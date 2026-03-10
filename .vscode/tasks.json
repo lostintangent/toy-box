@@ -1,0 +1,20 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run dev",
+      "type": "shell",
+      "command": "bun dev",
+      "inSessions": true
+    },
+    {
+      "label": "Setup",
+      "type": "shell",
+      "command": "bun install",
+      "inSessions": true,
+      "runOptions": {
+        "runOn": "worktreeCreated"
+      }
+    }
+  ]
+}
