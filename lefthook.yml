@@ -1,0 +1,8 @@
+pre-commit:
+  jobs:
+    - name: format
+      glob: "*.{ts,tsx,json,md,css,html}"
+      run: bun format -- {staged_files}
+    - name: lint
+      glob: "*.{ts,tsx}"
+      run: bun lint -- {staged_files}

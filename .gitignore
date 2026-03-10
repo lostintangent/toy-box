@@ -1,0 +1,16 @@
+node_modules
+.playwright-cli
+.DS_Store
+dist
+dist-ssr
+*.local
+count.txt
+.nitro
+.tanstack
+.wrangler
+.output
+test-results
+playwright-report
+
+# CLI binary
+toy-box
