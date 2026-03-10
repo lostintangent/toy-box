@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dogfooding"
+  short_description: "Run Toy Box dogfooding validation scenarios"
+  default_prompt: "Validate Toy Box changes with the dogfooding workflow and report pass/fail by scenario group."
