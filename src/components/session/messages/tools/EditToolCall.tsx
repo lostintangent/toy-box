@@ -19,14 +19,14 @@ type DiffLine =
   | { type: "added"; content: string; tokens?: ThemedToken[] }
   | { type: "removed"; content: string; tokens?: ThemedToken[] }
   | {
-      type: "modified";
-      content: string;
-      newContent: string;
-      segments: Segment[];
-      newSegments: Segment[];
-      tokens?: ThemedToken[];
-      newTokens?: ThemedToken[];
-    };
+    type: "modified";
+    content: string;
+    newContent: string;
+    segments: Segment[];
+    newSegments: Segment[];
+    tokens?: ThemedToken[];
+    newTokens?: ThemedToken[];
+  };
 
 interface DiffResult {
   lines: DiffLine[];
@@ -421,6 +421,7 @@ const DiffView = memo(function DiffView({ diffLines }: { diffLines: DiffLine[] }
     <pre className="text-xs p-2 rounded overflow-x-auto max-h-64 font-mono bg-muted/50">
       <div className="inline-block min-w-full">
         {diffLines.map((line, index) => (
+          // eslint-disable-next-line react/no-array-index-key -- diff rows are a positional rendering of one computed diff
           <React.Fragment key={`${line.type}-${index}`}>
             <DiffLineRenderer line={line} />
           </React.Fragment>

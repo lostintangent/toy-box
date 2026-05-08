@@ -12,13 +12,14 @@ import { getRuntimeConfig } from "@/functions/config";
 import { modelQueries } from "@/lib/queries";
 import { useAutomations } from "@/hooks/automations/useAutomations";
 import { useLocalStorage } from "@/hooks/browser/useLocalStorage";
+import { useLinkedSessions } from "@/hooks/session/useLinkedSessions";
 import { useSessions } from "@/hooks/session/useSessions";
 import { useViewport } from "@/hooks/browser/ViewportContext";
 import { usePanelTransition } from "@/hooks/browser/usePanelTransition";
 import { generateUUID } from "@/lib/utils";
 import type { SessionMetadata } from "@/types";
 import { Sidebar, SidebarProps } from "@/components/sidebar/Sidebar";
-import { SessionView } from "@/components/session/SessionView";
+import { MobileSessionPager } from "@/components/session/MobileSessionPager";
 import { SessionGrid } from "@/components/session/SessionGrid";
 import { SessionPlaceholder } from "@/components/session/SessionPlaceholder";
 import { TerminalShell } from "@/components/terminal/TerminalShell";
@@ -87,7 +88,7 @@ function SessionsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const search = Route.useSearch();
-  const sessionIds = search?.sessionIds ?? EMPTY_SESSION_IDS;
+  const selectedSessionIds = search?.sessionIds ?? EMPTY_SESSION_IDS;
   const {
     sidebarSize: initialSidebarSize,
     terminalSize: initialTerminalSize,
@@ -96,9 +97,64 @@ function SessionsPage() {
     automationsExpanded: initialAutomationsExpanded,
     terminalWsPort,
   } = Route.useLoaderData();
+  const { isMobile: isMobileLayout, hydrated } = useViewport();
 
-  const { allSessions, sessions, isLoading, streamingSessionIds, unreadSessionIds, worktreeSessionIds } = useSessions({
-    openSessionIds: sessionIds,
+  const updateSelectedSessionIds = useCallback(
+    (nextSelectedSessionIds: string[], options?: { replace?: boolean }) => {
+      navigate({
+        to: "/",
+        search: nextSelectedSessionIds.length > 0 ? { sessionIds: nextSelectedSessionIds } : {},
+        replace: options?.replace,
+      });
+    },
+    [navigate],
+  );
+
+  const [draftSessionId, setDraftSessionId] = useState<string | null>(null);
+  const primarySelectedSessionId = selectedSessionIds[0];
+  const {
+    visibleSessionIds,
+    dismissLinkedSession,
+    restoreLinkedSession,
+    resetDismissedLinkedSessions,
+  } = useLinkedSessions({
+    selectedSessionIds,
+  });
+
+  const { data: models = [] } = useQuery(modelQueries.list());
+
+  // Persisted state (synced with localStorage)
+  const [selectedModel, setSelectedModel] = useLocalStorage<string>(SELECTED_MODEL_KEY, "");
+  const [sourceFilter, setSourceFilter] = useLocalStorage(SESSION_SOURCE_FILTER_KEY, "toy-box");
+
+  // Default to first model if none selected
+  useEffect(() => {
+    if (models.length > 0 && !selectedModel) {
+      setSelectedModel(models[0].id);
+    }
+  }, [models, selectedModel, setSelectedModel]);
+
+  const [sidebarSize, setSidebarSize] = useState(initialSidebarSize);
+  const [terminalSize, setTerminalSize] = useState(initialTerminalSize);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(initialSidebarOpen);
+
+  // Terminal state - synced with cookie (SSR-safe)
+  const [isTerminalOpen, setIsTerminalOpen] = useState(initialTerminalOpen);
+  const [isAutomationsExpanded, setIsAutomationsExpanded] = useState(initialAutomationsExpanded);
+  const terminalPanelRef = useRef<ImperativePanelHandle>(null);
+  const shouldRenderMobileTerminalShell = import.meta.env.SSR
+    ? initialTerminalOpen
+    : isTerminalOpen;
+
+  const {
+    allSessions,
+    sessions,
+    isLoading,
+    streamingSessionIds,
+    unreadSessionIds,
+    worktreeSessionIds,
+  } = useSessions({
+    openSessionIds: visibleSessionIds,
   });
   const {
     automations,
@@ -113,7 +169,8 @@ function SessionsPage() {
     runningAutomationIds,
   } = useAutomations({
     onUserRunRequested: (sessionId) => {
-      navigate({ to: "/", search: { sessionIds: [sessionId] } });
+      resetDismissedLinkedSessions();
+      updateSelectedSessionIds([sessionId]);
     },
     streamingSessionIds,
   });
@@ -125,34 +182,67 @@ function SessionsPage() {
     }
     return ids;
   }, [allSessions, automations]);
-  const { data: models = [] } = useQuery(modelQueries.list());
-
-  // Persisted state (synced with localStorage)
-  const [selectedModel, setSelectedModel] = useLocalStorage<string>(SELECTED_MODEL_KEY, "");
-  const [sourceFilter, setSourceFilter] = useLocalStorage(SESSION_SOURCE_FILTER_KEY, "toy-box");
-
-  // Default to first model if none selected
-  useEffect(() => {
-    if (models.length > 0 && !selectedModel) {
-      setSelectedModel(models[0].id);
+  const openSessionIds = useMemo(() => {
+    if (isLoading) {
+      return visibleSessionIds;
     }
-  }, [models, selectedModel, setSelectedModel]);
-  const [sidebarSize, setSidebarSize] = useState(initialSidebarSize);
-  const [terminalSize, setTerminalSize] = useState(initialTerminalSize);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(initialSidebarOpen);
 
-  // Terminal state - synced with cookie (SSR-safe)
-  const [isTerminalOpen, setIsTerminalOpen] = useState(initialTerminalOpen);
-  const [isAutomationsExpanded, setIsAutomationsExpanded] = useState(initialAutomationsExpanded);
-  const terminalPanelRef = useRef<ImperativePanelHandle>(null);
+    return visibleSessionIds.filter((sessionId) => {
+      return sessionId === draftSessionId || availableSessionIds.has(sessionId);
+    });
+  }, [availableSessionIds, draftSessionId, isLoading, visibleSessionIds]);
+  const linkedOnlySessionIds = useMemo(() => {
+    return new Set(openSessionIds.filter((sessionId) => !selectedSessionIds.includes(sessionId)));
+  }, [openSessionIds, selectedSessionIds]);
 
-  const { isMobile: isMobileLayout, hydrated } = useViewport();
-  const shouldRenderMobileTerminalShell = import.meta.env.SSR
-    ? initialTerminalOpen
-    : isTerminalOpen;
+  const handleCloseVisibleSession = useCallback(
+    (sessionId: string) => {
+      dismissLinkedSession(sessionId);
 
-  // Draft session state - tracks a session that hasn't been created on the server yet
-  const [draftSessionId, setDraftSessionId] = useState<string | null>(null);
+      if (!selectedSessionIds.includes(sessionId)) {
+        return;
+      }
+
+      updateSelectedSessionIds(selectedSessionIds.filter((id) => id !== sessionId));
+    },
+    [dismissLinkedSession, selectedSessionIds, updateSelectedSessionIds],
+  );
+
+  const handleSessionSelect = useCallback(
+    (sessionId: string | null, modifierKey: boolean = false) => {
+      if (sessionId === null) {
+        updateSelectedSessionIds([]);
+        return;
+      }
+
+      if (!modifierKey || isMobileLayout) {
+        resetDismissedLinkedSessions();
+        updateSelectedSessionIds([sessionId]);
+        return;
+      }
+
+      if (openSessionIds.includes(sessionId)) {
+        handleCloseVisibleSession(sessionId);
+        return;
+      }
+
+      if (openSessionIds.length >= 4) {
+        return;
+      }
+
+      restoreLinkedSession(sessionId);
+      updateSelectedSessionIds([...selectedSessionIds, sessionId]);
+    },
+    [
+      handleCloseVisibleSession,
+      isMobileLayout,
+      openSessionIds,
+      resetDismissedLinkedSessions,
+      restoreLinkedSession,
+      selectedSessionIds,
+      updateSelectedSessionIds,
+    ],
+  );
 
   // Create a new draft session (client-side only until first message)
   // With modifier key (Cmd/Ctrl), adds to the grid instead of replacing
@@ -162,15 +252,21 @@ function SessionsPage() {
       setDraftSessionId(id);
 
       const hasModifier = e?.metaKey || e?.ctrlKey;
-      if (hasModifier && sessionIds.length > 0 && sessionIds.length < 4) {
+      if (hasModifier && openSessionIds.length > 0 && openSessionIds.length < 4) {
         // Add to grid
-        navigate({ to: "/", search: { sessionIds: [...sessionIds, id] } });
+        updateSelectedSessionIds([...selectedSessionIds, id]);
       } else {
         // Replace current view
-        navigate({ to: "/", search: { sessionIds: [id] } });
+        resetDismissedLinkedSessions();
+        updateSelectedSessionIds([id]);
       }
     },
-    [navigate, sessionIds],
+    [
+      openSessionIds.length,
+      resetDismissedLinkedSessions,
+      selectedSessionIds,
+      updateSelectedSessionIds,
+    ],
   );
 
   // Called when draft session is created on server (after first message)
@@ -221,21 +317,23 @@ function SessionsPage() {
   // This prevents stale open panes when another client deletes a session.
   useEffect(() => {
     if (isLoading) return;
-    if (sessionIds.length === 0) return;
+    if (selectedSessionIds.length === 0) return;
 
-    const validSessionIds = sessionIds.filter((sessionId) => {
+    const validSessionIds = selectedSessionIds.filter((sessionId) => {
       if (sessionId === draftSessionId) return true;
       return availableSessionIds.has(sessionId);
     });
 
-    if (validSessionIds.length === sessionIds.length) return;
+    if (validSessionIds.length === selectedSessionIds.length) return;
 
-    navigate({
-      to: "/",
-      search: validSessionIds.length > 0 ? { sessionIds: validSessionIds } : {},
-      replace: true,
-    });
-  }, [availableSessionIds, draftSessionId, isLoading, navigate, sessionIds]);
+    updateSelectedSessionIds(validSessionIds, { replace: true });
+  }, [
+    availableSessionIds,
+    draftSessionId,
+    isLoading,
+    selectedSessionIds,
+    updateSelectedSessionIds,
+  ]);
 
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
@@ -472,34 +570,6 @@ function SessionsPage() {
     },
   });
 
-  const handleSessionSelect = useCallback(
-    (selectedSessionId: string | null, modifierKey: boolean = false) => {
-      if (selectedSessionId === null) {
-        navigate({ to: "/", search: {} });
-        return;
-      }
-
-      // Normal click: Always reset to single session (ephemeral grids)
-      if (!modifierKey) {
-        navigate({ to: "/", search: { sessionIds: [selectedSessionId] } });
-        return;
-      }
-
-      // Cmd/Ctrl+click: Add to or remove from grid (desktop only)
-      // Note: Mobile behavior unchanged - modifier keys not supported
-      const currentSessionIds = sessionIds;
-      if (currentSessionIds.includes(selectedSessionId)) {
-        // Remove from grid
-        const updated = currentSessionIds.filter((id) => id !== selectedSessionId);
-        navigate({ to: "/", search: updated.length > 0 ? { sessionIds: updated } : {} });
-      } else if (currentSessionIds.length < 4) {
-        // Add to grid (max 4)
-        navigate({ to: "/", search: { sessionIds: [...currentSessionIds, selectedSessionId] } });
-      }
-    },
-    [navigate, sessionIds],
-  );
-
   const handleSessionDelete = useCallback(
     (sessionIdToDelete: string) => {
       // If deleting a draft session, just clear the draft state (no server call)
@@ -509,16 +579,14 @@ function SessionsPage() {
         deleteMutation.mutate(sessionIdToDelete);
       }
 
-      // If deleting an open session, remove it from the grid
-      if (sessionIds.includes(sessionIdToDelete)) {
-        const updated = sessionIds.filter((id) => id !== sessionIdToDelete);
-        navigate({ to: "/", search: updated.length > 0 ? { sessionIds: updated } : {} });
+      if (selectedSessionIds.includes(sessionIdToDelete)) {
+        updateSelectedSessionIds(selectedSessionIds.filter((id) => id !== sessionIdToDelete));
       }
     },
-    [draftSessionId, deleteMutation, sessionIds, navigate],
+    [deleteMutation, draftSessionId, selectedSessionIds, updateSelectedSessionIds],
   );
 
-  const hasSelectedSession = sessionIds.length > 0;
+  const hasSelectedSession = selectedSessionIds.length > 0;
 
   // Mobile view state: 'sidebar' | 'session' | 'terminal'
   type MobileView = "sidebar" | "session" | "terminal";
@@ -567,7 +635,7 @@ function SessionsPage() {
     onSessionSelect: handleSessionSelect,
     onSessionDelete: handleSessionDelete,
     deletingSessionId,
-    activeSessionIds: sessionIds,
+    activeSessionIds: openSessionIds,
     streamingSessionIds,
     unreadSessionIds,
     worktreeSessionIds,
@@ -610,11 +678,12 @@ function SessionsPage() {
 
         {/* Session View */}
         <div className="h-full w-full shrink-0">
-          {sessionIds[0] && (
-            <SessionView
-              sessionId={sessionIds[0]}
-              isSessionRunning={streamingSessionIds.includes(sessionIds[0])}
-              isSessionUnread={unreadSessionIds.includes(sessionIds[0])}
+          {primarySelectedSessionId && (
+            <MobileSessionPager
+              sessionIds={openSessionIds}
+              selectedSessionId={primarySelectedSessionId}
+              streamingSessionIds={streamingSessionIds}
+              unreadSessionIds={unreadSessionIds}
               onBack={() => handleSessionSelect(null)}
               models={models}
               selectedModel={selectedModel}
@@ -628,9 +697,8 @@ function SessionsPage() {
 
       {/* Terminal overlay (separate layer to avoid transform on input) */}
       <div
-        className={`absolute inset-y-0 w-full ${
-          hydrated ? "transition-[left] duration-300 ease-in-out" : ""
-        } ${mobileView === "terminal" ? "pointer-events-auto" : "pointer-events-none"}`}
+        className={`absolute inset-y-0 w-full ${hydrated ? "transition-[left] duration-300 ease-in-out" : ""
+          } ${mobileView === "terminal" ? "pointer-events-auto" : "pointer-events-none"}`}
         style={{ left: mobileView === "terminal" ? "0%" : "100%" }}
       >
         <div className="h-full">
@@ -693,18 +761,13 @@ function SessionsPage() {
                     <PanelLeft className="h-5 w-5" />
                   </button>
                 )}
-                {sessionIds.length > 0 ? (
+                {openSessionIds.length > 0 ? (
                   <SessionGrid
-                    sessionIds={sessionIds}
+                    sessionIds={openSessionIds}
+                    linkedOnlySessionIds={linkedOnlySessionIds}
                     streamingSessionIds={streamingSessionIds}
                     unreadSessionIds={unreadSessionIds}
-                    onRemoveSession={(sessionIdToRemove) => {
-                      const updated = sessionIds.filter((id) => id !== sessionIdToRemove);
-                      navigate({
-                        to: "/",
-                        search: updated.length > 0 ? { sessionIds: updated } : {},
-                      });
-                    }}
+                    onRemoveSession={handleCloseVisibleSession}
                     models={models}
                     selectedModel={selectedModel}
                     onModelChange={setSelectedModel}

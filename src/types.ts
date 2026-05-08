@@ -10,6 +10,14 @@ export type SessionSkill = {
   description: string;
 };
 
+export type SessionWorktree = {
+  path?: string;
+  branch?: string;
+  baseBranch?: string;
+  linesAdded?: number;
+  linesRemoved?: number;
+};
+
 /* Todos (structured patches from SQL tool calls) */
 
 export type TodoStatus = "pending" | "in_progress" | "done" | "blocked";
@@ -35,6 +43,7 @@ export type SessionSnapshot = {
   queuedMessages: QueuedMessage[];
   model?: string;
   todos?: TodoItem[];
+  linkedSessionIds?: string[];
   lastSeenEventId?: number;
   status: SessionStatus;
   reasoningContent: string;
@@ -98,34 +107,34 @@ export type JsonValue =
 
 export type SessionEvent = (
   | {
-      type: "user_message";
-      content: string;
-      attachments?: Attachment[];
-      timestamp?: string;
-      clientMessageId?: string;
-    }
+    type: "user_message";
+    content: string;
+    attachments?: Attachment[];
+    timestamp?: string;
+    clientMessageId?: string;
+  }
   | {
-      type: "assistant_message";
-      content: string;
-      toolCalls?: ToolCall[];
-    }
+    type: "assistant_message";
+    content: string;
+    toolCalls?: ToolCall[];
+  }
   | { type: "delta"; content: string }
   | { type: "reasoning"; content: string }
   | {
-      type: "tool_start";
-      toolName: string;
-      toolCallId: string;
-      parentToolCallId?: string;
-      arguments: { [key: string]: JsonValue };
-    }
+    type: "tool_start";
+    toolName: string;
+    toolCallId: string;
+    parentToolCallId?: string;
+    arguments: { [key: string]: JsonValue };
+  }
   | { type: "tool_progress"; toolCallId: string; message: string }
   | {
-      type: "tool_end";
-      toolCallId: string;
-      parentToolCallId?: string;
-      success: boolean;
-      result?: string;
-    }
+    type: "tool_end";
+    toolCallId: string;
+    parentToolCallId?: string;
+    success: boolean;
+    result?: string;
+  }
   | { type: "thinking" }
   | { type: "intent"; intent: string }
   | { type: "todos_patch"; patches: TodoItemPatch[] }
@@ -137,6 +146,8 @@ export type SessionEvent = (
   | { type: "message_dequeued"; content: string; queuedMessageId?: string }
   | { type: "model_changed"; model: string }
   | { type: "skills"; skills: SessionSkill[] }
+  | { type: "linked_session_added"; sessionId: string }
+  | { type: "linked_session_removed"; sessionId: string }
   | { type: "stream_end"; reason: "idle" | "error" }
 ) & {
   eventId?: number;
@@ -149,9 +160,9 @@ export type ServerUpdateEvent = SessionsUpdateEvent | AutomationsUpdateEvent;
 
 export type SessionsUpdateEvent =
   | {
-      type: "session.upserted";
-      session: SessionMetadataUpdate;
-    }
+    type: "session.upserted";
+    session: SessionMetadataUpdate;
+  }
   | SimpleSessionUpdateEvents<"deleted" | "running" | "idle" | "unread" | "read">;
 
 type SimpleSessionUpdateEvents<EventName extends string> = {
@@ -161,31 +172,31 @@ type SimpleSessionUpdateEvents<EventName extends string> = {
 
 export type AutomationsUpdateEvent =
   | {
-      type: "automation.added";
-      automation: Automation;
-    }
+    type: "automation.added";
+    automation: Automation;
+  }
   | {
-      type: "automation.deleted";
-      automationId: string;
-    }
+    type: "automation.deleted";
+    automationId: string;
+  }
   | {
-      type: "automation.updated";
-      automation: Automation;
-    }
+    type: "automation.updated";
+    automation: Automation;
+  }
   | {
-      type: "automation.started";
-      automationId: string;
-      sessionId: string;
-      startedAt: string; // ISO timestamp
-    }
+    type: "automation.started";
+    automationId: string;
+    sessionId: string;
+    startedAt: string; // ISO timestamp
+  }
   | {
-      type: "automation.finished";
-      automationId: string;
-      sessionId: string;
-      finishedAt: string; // ISO timestamp
-      success: boolean;
-      automation?: Automation;
-    };
+    type: "automation.finished";
+    automationId: string;
+    sessionId: string;
+    finishedAt: string; // ISO timestamp
+    success: boolean;
+    automation?: Automation;
+  };
 
 export type SessionMetadataUpdate = {
   sessionId: string;
@@ -195,6 +206,7 @@ export type SessionMetadataUpdate = {
   replaceSummary?: boolean;
   isRemote?: boolean;
   context?: SessionContext;
+  worktree?: SessionWorktree;
 };
 
 /* Terminal (client->server protocol) */

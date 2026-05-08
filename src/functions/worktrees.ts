@@ -32,7 +32,7 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 export async function getRepositoryName(directory: string): Promise<string | undefined> {
   try {
     const url = await git(directory, "remote", "get-url", "origin");
-    const match = url.match(/[\/:]([^\/]+\/[^\/]+?)(?:\.git)?$/);
+    const match = url.match(/[/:]([^/]+\/[^/]+?)(?:\.git)?$/);
     return match?.[1];
   } catch {
     return undefined;

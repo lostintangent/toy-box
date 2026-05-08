@@ -23,6 +23,7 @@ import type { ModelInfo } from "@/types";
 
 export interface SessionGridProps {
   sessionIds: string[]; // 1-4 session IDs
+  linkedOnlySessionIds?: ReadonlySet<string>;
   streamingSessionIds: string[];
   unreadSessionIds: string[];
   onRemoveSession: (sessionId: string) => void;
@@ -33,8 +34,76 @@ export interface SessionGridProps {
   onDraftSessionCreated?: (sessionId: string) => void;
 }
 
+type SessionGridSizes = {
+  topRow: number;
+  topLeft: number;
+  topRight: number;
+  bottomRow: number;
+  bottomLeft: number;
+  bottomRight: number;
+};
+
+function applySessionGridCountStep(
+  prevCount: number,
+  nextCount: number,
+  sizes: SessionGridSizes,
+): SessionGridSizes {
+  const nextSizes = { ...sizes };
+
+  if (nextCount > prevCount) {
+    if (nextCount === 2) {
+      nextSizes.topLeft = 50;
+      nextSizes.topRight = 50;
+    } else if (nextCount === 3) {
+      nextSizes.topRow = 50;
+      nextSizes.bottomRow = 50;
+      nextSizes.bottomLeft = 100;
+    } else if (nextCount === 4) {
+      nextSizes.bottomLeft = 50;
+      nextSizes.bottomRight = 50;
+    }
+
+    return nextSizes;
+  }
+
+  if (nextCount === 1) {
+    nextSizes.topRow = 100;
+    nextSizes.topLeft = 100;
+    nextSizes.topRight = 0;
+    nextSizes.bottomRow = 0;
+  } else if (nextCount === 2) {
+    nextSizes.topRow = 100;
+    nextSizes.bottomRow = 0;
+  } else if (nextCount === 3) {
+    nextSizes.bottomLeft = 100;
+    nextSizes.bottomRight = 0;
+  }
+
+  return nextSizes;
+}
+
+export function applySessionGridCountChange(
+  prevCount: number,
+  nextCount: number,
+  sizes: SessionGridSizes,
+): SessionGridSizes {
+  if (nextCount === prevCount) {
+    return sizes;
+  }
+
+  const direction = nextCount > prevCount ? 1 : -1;
+  let nextSizes = { ...sizes };
+
+  for (let currentCount = prevCount; currentCount !== nextCount; currentCount += direction) {
+    nextSizes = applySessionGridCountStep(currentCount, currentCount + direction, nextSizes);
+  }
+
+  return nextSizes;
+}
+
 export function SessionGrid({
   sessionIds,
+  linkedOnlySessionIds,
   streamingSessionIds = [],
   unreadSessionIds,
   onRemoveSession,
@@ -47,7 +116,7 @@ export function SessionGrid({
   const count = sessionIds.length;
   const [isDragging, setIsDragging] = useState(false);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
-  const savedSizesRef = useRef<Record<string, number> | null>(null);
+  const savedSizesRef = useRef<SessionGridSizes | null>(null);
 
   // Props forwarded to every GridCell (not grid-position-specific)
   const sessionProps = {
@@ -83,33 +152,44 @@ export function SessionGrid({
   // Transition class applied when not dragging
   const transitionClass = !isDragging ? "panel-transition" : "";
 
-  // Handle maximize: save current sizes, then expand target cell
-  const handleMaximize = useCallback((sessionId: string) => {
-    savedSizesRef.current = {
-      topRow: topRowRef.current?.getSize() ?? 50,
-      topLeft: topLeftRef.current?.getSize() ?? 50,
-      topRight: topRightRef.current?.getSize() ?? 50,
-      bottomRow: bottomRowRef.current?.getSize() ?? 50,
-      bottomLeft: bottomLeftRef.current?.getSize() ?? 50,
-      bottomRight: bottomRightRef.current?.getSize() ?? 50,
+  const readCurrentSizes = useCallback((): SessionGridSizes => {
+    return {
+      topRow: topRowRef.current?.getSize() ?? initialSizes.topRow,
+      topLeft: topLeftRef.current?.getSize() ?? initialSizes.topLeft,
+      topRight: topRightRef.current?.getSize() ?? initialSizes.topRight,
+      bottomRow: bottomRowRef.current?.getSize() ?? initialSizes.bottomRow,
+      bottomLeft: bottomLeftRef.current?.getSize() ?? initialSizes.bottomLeft,
+      bottomRight: bottomRightRef.current?.getSize() ?? initialSizes.bottomRight,
     };
-    setMaximizedId(sessionId);
+  }, [initialSizes]);
+
+  const resizePanels = useCallback((sizes: SessionGridSizes) => {
+    topRowRef.current?.resize(sizes.topRow);
+    topLeftRef.current?.resize(sizes.topLeft);
+    topRightRef.current?.resize(sizes.topRight);
+    bottomRowRef.current?.resize(sizes.bottomRow);
+    bottomLeftRef.current?.resize(sizes.bottomLeft);
+    bottomRightRef.current?.resize(sizes.bottomRight);
   }, []);
+
+  // Handle maximize: save current sizes, then expand target cell
+  const handleMaximize = useCallback(
+    (sessionId: string) => {
+      savedSizesRef.current = readCurrentSizes();
+      setMaximizedId(sessionId);
+    },
+    [readCurrentSizes],
+  );
 
   // Handle minimize: restore saved sizes
   const handleMinimize = useCallback(() => {
     const saved = savedSizesRef.current;
     if (saved) {
-      topRowRef.current?.resize(saved.topRow);
-      topLeftRef.current?.resize(saved.topLeft);
-      topRightRef.current?.resize(saved.topRight);
-      bottomRowRef.current?.resize(saved.bottomRow);
-      bottomLeftRef.current?.resize(saved.bottomLeft);
-      bottomRightRef.current?.resize(saved.bottomRight);
+      resizePanels(saved);
       savedSizesRef.current = null;
     }
     setMaximizedId(null);
-  }, []);
+  }, [resizePanels]);
 
   // Exit maximize mode on manual resize
   const handleDragging = useCallback((dragging: boolean) => {
@@ -160,36 +240,9 @@ export function SessionGrid({
       return;
     }
 
-    // Adding sessions
-    if (count > prevCount) {
-      if (count === 2) {
-        topLeftRef.current?.resize(50);
-        topRightRef.current?.resize(50);
-      } else if (count === 3) {
-        topRowRef.current?.resize(50);
-        bottomRowRef.current?.resize(50);
-        bottomLeftRef.current?.resize(100);
-      } else if (count === 4) {
-        bottomLeftRef.current?.resize(50);
-        bottomRightRef.current?.resize(50);
-      }
-      return;
-    }
-
-    // Removing sessions
-    if (count === 1) {
-      topRowRef.current?.resize(100);
-      topLeftRef.current?.resize(100);
-      topRightRef.current?.resize(0);
-      bottomRowRef.current?.resize(0);
-    } else if (count === 2) {
-      topRowRef.current?.resize(100);
-      bottomRowRef.current?.resize(0);
-    } else if (count === 3) {
-      bottomLeftRef.current?.resize(100);
-      bottomRightRef.current?.resize(0);
-    }
-  }, [count, maximizedId]);
+    const nextSizes = applySessionGridCountChange(prevCount, count, readCurrentSizes());
+    resizePanels(nextSizes);
+  }, [count, maximizedId, readCurrentSizes, resizePanels]);
 
   return (
     <ResizablePanelGroup direction="vertical" className="h-full w-full">
@@ -212,6 +265,7 @@ export function SessionGrid({
               <GridCell
                 key={sessionIds[0]}
                 sessionId={sessionIds[0]}
+                isLinkedOnly={linkedOnlySessionIds?.has(sessionIds[0]) ?? false}
                 isSessionRunning={streamingSessionIds.includes(sessionIds[0])}
                 isSessionUnread={unreadSessionIds.includes(sessionIds[0]) ?? false}
                 onRemove={onRemoveSession}
@@ -237,6 +291,7 @@ export function SessionGrid({
               <GridCell
                 key={sessionIds[1]}
                 sessionId={sessionIds[1]}
+                isLinkedOnly={linkedOnlySessionIds?.has(sessionIds[1]) ?? false}
                 isSessionRunning={streamingSessionIds.includes(sessionIds[1])}
                 isSessionUnread={unreadSessionIds.includes(sessionIds[1]) ?? false}
                 onRemove={onRemoveSession}
@@ -272,6 +327,7 @@ export function SessionGrid({
               <GridCell
                 key={sessionIds[2]}
                 sessionId={sessionIds[2]}
+                isLinkedOnly={linkedOnlySessionIds?.has(sessionIds[2]) ?? false}
                 isSessionRunning={streamingSessionIds.includes(sessionIds[2])}
                 isSessionUnread={unreadSessionIds.includes(sessionIds[2]) ?? false}
                 onRemove={onRemoveSession}
@@ -297,6 +353,7 @@ export function SessionGrid({
               <GridCell
                 key={sessionIds[3]}
                 sessionId={sessionIds[3]}
+                isLinkedOnly={linkedOnlySessionIds?.has(sessionIds[3]) ?? false}
                 isSessionRunning={streamingSessionIds.includes(sessionIds[3])}
                 isSessionUnread={unreadSessionIds.includes(sessionIds[3]) ?? false}
                 onRemove={onRemoveSession}
@@ -320,6 +377,7 @@ export function SessionGrid({
 
 interface GridCellProps {
   sessionId: string;
+  isLinkedOnly: boolean;
   isSessionRunning: boolean;
   isSessionUnread: boolean;
   onRemove: (sessionId: string) => void;
@@ -336,6 +394,7 @@ interface GridCellProps {
 
 const GridCell = memo(function GridCell({
   sessionId,
+  isLinkedOnly,
   isSessionRunning,
   isSessionUnread,
   onRemove,
@@ -356,10 +415,17 @@ const GridCell = memo(function GridCell({
   return (
     <div
       className={cn(
-        "h-full w-full relative group bg-background",
+        "h-full w-full relative group bg-background transition-shadow",
         showControls && !isMaximized && "border-r border-b border-border",
       )}
     >
+      {isLinkedOnly && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-10 ring-2 ring-inset ring-sky-500/80"
+        />
+      )}
+
       {showControls && (
         <div className="absolute top-3 right-3 z-20 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           {isMaximized ? (

@@ -20,15 +20,35 @@ import {
   updateSessionSummary,
 } from "./broadcast";
 import { applySessionEvent, createInitialSession } from "@/lib/session/sessionReducer";
-import { type SdkSessionEvent, readSessionModel } from "@/functions/sdk/extractors";
 import {
   createProjectionState,
   getSdkMetadataPatch,
   getSdkStreamTerminalDisposition,
+  type SdkSessionEvent,
   projectSdkEvent,
 } from "@/functions/sdk/projector";
+import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/sessionState";
 import type { Attachment, QueuedMessage, SessionEvent } from "@/types";
 import type { Session } from "@/lib/session/sessionReducer";
+
+export function prepareSessionForNextTurn(state: Session): Session {
+  state.status = "thinking";
+  state.reasoningContent = "";
+  state.pendingToolCalls.clear();
+  state.pendingOptimisticUserMessage = undefined;
+  return state;
+}
+
+function getLastAssistantResponse(messages: Session["messages"]): string {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role === "assistant" && message.content.trim().length > 0) {
+      return message.content;
+    }
+  }
+
+  return "";
+}
 
 export type SessionStreamConfig = {
   sessionId: string;
@@ -41,6 +61,22 @@ export type SessionStreamConfig = {
   clientMessageId?: string;
   afterEventId?: number;
   startNew?: boolean;
+};
+
+export type SendOrQueueSessionMessageOptions = {
+  sessionId: string;
+  prompt: string;
+  attachments?: Attachment[];
+  model?: string;
+  directory?: string;
+  useWorktree?: boolean;
+  clientMessageId?: string;
+  startNew?: boolean;
+};
+
+export type SendOrQueueSessionMessageResult = {
+  stream: SessionStream;
+  disposition: "queued" | "started" | "attached";
 };
 
 type SessionStreamSubscriber = (event: SessionEvent | null) => void;
@@ -59,15 +95,13 @@ export class SessionStream {
   static getOrCreate(
     sessionId: string,
     session: CopilotSession,
-    initialModel?: string,
+    initialState?: Partial<Session>,
   ): SessionStream {
     const existing = SessionStream.streams.get(sessionId);
     if (existing) return existing;
 
     const stream = new SessionStream(sessionId, session);
-    if (initialModel) {
-      stream.#turnState.model = initialModel;
-    }
+    stream.#sessionState = createInitialSession(initialState);
     SessionStream.streams.set(sessionId, stream);
     return stream;
   }
@@ -90,6 +124,17 @@ export class SessionStream {
     return SessionStream.streams.has(sessionId);
   }
 
+  static async waitForClose(sessionId: string, timeoutMs?: number): Promise<string> {
+    const stream = SessionStream.get(sessionId);
+    if (!stream) {
+      const { events } = await getOrResumeSession(sessionId);
+      return getLastAssistantResponse(
+        (await initializeSessionStateFromSdkHistory(events)).messages,
+      );
+    }
+    return stream.waitForClose(timeoutMs);
+  }
+
   // ── Instance fields ──────────────────────────────────────────────────
 
   readonly sessionId: string;
@@ -102,12 +147,14 @@ export class SessionStream {
 
   // Subscribers
   readonly #subscribers = new Set<SessionStreamSubscriber>();
+  readonly #closeWaiters = new Set<() => void>();
 
   // SDK event listener
   #unsubscribeSdk: () => void;
 
-  // Reducer state
-  #turnState: Session;
+  // Live session state. This survives turn boundaries; only the reconnect
+  // buffer is turn-scoped.
+  #sessionState: Session;
   #projectionState = createProjectionState();
 
   // Event sequencing
@@ -120,7 +167,7 @@ export class SessionStream {
   private constructor(sessionId: string, sdkSession: CopilotSession) {
     this.sessionId = sessionId;
     this.sdkSession = sdkSession;
-    this.#turnState = createInitialSession();
+    this.#sessionState = createInitialSession();
     this.#unsubscribeSdk = sdkSession.on((event) => this.#handleSdkEvent(event));
   }
 
@@ -128,9 +175,10 @@ export class SessionStream {
 
   /** Full shutdown: buffer + queue + unread + broadcast + SDK listener. */
   close(): void {
+    this.#resolveCloseWaiters();
     this.#updateUnreadOnStreamEnd();
     this.#clearBuffer();
-    this.#turnState.queuedMessages.length = 0;
+    this.#sessionState.queuedMessages.length = 0;
     this.#broadcastToSubscribers(null);
     this.#unsubscribeSdk();
     SessionStream.streams.delete(this.sessionId);
@@ -146,6 +194,7 @@ export class SessionStream {
    *  Used when the stream already closed normally and we just need
    *  to clean up the runtime object itself. */
   detach(): void {
+    this.#resolveCloseWaiters();
     this.#unsubscribeSdk();
     SessionStream.streams.delete(this.sessionId);
   }
@@ -160,15 +209,15 @@ export class SessionStream {
   // ── Model ───────────────────────────────────────────────────────────
 
   get model(): string | undefined {
-    return this.#turnState.model;
+    return this.#sessionState.model;
   }
 
   /** Update the model on both the SDK session and local state. */
   async setModel(model: string): Promise<void> {
-    if (model === this.#turnState.model) return;
+    if (model === this.#sessionState.model) return;
 
     await this.sdkSession.setModel(model);
-    this.#turnState.model = model;
+    this.#sessionState.model = model;
   }
 
   // ── Buffer ───────────────────────────────────────────────────────────
@@ -222,8 +271,8 @@ export class SessionStream {
     );
   }
 
-  getTurnState(): Session {
-    return this.#turnState;
+  getSessionState(): Session {
+    return this.#sessionState;
   }
 
   getLastEventId(): number | undefined {
@@ -233,7 +282,7 @@ export class SessionStream {
   // ── Queue ────────────────────────────────────────────────────────────
 
   getQueuedMessages(): QueuedMessage[] {
-    return this.#turnState.queuedMessages;
+    return this.#sessionState.queuedMessages;
   }
 
   addQueuedMessage(message: Omit<QueuedMessage, "id"> & { id?: string }): QueuedMessage {
@@ -254,7 +303,7 @@ export class SessionStream {
   }
 
   removeQueuedMessage(queuedMessageId: string): boolean {
-    const index = this.#turnState.queuedMessages.findIndex((m) => m.id === queuedMessageId);
+    const index = this.#sessionState.queuedMessages.findIndex((m) => m.id === queuedMessageId);
     if (index === -1) return false;
 
     this.#emit({
@@ -281,6 +330,51 @@ export class SessionStream {
     }
   }
 
+  #resolveCloseWaiters(): void {
+    if (this.#closeWaiters.size === 0) return;
+    for (const resolve of this.#closeWaiters) {
+      resolve();
+    }
+    this.#closeWaiters.clear();
+  }
+
+  #isCurrentStream(): boolean {
+    return SessionStream.get(this.sessionId) === this;
+  }
+
+  /** Wait for this specific runtime stream instance to end.
+   *  This intentionally does not observe future streams that might reuse the
+   *  same session ID after this instance closes. */
+  waitForClose(timeoutMs?: number): Promise<string> {
+    if (!this.#isCurrentStream()) {
+      return Promise.resolve(getLastAssistantResponse(this.#sessionState.messages));
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        this.#closeWaiters.delete(finish);
+        resolve(getLastAssistantResponse(this.#sessionState.messages));
+      };
+
+      this.#closeWaiters.add(finish);
+
+      if (!this.#isCurrentStream()) {
+        finish();
+        return;
+      }
+
+      if (timeoutMs !== undefined && timeoutMs >= 0) {
+        timer = setTimeout(finish, timeoutMs);
+      }
+    });
+  }
+
   #updateUnreadOnStreamEnd(): void {
     if (this.#subscribers.size > 0) {
       markSessionRead(this.sessionId);
@@ -295,7 +389,7 @@ export class SessionStream {
     return (
       this.#subscribers.size === 0 &&
       !this.#isDrainingQueue &&
-      this.#turnState.queuedMessages.length === 0 &&
+      this.#sessionState.queuedMessages.length === 0 &&
       this.#buffer.length === 0
     );
   }
@@ -305,7 +399,7 @@ export class SessionStream {
   /** Begin a new turn: reset state, emit the user message, and prepare
    *  the buffer for incoming assistant events. */
   startTurn(prompt: string, clientMessageId?: string): void {
-    this.#resetForNewTurn(prompt);
+    this.#prepareForNewTurn(prompt);
     this.#emit({
       type: "user_message",
       content: prompt,
@@ -320,14 +414,10 @@ export class SessionStream {
     this.#broadcastToSubscribers(decorated);
   }
 
-  #resetForNewTurn(summaryHint?: string): void {
+  #prepareForNewTurn(summaryHint?: string): void {
     this.#prepareBuffer(summaryHint);
     this.#currentTurnId = undefined;
-
-    const currentModel = this.#turnState.model;
-    this.#turnState = createInitialSession();
-    this.#turnState.model = currentModel;
-    this.#turnState.status = "thinking";
+    prepareSessionForNextTurn(this.#sessionState);
   }
 
   #generateTurnId(): string {
@@ -346,7 +436,7 @@ export class SessionStream {
 
   #applyEvent(event: SessionEvent): void {
     this.#appendToBuffer(event);
-    applySessionEvent(this.#turnState, event);
+    applySessionEvent(this.#sessionState, event);
   }
 
   // ── SDK event handling ──────────────────────────────────────────────
@@ -391,16 +481,16 @@ export class SessionStream {
     this.#isDrainingQueue = true;
 
     try {
-      const queuedMessage = this.#turnState.queuedMessages[0];
+      const queuedMessage = this.#sessionState.queuedMessages[0];
       if (!queuedMessage) {
         this.close();
         return;
       }
 
-      this.#resetForNewTurn(queuedMessage.content);
+      this.#prepareForNewTurn(queuedMessage.content);
       this.#currentTurnId = this.#generateTurnId();
 
-      // Emit removes the message from #turnState.queuedMessages via applySessionEvent.
+      // Emit removes the message from #sessionState.queuedMessages via applySessionEvent.
       this.#emit({
         type: "message_dequeued",
         content: queuedMessage.content,
@@ -409,9 +499,8 @@ export class SessionStream {
 
       const attachments = await writeAttachments(this.sessionId, queuedMessage.attachments);
 
-      if (queuedMessage.model && queuedMessage.model !== this.#turnState.model) {
-        await this.sdkSession.setModel(queuedMessage.model);
-        this.#turnState.model = queuedMessage.model;
+      if (queuedMessage.model && queuedMessage.model !== this.#sessionState.model) {
+        await this.setModel(queuedMessage.model);
       }
 
       await this.sdkSession.send({ prompt: queuedMessage.content, attachments });
@@ -427,15 +516,6 @@ export class SessionStream {
 // ============================================================================
 // Streaming Entry Point
 // ============================================================================
-
-/** Extract the last-known model from SDK history events (scans backwards). */
-function getModelFromSdkEvents(events: SdkSessionEvent[]): string | undefined {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const model = readSessionModel(events[i]);
-    if (model) return model;
-  }
-  return undefined;
-}
 
 function createAsyncQueue<T>() {
   const queue: (T | null)[] = [];
@@ -461,70 +541,119 @@ function createAsyncQueue<T>() {
   };
 }
 
-export async function* createSessionEventStream(
-  options: SessionStreamConfig,
-): AsyncGenerator<SessionEvent> {
-  const shouldStartNew = Boolean(options.startNew && options.prompt);
-  const hasPrompt = !!options.prompt;
+/** Deliver a prompt to a session without making the caller care whether it
+ *  needs to be queued behind an active turn, attached to an existing draft
+ *  stream, or sent immediately by resuming/starting the session. */
+export async function sendOrQueueSessionMessage(
+  options: SendOrQueueSessionMessageOptions,
+): Promise<SendOrQueueSessionMessageResult> {
+  const prompt = options.prompt;
+  let stream = SessionStream.get(options.sessionId);
+  const shouldStartNew = Boolean(options.startNew && !stream);
+  const shouldAttachToExistingStream = Boolean(options.startNew && stream);
 
-  // Reconnect with no prompt and no active stream — nothing to do.
-  if (!hasPrompt && !SessionStream.isRunning(options.sessionId)) {
-    return;
-  }
-
-  // Auto-queue: if the session is already streaming and a new prompt arrives,
-  // enqueue it instead of corrupting the in-flight turn.
-  if (hasPrompt && !shouldStartNew && SessionStream.isRunning(options.sessionId)) {
-    const stream = SessionStream.get(options.sessionId)!;
+  // Auto-queue: if the session is already streaming and this is not a stale
+  // draft retry, enqueue instead of corrupting the in-flight turn.
+  if (stream && !shouldAttachToExistingStream) {
     stream.addQueuedMessage({
       role: "user",
-      content: options.prompt!,
+      content: prompt,
       attachments: options.attachments,
       model: options.model,
     });
+    return { stream, disposition: "queued" };
+  }
 
+  let sdkSession: CopilotSession | undefined;
+
+  if (!stream) {
+    if (shouldStartNew) {
+      sdkSession = await createSession(options.sessionId, {
+        model: options.model,
+        directory: options.directory,
+        useWorktree: options.useWorktree,
+      });
+      stream = SessionStream.getOrCreate(options.sessionId, sdkSession, {
+        model: options.model,
+      });
+    } else {
+      const resumed = await getOrResumeSession(options.sessionId);
+      sdkSession = resumed.session;
+      stream = SessionStream.getOrCreate(
+        options.sessionId,
+        sdkSession,
+        await initializeSessionStateFromSdkHistory(resumed.events),
+      );
+    }
+  }
+
+  if (shouldAttachToExistingStream) {
+    return { stream, disposition: "attached" };
+  }
+
+  if (!stream || !sdkSession) {
+    throw new Error(`Failed to prepare session ${options.sessionId} for prompt delivery.`);
+  }
+
+  stream.startTurn(prompt, options.clientMessageId);
+
+  if (options.model) {
+    await stream.setModel(options.model);
+  }
+  const attachments = await writeAttachments(options.sessionId, options.attachments);
+  try {
+    await sdkSession.send({ prompt, attachments });
+  } catch (error) {
+    stream.markSendFailure();
+    throw error;
+  }
+
+  return { stream, disposition: "started" };
+}
+
+export async function* createSessionEventStream(
+  options: SessionStreamConfig,
+): AsyncGenerator<SessionEvent> {
+  const hasPrompt = !!options.prompt;
+  let stream = SessionStream.get(options.sessionId);
+  let promptDisposition: SendOrQueueSessionMessageResult["disposition"] | undefined;
+
+  // Reconnect with no prompt and no active stream — nothing to do.
+  if (!hasPrompt && !stream) {
     return;
   }
 
-  let sdkSession: CopilotSession;
-  let sdkModel: string | undefined;
-
-  if (shouldStartNew) {
-    sdkSession = await createSession(options.sessionId, {
+  if (hasPrompt) {
+    const delivery = await sendOrQueueSessionMessage({
+      sessionId: options.sessionId,
+      prompt: options.prompt!,
+      attachments: options.attachments,
       model: options.model,
       directory: options.directory,
       useWorktree: options.useWorktree,
+      clientMessageId: options.clientMessageId,
+      startNew: options.startNew,
     });
-    sdkModel = options.model;
-  } else {
-    const resumed = await getOrResumeSession(options.sessionId);
-    sdkSession = resumed.session;
-    sdkModel = getModelFromSdkEvents(resumed.events);
+    if (delivery.disposition === "queued") {
+      return;
+    }
+    stream = delivery.stream;
+    promptDisposition = delivery.disposition;
   }
 
-  const stream = SessionStream.getOrCreate(options.sessionId, sdkSession, sdkModel);
+  if (!stream) {
+    return;
+  }
 
   const { push, pull } = createAsyncQueue<SessionEvent>();
   const unsubscribe = stream.subscribe(push);
 
   try {
-    if (hasPrompt) {
-      // Send path: start a new turn, set model if changed, send to SDK.
-      stream.startTurn(options.prompt!, options.clientMessageId);
-
-      if (options.model) {
-        await stream.setModel(options.model);
-      }
-      const attachments = await writeAttachments(options.sessionId, options.attachments);
-      try {
-        await sdkSession.send({ prompt: options.prompt!, attachments });
-      } catch (error) {
-        stream.markSendFailure();
-        throw error;
-      }
-    } else {
+    if (!hasPrompt || promptDisposition === "attached") {
       // Reconnect path: replay buffered events then wait for live events.
-      // The early-return guard above ensures a stream is always active here.
+      // A stale `startNew` request from a retried or racing draft sender lands
+      // here as well, so it attaches to the existing turn instead of sending
+      // or queueing a duplicate prompt.
       for (const event of stream.getBufferSince(options.afterEventId)) {
         yield event;
       }

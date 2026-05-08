@@ -7,13 +7,14 @@
 // persistence.
 
 import { homedir } from "node:os";
-import type { CopilotSession } from "@github/copilot-sdk";
+import type { CopilotSession, SessionContext } from "@github/copilot-sdk";
 import {
   createSession as sdkCreateSession,
   resumeSession as sdkResumeSession,
   deleteSession as sdkDeleteSession,
   readSessionContextFromEvents,
 } from "../sdk/client";
+import { getTools } from "../sdk/tools";
 import { emitSessionUpsert, emitSessionDelete } from "../runtime/broadcast";
 import { SessionStream } from "../runtime/stream";
 import { deleteUnreadState } from "./unread";
@@ -31,29 +32,63 @@ export type CreateSessionOptions = {
   model?: string;
   directory?: string;
   useWorktree?: boolean;
+  initialContext?: SessionContext;
 };
 
-/** Create a new session with a specific ID and cache it (for draft sessions) */
-export async function createSession(
-  sessionId: string,
-  options?: CreateSessionOptions,
-): Promise<CopilotSession> {
-  let { directory, model, useWorktree } = options ?? {};
+type SessionWorktreeRecord = {
+  path: string;
+  branch: string;
+  baseBranch: string;
+};
 
-  // If requested, create a git worktree and redirect the session into it.
-  // Capture the original repo context so the initial SSE upsert shows the
-  // correct repository name instead of the worktree hash.
-  let originalGitRoot: string | undefined;
-  let originalRepository: string | undefined;
-  let worktreeRecord: { path: string; branch: string; baseBranch: string } | undefined;
-  if (useWorktree && directory) {
-    const gitRoot = await detectGitRoot(directory);
+type MergedDisplayContextOptions = {
+  executionDirectory?: string;
+  initialContext?: SessionContext;
+  sourceGitRoot?: string;
+  sourceRepository?: string;
+  useWorktree?: boolean;
+};
+
+type PreparedSessionLocation = {
+  executionDirectory?: string;
+  mergedDisplayContext?: SessionContext;
+  worktreeRecord?: SessionWorktreeRecord;
+};
+
+function buildMergedDisplayContext(
+  options: MergedDisplayContextOptions,
+): SessionContext | undefined {
+  if (!options.executionDirectory) return undefined;
+
+  return {
+    cwd: options.executionDirectory,
+    ...(options.initialContext?.gitRoot && { gitRoot: options.initialContext.gitRoot }),
+    ...(options.initialContext?.repository && { repository: options.initialContext.repository }),
+    ...(options.initialContext?.branch &&
+      !options.useWorktree && { branch: options.initialContext.branch }),
+    ...(options.sourceGitRoot && { gitRoot: options.sourceGitRoot }),
+    ...(options.sourceRepository && { repository: options.sourceRepository }),
+  };
+}
+
+async function prepareSessionLocation(
+  sessionId: string,
+  options: Pick<CreateSessionOptions, "directory" | "useWorktree" | "initialContext">,
+): Promise<PreparedSessionLocation> {
+  const requestedDirectory = options.directory;
+  let executionDirectory = requestedDirectory;
+  let sourceGitRoot: string | undefined;
+  let sourceRepository: string | undefined;
+  let worktreeRecord: SessionWorktreeRecord | undefined;
+
+  if (options.useWorktree && requestedDirectory) {
+    const gitRoot = await detectGitRoot(requestedDirectory);
     if (gitRoot) {
-      originalGitRoot = gitRoot;
-      originalRepository = await getRepositoryName(gitRoot);
+      sourceGitRoot = gitRoot;
+      sourceRepository = await getRepositoryName(gitRoot);
 
       const worktree = await createWorktree(gitRoot, sessionId);
-      directory = worktree.path;
+      executionDirectory = worktree.path;
 
       worktreeRecord = {
         path: worktree.path,
@@ -64,29 +99,57 @@ export async function createSession(
     }
   }
 
+  return {
+    executionDirectory,
+    mergedDisplayContext: buildMergedDisplayContext({
+      executionDirectory,
+      initialContext: options.initialContext,
+      sourceGitRoot,
+      sourceRepository,
+      useWorktree: options.useWorktree,
+    }),
+    worktreeRecord,
+  };
+}
+
+/** Create a new session with a specific ID and cache it (for draft sessions) */
+export async function createSession(
+  sessionId: string,
+  options?: CreateSessionOptions,
+): Promise<CopilotSession> {
+  const { model, directory, useWorktree, initialContext } = options ?? {};
+  const { executionDirectory, mergedDisplayContext, worktreeRecord } = await prepareSessionLocation(
+    sessionId,
+    {
+      directory,
+      useWorktree,
+      initialContext,
+    },
+  );
+
   // The SDK requires a working directory. When none was explicitly provided
   // (e.g. automations with no cwd), fall back to the user's home directory
   // so the SDK has a valid path without leaking the server's cwd.
-  const session = await sdkCreateSession(sessionId, model, directory ?? homedir());
+  const session = await sdkCreateSession(
+    sessionId,
+    model,
+    executionDirectory ?? homedir(),
+    getTools(),
+  );
   const now = new Date().toISOString();
   activeSessions.set(sessionId, session);
 
   // Emit immediately so the session appears in the list right away.
-  // Only include context when a directory was explicitly provided —
-  // sessions without a directory (e.g. automations) have no location.
+  // This merged display context can come from an inherited workspace or a
+  // worktree rewrite; the SDK history remains the authoritative source once
+  // session.start is written to disk.
   emitSessionUpsert({
     sessionId,
     startTime: now,
     modifiedTime: now,
     summary: "",
     isRemote: false,
-    context: directory
-      ? {
-          cwd: directory,
-          ...(originalGitRoot && { gitRoot: originalGitRoot }),
-          ...(originalRepository && { repository: originalRepository }),
-        }
-      : undefined,
+    context: mergedDisplayContext,
     worktree: worktreeRecord,
   });
 
@@ -94,7 +157,7 @@ export async function createSession(
   // session.start event once it's written to disk. Skip for directory-less
   // sessions — their events.jsonl contains the homedir fallback, not a
   // meaningful location the user chose.
-  if (directory) {
+  if (executionDirectory) {
     readSessionContextFromEvents(sessionId).then((context) => {
       if (context) {
         emitSessionUpsert({ sessionId, context });
@@ -109,7 +172,7 @@ export async function getCachedOrResumeSession(sessionId: string): Promise<Copil
   const cached = activeSessions.get(sessionId);
   if (cached) return cached;
 
-  const session = await sdkResumeSession(sessionId);
+  const session = await sdkResumeSession(sessionId, getTools());
   activeSessions.set(sessionId, session);
   return session;
 }

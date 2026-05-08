@@ -8,7 +8,6 @@ import { z } from "zod";
 import { listAllSessions, listAvailableModels } from "./sdk/client";
 import { getOrResumeSession, getCachedOrResumeSession, deleteSession } from "./state/sessionCache";
 import { getUnreadSessionIds, markSessionUnread, markSessionRead } from "./state/unread";
-import { readAttachment } from "./state/attachments";
 import {
   getAllSessionWorktrees,
   getSessionWorktree,
@@ -22,18 +21,15 @@ import {
   detectGitRoot,
 } from "./worktrees";
 import type {
-  Attachment,
-  Message,
   ModelInfo,
   SessionEvent,
   SessionMetadata,
   SessionSkill,
   SessionSnapshot,
-  SessionStatus,
   SessionWorktree,
 } from "@/types";
-import { applySessionEvent, createInitialSession } from "@/lib/session/sessionReducer";
-import { projectSessionEventsFromSdkHistory } from "@/functions/sdk/projector";
+import type { Session } from "@/lib/session/sessionReducer";
+import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/sessionState";
 import { encodeSessionEvent } from "@/lib/session/streamCodec";
 
 // ============================================================================
@@ -100,16 +96,6 @@ const withSessionId = createMiddleware({ type: "function" }).inputValidator(
   zodValidator(sessionInputSchema),
 );
 
-async function readHistoryAttachments(attachments: unknown): Promise<Attachment[] | undefined> {
-  if (!Array.isArray(attachments) || attachments.length === 0) return undefined;
-
-  return Promise.all(
-    attachments.map((attachment) =>
-      readAttachment(attachment as { displayName?: string; path?: string; filePath?: string }),
-    ),
-  );
-}
-
 // ============================================================================
 // Server Functions
 // ============================================================================
@@ -173,75 +159,34 @@ export const listSessionSkills = createServerFn({ method: "POST" })
       .map((s) => ({ name: s.name, description: s.description }));
   });
 
-/**
- * When merging SDK history with streaming data, the SDK may already include
- * events from the in-progress turn (user message, completed sub-turn messages).
- * The streaming snapshot/buffer covers that same turn, so we truncate the
- * history at the turn boundary to avoid duplicating messages.
- */
-function truncateAtCurrentTurn(
-  historyMessages: Message[],
-  streamingMessages: Message[],
-): Message[] {
-  if (streamingMessages.length === 0 || streamingMessages[0].role !== "user") {
-    return historyMessages;
-  }
-
-  let lastUserIdx = -1;
-  for (let i = historyMessages.length - 1; i >= 0; i--) {
-    if (historyMessages[i].role === "user") {
-      lastUserIdx = i;
-      break;
-    }
-  }
-  if (lastUserIdx < 0) return historyMessages;
-  return historyMessages.slice(0, lastUserIdx);
+function createSessionSnapshot(sessionId: string, state: Session): SessionSnapshot {
+  return {
+    id: sessionId,
+    messages: state.messages,
+    queuedMessages: state.queuedMessages,
+    model: state.model,
+    todos: state.todos,
+    linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
+    lastSeenEventId: state.lastSeenEventId,
+    status: state.status,
+    reasoningContent: state.reasoningContent,
+  };
 }
 
 /** Resume a session and get its message history */
 export const querySession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
   .handler(async ({ data }): Promise<SessionSnapshot> => {
-    const { session, events } = await getOrResumeSession(data.sessionId);
-
-    const sessionState = createInitialSession();
-    for await (const event of projectSessionEventsFromSdkHistory(events, {
-      resolveAttachments: ({ data }) => readHistoryAttachments(data?.attachments),
-    })) {
-      applySessionEvent(sessionState, event);
-    }
-
     const stream = SessionStream.get(data.sessionId);
-    const streamState = stream?.getTurnState();
-
-    let messages = sessionState.messages;
-    let model = sessionState.model;
-    let streamingTodos = sessionState.todos;
-    let status: SessionStatus = sessionState.status;
-    let reasoningContent = "";
-    if (streamState) {
-      messages = truncateAtCurrentTurn(messages, streamState.messages);
-      messages = [...messages, ...streamState.messages];
-      model = streamState.model ?? model;
-      streamingTodos = streamState.todos ?? streamingTodos;
-      status = streamState.status;
-      reasoningContent = streamState.reasoningContent;
+    if (stream) {
+      return createSessionSnapshot(data.sessionId, stream.getSessionState());
     }
 
-    // Queued messages are stored on the stream (not in SDK event history)
-    // so they can survive client navigation and be cancelled by the user.
-    const queuedMessages = stream?.getQueuedMessages() ?? [];
-
-    return {
-      id: session.sessionId,
-      messages,
-      queuedMessages,
-      model,
-      todos: streamingTodos,
-      lastSeenEventId: stream?.getLastEventId(),
-      status,
-      reasoningContent,
-    };
+    const { session, events } = await getOrResumeSession(data.sessionId);
+    return createSessionSnapshot(
+      session.sessionId,
+      await initializeSessionStateFromSdkHistory(events),
+    );
   });
 
 function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): ReadableStream<Uint8Array> {

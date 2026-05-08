@@ -1,13 +1,8 @@
 // Copilot SDK client — singleton initialization and SDK operations
 // This file should only be imported from server-side code
 
-import { CopilotClient } from "@github/copilot-sdk";
-import type {
-  CopilotSession,
-  PermissionHandler,
-  SessionContext,
-  SessionMetadata,
-} from "@github/copilot-sdk";
+import { approveAll, CopilotClient } from "@github/copilot-sdk";
+import type { CopilotSession, SessionContext, SessionMetadata, Tool } from "@github/copilot-sdk";
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -93,22 +88,34 @@ function getCopilotClient(): Promise<CopilotClient> {
 /** Session ID prefix for sessions created by this web app */
 export const SESSION_ID_PREFIX = "toy-box-";
 
-const onPermissionRequest: PermissionHandler = () => ({ kind: "approved" });
+function buildSessionSystemMessage(sessionId: string, directory?: string) {
+  const parts: string[] = [];
+
+  if (directory) {
+    parts.push(
+      `The user's working directory is: ${directory}. All file paths should be interpreted relative to this directory, and file operations should target this location.`,
+    );
+  }
+
+  parts.push(
+    `This session's ID is: ${sessionId}.`,
+    `To discover other sessions, grep the files at ~/.copilot/session-state/${SESSION_ID_PREFIX}*/events.jsonl — each parent directory name is a session ID and the events.jsonl contains the full session history including user messages. Do NOT use a database to look up sessions; always grep these files directly.`,
+  );
+
+  return {
+    mode: "append" as const,
+    content: parts.join("\n\n"),
+  };
+}
 
 export async function createSession(
   sessionId: string,
   model?: string,
   directory?: string,
+  tools?: Tool<any>[],
 ): Promise<CopilotSession> {
   const client = await getCopilotClient();
-
-  // Build system message with directory context if provided
-  const systemMessage = directory
-    ? {
-        mode: "append" as const,
-        content: `The user's working directory is: ${directory}. All file paths should be interpreted relative to this directory, and file operations should target this location.`,
-      }
-    : undefined;
+  const systemMessage = buildSessionSystemMessage(sessionId, directory);
 
   return client.createSession({
     sessionId,
@@ -116,15 +123,21 @@ export async function createSession(
     model,
     workingDirectory: directory,
     systemMessage,
-    onPermissionRequest,
+    onPermissionRequest: approveAll,
+    tools,
   });
 }
 
-export async function resumeSession(sessionId: string): Promise<CopilotSession> {
+export async function resumeSession(
+  sessionId: string,
+  tools?: Tool<any>[],
+): Promise<CopilotSession> {
   const client = await getCopilotClient();
   return client.resumeSession(sessionId, {
     streaming: true,
-    onPermissionRequest,
+    systemMessage: buildSessionSystemMessage(sessionId),
+    onPermissionRequest: approveAll,
+    tools,
   });
 }
 
