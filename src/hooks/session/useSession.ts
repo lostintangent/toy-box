@@ -11,7 +11,15 @@ import {
   enqueueMessage,
   cancelQueuedMessage as serverCancelQueuedMessage,
 } from "@/functions/sessions";
-import type { Attachment, Message, QueuedMessage, SessionEvent, SessionStatus, TodoItem } from "@/types";
+import type {
+  Attachment,
+  Message,
+  QueuedMessage,
+  SessionEvent,
+  SessionSnapshot,
+  SessionStatus,
+  TodoItem,
+} from "@/types";
 import {
   applySessionEvent,
   createInitialSession,
@@ -63,20 +71,44 @@ export interface SessionConfig {
   onSessionCreated?: () => void;
 }
 
+function toSessionSnapshot(
+  sessionId: string,
+  state: Session,
+  previous?: SessionSnapshot,
+): SessionSnapshot {
+  return {
+    id: previous?.id ?? sessionId,
+    messages: state.messages,
+    queuedMessages: state.queuedMessages,
+    model: state.model ?? previous?.model,
+    todos: state.todos,
+    linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
+    lastSeenEventId: state.lastSeenEventId,
+    status: state.status,
+    reasoningContent: state.reasoningContent,
+  };
+}
+
 export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
   const queryClient = useQueryClient();
   const detailQueryKey = sessionQueries.detail(sessionId).queryKey;
+  const sessionModel = sessionConfig?.model;
+  const sessionDirectory = sessionConfig?.directory;
+  const sessionUseWorktree = sessionConfig?.useWorktree;
+  const onSessionCreated = sessionConfig?.onSessionCreated;
 
   // ---------------------------------------------------------------------------
   // Query cache helpers
   // ---------------------------------------------------------------------------
-  const setCachedMessages = useCallback(
-    (messages: Message[]) => {
-      queryClient.setQueryData<Session>(detailQueryKey, (old) =>
-        old ? { ...old, messages } : undefined,
+  const setCachedSessionSnapshot = useCallback(
+    (state: Session) => {
+      // Keep the detail query in sync with the live stream so reenabling the
+      // query after streaming does not briefly replay stale linked-session state.
+      queryClient.setQueryData<SessionSnapshot>(detailQueryKey, (old) =>
+        toSessionSnapshot(sessionId, state, old),
       );
     },
-    [queryClient, detailQueryKey],
+    [queryClient, detailQueryKey, sessionId],
   );
 
   const invalidateDetailQuery = useCallback(
@@ -100,7 +132,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     // A session is considered "started" (not a draft) when there is no
     // onSessionCreated callback. We can't gate on sessionConfig itself
     // because it now always carries the model for mid-session switches.
-    sessionStartedRef.current = { sessionId, started: !sessionConfig?.onSessionCreated };
+    sessionStartedRef.current = { sessionId, started: !onSessionCreated };
   }
 
   if (!sessionRef.current || sessionRef.current.sessionId !== sessionId) {
@@ -145,6 +177,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     messages,
     queuedMessages,
     todos,
+    linkedSessionIds,
     status: baseStatus,
     reasoningContent,
   } = sessionRef.current.state;
@@ -170,18 +203,19 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     (event: SessionEvent) => {
       // Skills are directory-scoped — prime the React Query cache so all
       // sessions in the same CWD share the data without an extra RPC call.
-      if (event.type === "skills" && sessionConfig?.directory) {
-        queryClient.setQueryData(skillQueries.byCwd(sessionConfig.directory), event.skills);
+      if (event.type === "skills" && sessionDirectory) {
+        queryClient.setQueryData(skillQueries.byCwd(sessionDirectory), event.skills);
       }
 
       applySessionEvent(sessionRef.current!.state, event);
+
       if (isBatchableEvent(event)) {
         scheduleRevision();
       } else {
         updateRevision();
       }
     },
-    [scheduleRevision, updateRevision, queryClient, sessionConfig?.directory],
+    [queryClient, scheduleRevision, sessionDirectory, updateRevision],
   );
 
   // ---------------------------------------------------------------------------
@@ -236,6 +270,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
           applyEvent({ type: "stream_end", reason: "idle" });
         }
         if (outcome === "completed") {
+          setCachedSessionSnapshot(sessionRef.current!.state);
           setSessionStreaming(queryClient, sessionId, false);
         }
         setIsStreaming(false);
@@ -250,7 +285,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
         outcome,
       };
     },
-    [applyEvent, queryClient, sessionId],
+    [applyEvent, queryClient, sessionId, setCachedSessionSnapshot],
   );
 
   // End streaming locally (used when detaching or force-stopping).
@@ -319,7 +354,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
       const notifyDraftCreated = () => {
         if (!isFirstMessageToDraft || hasNotifiedDraftCreated) return;
         hasNotifiedDraftCreated = true;
-        sessionConfig?.onSessionCreated?.();
+        onSessionCreated?.();
       };
 
       try {
@@ -330,13 +365,9 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
             attachments,
             clientMessageId,
             startNew: isFirstMessageToDraft,
-            model: sessionConfig?.model,
-            directory: isFirstMessageToDraft
-              ? (options?.directory ?? sessionConfig?.directory)
-              : undefined,
-            useWorktree: isFirstMessageToDraft
-              ? sessionConfig?.useWorktree
-              : undefined,
+            model: sessionModel,
+            directory: isFirstMessageToDraft ? (options?.directory ?? sessionDirectory) : undefined,
+            useWorktree: isFirstMessageToDraft ? sessionUseWorktree : undefined,
           },
           {
             // Fired once the stream request is established.
@@ -353,7 +384,6 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
             // On success: finalize session state.
             onSuccess: () => {
               notifyDraftCreated();
-              setCachedMessages(sessionRef.current!.state.messages);
               void invalidateDetailQuery();
             },
           },
@@ -370,11 +400,13 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
       applyEvent,
       invalidateDetailQuery,
       queryClient,
-      setCachedMessages,
       updateRevision,
       isStreaming,
       runStreamingLoop,
-      sessionConfig,
+      onSessionCreated,
+      sessionDirectory,
+      sessionModel,
+      sessionUseWorktree,
       sessionId,
     ],
   );
@@ -410,6 +442,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
       serverMessages: Message[],
       serverQueuedMessages: QueuedMessage[],
       serverTodos?: TodoItem[],
+      serverLinkedSessionIds?: string[],
       serverLastStreamingEventId?: number,
       serverStreamingStatus: SessionStatus = "idle",
       serverStreamingReasoningContent = "",
@@ -418,6 +451,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
         messages: serverMessages,
         queuedMessages: serverQueuedMessages,
         todos: serverTodos,
+        linkedSessionIds: serverLinkedSessionIds,
         status: serverStreamingStatus,
         reasoningContent: serverStreamingReasoningContent,
       });
@@ -492,6 +526,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     status,
     reasoningContent,
     todos,
+    linkedSessionIds,
     revision,
     hasSynced,
 

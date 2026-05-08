@@ -4,18 +4,18 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-export type SessionSourceFilter = "toy-box" | "all";
 
 export interface SidebarHeaderProps {
   filter: string;
   onFilterChange: (value: string) => void;
-  sourceFilter: SessionSourceFilter;
-  onSourceFilterChange: (value: SessionSourceFilter) => void;
+  showChildSessions: boolean;
+  onShowChildSessionsChange: (value: boolean) => void;
+  showExternalSessions: boolean;
+  onShowExternalSessionsChange: (value: boolean) => void;
   filteredSessionsCount: number;
   onCreateSession: (e?: React.MouseEvent) => void;
   onCollapse?: () => void;
@@ -24,8 +24,10 @@ export interface SidebarHeaderProps {
 export function SidebarHeader({
   filter,
   onFilterChange,
-  sourceFilter,
-  onSourceFilterChange,
+  showChildSessions,
+  onShowChildSessionsChange,
+  showExternalSessions,
+  onShowExternalSessionsChange,
   filteredSessionsCount,
   onCreateSession,
   onCollapse,
@@ -58,14 +60,18 @@ export function SidebarHeader({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={() => onSourceFilterChange("toy-box")}>
-              Toy Box
-              {sourceFilter === "toy-box" && <span className="ml-auto text-primary">✓</span>}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onSourceFilterChange("all")}>
-              All
-              {sourceFilter === "all" && <span className="ml-auto text-primary">✓</span>}
-            </DropdownMenuItem>
+            <DropdownMenuCheckboxItem
+              checked={showExternalSessions}
+              onCheckedChange={(checked) => onShowExternalSessionsChange(checked === true)}
+            >
+              Show external sessions
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={showChildSessions}
+              onCheckedChange={(checked) => onShowChildSessionsChange(checked === true)}
+            >
+              Show child sessions
+            </DropdownMenuCheckboxItem>
           </DropdownMenuContent>
         </DropdownMenu>
         <Input

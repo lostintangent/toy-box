@@ -1,19 +1,19 @@
 import { cn } from "@/lib/utils";
 import type { Automation, AutomationOptions, SessionMetadata, ModelInfo } from "@/types";
 import type { SessionDirectoryOption } from "@/components/session/sessionDirectoryOptions";
-import { SidebarHeader, type SessionSourceFilter } from "./shell/SidebarHeader";
+import { SidebarHeader } from "./shell/SidebarHeader";
 import { SidebarFooter } from "./shell/SidebarFooter";
 import { SessionList } from "./list/SessionList";
 import { AutomationPanel } from "./automation/AutomationPanel";
-
-export type { SessionSourceFilter };
 
 export interface SidebarProps {
   // Filter props
   filter: string;
   onFilterChange: (value: string) => void;
-  sourceFilter: SessionSourceFilter;
-  onSourceFilterChange: (value: SessionSourceFilter) => void;
+  showChildSessions: boolean;
+  onShowChildSessionsChange: (value: boolean) => void;
+  showExternalSessions: boolean;
+  onShowExternalSessionsChange: (value: boolean) => void;
 
   // Session list props
   sessions: SessionMetadata[];
@@ -63,8 +63,10 @@ export function Sidebar({
   // Filter props
   filter,
   onFilterChange,
-  sourceFilter,
-  onSourceFilterChange,
+  showChildSessions,
+  onShowChildSessionsChange,
+  showExternalSessions,
+  onShowExternalSessionsChange,
 
   // Session list props
   sessions,
@@ -119,8 +121,10 @@ export function Sidebar({
       <SidebarHeader
         filter={filter}
         onFilterChange={onFilterChange}
-        sourceFilter={sourceFilter}
-        onSourceFilterChange={onSourceFilterChange}
+        showChildSessions={showChildSessions}
+        onShowChildSessionsChange={onShowChildSessionsChange}
+        showExternalSessions={showExternalSessions}
+        onShowExternalSessionsChange={onShowExternalSessionsChange}
         filteredSessionsCount={sessions.length}
         onCreateSession={onCreateSession}
         onCollapse={onCollapse}

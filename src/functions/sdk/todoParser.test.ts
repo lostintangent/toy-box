@@ -70,6 +70,22 @@ describe("todo parser", () => {
     });
   });
 
+  test("parses todo updates that change the status of multiple explicit ids", () => {
+    expect(
+      parseTodoSql(
+        "UPDATE todos SET status = 'done', updated_at = CURRENT_TIMESTAMP " +
+          "WHERE id IN ('public-api-actions', 'selected-text-resolution', 'toolbar-dynamic-icons');" +
+          "SELECT id, status FROM todos ORDER BY created_at;",
+      ),
+    ).toEqual({
+      patches: [
+        { type: "upsert", id: "public-api-actions", status: "done" },
+        { type: "upsert", id: "selected-text-resolution", status: "done" },
+        { type: "upsert", id: "toolbar-dynamic-icons", status: "done" },
+      ],
+    });
+  });
+
   test("hides todo selects without emitting todo state changes", () => {
     expect(parseTodoSql("SELECT id, title, status FROM todos;")).toEqual({
       patches: [],

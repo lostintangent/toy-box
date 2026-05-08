@@ -1,7 +1,7 @@
 # Toy Box Terminal Server
 
 Toy Box runs a dedicated terminal backend that manages PTY sessions over
-WebSockets. A seperate server is needed because TanStack Start doesn't currently support WebSocket API routes. But once it does, we'll merge this capability into the main backend 👍
+WebSockets. A separate server is needed because TanStack Start doesn't currently support WebSocket API routes. But once it does, we'll merge this capability into the main backend 👍
 
 ## Server Protocol (WebSockets)
 

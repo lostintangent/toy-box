@@ -211,7 +211,7 @@ export function SessionListItem({
     [allowScrollIntoView, isActive],
   );
   const showBadges = Boolean(
-    session.context?.repository || session.context?.gitRoot || session.context?.cwd,
+    session.context?.repository || session.context?.gitRoot || session.context?.workingDirectory,
   );
 
   return (
@@ -239,7 +239,7 @@ export function SessionListItem({
                   <SessionMetadataBadges
                     repository={session.context?.repository}
                     gitRoot={session.context?.gitRoot}
-                    cwd={session.context?.cwd}
+                    cwd={session.context?.workingDirectory}
                     isWorktree={isWorktree}
                   />
                 </>

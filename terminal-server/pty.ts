@@ -274,6 +274,11 @@ export class PTYManager {
     session.lastActivity = Date.now();
   }
 
+  // When a client reattaches mid-TUI (alternate screen active), we have no
+  // captured frame to replay — only the mode state. Briefly nudging the row
+  // count and restoring it fires SIGWINCH inside the PTY, which causes
+  // full-screen apps (vim, htop, less, etc.) to repaint against the new
+  // socket. The size ends up unchanged from the client's perspective.
   private pokeAlternateScreenRefresh(session: PTYSession) {
     if (!session.proc.terminal) return;
     const currentRows = session.rows;

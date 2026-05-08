@@ -10,6 +10,14 @@ export type SessionSkill = {
   description: string;
 };
 
+export type SessionWorktree = {
+  path?: string;
+  branch?: string;
+  baseBranch?: string;
+  linesAdded?: number;
+  linesRemoved?: number;
+};
+
 /* Todos (structured patches from SQL tool calls) */
 
 export type TodoStatus = "pending" | "in_progress" | "done" | "blocked";
@@ -35,6 +43,7 @@ export type SessionSnapshot = {
   queuedMessages: QueuedMessage[];
   model?: string;
   todos?: TodoItem[];
+  linkedSessionIds?: string[];
   lastSeenEventId?: number;
   status: SessionStatus;
   reasoningContent: string;
@@ -137,6 +146,8 @@ export type SessionEvent = (
   | { type: "message_dequeued"; content: string; queuedMessageId?: string }
   | { type: "model_changed"; model: string }
   | { type: "skills"; skills: SessionSkill[] }
+  | { type: "linked_session_added"; sessionId: string }
+  | { type: "linked_session_removed"; sessionId: string }
   | { type: "stream_end"; reason: "idle" | "error" }
 ) & {
   eventId?: number;
@@ -195,6 +206,8 @@ export type SessionMetadataUpdate = {
   replaceSummary?: boolean;
   isRemote?: boolean;
   context?: SessionContext;
+  worktree?: SessionWorktree;
+  parentSessionId?: string;
 };
 
 /* Terminal (client->server protocol) */

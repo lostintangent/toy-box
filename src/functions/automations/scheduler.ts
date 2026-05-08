@@ -5,9 +5,8 @@
 // exposes `runAutomation` for on-demand manual runs from the UI.
 
 import type { CopilotSession } from "@github/copilot-sdk";
-import { createSession, deleteSession } from "@/functions/state/sessionCache";
-import { updateSessionSummary } from "@/functions/runtime/broadcast";
-import { SessionStream } from "@/functions/runtime/stream";
+import { deleteSession } from "@/functions/state/sessionCache";
+import { createManagedSession, startManagedSessionTurn } from "@/functions/runtime/sessionLauncher";
 import { getSdkStreamTerminalDisposition } from "@/functions/sdk/projector";
 import { createAutomationRunSessionId } from "@/lib/automation/sessionId";
 import type { Automation } from "@/types";
@@ -16,35 +15,6 @@ import { AutomationDatabase } from "./database";
 import { emitAutomationsUpdate } from "./events";
 
 const AUTOMATION_SCHEDULER_POLL_MS = 30_000;
-
-type AutomationSchedulerDependencies = {
-  db: AutomationDatabase;
-  deleteSession: typeof deleteSession;
-  createSession: typeof createSession;
-  updateSessionSummary: typeof updateSessionSummary;
-  getOrCreateStream: (
-    sessionId: string,
-    session: CopilotSession,
-    initialModel?: string,
-  ) => SessionStream;
-  emitAutomationsUpdate: typeof emitAutomationsUpdate;
-  getSdkStreamTerminalDisposition: typeof getSdkStreamTerminalDisposition;
-};
-
-async function resolveDefaultDependencies(): Promise<AutomationSchedulerDependencies> {
-  return {
-    db: new AutomationDatabase(await getAppDatabase()),
-    deleteSession,
-    createSession,
-    updateSessionSummary,
-    getOrCreateStream: (sessionId, session, initialModel) =>
-      SessionStream.getOrCreate(sessionId, session, initialModel),
-    emitAutomationsUpdate,
-    getSdkStreamTerminalDisposition,
-  };
-}
-
-let activeDependencies: AutomationSchedulerDependencies | undefined;
 
 /** Ensure the scheduler's polling loop is started */
 let started = false;
@@ -62,12 +32,11 @@ export async function runSchedulerTick() {
   tickInProgress = true;
 
   try {
-    const dependencies = activeDependencies ?? (await resolveDefaultDependencies());
-    activeDependencies = dependencies;
-    const dueAutomations = await dependencies.db.claimDue();
+    const db = new AutomationDatabase(await getAppDatabase());
+    const dueAutomations = await db.claimDue();
     for (const automation of dueAutomations) {
       try {
-        await runAutomation(automation.id);
+        await runAutomationWithDatabase(automation.id, db);
       } catch (error) {
         console.error(`Failed to run scheduled automation ${automation.id}:`, error);
       }
@@ -80,9 +49,15 @@ export async function runSchedulerTick() {
 
 /** Create a fresh session for an automation and send its prompt. */
 export async function runAutomation(automationId: string): Promise<{ sessionId: string }> {
-  const dependencies = activeDependencies ?? (await resolveDefaultDependencies());
-  activeDependencies = dependencies;
-  const automation = await dependencies.db.getById(automationId);
+  const db = new AutomationDatabase(await getAppDatabase());
+  return runAutomationWithDatabase(automationId, db);
+}
+
+export async function runAutomationWithDatabase(
+  automationId: string,
+  db: AutomationDatabase,
+): Promise<{ sessionId: string }> {
+  const automation = await db.getById(automationId);
   if (!automation) {
     throw new Error("Automation not found");
   }
@@ -93,47 +68,40 @@ export async function runAutomation(automationId: string): Promise<{ sessionId: 
     : createAutomationRunSessionId(automation.id);
 
   if (sessionExists) {
-    await dependencies.deleteSession(sessionId);
+    await deleteSession(sessionId);
   }
 
-  const session = await dependencies.createSession(sessionId, {
+  const sessionHandle = await createManagedSession({
+    sessionId,
     model: automation.model,
     directory: automation.cwd,
+    summary: automation.title,
   });
-
-  dependencies.updateSessionSummary(sessionId, automation.title, { replace: true });
-  const stream = dependencies.getOrCreateStream(sessionId, session);
 
   // Persist the session ID immediately so the automation list item is clickable
   // and the session can be filtered from the regular session list while running.
-  await dependencies.db.updateLastRunSessionId(automation.id, sessionId);
+  await db.updateLastRunSessionId(automation.id, sessionId);
 
-  dependencies.emitAutomationsUpdate({
+  emitAutomationsUpdate({
     type: "automation.started",
     automationId: automation.id,
     sessionId,
     startedAt: new Date().toISOString(),
   });
 
-  const stopCompletionObserver = observeRunCompletion(dependencies, {
+  const stopCompletionObserver = observeRunCompletion(db, {
     automationId: automation.id,
     sessionId,
-    session,
+    session: sessionHandle.session,
   });
 
   try {
-    stream.startTurn(automation.prompt);
-
-    session.send({
-      prompt: automation.prompt,
-    });
+    await startManagedSessionTurn(sessionHandle, automation.prompt);
 
     return { sessionId };
   } catch (error) {
     stopCompletionObserver();
-    stream.markSendFailure();
-    stream.detach();
-    await finalizeAutomationRun(dependencies, {
+    await finalizeAutomationRun(db, {
       automationId: automation.id,
       sessionId,
       success: false,
@@ -149,7 +117,7 @@ export async function runAutomation(automationId: string): Promise<{ sessionId: 
 
 /** Subscribe to session events and finalize the run on a terminal event. Returns a dispose function. */
 function observeRunCompletion(
-  dependencies: AutomationSchedulerDependencies,
+  db: AutomationDatabase,
   options: {
     automationId: string;
     sessionId: string;
@@ -159,12 +127,12 @@ function observeRunCompletion(
   let settled = false;
 
   const unsubscribe = options.session.on((event) => {
-    const terminalDisposition = dependencies.getSdkStreamTerminalDisposition(event.type);
+    const terminalDisposition = getSdkStreamTerminalDisposition(event.type);
     if (!terminalDisposition || settled) return;
 
     settled = true;
     unsubscribe();
-    void finalizeAutomationRun(dependencies, {
+    void finalizeAutomationRun(db, {
       automationId: options.automationId,
       sessionId: options.sessionId,
       success: terminalDisposition === "idle",
@@ -183,7 +151,7 @@ function observeRunCompletion(
 
 /** Persist the run result and emit a finished event to connected clients. */
 async function finalizeAutomationRun(
-  dependencies: AutomationSchedulerDependencies,
+  db: AutomationDatabase,
   options: {
     automationId: string;
     sessionId: string;
@@ -195,11 +163,11 @@ async function finalizeAutomationRun(
   let updatedAutomation: Automation | undefined;
 
   if (options.updateLastRun) {
-    await dependencies.db.updateLastRun(options.automationId, finishedAt, options.sessionId);
-    updatedAutomation = (await dependencies.db.getById(options.automationId)) ?? undefined;
+    await db.updateLastRun(options.automationId, finishedAt, options.sessionId);
+    updatedAutomation = (await db.getById(options.automationId)) ?? undefined;
   }
 
-  dependencies.emitAutomationsUpdate({
+  emitAutomationsUpdate({
     type: "automation.finished",
     automationId: options.automationId,
     sessionId: options.sessionId,
@@ -216,31 +184,4 @@ function scheduleNextTick(delayMs = AUTOMATION_SCHEDULER_POLL_MS) {
   }
 
   timer = setTimeout(runSchedulerTick, delayMs);
-}
-
-// ============================================================================
-// Test Seams
-// ============================================================================
-
-export function setAutomationSchedulerDependenciesForTests(
-  overrides?: Partial<AutomationSchedulerDependencies>,
-): void {
-  if (!overrides) {
-    activeDependencies = undefined;
-    return;
-  }
-
-  activeDependencies = {
-    db: overrides.db ?? ({} as AutomationDatabase),
-    deleteSession: overrides.deleteSession ?? deleteSession,
-    createSession: overrides.createSession ?? createSession,
-    updateSessionSummary: overrides.updateSessionSummary ?? updateSessionSummary,
-    getOrCreateStream:
-      overrides.getOrCreateStream ??
-      ((sessionId, session, initialModel) =>
-        SessionStream.getOrCreate(sessionId, session, initialModel)),
-    emitAutomationsUpdate: overrides.emitAutomationsUpdate ?? emitAutomationsUpdate,
-    getSdkStreamTerminalDisposition:
-      overrides.getSdkStreamTerminalDisposition ?? getSdkStreamTerminalDisposition,
-  };
 }

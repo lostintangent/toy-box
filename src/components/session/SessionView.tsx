@@ -8,21 +8,20 @@ import {
   useLayoutEffect,
   useState,
 } from "react";
+import { useAtom } from "jotai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowLeft, Bot } from "lucide-react";
 import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import type { Attachment, Message, ModelInfo } from "@/types";
 import { sessionQueries, skillQueries } from "@/lib/queries";
+import { linkedSessionsAtom } from "@/atoms";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Message as SessionMessage } from "./messages/Message";
 import { StatusIndicator, ReasoningDisplay } from "./SessionStatus";
 import type { SessionStatus } from "@/types";
-import {
-  SessionLocationPicker,
-  type SessionLocationPickerProps,
-} from "./SessionLocationPicker";
+import { SessionLocationPicker, type SessionLocationPickerProps } from "./SessionLocationPicker";
 import type { WorktreeProps } from "./WorktreeBranchMenu";
 import { SessionMetadataBadges } from "./SessionMetadataBadges";
 import {
@@ -42,6 +41,7 @@ import { SessionCwdProvider } from "@/hooks/session/SessionCwdContext";
 
 // Only defer rendering for sessions above this threshold (avoids skeleton flash for small sessions)
 const DEFERRED_MESSAGE_THRESHOLD = 10;
+const EMPTY_LINKED_SESSION_IDS: string[] = [];
 
 type SessionOpenSyncMode = "subscribe-live" | "catch-up-unread" | "none";
 
@@ -160,7 +160,7 @@ export function SessionView({
   const directoryOptions = useMemo<SessionDirectoryOption[]>(() => {
     const rawOptions =
       sessionsState?.sessions.reduce<SessionDirectoryOption[]>((acc, session) => {
-        const cwd = session.context?.cwd?.trim();
+        const cwd = session.context?.workingDirectory?.trim();
         if (!cwd) return acc;
 
         acc.push({
@@ -174,8 +174,8 @@ export function SessionView({
     return normalizeSessionDirectoryOptions(rawOptions);
   }, [sessionsState]);
   const initialDraftDirectory = useMemo(
-    () => sessionContext?.cwd ?? directoryOptions[0]?.cwd,
-    [directoryOptions, sessionContext?.cwd],
+    () => sessionContext?.workingDirectory ?? directoryOptions[0]?.cwd,
+    [directoryOptions, sessionContext?.workingDirectory],
   );
   const [draftDirectory, setDraftDirectory] = useState<string | undefined>(initialDraftDirectory);
   const draftDirectoryRef = useRef<string | undefined>(initialDraftDirectory);
@@ -190,7 +190,7 @@ export function SessionView({
 
   const selectedDirectory = isDraft
     ? (draftDirectory ?? initialDraftDirectory)
-    : sessionContext?.cwd;
+    : sessionContext?.workingDirectory;
   const selectedDirectoryOption = useMemo(
     () => findSessionDirectoryOption(directoryOptions, selectedDirectory),
     [directoryOptions, selectedDirectory],
@@ -327,6 +327,7 @@ export function SessionView({
     status,
     reasoningContent,
     todos,
+    linkedSessionIds,
     revision,
     hasSynced,
     sendMessage,
@@ -355,6 +356,29 @@ export function SessionView({
     ...skillQueries.list(sessionId, selectedDirectory!),
     enabled: !isDraft && !!selectedDirectory,
   });
+  const hasHydratedSessionData = sessionData !== undefined;
+  const [, setLinkedSessions] = useAtom(linkedSessionsAtom);
+
+  useEffect(() => {
+    const ids =
+      isDraft || isStreaming
+        ? linkedSessionIds
+        : hasHydratedSessionData
+          ? (sessionData?.linkedSessionIds ?? EMPTY_LINKED_SESSION_IDS)
+          : undefined;
+
+    if (ids === undefined) return;
+    setLinkedSessions((current) => ({ ...current, [sessionId]: ids }));
+    return () => setLinkedSessions(({ [sessionId]: _removed, ...rest }) => rest);
+  }, [
+    hasHydratedSessionData,
+    isDraft,
+    isStreaming,
+    linkedSessionIds,
+    sessionData?.linkedSessionIds,
+    sessionId,
+    setLinkedSessions,
+  ]);
 
   // Check if this is a "session not found" error
   const isSessionNotFound = error?.message?.includes("Session not found");
@@ -383,6 +407,7 @@ export function SessionView({
         sessionData.messages,
         sessionData.queuedMessages ?? [],
         sessionData.todos,
+        sessionData.linkedSessionIds,
         sessionData.lastSeenEventId,
         sessionData.status,
         sessionData.reasoningContent,
@@ -527,7 +552,7 @@ export function SessionView({
       {/* Mobile Back Button Bar - Hidden entirely in read-only mode */}
       {!readOnly && onBack && (
         <div className="p-2 pt-0 border-b bg-background md:hidden shrink-0 flex items-center justify-between gap-2">
-          <Button variant="ghost" size="sm" onClick={onBack} className="gap-2">
+          <Button variant="ghost" size="sm" onClick={onBack} className="gap-2 shrink-0">
             <ArrowLeft className="h-4 w-4" />
             Back to Sessions
           </Button>
@@ -706,6 +731,7 @@ function MessageListContent({
           const isLast = index === messages.length - 1;
           return (
             <SessionMessage
+              // eslint-disable-next-line react/no-array-index-key -- messages append in order and streaming updates replace content in place
               key={`${message.role}-${index}`}
               message={message}
               isStreaming={isLast && isStreaming}

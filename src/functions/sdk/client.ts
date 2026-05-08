@@ -1,13 +1,8 @@
 // Copilot SDK client — singleton initialization and SDK operations
 // This file should only be imported from server-side code
 
-import { CopilotClient } from "@github/copilot-sdk";
-import type {
-  CopilotSession,
-  PermissionHandler,
-  SessionContext,
-  SessionMetadata,
-} from "@github/copilot-sdk";
+import { approveAll, CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
+import type { CopilotSession, SessionContext, SessionMetadata, Tool } from "@github/copilot-sdk";
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -64,7 +59,7 @@ function getCopilotClient(): Promise<CopilotClient> {
           // Provide an explicit CLI path so the SDK doesn't rely on
           // import.meta.resolve, which fails in compiled Bun binaries when
           // run from a directory without @github/copilot in node_modules.
-          ...(cliPath ? { cliPath } : {}),
+          ...(cliPath ? { connection: RuntimeConnection.forStdio({ path: cliPath }) } : {}),
           // When the app runs as a compiled Bun executable, SDK subprocesses may
           // use this binary as process.execPath. This makes that subprocess behave
           // like the Bun CLI (execute passed JS entrypoints) instead of re-running
@@ -93,22 +88,34 @@ function getCopilotClient(): Promise<CopilotClient> {
 /** Session ID prefix for sessions created by this web app */
 export const SESSION_ID_PREFIX = "toy-box-";
 
-const onPermissionRequest: PermissionHandler = () => ({ kind: "approved" });
+function buildSessionSystemMessage(sessionId: string, directory?: string) {
+  const parts: string[] = [];
+
+  if (directory) {
+    parts.push(
+      `The user's working directory is: ${directory}. All file paths should be interpreted relative to this directory, and file operations should target this location.`,
+    );
+  }
+
+  parts.push(
+    `This session's ID is: ${sessionId}.`,
+    `To discover other sessions, grep the files at ~/.copilot/session-state/${SESSION_ID_PREFIX}*/events.jsonl — each parent directory name is a session ID and the events.jsonl contains the full session history including user messages. Do NOT use a database to look up sessions; always grep these files directly.`,
+  );
+
+  return {
+    mode: "append" as const,
+    content: parts.join("\n\n"),
+  };
+}
 
 export async function createSession(
   sessionId: string,
   model?: string,
   directory?: string,
+  tools?: Tool<any>[],
 ): Promise<CopilotSession> {
   const client = await getCopilotClient();
-
-  // Build system message with directory context if provided
-  const systemMessage = directory
-    ? {
-        mode: "append" as const,
-        content: `The user's working directory is: ${directory}. All file paths should be interpreted relative to this directory, and file operations should target this location.`,
-      }
-    : undefined;
+  const systemMessage = buildSessionSystemMessage(sessionId, directory);
 
   return client.createSession({
     sessionId,
@@ -116,15 +123,21 @@ export async function createSession(
     model,
     workingDirectory: directory,
     systemMessage,
-    onPermissionRequest,
+    onPermissionRequest: approveAll,
+    tools,
   });
 }
 
-export async function resumeSession(sessionId: string): Promise<CopilotSession> {
+export async function resumeSession(
+  sessionId: string,
+  tools?: Tool<any>[],
+): Promise<CopilotSession> {
   const client = await getCopilotClient();
   return client.resumeSession(sessionId, {
     streaming: true,
-    onPermissionRequest,
+    systemMessage: buildSessionSystemMessage(sessionId),
+    onPermissionRequest: approveAll,
+    tools,
   });
 }
 
@@ -173,7 +186,7 @@ export async function readSessionContextFromEvents(
     if (event?.type === "session.start" && event?.data?.context) {
       const ctx = event.data.context;
       return {
-        cwd: ctx.cwd,
+        workingDirectory: ctx.workingDirectory ?? ctx.cwd,
         gitRoot: ctx.gitRoot,
         repository: ctx.repository,
         branch: ctx.branch,
@@ -196,16 +209,16 @@ async function backfillMissingContext(sessions: SessionMetadata[]): Promise<void
 
 /**
  * Strip SDK-defaulted context from sessions that were created without an
- * explicit directory. The SDK always writes a cwd (falling back to
+ * explicit directory. The SDK always writes a workingDirectory (falling back to
  * homedir), so sessions without a real location end up with a misleading
- * context. We detect these by checking for cwd === homedir() with no
+ * context. We detect these by checking for workingDirectory === homedir() with no
  * meaningful git info.
  */
 function stripHomedirFallbackContext(sessions: SessionMetadata[]): void {
   const home = homedir();
   for (const session of sessions) {
     const ctx = session.context;
-    if (ctx && ctx.cwd === home && !ctx.gitRoot && !ctx.repository) {
+    if (ctx && ctx.workingDirectory === home && !ctx.gitRoot && !ctx.repository) {
       session.context = undefined;
     }
   }

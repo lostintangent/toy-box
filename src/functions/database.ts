@@ -82,6 +82,18 @@ async function initializeSchema(db: Database, path: string): Promise<void> {
       lines_removed        INTEGER
     );
   `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS child_sessions (
+      session_id        TEXT PRIMARY KEY,
+      parent_session_id TEXT NOT NULL
+    );
+  `);
+
+  await db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_child_sessions_parent_session_id
+      ON child_sessions(parent_session_id);
+  `);
 }
 
 let dbPromise: Promise<Database> | undefined;

@@ -102,16 +102,21 @@ function parseTodoUpdate(statement: string): ParsedTodoSql | undefined {
   }
 
   const whereClause = rest.slice(whereIndex + "where".length).trim();
-  const id = parseTodoIdComparison(whereClause);
-  if (!id) return { patches: [] };
+  const ids = parseTodoIdsWhereClause(whereClause);
+  if (ids.length === 0) return { patches: [] };
 
-  const patch: TodoItemPatch = { type: "upsert", id };
-  patch.title = parsedUpdate.title;
-  patch.status = parsedUpdate.status;
+  if (parsedUpdate.title === undefined && parsedUpdate.status === undefined) {
+    return { patches: [] };
+  }
 
-  return patch.title !== undefined || patch.status !== undefined
-    ? { patches: [patch] }
-    : { patches: [] };
+  return {
+    patches: ids.map((id) => {
+      const patch: TodoItemPatch = { type: "upsert", id };
+      patch.title = parsedUpdate.title;
+      patch.status = parsedUpdate.status;
+      return patch;
+    }),
+  };
 }
 
 function parseTodoDelete(statement: string): ParsedTodoSql | undefined {
@@ -122,8 +127,8 @@ function parseTodoDelete(statement: string): ParsedTodoSql | undefined {
   const whereIndex = findTopLevelKeyword(rest, "where");
   if (whereIndex === -1) return { patches: [] };
 
-  const id = parseTodoIdComparison(rest.slice(whereIndex + "where".length).trim());
-  return id ? { patches: [{ type: "delete", id }] } : { patches: [] };
+  const ids = parseTodoIdsWhereClause(rest.slice(whereIndex + "where".length).trim());
+  return ids.length > 0 ? { patches: ids.map((id) => ({ type: "delete", id })) } : { patches: [] };
 }
 
 function parseTodoSelect(statement: string): ParsedTodoSql | undefined {
@@ -179,6 +184,33 @@ function parseTodoIdComparison(input: string): string | undefined {
   if (left === "id" && rightValue !== undefined) return rightValue;
   if (right === "id" && leftValue !== undefined) return leftValue;
   return undefined;
+}
+
+function parseTodoIdsWhereClause(input: string): string[] {
+  const comparisonId = parseTodoIdComparison(input);
+  if (comparisonId) return [comparisonId];
+
+  return parseTodoIdInComparison(input) ?? [];
+}
+
+function parseTodoIdInComparison(input: string): string[] | undefined {
+  const match = input.match(
+    /^\s*((?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[a-z_][a-z0-9_]*)(?:\.(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[a-z_][a-z0-9_]*))?)\s+in\b/i,
+  );
+  if (!match || normalizeIdentifier(match[1]) !== "id") return undefined;
+
+  const rest = input.slice(match[0].length).trimStart();
+  const values = readParenthesized(rest);
+  if (!values || rest.slice(values.end).trim()) return undefined;
+
+  const ids: string[] = [];
+  for (const value of splitTopLevel(values.value, ",")) {
+    const id = parseSqlValue(value);
+    if (id === undefined) return undefined;
+    ids.push(id);
+  }
+
+  return ids.length > 0 ? ids : undefined;
 }
 
 function parseSqlValue(input: string): string | undefined {

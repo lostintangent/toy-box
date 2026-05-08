@@ -126,6 +126,7 @@ export function removeSessionFromState(queryClient: QueryClient, sessionId: stri
       sessions: old.sessions.filter((session) => session.sessionId !== sessionId),
       streamingSessionIds: old.streamingSessionIds.filter((id) => id !== sessionId),
       unreadSessionIds: old.unreadSessionIds.filter((id) => id !== sessionId),
+      childSessionIds: removeSessionId(old.childSessionIds, sessionId),
       worktrees: remainingMetadata,
     };
   });
@@ -149,8 +150,11 @@ export function upsertSessionInState(
     const worktrees = sessionUpdate.worktree
       ? { ...old.worktrees, [sessionUpdate.sessionId]: sessionUpdate.worktree }
       : old.worktrees;
+    const childSessionIds = sessionUpdate.parentSessionId
+      ? addSessionId(old.childSessionIds, sessionUpdate.sessionId)
+      : old.childSessionIds;
 
-    return { ...old, sessions, worktrees };
+    return { ...old, sessions, worktrees, childSessionIds };
   });
 }
 

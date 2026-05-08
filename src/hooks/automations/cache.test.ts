@@ -66,7 +66,7 @@ describe("automations cache updates", () => {
     expect(automations[0]?.updatedAt).toBe("2026-02-14T11:00:00.000Z");
   });
 
-  test("keeps same reference for non-mutating running-state events", () => {
+  test("updates the running session id on start and preserves reference when finished has no payload", () => {
     const queryClient = new QueryClient();
     const seeded = [createAutomation({ id: "a1" })];
     queryClient.setQueryData<Automation[]>(automationQueries.all(), seeded);
@@ -81,7 +81,8 @@ describe("automations cache updates", () => {
     });
 
     const afterStarted = queryClient.getQueryData<Automation[]>(automationQueries.all());
-    expect(afterStarted).toBe(before);
+    expect(afterStarted).not.toBe(before);
+    expect(afterStarted?.[0]?.lastRunSessionId).toBe("toy-box-auto-a1--run-1");
 
     applyAutomationsUpdateEvent(queryClient, {
       type: "automation.finished",
@@ -94,7 +95,7 @@ describe("automations cache updates", () => {
     const afterFinishedWithoutPayload = queryClient.getQueryData<Automation[]>(
       automationQueries.all(),
     );
-    expect(afterFinishedWithoutPayload).toBe(before);
+    expect(afterFinishedWithoutPayload).toBe(afterStarted);
   });
 
   test("deletes existing ids and preserves reference when delete target is missing", () => {

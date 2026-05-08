@@ -16,6 +16,7 @@ export function createEmptySessionsState(): SessionsState {
     streamingSessionIds: [],
     unreadSessionIds: [],
     worktrees: {},
+    childSessionIds: [],
   };
 }
 

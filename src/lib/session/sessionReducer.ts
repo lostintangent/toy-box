@@ -18,6 +18,7 @@ export type Session = {
   queuedMessages: QueuedMessage[];
   summary?: string;
   todos?: TodoItem[];
+  linkedSessionIds: string[];
   status: SessionStatus;
   reasoningContent: string;
   model?: string;
@@ -40,6 +41,7 @@ export function createInitialSession(initial: Partial<Session> = {}): Session {
     queuedMessages: initial.queuedMessages ? [...initial.queuedMessages] : [],
     summary: initial.summary,
     todos: initial.todos ? initial.todos.map((todo) => ({ ...todo })) : undefined,
+    linkedSessionIds: initial.linkedSessionIds ? [...initial.linkedSessionIds] : [],
     status: initial.status ?? "idle",
     reasoningContent: initial.reasoningContent ?? "",
     model: initial.model,
@@ -410,6 +412,21 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     case "todos_patch": {
       state.todos = applyTodoPatches(state.todos, event.patches);
+      return;
+    }
+
+    // ── Linked sessions ───────────────────────────────────────────────
+
+    case "linked_session_added": {
+      if (state.linkedSessionIds.includes(event.sessionId)) return;
+      state.linkedSessionIds = [...state.linkedSessionIds, event.sessionId];
+      return;
+    }
+
+    case "linked_session_removed": {
+      const filtered = state.linkedSessionIds.filter((id) => id !== event.sessionId);
+      if (filtered.length === state.linkedSessionIds.length) return;
+      state.linkedSessionIds = filtered;
       return;
     }
 

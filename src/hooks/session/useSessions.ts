@@ -27,6 +27,7 @@ export function useSessions({ openSessionIds }: UseSessionsOptions) {
     streamingSessionIds,
     unreadSessionIds,
     worktrees,
+    childSessionIds,
   } = data ?? createEmptySessionsState();
 
   const sessions = useMemo(
@@ -78,5 +79,6 @@ export function useSessions({ openSessionIds }: UseSessionsOptions) {
     streamingSessionIds,
     unreadSessionIds,
     worktreeSessionIds,
+    childSessionIds,
   };
 }
