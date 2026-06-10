@@ -9,7 +9,7 @@ function createAutomation(overrides: Partial<Automation> = {}): Automation {
     id: overrides.id ?? "automation-1",
     title: overrides.title ?? "Daily summary",
     prompt: overrides.prompt ?? "Summarize repo status.",
-    model: overrides.model ?? "gpt-5",
+    modelConfiguration: overrides.modelConfiguration ?? { model: "gpt-5" },
     cron: overrides.cron ?? "0 9 * * *",
     reuseSession: overrides.reuseSession ?? false,
     createdAt: overrides.createdAt ?? "2026-02-14T00:00:00.000Z",

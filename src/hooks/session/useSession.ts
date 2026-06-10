@@ -15,6 +15,7 @@ import type {
   Attachment,
   Message,
   QueuedMessage,
+  ModelConfiguration,
   SessionEvent,
   SessionSnapshot,
   SessionStatus,
@@ -65,11 +66,22 @@ type SendMessageOptions = {
 };
 
 export interface SessionConfig {
-  model?: string;
+  modelConfiguration?: ModelConfiguration;
   directory?: string;
   useWorktree?: boolean;
   onSessionCreated?: () => void;
 }
+
+type SessionStateUpdate = {
+  messages: Message[];
+  queuedMessages?: QueuedMessage[];
+  todos?: TodoItem[];
+  linkedSessionIds?: string[];
+  lastSeenEventId?: number;
+  status?: SessionStatus;
+  reasoningContent?: string;
+  modelConfiguration?: ModelConfiguration;
+};
 
 function toSessionSnapshot(
   sessionId: string,
@@ -80,7 +92,7 @@ function toSessionSnapshot(
     id: previous?.id ?? sessionId,
     messages: state.messages,
     queuedMessages: state.queuedMessages,
-    model: state.model ?? previous?.model,
+    modelConfiguration: state.modelConfiguration ?? previous?.modelConfiguration,
     todos: state.todos,
     linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
     lastSeenEventId: state.lastSeenEventId,
@@ -92,7 +104,7 @@ function toSessionSnapshot(
 export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
   const queryClient = useQueryClient();
   const detailQueryKey = sessionQueries.detail(sessionId).queryKey;
-  const sessionModel = sessionConfig?.model;
+  const sessionModelConfiguration = sessionConfig?.modelConfiguration;
   const sessionDirectory = sessionConfig?.directory;
   const sessionUseWorktree = sessionConfig?.useWorktree;
   const onSessionCreated = sessionConfig?.onSessionCreated;
@@ -180,6 +192,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     linkedSessionIds,
     status: baseStatus,
     reasoningContent,
+    modelConfiguration,
   } = sessionRef.current.state;
 
   // During connection handshake we still want a spinner even if no events arrived yet.
@@ -319,12 +332,19 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
           role: "user",
           content: prompt,
           attachments,
+          modelConfiguration: sessionModelConfiguration,
         };
 
         sessionRef.current!.state.queuedMessages.push(queuedMessage);
         updateRevision();
         enqueueMessage({
-          data: { sessionId, content: prompt, queuedMessageId, attachments },
+          data: {
+            sessionId,
+            content: prompt,
+            queuedMessageId,
+            attachments,
+            modelConfiguration: sessionModelConfiguration,
+          },
         }).catch(async (error) => {
           console.error("Failed to enqueue message:", error);
           const queue = sessionRef.current!.state.queuedMessages;
@@ -365,7 +385,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
             attachments,
             clientMessageId,
             startNew: isFirstMessageToDraft,
-            model: sessionModel,
+            modelConfiguration: sessionModelConfiguration,
             directory: isFirstMessageToDraft ? (options?.directory ?? sessionDirectory) : undefined,
             useWorktree: isFirstMessageToDraft ? sessionUseWorktree : undefined,
           },
@@ -405,7 +425,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
       runStreamingLoop,
       onSessionCreated,
       sessionDirectory,
-      sessionModel,
+      sessionModelConfiguration,
       sessionUseWorktree,
       sessionId,
     ],
@@ -420,8 +440,8 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
       updateRevision();
 
       try {
-        const result = await serverCancelQueuedMessage({ data: { sessionId, queuedMessageId } });
-        if (!result.success) {
+        const removed = await serverCancelQueuedMessage({ data: { sessionId, queuedMessageId } });
+        if (!removed) {
           await invalidateDetailQuery();
         }
       } catch {
@@ -438,24 +458,17 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
   );
 
   const updateState = useCallback(
-    (
-      serverMessages: Message[],
-      serverQueuedMessages: QueuedMessage[],
-      serverTodos?: TodoItem[],
-      serverLinkedSessionIds?: string[],
-      serverLastStreamingEventId?: number,
-      serverStreamingStatus: SessionStatus = "idle",
-      serverStreamingReasoningContent = "",
-    ) => {
+    (snapshot: SessionStateUpdate) => {
       const state = createInitialSession({
-        messages: serverMessages,
-        queuedMessages: serverQueuedMessages,
-        todos: serverTodos,
-        linkedSessionIds: serverLinkedSessionIds,
-        status: serverStreamingStatus,
-        reasoningContent: serverStreamingReasoningContent,
+        messages: snapshot.messages,
+        queuedMessages: snapshot.queuedMessages ?? [],
+        todos: snapshot.todos,
+        linkedSessionIds: snapshot.linkedSessionIds,
+        status: snapshot.status ?? "idle",
+        reasoningContent: snapshot.reasoningContent ?? "",
+        modelConfiguration: snapshot.modelConfiguration,
       });
-      state.lastSeenEventId = serverLastStreamingEventId;
+      state.lastSeenEventId = snapshot.lastSeenEventId;
       sessionRef.current!.state = state;
       updateRevision();
       setHasSynced(true);
@@ -525,6 +538,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     isStreaming,
     status,
     reasoningContent,
+    modelConfiguration,
     todos,
     linkedSessionIds,
     revision,

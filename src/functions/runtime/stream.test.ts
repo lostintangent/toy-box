@@ -21,7 +21,7 @@ describe("prepareSessionForNextTurn", () => {
       linkedSessionIds: ["session-1", "session-2"],
       status: "responding",
       reasoningContent: "thinking...",
-      model: "claude-sonnet-4.6",
+      modelConfiguration: { model: "claude-sonnet-4.6" },
     });
     previousState.pendingToolCalls.set("tool-1", {
       toolCallId: "tool-1",
@@ -40,7 +40,7 @@ describe("prepareSessionForNextTurn", () => {
       { id: "todo-1", title: "Inspect stream state", status: "in_progress" },
     ]);
     expect(nextState.linkedSessionIds).toEqual(["session-1", "session-2"]);
-    expect(nextState.model).toBe("claude-sonnet-4.6");
+    expect(nextState.modelConfiguration).toEqual({ model: "claude-sonnet-4.6" });
     expect(nextState.queuedMessages).toEqual([
       {
         id: "queued-1",
@@ -53,6 +53,69 @@ describe("prepareSessionForNextTurn", () => {
     expect(nextState.status).toBe("thinking");
     expect(nextState.pendingToolCalls.size).toBe(0);
     expect(nextState.pendingOptimisticUserMessage).toBeUndefined();
+  });
+});
+
+describe("SessionStream event IDs", () => {
+  test("increase across consecutive stream instances for the same session", () => {
+    onTestFinished(() => {
+      SessionStream.close("session-event-id-reuse");
+    });
+
+    const makeFakeSession = () =>
+      ({
+        on: () => () => {},
+      }) as unknown as CopilotSession;
+
+    const first = SessionStream.getOrCreate("session-event-id-reuse", makeFakeSession());
+    first.startTurn("First run");
+    const firstEventId = first.getBufferSince()[0]?.eventId;
+    first.detach();
+
+    const second = SessionStream.getOrCreate("session-event-id-reuse", makeFakeSession());
+    second.startTurn("Second run");
+    const secondEventId = second.getBufferSince()[0]?.eventId;
+
+    expect(firstEventId).toEqual(expect.any(Number));
+    expect(secondEventId).toEqual(expect.any(Number));
+    expect(secondEventId!).toBeGreaterThan(firstEventId!);
+  });
+});
+
+describe("SessionStream model configuration", () => {
+  test("setModel emits a model_changed event into live stream state", async () => {
+    onTestFinished(() => {
+      SessionStream.close("session-model-change");
+    });
+
+    const setModelMock = mock(
+      async (_model: string, _options?: { reasoningEffort?: string }) => {},
+    );
+    const fakeSession = {
+      on: () => () => {},
+      setModel: setModelMock,
+    } as unknown as CopilotSession;
+
+    const stream = SessionStream.getOrCreate("session-model-change", fakeSession);
+    const seenEvents: unknown[] = [];
+    const unsubscribe = stream.subscribe((event) => {
+      if (event) seenEvents.push(event);
+    });
+
+    await stream.setModel({ model: "gpt-5.5", reasoningEffort: "high" });
+    unsubscribe();
+
+    expect(setModelMock).toHaveBeenCalledWith("gpt-5.5", { reasoningEffort: "high" });
+    expect(stream.getSessionState().modelConfiguration).toEqual({
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+    });
+    expect(seenEvents).toEqual([
+      expect.objectContaining({
+        type: "model_changed",
+        modelConfiguration: { model: "gpt-5.5", reasoningEffort: "high" },
+      }),
+    ]);
   });
 });
 
@@ -93,7 +156,7 @@ describe("createSessionEventStream", () => {
       await import("./stream");
 
     const stream = ImportedSessionStream.getOrCreate("session-reconnect", fakeSession, {
-      model: "gpt-5",
+      modelConfiguration: { model: "gpt-5" },
     });
     stream.startTurn("Reconnect me");
 
@@ -146,7 +209,7 @@ describe("createSessionEventStream", () => {
       await import("./stream");
 
     const stream = ImportedSessionStream.getOrCreate("session-draft-race", fakeSession, {
-      model: "gpt-5",
+      modelConfiguration: { model: "gpt-5" },
     });
     stream.startTurn("Original draft prompt", "client-1");
 
@@ -181,7 +244,7 @@ describe("sendOrQueueSessionMessage", () => {
     } as unknown as CopilotSession;
 
     const stream = SessionStream.getOrCreate("session-queue-helper", fakeSession, {
-      model: "gpt-5",
+      modelConfiguration: { model: "gpt-5" },
     });
     stream.startTurn("Already running");
 

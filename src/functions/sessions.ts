@@ -32,6 +32,7 @@ import type {
 import type { Session } from "@/lib/session/sessionReducer";
 import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/sessionState";
 import { encodeSessionEvent } from "@/lib/session/streamCodec";
+import { modelConfigurationSchema } from "@/lib/modelConfiguration";
 
 // ============================================================================
 // Input Schemas (Zod)
@@ -57,7 +58,7 @@ const streamInputSchema = z.object({
     .optional(),
   // For draft sessions: create the session on first message instead of resuming
   startNew: z.boolean().optional(),
-  model: z.string().optional(),
+  modelConfiguration: modelConfigurationSchema.optional(),
   directory: z.string().optional(),
   useWorktree: z.boolean().optional(),
 });
@@ -66,6 +67,7 @@ const enqueueInputSchema = z.object({
   sessionId: z.string(),
   content: z.string(),
   queuedMessageId: z.string().optional(),
+  modelConfiguration: modelConfigurationSchema.optional(),
   attachments: z
     .array(
       z.object({
@@ -93,7 +95,7 @@ const sessionsStateInputSchema = z
 // ============================================================================
 
 /** Middleware that validates sessionId input - reused across multiple server functions */
-const withSessionId = createMiddleware({ type: "function" }).inputValidator(
+const withSessionId = createMiddleware({ type: "function" }).validator(
   zodValidator(sessionInputSchema),
 );
 
@@ -111,7 +113,7 @@ export type SessionsState = {
 
 /** Fetch list + streaming + unread + app metadata in a single round-trip */
 export const getSessionsState = createServerFn({ method: "GET" })
-  .inputValidator(zodValidator(sessionsStateInputSchema))
+  .validator(zodValidator(sessionsStateInputSchema))
   .handler(async ({ data }): Promise<SessionsState> => {
     for (const sessionId of new Set(data.openSessionIds ?? [])) {
       markSessionRead(sessionId);
@@ -135,17 +137,17 @@ export const getSessionsState = createServerFn({ method: "GET" })
 /** Mark a session as read */
 export const markSessionAsRead = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<boolean> => {
     markSessionRead(data.sessionId);
-    return { success: true };
+    return true;
   });
 
 /** Mark a session as unread */
 export const markSessionAsUnread = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<boolean> => {
     markSessionUnread(data.sessionId);
-    return { success: true };
+    return true;
   });
 
 /** List available models */
@@ -171,7 +173,7 @@ function createSessionSnapshot(sessionId: string, state: Session): SessionSnapsh
     id: sessionId,
     messages: state.messages,
     queuedMessages: state.queuedMessages,
-    model: state.model,
+    modelConfiguration: state.modelConfiguration,
     todos: state.todos,
     linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
     lastSeenEventId: state.lastSeenEventId,
@@ -217,7 +219,7 @@ function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): Readable
 }
 
 export const connectSessionStream = createServerFn({ method: "POST" })
-  .inputValidator(zodValidator(streamInputSchema))
+  .validator(zodValidator(streamInputSchema))
   .handler(async ({ data }) => {
     const iterator = createSessionEventStream(data);
     return new RawStream(createEventByteStream(iterator), { hint: "text" });
@@ -226,48 +228,48 @@ export const connectSessionStream = createServerFn({ method: "POST" })
 /** Enqueue a message to be sent after the current turn finishes.
  *  Stored on the stream so it survives client navigation and can be cancelled. */
 export const enqueueMessage = createServerFn({ method: "POST" })
-  .inputValidator(zodValidator(enqueueInputSchema))
-  .handler(async ({ data }) => {
+  .validator(zodValidator(enqueueInputSchema))
+  .handler(async ({ data }): Promise<boolean> => {
     const stream = SessionStream.get(data.sessionId);
-    if (!stream) return { success: false };
+    if (!stream) return false;
 
     stream.addQueuedMessage({
       id: data.queuedMessageId,
       role: "user",
       content: data.content,
       attachments: data.attachments,
+      modelConfiguration: data.modelConfiguration,
     });
-    return { success: true };
+    return true;
   });
 
 /** Cancel a queued message by ID (before it's been sent to the SDK) */
 export const cancelQueuedMessage = createServerFn({ method: "POST" })
-  .inputValidator(zodValidator(cancelQueuedInputSchema))
-  .handler(async ({ data }) => {
+  .validator(zodValidator(cancelQueuedInputSchema))
+  .handler(async ({ data }): Promise<boolean> => {
     const stream = SessionStream.get(data.sessionId);
-    const removed = stream?.removeQueuedMessage(data.queuedMessageId) ?? false;
-    return { success: removed };
+    return stream?.removeQueuedMessage(data.queuedMessageId) ?? false;
   });
 
 /** Abort the currently processing message in a session.
  *  Closes the stream (which clears buffer, queue, and SDK listener). */
 export const abortSession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<boolean> => {
     const stream = SessionStream.get(data.sessionId);
     if (stream) {
       await stream.abort();
     }
-    return { success: true };
+    return true;
   });
 
 /** Destroy a session and release resources */
 export const destroySession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<boolean> => {
     SessionStream.close(data.sessionId);
     await deleteSession(data.sessionId);
-    return { success: true };
+    return true;
   });
 
 /**

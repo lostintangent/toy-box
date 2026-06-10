@@ -5,6 +5,7 @@
 
 import type {
   Message,
+  ModelConfiguration,
   QueuedMessage,
   SessionEvent,
   SessionStatus,
@@ -21,7 +22,7 @@ export type Session = {
   linkedSessionIds: string[];
   status: SessionStatus;
   reasoningContent: string;
-  model?: string;
+  modelConfiguration?: ModelConfiguration;
   pendingToolCalls: Map<string, ToolCall>;
   pendingOptimisticUserMessage?: {
     clientMessageId: string;
@@ -44,7 +45,7 @@ export function createInitialSession(initial: Partial<Session> = {}): Session {
     linkedSessionIds: initial.linkedSessionIds ? [...initial.linkedSessionIds] : [],
     status: initial.status ?? "idle",
     reasoningContent: initial.reasoningContent ?? "",
-    model: initial.model,
+    modelConfiguration: initial.modelConfiguration,
     pendingToolCalls: new Map(),
   };
 }
@@ -237,6 +238,16 @@ function applyTodoPatches(
 // ============================================================================
 
 function applySessionEventCore(state: Session, event: SessionEvent): void {
+  // Replayed buffer events that are already incorporated in a snapshot
+  // can race with detail refetches; skip stale events before mutating state.
+  if (
+    event.eventId !== undefined &&
+    state.lastSeenEventId !== undefined &&
+    event.eventId <= state.lastSeenEventId
+  ) {
+    return;
+  }
+
   if (event.eventId !== undefined || event.turnId !== undefined) {
     const lastSeenEventId = event.eventId ?? state.lastSeenEventId;
     const activeTurnId = event.turnId ?? state.activeTurnId;
@@ -433,7 +444,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     // ── Model ─────────────────────────────────────────────────────────
 
     case "model_changed":
-      state.model = event.model;
+      state.modelConfiguration = event.modelConfiguration;
       return;
 
     // ── Lifecycle ─────────────────────────────────────────────────────

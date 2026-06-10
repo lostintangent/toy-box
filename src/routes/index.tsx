@@ -13,6 +13,7 @@ import { modelQueries } from "@/lib/queries";
 import { useAutomations } from "@/hooks/automations/useAutomations";
 import { useLocalStorage } from "@/hooks/browser/useLocalStorage";
 import { useLinkedSessions } from "@/hooks/session/useLinkedSessions";
+import { useModelConfiguration } from "@/hooks/session/useModelConfiguration";
 import { useSessions } from "@/hooks/session/useSessions";
 import { useViewport } from "@/hooks/browser/ViewportContext";
 import { usePanelTransition } from "@/hooks/browser/usePanelTransition";
@@ -51,7 +52,6 @@ const Terminal = lazy(() =>
 /** Session ID prefix for sessions created by this web app */
 const SESSION_ID_PREFIX = "toy-box-";
 
-const SELECTED_MODEL_KEY = "selected-model";
 const SESSIONS_SHOW_CHILD_KEY = "sessions:show-child";
 const SESSIONS_SHOW_EXTERNAL_KEY = "sessions:show-external";
 
@@ -128,8 +128,8 @@ function SessionsPage() {
 
   const { data: models = [] } = useQuery(modelQueries.list());
 
-  // Persisted state (synced with localStorage)
-  const [selectedModel, setSelectedModel] = useLocalStorage<string>(SELECTED_MODEL_KEY, "");
+  const [selectedModelConfiguration, handleModelConfigurationChange] =
+    useModelConfiguration(models);
   const [showChildSessions, setShowChildSessions] = useLocalStorage(
     SESSIONS_SHOW_CHILD_KEY,
     false,
@@ -140,13 +140,6 @@ function SessionsPage() {
     true,
     parseStoredBoolean,
   );
-
-  // Default to first model if none selected
-  useEffect(() => {
-    if (models.length > 0 && !selectedModel) {
-      setSelectedModel(models[0].id);
-    }
-  }, [models, selectedModel, setSelectedModel]);
 
   const [sidebarSize, setSidebarSize] = useState(initialSidebarSize);
   const [terminalSize, setTerminalSize] = useState(initialTerminalSize);
@@ -666,7 +659,7 @@ function SessionsPage() {
     automations,
     isAutomationsLoading,
     models,
-    defaultAutomationModelId: selectedModel,
+    defaultAutomationModelConfiguration: selectedModelConfiguration ?? undefined,
     isAutomationsExpanded,
     onAutomationsExpandedChange: setIsAutomationsExpanded,
     onCreateAutomation: createAutomation,
@@ -707,8 +700,8 @@ function SessionsPage() {
               unreadSessionIds={unreadSessionIds}
               onBack={() => handleSessionSelect(null)}
               models={models}
-              selectedModel={selectedModel}
-              onModelChange={setSelectedModel}
+              modelConfiguration={selectedModelConfiguration}
+              onModelConfigurationChange={handleModelConfigurationChange}
               draftSessionId={draftSessionId}
               onDraftSessionCreated={handleDraftSessionCreated}
             />
@@ -791,8 +784,8 @@ function SessionsPage() {
                     unreadSessionIds={unreadSessionIds}
                     onRemoveSession={handleCloseVisibleSession}
                     models={models}
-                    selectedModel={selectedModel}
-                    onModelChange={setSelectedModel}
+                    modelConfiguration={selectedModelConfiguration}
+                    onModelConfigurationChange={handleModelConfigurationChange}
                     draftSessionId={draftSessionId}
                     onDraftSessionCreated={handleDraftSessionCreated}
                   />

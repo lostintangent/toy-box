@@ -45,10 +45,10 @@ function assistantMessage(
   };
 }
 
-function modelChange(newModel: string): SdkSessionEvent {
+function modelChange(newModel: string, reasoningEffort?: string): SdkSessionEvent {
   return {
     type: "session.model_change",
-    data: { newModel },
+    data: { newModel, ...(reasoningEffort ? { reasoningEffort } : {}) },
   };
 }
 
@@ -430,7 +430,14 @@ describe("projector", () => {
       const context = createStreamingContext();
 
       expect(projectSdkEvent(modelChange("claude-sonnet-4.6"), context)).toEqual([
-        { type: "model_changed", model: "claude-sonnet-4.6" },
+        { type: "model_changed", modelConfiguration: { model: "claude-sonnet-4.6" } },
+      ]);
+
+      expect(projectSdkEvent(modelChange("gpt-5", "high"), context)).toEqual([
+        {
+          type: "model_changed",
+          modelConfiguration: { model: "gpt-5", reasoningEffort: "high" },
+        },
       ]);
 
       expect(projectSdkEvent(titleChanged("Friendly title"), context)).toEqual([
@@ -458,8 +465,8 @@ describe("projector", () => {
       ]);
 
       expect(adapted).toEqual([
-        { type: "model_changed", model: "claude-sonnet-4.5" },
-        { type: "model_changed", model: "claude-sonnet-4.6" },
+        { type: "model_changed", modelConfiguration: { model: "claude-sonnet-4.5" } },
+        { type: "model_changed", modelConfiguration: { model: "claude-sonnet-4.6" } },
       ]);
     });
 
@@ -604,7 +611,67 @@ describe("projector", () => {
           "tool-list-automations",
           {},
           JSON.stringify({
-            automations: [{ id: "automation-1", title: "Daily Summary" }],
+            automations: [
+              {
+                id: "automation-1",
+                title: "Daily Summary",
+                prompt: "Summarize updates",
+                model: "gpt-5",
+                cron: "0 9 * * *",
+                reuseSession: false,
+                createdAt: "2026-02-14T10:00:00.000Z",
+                updatedAt: "2026-02-14T10:00:00.000Z",
+                nextRunAt: "2026-02-15T09:00:00.000Z",
+              },
+            ],
+          }),
+        ),
+        ...successfulHiddenToolHistory(
+          "create_automation",
+          "tool-create-automation",
+          {
+            title: "Daily Summary",
+            prompt: "Summarize updates",
+            model: "gpt-5",
+            cron: "0 9 * * *",
+          },
+          JSON.stringify({
+            automation: {
+              id: "automation-1",
+              title: "Daily Summary",
+              prompt: "Summarize updates",
+              model: "gpt-5",
+              cron: "0 9 * * *",
+              reuseSession: false,
+              createdAt: "2026-02-14T10:00:00.000Z",
+              updatedAt: "2026-02-14T10:00:00.000Z",
+              nextRunAt: "2026-02-15T09:00:00.000Z",
+            },
+          }),
+        ),
+        ...successfulHiddenToolHistory(
+          "edit_automation",
+          "tool-edit-automation",
+          {
+            automationId: "automation-1",
+            title: "Updated Summary",
+            prompt: "Summarize project updates",
+            model: "gpt-5",
+            cron: "0 10 * * *",
+            reuseSession: false,
+          },
+          JSON.stringify({
+            automation: {
+              id: "automation-1",
+              title: "Updated Summary",
+              prompt: "Summarize project updates",
+              model: "gpt-5",
+              cron: "0 10 * * *",
+              reuseSession: false,
+              createdAt: "2026-02-14T10:00:00.000Z",
+              updatedAt: "2026-02-14T10:05:00.000Z",
+              nextRunAt: "2026-02-15T10:00:00.000Z",
+            },
           }),
         ),
         ...successfulHiddenToolHistory(

@@ -28,7 +28,8 @@ function mapRowToWorktree(row: SessionWorktreeRow): SessionWorktree {
 
 /** Get the worktree record for a single session. Returns null if none exists. */
 export async function getSessionWorktree(sessionId: string): Promise<SessionWorktree | null> {
-  const db = await getAppDatabase();
+  const db = await getAppDatabase({ createIfMissing: false });
+  if (!db) return null;
   const { rows } = await db.sql`
     SELECT * FROM worktrees WHERE session_id = ${sessionId}
   `;
@@ -38,7 +39,8 @@ export async function getSessionWorktree(sessionId: string): Promise<SessionWork
 
 /** Get worktree records for all sessions. Used on bootstrap to enrich the session list. */
 export async function getAllSessionWorktrees(): Promise<Record<string, SessionWorktree>> {
-  const db = await getAppDatabase();
+  const db = await getAppDatabase({ createIfMissing: false });
+  if (!db) return {};
   const { rows } = await db.sql`SELECT * FROM worktrees`;
 
   const result: Record<string, SessionWorktree> = {};

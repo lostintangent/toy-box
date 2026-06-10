@@ -1,6 +1,6 @@
 {
   "name": "@lostintangent/toy-box",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Your personal coding agent server",
   "bin": {
     "toy-box": "toy-box"

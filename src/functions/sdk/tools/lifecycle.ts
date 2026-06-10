@@ -3,6 +3,7 @@ import { defineTool } from "@github/copilot-sdk";
 import { homedir } from "node:os";
 import { z } from "zod";
 import { SESSION_ID_PREFIX, readSessionContextFromEvents } from "@/functions/sdk/client";
+import { modelConfigurationSchema } from "@/lib/modelConfiguration";
 
 function normalizeInheritedWorkspaceContext(context?: SessionContext): SessionContext | undefined {
   const workingDirectory = context?.workingDirectory;
@@ -27,7 +28,9 @@ const createSession = defineTool("create_session", {
     "By default it does not create a worktree.",
   parameters: z.object({
     prompt: z.string().describe("The initial prompt to send to the new session"),
-    model: z.string().optional().describe("Optional model override for the new session"),
+    modelConfiguration: modelConfigurationSchema
+      .optional()
+      .describe("Optional model configuration override for the new session"),
     directory: z
       .string()
       .optional()
@@ -51,12 +54,13 @@ const createSession = defineTool("create_session", {
         : undefined;
     const inheritedExecutionDirectory =
       args.directory ?? inheritedWorkspaceContext?.workingDirectory;
-    const inheritedModel =
-      args.model ?? SessionStream.get(invocation.sessionId)?.getSessionState().model;
+    const inheritedModelConfiguration =
+      args.modelConfiguration ??
+      SessionStream.get(invocation.sessionId)?.getSessionState().modelConfiguration;
     const { sessionId } = await createAndStartSession({
       sessionId: `${SESSION_ID_PREFIX}${crypto.randomUUID()}`,
       prompt: args.prompt,
-      model: inheritedModel,
+      modelConfiguration: inheritedModelConfiguration,
       directory: inheritedExecutionDirectory,
       useWorktree: args.useWorktree ?? false,
       parentSessionId: invocation.sessionId,

@@ -4,7 +4,7 @@
 // synthetic session events derived from tool calls, todo SQL translation,
 // and the shared projection state used by both streaming and history replay.
 
-import type { Attachment, SessionEvent, SessionSkill, ToolCall } from "@/types";
+import { type Attachment, type SessionEvent, type SessionSkill, type ToolCall } from "@/types";
 import {
   asRecord,
   readArray,
@@ -106,6 +106,21 @@ function readEventString(
   return field ? readString(event.data, field) : undefined;
 }
 
+function readReasoningEffort(data: unknown): string | undefined {
+  return readString(data, "reasoningEffort");
+}
+
+function projectModelChanged(model: string, data: unknown): SessionEvent {
+  const reasoningEffort = readReasoningEffort(data);
+  return {
+    type: "model_changed",
+    modelConfiguration: {
+      model,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+    },
+  };
+}
+
 function projectLinkedSessionEvent(
   args: Record<string, unknown> | undefined,
   type: "linked_session_added" | "linked_session_removed",
@@ -168,6 +183,12 @@ const TOOL_CALL_OVERRIDES: Record<string, ToolCallOverride> = {
     suppressToolCall: true,
   },
   list_automations: {
+    suppressToolCall: true,
+  },
+  create_automation: {
+    suppressToolCall: true,
+  },
+  edit_automation: {
     suppressToolCall: true,
   },
   run_automation: {
@@ -557,11 +578,11 @@ const SDK_PROJECTORS: Record<string, SdkProjector | undefined> = {
   // ── History-only ────────────────────────────────────────────────────
   "session.start": historyOnly((event) => {
     const model = readEventString(event, SESSION_MODEL_FIELD_BY_EVENT_TYPE);
-    return model ? [{ type: "model_changed", model }] : undefined;
+    return model ? [projectModelChanged(model, event.data)] : undefined;
   }),
   "session.shutdown": historyOnly((event) => {
     const model = readEventString(event, SESSION_MODEL_FIELD_BY_EVENT_TYPE);
-    return model ? [{ type: "model_changed", model }] : undefined;
+    return model ? [projectModelChanged(model, event.data)] : undefined;
   }),
   "assistant.message": historyOnly((event, context) => {
     // Sub-agent messages are nested under their parent's tool call tree
@@ -596,7 +617,7 @@ const SDK_PROJECTORS: Record<string, SdkProjector | undefined> = {
   // ── Both modes ──────────────────────────────────────────────────────
   "session.model_change": (event) => {
     const model = readEventString(event, SESSION_MODEL_FIELD_BY_EVENT_TYPE);
-    return model ? [{ type: "model_changed", model }] : undefined;
+    return model ? [projectModelChanged(model, event.data)] : undefined;
   },
   "session.title_changed": (event) => {
     const title = readEventString(event, SESSION_TITLE_FIELD_BY_EVENT_TYPE);

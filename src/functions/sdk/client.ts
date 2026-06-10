@@ -7,6 +7,8 @@ import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+import type { ModelConfiguration } from "@/types";
+import { toSdkSessionModelOptions } from "@/lib/modelConfiguration";
 
 // ============================================================================
 // CLI Path Resolution
@@ -108,23 +110,27 @@ function buildSessionSystemMessage(sessionId: string, directory?: string) {
   };
 }
 
+type CreateSdkSessionOptions = {
+  modelConfiguration?: ModelConfiguration;
+  directory?: string;
+  tools?: Tool<any>[];
+};
+
 export async function createSession(
   sessionId: string,
-  model?: string,
-  directory?: string,
-  tools?: Tool<any>[],
+  options: CreateSdkSessionOptions = {},
 ): Promise<CopilotSession> {
   const client = await getCopilotClient();
-  const systemMessage = buildSessionSystemMessage(sessionId, directory);
+  const systemMessage = buildSessionSystemMessage(sessionId, options.directory);
 
   return client.createSession({
     sessionId,
     streaming: true,
-    model,
-    workingDirectory: directory,
+    ...toSdkSessionModelOptions(options.modelConfiguration),
+    workingDirectory: options.directory,
     systemMessage,
     onPermissionRequest: approveAll,
-    tools,
+    tools: options.tools,
   });
 }
 

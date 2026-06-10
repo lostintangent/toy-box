@@ -4,7 +4,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/componen
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { SessionView } from "./SessionView";
 import { cn } from "@/lib/utils";
-import type { ModelInfo } from "@/types";
+import type { ModelInfo, ModelConfiguration } from "@/types";
 
 // ============================================================================
 // Session Grid - Multi-session grid layout (max 4 sessions)
@@ -28,8 +28,8 @@ export interface SessionGridProps {
   unreadSessionIds: string[];
   onRemoveSession: (sessionId: string) => void;
   models?: ModelInfo[];
-  selectedModel?: string;
-  onModelChange?: (modelId: string) => void;
+  modelConfiguration?: ModelConfiguration | null;
+  onModelConfigurationChange?: (configuration: ModelConfiguration) => void;
   draftSessionId?: string | null;
   onDraftSessionCreated?: (sessionId: string) => void;
 }
@@ -108,8 +108,8 @@ export function SessionGrid({
   unreadSessionIds,
   onRemoveSession,
   models,
-  selectedModel,
-  onModelChange,
+  modelConfiguration,
+  onModelConfigurationChange,
   draftSessionId,
   onDraftSessionCreated,
 }: SessionGridProps) {
@@ -121,8 +121,8 @@ export function SessionGrid({
   // Props forwarded to every GridCell (not grid-position-specific)
   const sessionProps = {
     models,
-    selectedModel,
-    onModelChange,
+    modelConfiguration,
+    onModelConfigurationChange,
     draftSessionId,
     onDraftSessionCreated,
   };
@@ -386,8 +386,8 @@ interface GridCellProps {
   onMaximize: (sessionId: string) => void;
   onMinimize: () => void;
   models?: ModelInfo[];
-  selectedModel?: string;
-  onModelChange?: (modelId: string) => void;
+  modelConfiguration?: ModelConfiguration | null;
+  onModelConfigurationChange?: (configuration: ModelConfiguration) => void;
   draftSessionId?: string | null;
   onDraftSessionCreated?: (sessionId: string) => void;
 }
@@ -403,8 +403,8 @@ const GridCell = memo(function GridCell({
   onMaximize,
   onMinimize,
   models,
-  selectedModel,
-  onModelChange,
+  modelConfiguration,
+  onModelConfigurationChange,
   draftSessionId,
   onDraftSessionCreated,
 }: GridCellProps) {
@@ -454,8 +454,8 @@ const GridCell = memo(function GridCell({
         isSessionRunning={isSessionRunning}
         isSessionUnread={isSessionUnread}
         models={models}
-        selectedModel={selectedModel}
-        onModelChange={onModelChange}
+        modelConfiguration={modelConfiguration}
+        onModelConfigurationChange={onModelConfigurationChange}
         draftSessionId={draftSessionId}
         onDraftSessionCreated={onDraftSessionCreated}
       />

@@ -1,18 +1,26 @@
 import { useRef, useEffect, useState, useCallback, useMemo, memo } from "react";
 import { Image, ArrowUp, Pencil, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupTextarea,
 } from "@/components/ui/input-group";
-import { ModelPicker } from "./ModelPicker";
+import { ModelConfigurationPicker } from "./ModelPicker";
 import { SessionLocationPicker, type SessionLocationPickerProps } from "../SessionLocationPicker";
 import { TodoPopup } from "./TodoPopup";
 import { DiffPopup } from "./DiffPopup";
 import { SkillPicker } from "./SkillPicker";
-import type { Attachment, ModelInfo, QueuedMessage, SessionSkill, TodoItem } from "@/types";
+import type {
+  Attachment,
+  ModelInfo,
+  ModelConfiguration,
+  QueuedMessage,
+  SessionSkill,
+  TodoItem,
+} from "@/types";
 import { toDataUrl } from "@/types";
 import type { FileDiff, LineDiff } from "@/hooks/diffs/useEditDiffs";
 import { useViewport } from "@/hooks/browser/ViewportContext";
@@ -25,14 +33,23 @@ export interface SessionInputProps {
   isStreaming: boolean;
   onStop: () => void;
   models?: ModelInfo[];
-  selectedModel?: string;
-  onModelChange?: (modelId: string) => void;
+  modelConfiguration?: ModelConfiguration | null;
+  onModelConfigurationChange?: (configuration: ModelConfiguration) => void;
   locationPicker?: SessionLocationPickerProps;
   todos?: TodoItem[];
   skills?: SessionSkill[];
   sessionDiff?: { total: LineDiff; byFile: FileDiff[] };
   queuedMessages?: QueuedMessage[];
   onCancelQueuedMessage?: (queuedMessageId: string) => void;
+}
+
+function ModelConfigurationSkeleton() {
+  return (
+    <div className="flex items-center gap-1" aria-label="Loading model configuration">
+      <Skeleton className="h-6 w-20 rounded-md" />
+      <Skeleton className="h-6 w-14 rounded-md" />
+    </div>
+  );
 }
 
 function AttachmentPreview({
@@ -79,8 +96,8 @@ export const SessionInput = memo(function SessionInput({
   isStreaming,
   onStop,
   models,
-  selectedModel,
-  onModelChange,
+  modelConfiguration,
+  onModelConfigurationChange,
   locationPicker,
   todos,
   skills,
@@ -301,11 +318,13 @@ export const SessionInput = memo(function SessionInput({
 
                 {locationPicker && <SessionLocationPicker {...locationPicker} />}
 
-                {models && onModelChange && (
-                  <ModelPicker
+                {models && !modelConfiguration && <ModelConfigurationSkeleton />}
+
+                {models && modelConfiguration && onModelConfigurationChange && (
+                  <ModelConfigurationPicker
                     models={models}
-                    selectedModel={selectedModel}
-                    onModelChange={onModelChange}
+                    value={modelConfiguration}
+                    onValueChange={onModelConfigurationChange}
                   />
                 )}
 

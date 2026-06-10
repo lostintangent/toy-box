@@ -95,11 +95,11 @@ export function useAutomations({
 
   const updateMutation = useMutation({
     mutationFn: async (input: AutomationOptions & { automationId: string }) => {
-      const result = await updateServerAutomation({ data: input });
-      if (!result.success) {
+      const automation = await updateServerAutomation({ data: input });
+      if (!automation) {
         throw new Error("Automation not found");
       }
-      return result;
+      return automation;
     },
     onMutate: ({ automationId }) => {
       setUpdatingAutomationId(automationId);
@@ -112,11 +112,11 @@ export function useAutomations({
 
   const deleteMutation = useMutation({
     mutationFn: async (automationId: string) => {
-      const result = await deleteServerAutomation({ data: { automationId } });
-      if (!result.success) {
+      const deleted = await deleteServerAutomation({ data: { automationId } });
+      if (!deleted) {
         throw new Error("Automation not found");
       }
-      return result;
+      return deleted;
     },
     onMutate: (automationId) => {
       setDeletingAutomationId(automationId);
@@ -132,28 +132,31 @@ export function useAutomations({
     onMutate: (automationId) => {
       setKnownRunningAutomationIds((current) => addAutomationId(current, automationId));
     },
-    onSuccess: ({ sessionId }, automationId) => {
+    onSuccess: ({ sessionId, started }, automationId) => {
       // Reset the detail cache to an empty session so the SessionView's
-      // sync effect calls updateState([], []), clearing local mutable
+      // sync effect initializes from an empty snapshot, clearing local mutable
       // state. This avoids briefly showing the previous run's messages
       // when the same session ID is reused.
-      queryClient.setQueryData<SessionSnapshot>(sessionQueries.detail(sessionId).queryKey, {
-        id: sessionId,
-        messages: [],
-        queuedMessages: [],
-        status: "thinking",
-        reasoningContent: "",
-      });
+      if (started) {
+        const automation = automations.find((candidate) => candidate.id === automationId);
+        queryClient.setQueryData<SessionSnapshot>(sessionQueries.detail(sessionId).queryKey, {
+          id: sessionId,
+          messages: [],
+          queuedMessages: [],
+          modelConfiguration: automation?.modelConfiguration,
+          status: "thinking",
+          reasoningContent: "",
+        });
 
-      const automationTitle =
-        automations.find((automation) => automation.id === automationId)?.title ?? "";
-      prependSessionIfMissing(queryClient, {
-        sessionId,
-        startTime: new Date(),
-        modifiedTime: new Date(),
-        summary: automationTitle,
-        isRemote: false,
-      });
+        prependSessionIfMissing(queryClient, {
+          sessionId,
+          startTime: new Date(),
+          modifiedTime: new Date(),
+          summary: automation?.title ?? "",
+          isRemote: false,
+        });
+      }
+
       onUserRunRequested?.(sessionId);
     },
     onSettled: (_data, _error, automationId) => {

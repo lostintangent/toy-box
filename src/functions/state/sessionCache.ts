@@ -30,11 +30,12 @@ import {
   upsertChildSession,
 } from "./childSessions";
 import { createWorktree, cleanupWorktree, detectGitRoot, getRepositoryName } from "../worktrees";
+import type { ModelConfiguration } from "@/types";
 
 const activeSessions = new Map<string, CopilotSession>();
 
 export type CreateSessionOptions = {
-  model?: string;
+  modelConfiguration?: ModelConfiguration;
   directory?: string;
   useWorktree?: boolean;
   initialContext?: SessionContext;
@@ -123,7 +124,8 @@ export async function createSession(
   sessionId: string,
   options?: CreateSessionOptions,
 ): Promise<CopilotSession> {
-  const { model, directory, useWorktree, initialContext, parentSessionId } = options ?? {};
+  const { modelConfiguration, directory, useWorktree, initialContext, parentSessionId } =
+    options ?? {};
   const { executionDirectory, mergedDisplayContext, worktreeRecord } = await prepareSessionLocation(
     sessionId,
     {
@@ -136,12 +138,11 @@ export async function createSession(
   // The SDK requires a working directory. When none was explicitly provided
   // (e.g. automations with no cwd), fall back to the user's home directory
   // so the SDK has a valid path without leaking the server's cwd.
-  const session = await sdkCreateSession(
-    sessionId,
-    model,
-    executionDirectory ?? homedir(),
-    getTools(),
-  );
+  const session = await sdkCreateSession(sessionId, {
+    modelConfiguration,
+    directory: executionDirectory ?? homedir(),
+    tools: getTools(),
+  });
   const now = new Date().toISOString();
   activeSessions.set(sessionId, session);
 

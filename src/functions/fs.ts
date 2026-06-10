@@ -30,7 +30,7 @@ const listDirectoryContentsInputSchema = z.object({
 
 /** List child directories at a given path (defaults to CWD) */
 export const listDirectoryContents = createServerFn({ method: "GET" })
-  .inputValidator(zodValidator(listDirectoryContentsInputSchema))
+  .validator(zodValidator(listDirectoryContentsInputSchema))
   .handler(async ({ data }): Promise<ListDirectoryContentsResult> => {
     const targetPath = resolve(data.path ?? process.cwd());
 

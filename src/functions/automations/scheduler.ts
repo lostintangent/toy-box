@@ -1,12 +1,13 @@
 // Automation scheduler: polls for due automations and executes them.
 //
-// Each run creates a fresh session (even when reuseSession is enabled,
-// which simply reuses the previous session ID). The scheduler also
-// exposes `runAutomation` for on-demand manual runs from the UI.
+// Each run creates a fresh session unless reuseSession points at an idle
+// previous run session. The scheduler also exposes `runAutomation` for
+// on-demand manual runs from the UI.
 
 import type { CopilotSession } from "@github/copilot-sdk";
 import { deleteSession } from "@/functions/state/sessionCache";
 import { createManagedSession, startManagedSessionTurn } from "@/functions/runtime/sessionLauncher";
+import { SessionStream } from "@/functions/runtime/stream";
 import { getSdkStreamTerminalDisposition } from "@/functions/sdk/projector";
 import { createAutomationRunSessionId } from "@/lib/automation/sessionId";
 import type { Automation } from "@/types";
@@ -16,13 +17,18 @@ import { emitAutomationsUpdate } from "./events";
 
 const AUTOMATION_SCHEDULER_POLL_MS = 30_000;
 
+export type AutomationRunResult = {
+  sessionId: string;
+  started: boolean;
+};
+
 /** Ensure the scheduler's polling loop is started */
 let started = false;
 export function ensureSchedulerStarted() {
   if (started) return;
   started = true;
 
-  scheduleNextTick();
+  scheduleNextTick(0);
 }
 
 /** Poll for due automations and run them. */
@@ -32,7 +38,9 @@ export async function runSchedulerTick() {
   tickInProgress = true;
 
   try {
-    const db = new AutomationDatabase(await getAppDatabase());
+    const appDatabase = await getAppDatabase({ createIfMissing: false });
+    if (!appDatabase) return;
+    const db = new AutomationDatabase(appDatabase);
     const dueAutomations = await db.claimDue();
     for (const automation of dueAutomations) {
       try {
@@ -41,6 +49,8 @@ export async function runSchedulerTick() {
         console.error(`Failed to run scheduled automation ${automation.id}:`, error);
       }
     }
+  } catch (error) {
+    console.error("Failed to run automation scheduler tick:", error);
   } finally {
     tickInProgress = false;
     scheduleNextTick();
@@ -48,7 +58,7 @@ export async function runSchedulerTick() {
 }
 
 /** Create a fresh session for an automation and send its prompt. */
-export async function runAutomation(automationId: string): Promise<{ sessionId: string }> {
+export async function runAutomation(automationId: string): Promise<AutomationRunResult> {
   const db = new AutomationDatabase(await getAppDatabase());
   return runAutomationWithDatabase(automationId, db);
 }
@@ -56,24 +66,26 @@ export async function runAutomation(automationId: string): Promise<{ sessionId: 
 export async function runAutomationWithDatabase(
   automationId: string,
   db: AutomationDatabase,
-): Promise<{ sessionId: string }> {
+): Promise<AutomationRunResult> {
   const automation = await db.getById(automationId);
   if (!automation) {
     throw new Error("Automation not found");
   }
 
-  const sessionExists = automation.reuseSession && automation.lastRunSessionId;
-  const sessionId = sessionExists
-    ? automation.lastRunSessionId!
-    : createAutomationRunSessionId(automation.id);
+  const reusedSessionId = automation.reuseSession ? automation.lastRunSessionId : undefined;
+  if (reusedSessionId && SessionStream.isRunning(reusedSessionId)) {
+    return { sessionId: reusedSessionId, started: false };
+  }
 
-  if (sessionExists) {
+  const sessionId = reusedSessionId ?? createAutomationRunSessionId(automation.id);
+
+  if (reusedSessionId) {
     await deleteSession(sessionId);
   }
 
   const sessionHandle = await createManagedSession({
     sessionId,
-    model: automation.model,
+    modelConfiguration: automation.modelConfiguration,
     directory: automation.cwd,
     summary: automation.title,
   });
@@ -98,7 +110,7 @@ export async function runAutomationWithDatabase(
   try {
     await startManagedSessionTurn(sessionHandle, automation.prompt);
 
-    return { sessionId };
+    return { sessionId, started: true };
   } catch (error) {
     stopCompletionObserver();
     await finalizeAutomationRun(db, {

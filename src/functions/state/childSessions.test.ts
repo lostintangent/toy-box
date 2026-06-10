@@ -5,7 +5,8 @@ import { createTestDatabase } from "../database";
 let currentDb: Database | undefined;
 
 mock.module("../database", () => ({
-  getAppDatabase: async () => {
+  getAppDatabase: async (options?: { createIfMissing?: boolean }) => {
+    if (!currentDb && options?.createIfMissing === false) return null;
     if (!currentDb) throw new Error("Test database has not been opened");
     return currentDb;
   },
@@ -23,6 +24,11 @@ async function openChildSessionsTestDatabase(): Promise<void> {
 }
 
 describe("child session metadata", () => {
+  test("read paths no-op when the app database does not exist", async () => {
+    expect(await getChildSessionIds()).toEqual([]);
+    expect(await getChildSessionIdsForParent("toy-box-parent")).toEqual([]);
+  });
+
   test("lists child session ids", async () => {
     await openChildSessionsTestDatabase();
 

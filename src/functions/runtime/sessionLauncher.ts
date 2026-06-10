@@ -34,7 +34,7 @@ export async function createManagedSession(
     sessionId,
     session,
     stream: SessionStream.getOrCreate(sessionId, session, {
-      model: options.model,
+      modelConfiguration: options.modelConfiguration,
     }),
   };
 }

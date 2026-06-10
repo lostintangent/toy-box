@@ -259,6 +259,49 @@ describe("sessionStateReducer", () => {
     expect(afterToolStart.activeTurnId).toBe("turn-1");
   });
 
+  test("skips replayed events that are older than the current snapshot", () => {
+    const state = createInitialSession({
+      messages: [{ role: "user", content: "already synced" }],
+    });
+    state.lastSeenEventId = 20;
+
+    applySessionEvent(state, {
+      type: "user_message",
+      content: "already synced",
+      eventId: 20,
+    });
+    applySessionEvent(state, {
+      type: "assistant_message",
+      content: "stale response",
+      eventId: 19,
+    });
+
+    expect(state.messages).toEqual([{ role: "user", content: "already synced" }]);
+    expect(state.lastSeenEventId).toBe(20);
+  });
+
+  test("keeps optimistic local events and newer stream events after stale-event filtering", () => {
+    const state = createInitialSession();
+    state.lastSeenEventId = 20;
+
+    applySessionEvent(state, {
+      type: "user_message",
+      content: "optimistic",
+      clientMessageId: "client-1",
+    });
+    applySessionEvent(state, {
+      type: "assistant_message",
+      content: "new response",
+      eventId: 21,
+    });
+
+    expect(state.messages).toEqual([
+      { role: "user", content: "optimistic" },
+      { role: "assistant", content: "new response", toolCalls: undefined },
+    ]);
+    expect(state.lastSeenEventId).toBe(21);
+  });
+
   test("deduplicates replayed user messages by clientMessageId", () => {
     const state = createInitialSession();
 

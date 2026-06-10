@@ -28,8 +28,9 @@ import {
   projectSdkEvent,
 } from "@/functions/sdk/projector";
 import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/sessionState";
-import type { Attachment, QueuedMessage, SessionEvent } from "@/types";
+import type { Attachment, ModelConfiguration, QueuedMessage, SessionEvent } from "@/types";
 import type { Session } from "@/lib/session/sessionReducer";
+import { areModelConfigurationsEqual, toSdkSetModelOptions } from "@/lib/modelConfiguration";
 
 export function prepareSessionForNextTurn(state: Session): Session {
   state.status = "thinking";
@@ -54,7 +55,7 @@ export type SessionStreamConfig = {
   sessionId: string;
   prompt?: string;
   attachments?: Attachment[];
-  model?: string;
+  modelConfiguration?: ModelConfiguration;
   directory?: string;
   useWorktree?: boolean;
 
@@ -67,7 +68,7 @@ export type SendOrQueueSessionMessageOptions = {
   sessionId: string;
   prompt: string;
   attachments?: Attachment[];
-  model?: string;
+  modelConfiguration?: ModelConfiguration;
   directory?: string;
   useWorktree?: boolean;
   clientMessageId?: string;
@@ -82,6 +83,12 @@ export type SendOrQueueSessionMessageResult = {
 type SessionStreamSubscriber = (event: SessionEvent | null) => void;
 
 const MAX_BUFFER_EVENTS = 1500;
+let nextStreamEventIdSeed = Date.now();
+
+function createInitialEventId(): number {
+  nextStreamEventIdSeed = Math.max(Date.now(), nextStreamEventIdSeed + 1);
+  return nextStreamEventIdSeed;
+}
 
 export class SessionStream {
   // ── Static registry ──────────────────────────────────────────────────
@@ -158,7 +165,7 @@ export class SessionStream {
   #projectionState = createProjectionState();
 
   // Event sequencing
-  #nextEventId = 1;
+  #nextEventId = createInitialEventId();
   #currentTurnId: string | undefined;
   #isDrainingQueue = false;
 
@@ -209,15 +216,22 @@ export class SessionStream {
   // ── Model ───────────────────────────────────────────────────────────
 
   get model(): string | undefined {
-    return this.#sessionState.model;
+    return this.#sessionState.modelConfiguration?.model;
   }
 
-  /** Update the model on both the SDK session and local state. */
-  async setModel(model: string): Promise<void> {
-    if (model === this.#sessionState.model) return;
+  /** Update model options on both the SDK session and live stream state. */
+  async setModel(configuration: ModelConfiguration): Promise<void> {
+    if (!configuration.model) return;
 
-    await this.sdkSession.setModel(model);
-    this.#sessionState.model = model;
+    if (areModelConfigurationsEqual(configuration, this.#sessionState.modelConfiguration)) {
+      return;
+    }
+
+    await this.sdkSession.setModel(configuration.model, toSdkSetModelOptions(configuration));
+    this.#emit({
+      type: "model_changed",
+      modelConfiguration: configuration,
+    });
   }
 
   // ── Buffer ───────────────────────────────────────────────────────────
@@ -499,8 +513,8 @@ export class SessionStream {
 
       const attachments = await writeAttachments(this.sessionId, queuedMessage.attachments);
 
-      if (queuedMessage.model && queuedMessage.model !== this.#sessionState.model) {
-        await this.setModel(queuedMessage.model);
+      if (queuedMessage.modelConfiguration?.model) {
+        await this.setModel(queuedMessage.modelConfiguration);
       }
 
       await this.sdkSession.send({ prompt: queuedMessage.content, attachments });
@@ -559,7 +573,7 @@ export async function sendOrQueueSessionMessage(
       role: "user",
       content: prompt,
       attachments: options.attachments,
-      model: options.model,
+      modelConfiguration: options.modelConfiguration,
     });
     return { stream, disposition: "queued" };
   }
@@ -569,12 +583,12 @@ export async function sendOrQueueSessionMessage(
   if (!stream) {
     if (shouldStartNew) {
       sdkSession = await createSession(options.sessionId, {
-        model: options.model,
+        modelConfiguration: options.modelConfiguration,
         directory: options.directory,
         useWorktree: options.useWorktree,
       });
       stream = SessionStream.getOrCreate(options.sessionId, sdkSession, {
-        model: options.model,
+        modelConfiguration: options.modelConfiguration,
       });
     } else {
       const resumed = await getOrResumeSession(options.sessionId);
@@ -597,8 +611,8 @@ export async function sendOrQueueSessionMessage(
 
   stream.startTurn(prompt, options.clientMessageId);
 
-  if (options.model) {
-    await stream.setModel(options.model);
+  if (options.modelConfiguration?.model) {
+    await stream.setModel(options.modelConfiguration);
   }
   const attachments = await writeAttachments(options.sessionId, options.attachments);
   try {
@@ -628,7 +642,7 @@ export async function* createSessionEventStream(
       sessionId: options.sessionId,
       prompt: options.prompt!,
       attachments: options.attachments,
-      model: options.model,
+      modelConfiguration: options.modelConfiguration,
       directory: options.directory,
       useWorktree: options.useWorktree,
       clientMessageId: options.clientMessageId,

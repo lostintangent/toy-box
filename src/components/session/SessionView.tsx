@@ -13,7 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowLeft, Bot } from "lucide-react";
 import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
-import type { Attachment, Message, ModelInfo } from "@/types";
+import type { Attachment, Message, ModelInfo, ModelConfiguration } from "@/types";
 import { sessionQueries, skillQueries } from "@/lib/queries";
 import { linkedSessionsAtom } from "@/atoms";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,7 @@ import { getSettings } from "@/lib/settings";
 import { useEditDiffs } from "@/hooks/diffs/useEditDiffs";
 import { EditDiffsProvider } from "@/hooks/diffs/EditDiffsContext";
 import { SessionCwdProvider } from "@/hooks/session/SessionCwdContext";
+import { resolveSessionStateSyncAction } from "@/lib/session/sessionSync";
 
 // Stable default values for non-streaming messages (enables memo to skip re-renders)
 
@@ -123,8 +124,8 @@ export interface SessionViewProps {
   isSessionUnread?: boolean;
   onBack?: () => void;
   models?: ModelInfo[];
-  selectedModel?: string;
-  onModelChange?: (modelId: string) => void;
+  modelConfiguration?: ModelConfiguration | null;
+  onModelConfigurationChange?: (configuration: ModelConfiguration) => void;
   readOnly?: boolean; // Hide input area for preview mode
   draftSessionId?: string | null; // ID of the current draft session (if any)
   onDraftSessionCreated?: (sessionId: string) => void; // Called when draft becomes real session
@@ -136,8 +137,8 @@ export function SessionView({
   isSessionUnread = false,
   onBack,
   models,
-  selectedModel,
-  onModelChange,
+  modelConfiguration,
+  onModelConfigurationChange,
   readOnly = false,
   draftSessionId,
   onDraftSessionCreated,
@@ -287,24 +288,29 @@ export function SessionView({
   // Per-session model override: populated from the session's server state so
   // that switching between sessions restores each one's last-used model
   // without writing to localStorage (which is reserved for explicit user picks).
-  const [sessionModel, setSessionModel] = useState<string | undefined>(undefined);
+  const [sessionModelConfiguration, setSessionModelConfiguration] =
+    useState<ModelConfiguration | null>(null);
 
   // Reset the override when switching to a different session.
   useEffect(() => {
-    setSessionModel(undefined);
+    setSessionModelConfiguration(null);
   }, [sessionId]);
 
-  // The effective model shown in the picker and sent to the server.
-  const effectiveModel = sessionModel ?? selectedModel;
+  // Session state wins over the global picker state. Draft sessions use the
+  // current global configuration until the server reports a session-specific one.
+  const displayedModelConfiguration = useMemo<ModelConfiguration | null>(
+    () => sessionModelConfiguration ?? (isDraft ? (modelConfiguration ?? null) : null),
+    [isDraft, modelConfiguration, sessionModelConfiguration],
+  );
 
   // When the user explicitly picks a model, persist to localStorage AND
   // update the local override so it takes effect immediately.
-  const handleModelChange = useCallback(
-    (modelId: string) => {
-      setSessionModel(modelId);
-      onModelChange?.(modelId);
+  const handleModelConfigurationChange = useCallback(
+    (configuration: ModelConfiguration) => {
+      setSessionModelConfiguration(configuration);
+      onModelConfigurationChange?.(configuration);
     },
-    [onModelChange],
+    [onModelConfigurationChange],
   );
 
   // Session config passed to useSession. The model is always forwarded so that
@@ -313,12 +319,19 @@ export function SessionView({
   // by useSession after the first message.
   const sessionConfig = useMemo<SessionConfig | undefined>(() => {
     return {
-      model: effectiveModel,
+      modelConfiguration: displayedModelConfiguration ?? undefined,
       directory: selectedDirectory,
       useWorktree: isDraft ? useWorktree : undefined,
       onSessionCreated: isDraft ? () => onDraftSessionCreated?.(sessionId) : undefined,
     };
-  }, [isDraft, effectiveModel, selectedDirectory, useWorktree, sessionId, onDraftSessionCreated]);
+  }, [
+    isDraft,
+    displayedModelConfiguration,
+    selectedDirectory,
+    useWorktree,
+    sessionId,
+    onDraftSessionCreated,
+  ]);
 
   const {
     messages,
@@ -396,31 +409,41 @@ export function SessionView({
   // refetches and visibility returns update messages in-place without flashing.
   const isHydratingSession = !isDraft && !hasSynced;
 
-  // Sync messages from server when data arrives (guarded against streaming)
-  // For draft sessions, sync immediately with empty state
+  // Sync local state from the authoritative source for the current lifecycle phase.
+  // Drafts initialize empty exactly once; after the first optimistic send they remain
+  // drafts until the server creates a real session, so rerunning this branch would
+  // erase the optimistic user message or any send-failure error. Active streams keep
+  // live reducer state authoritative and skip snapshots until the stream settles.
+  // Any field added to SessionSnapshot must either be event-conveyed during a
+  // live stream or be correct in the cache before attach.
   useEffect(() => {
-    if (isDraft) {
-      // Draft sessions start with empty state
-      updateState([], []);
-    } else if (sessionData?.messages) {
-      updateState(
-        sessionData.messages,
-        sessionData.queuedMessages ?? [],
-        sessionData.todos,
-        sessionData.linkedSessionIds,
-        sessionData.lastSeenEventId,
-        sessionData.status,
-        sessionData.reasoningContent,
-      );
+    const syncAction = resolveSessionStateSyncAction({
+      isDraft,
+      hasSynced,
+      isStreaming,
+      hasSnapshot: Boolean(sessionData?.messages),
+    });
+
+    if (syncAction === "initialize-draft") {
+      updateState({ messages: [] });
+    } else if (syncAction === "sync-snapshot" && sessionData?.messages) {
+      updateState({
+        messages: sessionData.messages,
+        queuedMessages: sessionData.queuedMessages,
+        todos: sessionData.todos,
+        linkedSessionIds: sessionData.linkedSessionIds,
+        lastSeenEventId: sessionData.lastSeenEventId,
+        status: sessionData.status,
+        reasoningContent: sessionData.reasoningContent,
+        modelConfiguration: sessionData.modelConfiguration,
+      });
 
       // Restore the session's model selection so the picker reflects this
       // session's last-used model. Uses the local override (not onModelChange)
       // so localStorage is not modified — only explicit user picks persist.
-      if (sessionData.model) {
-        setSessionModel(sessionData.model);
-      }
+      setSessionModelConfiguration(sessionData.modelConfiguration ?? null);
     }
-  }, [isDraft, sessionData, updateState]);
+  }, [hasSynced, isDraft, isStreaming, sessionData, updateState]);
 
   // ---------------------------------------------------------------------------
   // Page Visibility: Abort on background, resubscribe on foreground
@@ -602,8 +625,8 @@ export function SessionView({
             isStreaming={isStreaming}
             onStop={cancelStream}
             models={models}
-            selectedModel={effectiveModel}
-            onModelChange={handleModelChange}
+            modelConfiguration={displayedModelConfiguration}
+            onModelConfigurationChange={handleModelConfigurationChange}
             locationPicker={onBack ? undefined : locationPickerProps}
             todos={todos}
             skills={skills}

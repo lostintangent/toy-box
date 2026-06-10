@@ -65,7 +65,7 @@ describe("sessionLauncher", () => {
     const { createManagedSession } = await import("./sessionLauncher");
     const created = await createManagedSession({
       sessionId: "toy-box-launcher-test",
-      model: "gpt-5",
+      modelConfiguration: { model: "gpt-5" },
       directory: "/repo/app",
       summary: "Automation title",
       useWorktree: false,
@@ -81,7 +81,7 @@ describe("sessionLauncher", () => {
     expect(created.stream).toBe(fakeStream);
     expect(createSessionMock).toHaveBeenCalledTimes(1);
     expect(createSessionMock).toHaveBeenCalledWith("toy-box-launcher-test", {
-      model: "gpt-5",
+      modelConfiguration: { model: "gpt-5" },
       directory: "/repo/app",
       useWorktree: false,
       initialContext: {
@@ -101,7 +101,7 @@ describe("sessionLauncher", () => {
     );
     expect(getOrCreateStreamMock).toHaveBeenCalledTimes(1);
     expect(getOrCreateStreamMock).toHaveBeenCalledWith("toy-box-launcher-test", fakeSession, {
-      model: "gpt-5",
+      modelConfiguration: { model: "gpt-5" },
     });
   });
 

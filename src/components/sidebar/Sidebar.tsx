@@ -1,5 +1,11 @@
 import { cn } from "@/lib/utils";
-import type { Automation, AutomationOptions, SessionMetadata, ModelInfo } from "@/types";
+import type {
+  Automation,
+  AutomationOptions,
+  ModelConfiguration,
+  SessionMetadata,
+  ModelInfo,
+} from "@/types";
 import type { SessionDirectoryOption } from "@/components/session/sessionDirectoryOptions";
 import { SidebarHeader } from "./shell/SidebarHeader";
 import { SidebarFooter } from "./shell/SidebarFooter";
@@ -33,7 +39,7 @@ export interface SidebarProps {
   automations: Automation[];
   isAutomationsLoading: boolean;
   models: ModelInfo[];
-  defaultAutomationModelId?: string;
+  defaultAutomationModelConfiguration?: ModelConfiguration;
   isAutomationsExpanded: boolean;
   onAutomationsExpandedChange: (expanded: boolean) => void;
   onCreateAutomation: (input: AutomationOptions) => Promise<void>;
@@ -86,7 +92,7 @@ export function Sidebar({
   automations,
   isAutomationsLoading,
   models,
-  defaultAutomationModelId,
+  defaultAutomationModelConfiguration,
   isAutomationsExpanded,
   onAutomationsExpandedChange,
   onCreateAutomation,
@@ -150,7 +156,7 @@ export function Sidebar({
           automations={automations}
           isLoading={isAutomationsLoading}
           models={models}
-          defaultModelId={defaultAutomationModelId}
+          defaultModelConfiguration={defaultAutomationModelConfiguration}
           directoryOptions={directoryOptions}
           isExpanded={isAutomationsExpanded}
           onExpandedChange={onAutomationsExpandedChange}

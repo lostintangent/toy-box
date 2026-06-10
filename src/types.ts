@@ -3,6 +3,15 @@
 import type { SessionContext } from "@github/copilot-sdk";
 export type { SessionMetadata, SessionContext, ModelInfo } from "@github/copilot-sdk";
 
+/** Open-ended on purpose: the SDK's public union can lag the wire protocol
+ *  and model catalog values such as "none" and "max". */
+export type ReasoningEffort = string;
+
+export type ModelConfiguration = {
+  model: string;
+  reasoningEffort?: ReasoningEffort;
+};
+
 /* Skills (directory-scoped — resolved from .claude/ dirs, plugins, etc.) */
 
 export type SessionSkill = {
@@ -41,7 +50,7 @@ export type SessionSnapshot = {
   id: string;
   messages: Message[];
   queuedMessages: QueuedMessage[];
-  model?: string;
+  modelConfiguration?: ModelConfiguration;
   todos?: TodoItem[];
   linkedSessionIds?: string[];
   lastSeenEventId?: number;
@@ -92,7 +101,7 @@ export function toDataUrl(attachment: Attachment): string | undefined {
 
 export type QueuedMessage = UserMessage & {
   id: string;
-  model?: string;
+  modelConfiguration?: ModelConfiguration;
 };
 
 export type JsonValue =
@@ -144,7 +153,7 @@ export type SessionEvent = (
   | { type: "message_queued"; queuedMessageId: string; content: string; attachments?: Attachment[] }
   | { type: "message_cancelled"; queuedMessageId: string }
   | { type: "message_dequeued"; content: string; queuedMessageId?: string }
-  | { type: "model_changed"; model: string }
+  | { type: "model_changed"; modelConfiguration: ModelConfiguration }
   | { type: "skills"; skills: SessionSkill[] }
   | { type: "linked_session_added"; sessionId: string }
   | { type: "linked_session_removed"; sessionId: string }
@@ -226,7 +235,7 @@ export type TerminalServerMessage = { type: "ready"; resumed: boolean } | { type
 export type AutomationOptions = {
   title: string;
   prompt: string;
-  model: string;
+  modelConfiguration: ModelConfiguration;
   cron: string;
   reuseSession: boolean;
   cwd?: string;

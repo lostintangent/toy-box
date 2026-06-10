@@ -11,13 +11,15 @@ type ChildSessionIdRow = {
 };
 
 export async function getChildSessionIds(): Promise<string[]> {
-  const db = await getAppDatabase();
+  const db = await getAppDatabase({ createIfMissing: false });
+  if (!db) return [];
   const { rows } = await db.sql`SELECT session_id FROM child_sessions ORDER BY session_id`;
   return (rows as ChildSessionIdRow[]).map((row) => row.session_id);
 }
 
 export async function getChildSessionIdsForParent(parentSessionId: string): Promise<string[]> {
-  const db = await getAppDatabase();
+  const db = await getAppDatabase({ createIfMissing: false });
+  if (!db) return [];
   const { rows } = await db.sql`
     SELECT session_id FROM child_sessions
     WHERE parent_session_id = ${parentSessionId}

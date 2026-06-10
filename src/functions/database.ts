@@ -4,7 +4,7 @@
 // all tables on startup. Modules that need persistence (automations,
 // worktrees) import getAppDatabase() and share the same connection.
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createDatabase, type Database } from "db0";
@@ -48,13 +48,15 @@ async function initializeSchema(db: Database, path: string): Promise<void> {
     await db.exec("PRAGMA synchronous = NORMAL;");
   }
 
+  // The app DB schema has not shipped yet, so startup defines the current shape
+  // directly instead of carrying migrations for earlier local prototypes.
   // Automations table
   await db.exec(`
     CREATE TABLE IF NOT EXISTS automations (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       prompt TEXT NOT NULL,
-      model TEXT NOT NULL,
+      model_configuration TEXT NOT NULL,
       cron TEXT NOT NULL,
       cwd TEXT,
       created_at TEXT NOT NULL,
@@ -98,9 +100,26 @@ async function initializeSchema(db: Database, path: string): Promise<void> {
 
 let dbPromise: Promise<Database> | undefined;
 
-export function getAppDatabase(): Promise<Database> {
+type AppDatabaseOptions = {
+  createIfMissing?: boolean;
+};
+
+type AppDatabaseResult<T extends AppDatabaseOptions | undefined> = T extends {
+  createIfMissing: false;
+}
+  ? Database | null
+  : Database;
+
+export function getAppDatabase<T extends AppDatabaseOptions | undefined = undefined>(
+  options?: T,
+): Promise<AppDatabaseResult<T>>;
+export function getAppDatabase(options: AppDatabaseOptions = {}): Promise<Database | null> {
   if (!dbPromise) {
     const path = resolveDefaultPath();
+    if (options.createIfMissing === false && !existsSync(path)) {
+      return Promise.resolve(null);
+    }
+
     dbPromise = (async () => {
       const db = await createRuntimeDatabase(path);
       await initializeSchema(db, path);

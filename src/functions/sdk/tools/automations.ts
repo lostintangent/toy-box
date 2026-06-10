@@ -1,20 +1,56 @@
 import { defineTool } from "@github/copilot-sdk";
 import { z } from "zod";
-import { listServerAutomations, runServerAutomation } from "@/functions/automations";
+import {
+  createServerAutomation,
+  listServerAutomations,
+  runServerAutomation,
+  updateServerAutomation,
+} from "@/functions/automations";
+import { automationFieldsSchema } from "@/lib/automation/schema";
 
 const listAutomations = defineTool("list_automations", {
-  description: "Lists all available automations. " + "Returns each automation's ID and title.",
+  description:
+    "Lists all available automations. " +
+    "Returns full automation records so they can be inspected, edited, or run.",
   parameters: z.object({}),
   skipPermission: true,
   handler: async () => {
     const automations = await listServerAutomations();
 
     return JSON.stringify({
-      automations: automations.map((automation) => ({
-        id: automation.id,
-        title: automation.title,
-      })),
+      automations,
     });
+  },
+});
+
+const createAutomationTool = defineTool("create_automation", {
+  description:
+    "Creates a new automation with a title, prompt, cron schedule, model configuration, and optional working directory. " +
+    "Returns the created automation record.",
+  parameters: automationFieldsSchema,
+  skipPermission: true,
+  handler: async (input) => {
+    const automation = await createServerAutomation({ data: input });
+    return JSON.stringify({ automation });
+  },
+});
+
+const editAutomation = defineTool("edit_automation", {
+  description:
+    "Edits an existing automation by ID. " +
+    "Use list_automations first to inspect the current automation and preserve any unchanged values. " +
+    "Returns the updated automation record.",
+  parameters: automationFieldsSchema.extend({
+    automationId: z.string().trim().min(1).describe("The automation ID to edit"),
+  }),
+  skipPermission: true,
+  handler: async ({ automationId, ...input }) => {
+    const automation = await updateServerAutomation({ data: { automationId, ...input } });
+    if (!automation) {
+      throw new Error("Automation not found");
+    }
+
+    return JSON.stringify({ automation });
   },
 });
 
@@ -29,8 +65,13 @@ const runAutomation = defineTool("run_automation", {
   skipPermission: true,
   handler: async ({ automationId }) => {
     const result = await runServerAutomation({ data: { automationId } });
-    return JSON.stringify({ sessionId: result.sessionId });
+    return JSON.stringify({ sessionId: result.sessionId, started: result.started });
   },
 });
 
-export const automationTools = [listAutomations, runAutomation];
+export const automationTools = [
+  listAutomations,
+  createAutomationTool,
+  editAutomation,
+  runAutomation,
+];

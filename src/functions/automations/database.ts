@@ -1,5 +1,6 @@
 import type { Database } from "db0";
 import { computeNextAutomationRunAt } from "@/lib/automation/cron";
+import { parseSerializedModelConfiguration } from "@/lib/modelConfiguration";
 import type { Automation, AutomationOptions } from "@/types";
 
 const DUE_AUTOMATION_RETRY_DELAY_MS = 60_000;
@@ -8,7 +9,7 @@ type AutomationRow = {
   id: string;
   title: string;
   prompt: string;
-  model: string;
+  model_configuration: string;
   cron: string;
   created_at: string;
   updated_at: string;
@@ -19,12 +20,26 @@ type AutomationRow = {
   cwd: string | null;
 };
 
+function mapInputToDatabaseValues(input: AutomationOptions) {
+  return {
+    ...input,
+    modelConfiguration: JSON.stringify(input.modelConfiguration),
+    reuseSession: input.reuseSession ? 1 : 0,
+    cwd: input.cwd ?? null,
+  };
+}
+
 function mapRowToAutomation(row: AutomationRow): Automation {
+  const modelConfiguration = parseSerializedModelConfiguration(row.model_configuration);
+  if (!modelConfiguration?.model) {
+    throw new Error("Automation model configuration is missing a model");
+  }
+
   return {
     id: row.id,
     title: row.title,
     prompt: row.prompt,
-    model: row.model,
+    modelConfiguration,
     cron: row.cron,
     reuseSession: row.reuse_session === 1,
     cwd: row.cwd ?? undefined,
@@ -36,6 +51,18 @@ function mapRowToAutomation(row: AutomationRow): Automation {
   };
 }
 
+function mapValidAutomationRows(rows: AutomationRow[], source: string): Automation[] {
+  const automations: Automation[] = [];
+  for (const row of rows) {
+    try {
+      automations.push(mapRowToAutomation(row));
+    } catch (error) {
+      console.error(`Skipping invalid automation row ${row.id} during ${source}:`, error);
+    }
+  }
+  return automations;
+}
+
 export class AutomationDatabase {
   #db: Database;
 
@@ -45,7 +72,7 @@ export class AutomationDatabase {
 
   async list(): Promise<Automation[]> {
     const { rows } = await this.#db.sql`SELECT * FROM automations ORDER BY updated_at DESC`;
-    return (rows as AutomationRow[]).map(mapRowToAutomation);
+    return mapValidAutomationRows(rows as AutomationRow[], "list");
   }
 
   async getById(automationId: string): Promise<Automation | null> {
@@ -59,22 +86,16 @@ export class AutomationDatabase {
     const nowIso = now.toISOString();
     const nextRunAt = computeNextAutomationRunAt(input.cron, now).toISOString();
     const id = crypto.randomUUID();
-    const reuseSession = input.reuseSession ? 1 : 0;
-    const cwd = input.cwd ?? null;
+    const values = mapInputToDatabaseValues(input);
 
     await this.#db.sql`
-      INSERT INTO automations (id, title, prompt, model, cron, reuse_session, cwd, created_at, updated_at, next_run_at)
-      VALUES (${id}, ${input.title}, ${input.prompt}, ${input.model}, ${input.cron}, ${reuseSession}, ${cwd}, ${nowIso}, ${nowIso}, ${nextRunAt})
+      INSERT INTO automations (id, title, prompt, model_configuration, cron, reuse_session, cwd, created_at, updated_at, next_run_at)
+      VALUES (${id}, ${values.title}, ${values.prompt}, ${values.modelConfiguration}, ${values.cron}, ${values.reuseSession}, ${values.cwd}, ${nowIso}, ${nowIso}, ${nextRunAt})
     `;
 
     return {
       id,
-      title: input.title,
-      prompt: input.prompt,
-      model: input.model,
-      cron: input.cron,
-      reuseSession: input.reuseSession,
-      cwd: input.cwd,
+      ...input,
       createdAt: nowIso,
       updatedAt: nowIso,
       nextRunAt,
@@ -85,13 +106,13 @@ export class AutomationDatabase {
     const now = new Date();
     const nowIso = now.toISOString();
     const nextRunAt = computeNextAutomationRunAt(input.cron, now).toISOString();
-    const reuseSession = input.reuseSession ? 1 : 0;
-    const cwd = input.cwd ?? null;
+    const values = mapInputToDatabaseValues(input);
 
     const result = await this.#db.sql`
       UPDATE automations
-      SET title = ${input.title}, prompt = ${input.prompt}, cron = ${input.cron}, model = ${input.model},
-          reuse_session = ${reuseSession}, cwd = ${cwd}, updated_at = ${nowIso}, next_run_at = ${nextRunAt}
+      SET title = ${values.title}, prompt = ${values.prompt}, cron = ${values.cron},
+          model_configuration = ${values.modelConfiguration},
+          reuse_session = ${values.reuseSession}, cwd = ${values.cwd}, updated_at = ${nowIso}, next_run_at = ${nextRunAt}
       WHERE id = ${automationId}
     `;
     if ((result.changes ?? 0) === 0) return null;
@@ -142,7 +163,7 @@ export class AutomationDatabase {
       }
 
       await this.#db.exec("COMMIT");
-      return dueRows.map(mapRowToAutomation);
+      return mapValidAutomationRows(dueRows, "claim");
     } catch (error) {
       try {
         await this.#db.exec("ROLLBACK");

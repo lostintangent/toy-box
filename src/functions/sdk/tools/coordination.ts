@@ -1,6 +1,7 @@
 import { defineTool } from "@github/copilot-sdk";
 import { z } from "zod";
 import { SessionStream } from "@/functions/runtime/stream";
+import { modelConfigurationSchema } from "@/lib/modelConfiguration";
 
 const checkSessionStatus = defineTool("check_session_status", {
   description:
@@ -54,16 +55,18 @@ const sendToSession = defineTool("send_to_session", {
   parameters: z.object({
     sessionId: z.string().describe("The ID of the session to send the prompt to"),
     prompt: z.string().describe("The prompt to deliver to the target session"),
-    model: z.string().optional().describe("Optional model override for this prompt"),
+    modelConfiguration: modelConfigurationSchema
+      .optional()
+      .describe("Optional model configuration override for this prompt"),
   }),
   skipPermission: true,
-  handler: async ({ sessionId, prompt, model }) => {
+  handler: async ({ sessionId, prompt, modelConfiguration }) => {
     const { sendOrQueueSessionMessage } = await import("@/functions/runtime/stream");
 
     await sendOrQueueSessionMessage({
       sessionId,
       prompt,
-      model,
+      modelConfiguration,
     });
 
     return JSON.stringify({ accepted: true });
