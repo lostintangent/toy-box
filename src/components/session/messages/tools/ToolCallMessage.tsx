@@ -2,8 +2,8 @@ import type { ComponentType } from "react";
 import type { ToolCall } from "@/types";
 import { AgentToolCall } from "./AgentToolCall";
 import { BashToolCall } from "./BashToolCall";
+import { FileDiffToolCall } from "./FileDiffToolCall";
 import { DefaultToolCall } from "./DefaultToolCall";
-import { EditToolCall } from "./EditToolCall";
 import { GlobToolCall } from "./GlobToolCall";
 import { ReadToolCall } from "./ReadToolCall";
 import { SqlToolCall } from "./SqlToolCall";
@@ -20,13 +20,14 @@ const TOOL_RENDERERS: Record<string, ComponentType<ToolCallProps>> = {
   read: ReadToolCall,
   glob: GlobToolCall,
   grep: GlobToolCall,
-  edit: EditToolCall,
+  edit: FileDiffToolCall,
+  patch: FileDiffToolCall,
   fetch: WebFetchToolCall,
   sql: SqlToolCall,
   agent: AgentToolCall,
 };
 
 export function ToolCallMessage({ toolCall, isActive }: ToolCallMessageProps) {
-  const Renderer = TOOL_RENDERERS[toolCall.toolName] ?? DefaultToolCall;
+  const Renderer = TOOL_RENDERERS[toolCall.name] ?? DefaultToolCall;
   return <Renderer toolCall={toolCall} isActive={isActive} />;
 }

@@ -1,91 +1,65 @@
 import { useMemo, useRef } from "react";
 import type { Message, ToolCall } from "@/types";
+import {
+  computeDiffStats,
+  computeFileDiffStats,
+  getToolCallFileDiffs,
+  type DiffStats,
+} from "@/lib/diffs/fileDiffs";
 import { toRelativePath } from "@/lib/utils";
 
-export interface LineDiff {
-  added: number;
-  removed: number;
-}
+export { computeDiffStats };
+export type { DiffStats };
 
-export interface FileDiff {
+export interface FileDiffSummary {
   path: string;
   displayPath: string;
-  diff: LineDiff;
+  diff: DiffStats;
 }
 
 export interface SessionDiffs {
-  total: LineDiff;
-  byFile: FileDiff[];
-  byToolCallId: Map<string, LineDiff>;
+  total: DiffStats;
+  byFile: FileDiffSummary[];
+  byToolCallId: Map<string, DiffStats>;
 }
 
-/** Compute actual added/removed line counts by finding common prefix/suffix */
-export function computeLineDiff(oldStr: string, newStr: string): LineDiff {
-  if (!oldStr && !newStr) return { added: 0, removed: 0 };
-  if (!oldStr) return { added: newStr.split("\n").length, removed: 0 };
-  if (!newStr) return { added: 0, removed: oldStr.split("\n").length };
+type CachedToolDiff = {
+  cwd?: string;
+} & ReturnType<typeof computeFileDiffStats>;
 
-  const oldLines = oldStr.split("\n");
-  const newLines = newStr.split("\n");
+function isFileDiffToolCall(toolCall: ToolCall): boolean {
+  return toolCall.name === "edit" || toolCall.name === "patch";
+}
 
-  // Find common prefix length
-  let prefixLen = 0;
-  while (
-    prefixLen < oldLines.length &&
-    prefixLen < newLines.length &&
-    oldLines[prefixLen] === newLines[prefixLen]
-  ) {
-    prefixLen++;
+function computeToolDiff(
+  toolCall: ToolCall,
+  cache: Map<string, CachedToolDiff>,
+  cwd?: string,
+): CachedToolDiff | undefined {
+  if (!isFileDiffToolCall(toolCall) || toolCall.result?.success !== true) {
+    cache.delete(toolCall.id);
+    return undefined;
   }
 
-  // Find common suffix length (but don't overlap with prefix)
-  let suffixLen = 0;
-  while (
-    suffixLen < oldLines.length - prefixLen &&
-    suffixLen < newLines.length - prefixLen &&
-    oldLines[oldLines.length - 1 - suffixLen] === newLines[newLines.length - 1 - suffixLen]
-  ) {
-    suffixLen++;
-  }
+  const cached = cache.get(toolCall.id);
+  if (cached && cached.cwd === cwd) return cached;
 
-  // The changed region is what's left after removing common prefix and suffix
-  const removedCount = oldLines.length - prefixLen - suffixLen;
-  const addedCount = newLines.length - prefixLen - suffixLen;
+  const fileDiffs = getToolCallFileDiffs(toolCall, cwd);
+  if (!fileDiffs) return undefined;
 
-  return { added: Math.max(0, addedCount), removed: Math.max(0, removedCount) };
+  const diff = computeFileDiffStats(fileDiffs);
+  const next = { cwd, total: diff.total, byFile: diff.byFile };
+  cache.set(toolCall.id, next);
+  return next;
 }
 
-/** Check if a tool call is a completed edit operation */
-function isCompletedEditToolCall(toolCall: ToolCall): boolean {
-  const isEdit = toolCall.toolName === "edit" || toolCall.toolName === "replace_string_in_file";
-  // Only include completed tool calls (have a result) to avoid computing diffs on partial streaming data
-  return isEdit && toolCall.result !== undefined;
-}
-
-/** Extract path from edit tool call arguments */
-function getEditPath(toolCall: ToolCall): string {
-  return (
-    (toolCall.arguments.path as string) || (toolCall.arguments.filePath as string) || "Unknown file"
-  );
-}
-
-/** Extract old/new strings from edit tool call arguments */
-function getEditStrings(toolCall: ToolCall): { oldStr: string; newStr: string } {
-  const oldStr =
-    (toolCall.arguments.old_str as string) || (toolCall.arguments.oldString as string) || "";
-  const newStr =
-    (toolCall.arguments.new_str as string) || (toolCall.arguments.newString as string) || "";
-  return { oldStr, newStr };
-}
-
-/** Compute all edit diffs for a session (incremental - only computes new diffs) */
-function computeSessionDiffs(
+export function computeSessionDiffs(
   messages: Message[],
-  cache: Map<string, { path: string; diff: LineDiff }>,
+  cache: Map<string, CachedToolDiff>,
   cwd?: string,
 ): SessionDiffs {
-  const byToolCallId = new Map<string, LineDiff>();
-  const fileAccumulator = new Map<string, { path: string; displayPath: string; diff: LineDiff }>();
+  const byToolCallId = new Map<string, DiffStats>();
+  const fileAccumulator = new Map<string, { path: string; displayPath: string; diff: DiffStats }>();
 
   let totalAdded = 0;
   let totalRemoved = 0;
@@ -94,44 +68,27 @@ function computeSessionDiffs(
     if (message.role !== "assistant" || !message.toolCalls) continue;
 
     for (const toolCall of message.toolCalls) {
-      if (!isCompletedEditToolCall(toolCall)) continue;
+      const toolDiff = computeToolDiff(toolCall, cache, cwd);
+      if (!toolDiff) continue;
 
-      const toolCallId = toolCall.toolCallId;
-      let path: string;
-      let diff: LineDiff;
+      byToolCallId.set(toolCall.id, toolDiff.total);
 
-      // Check cache first to avoid recomputing
-      const cached = cache.get(toolCallId);
-      if (cached) {
-        path = cached.path;
-        diff = cached.diff;
-      } else {
-        // Compute and cache
-        path = getEditPath(toolCall);
-        const { oldStr, newStr } = getEditStrings(toolCall);
-        diff = computeLineDiff(oldStr, newStr);
-        cache.set(toolCallId, { path, diff });
+      for (const file of toolDiff.byFile) {
+        const existing = fileAccumulator.get(file.path);
+        if (existing) {
+          existing.diff.added += file.diff.added;
+          existing.diff.removed += file.diff.removed;
+        } else {
+          fileAccumulator.set(file.path, {
+            path: file.path,
+            displayPath: toRelativePath(file.path, cwd),
+            diff: { added: file.diff.added, removed: file.diff.removed },
+          });
+        }
       }
 
-      // Store by tool call ID
-      byToolCallId.set(toolCallId, diff);
-
-      // Accumulate by file
-      const existing = fileAccumulator.get(path);
-      if (existing) {
-        existing.diff.added += diff.added;
-        existing.diff.removed += diff.removed;
-      } else {
-        fileAccumulator.set(path, {
-          path,
-          displayPath: toRelativePath(path, cwd),
-          diff: { added: diff.added, removed: diff.removed },
-        });
-      }
-
-      // Accumulate total
-      totalAdded += diff.added;
-      totalRemoved += diff.removed;
+      totalAdded += toolDiff.total.added;
+      totalRemoved += toolDiff.total.removed;
     }
   }
 
@@ -143,16 +100,13 @@ function computeSessionDiffs(
 }
 
 /**
- * Hook to compute edit diffs at session, file, and tool-call levels.
+ * Hook to compute diff stats at session, file, and tool-call levels.
  *
- * Optimized for performance:
- * - Caches individual tool call diffs to avoid recomputation
- * - Only computes diffs for newly completed edit tool calls
- * - Safe for use in multi-session grid views
+ * Tool-specific adapters convert edit/patch calls into file diffs before stats
+ * are computed.
  */
 export function useEditDiffs(messages: Message[], cwd?: string): SessionDiffs {
-  // Persistent cache of computed diffs by tool call ID
-  const cacheRef = useRef(new Map<string, { path: string; diff: LineDiff }>());
+  const cacheRef = useRef(new Map<string, CachedToolDiff>());
 
   return useMemo(() => computeSessionDiffs(messages, cacheRef.current, cwd), [messages, cwd]);
 }

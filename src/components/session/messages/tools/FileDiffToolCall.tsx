@@ -1,19 +1,16 @@
-import React, { useMemo, useEffect, useState, memo } from "react";
+import React, { memo, useEffect, useMemo, useState } from "react";
 import { Pencil } from "lucide-react";
 import type { ThemedToken } from "shiki/core";
 import type { ToolCallProps } from "./types";
 import { useToolCallDiff } from "@/hooks/diffs/EditDiffsContext";
-import { toRelativePath } from "@/lib/utils";
 import { useSessionCwd } from "@/hooks/session/SessionCwdContext";
+import { getToolCallFileDiffs, type DiffHunk, type FileDiff } from "@/lib/diffs/fileDiffs";
+import { toRelativePath } from "@/lib/utils";
 import { ToolCallCard } from "./ToolCallCard";
-
-// ============================================================================
-// Types
-// ============================================================================
+import { TextBlock } from "./TextBlock";
 
 type Segment = { text: string; type: "same" | "added" | "removed" };
 
-/** Discriminated union for diff lines - TypeScript knows segments exist when type is "modified" */
 type DiffLine =
   | { type: "context"; content: string; tokens?: ThemedToken[] }
   | { type: "added"; content: string; tokens?: ThemedToken[] }
@@ -33,10 +30,6 @@ interface DiffResult {
   minIndent: number;
 }
 
-// ============================================================================
-// Style Constants
-// ============================================================================
-
 const DIFF_COLORS = {
   added: {
     bg: "bg-diff-added-bg",
@@ -54,19 +47,16 @@ const DIFF_COLORS = {
   },
 } as const;
 
-// ============================================================================
-// Diff Computation
-// ============================================================================
+const STATUS_LABELS = {
+  added: "Added",
+  modified: "Modified",
+  deleted: "Deleted",
+} as const;
 
-/**
- * Compute character-level diff between two strings.
- * Returns segments for rendering inline highlights.
- */
 function computeCharDiff(
   oldLine: string,
   newLine: string,
 ): { oldSegments: Segment[]; newSegments: Segment[] } {
-  // Find common prefix
   let prefixLen = 0;
   while (
     prefixLen < oldLine.length &&
@@ -76,7 +66,6 @@ function computeCharDiff(
     prefixLen++;
   }
 
-  // Find common suffix (don't overlap with prefix)
   let suffixLen = 0;
   while (
     suffixLen < oldLine.length - prefixLen &&
@@ -86,13 +75,11 @@ function computeCharDiff(
     suffixLen++;
   }
 
-  // Extract the three parts - prefix and suffix are shared, middle differs
   const prefix = oldLine.slice(0, prefixLen);
   const oldMiddle = oldLine.slice(prefixLen, oldLine.length - suffixLen);
   const newMiddle = newLine.slice(prefixLen, newLine.length - suffixLen);
   const suffix = oldLine.slice(oldLine.length - suffixLen);
 
-  // Build segments, only including non-empty parts
   const oldSegments: Segment[] = [];
   const newSegments: Segment[] = [];
 
@@ -110,15 +97,10 @@ function computeCharDiff(
   return { oldSegments, newSegments };
 }
 
-/**
- * Compute the minimum leading whitespace across all non-empty lines.
- * Iterates without creating intermediate arrays for performance.
- */
 function computeMinIndent(diffLines: DiffLine[]): number {
   let minIndent = Infinity;
 
   for (const line of diffLines) {
-    // Check main content
     if (line.content.trim()) {
       const match = line.content.match(/^[ \t]*/);
       const indent = match ? match[0].length : 0;
@@ -126,7 +108,6 @@ function computeMinIndent(diffLines: DiffLine[]): number {
       minIndent = Math.min(minIndent, indent);
     }
 
-    // Check newContent for modified lines
     if (line.type === "modified" && line.newContent.trim()) {
       const match = line.newContent.match(/^[ \t]*/);
       const indent = match ? match[0].length : 0;
@@ -138,10 +119,6 @@ function computeMinIndent(diffLines: DiffLine[]): number {
   return minIndent === Infinity ? 0 : minIndent;
 }
 
-/**
- * Strip a fixed number of leading characters from diff lines.
- * For modified lines, recomputes character-level diff after stripping.
- */
 function stripCommonIndent(diffLines: DiffLine[], indent: number): DiffLine[] {
   if (indent === 0) return diffLines;
 
@@ -164,18 +141,12 @@ function stripCommonIndent(diffLines: DiffLine[], indent: number): DiffLine[] {
   });
 }
 
-/**
- * Compute an intuitive diff by finding common prefix/suffix lines.
- * When the number of changed lines match, uses inline character-level diffs.
- * Strips common leading whitespace for cleaner display.
- */
-function computeIntuitiveDiff(oldStr: string, newStr: string): DiffResult {
-  if (!oldStr && !newStr) return { lines: [], minIndent: 0 };
+function computeIntuitiveDiff(oldText: string, newText: string): DiffResult {
+  if (!oldText && !newText) return { lines: [], minIndent: 0 };
 
-  const oldLines = oldStr.split("\n");
-  const newLines = newStr.split("\n");
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
 
-  // Find common prefix length
   let prefixLen = 0;
   while (
     prefixLen < oldLines.length &&
@@ -185,7 +156,6 @@ function computeIntuitiveDiff(oldStr: string, newStr: string): DiffResult {
     prefixLen++;
   }
 
-  // Find common suffix length (but don't overlap with prefix)
   let suffixLen = 0;
   while (
     suffixLen < oldLines.length - prefixLen &&
@@ -197,27 +167,22 @@ function computeIntuitiveDiff(oldStr: string, newStr: string): DiffResult {
 
   const result: DiffLine[] = [];
 
-  // Add context lines from prefix
   for (let i = 0; i < prefixLen; i++) {
     result.push({ type: "context", content: oldLines[i] });
   }
 
-  // Get middle sections
   const oldMiddleStart = prefixLen;
   const oldMiddleEnd = oldLines.length - suffixLen;
   const newMiddleStart = prefixLen;
   const newMiddleEnd = newLines.length - suffixLen;
-
   const oldMiddleCount = oldMiddleEnd - oldMiddleStart;
   const newMiddleCount = newMiddleEnd - newMiddleStart;
 
-  // If same number of changed lines, use inline character diffs
   if (oldMiddleCount === newMiddleCount && oldMiddleCount > 0) {
     for (let i = 0; i < oldMiddleCount; i++) {
       const oldLine = oldLines[oldMiddleStart + i];
       const newLine = newLines[newMiddleStart + i];
 
-      // If lines are identical (shouldn't happen but be safe), show as context
       if (oldLine === newLine) {
         result.push({ type: "context", content: oldLine });
       } else {
@@ -227,12 +192,11 @@ function computeIntuitiveDiff(oldStr: string, newStr: string): DiffResult {
           content: oldLine,
           segments: oldSegments,
           newContent: newLine,
-          newSegments: newSegments,
+          newSegments,
         });
       }
     }
   } else {
-    // Different line counts: fall back to line-by-line
     for (let i = oldMiddleStart; i < oldMiddleEnd; i++) {
       result.push({ type: "removed", content: oldLines[i] });
     }
@@ -241,21 +205,24 @@ function computeIntuitiveDiff(oldStr: string, newStr: string): DiffResult {
     }
   }
 
-  // Add context lines from suffix
   for (let i = oldLines.length - suffixLen; i < oldLines.length; i++) {
     result.push({ type: "context", content: oldLines[i] });
   }
 
-  // Strip common leading whitespace for cleaner display
   const minIndent = computeMinIndent(result);
   return { lines: stripCommonIndent(result, minIndent), minIndent };
 }
 
-// ============================================================================
-// Rendering Helpers
-// ============================================================================
+function diffLinesFromChangeLines(changeLines: NonNullable<DiffHunk["lines"]>): DiffResult {
+  const diffLines: DiffLine[] = changeLines.map((line) => ({
+    type: line.type,
+    content: line.text,
+  }));
 
-/** Get the appropriate CSS classes for a segment type */
+  const minIndent = computeMinIndent(diffLines);
+  return { lines: stripCommonIndent(diffLines, minIndent), minIndent };
+}
+
 function getSegmentClasses(type: Segment["type"], hasTokenColor: boolean): string {
   if (type === "same") {
     return hasTokenColor ? "" : "text-muted-foreground";
@@ -265,13 +232,11 @@ function getSegmentClasses(type: Segment["type"], hasTokenColor: boolean): strin
       ? DIFF_COLORS.removed.bgStrong
       : `${DIFF_COLORS.removed.bgStrong} ${DIFF_COLORS.removed.text}`;
   }
-  // added
   return hasTokenColor
     ? DIFF_COLORS.added.bgStrong
     : `${DIFF_COLORS.added.bgStrong} ${DIFF_COLORS.added.text}`;
 }
 
-/** Render tokens with syntax highlighting, or plain text fallback */
 function renderTokens(tokens: ThemedToken[] | undefined, fallback: string) {
   if (!tokens) return fallback || "\u00A0";
   if (tokens.length === 0) return "\u00A0";
@@ -284,12 +249,7 @@ function renderTokens(tokens: ThemedToken[] | undefined, fallback: string) {
   ));
 }
 
-/**
- * Render segments with syntax-aware highlighting.
- * Merges syntax tokens with diff segments for proper coloring.
- */
 function renderSegmentsWithTokens(segments: Segment[], tokens: ThemedToken[] | undefined) {
-  // No syntax tokens - use simple segment rendering
   if (!tokens || tokens.length === 0) {
     return segments.map((seg, i) => (
       // eslint-disable-next-line react/no-array-index-key -- segments have no stable ID
@@ -299,7 +259,6 @@ function renderSegmentsWithTokens(segments: Segment[], tokens: ThemedToken[] | u
     ));
   }
 
-  // Merge syntax tokens with diff segments
   const result: React.ReactNode[] = [];
   let tokenIdx = 0;
   let tokenOffset = 0;
@@ -336,7 +295,6 @@ function renderSegmentsWithTokens(segments: Segment[], tokens: ThemedToken[] | u
       }
     }
 
-    // Fallback if tokens don't cover all text
     if (linePos < segEnd) {
       result.push(
         <span key={`${segIdx}-fallback`} className={getSegmentClasses(seg.type, false)}>
@@ -350,10 +308,6 @@ function renderSegmentsWithTokens(segments: Segment[], tokens: ThemedToken[] | u
   return result;
 }
 
-/**
- * Strip leading whitespace from tokens.
- * Removes `indent` characters from the beginning of the token sequence.
- */
 function stripTokensIndent(
   tokens: ThemedToken[] | undefined,
   indent: number,
@@ -377,11 +331,6 @@ function stripTokensIndent(
   return result;
 }
 
-// ============================================================================
-// Components
-// ============================================================================
-
-/** Render a single diff line based on its type */
 function DiffLineRenderer({ line }: { line: DiffLine }) {
   if (line.type === "modified") {
     const hasOldContent = line.segments.some((s) => s.text.length > 0);
@@ -411,11 +360,9 @@ function DiffLineRenderer({ line }: { line: DiffLine }) {
     return <div className={DIFF_COLORS.removed.bg}>{renderTokens(line.tokens, content)}</div>;
   }
 
-  // context
   return <div>{renderTokens(line.tokens, content)}</div>;
 }
 
-/** Memoized diff view - prevents re-renders when parent updates but diffLines unchanged */
 const DiffView = memo(function DiffView({ diffLines }: { diffLines: DiffLine[] }) {
   return (
     <pre className="text-xs p-2 rounded overflow-x-auto max-h-64 font-mono bg-muted/50">
@@ -431,15 +378,10 @@ const DiffView = memo(function DiffView({ diffLines }: { diffLines: DiffLine[] }
   );
 });
 
-// ============================================================================
-// Hooks
-// ============================================================================
-
-/** Apply syntax highlighting to diff lines asynchronously */
 function useSyntaxHighlightedDiff(
   diffLines: DiffLine[],
-  oldStr: string,
-  newStr: string,
+  oldText: string,
+  newText: string,
   path: string,
   minIndent: number,
 ): DiffLine[] {
@@ -449,12 +391,12 @@ function useSyntaxHighlightedDiff(
     let cancelled = false;
 
     async function highlight() {
-      const { highlightCode, getLangFromPath } = await import("@/lib/highlight");
+      const { highlightCode, getLangFromPath } = await import("@/lib/diffs/highlight");
       const lang = getLangFromPath(path);
 
       const [oldHighlighted, newHighlighted] = await Promise.all([
-        highlightCode(oldStr, lang),
-        highlightCode(newStr, lang),
+        highlightCode(oldText, lang),
+        highlightCode(newText, lang),
       ]);
 
       if (cancelled) return;
@@ -494,37 +436,130 @@ function useSyntaxHighlightedDiff(
     return () => {
       cancelled = true;
     };
-  }, [diffLines, oldStr, newStr, path, minIndent]);
+  }, [diffLines, oldText, newText, path, minIndent]);
 
   return highlightedLines ?? diffLines;
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
-export function EditToolCall({ toolCall, ...props }: ToolCallProps) {
-  const cwd = useSessionCwd();
-  // Extract arguments
-  const path =
-    (toolCall.arguments.path as string) ||
-    (toolCall.arguments.filePath as string) ||
-    "Unknown file";
-  const oldStr =
-    (toolCall.arguments.old_str as string) || (toolCall.arguments.oldString as string) || "";
-  const newStr =
-    (toolCall.arguments.new_str as string) || (toolCall.arguments.newString as string) || "";
-
-  const lineDiff = useToolCallDiff(toolCall.toolCallId);
-
-  // Compute diff (memoized)
+function DiffHunkView({ hunk, path }: { hunk: DiffHunk; path: string }) {
   const { lines: diffLines, minIndent } = useMemo(
-    () => computeIntuitiveDiff(oldStr, newStr),
-    [oldStr, newStr],
+    () =>
+      hunk.lines
+        ? diffLinesFromChangeLines(hunk.lines)
+        : computeIntuitiveDiff(hunk.oldText, hunk.newText),
+    [hunk.lines, hunk.oldText, hunk.newText],
+  );
+  const displayDiffLines = useSyntaxHighlightedDiff(
+    diffLines,
+    hunk.oldText,
+    hunk.newText,
+    path,
+    minIndent,
   );
 
-  // Apply syntax highlighting asynchronously
-  const displayDiffLines = useSyntaxHighlightedDiff(diffLines, oldStr, newStr, path, minIndent);
+  return <DiffView diffLines={displayDiffLines} />;
+}
+
+function FileDiffHeader({ file, cwd }: { file: FileDiff; cwd?: string }) {
+  const statusClass =
+    file.status === "added"
+      ? "text-diff-added"
+      : file.status === "deleted"
+        ? "text-diff-removed"
+        : "text-muted-foreground";
+
+  return (
+    <div className="flex items-center gap-2 px-2 py-1.5 text-xs border-b border-border/50 bg-muted/30">
+      <span className="truncate flex-1 font-mono text-muted-foreground">
+        {toRelativePath(file.path, cwd)}
+      </span>
+      <span className={statusClass}>{STATUS_LABELS[file.status]}</span>
+    </div>
+  );
+}
+
+function FileDiffView({
+  file,
+  cwd,
+  showHeader,
+}: {
+  file: FileDiff;
+  cwd?: string;
+  showHeader: boolean;
+}) {
+  if (file.hunks.length === 0) {
+    return (
+      <div>
+        {showHeader && <FileDiffHeader file={file} cwd={cwd} />}
+        <div className="p-2 text-xs text-muted-foreground">
+          {STATUS_LABELS[file.status]} {toRelativePath(file.path, cwd)}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {showHeader && <FileDiffHeader file={file} cwd={cwd} />}
+      <div className={showHeader ? "p-2 space-y-2" : "space-y-2"}>
+        {file.hunks.map((hunk, index) => (
+          // eslint-disable-next-line react/no-array-index-key -- hunks are displayed in source order
+          <DiffHunkView key={index} hunk={hunk} path={file.path} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FileDiffsView({ fileDiffs, cwd }: { fileDiffs: FileDiff[]; cwd?: string }) {
+  const showFileHeaders = fileDiffs.length > 1 || fileDiffs.some((file) => file.hunks.length === 0);
+
+  return (
+    <div className={showFileHeaders ? "divide-y divide-border/50" : undefined}>
+      {fileDiffs.map((file) => (
+        <FileDiffView
+          key={getFileDiffKey(file)}
+          file={file}
+          cwd={cwd}
+          showHeader={showFileHeaders}
+        />
+      ))}
+    </div>
+  );
+}
+
+function getFileDiffKey(file: FileDiff): string {
+  const hunkKey = file.hunks.map((hunk) => `${hunk.oldText}->${hunk.newText}`).join("|");
+  return `${file.path}:${file.status}:${hunkKey}`;
+}
+
+function getFileDiffToolCallLabel(
+  toolName: string,
+  fileDiffs: FileDiff[] | undefined,
+  cwd?: string,
+): string {
+  const isPatch = toolName === "patch";
+  if (!fileDiffs?.length) {
+    return isPatch ? "Patch" : "Edit";
+  }
+
+  if (fileDiffs.length === 1) {
+    return toRelativePath(fileDiffs[0].path, cwd);
+  }
+
+  return isPatch ? `Patch - ${fileDiffs.length} files` : `${fileDiffs.length} files`;
+}
+
+export function FileDiffToolCall({ toolCall, ...props }: ToolCallProps) {
+  const cwd = useSessionCwd();
+  const fileDiffs = useMemo(() => getToolCallFileDiffs(toolCall, cwd), [toolCall, cwd]);
+  const lineDiff = useToolCallDiff(toolCall.id);
+  const patch = typeof toolCall.arguments.patch === "string" ? toolCall.arguments.patch : undefined;
+  const fallbackContent =
+    toolCall.result === undefined
+      ? patch
+      : (toolCall.result.details ?? toolCall.result.content ?? patch);
+  const fallbackTitle = toolCall.result === undefined && patch ? "Patch" : "Result";
 
   const headerExtra = lineDiff && (
     <span className="text-xs shrink-0">
@@ -538,12 +573,16 @@ export function EditToolCall({ toolCall, ...props }: ToolCallProps) {
       {...props}
       toolCall={toolCall}
       icon={Pencil}
-      label={toRelativePath(path, cwd)}
+      label={getFileDiffToolCallLabel(toolCall.name, fileDiffs, cwd)}
       defaultExpanded={true}
       headerExtra={headerExtra}
-      bodyClassName="p-0"
+      bodyClassName={fileDiffs?.length ? "p-0" : undefined}
     >
-      {(oldStr || newStr) && <DiffView diffLines={displayDiffLines} />}
+      {fileDiffs?.length ? (
+        <FileDiffsView fileDiffs={fileDiffs} cwd={cwd} />
+      ) : (
+        <TextBlock title={fallbackTitle}>{fallbackContent}</TextBlock>
+      )}
     </ToolCallCard>
   );
 }

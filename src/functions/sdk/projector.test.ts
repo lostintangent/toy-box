@@ -1,49 +1,37 @@
 import { describe, expect, test } from "bun:test";
-import {
-  createProjectionState,
-  projectSdkEvent,
-  projectSessionEventsFromSdkHistory,
-} from "@/functions/sdk/projector";
+import { createProjectionState, projectSdkEvent } from "@/functions/sdk/projector";
 import type { SdkSessionEvent } from "@/functions/sdk/extractors";
-import type { Attachment, JsonValue, SessionEvent } from "@/types";
+import type { JsonValue, SessionEvent } from "@/types";
 
 function createStreamingContext() {
-  return { streaming: true as const, state: createProjectionState() };
+  return createProjectionState();
 }
 
-function userMessage(
-  content: string,
-  options: {
-    timestamp?: string;
-    attachments?: Array<{ displayName: string; path?: string }>;
-  } = {},
-): SdkSessionEvent {
-  return {
-    type: "user.message",
-    ...(options.timestamp ? { timestamp: options.timestamp } : {}),
-    data: {
-      content,
-      ...(options.attachments ? { attachments: options.attachments } : {}),
-    },
-  };
-}
+// Every tool name from the projector's static omitted-tool policy.
+const OMITTED_TOOL_NAMES = [
+  "read_agent",
+  "check_session_status",
+  "wait_for_sessions",
+  "send_to_session",
+  "list_automations",
+  "create_automation",
+  "edit_automation",
+  "run_automation",
+];
 
-function assistantMessage(
-  content: string,
-  toolRequests?: Array<{
-    toolCallId?: string;
-    name: string;
-    arguments?: { [key: string]: JsonValue };
-  }>,
-): SdkSessionEvent {
-  return {
-    type: "assistant.message",
-    data: {
-      content,
-      ...(toolRequests ? { toolRequests } : {}),
-    },
-  };
-}
+// Shared apply_patch fixtures (the SDK sends the patch as a bare string).
+const PATCH_TEXT = `*** Begin Patch
+*** Update File: /Users/lostintangent/Desktop/toy-box/docs/notes.md
+@@
+-old
++new
+*** End Patch`;
+const PATCH_DIFF = `diff --git a/Users/lostintangent/Desktop/toy-box/docs/notes.md b/Users/lostintangent/Desktop/toy-box/docs/notes.md
+--- a/Users/lostintangent/Desktop/toy-box/docs/notes.md
++++ b/Users/lostintangent/Desktop/toy-box/docs/notes.md
+@@ -1 +1 @@
+-old
++new`;
 
 function modelChange(newModel: string, reasoningEffort?: string): SdkSessionEvent {
   return {
@@ -62,11 +50,13 @@ function titleChanged(title: string): SdkSessionEvent {
 function toolExecutionStart(
   toolName: string,
   toolCallId: string,
-  argumentsRecord: { [key: string]: JsonValue } = {},
+  argumentsRecord: { [key: string]: JsonValue } | string = {},
   extraData: Record<string, unknown> = {},
+  options: { agentId?: string } = {},
 ): SdkSessionEvent {
   return {
     type: "tool.execution_start",
+    ...(options.agentId ? { agentId: options.agentId } : {}),
     data: {
       toolName,
       toolCallId,
@@ -91,61 +81,33 @@ function toolExecutionComplete(
   options: {
     success: boolean;
     resultContent?: string;
+    detailedContent?: string;
     errorMessage?: string;
-    parentToolCallId?: string;
+    agentId?: string;
   },
 ): SdkSessionEvent {
   return {
     type: "tool.execution_complete",
+    ...(options.agentId ? { agentId: options.agentId } : {}),
     data: {
       toolCallId,
-      parentToolCallId: options.parentToolCallId,
       success: options.success,
-      ...(options.resultContent !== undefined
-        ? { result: { content: options.resultContent } }
+      ...(options.resultContent !== undefined || options.detailedContent !== undefined
+        ? {
+            result: {
+              ...(options.resultContent !== undefined ? { content: options.resultContent } : {}),
+              ...(options.detailedContent !== undefined
+                ? { detailedContent: options.detailedContent }
+                : {}),
+            },
+          }
         : {}),
       ...(options.errorMessage !== undefined ? { error: { message: options.errorMessage } } : {}),
     },
   };
 }
 
-function successfulHiddenToolHistory(
-  toolName: string,
-  toolCallId: string,
-  argumentsRecord: { [key: string]: JsonValue },
-  resultContent: string,
-): SdkSessionEvent[] {
-  return [
-    toolExecutionStart(toolName, toolCallId, argumentsRecord),
-    toolExecutionComplete(toolCallId, {
-      success: true,
-      resultContent,
-    }),
-  ];
-}
-
-async function projectHistory(
-  events: SdkSessionEvent[],
-  attachments?: Attachment[],
-): Promise<SessionEvent[]> {
-  const projected: SessionEvent[] = [];
-  for await (const event of projectSessionEventsFromSdkHistory(events, {
-    resolveAttachments: attachments ? async () => attachments : undefined,
-  })) {
-    projected.push(event);
-  }
-  return projected;
-}
-
-function expectStartOnlyProjection(
-  context: ReturnType<typeof createStreamingContext>,
-  event: SdkSessionEvent,
-  expected: SessionEvent[],
-) {
-  expect(projectSdkEvent(event, context)).toEqual(expected);
-}
-
-function expectSuppressedToolLifecycle(
+function expectOmittedToolLifecycle(
   context: ReturnType<typeof createStreamingContext>,
   options: {
     toolName: string;
@@ -165,7 +127,7 @@ function expectSuppressedToolLifecycle(
   ).toEqual(options.startEvents ?? []);
 
   expect(
-    projectSdkEvent(toolExecutionProgress(options.toolCallId, "still hidden"), context),
+    projectSdkEvent(toolExecutionProgress(options.toolCallId, "still omitted"), context),
   ).toEqual([]);
 
   expect(
@@ -200,16 +162,15 @@ function expectVisibleToolLifecycle(
       type: "tool_start",
       toolName: options.toolName,
       toolCallId: options.toolCallId,
-      parentToolCallId: undefined,
       arguments: options.argumentsRecord ?? {},
     },
   ]);
 
+  // Progress events carry no canonical meaning (nothing downstream consumes
+  // them) and project to nothing for visible and omitted tools alike.
   expect(
     projectSdkEvent(toolExecutionProgress(options.toolCallId, options.progressMessage), context),
-  ).toEqual([
-    { type: "tool_progress", toolCallId: options.toolCallId, message: options.progressMessage },
-  ]);
+  ).toEqual([]);
 
   expect(
     projectSdkEvent(
@@ -223,7 +184,6 @@ function expectVisibleToolLifecycle(
     {
       type: "tool_end",
       toolCallId: options.toolCallId,
-      parentToolCallId: undefined,
       success: true,
       result: options.resultContent,
     },
@@ -231,7 +191,9 @@ function expectVisibleToolLifecycle(
 }
 
 describe("projector", () => {
-  describe("streaming tool calls", () => {
+  // ── Streaming: the live event pipeline ────────────────────────────────
+
+  describe("streaming: visible tool calls", () => {
     test("projects normal tool calls into visible tool lifecycle events", () => {
       const context = createStreamingContext();
 
@@ -244,10 +206,164 @@ describe("projector", () => {
       });
     });
 
-    test("open_session and close_session emit linked-session events immediately and stay suppressed", () => {
+    test("failed tool calls surface the error message as the result", () => {
+      const context = createStreamingContext();
+      projectSdkEvent(toolExecutionStart("bash", "tool-fail", { command: "exit 1" }), context);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-fail", { success: false, errorMessage: "command failed" }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_end",
+          toolCallId: "tool-fail",
+          success: false,
+          result: "command failed",
+          details: undefined,
+        },
+      ]);
+    });
+
+    test("projects apply_patch as patch with freeform arguments and detailed completion diffs", () => {
       const context = createStreamingContext();
 
-      expectSuppressedToolLifecycle(context, {
+      expect(
+        projectSdkEvent(toolExecutionStart("apply_patch", "tool-patch", PATCH_TEXT), context),
+      ).toEqual([
+        {
+          type: "tool_start",
+          toolName: "patch",
+          toolCallId: "tool-patch",
+          arguments: { patch: PATCH_TEXT },
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-patch", {
+            success: true,
+            resultContent: "Modified 1 file(s)",
+            detailedContent: PATCH_DIFF,
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_end",
+          toolCallId: "tool-patch",
+          success: true,
+          result: "Modified 1 file(s)",
+          details: PATCH_DIFF,
+        },
+      ]);
+    });
+  });
+
+  describe("streaming: subagents", () => {
+    test("subagent tool calls carry their parent agent id from the event envelope", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("view", "sub-1", { path: "a.ts" }, {}, { agentId: "call-task-9" }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_start",
+          toolName: "read",
+          toolCallId: "sub-1",
+          agentId: "call-task-9",
+          arguments: { path: "a.ts" },
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("sub-1", {
+            success: true,
+            resultContent: "ok",
+            agentId: "call-task-9",
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_end",
+          toolCallId: "sub-1",
+          agentId: "call-task-9",
+          success: true,
+          result: "ok",
+          details: undefined,
+        },
+      ]);
+    });
+
+    test("background agent calls suppress the early tool_end and complete via subagent.completed", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("task", "call-bg-1", { agentName: "explore", mode: "background" }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_start",
+          toolName: "agent",
+          toolCallId: "call-bg-1",
+          arguments: { agentName: "explore", mode: "background" },
+        },
+      ]);
+
+      // The SDK emits an early tool_end ("Agent started in background...") — skipped.
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("call-bg-1", {
+            success: true,
+            resultContent: "Agent started in background",
+          }),
+          context,
+        ),
+      ).toEqual([]);
+
+      // The real completion signal arrives via subagent.completed.
+      expect(
+        projectSdkEvent({ type: "subagent.completed", data: { toolCallId: "call-bg-1" } }, context),
+      ).toEqual([{ type: "tool_end", toolCallId: "call-bg-1", success: true }]);
+    });
+
+    test("failed background agents emit a failed tool_end via subagent.failed", () => {
+      const context = createStreamingContext();
+      projectSdkEvent(toolExecutionStart("task", "call-bg-2", { mode: "background" }), context);
+      projectSdkEvent(toolExecutionComplete("call-bg-2", { success: true }), context);
+
+      expect(
+        projectSdkEvent({ type: "subagent.failed", data: { toolCallId: "call-bg-2" } }, context),
+      ).toEqual([{ type: "tool_end", toolCallId: "call-bg-2", success: false }]);
+    });
+  });
+
+  describe("streaming: omitted and translated tools", () => {
+    test("every omitted tool is omitted across start, progress, and completion", () => {
+      const context = createStreamingContext();
+
+      for (const [i, toolName] of OMITTED_TOOL_NAMES.entries()) {
+        expectOmittedToolLifecycle(context, {
+          toolName,
+          toolCallId: `tool-omitted-${i}`,
+          argumentsRecord: {},
+          completionResultContent: "done",
+        });
+      }
+    });
+
+    test("open_session and close_session emit linked-session events immediately and are omitted", () => {
+      const context = createStreamingContext();
+
+      expectOmittedToolLifecycle(context, {
         toolName: "open_session",
         toolCallId: "tool-open-session",
         argumentsRecord: { sessionId: "toy-box-linked-1" },
@@ -255,7 +371,7 @@ describe("projector", () => {
         completionResultContent: "Session toy-box-linked-1 opened.",
       });
 
-      expectSuppressedToolLifecycle(context, {
+      expectOmittedToolLifecycle(context, {
         toolName: "close_session",
         toolCallId: "tool-close-session",
         argumentsRecord: { sessionId: "toy-box-linked-1" },
@@ -264,10 +380,10 @@ describe("projector", () => {
       });
     });
 
-    test("delete_session removes linked sessions immediately and stays suppressed", () => {
+    test("delete_session removes linked sessions immediately and is omitted", () => {
       const context = createStreamingContext();
 
-      expectSuppressedToolLifecycle(context, {
+      expectOmittedToolLifecycle(context, {
         toolName: "delete_session",
         toolCallId: "tool-delete-session",
         argumentsRecord: { sessionId: "toy-box-created-1" },
@@ -279,13 +395,14 @@ describe("projector", () => {
     test("create_session projects a linked session only after successful completion", () => {
       const context = createStreamingContext();
 
-      expectStartOnlyProjection(
-        context,
-        toolExecutionStart("create_session", "tool-create-session", {
-          prompt: "Review the auth flow",
-        }),
-        [],
-      );
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("create_session", "tool-create-session", {
+            prompt: "Review the auth flow",
+          }),
+          context,
+        ),
+      ).toEqual([]);
 
       expect(
         projectSdkEvent(toolExecutionProgress("tool-create-session", "Creating"), context),
@@ -302,10 +419,10 @@ describe("projector", () => {
       ).toEqual([{ type: "linked_session_added", sessionId: "toy-box-created-1" }]);
     });
 
-    test("failed create_session completions stay suppressed and emit no linked session", () => {
+    test("failed create_session completions are omitted and emit no linked session", () => {
       const context = createStreamingContext();
 
-      expectSuppressedToolLifecycle(context, {
+      expectOmittedToolLifecycle(context, {
         toolName: "create_session",
         toolCallId: "tool-create-session-failed",
         argumentsRecord: { prompt: "Review the auth flow" },
@@ -313,22 +430,13 @@ describe("projector", () => {
         completionErrorMessage: "boom",
       });
     });
+  });
 
-    test("suppression-only tools stay hidden across start, progress, and completion", () => {
+  describe("streaming: todo SQL", () => {
+    test("sql insert and update statements emit todo patches and are omitted", () => {
       const context = createStreamingContext();
 
-      expectSuppressedToolLifecycle(context, {
-        toolName: "read_agent",
-        toolCallId: "tool-hidden",
-        argumentsRecord: {},
-        completionResultContent: "done",
-      });
-    });
-
-    test("sql insert and update statements emit todo patches and stay suppressed", () => {
-      const context = createStreamingContext();
-
-      expectSuppressedToolLifecycle(context, {
+      expectOmittedToolLifecycle(context, {
         toolName: "sql",
         toolCallId: "tool-insert",
         argumentsRecord: {
@@ -358,10 +466,10 @@ describe("projector", () => {
       });
     });
 
-    test("sql select statements stay suppressed without emitting todo patches", () => {
+    test("sql select statements are omitted without emitting todo patches", () => {
       const context = createStreamingContext();
 
-      expectSuppressedToolLifecycle(context, {
+      expectOmittedToolLifecycle(context, {
         toolName: "sql",
         toolCallId: "tool-select",
         argumentsRecord: { query: "SELECT id, title, status FROM todos;" },
@@ -370,10 +478,10 @@ describe("projector", () => {
       });
     });
 
-    test("sql delete statements emit delete patches and stay suppressed", () => {
+    test("sql delete statements emit delete patches and are omitted", () => {
       const context = createStreamingContext();
 
-      expectSuppressedToolLifecycle(context, {
+      expectOmittedToolLifecycle(context, {
         toolName: "sql",
         toolCallId: "tool-delete",
         argumentsRecord: { query: "DELETE FROM todos WHERE id = 'inspect-sql-events';" },
@@ -387,10 +495,28 @@ describe("projector", () => {
       });
     });
 
-    test("failed sql mutations keep their optimistic todo patches and stay suppressed", () => {
+    test("sql bulk status updates emit update-all patches on start", () => {
       const context = createStreamingContext();
 
-      expectSuppressedToolLifecycle(context, {
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("sql", "tool-update-all", {
+            query: "UPDATE todos SET status = 'done';",
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "todos_patch",
+          patches: [{ type: "update_all", status: "done" }],
+        },
+      ]);
+    });
+
+    test("failed sql mutations keep their optimistic todo patches and are omitted", () => {
+      const context = createStreamingContext();
+
+      expectOmittedToolLifecycle(context, {
         toolName: "sql",
         toolCallId: "tool-failed",
         argumentsRecord: {
@@ -406,26 +532,92 @@ describe("projector", () => {
         completionErrorMessage: "boom",
       });
     });
+  });
 
-    test("sql bulk status updates emit update-all patches on start", () => {
+  describe("streaming: deltas", () => {
+    test("drops empty-content deltas at the source", () => {
       const context = createStreamingContext();
 
-      expectStartOnlyProjection(
-        context,
-        toolExecutionStart("sql", "tool-update-all", {
-          query: "UPDATE todos SET status = 'done';",
-        }),
-        [
+      expect(
+        projectSdkEvent({ type: "assistant.message_delta", data: { deltaContent: "" } }, context),
+      ).toEqual([]);
+      expect(
+        projectSdkEvent({ type: "assistant.reasoning_delta", data: { deltaContent: "" } }, context),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent({ type: "assistant.message_delta", data: { deltaContent: "Hi" } }, context),
+      ).toEqual([{ type: "delta", content: "Hi" }]);
+      expect(
+        projectSdkEvent(
+          { type: "assistant.reasoning_delta", data: { deltaContent: "Hmm" } },
+          context,
+        ),
+      ).toEqual([{ type: "reasoning", content: "Hmm" }]);
+    });
+
+    test("drops subagent text deltas and scopes subagent reasoning deltas", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
           {
-            type: "todos_patch",
-            patches: [{ type: "update_all", status: "done" }],
+            type: "assistant.message_delta",
+            agentId: "call-agent-1",
+            data: { deltaContent: "Subagent text" },
           },
-        ],
-      );
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(
+          {
+            type: "assistant.reasoning_delta",
+            agentId: "call-agent-1",
+            data: { deltaContent: "Subagent reasoning" },
+          },
+          context,
+        ),
+      ).toEqual([{ type: "reasoning", agentId: "call-agent-1", content: "Subagent reasoning" }]);
     });
   });
 
-  describe("streaming non-tool events", () => {
+  describe("streaming: session events", () => {
+    test("drops subagent status events so they do not mutate root status", () => {
+      const context = createStreamingContext();
+
+      expect(projectSdkEvent({ type: "assistant.turn_start", data: {} }, context)).toEqual([
+        { type: "thinking" },
+      ]);
+      expect(
+        projectSdkEvent(
+          { type: "assistant.turn_start", agentId: "call-agent-1", data: {} },
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(projectSdkEvent({ type: "session.compaction_start", data: {} }, context)).toEqual([
+        { type: "compacting_start" },
+      ]);
+      expect(
+        projectSdkEvent(
+          { type: "session.compaction_start", agentId: "call-agent-1", data: {} },
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(projectSdkEvent({ type: "session.compaction_complete", data: {} }, context)).toEqual([
+        { type: "compacting_end" },
+      ]);
+      expect(
+        projectSdkEvent(
+          { type: "session.compaction_complete", agentId: "call-agent-1", data: {} },
+          context,
+        ),
+      ).toEqual([]);
+    });
+
     test("projects model and title events into canonical session events", () => {
       const context = createStreamingContext();
 
@@ -445,6 +637,33 @@ describe("projector", () => {
       ]);
     });
 
+    test("projects subagent start model as a scoped model change", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          {
+            type: "subagent.started",
+            agentId: "call-agent-1",
+            data: {
+              toolCallId: "call-agent-1",
+              agentName: "explore",
+              agentDisplayName: "Explore Agent",
+              agentDescription: "Searches code.",
+              model: "claude-haiku-4.5",
+            },
+          },
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "model_changed",
+          agentId: "call-agent-1",
+          modelConfiguration: { model: "claude-haiku-4.5" },
+        },
+      ]);
+    });
+
     test("returns no events for unknown SDK event types", () => {
       expect(
         projectSdkEvent({ type: "unknown.event", data: {} }, createStreamingContext()),
@@ -452,288 +671,8 @@ describe("projector", () => {
     });
   });
 
-  describe("history adaptation", () => {
-    test("replays model changes from session lifecycle events", async () => {
-      const adapted = await projectHistory([
-        {
-          type: "session.start",
-          data: {
-            selectedModel: "claude-sonnet-4.5",
-          },
-        },
-        modelChange("claude-sonnet-4.6"),
-      ]);
+  // ── History: replaying a recorded session into a transcript ───────────
 
-      expect(adapted).toEqual([
-        { type: "model_changed", modelConfiguration: { model: "claude-sonnet-4.5" } },
-        { type: "model_changed", modelConfiguration: { model: "claude-sonnet-4.6" } },
-      ]);
-    });
-
-    test("keeps suppressed SQL tool calls out of assistant tool calls while preserving todo patches", async () => {
-      const attachments: Attachment[] = [
-        {
-          displayName: "image.png",
-          mimeType: "image/png",
-        },
-      ];
-
-      const adapted = await projectHistory(
-        [
-          userMessage("User prompt", {
-            timestamp: "2026-01-01T00:00:00.000Z",
-            attachments: [{ displayName: "image.png", path: "/tmp/image.png" }],
-          }),
-          assistantMessage("Assistant response", [
-            {
-              toolCallId: "todo-call",
-              name: "sql",
-              arguments: {
-                query:
-                  "INSERT INTO todos (id, title) VALUES ('inspect-sql-events', 'inspect SQL events');",
-              },
-            },
-            {
-              toolCallId: "call-1",
-              name: "write_file",
-              arguments: { filePath: "notes.md" },
-            },
-          ]),
-          toolExecutionStart("sql", "todo-call", {
-            query:
-              "INSERT INTO todos (id, title) VALUES ('inspect-sql-events', 'inspect SQL events');",
-          }),
-          toolExecutionComplete("todo-call", {
-            success: true,
-            resultContent: "done",
-          }),
-          toolExecutionComplete("call-1", {
-            success: true,
-            resultContent: "done",
-          }),
-          titleChanged("Friendly title"),
-        ],
-        attachments,
-      );
-
-      expect(adapted).toEqual([
-        {
-          type: "user_message",
-          content: "User prompt",
-          timestamp: "2026-01-01T00:00:00.000Z",
-          attachments,
-        },
-        {
-          type: "assistant_message",
-          content: "Assistant response",
-          toolCalls: [
-            {
-              toolCallId: "call-1",
-              toolName: "write_file",
-              arguments: { filePath: "notes.md" },
-              result: { content: "done", success: true },
-            },
-          ],
-        },
-        {
-          type: "todos_patch",
-          patches: [
-            {
-              type: "upsert",
-              id: "inspect-sql-events",
-              title: "inspect SQL events",
-              status: "pending",
-            },
-          ],
-        },
-        { type: "session_title_changed", title: "Friendly title" },
-      ]);
-    });
-
-    test("restores create_session links without surfacing the suppressed tool call", async () => {
-      const adapted = await projectHistory([
-        assistantMessage("Opening a companion session.", [
-          {
-            toolCallId: "tool-create-session",
-            name: "create_session",
-            arguments: {
-              prompt: "Inspect the API errors",
-            },
-          },
-        ]),
-        toolExecutionStart("create_session", "tool-create-session", {
-          prompt: "Inspect the API errors",
-        }),
-        toolExecutionComplete("tool-create-session", {
-          success: true,
-          resultContent: JSON.stringify({ sessionId: "toy-box-created-2" }),
-        }),
-      ]);
-
-      expect(adapted).toEqual([
-        {
-          type: "assistant_message",
-          content: "Opening a companion session.",
-          toolCalls: undefined,
-        },
-        {
-          type: "linked_session_added",
-          sessionId: "toy-box-created-2",
-        },
-      ]);
-    });
-
-    test("keeps suppression-only session coordination tools hidden in history", async () => {
-      const adapted = await projectHistory([
-        ...successfulHiddenToolHistory(
-          "check_session_status",
-          "tool-check-session",
-          { sessionId: "toy-box-created-2" },
-          JSON.stringify({ running: false, queuedCount: 0 }),
-        ),
-        ...successfulHiddenToolHistory(
-          "wait_for_sessions",
-          "tool-wait-sessions",
-          { sessionIds: ["toy-box-created-2"] },
-          JSON.stringify({
-            responses: [{ sessionId: "toy-box-created-2", response: "done" }],
-          }),
-        ),
-      ]);
-
-      expect(adapted).toEqual([]);
-    });
-
-    test("keeps automation tools hidden in history", async () => {
-      const adapted = await projectHistory([
-        ...successfulHiddenToolHistory(
-          "list_automations",
-          "tool-list-automations",
-          {},
-          JSON.stringify({
-            automations: [
-              {
-                id: "automation-1",
-                title: "Daily Summary",
-                prompt: "Summarize updates",
-                model: "gpt-5",
-                cron: "0 9 * * *",
-                reuseSession: false,
-                createdAt: "2026-02-14T10:00:00.000Z",
-                updatedAt: "2026-02-14T10:00:00.000Z",
-                nextRunAt: "2026-02-15T09:00:00.000Z",
-              },
-            ],
-          }),
-        ),
-        ...successfulHiddenToolHistory(
-          "create_automation",
-          "tool-create-automation",
-          {
-            title: "Daily Summary",
-            prompt: "Summarize updates",
-            model: "gpt-5",
-            cron: "0 9 * * *",
-          },
-          JSON.stringify({
-            automation: {
-              id: "automation-1",
-              title: "Daily Summary",
-              prompt: "Summarize updates",
-              model: "gpt-5",
-              cron: "0 9 * * *",
-              reuseSession: false,
-              createdAt: "2026-02-14T10:00:00.000Z",
-              updatedAt: "2026-02-14T10:00:00.000Z",
-              nextRunAt: "2026-02-15T09:00:00.000Z",
-            },
-          }),
-        ),
-        ...successfulHiddenToolHistory(
-          "edit_automation",
-          "tool-edit-automation",
-          {
-            automationId: "automation-1",
-            title: "Updated Summary",
-            prompt: "Summarize project updates",
-            model: "gpt-5",
-            cron: "0 10 * * *",
-            reuseSession: false,
-          },
-          JSON.stringify({
-            automation: {
-              id: "automation-1",
-              title: "Updated Summary",
-              prompt: "Summarize project updates",
-              model: "gpt-5",
-              cron: "0 10 * * *",
-              reuseSession: false,
-              createdAt: "2026-02-14T10:00:00.000Z",
-              updatedAt: "2026-02-14T10:05:00.000Z",
-              nextRunAt: "2026-02-15T10:00:00.000Z",
-            },
-          }),
-        ),
-        ...successfulHiddenToolHistory(
-          "run_automation",
-          "tool-run-automation",
-          { automationId: "automation-1" },
-          JSON.stringify({ sessionId: "automation-session-1" }),
-        ),
-      ]);
-
-      expect(adapted).toEqual([]);
-    });
-
-    test("adapts malformed tool requests without dropping valid sibling tool calls", async () => {
-      let attachmentResolverCalls = 0;
-      const attachments: Attachment[] = [{ displayName: "photo.png", mimeType: "image/png" }];
-      const adapted: SessionEvent[] = [];
-
-      for await (const event of projectSessionEventsFromSdkHistory(
-        [
-          assistantMessage("A", [
-            { name: "missing_id", arguments: { value: 1 } },
-            { toolCallId: "call-2", name: "write_file", arguments: { filePath: "notes.md" } },
-          ]),
-          toolExecutionComplete("call-2", {
-            success: true,
-            resultContent: "",
-          }),
-          userMessage("User prompt"),
-        ],
-        {
-          resolveAttachments: async () => {
-            attachmentResolverCalls += 1;
-            return attachments;
-          },
-        },
-      )) {
-        adapted.push(event);
-      }
-
-      expect(adapted).toEqual([
-        {
-          type: "assistant_message",
-          content: "A",
-          toolCalls: [
-            {
-              toolCallId: "call-2",
-              toolName: "write_file",
-              arguments: { filePath: "notes.md" },
-              result: { content: "", success: true },
-              childToolCalls: undefined,
-            },
-          ],
-        },
-        {
-          type: "user_message",
-          content: "User prompt",
-          timestamp: undefined,
-          attachments,
-        },
-      ]);
-      expect(attachmentResolverCalls).toBe(1);
-    });
-  });
 });
+
+// Golden replays of real session fixtures live in tests/ (see tests/AGENTS.md).

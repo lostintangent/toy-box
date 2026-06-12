@@ -76,21 +76,29 @@ export type AssistantMessage = BaseMessage & {
 
 export type Message = UserMessage | AssistantMessage;
 
+export type SubAgent = {
+  content?: string;
+  modelConfiguration?: ModelConfiguration;
+  reasoningContent?: string;
+  toolCalls?: ToolCall[];
+};
+
 export type ToolCall = {
-  toolCallId: string;
-  toolName: string;
+  id: string;
+  name: string;
   arguments: { [key: string]: JsonValue };
   result?: {
     content: string;
     success: boolean;
+    details?: string;
   };
-  childToolCalls?: ToolCall[];
+  agent?: SubAgent;
 };
 
 export type Attachment = {
   displayName: string;
   mimeType: string;
-  base64?: string;
+  base64: string;
 };
 
 /** Build a data URL from an attachment's base64 content and MIME type */
@@ -125,27 +133,26 @@ export type SessionEvent = (
   | {
       type: "assistant_message";
       content: string;
-      toolCalls?: ToolCall[];
+      agentId?: string;
     }
-  | { type: "delta"; content: string }
-  | { type: "reasoning"; content: string }
+  | { type: "delta"; content: string; agentId?: string }
+  | { type: "reasoning"; content: string; agentId?: string }
   | {
       type: "tool_start";
       toolName: string;
       toolCallId: string;
-      parentToolCallId?: string;
+      agentId?: string;
       arguments: { [key: string]: JsonValue };
     }
-  | { type: "tool_progress"; toolCallId: string; message: string }
   | {
       type: "tool_end";
       toolCallId: string;
-      parentToolCallId?: string;
+      agentId?: string;
       success: boolean;
       result?: string;
+      details?: string;
     }
   | { type: "thinking" }
-  | { type: "intent"; intent: string }
   | { type: "todos_patch"; patches: TodoItemPatch[] }
   | { type: "session_title_changed"; title: string }
   | { type: "compacting_start" }
@@ -153,7 +160,7 @@ export type SessionEvent = (
   | { type: "message_queued"; queuedMessageId: string; content: string; attachments?: Attachment[] }
   | { type: "message_cancelled"; queuedMessageId: string }
   | { type: "message_dequeued"; content: string; queuedMessageId?: string }
-  | { type: "model_changed"; modelConfiguration: ModelConfiguration }
+  | { type: "model_changed"; modelConfiguration: ModelConfiguration; agentId?: string }
   | { type: "skills"; skills: SessionSkill[] }
   | { type: "linked_session_added"; sessionId: string }
   | { type: "linked_session_removed"; sessionId: string }

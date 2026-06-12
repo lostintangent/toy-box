@@ -6,7 +6,7 @@ export function DefaultToolCall({ toolCall, ...props }: ToolCallProps) {
   const hasArgs = Object.keys(toolCall.arguments).length > 0;
 
   return (
-    <ToolCallCard {...props} toolCall={toolCall} label={toolCall.toolName}>
+    <ToolCallCard {...props} toolCall={toolCall} label={toolCall.name}>
       <TextBlock title="Arguments" maxHeight="max-h-32">
         {hasArgs ? JSON.stringify(toolCall.arguments, null, 2) : null}
       </TextBlock>

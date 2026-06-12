@@ -1,6 +1,14 @@
 /**
- * Manages a single session's lifecycle: mutable state with batched rendering,
- * SSE streaming, message sending/queuing, and query cache synchronization.
+ * Manages a single session's live runtime: mutable state with batched
+ * rendering, SSE streaming, message sending/queuing, and query cache
+ * synchronization.
+ *
+ * Session creation: a draft session (see useDraftSession) exists only on the
+ * client until its first send, which asks the server to create the session
+ * (`startNew`, plus creation-time options like directory and worktree). Once
+ * the server confirms the session exists, `sessionConfig.onSessionCreated`
+ * fires exactly once — the parent wires this to the draft's promotion. This
+ * hook never learns what promotion means; it only reports the moment.
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -23,7 +31,9 @@ import type {
 } from "@/types";
 import {
   applySessionEvent,
+  applyStreamError,
   createInitialSession,
+  toSessionSnapshot,
   type Session,
 } from "@/lib/session/sessionReducer";
 import { sessionQueries, skillQueries } from "@/lib/queries";
@@ -34,41 +44,33 @@ import { generateUUID } from "@/lib/utils";
 const THINKING_STATUS: SessionStatus = "thinking";
 const STREAM_ERROR_MESSAGE = "An error occurred. Please try again.";
 
-function createStreamErrorState(state: Session): Session {
-  const last = state.messages[state.messages.length - 1];
-  const messages =
-    last?.role === "assistant"
-      ? [...state.messages.slice(0, -1), { ...last, content: STREAM_ERROR_MESSAGE }]
-      : [...state.messages, { role: "assistant" as const, content: STREAM_ERROR_MESSAGE }];
-
-  return {
-    ...state,
-    messages,
-    status: "idle",
-    reasoningContent: "",
-    pendingToolCalls: new Map(),
-  };
-}
-
 /** Returns true for high-frequency events that should be batched per-frame. */
-function isBatchableEvent(event: SessionEvent): boolean {
+export function isBatchableEvent(event: SessionEvent): boolean {
   return event.type === "delta" || event.type === "reasoning";
 }
 
-type StreamLoopResult = {
-  wasAborted: boolean;
-  receivedData: boolean;
-  outcome: "completed" | "aborted" | "failed";
-};
+type StreamLoopOutcome = "completed" | "aborted" | "failed";
 
 type SendMessageOptions = {
   directory?: string;
 };
 
 export interface SessionConfig {
-  modelConfiguration?: ModelConfiguration;
+  /** True while the session exists only on the client (no first prompt sent yet). */
+  isDraft?: boolean;
+  /** Global picker state, used to seed a draft's first message. Once the session
+   *  has its own configuration (seeded on send, or synced from the server), that
+   *  always wins over this default. */
+  defaultModelConfiguration?: ModelConfiguration;
+  /** Working directory for the session. Only sent with a draft's first message
+   *  (the server fixes it at creation). */
   directory?: string;
+  /** Run the session in an isolated git worktree. Creation-time only, like
+   *  `directory`. */
   useWorktree?: boolean;
+  /** Fired exactly once, when the server confirms a draft's session exists
+   *  (first stream event, or completion of an event-less first turn). Wire
+   *  this to the draft's promotion (useDraftSession.promoteDraft). */
   onSessionCreated?: () => void;
 }
 
@@ -83,28 +85,10 @@ type SessionStateUpdate = {
   modelConfiguration?: ModelConfiguration;
 };
 
-function toSessionSnapshot(
-  sessionId: string,
-  state: Session,
-  previous?: SessionSnapshot,
-): SessionSnapshot {
-  return {
-    id: previous?.id ?? sessionId,
-    messages: state.messages,
-    queuedMessages: state.queuedMessages,
-    modelConfiguration: state.modelConfiguration ?? previous?.modelConfiguration,
-    todos: state.todos,
-    linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
-    lastSeenEventId: state.lastSeenEventId,
-    status: state.status,
-    reasoningContent: state.reasoningContent,
-  };
-}
-
 export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
   const queryClient = useQueryClient();
   const detailQueryKey = sessionQueries.detail(sessionId).queryKey;
-  const sessionModelConfiguration = sessionConfig?.modelConfiguration;
+  const defaultModelConfiguration = sessionConfig?.defaultModelConfiguration;
   const sessionDirectory = sessionConfig?.directory;
   const sessionUseWorktree = sessionConfig?.useWorktree;
   const onSessionCreated = sessionConfig?.onSessionCreated;
@@ -137,26 +121,22 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
   // events like tool calls) or once per animation frame (for high-frequency
   // text/reasoning deltas during streaming).
   const sessionRef = useRef<{ sessionId: string; state: Session } | null>(null);
-  const sessionStartedRef = useRef<{ sessionId: string; started: boolean } | null>(null);
   const rafIdRef = useRef<number | null>(null);
-
-  if (!sessionStartedRef.current || sessionStartedRef.current.sessionId !== sessionId) {
-    // A session is considered "started" (not a draft) when there is no
-    // onSessionCreated callback. We can't gate on sessionConfig itself
-    // because it now always carries the model for mid-session switches.
-    sessionStartedRef.current = { sessionId, started: !onSessionCreated };
-  }
 
   if (!sessionRef.current || sessionRef.current.sessionId !== sessionId) {
     sessionRef.current = {
       sessionId,
-      state: createInitialSession({
-        messages: [],
-        queuedMessages: [],
-        status: "idle",
-        reasoningContent: "",
-      }),
+      state: createInitialSession(),
     };
+  }
+
+  // Whether the session exists on the server. Seeded from the isDraft prop and
+  // then latched on the first send (see sendMessage's onStarted): the parent
+  // promotes the draft mid-stream, flipping the prop, and that must not
+  // re-trigger a second `startNew`.
+  const sessionStartedRef = useRef<{ sessionId: string; started: boolean } | null>(null);
+  if (!sessionStartedRef.current || sessionStartedRef.current.sessionId !== sessionId) {
+    sessionStartedRef.current = { sessionId, started: !sessionConfig?.isDraft };
   }
 
   // A revision counter that triggers React re-renders. Incrementing this is
@@ -242,13 +222,13 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
         onFirstEvent?: () => void;
         onSuccess?: () => void;
       },
-    ): Promise<StreamLoopResult> => {
+    ): Promise<StreamLoopOutcome> => {
       const controller = new AbortController();
       abortControllerRef.current = controller;
       setIsStreaming(true);
 
       let receivedData = false;
-      let outcome: StreamLoopResult["outcome"] = "failed";
+      let outcome: StreamLoopOutcome = "failed";
 
       try {
         const raw = await connectSessionStream({
@@ -292,73 +272,90 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
         }
       }
 
-      return {
-        wasAborted: outcome === "aborted",
-        receivedData,
-        outcome,
-      };
+      return outcome;
     },
     [applyEvent, queryClient, sessionId, setCachedSessionSnapshot],
   );
 
-  // End streaming locally (used when detaching or force-stopping).
+  // End streaming locally (used when detaching or force-stopping). The
+  // transient-state reset is the reducer's stream_end policy — applied
+  // directly so it can never drift from the server's stream end semantics.
   const endStreamingLocally = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    const state = sessionRef.current!.state;
-    state.status = "idle";
-    state.reasoningContent = "";
-    state.pendingToolCalls.clear();
-    state.pendingOptimisticUserMessage = undefined;
+    applySessionEvent(sessionRef.current!.state, { type: "stream_end", reason: "idle" });
     updateRevision();
     setIsStreaming(false);
   }, [updateRevision]);
+
+  /** Optimistically queue a follow-up prompt behind the active stream and
+   *  mirror it to the server; rolls the local queue back if the server
+   *  rejects it. */
+  const enqueueFollowUp = useCallback(
+    (prompt: string, attachments?: Attachment[], modelConfiguration?: ModelConfiguration) => {
+      const queuedMessageId = generateUUID();
+      sessionRef.current!.state.queuedMessages.push({
+        id: queuedMessageId,
+        role: "user",
+        content: prompt,
+        attachments,
+        modelConfiguration,
+      });
+      updateRevision();
+
+      enqueueMessage({
+        data: {
+          sessionId,
+          content: prompt,
+          queuedMessageId,
+          attachments,
+          modelConfiguration,
+        },
+      }).catch(async (error) => {
+        console.error("Failed to enqueue message:", error);
+        const queue = sessionRef.current!.state.queuedMessages;
+        const index = queue.findIndex((m) => m.id === queuedMessageId);
+        if (index !== -1) {
+          queue.splice(index, 1);
+          updateRevision();
+        }
+        await invalidateDetailQuery();
+      });
+    },
+    [invalidateDetailQuery, sessionId, updateRevision],
+  );
 
   const sendMessage = useCallback(
     async (prompt: string, imageAttachments: Attachment[] = [], options?: SendMessageOptions) => {
       if (!prompt.trim() && imageAttachments.length === 0) return;
       const clientMessageId = generateUUID();
       const attachments = imageAttachments.length > 0 ? imageAttachments : undefined;
+      const isFirstMessageToDraft = !sessionStartedRef.current!.started;
+
+      // The session's own configuration always wins; an unstarted session's
+      // first message falls back to the global default.
+      const modelConfiguration =
+        sessionRef.current!.state.modelConfiguration ??
+        (isFirstMessageToDraft ? defaultModelConfiguration : undefined);
 
       // Enqueue if a stream is already active. We gate on the controller ref
       // (not only React state) so rapid consecutive sends in the same tick
       // reliably enqueue instead of racing into a second stream.
       if (abortControllerRef.current || isStreaming) {
-        const queuedMessageId = generateUUID();
-        const queuedMessage: QueuedMessage = {
-          id: queuedMessageId,
-          role: "user",
-          content: prompt,
-          attachments,
-          modelConfiguration: sessionModelConfiguration,
-        };
-
-        sessionRef.current!.state.queuedMessages.push(queuedMessage);
-        updateRevision();
-        enqueueMessage({
-          data: {
-            sessionId,
-            content: prompt,
-            queuedMessageId,
-            attachments,
-            modelConfiguration: sessionModelConfiguration,
-          },
-        }).catch(async (error) => {
-          console.error("Failed to enqueue message:", error);
-          const queue = sessionRef.current!.state.queuedMessages;
-          const idx = queue.findIndex((m) => m.id === queuedMessageId);
-          if (idx !== -1) {
-            queue.splice(idx, 1);
-            updateRevision();
-          }
-          await invalidateDetailQuery();
-        });
+        enqueueFollowUp(prompt, attachments, modelConfiguration);
         return;
       }
 
-      // Start a new streaming response.
+      // Start a new streaming response. Seed the session's model configuration
+      // with what we're about to send — this mirrors the server, which seeds its
+      // stream state the same way and therefore never re-announces the initial
+      // model via a model_changed event. Without this, a draft's picker would
+      // blank out when the draft becomes a real session mid-stream.
+      if (modelConfiguration) {
+        sessionRef.current!.state.modelConfiguration = modelConfiguration;
+      }
       setSessionStreaming(queryClient, sessionId, true);
       applyEvent({
         type: "user_message",
@@ -369,7 +366,9 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
       });
       applyEvent({ type: "thinking" });
 
-      const isFirstMessageToDraft = !sessionStartedRef.current!.started;
+      // Promote the draft once the server confirms the session exists. Fired
+      // from both onFirstEvent and onSuccess (idempotent) because a stream
+      // can complete without emitting any events.
       let hasNotifiedDraftCreated = false;
       const notifyDraftCreated = () => {
         if (!isFirstMessageToDraft || hasNotifiedDraftCreated) return;
@@ -385,23 +384,25 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
             attachments,
             clientMessageId,
             startNew: isFirstMessageToDraft,
-            modelConfiguration: sessionModelConfiguration,
+            modelConfiguration,
             directory: isFirstMessageToDraft ? (options?.directory ?? sessionDirectory) : undefined,
             useWorktree: isFirstMessageToDraft ? sessionUseWorktree : undefined,
           },
           {
-            // Fired once the stream request is established.
+            // Fired once the stream request is established. Mark the draft as
+            // started immediately so a rapid follow-up send enqueues instead
+            // of racing into a second startNew; the list handoff waits for the
+            // first server event (notifyDraftCreated).
             onStarted: () => {
-              if (isFirstMessageToDraft && !sessionStartedRef.current!.started) {
-                // Mark local draft as started immediately to avoid duplicate callbacks,
-                // but defer list handoff until we receive the first server event.
+              if (isFirstMessageToDraft) {
                 sessionStartedRef.current!.started = true;
               }
             },
             onFirstEvent: () => {
               notifyDraftCreated();
             },
-            // On success: finalize session state.
+            // Stream completed: promote (covers event-less streams) and
+            // reconcile with the server's authoritative detail state.
             onSuccess: () => {
               notifyDraftCreated();
               void invalidateDetailQuery();
@@ -410,7 +411,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
         );
       } catch (error) {
         console.error("Streaming error:", error);
-        sessionRef.current!.state = createStreamErrorState(sessionRef.current!.state);
+        applyStreamError(sessionRef.current!.state, STREAM_ERROR_MESSAGE);
         updateRevision();
         setSessionStreaming(queryClient, sessionId, false);
         void invalidateDetailQuery();
@@ -418,6 +419,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     },
     [
       applyEvent,
+      enqueueFollowUp,
       invalidateDetailQuery,
       queryClient,
       updateRevision,
@@ -425,7 +427,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
       runStreamingLoop,
       onSessionCreated,
       sessionDirectory,
-      sessionModelConfiguration,
+      defaultModelConfiguration,
       sessionUseWorktree,
       sessionId,
     ],
@@ -436,20 +438,23 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
       const queue = sessionRef.current!.state.queuedMessages;
       const index = queue.findIndex((m) => m.id === queuedMessageId);
       if (index === -1) return;
-      const [removed] = queue.splice(index, 1);
+      const [removedMessage] = queue.splice(index, 1);
       updateRevision();
 
       try {
-        const removed = await serverCancelQueuedMessage({ data: { sessionId, queuedMessageId } });
-        if (!removed) {
+        const serverRemoved = await serverCancelQueuedMessage({
+          data: { sessionId, queuedMessageId },
+        });
+        if (!serverRemoved) {
           await invalidateDetailQuery();
         }
       } catch {
+        // Roll the optimistic removal back at (or near) its original position.
         const safeIndex = Math.max(
           0,
           Math.min(index, sessionRef.current!.state.queuedMessages.length),
         );
-        sessionRef.current!.state.queuedMessages.splice(safeIndex, 0, removed);
+        sessionRef.current!.state.queuedMessages.splice(safeIndex, 0, removedMessage);
         updateRevision();
         await invalidateDetailQuery();
       }
@@ -466,7 +471,10 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
         linkedSessionIds: snapshot.linkedSessionIds,
         status: snapshot.status ?? "idle",
         reasoningContent: snapshot.reasoningContent ?? "",
-        modelConfiguration: snapshot.modelConfiguration,
+        // Keep the locally seeded/picked configuration when the snapshot has
+        // none (e.g. history replay that predates model events).
+        modelConfiguration:
+          snapshot.modelConfiguration ?? sessionRef.current!.state.modelConfiguration,
       });
       state.lastSeenEventId = snapshot.lastSeenEventId;
       sessionRef.current!.state = state;
@@ -476,19 +484,27 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     [updateRevision],
   );
 
+  /** Explicit user pick of the session's model configuration. Takes effect
+   *  immediately in the UI and is sent with the next message. */
+  const setModelConfiguration = useCallback(
+    (configuration: ModelConfiguration) => {
+      sessionRef.current!.state.modelConfiguration = configuration;
+      updateRevision();
+    },
+    [updateRevision],
+  );
+
   const attachToStream = useCallback(async () => {
     if (abortControllerRef.current) return; // Already streaming
 
-    // Prevent server sync from overwriting our streaming state
-
     try {
-      const result = await runStreamingLoop({
+      const outcome = await runStreamingLoop({
         sessionId,
         afterEventId: sessionRef.current!.state.lastSeenEventId,
       });
       // Always reconcile against authoritative detail state when a passive
       // subscribe completes so the cached detail reflects the latest server state.
-      if (!result.wasAborted) {
+      if (outcome !== "aborted") {
         await invalidateDetailQuery();
       }
     } catch (error) {
@@ -533,6 +549,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
   ]);
 
   return {
+    // Session state (re-read from the mutable ref on every revision bump)
     messages,
     queuedMessages,
     isStreaming,
@@ -544,11 +561,15 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     revision,
     hasSynced,
 
+    // State mutation (snapshot sync + explicit user picks)
     updateState,
+    setModelConfiguration,
 
+    // Messaging
     sendMessage,
     cancelQueuedMessage,
 
+    // Stream control
     attachToStream,
     detachFromStream,
     cancelStream,

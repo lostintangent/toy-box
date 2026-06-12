@@ -1,13 +1,44 @@
-// Canonical session state reducer. Both streaming and history replay feed
-// the same SessionEvents through `applySessionEvent`, so this module is the
-// single source of truth for how session state changes and stays agnostic to
-// Copilot SDK details.
+// Canonical session state reducer — the single transition function for
+// Session state. Three consumers feed it the same SessionEvents:
+//   - server live streaming (SessionStream#emit, runtime/stream.ts)
+//   - server history replay (sdk/historyReplay.ts)
+//   - the client, for live SSE events and the buffered-event replay a
+//     late-connecting client catches up on (useSession#applyEvent)
+// Sharing this module is what guarantees a transcript renders identically
+// whether it is watched live, reloaded, or reconnected to. It stays agnostic
+// to Copilot SDK details — SDK translation policy lives in
+// functions/sdk/projector.ts.
+//
+// Vocabulary used throughout this file:
+//   - root vs agent-scoped: events without an agentId mutate the top-level
+//     transcript; events carrying one mutate the subagent state nested under
+//     the spawning agent tool call (toolCall.agent).
+//   - pending vs committed: the in-progress message group's tool calls live
+//     in pendingToolCalls, mirrored onto the last assistant message after
+//     every change. A boundary "commits" them — afterwards they are only
+//     reachable by searching messages (findCommittedToolCall).
+//   - message group / boundary: an assistant turn renders as alternating
+//     text and tool-call groups. A boundary — the first text delta after
+//     tool calls (live), or a committed root assistant_message (replay) —
+//     finalizes the current group and starts a fresh assistant message.
+//
+// Mutation & identity contract: state is mutated IN PLACE. Callers re-read it
+// on a revision counter (see useSession) rather than relying on root object
+// identity. Identity still matters in the three places memoized React
+// subtrees compare:
+//   - message.revision is bumped when a committed message changes in place
+//     (findCommittedToolCall), so memoized message components re-render
+//   - updated tool calls are cloned back into pendingToolCalls so they get a
+//     fresh object identity when applied to the message
+//   - linkedSessionIds is replaced rather than mutated because consumers use
+//     it in hook dependency arrays
 
 import type {
   Message,
   ModelConfiguration,
   QueuedMessage,
   SessionEvent,
+  SessionSnapshot,
   SessionStatus,
   TodoItem,
   TodoItemPatch,
@@ -33,7 +64,7 @@ export type Session = {
 };
 
 // ============================================================================
-// State initialization
+// Public API
 // ============================================================================
 
 export function createInitialSession(initial: Partial<Session> = {}): Session {
@@ -48,6 +79,350 @@ export function createInitialSession(initial: Partial<Session> = {}): Session {
     modelConfiguration: initial.modelConfiguration,
     pendingToolCalls: new Map(),
   };
+}
+
+/** Project a Session into the wire/query snapshot shape — the one mapping
+ *  shared by the server (querySession) and the client (detail query cache).
+ *  `previous` lets the client preserve fields the live state hasn't learned
+ *  yet; the server omits it. */
+export function toSessionSnapshot(
+  sessionId: string,
+  state: Session,
+  previous?: SessionSnapshot,
+): SessionSnapshot {
+  return {
+    id: previous?.id ?? sessionId,
+    messages: state.messages,
+    queuedMessages: state.queuedMessages,
+    modelConfiguration: state.modelConfiguration ?? previous?.modelConfiguration,
+    todos: state.todos,
+    linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
+    lastSeenEventId: state.lastSeenEventId,
+    status: state.status,
+    reasoningContent: state.reasoningContent,
+  };
+}
+
+/** Mutates `state` in place and returns it (for chaining convenience).
+ *  The switch lives in applySessionEventCore so handlers can use bare returns. */
+export function applySessionEvent(state: Session, event: SessionEvent): Session {
+  applySessionEventCore(state, event);
+  return state;
+}
+
+/** Reset turn-scoped state ahead of a new turn, preserving durable session
+ *  state. The turn-boundary sibling of the stream_end handler below — the
+ *  same transient fields, but transitioning into "thinking" instead of idle. */
+export function prepareSessionForNextTurn(state: Session): Session {
+  state.status = "thinking";
+  state.reasoningContent = "";
+  state.pendingToolCalls.clear();
+  state.pendingOptimisticUserMessage = undefined;
+  return state;
+}
+
+/** Client-side recovery for a failed stream: surface `content` as the
+ *  trailing assistant message (replacing a partial one, or appending) and
+ *  reset transient streaming state. */
+export function applyStreamError(state: Session, content: string): Session {
+  const last = state.messages[state.messages.length - 1];
+  if (last?.role === "assistant") {
+    state.messages[state.messages.length - 1] = { ...last, content };
+  } else {
+    state.messages.push({ role: "assistant", content });
+  }
+
+  state.status = "idle";
+  state.reasoningContent = "";
+  state.pendingToolCalls.clear();
+  return state;
+}
+
+// ============================================================================
+// Event reducer
+// ============================================================================
+
+function applySessionEventCore(state: Session, event: SessionEvent): void {
+  // Replayed buffer events that are already incorporated in a snapshot
+  // can race with detail refetches; skip stale events before mutating state.
+  if (
+    event.eventId !== undefined &&
+    state.lastSeenEventId !== undefined &&
+    event.eventId <= state.lastSeenEventId
+  ) {
+    return;
+  }
+
+  if (event.eventId !== undefined) state.lastSeenEventId = event.eventId;
+  if (event.turnId !== undefined) state.activeTurnId = event.turnId;
+
+  switch (event.type) {
+    // ── Messages ──────────────────────────────────────────────────────
+
+    case "user_message": {
+      if (reconcileOptimisticUserMessage(state, event)) return;
+      if (isDuplicateUserMessage(state, event)) return;
+
+      state.messages.push({
+        role: "user",
+        content: event.content,
+        attachments: event.attachments,
+        timestamp: event.timestamp,
+      });
+      // Only locally-synthesized events lack an eventId (the server stamps
+      // one on everything it emits). Remember the optimistic message so the
+      // server's decorated echo reconciles it instead of duplicating it.
+      if (event.clientMessageId && event.eventId === undefined) {
+        state.pendingOptimisticUserMessage = {
+          clientMessageId: event.clientMessageId,
+          index: state.messages.length - 1,
+        };
+      }
+      return;
+    }
+
+    case "assistant_message": {
+      if (event.agentId) {
+        updateAgentToolCall(state, event.agentId, (toolCall) => {
+          toolCall.agent = {
+            ...toolCall.agent,
+            content: appendCommittedAgentContent(toolCall.agent?.content ?? "", event.content),
+          };
+        });
+        return;
+      }
+
+      // Turn boundary: a committed root assistant message finalizes the
+      // previous message group's pending tool calls. Live streaming reaches
+      // the same boundary via its first text delta (ensureCleanAssistantMessage);
+      // committed assistant messages only occur in history replay, which has
+      // no deltas. Tool calls enter state through tool_start/tool_end only.
+      state.pendingToolCalls.clear();
+
+      state.messages.push({
+        role: "assistant",
+        content: event.content,
+      });
+      return;
+    }
+
+    case "message_queued": {
+      if (state.queuedMessages.some((m) => m.id === event.queuedMessageId)) return;
+      state.queuedMessages.push({
+        id: event.queuedMessageId,
+        role: "user",
+        content: event.content,
+        attachments: event.attachments,
+      });
+      return;
+    }
+
+    case "message_cancelled": {
+      removeQueuedMessage(state, event.queuedMessageId);
+      return;
+    }
+
+    case "message_dequeued": {
+      removeQueuedMessage(state, event.queuedMessageId);
+      // Dedup: same as user_message — buffer replay after reconnect.
+      if (isDuplicateUserMessage(state, event)) return;
+      state.messages.push({ role: "user", content: event.content });
+      return;
+    }
+
+    // ── Streaming content ─────────────────────────────────────────────
+
+    case "thinking": {
+      // A segment boundary: start a clean assistant message (finalizing the
+      // previous group's tool calls) and reset reasoning. The early return
+      // makes repeated/replayed thinking events no-ops.
+      const insertedAssistant = ensureCleanAssistantMessage(state);
+      if (!insertedAssistant && state.status === "thinking" && state.reasoningContent === "") {
+        return;
+      }
+      state.status = "thinking";
+      state.reasoningContent = "";
+      return;
+    }
+
+    case "delta": {
+      // Ignore empty deltas. They carry no content and would otherwise
+      // call ensureCleanAssistantMessage, which clears pendingToolCalls
+      // and creates a new message — fragmenting the conversation and
+      // potentially dropping in-flight tool call results.
+      if (event.content.length === 0) return;
+
+      ensureCleanAssistantMessage(state);
+      state.status = "responding";
+      state.reasoningContent = "";
+      appendAssistantDelta(state, event.content);
+      return;
+    }
+
+    case "reasoning": {
+      if (event.agentId) {
+        updateAgentToolCall(state, event.agentId, (toolCall) => {
+          toolCall.agent = {
+            ...toolCall.agent,
+            reasoningContent: mergeStreamingText(
+              toolCall.agent?.reasoningContent ?? "",
+              event.content,
+            ),
+          };
+        });
+        return;
+      }
+
+      state.status = "reasoning";
+      state.reasoningContent = mergeStreamingText(state.reasoningContent, event.content);
+      return;
+    }
+
+    // ── Tool calls ────────────────────────────────────────────────────
+
+    case "tool_start": {
+      ensureAssistantMessage(state);
+
+      if (event.agentId) {
+        // Nest subagent tool calls under their agent call.
+        const child: ToolCall = {
+          id: event.toolCallId,
+          name: event.toolName,
+          arguments: event.arguments,
+        };
+        updateAgentToolCall(state, event.agentId, (p) => {
+          p.agent = {
+            ...p.agent,
+            toolCalls: p.agent?.toolCalls ? [...p.agent.toolCalls, child] : [child],
+          };
+        });
+        return;
+      }
+
+      state.pendingToolCalls.set(event.toolCallId, {
+        id: event.toolCallId,
+        name: event.toolName,
+        arguments: event.arguments,
+      });
+      applyPendingToolCallsToLastAssistant(state);
+      return;
+    }
+
+    case "tool_end": {
+      const result = {
+        content: event.result ?? "",
+        success: event.success,
+        details: event.details,
+      };
+
+      if (event.agentId) {
+        // Complete a child tool call nested under its agent call.
+        updateAgentToolCall(state, event.agentId, (p) => {
+          const index = p.agent?.toolCalls?.findIndex((c) => c.id === event.toolCallId) ?? -1;
+          if (index !== -1) {
+            p.agent!.toolCalls![index] = { ...p.agent!.toolCalls![index], result };
+          }
+        });
+        return;
+      }
+
+      const current = state.pendingToolCalls.get(event.toolCallId);
+      if (current) {
+        state.pendingToolCalls.set(event.toolCallId, { ...current, result });
+        applyPendingToolCallsToLastAssistant(state);
+        return;
+      }
+
+      // Late completion: deferred completions (e.g. a background agent's
+      // subagent.completed → tool_end) arrive after a message boundary has
+      // already committed the tool call and cleared it from pending. Resolve
+      // against committed messages — the same pending-then-committed fallback
+      // the agentId branch above gets via updateAgentToolCall.
+      const committed = findCommittedToolCall(state, event.toolCallId);
+      if (committed) {
+        committed.result = result;
+      }
+      return;
+    }
+
+    // ── Status & metadata ─────────────────────────────────────────────
+
+    case "compacting_start":
+      if (state.status === "compacting") return;
+      state.status = "compacting";
+      return;
+
+    case "compacting_end":
+      if (state.status !== "compacting") return;
+      state.status = "thinking";
+      return;
+
+    case "session_title_changed":
+      if (state.summary === event.title) return;
+      state.summary = event.title;
+      return;
+
+    case "todos_patch": {
+      state.todos = applyTodoPatches(state.todos, event.patches);
+      return;
+    }
+
+    // ── Linked sessions ───────────────────────────────────────────────
+
+    case "linked_session_added": {
+      if (state.linkedSessionIds.includes(event.sessionId)) return;
+      state.linkedSessionIds = [...state.linkedSessionIds, event.sessionId];
+      return;
+    }
+
+    case "linked_session_removed": {
+      const filtered = state.linkedSessionIds.filter((id) => id !== event.sessionId);
+      if (filtered.length === state.linkedSessionIds.length) return;
+      state.linkedSessionIds = filtered;
+      return;
+    }
+
+    // ── Model ─────────────────────────────────────────────────────────
+
+    case "model_changed":
+      if (event.agentId) {
+        updateAgentToolCall(state, event.agentId, (toolCall) => {
+          toolCall.agent = {
+            ...toolCall.agent,
+            modelConfiguration: event.modelConfiguration,
+          };
+        });
+        return;
+      }
+
+      state.modelConfiguration = event.modelConfiguration;
+      return;
+
+    // ── Lifecycle ─────────────────────────────────────────────────────
+
+    case "stream_end":
+      // Idempotent on purpose: clients synthesize a stream_end on every
+      // stream close, and replays can deliver one after state is already
+      // final.
+      if (
+        state.status === "idle" &&
+        state.reasoningContent === "" &&
+        state.pendingToolCalls.size === 0 &&
+        state.pendingOptimisticUserMessage === undefined
+      ) {
+        return;
+      }
+      state.status = "idle";
+      state.reasoningContent = "";
+      state.pendingToolCalls.clear();
+      state.pendingOptimisticUserMessage = undefined;
+      return;
+
+    default:
+      // Event types with no Session state effect (skills) are consumed by
+      // runtimes directly — useSession primes the skills query cache.
+      return;
+  }
 }
 
 // ============================================================================
@@ -101,16 +476,16 @@ function reconcileOptimisticUserMessage(
   return true;
 }
 
-function ensureAssistantMessage(state: Session): boolean {
+function ensureAssistantMessage(state: Session): void {
   const last = state.messages[state.messages.length - 1];
-  if (last?.role === "assistant") return false;
+  if (last?.role === "assistant") return;
   state.messages.push({ role: "assistant", content: "" });
-  return true;
 }
 
 // Like ensureAssistantMessage, but also starts a new message when the current
 // one already has tool calls — so that text after tool execution lands on a
 // fresh assistant message, preserving the interleaving of text and tool groups.
+// Returns true when a new message was inserted.
 function ensureCleanAssistantMessage(state: Session): boolean {
   const last = state.messages[state.messages.length - 1];
   if (last?.role === "assistant" && !last.toolCalls?.length && state.pendingToolCalls.size === 0) {
@@ -133,6 +508,15 @@ function mergeStreamingText(existing: string, incoming: string): string {
   }
 
   return existing + incoming;
+}
+
+// Unlike mergeStreamingText (which splices deltas of ONE growing message),
+// agent assistant_message events are whole committed messages — joined as
+// separate paragraphs.
+function appendCommittedAgentContent(existing: string, incoming: string): string {
+  if (incoming.length === 0) return existing;
+  if (existing.length === 0) return incoming;
+  return `${existing}\n\n${incoming}`;
 }
 
 function appendAssistantDelta(state: Session, content: string): void {
@@ -159,7 +543,7 @@ function findCommittedToolCall(state: Session, toolCallId: string): ToolCall | u
   for (let i = state.messages.length - 1; i >= 0; i--) {
     const msg = state.messages[i];
     if (msg.role !== "assistant" || !msg.toolCalls) continue;
-    const tc = msg.toolCalls.find((t) => t.toolCallId === toolCallId);
+    const tc = msg.toolCalls.find((t) => t.id === toolCallId);
     if (tc) {
       msg.revision = (msg.revision ?? 0) + 1;
       return tc;
@@ -168,8 +552,30 @@ function findCommittedToolCall(state: Session, toolCallId: string): ToolCall | u
   return undefined;
 }
 
-function appendChildToolCall(parent: ToolCall, child: ToolCall): void {
-  parent.childToolCalls = parent.childToolCalls ? [...parent.childToolCalls, child] : [child];
+/** Apply a mutation to a parent tool call, resolving it from pendingToolCalls
+ *  first and falling back to committed messages. Pending parents are cloned
+ *  back into the map and re-applied to the last assistant message so
+ *  memoized renderers see a fresh identity; committed parents get their
+ *  message's revision bumped via findCommittedToolCall instead — re-applying
+ *  a (possibly empty) pending map to a committed parent's message would wipe
+ *  its committed tool calls. */
+function updateAgentToolCall(
+  state: Session,
+  agentId: string,
+  mutate: (agentToolCall: ToolCall) => void,
+): void {
+  const pending = state.pendingToolCalls.get(agentId);
+  if (pending) {
+    mutate(pending);
+    state.pendingToolCalls.set(agentId, { ...pending });
+    applyPendingToolCallsToLastAssistant(state);
+    return;
+  }
+
+  const committed = findCommittedToolCall(state, agentId);
+  if (committed) {
+    mutate(committed);
+  }
 }
 
 // ============================================================================
@@ -188,6 +594,10 @@ function removeQueuedMessage(state: Session, queuedMessageId?: string): void {
   if (index === -1) return;
   state.queuedMessages.splice(index, 1);
 }
+
+// ============================================================================
+// Todo helpers
+// ============================================================================
 
 function applyTodoPatches(
   current: TodoItem[] | undefined,
@@ -231,244 +641,4 @@ function applyTodoPatches(
   }
 
   return next.length > 0 ? next : undefined;
-}
-
-// ============================================================================
-// Event reducer
-// ============================================================================
-
-function applySessionEventCore(state: Session, event: SessionEvent): void {
-  // Replayed buffer events that are already incorporated in a snapshot
-  // can race with detail refetches; skip stale events before mutating state.
-  if (
-    event.eventId !== undefined &&
-    state.lastSeenEventId !== undefined &&
-    event.eventId <= state.lastSeenEventId
-  ) {
-    return;
-  }
-
-  if (event.eventId !== undefined || event.turnId !== undefined) {
-    const lastSeenEventId = event.eventId ?? state.lastSeenEventId;
-    const activeTurnId = event.turnId ?? state.activeTurnId;
-    if (lastSeenEventId !== state.lastSeenEventId || activeTurnId !== state.activeTurnId) {
-      state.lastSeenEventId = lastSeenEventId;
-      state.activeTurnId = activeTurnId;
-    }
-  }
-
-  switch (event.type) {
-    // ── Messages ──────────────────────────────────────────────────────
-
-    case "user_message": {
-      if (reconcileOptimisticUserMessage(state, event)) return;
-      if (isDuplicateUserMessage(state, event)) return;
-
-      state.messages.push({
-        role: "user",
-        content: event.content,
-        attachments: event.attachments,
-        timestamp: event.timestamp,
-      });
-      if (event.clientMessageId && event.eventId === undefined) {
-        state.pendingOptimisticUserMessage = {
-          clientMessageId: event.clientMessageId,
-          index: state.messages.length - 1,
-        };
-      }
-      return;
-    }
-
-    case "assistant_message": {
-      const toolCalls = event.toolCalls?.length ? event.toolCalls : undefined;
-      state.messages.push({
-        role: "assistant",
-        content: event.content,
-        toolCalls,
-      });
-      return;
-    }
-
-    case "message_queued": {
-      if (state.queuedMessages.some((m) => m.id === event.queuedMessageId)) return;
-      state.queuedMessages.push({
-        id: event.queuedMessageId,
-        role: "user",
-        content: event.content,
-        attachments: event.attachments,
-      });
-      return;
-    }
-
-    case "message_cancelled": {
-      removeQueuedMessage(state, event.queuedMessageId);
-      return;
-    }
-
-    case "message_dequeued": {
-      removeQueuedMessage(state, event.queuedMessageId);
-      // Dedup: same as user_message — buffer replay after reconnect.
-      if (isDuplicateUserMessage(state, event)) return;
-      state.messages.push({ role: "user", content: event.content });
-      return;
-    }
-
-    // ── Streaming content ─────────────────────────────────────────────
-
-    case "thinking": {
-      const insertedAssistant = ensureCleanAssistantMessage(state);
-      if (!insertedAssistant && state.status === "thinking" && state.reasoningContent === "") {
-        return;
-      }
-      state.status = "thinking";
-      state.reasoningContent = "";
-      return;
-    }
-
-    case "delta": {
-      // Ignore empty deltas. They carry no content and would otherwise
-      // call ensureCleanAssistantMessage, which clears pendingToolCalls
-      // and creates a new message — fragmenting the conversation and
-      // potentially dropping in-flight tool call results.
-      if (event.content.length === 0) return;
-
-      ensureCleanAssistantMessage(state);
-      state.status = "responding";
-      state.reasoningContent = "";
-      appendAssistantDelta(state, event.content);
-      return;
-    }
-
-    case "reasoning":
-      state.status = "reasoning";
-      state.reasoningContent = mergeStreamingText(state.reasoningContent, event.content);
-      return;
-
-    // ── Tool calls ────────────────────────────────────────────────────
-
-    case "tool_start": {
-      ensureAssistantMessage(state);
-
-      if (event.parentToolCallId) {
-        const child: ToolCall = {
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          arguments: event.arguments,
-        };
-        // Nest under parent tool call (check pending first, then committed messages)
-        const parent = state.pendingToolCalls.get(event.parentToolCallId);
-        if (parent) {
-          appendChildToolCall(parent, child);
-          state.pendingToolCalls.set(event.parentToolCallId, { ...parent });
-        } else {
-          const parentTc = findCommittedToolCall(state, event.parentToolCallId);
-          if (parentTc) appendChildToolCall(parentTc, child);
-        }
-      } else {
-        state.pendingToolCalls.set(event.toolCallId, {
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          arguments: event.arguments,
-        });
-      }
-
-      applyPendingToolCallsToLastAssistant(state);
-      return;
-    }
-
-    case "tool_end": {
-      const result = { content: event.result ?? "", success: event.success };
-
-      if (event.parentToolCallId) {
-        // Complete a child tool call nested under parent (check pending first, then committed)
-        const parent = state.pendingToolCalls.get(event.parentToolCallId);
-        const childList =
-          parent?.childToolCalls ??
-          findCommittedToolCall(state, event.parentToolCallId)?.childToolCalls;
-        if (childList) {
-          const childIndex = childList.findIndex((c) => c.toolCallId === event.toolCallId);
-          if (childIndex !== -1) {
-            childList[childIndex] = { ...childList[childIndex], result };
-            if (parent) {
-              state.pendingToolCalls.set(event.parentToolCallId, { ...parent });
-            }
-          }
-        }
-      } else {
-        const current = state.pendingToolCalls.get(event.toolCallId);
-        if (current) {
-          state.pendingToolCalls.set(event.toolCallId, { ...current, result });
-        }
-      }
-      applyPendingToolCallsToLastAssistant(state);
-      return;
-    }
-
-    // ── Status & metadata ─────────────────────────────────────────────
-
-    case "compacting_start":
-      if (state.status === "compacting") return;
-      state.status = "compacting";
-      return;
-
-    case "compacting_end":
-      if (state.status !== "compacting") return;
-      state.status = "thinking";
-      return;
-
-    case "session_title_changed":
-      if (state.summary === event.title) return;
-      state.summary = event.title;
-      return;
-
-    case "todos_patch": {
-      state.todos = applyTodoPatches(state.todos, event.patches);
-      return;
-    }
-
-    // ── Linked sessions ───────────────────────────────────────────────
-
-    case "linked_session_added": {
-      if (state.linkedSessionIds.includes(event.sessionId)) return;
-      state.linkedSessionIds = [...state.linkedSessionIds, event.sessionId];
-      return;
-    }
-
-    case "linked_session_removed": {
-      const filtered = state.linkedSessionIds.filter((id) => id !== event.sessionId);
-      if (filtered.length === state.linkedSessionIds.length) return;
-      state.linkedSessionIds = filtered;
-      return;
-    }
-
-    // ── Model ─────────────────────────────────────────────────────────
-
-    case "model_changed":
-      state.modelConfiguration = event.modelConfiguration;
-      return;
-
-    // ── Lifecycle ─────────────────────────────────────────────────────
-
-    case "stream_end":
-      if (
-        state.status === "idle" &&
-        state.reasoningContent === "" &&
-        state.pendingToolCalls.size === 0
-      ) {
-        return;
-      }
-      state.status = "idle";
-      state.reasoningContent = "";
-      state.pendingToolCalls.clear();
-      state.pendingOptimisticUserMessage = undefined;
-      return;
-
-    default:
-      return;
-  }
-}
-
-export function applySessionEvent(state: Session, event: SessionEvent): Session {
-  applySessionEventCore(state, event);
-  return state;
 }

@@ -22,7 +22,7 @@ import type {
   TodoItem,
 } from "@/types";
 import { toDataUrl } from "@/types";
-import type { FileDiff, LineDiff } from "@/hooks/diffs/useEditDiffs";
+import type { DiffStats, FileDiffSummary } from "@/hooks/diffs/useEditDiffs";
 import { useViewport } from "@/hooks/browser/ViewportContext";
 
 const TEXTAREA_MIN_HEIGHT = 40;
@@ -38,7 +38,7 @@ export interface SessionInputProps {
   locationPicker?: SessionLocationPickerProps;
   todos?: TodoItem[];
   skills?: SessionSkill[];
-  sessionDiff?: { total: LineDiff; byFile: FileDiff[] };
+  sessionDiff?: { total: DiffStats; byFile: FileDiffSummary[] };
   queuedMessages?: QueuedMessage[];
   onCancelQueuedMessage?: (queuedMessageId: string) => void;
 }
@@ -161,6 +161,8 @@ export const SessionInput = memo(function SessionInput({
     reader.onload = () => {
       const dataUrl = reader.result as string;
       const base64 = dataUrl.split(",")[1];
+      if (!base64) return;
+
       setAttachments((prev) => [
         ...prev,
         {

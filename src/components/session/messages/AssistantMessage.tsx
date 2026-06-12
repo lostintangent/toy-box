@@ -52,7 +52,7 @@ export function AssistantMessage({
 function deduplicateIntents(toolCalls: ToolCall[]): ToolCall[] {
   let lastIntentValue: string | null = null;
   return toolCalls.filter((tc) => {
-    if (tc.toolName === "report_intent") {
+    if (tc.name === "report_intent") {
       const value = tc.arguments?.intent as string;
       if (value === lastIntentValue) return false;
       lastIntentValue = value;
@@ -77,16 +77,16 @@ function ToolCallsDisplay({ toolCalls }: { toolCalls: ToolCall[] }) {
   return (
     <div className="space-y-2">
       {deduplicated.map((toolCall) => {
-        if (toolCall.toolName === "report_intent") {
+        if (toolCall.name === "report_intent") {
           const intent = (toolCall.arguments?.intent as string) || "Working...";
-          return <IntentDivider key={toolCall.toolCallId} intent={intent} />;
+          return <IntentDivider key={toolCall.id} intent={intent} />;
         }
 
         return (
           <ToolCallMessage
-            key={toolCall.toolCallId}
+            key={toolCall.id}
             toolCall={toolCall}
-            isActive={!toolCall.result}
+            isActive={toolCall.result === undefined}
           />
         );
       })}

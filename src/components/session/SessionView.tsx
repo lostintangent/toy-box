@@ -32,7 +32,7 @@ import {
 import { SessionInput } from "./input/SessionInput";
 import { useSession, type SessionConfig } from "@/hooks/session/useSession";
 import { mergeSessionWorktree, applySessionWorktree } from "@/functions/sessions";
-import { getSettings } from "@/lib/settings";
+import { getSettings } from "@/lib/config/settings";
 import { useEditDiffs } from "@/hooks/diffs/useEditDiffs";
 import { EditDiffsProvider } from "@/hooks/diffs/EditDiffsContext";
 import { SessionCwdProvider } from "@/hooks/session/SessionCwdContext";
@@ -285,48 +285,23 @@ export function SessionView({
     worktreeProps,
   ]);
 
-  // Per-session model override: populated from the session's server state so
-  // that switching between sessions restores each one's last-used model
-  // without writing to localStorage (which is reserved for explicit user picks).
-  const [sessionModelConfiguration, setSessionModelConfiguration] =
-    useState<ModelConfiguration | null>(null);
-
-  // Reset the override when switching to a different session.
-  useEffect(() => {
-    setSessionModelConfiguration(null);
-  }, [sessionId]);
-
-  // Session state wins over the global picker state. Draft sessions use the
-  // current global configuration until the server reports a session-specific one.
-  const displayedModelConfiguration = useMemo<ModelConfiguration | null>(
-    () => sessionModelConfiguration ?? (isDraft ? (modelConfiguration ?? null) : null),
-    [isDraft, modelConfiguration, sessionModelConfiguration],
-  );
-
-  // When the user explicitly picks a model, persist to localStorage AND
-  // update the local override so it takes effect immediately.
-  const handleModelConfigurationChange = useCallback(
-    (configuration: ModelConfiguration) => {
-      setSessionModelConfiguration(configuration);
-      onModelConfigurationChange?.(configuration);
-    },
-    [onModelConfigurationChange],
-  );
-
-  // Session config passed to useSession. The model is always forwarded so that
-  // mid-session model changes are sent to the server. Directory and the
+  // Session config passed to useSession. The session's model configuration is
+  // owned by useSession's reducer state (seeded on first send, updated by
+  // model_changed events and snapshot syncs); the global picker state is only
+  // forwarded as the default for a draft's first message. Directory and the
   // creation callback only matter for draft sessions but are safely ignored
   // by useSession after the first message.
   const sessionConfig = useMemo<SessionConfig | undefined>(() => {
     return {
-      modelConfiguration: displayedModelConfiguration ?? undefined,
+      isDraft,
+      defaultModelConfiguration: modelConfiguration ?? undefined,
       directory: selectedDirectory,
       useWorktree: isDraft ? useWorktree : undefined,
       onSessionCreated: isDraft ? () => onDraftSessionCreated?.(sessionId) : undefined,
     };
   }, [
     isDraft,
-    displayedModelConfiguration,
+    modelConfiguration,
     selectedDirectory,
     useWorktree,
     sessionId,
@@ -339,17 +314,37 @@ export function SessionView({
     isStreaming,
     status,
     reasoningContent,
+    modelConfiguration: sessionModelConfiguration,
     todos,
     linkedSessionIds,
     revision,
     hasSynced,
     sendMessage,
     updateState,
+    setModelConfiguration,
     attachToStream,
     detachFromStream,
     cancelStream,
     cancelQueuedMessage,
   } = useSession(sessionId, sessionConfig);
+
+  // Session state wins over the global picker state. Draft sessions fall back
+  // to the current global configuration until the first send seeds their own.
+  // Existing sessions show a loading skeleton until their snapshot syncs.
+  const displayedModelConfiguration = useMemo<ModelConfiguration | null>(
+    () => sessionModelConfiguration ?? (isDraft ? (modelConfiguration ?? null) : null),
+    [isDraft, modelConfiguration, sessionModelConfiguration],
+  );
+
+  // When the user explicitly picks a model, persist to localStorage AND
+  // update the session's state so it takes effect immediately.
+  const handleModelConfigurationChange = useCallback(
+    (configuration: ModelConfiguration) => {
+      setModelConfiguration(configuration);
+      onModelConfigurationChange?.(configuration);
+    },
+    [onModelConfigurationChange, setModelConfiguration],
+  );
 
   // Session data from cache - disabled for draft sessions (they don't exist on server yet)
   // and while streaming (local state is authoritative during a stream).
@@ -435,13 +430,11 @@ export function SessionView({
         lastSeenEventId: sessionData.lastSeenEventId,
         status: sessionData.status,
         reasoningContent: sessionData.reasoningContent,
+        // Restores the session's last-used model so the picker reflects it.
+        // Lives in useSession state (not localStorage) — only explicit user
+        // picks persist globally.
         modelConfiguration: sessionData.modelConfiguration,
       });
-
-      // Restore the session's model selection so the picker reflects this
-      // session's last-used model. Uses the local override (not onModelChange)
-      // so localStorage is not modified — only explicit user picks persist.
-      setSessionModelConfiguration(sessionData.modelConfiguration ?? null);
     }
   }, [hasSynced, isDraft, isStreaming, sessionData, updateState]);
 

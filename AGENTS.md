@@ -6,13 +6,13 @@ Start with the subsystem that matches your change. These are the main layers tha
 
 ### Sessions
 
-#### SDK -> Domain Projector
+#### SDK -> Domain Projection
 
-The projector translates raw SDK session events into the canonical session events the rest of the app understands. It keeps streaming behavior and history replay consistent for visible tool calls, hidden tool calls, synthetic events, and session metadata. Start here when you need to understand how SDK output becomes app state. Files: [`src/functions/sdk/projector.ts`](src/functions/sdk/projector.ts)
+The projector translates raw SDK session events into the canonical `SessionEvent`s the rest of the app understands, with all SDK-specific policy (tool name aliases, omitted/translated/deferred tool calls, terminal dispositions) declared as tables at the top of the file. History replay is a thin adapter in front of the same projection: it resolves the three ways a persisted log differs from a live stream (committed messages instead of deltas, lifecycle records, no in-flight progress) and replays the log through the identical pipeline, so a reloaded transcript can never disagree with one a client watched stream in. Start here when you need to understand how SDK output becomes app state. Files: [`src/functions/sdk/projector.ts`](src/functions/sdk/projector.ts), [`src/functions/sdk/historyReplay.ts`](src/functions/sdk/historyReplay.ts), [`src/functions/sdk/attachments.ts`](src/functions/sdk/attachments.ts), [`src/functions/sdk/extractors.ts`](src/functions/sdk/extractors.ts)
 
-#### Session State Model
+#### Session Reducer
 
-Session state in Toy Box combines three layers: persisted SDK-backed session history and metadata, live in-memory runtime state, and auxiliary cached per-session state such as worktrees and unread markers. The key rule is that active sessions take their live truth from the in-memory stream, while idle sessions are reconstructed from persisted history plus cached side-state. Start here when you need the holistic picture of where session state comes from and which layer is authoritative. Files: [`src/functions/sdk/sessionState.ts`](src/functions/sdk/sessionState.ts), [`src/functions/state/sessionCache.ts`](src/functions/state/sessionCache.ts), [`src/functions/sessions.ts`](src/functions/sessions.ts), [`src/functions/runtime/stream.ts`](src/functions/runtime/stream.ts)
+The session reducer is the single transition function for `Session` state, shared by the server's live stream, server-side history replay, and the client (both live SSE events and the buffered replay a late-connecting client catches up on). Because every consumer feeds it the same canonical `SessionEvent`s, a transcript renders identically whether it is watched live, reloaded, or reconnected to. It turns events into messages, streaming assistant output, queued prompts, todos, status transitions, and linked-session state. Start here when you need to understand what a session event means to session state. Files: [`src/lib/session/sessionReducer.ts`](src/lib/session/sessionReducer.ts)
 
 #### Runtime Streams
 
@@ -22,9 +22,9 @@ The runtime stream layer owns the live server-side lifecycle of an active sessio
 
 This layer keeps the canonical React Query state for session lists, session details, and automation lists synchronized across clients. Query caches provide the local source of truth for list and detail views, while the server broadcasts updates over SSE and client cache helpers apply them for multi-client sync, unread markers, running indicators, and automation status. Start here when you need to understand how shared state propagates outside an active session stream. Files: [`src/functions/runtime/broadcast.ts`](src/functions/runtime/broadcast.ts), [`src/routes/api/events.ts`](src/routes/api/events.ts), [`src/hooks/events/useServerEvents.ts`](src/hooks/events/useServerEvents.ts), [`src/lib/session/sessionsCache.ts`](src/lib/session/sessionsCache.ts), [`src/hooks/automations/cache.ts`](src/hooks/automations/cache.ts), [`src/lib/queries.ts`](src/lib/queries.ts)
 
-#### Session Reducer
+#### Session State Model
 
-The session reducer is the canonical client-side state machine for a session. It turns projected session events into the UI state for messages, streaming assistant output, queued prompts, todos, status transitions, and linked session behavior. Start here when you need to understand what a session event means to the UI. Files: [`src/lib/session/sessionReducer.ts`](src/lib/session/sessionReducer.ts)
+Session state in Toy Box combines three layers: persisted SDK-backed session history and metadata, live in-memory runtime state, and auxiliary cached per-session state such as worktrees and unread markers. The key rule is that active sessions take their live truth from the in-memory stream, while idle sessions are reconstructed from persisted history plus cached side-state. Start here when you need the holistic picture of where session state comes from and which layer is authoritative. Files: [`src/functions/sdk/historyReplay.ts`](src/functions/sdk/historyReplay.ts), [`src/functions/state/sessionCache.ts`](src/functions/state/sessionCache.ts), [`src/functions/sessions.ts`](src/functions/sessions.ts), [`src/functions/runtime/stream.ts`](src/functions/runtime/stream.ts)
 
 ### Automations
 
@@ -33,6 +33,18 @@ The automation scheduler decides when automations run and drives each scheduled 
 ### Terminal
 
 The terminal WebSocket service owns the lifecycle of interactive terminal sessions, including PTY creation, reconnect behavior, idle/orphan cleanup, and scrollback replay. It exists so terminal clients can disconnect and reconnect without losing the right view of terminal state. Start here when you need to understand terminal session ownership, replay behavior, or PTY lifecycle rules. Files: [`terminal-server/AGENTS.md`](terminal-server/AGENTS.md)
+
+## Writing Great Code
+
+- Core principles
+  - Model the domain directly with intuitive, well-named primitives and abstractions that become the core nouns and verbs of the subsystem.
+  - Add concise module-level comments when they help a reader understand the role the module plays in the system.
+  - Keep shared helpers generic, and put caller-specific policy at the edges.
+  - Extract helpers when they remove real repetition or clarify intent. Inline them when they only add indirection.
+  - Organize files so they read top-to-bottom: domain types and policy first, then helpers, then public entrypoints when they mainly compose internal logic. In simpler modules, leading with the public API can be clearer.
+- Module boundaries
+  - Use normal imports by default. Use dynamic imports only when they solve a real module-cycle or runtime-boundary problem.
+- For a model example of this style, see [`src/functions/sdk/projector.ts`](src/functions/sdk/projector.ts).
 
 ## Writing Great Tests
 
@@ -50,18 +62,6 @@ The terminal WebSocket service owns the lifecycle of interactive terminal sessio
   - Use `onTestFinished(...)` for per-test cleanup instead of shared mutable teardown state.
   - For timer-driven behavior, use short real timers (`Bun.sleep(...)`) with explicit test timeouts; Bun does not fully mock timeout APIs yet.
 - For a model example of this style, see [`src/functions/sdk/projector.test.ts`](src/functions/sdk/projector.test.ts).
-
-## Writing Great Code
-
-- Core principles
-  - Model the domain directly with intuitive, well-named primitives and abstractions that become the core nouns and verbs of the subsystem.
-  - Add concise module-level comments when they help a reader understand the role the module plays in the system.
-  - Keep shared helpers generic, and put caller-specific policy at the edges.
-  - Extract helpers when they remove real repetition or clarify intent. Inline them when they only add indirection.
-  - Organize files so they read top-to-bottom: domain types and policy first, then helpers, then public entrypoints when they mainly compose internal logic. In simpler modules, leading with the public API can be clearer.
-- Module boundaries
-  - Use normal imports by default. Use dynamic imports only when they solve a real module-cycle or runtime-boundary problem.
-- For a model example of this style, see [`src/functions/sdk/projector.ts`](src/functions/sdk/projector.ts).
 
 ## Post-Change Checklist
 

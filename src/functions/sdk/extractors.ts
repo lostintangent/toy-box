@@ -1,12 +1,15 @@
-// Defensive field accessors for untyped SDK event data.
+// Defensive field accessors for SDK event payloads.
 //
-// SDK events are typed, but the adapter still treats payloads defensively so
-// it can tolerate older/newer CLI event shapes at the projection boundary.
+// These exist because events arrive from outside the type system (parsed
+// events.jsonl lines, RPC payloads), so reads stay runtime-tolerant at this
+// boundary. Keep this surface minimal — every stringly-keyed read here is
+// invisible to the compiler, so schema drift (renamed/moved SDK fields) only
+// surfaces through tests, not types.
 
 import type { JsonValue } from "@/types";
 import type { SessionEvent as CopilotSdkSessionEvent } from "@github/copilot-sdk";
 
-export type UnknownRecord = Record<string, unknown>;
+type UnknownRecord = Record<string, unknown>;
 
 type UnknownSdkSessionEvent = {
   type: CopilotSdkSessionEvent["type"] | (string & {});
@@ -35,10 +38,6 @@ export function readPath(value: unknown, ...path: string[]): unknown {
   }
 
   return current;
-}
-
-export function readRecord(value: unknown, key: string): UnknownRecord | undefined {
-  return asRecord(readPath(value, key));
 }
 
 export function readArray(value: unknown, key: string): unknown[] | undefined {

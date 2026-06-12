@@ -4,6 +4,7 @@ import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";
 import { MarkdownBlock } from "./MarkdownBlock";
 import { ToolCallMessage } from "./ToolCallMessage";
+import { ReasoningDisplay } from "../../SessionStatus";
 
 export function AgentToolCall({ toolCall, ...props }: ToolCallProps) {
   const agentType = toolCall.arguments.agent_type as string | undefined;
@@ -14,6 +15,12 @@ export function AgentToolCall({ toolCall, ...props }: ToolCallProps) {
   const label = description ? `${agentLabel}: ${description}` : agentLabel;
 
   const isBackground = toolCall.arguments.mode === "background";
+  const model = toolCall.agent?.modelConfiguration?.model;
+  const agentContent = toolCall.agent?.content;
+  const reasoningContent = toolCall.agent?.reasoningContent;
+  const agentToolCalls = toolCall.agent?.toolCalls;
+  const promptTitle = model ? `Prompt (${model})` : "Prompt";
+  const result = toolCall.result?.content;
 
   return (
     <ToolCallCard
@@ -23,26 +30,31 @@ export function AgentToolCall({ toolCall, ...props }: ToolCallProps) {
       label={label}
       headerExtra={
         <span className="text-[10px] font-medium text-muted-foreground bg-muted rounded-full px-1.5 py-0.5">
-          {toolCall.childToolCalls?.length ?? 0}
+          {agentToolCalls?.length ?? 0}
         </span>
       }
     >
-      {toolCall.childToolCalls && toolCall.childToolCalls.length > 0 && (
+      {reasoningContent && <ReasoningDisplay content={reasoningContent} />}
+      {agentToolCalls && agentToolCalls.length > 0 && (
         <div className="space-y-1">
           <div className="text-xs text-muted-foreground mb-1">Tool Calls</div>
-          {toolCall.childToolCalls.map((child) => (
+          {agentToolCalls.map((child) => (
             <ToolCallMessage
-              key={child.toolCallId}
+              key={child.id}
               toolCall={child}
-              isActive={!child.result && props.isActive}
+              isActive={child.result === undefined && props.isActive}
             />
           ))}
         </div>
       )}
-      <TextBlock title="Prompt" maxHeight="max-h-32">
+      <TextBlock title={promptTitle} maxHeight="max-h-32">
         {prompt}
       </TextBlock>
-      {!isBackground && <MarkdownBlock title="Result">{toolCall.result?.content}</MarkdownBlock>}
+      {agentContent ? (
+        <MarkdownBlock title="Result">{agentContent}</MarkdownBlock>
+      ) : (
+        !isBackground && result && <MarkdownBlock title="Result">{result}</MarkdownBlock>
+      )}
     </ToolCallCard>
   );
 }

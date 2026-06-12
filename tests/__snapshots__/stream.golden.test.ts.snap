@@ -1,0 +1,1018 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, and close 1`] = `
+{
+  "received": [
+    {
+      "clientMessageId": "client-1",
+      "content": "kick off the reviews",
+      "eventId": 0,
+      "turnId": "turn-0",
+      "type": "user_message",
+    },
+    {
+      "arguments": {
+        "path": "/tmp/copilot-sdk-100-inspect-48621/package/dist/generated/session-events.d.ts",
+        "view_range": [
+          1970,
+          2168,
+        ],
+      },
+      "eventId": 1,
+      "toolCallId": "call_M1QBw3fDmRrrXoYP9bt4edOd",
+      "toolName": "read",
+      "turnId": "turn-0",
+      "type": "tool_start",
+    },
+    {
+      "details": undefined,
+      "eventId": 2,
+      "result": "Path does not exist",
+      "success": false,
+      "toolCallId": "call_M1QBw3fDmRrrXoYP9bt4edOd",
+      "turnId": "turn-0",
+      "type": "tool_end",
+    },
+    {
+      "eventId": 3,
+      "turnId": "turn-0",
+      "type": "compacting_start",
+    },
+    {
+      "eventId": 4,
+      "turnId": "turn-0",
+      "type": "compacting_end",
+    },
+    {
+      "eventId": 5,
+      "turnId": "turn-1",
+      "type": "thinking",
+    },
+    {
+      "arguments": {
+        "intent": "Launching reviews",
+      },
+      "eventId": 6,
+      "toolCallId": "call_RxF3q3DxvPVDWX1mvsjqs9iq",
+      "toolName": "report_intent",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "arguments": {
+        "agent_type": "code-review",
+        "description": "Review full diff",
+        "mode": "background",
+        "name": "full-diff-review",
+        "prompt": "You are reviewing the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Focus only on high-signal correctness, security, regression, type-safety, and maintainability issues. Ignore formatting/style un…",
+      },
+      "eventId": 7,
+      "toolCallId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
+      "toolName": "agent",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "arguments": {
+        "agent_type": "explore",
+        "description": "Review attachments flow",
+        "mode": "background",
+        "name": "attachments-review",
+        "prompt": 
+"You are an explore agent reviewing attachment-related changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Focus on whether the SDK-backed blob attachment model is wired correctly end-to-end.
+
+Intended behavior:
+- Client/UI…"
+,
+      },
+      "eventId": 8,
+      "toolCallId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
+      "toolName": "agent",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "arguments": {
+        "agent_type": "explore",
+        "description": "Review tool semantics",
+        "mode": "background",
+        "name": "toolcall-review",
+        "prompt": 
+"You are an explore agent reviewing ToolCall semantic-type changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+
+Intended behavior:
+- SessionEvent shapes remain unchanged/protocol-like: tool_start uses toolCallId/toolName; t…"
+,
+      },
+      "eventId": 9,
+      "toolCallId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
+      "toolName": "agent",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "arguments": {
+        "agent_type": "explore",
+        "description": "Review diff parser",
+        "mode": "background",
+        "name": "diff-review",
+        "prompt": 
+"You are an explore agent reviewing the diff parser/model/UI changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+
+Intended behavior:
+- Patch tool start args are not parsed into FileDiff[]; raw apply_patch text displays whil…"
+,
+      },
+      "eventId": 10,
+      "toolCallId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
+      "toolName": "agent",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "arguments": {
+        "agent_type": "explore",
+        "description": "Review runtime state",
+        "mode": "background",
+        "name": "runtime-state-review",
+        "prompt": 
+"You are an explore agent reviewing runtime/session-state consistency for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+
+Focus areas:
+- Active stream state vs persisted history reconstruction a…"
+,
+      },
+      "eventId": 11,
+      "toolCallId": "call_7CE08h3s8nNulW1GHoiNsWeu",
+      "toolName": "agent",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "arguments": {
+        "agent_type": "explore",
+        "description": "Review tests coverage",
+        "mode": "background",
+        "name": "coverage-review",
+        "prompt": 
+"You are an explore agent reviewing test coverage for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+
+Context: Changes include SDK blob attachments, semantic Attachment type, semantic ToolCall i…"
+,
+      },
+      "eventId": 12,
+      "toolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "toolName": "agent",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "arguments": {
+        "agent_type": "rubber-duck",
+        "description": "Rubber duck design",
+        "mode": "background",
+        "name": "design-review",
+        "prompt": 
+"You are a rubber-duck reviewer for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Provide high-signal design feedback only; ignore style/formatting.
+
+Evaluate the overall design decisions:
+- Se…"
+,
+      },
+      "eventId": 13,
+      "toolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "toolName": "agent",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "agentId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
+      "eventId": 14,
+      "modelConfiguration": {
+        "model": "gpt-5.5",
+      },
+      "turnId": "turn-1",
+      "type": "model_changed",
+    },
+    {
+      "details": "Launching reviews",
+      "eventId": 15,
+      "result": "Intent logged",
+      "success": true,
+      "toolCallId": "call_RxF3q3DxvPVDWX1mvsjqs9iq",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "eventId": 16,
+      "modelConfiguration": {
+        "model": "claude-opus-4.8",
+      },
+      "turnId": "turn-1",
+      "type": "model_changed",
+    },
+    {
+      "agentId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
+      "eventId": 17,
+      "modelConfiguration": {
+        "model": "claude-haiku-4.5",
+      },
+      "turnId": "turn-1",
+      "type": "model_changed",
+    },
+    {
+      "agentId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
+      "eventId": 18,
+      "modelConfiguration": {
+        "model": "claude-haiku-4.5",
+      },
+      "turnId": "turn-1",
+      "type": "model_changed",
+    },
+    {
+      "agentId": "call_7CE08h3s8nNulW1GHoiNsWeu",
+      "eventId": 19,
+      "modelConfiguration": {
+        "model": "claude-haiku-4.5",
+      },
+      "turnId": "turn-1",
+      "type": "model_changed",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "eventId": 20,
+      "modelConfiguration": {
+        "model": "claude-haiku-4.5",
+      },
+      "turnId": "turn-1",
+      "type": "model_changed",
+    },
+    {
+      "agentId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
+      "eventId": 21,
+      "modelConfiguration": {
+        "model": "claude-haiku-4.5",
+      },
+      "turnId": "turn-1",
+      "type": "model_changed",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "arguments": {
+        "command": "cd /Users/lostintangent/Desktop/toy-box && git status",
+        "description": "Check git status to see uncommitted changes",
+      },
+      "eventId": 22,
+      "toolCallId": "toolu_bdrk_01Bc16CL9HSZ6uwrBHBTraGR",
+      "toolName": "bash",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "arguments": {
+        "command": "cd /Users/lostintangent/Desktop/toy-box && git diff --name-only",
+        "description": "List modified files",
+      },
+      "eventId": 23,
+      "toolCallId": "toolu_bdrk_01WYvdnAft499BoKhWbhRnnF",
+      "toolName": "bash",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "arguments": {
+        "command": "cd /Users/lostintangent/Desktop/toy-box && git status --porcelain",
+        "description": "Get full status with untracked files",
+      },
+      "eventId": 24,
+      "toolCallId": "toolu_bdrk_01CpyvLNVaTKQDdQt31piuC6",
+      "toolName": "bash",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "details": 
+"On branch main
+Changes not staged for commit:
+  (use "git add/rm <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/components/session/SessionView.tsx
+	modif…"
+,
+      "eventId": 25,
+      "result": 
+"On branch main
+Changes not staged for commit:
+  (use "git add/rm <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/components/session/SessionView.tsx
+	modif…"
+,
+      "success": true,
+      "toolCallId": "toolu_bdrk_01Bc16CL9HSZ6uwrBHBTraGR",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "details": 
+"src/components/session/SessionView.tsx
+src/components/session/input/DiffPopup.tsx
+src/components/session/input/SessionInput.tsx
+src/components/session/messages/AssistantMessage.tsx
+src/components/session/messages/tools/AgentToolCall.tsx
+src…"
+,
+      "eventId": 26,
+      "result": 
+"src/components/session/SessionView.tsx
+src/components/session/input/DiffPopup.tsx
+src/components/session/input/SessionInput.tsx
+src/components/session/messages/AssistantMessage.tsx
+src/components/session/messages/tools/AgentToolCall.tsx
+src…"
+,
+      "success": true,
+      "toolCallId": "toolu_bdrk_01WYvdnAft499BoKhWbhRnnF",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "details": 
+"M src/components/session/SessionView.tsx
+ M src/components/session/input/DiffPopup.tsx
+ M src/components/session/input/SessionInput.tsx
+ M src/components/session/messages/AssistantMessage.tsx
+ M src/components/session/messages/tools/AgentTo…"
+,
+      "eventId": 27,
+      "result": 
+"M src/components/session/SessionView.tsx
+ M src/components/session/input/DiffPopup.tsx
+ M src/components/session/input/SessionInput.tsx
+ M src/components/session/messages/AssistantMessage.tsx
+ M src/components/session/messages/tools/AgentTo…"
+,
+      "success": true,
+      "toolCallId": "toolu_bdrk_01CpyvLNVaTKQDdQt31piuC6",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "arguments": {
+        "intent": "Examining uncommitted changes",
+      },
+      "eventId": 28,
+      "toolCallId": "toolu_01U7w1ymeBtK62owAFb7pxSA",
+      "toolName": "report_intent",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "arguments": {
+        "command": "cd /Users/lostintangent/Desktop/toy-box && git --no-pager status && echo "===DIFFSTAT===" && git --no-pager diff --stat",
+        "description": "Show git status and diff stat",
+      },
+      "eventId": 29,
+      "toolCallId": "toolu_01AaNM5wZ1QXPthiuEr4vzZW",
+      "toolName": "bash",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "details": "Examining uncommitted changes",
+      "eventId": 30,
+      "result": "Intent logged",
+      "success": true,
+      "toolCallId": "toolu_01U7w1ymeBtK62owAFb7pxSA",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "details": 
+"On branch main
+Changes not staged for commit:
+  (use "git add/rm <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/components/session/SessionView.tsx
+	modif…"
+,
+      "eventId": 31,
+      "result": 
+"On branch main
+Changes not staged for commit:
+  (use "git add/rm <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/components/session/SessionView.tsx
+	modif…"
+,
+      "success": true,
+      "toolCallId": "toolu_01AaNM5wZ1QXPthiuEr4vzZW",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "arguments": {
+        "path": "/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts",
+      },
+      "eventId": 32,
+      "toolCallId": "toolu_bdrk_01DuKi1hYw5i5feiz5KeWwaC",
+      "toolName": "read",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "details": 
+"
+diff --git a/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts b/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts
+index 0000000..0000000 100644
+--- a/Users/lostintangent/Desktop/toy-box/sr…"
+,
+      "eventId": 33,
+      "result": 
+"1. import { describe, expect, test } from "bun:test";
+2. import { initializeSessionStateFromSdkHistory } from "./sessionState";
+3. import type { SdkSessionEvent } from "./projector";
+4. 
+5. describe("initializeSessionStateFromSdkHistory", (…"
+,
+      "success": true,
+      "toolCallId": "toolu_bdrk_01DuKi1hYw5i5feiz5KeWwaC",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "arguments": {
+        "command": "cd /Users/lostintangent/Desktop/toy-box && git --no-pager diff src/types.ts",
+        "description": "Show diff of types.ts",
+      },
+      "eventId": 34,
+      "toolCallId": "toolu_01TorsDVgPrQe3waDFEWnQvD",
+      "toolName": "bash",
+      "turnId": "turn-1",
+      "type": "tool_start",
+    },
+    {
+      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "details": 
+"diff --git a/src/types.ts b/src/types.ts
+index 375b1b8..9db9a3a 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -77,12 +77,13 @@ export type AssistantMessage = BaseMessage & {
+ export type Message = UserMessage | AssistantMessage;
+ 
+ export…"
+,
+      "eventId": 35,
+      "result": 
+"diff --git a/src/types.ts b/src/types.ts
+index 375b1b8..9db9a3a 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -77,12 +77,13 @@ export type AssistantMessage = BaseMessage & {
+ export type Message = UserMessage | AssistantMessage;
+ 
+ export…"
+,
+      "success": true,
+      "toolCallId": "toolu_01TorsDVgPrQe3waDFEWnQvD",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "eventId": 36,
+      "success": true,
+      "toolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "eventId": 37,
+      "success": true,
+      "toolCallId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "eventId": 38,
+      "success": true,
+      "toolCallId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "eventId": 39,
+      "success": true,
+      "toolCallId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "eventId": 40,
+      "success": true,
+      "toolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "eventId": 41,
+      "success": true,
+      "toolCallId": "call_7CE08h3s8nNulW1GHoiNsWeu",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "eventId": 42,
+      "success": true,
+      "toolCallId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
+      "turnId": "turn-1",
+      "type": "tool_end",
+    },
+    {
+      "content": "Wrapping up.",
+      "eventId": 43,
+      "turnId": "turn-1",
+      "type": "delta",
+    },
+    {
+      "attachments": undefined,
+      "content": "now fix the findings",
+      "eventId": 44,
+      "queuedMessageId": "queued-1",
+      "turnId": "turn-1",
+      "type": "message_queued",
+    },
+    {
+      "content": "now fix the findings",
+      "eventId": 45,
+      "queuedMessageId": "queued-1",
+      "turnId": "turn-2",
+      "type": "message_dequeued",
+    },
+    {
+      "eventId": 46,
+      "turnId": "turn-3",
+      "type": "thinking",
+    },
+    {
+      "content": "On it.",
+      "eventId": 47,
+      "turnId": "turn-3",
+      "type": "delta",
+    },
+    "<<STREAM-CLOSED>>",
+  ],
+  "sideEffects": [
+    "running:golden-stream",
+    "touched:golden-stream:kick off the reviews",
+    "touched:golden-stream:now fix the findings",
+    "--- pre-close ---",
+    "read:golden-stream",
+    "idle:golden-stream",
+    "sdk:unsubscribed",
+  ],
+}
+`;
+
+exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, and close 2`] = `
+{
+  "activeTurnId": "turn-3",
+  "lastSeenEventId": 47,
+  "linkedSessionIds": [],
+  "messages": [
+    {
+      "attachments": undefined,
+      "content": "kick off the reviews",
+      "role": "user",
+      "timestamp": undefined,
+    },
+    {
+      "content": "",
+      "role": "assistant",
+      "toolCalls": [
+        {
+          "arguments": {
+            "path": "/tmp/copilot-sdk-100-inspect-48621/package/dist/generated/session-events.d.ts",
+            "view_range": [
+              1970,
+              2168,
+            ],
+          },
+          "id": "call_M1QBw3fDmRrrXoYP9bt4edOd",
+          "name": "read",
+          "result": {
+            "content": "Path does not exist",
+            "details": undefined,
+            "success": false,
+          },
+        },
+      ],
+    },
+    {
+      "content": "",
+      "role": "assistant",
+      "toolCalls": [
+        {
+          "arguments": {
+            "intent": "Launching reviews",
+          },
+          "id": "call_RxF3q3DxvPVDWX1mvsjqs9iq",
+          "name": "report_intent",
+          "result": {
+            "content": "Intent logged",
+            "details": "Launching reviews",
+            "success": true,
+          },
+        },
+        {
+          "agent": {
+            "modelConfiguration": {
+              "model": "gpt-5.5",
+            },
+          },
+          "arguments": {
+            "agent_type": "code-review",
+            "description": "Review full diff",
+            "mode": "background",
+            "name": "full-diff-review",
+            "prompt": "You are reviewing the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Focus only on high-signal correctness, security, regression, type-safety, and maintainability issues. Ignore formatting/style un…",
+          },
+          "id": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
+          "name": "agent",
+          "result": {
+            "content": "",
+            "details": undefined,
+            "success": true,
+          },
+        },
+        {
+          "agent": {
+            "modelConfiguration": {
+              "model": "claude-haiku-4.5",
+            },
+          },
+          "arguments": {
+            "agent_type": "explore",
+            "description": "Review attachments flow",
+            "mode": "background",
+            "name": "attachments-review",
+            "prompt": 
+"You are an explore agent reviewing attachment-related changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Focus on whether the SDK-backed blob attachment model is wired correctly end-to-end.
+
+Intended behavior:
+- Client/UI…"
+,
+          },
+          "id": "call_6Jaw3UuYJyWaSJPruwIeJOql",
+          "name": "agent",
+          "result": {
+            "content": "",
+            "details": undefined,
+            "success": true,
+          },
+        },
+        {
+          "agent": {
+            "modelConfiguration": {
+              "model": "claude-haiku-4.5",
+            },
+          },
+          "arguments": {
+            "agent_type": "explore",
+            "description": "Review tool semantics",
+            "mode": "background",
+            "name": "toolcall-review",
+            "prompt": 
+"You are an explore agent reviewing ToolCall semantic-type changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+
+Intended behavior:
+- SessionEvent shapes remain unchanged/protocol-like: tool_start uses toolCallId/toolName; t…"
+,
+          },
+          "id": "call_FEzfqGxQde7PZN4D2gB4MjYF",
+          "name": "agent",
+          "result": {
+            "content": "",
+            "details": undefined,
+            "success": true,
+          },
+        },
+        {
+          "agent": {
+            "modelConfiguration": {
+              "model": "claude-haiku-4.5",
+            },
+          },
+          "arguments": {
+            "agent_type": "explore",
+            "description": "Review diff parser",
+            "mode": "background",
+            "name": "diff-review",
+            "prompt": 
+"You are an explore agent reviewing the diff parser/model/UI changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+
+Intended behavior:
+- Patch tool start args are not parsed into FileDiff[]; raw apply_patch text displays whil…"
+,
+          },
+          "id": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
+          "name": "agent",
+          "result": {
+            "content": "",
+            "details": undefined,
+            "success": true,
+          },
+        },
+        {
+          "agent": {
+            "modelConfiguration": {
+              "model": "claude-haiku-4.5",
+            },
+          },
+          "arguments": {
+            "agent_type": "explore",
+            "description": "Review runtime state",
+            "mode": "background",
+            "name": "runtime-state-review",
+            "prompt": 
+"You are an explore agent reviewing runtime/session-state consistency for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+
+Focus areas:
+- Active stream state vs persisted history reconstruction a…"
+,
+          },
+          "id": "call_7CE08h3s8nNulW1GHoiNsWeu",
+          "name": "agent",
+          "result": {
+            "content": "",
+            "details": undefined,
+            "success": true,
+          },
+        },
+        {
+          "agent": {
+            "modelConfiguration": {
+              "model": "claude-haiku-4.5",
+            },
+            "toolCalls": [
+              {
+                "arguments": {
+                  "command": "cd /Users/lostintangent/Desktop/toy-box && git status",
+                  "description": "Check git status to see uncommitted changes",
+                },
+                "id": "toolu_bdrk_01Bc16CL9HSZ6uwrBHBTraGR",
+                "name": "bash",
+                "result": {
+                  "content": 
+"On branch main
+Changes not staged for commit:
+  (use "git add/rm <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/components/session/SessionView.tsx
+	modif…"
+,
+                  "details": 
+"On branch main
+Changes not staged for commit:
+  (use "git add/rm <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/components/session/SessionView.tsx
+	modif…"
+,
+                  "success": true,
+                },
+              },
+              {
+                "arguments": {
+                  "command": "cd /Users/lostintangent/Desktop/toy-box && git diff --name-only",
+                  "description": "List modified files",
+                },
+                "id": "toolu_bdrk_01WYvdnAft499BoKhWbhRnnF",
+                "name": "bash",
+                "result": {
+                  "content": 
+"src/components/session/SessionView.tsx
+src/components/session/input/DiffPopup.tsx
+src/components/session/input/SessionInput.tsx
+src/components/session/messages/AssistantMessage.tsx
+src/components/session/messages/tools/AgentToolCall.tsx
+src…"
+,
+                  "details": 
+"src/components/session/SessionView.tsx
+src/components/session/input/DiffPopup.tsx
+src/components/session/input/SessionInput.tsx
+src/components/session/messages/AssistantMessage.tsx
+src/components/session/messages/tools/AgentToolCall.tsx
+src…"
+,
+                  "success": true,
+                },
+              },
+              {
+                "arguments": {
+                  "command": "cd /Users/lostintangent/Desktop/toy-box && git status --porcelain",
+                  "description": "Get full status with untracked files",
+                },
+                "id": "toolu_bdrk_01CpyvLNVaTKQDdQt31piuC6",
+                "name": "bash",
+                "result": {
+                  "content": 
+"M src/components/session/SessionView.tsx
+ M src/components/session/input/DiffPopup.tsx
+ M src/components/session/input/SessionInput.tsx
+ M src/components/session/messages/AssistantMessage.tsx
+ M src/components/session/messages/tools/AgentTo…"
+,
+                  "details": 
+"M src/components/session/SessionView.tsx
+ M src/components/session/input/DiffPopup.tsx
+ M src/components/session/input/SessionInput.tsx
+ M src/components/session/messages/AssistantMessage.tsx
+ M src/components/session/messages/tools/AgentTo…"
+,
+                  "success": true,
+                },
+              },
+              {
+                "arguments": {
+                  "path": "/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts",
+                },
+                "id": "toolu_bdrk_01DuKi1hYw5i5feiz5KeWwaC",
+                "name": "read",
+                "result": {
+                  "content": 
+"1. import { describe, expect, test } from "bun:test";
+2. import { initializeSessionStateFromSdkHistory } from "./sessionState";
+3. import type { SdkSessionEvent } from "./projector";
+4. 
+5. describe("initializeSessionStateFromSdkHistory", (…"
+,
+                  "details": 
+"
+diff --git a/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts b/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts
+index 0000000..0000000 100644
+--- a/Users/lostintangent/Desktop/toy-box/sr…"
+,
+                  "success": true,
+                },
+              },
+            ],
+          },
+          "arguments": {
+            "agent_type": "explore",
+            "description": "Review tests coverage",
+            "mode": "background",
+            "name": "coverage-review",
+            "prompt": 
+"You are an explore agent reviewing test coverage for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+
+Context: Changes include SDK blob attachments, semantic Attachment type, semantic ToolCall i…"
+,
+          },
+          "id": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+          "name": "agent",
+          "result": {
+            "content": "",
+            "details": undefined,
+            "success": true,
+          },
+        },
+        {
+          "agent": {
+            "modelConfiguration": {
+              "model": "claude-opus-4.8",
+            },
+            "toolCalls": [
+              {
+                "arguments": {
+                  "intent": "Examining uncommitted changes",
+                },
+                "id": "toolu_01U7w1ymeBtK62owAFb7pxSA",
+                "name": "report_intent",
+                "result": {
+                  "content": "Intent logged",
+                  "details": "Examining uncommitted changes",
+                  "success": true,
+                },
+              },
+              {
+                "arguments": {
+                  "command": "cd /Users/lostintangent/Desktop/toy-box && git --no-pager status && echo "===DIFFSTAT===" && git --no-pager diff --stat",
+                  "description": "Show git status and diff stat",
+                },
+                "id": "toolu_01AaNM5wZ1QXPthiuEr4vzZW",
+                "name": "bash",
+                "result": {
+                  "content": 
+"On branch main
+Changes not staged for commit:
+  (use "git add/rm <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/components/session/SessionView.tsx
+	modif…"
+,
+                  "details": 
+"On branch main
+Changes not staged for commit:
+  (use "git add/rm <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/components/session/SessionView.tsx
+	modif…"
+,
+                  "success": true,
+                },
+              },
+              {
+                "arguments": {
+                  "command": "cd /Users/lostintangent/Desktop/toy-box && git --no-pager diff src/types.ts",
+                  "description": "Show diff of types.ts",
+                },
+                "id": "toolu_01TorsDVgPrQe3waDFEWnQvD",
+                "name": "bash",
+                "result": {
+                  "content": 
+"diff --git a/src/types.ts b/src/types.ts
+index 375b1b8..9db9a3a 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -77,12 +77,13 @@ export type AssistantMessage = BaseMessage & {
+ export type Message = UserMessage | AssistantMessage;
+ 
+ export…"
+,
+                  "details": 
+"diff --git a/src/types.ts b/src/types.ts
+index 375b1b8..9db9a3a 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -77,12 +77,13 @@ export type AssistantMessage = BaseMessage & {
+ export type Message = UserMessage | AssistantMessage;
+ 
+ export…"
+,
+                  "success": true,
+                },
+              },
+            ],
+          },
+          "arguments": {
+            "agent_type": "rubber-duck",
+            "description": "Rubber duck design",
+            "mode": "background",
+            "name": "design-review",
+            "prompt": 
+"You are a rubber-duck reviewer for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Provide high-signal design feedback only; ignore style/formatting.
+
+Evaluate the overall design decisions:
+- Se…"
+,
+          },
+          "id": "call_aIs3ubnSXyt6yavyLbThBQZk",
+          "name": "agent",
+          "result": {
+            "content": "",
+            "details": undefined,
+            "success": true,
+          },
+        },
+      ],
+    },
+    {
+      "content": "Wrapping up.",
+      "role": "assistant",
+    },
+    {
+      "content": "now fix the findings",
+      "role": "user",
+    },
+    {
+      "content": "On it.",
+      "role": "assistant",
+    },
+  ],
+  "modelConfiguration": {
+    "model": "gpt-5.5",
+  },
+  "pendingOptimisticUserMessage": undefined,
+  "pendingToolCalls": [],
+  "queuedMessages": [],
+  "reasoningContent": "",
+  "status": "responding",
+  "summary": undefined,
+  "todos": undefined,
+}
+`;

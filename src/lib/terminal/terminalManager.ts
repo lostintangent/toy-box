@@ -9,7 +9,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { getOrCreateClientId } from "@/lib/config/clientId";
-import { getSettings } from "@/lib/settings";
+import { getSettings } from "@/lib/config/settings";
 import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 import type { TerminalServerMessage } from "@/types";
 import { TerminalConnection } from "./connection";

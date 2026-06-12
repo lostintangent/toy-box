@@ -1,11 +1,11 @@
 import { Diff } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { InputGroupButton } from "@/components/ui/input-group";
-import type { FileDiff, LineDiff } from "@/hooks/diffs/useEditDiffs";
+import type { DiffStats, FileDiffSummary } from "@/hooks/diffs/useEditDiffs";
 
 export interface DiffPopupProps {
-  total: LineDiff;
-  byFile: FileDiff[];
+  total: DiffStats;
+  byFile: FileDiffSummary[];
 }
 
 export function DiffPopup({ total, byFile }: DiffPopupProps) {

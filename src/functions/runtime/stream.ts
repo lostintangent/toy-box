@@ -1,8 +1,17 @@
 // Session streaming runtime — bridges the Copilot SDK's event-driven session
-// model to the HTTP streaming interface consumed by the client. Owns the
-// per-session event pipeline (SDK event → projected SessionEvent → streaming
-// buffer → SSE listener), turn lifecycle, and the queued-message drain loop
-// that sends follow-up prompts between turns.
+// model to the HTTP streaming interface consumed by the client. Ownership
+// boundaries: the projector owns SDK-event translation, the reducer owns
+// Session state transitions; this module owns STREAM LIFETIME — the per-
+// session registry, the reconnect buffer, event sequencing, turn boundaries,
+// and the queued-message drain loop that sends follow-up prompts between
+// turns.
+//
+// Event sequencing contract: every emitted event is stamped with a globally
+// monotonic eventId (Date.now-seeded so ids keep increasing across server
+// restarts) and the current turnId. Both are load-bearing downstream: the
+// reducer's stale-event filter (lastSeenEventId) and duplicate-user-message
+// detection (turnId) rely on them, as does the client's `afterEventId`
+// reconnect cursor.
 //
 // The SessionStream class encapsulates all per-stream state: the event buffer,
 // queued messages, subscribers, SDK listener, and reducer state. External
@@ -12,14 +21,17 @@
 import type { CopilotSession } from "@github/copilot-sdk";
 import { createSession, getOrResumeSession } from "../state/sessionCache";
 import { markSessionUnread, markSessionRead } from "../state/unread";
-import { writeAttachments } from "../state/attachments";
 import {
   emitSessionRunning,
   emitSessionIdle,
   emitSessionTouched,
   updateSessionSummary,
 } from "./broadcast";
-import { applySessionEvent, createInitialSession } from "@/lib/session/sessionReducer";
+import {
+  applySessionEvent,
+  createInitialSession,
+  prepareSessionForNextTurn,
+} from "@/lib/session/sessionReducer";
 import {
   createProjectionState,
   getSdkMetadataPatch,
@@ -27,29 +39,15 @@ import {
   type SdkSessionEvent,
   projectSdkEvent,
 } from "@/functions/sdk/projector";
-import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/sessionState";
+import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/historyReplay";
+import { toSdkAttachmentBlobs } from "@/functions/sdk/attachments";
 import type { Attachment, ModelConfiguration, QueuedMessage, SessionEvent } from "@/types";
 import type { Session } from "@/lib/session/sessionReducer";
 import { areModelConfigurationsEqual, toSdkSetModelOptions } from "@/lib/modelConfiguration";
 
-export function prepareSessionForNextTurn(state: Session): Session {
-  state.status = "thinking";
-  state.reasoningContent = "";
-  state.pendingToolCalls.clear();
-  state.pendingOptimisticUserMessage = undefined;
-  return state;
-}
-
-function getLastAssistantResponse(messages: Session["messages"]): string {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message.role === "assistant" && message.content.trim().length > 0) {
-      return message.content;
-    }
-  }
-
-  return "";
-}
+// ============================================================================
+// Types
+// ============================================================================
 
 export type SessionStreamConfig = {
   sessionId: string;
@@ -64,15 +62,11 @@ export type SessionStreamConfig = {
   startNew?: boolean;
 };
 
-export type SendOrQueueSessionMessageOptions = {
-  sessionId: string;
+export type SendOrQueueSessionMessageOptions = Omit<
+  SessionStreamConfig,
+  "prompt" | "afterEventId"
+> & {
   prompt: string;
-  attachments?: Attachment[];
-  modelConfiguration?: ModelConfiguration;
-  directory?: string;
-  useWorktree?: boolean;
-  clientMessageId?: string;
-  startNew?: boolean;
 };
 
 export type SendOrQueueSessionMessageResult = {
@@ -82,6 +76,10 @@ export type SendOrQueueSessionMessageResult = {
 
 type SessionStreamSubscriber = (event: SessionEvent | null) => void;
 
+// Reconnect buffer cap. A client reconnecting across a gap larger than this
+// silently misses the trimmed events; the client heals by refetching the
+// detail snapshot when its stream completes (see useSession), so the cap
+// trades a rare extra refetch for bounded memory.
 const MAX_BUFFER_EVENTS = 1500;
 let nextStreamEventIdSeed = Date.now();
 
@@ -89,6 +87,21 @@ function createInitialEventId(): number {
   nextStreamEventIdSeed = Math.max(Date.now(), nextStreamEventIdSeed + 1);
   return nextStreamEventIdSeed;
 }
+
+function getLastAssistantResponse(messages: Session["messages"]): string {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role === "assistant" && message.content.trim().length > 0) {
+      return message.content;
+    }
+  }
+
+  return "";
+}
+
+// ============================================================================
+// SessionStream
+// ============================================================================
 
 export class SessionStream {
   // ── Static registry ──────────────────────────────────────────────────
@@ -107,8 +120,7 @@ export class SessionStream {
     const existing = SessionStream.streams.get(sessionId);
     if (existing) return existing;
 
-    const stream = new SessionStream(sessionId, session);
-    stream.#sessionState = createInitialSession(initialState);
+    const stream = new SessionStream(sessionId, session, initialState);
     SessionStream.streams.set(sessionId, stream);
     return stream;
   }
@@ -169,26 +181,29 @@ export class SessionStream {
   #currentTurnId: string | undefined;
   #isDrainingQueue = false;
 
-  // ── Constructor ──────────────────────────────────────────────────────
-
-  private constructor(sessionId: string, sdkSession: CopilotSession) {
+  private constructor(
+    sessionId: string,
+    sdkSession: CopilotSession,
+    initialState?: Partial<Session>,
+  ) {
     this.sessionId = sessionId;
     this.sdkSession = sdkSession;
-    this.#sessionState = createInitialSession();
+    this.#sessionState = createInitialSession(initialState);
     this.#unsubscribeSdk = sdkSession.on((event) => this.#handleSdkEvent(event));
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────
+  // Teardown composes from two primitives so each step exists exactly once:
+  //   markSendFailure = unread + buffer cleanup (keeps the runtime alive)
+  //   detach          = waiters + SDK listener + registry (no lifecycle events)
+  //   close           = markSendFailure + queue clear + end-of-stream + detach
 
   /** Full shutdown: buffer + queue + unread + broadcast + SDK listener. */
   close(): void {
-    this.#resolveCloseWaiters();
-    this.#updateUnreadOnStreamEnd();
-    this.#clearBuffer();
+    this.markSendFailure();
     this.#sessionState.queuedMessages.length = 0;
     this.#broadcastToSubscribers(null);
-    this.#unsubscribeSdk();
-    SessionStream.streams.delete(this.sessionId);
+    this.detach();
   }
 
   /** Abort the in-flight turn on the SDK and close the stream. */
@@ -236,15 +251,21 @@ export class SessionStream {
 
   // ── Buffer ───────────────────────────────────────────────────────────
 
+  /** Announce running/idle to the session list exactly once per transition. */
+  #setAnnouncedRunning(running: boolean): void {
+    if (this.#announcedRunning === running) return;
+    this.#announcedRunning = running;
+    if (running) {
+      emitSessionRunning(this.sessionId);
+    } else {
+      emitSessionIdle(this.sessionId);
+    }
+  }
+
   /** Prepare buffer for a new turn. Emits "running" on the first call. */
   #prepareBuffer(summaryHint?: string): void {
     this.#buffer.length = 0;
-
-    if (!this.#announcedRunning) {
-      this.#announcedRunning = true;
-      emitSessionRunning(this.sessionId);
-    }
-
+    this.#setAnnouncedRunning(true);
     emitSessionTouched(this.sessionId, { summary: summaryHint });
   }
 
@@ -258,27 +279,19 @@ export class SessionStream {
       this.#buffer.splice(0, this.#buffer.length - MAX_BUFFER_EVENTS);
     }
 
-    if (!this.#announcedRunning) {
-      this.#announcedRunning = true;
-      emitSessionRunning(this.sessionId);
-    }
+    this.#setAnnouncedRunning(true);
   }
 
   #clearBuffer(): void {
-    if (this.#buffer.length === 0 && !this.#announcedRunning) return;
-
     this.#buffer.length = 0;
     this.#lastEventId = undefined;
-
-    if (this.#announcedRunning) {
-      this.#announcedRunning = false;
-      emitSessionIdle(this.sessionId);
-    }
+    this.#setAnnouncedRunning(false);
   }
 
+  /** Snapshot of buffered events after the given cursor. Returns a copy so
+   *  replay iteration never races live appends (which would double-deliver). */
   getBufferSince(afterEventId?: number): SessionEvent[] {
-    if (afterEventId === undefined) return this.#buffer;
-    if (this.#buffer.length === 0) return [];
+    if (afterEventId === undefined) return [...this.#buffer];
 
     return this.#buffer.filter(
       (event) => event.eventId === undefined || event.eventId > afterEventId,
@@ -424,13 +437,14 @@ export class SessionStream {
   #emit(event: SessionEvent, sourceEventType?: string): void {
     const decorated = this.#decorateEvent(event, sourceEventType);
 
-    this.#applyEvent(decorated);
+    this.#appendToBuffer(decorated);
+    applySessionEvent(this.#sessionState, decorated);
     this.#broadcastToSubscribers(decorated);
   }
 
   #prepareForNewTurn(summaryHint?: string): void {
     this.#prepareBuffer(summaryHint);
-    this.#currentTurnId = undefined;
+    this.#currentTurnId = this.#generateTurnId();
     prepareSessionForNextTurn(this.#sessionState);
   }
 
@@ -442,15 +456,12 @@ export class SessionStream {
     if (sourceEventType === "assistant.turn_start") {
       this.#currentTurnId = this.#generateTurnId();
     } else if (!this.#currentTurnId) {
+      // Events arriving before any turn boundary (e.g. attaching to a
+      // resumed session mid-turn) share a stable bootstrap turn id.
       this.#currentTurnId = `${this.sessionId}:turn:bootstrap`;
     }
     const eventId = this.#nextEventId++;
     return { ...event, eventId, turnId: this.#currentTurnId };
-  }
-
-  #applyEvent(event: SessionEvent): void {
-    this.#appendToBuffer(event);
-    applySessionEvent(this.#sessionState, event);
   }
 
   // ── SDK event handling ──────────────────────────────────────────────
@@ -473,17 +484,7 @@ export class SessionStream {
       return;
     }
 
-    for (const sessionEvent of projectSdkEvent(sdkEvent, {
-      streaming: true,
-      state: this.#projectionState,
-    })) {
-      if (
-        (sessionEvent.type === "delta" || sessionEvent.type === "reasoning") &&
-        sessionEvent.content.length === 0
-      ) {
-        continue;
-      }
-
+    for (const sessionEvent of projectSdkEvent(sdkEvent, this.#projectionState)) {
       this.#emit(sessionEvent, sdkEvent.type);
     }
   }
@@ -502,7 +503,6 @@ export class SessionStream {
       }
 
       this.#prepareForNewTurn(queuedMessage.content);
-      this.#currentTurnId = this.#generateTurnId();
 
       // Emit removes the message from #sessionState.queuedMessages via applySessionEvent.
       this.#emit({
@@ -511,7 +511,7 @@ export class SessionStream {
         queuedMessageId: queuedMessage.id,
       });
 
-      const attachments = await writeAttachments(this.sessionId, queuedMessage.attachments);
+      const attachments = toSdkAttachmentBlobs(queuedMessage.attachments);
 
       if (queuedMessage.modelConfiguration?.model) {
         await this.setModel(queuedMessage.modelConfiguration);
@@ -531,6 +531,8 @@ export class SessionStream {
 // Streaming Entry Point
 // ============================================================================
 
+/** Minimal single-consumer async queue bridging push-based subscribers to the
+ *  pull-based async generator below. Only one pull may be outstanding. */
 function createAsyncQueue<T>() {
   const queue: (T | null)[] = [];
   let resolve: ((value: T | null) => void) | null = null;
@@ -561,62 +563,57 @@ function createAsyncQueue<T>() {
 export async function sendOrQueueSessionMessage(
   options: SendOrQueueSessionMessageOptions,
 ): Promise<SendOrQueueSessionMessageResult> {
-  const prompt = options.prompt;
-  let stream = SessionStream.get(options.sessionId);
-  const shouldStartNew = Boolean(options.startNew && !stream);
-  const shouldAttachToExistingStream = Boolean(options.startNew && stream);
+  const existing = SessionStream.get(options.sessionId);
+  if (existing) {
+    // A `startNew` request against a live stream is a stale draft retry (the
+    // draft sender raced or retried) — attach to the in-flight turn instead
+    // of sending or queueing a duplicate prompt.
+    if (options.startNew) {
+      return { stream: existing, disposition: "attached" };
+    }
 
-  // Auto-queue: if the session is already streaming and this is not a stale
-  // draft retry, enqueue instead of corrupting the in-flight turn.
-  if (stream && !shouldAttachToExistingStream) {
-    stream.addQueuedMessage({
+    // Auto-queue: the session is already streaming; enqueue instead of
+    // corrupting the in-flight turn.
+    existing.addQueuedMessage({
       role: "user",
-      content: prompt,
+      content: options.prompt,
       attachments: options.attachments,
       modelConfiguration: options.modelConfiguration,
     });
-    return { stream, disposition: "queued" };
+    return { stream: existing, disposition: "queued" };
   }
 
-  let sdkSession: CopilotSession | undefined;
-
-  if (!stream) {
-    if (shouldStartNew) {
-      sdkSession = await createSession(options.sessionId, {
-        modelConfiguration: options.modelConfiguration,
-        directory: options.directory,
-        useWorktree: options.useWorktree,
-      });
-      stream = SessionStream.getOrCreate(options.sessionId, sdkSession, {
-        modelConfiguration: options.modelConfiguration,
-      });
-    } else {
-      const resumed = await getOrResumeSession(options.sessionId);
-      sdkSession = resumed.session;
-      stream = SessionStream.getOrCreate(
-        options.sessionId,
-        sdkSession,
-        await initializeSessionStateFromSdkHistory(resumed.events),
-      );
-    }
+  let sdkSession: CopilotSession;
+  let stream: SessionStream;
+  if (options.startNew) {
+    sdkSession = await createSession(options.sessionId, {
+      modelConfiguration: options.modelConfiguration,
+      directory: options.directory,
+      useWorktree: options.useWorktree,
+    });
+    stream = SessionStream.getOrCreate(options.sessionId, sdkSession, {
+      modelConfiguration: options.modelConfiguration,
+    });
+  } else {
+    const resumed = await getOrResumeSession(options.sessionId);
+    sdkSession = resumed.session;
+    stream = SessionStream.getOrCreate(
+      options.sessionId,
+      sdkSession,
+      await initializeSessionStateFromSdkHistory(resumed.events),
+    );
   }
 
-  if (shouldAttachToExistingStream) {
-    return { stream, disposition: "attached" };
-  }
-
-  if (!stream || !sdkSession) {
-    throw new Error(`Failed to prepare session ${options.sessionId} for prompt delivery.`);
-  }
-
-  stream.startTurn(prompt, options.clientMessageId);
+  stream.startTurn(options.prompt, options.clientMessageId);
 
   if (options.modelConfiguration?.model) {
     await stream.setModel(options.modelConfiguration);
   }
-  const attachments = await writeAttachments(options.sessionId, options.attachments);
   try {
-    await sdkSession.send({ prompt, attachments });
+    await sdkSession.send({
+      prompt: options.prompt,
+      attachments: toSdkAttachmentBlobs(options.attachments),
+    });
   } catch (error) {
     stream.markSendFailure();
     throw error;
@@ -665,9 +662,6 @@ export async function* createSessionEventStream(
   try {
     if (!hasPrompt || promptDisposition === "attached") {
       // Reconnect path: replay buffered events then wait for live events.
-      // A stale `startNew` request from a retried or racing draft sender lands
-      // here as well, so it attaches to the existing turn instead of sending
-      // or queueing a duplicate prompt.
       for (const event of stream.getBufferSince(options.afterEventId)) {
         yield event;
       }

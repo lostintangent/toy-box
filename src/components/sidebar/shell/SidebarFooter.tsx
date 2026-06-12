@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { getSettings, updateSetting } from "@/lib/settings";
+import { getSettings, updateSetting } from "@/lib/config/settings";
 
 export interface SidebarFooterProps {
   onToggleTerminal?: () => void;

@@ -29,8 +29,8 @@ import type {
   SessionSnapshot,
   SessionWorktree,
 } from "@/types";
-import type { Session } from "@/lib/session/sessionReducer";
-import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/sessionState";
+import { toSessionSnapshot } from "@/lib/session/sessionReducer";
+import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/historyReplay";
 import { encodeSessionEvent } from "@/lib/session/streamCodec";
 import { modelConfigurationSchema } from "@/lib/modelConfiguration";
 
@@ -52,7 +52,7 @@ const streamInputSchema = z.object({
       z.object({
         displayName: z.string(),
         mimeType: z.string(),
-        base64: z.string().optional(),
+        base64: z.string(),
       }),
     )
     .optional(),
@@ -73,7 +73,7 @@ const enqueueInputSchema = z.object({
       z.object({
         displayName: z.string(),
         mimeType: z.string(),
-        base64: z.string().optional(),
+        base64: z.string(),
       }),
     )
     .optional(),
@@ -168,34 +168,17 @@ export const listSessionSkills = createServerFn({ method: "POST" })
       .map((s) => ({ name: s.name, description: s.description }));
   });
 
-function createSessionSnapshot(sessionId: string, state: Session): SessionSnapshot {
-  return {
-    id: sessionId,
-    messages: state.messages,
-    queuedMessages: state.queuedMessages,
-    modelConfiguration: state.modelConfiguration,
-    todos: state.todos,
-    linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
-    lastSeenEventId: state.lastSeenEventId,
-    status: state.status,
-    reasoningContent: state.reasoningContent,
-  };
-}
-
 /** Resume a session and get its message history */
 export const querySession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
   .handler(async ({ data }): Promise<SessionSnapshot> => {
     const stream = SessionStream.get(data.sessionId);
     if (stream) {
-      return createSessionSnapshot(data.sessionId, stream.getSessionState());
+      return toSessionSnapshot(data.sessionId, stream.getSessionState());
     }
 
     const { session, events } = await getOrResumeSession(data.sessionId);
-    return createSessionSnapshot(
-      session.sessionId,
-      await initializeSessionStateFromSdkHistory(events),
-    );
+    return toSessionSnapshot(session.sessionId, await initializeSessionStateFromSdkHistory(events));
   });
 
 function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): ReadableStream<Uint8Array> {

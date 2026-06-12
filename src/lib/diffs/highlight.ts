@@ -35,7 +35,7 @@ const EXT_TO_LANG: Record<string, string> = {
   svelte: "svelte",
 };
 
-// Languages to bundle (common ones for code editing)
+// Languages to bundle for diff rendering.
 const BUNDLED_LANGS = [
   "typescript",
   "tsx",

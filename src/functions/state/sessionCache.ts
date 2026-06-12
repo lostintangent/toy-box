@@ -3,8 +3,7 @@
 // The SDK persists sessions to disk; this module caches live
 // CopilotSession objects in memory to avoid redundant resume calls.
 // It also owns the deleteSession workflow, which coordinates cleanup
-// across streaming buffers, unread state, attachments, and SDK
-// persistence.
+// across streaming buffers, unread state, and SDK persistence.
 
 import { homedir } from "node:os";
 import type { CopilotSession, SessionContext } from "@github/copilot-sdk";
@@ -18,7 +17,6 @@ import { getTools } from "../sdk/tools";
 import { emitSessionUpsert, emitSessionDelete } from "../runtime/broadcast";
 import { SessionStream } from "../runtime/stream";
 import { deleteUnreadState } from "./unread";
-import { cleanupSessionAttachments } from "./attachments";
 import {
   getSessionWorktree,
   upsertSessionWorktree,
@@ -249,7 +247,6 @@ async function deleteSessionRecord(sessionId: string): Promise<void> {
   SessionStream.remove(sessionId);
   deleteUnreadState(sessionId);
 
-  await cleanupSessionAttachments(sessionId);
   await sdkDeleteSession(sessionId);
   emitSessionDelete(sessionId);
 }

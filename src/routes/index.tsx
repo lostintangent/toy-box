@@ -12,13 +12,12 @@ import { getRuntimeConfig } from "@/functions/config";
 import { modelQueries } from "@/lib/queries";
 import { useAutomations } from "@/hooks/automations/useAutomations";
 import { useLocalStorage } from "@/hooks/browser/useLocalStorage";
+import { useDraftSession, SESSION_ID_PREFIX } from "@/hooks/session/useDraftSession";
 import { useLinkedSessions } from "@/hooks/session/useLinkedSessions";
 import { useModelConfiguration } from "@/hooks/session/useModelConfiguration";
 import { useSessions } from "@/hooks/session/useSessions";
 import { useViewport } from "@/hooks/browser/ViewportContext";
 import { usePanelTransition } from "@/hooks/browser/usePanelTransition";
-import { generateUUID } from "@/lib/utils";
-import type { SessionMetadata } from "@/types";
 import { Sidebar, SidebarProps } from "@/components/sidebar/Sidebar";
 import { MobileSessionPager } from "@/components/session/MobileSessionPager";
 import { SessionGrid } from "@/components/session/SessionGrid";
@@ -41,16 +40,12 @@ import {
 import {
   cancelSessionsState,
   getSessionsStateSnapshot,
-  prependSessionIfMissing,
   removeSessionFromState,
   replaceSessionsState,
 } from "@/lib/session/sessionsCache";
 const Terminal = lazy(() =>
   import("@/components/terminal/Terminal").then((m) => ({ default: m.Terminal })),
 );
-
-/** Session ID prefix for sessions created by this web app */
-const SESSION_ID_PREFIX = "toy-box-";
 
 const SESSIONS_SHOW_CHILD_KEY = "sessions:show-child";
 const SESSIONS_SHOW_EXTERNAL_KEY = "sessions:show-external";
@@ -115,7 +110,6 @@ function SessionsPage() {
     [navigate],
   );
 
-  const [draftSessionId, setDraftSessionId] = useState<string | null>(null);
   const primarySelectedSessionId = selectedSessionIds[0];
   const {
     visibleSessionIds,
@@ -164,6 +158,15 @@ function SessionsPage() {
   } = useSessions({
     openSessionIds: visibleSessionIds,
   });
+
+  // Draft session lifecycle. Three touchpoints in this component:
+  // - handleCreateSession allocates a draft and opens it
+  // - SessionView promotes it (via onDraftSessionCreated -> promoteDraft)
+  //   once the first prompt's stream confirms the session on the server
+  // - handleSessionDelete discards an unsent draft
+  const { draftSessionId, draftSession, createDraft, promoteDraft, discardDraft } =
+    useDraftSession(sessions);
+
   const {
     automations,
     isLoading: isAutomationsLoading,
@@ -256,8 +259,7 @@ function SessionsPage() {
   // With modifier key (Cmd/Ctrl), adds to the grid instead of replacing
   const handleCreateSession = useCallback(
     (e?: React.MouseEvent) => {
-      const id = `${SESSION_ID_PREFIX}${generateUUID()}`;
-      setDraftSessionId(id);
+      const id = createDraft();
 
       const hasModifier = e?.metaKey || e?.ctrlKey;
       if (hasModifier && openSessionIds.length > 0 && openSessionIds.length < 4) {
@@ -270,56 +272,13 @@ function SessionsPage() {
       }
     },
     [
+      createDraft,
       openSessionIds.length,
       resetDismissedLinkedSessions,
       selectedSessionIds,
       updateSelectedSessionIds,
     ],
   );
-
-  // Called when draft session is created on server (after first message)
-  // Don't clear draftSessionId here - let the draftSession memo handle the
-  // transition naturally when the server session appears in the list
-  const handleDraftSessionCreated = useCallback(
-    (sessionId: string) => {
-      if (sessionId !== draftSessionId) return;
-
-      // Immediately add the new session to the cache so it persists across navigation.
-      // This ensures the session remains visible even if the user navigates back
-      // before the next automatic refetch.
-      prependSessionIfMissing(queryClient, {
-        sessionId,
-        startTime: new Date(),
-        modifiedTime: new Date(),
-        summary: "",
-        isRemote: false,
-      });
-    },
-    [draftSessionId, queryClient],
-  );
-
-  // Create draft session object (separate from sessions list for animation)
-  // Returns null if draft is already in server list, enabling smooth handoff
-  const draftSession = useMemo<SessionMetadata | null>(() => {
-    if (!draftSessionId) return null;
-    // Don't show draft if it's already in the server list - this enables
-    // a smooth transition where the server session renders before draft unmounts
-    if (sessions.some((s) => s.sessionId === draftSessionId)) return null;
-    return {
-      sessionId: draftSessionId,
-      startTime: new Date(),
-      modifiedTime: new Date(),
-      summary: "",
-      isRemote: false,
-    };
-  }, [draftSessionId, sessions]);
-
-  // Clear stale draftSessionId once session is in server list
-  useEffect(() => {
-    if (draftSessionId && sessions.some((s) => s.sessionId === draftSessionId)) {
-      setDraftSessionId(null);
-    }
-  }, [draftSessionId, sessions]);
 
   // Keep URL session IDs aligned with available sessions.
   // This prevents stale open panes when another client deletes a session.
@@ -586,7 +545,7 @@ function SessionsPage() {
     (sessionIdToDelete: string) => {
       // If deleting a draft session, just clear the draft state (no server call)
       if (sessionIdToDelete === draftSessionId) {
-        setDraftSessionId(null);
+        discardDraft();
       } else {
         deleteMutation.mutate(sessionIdToDelete);
       }
@@ -595,7 +554,7 @@ function SessionsPage() {
         updateSelectedSessionIds(selectedSessionIds.filter((id) => id !== sessionIdToDelete));
       }
     },
-    [deleteMutation, draftSessionId, selectedSessionIds, updateSelectedSessionIds],
+    [deleteMutation, discardDraft, draftSessionId, selectedSessionIds, updateSelectedSessionIds],
   );
 
   const hasSelectedSession = selectedSessionIds.length > 0;
@@ -703,7 +662,7 @@ function SessionsPage() {
               modelConfiguration={selectedModelConfiguration}
               onModelConfigurationChange={handleModelConfigurationChange}
               draftSessionId={draftSessionId}
-              onDraftSessionCreated={handleDraftSessionCreated}
+              onDraftSessionCreated={promoteDraft}
             />
           )}
         </div>
@@ -787,7 +746,7 @@ function SessionsPage() {
                     modelConfiguration={selectedModelConfiguration}
                     onModelConfigurationChange={handleModelConfigurationChange}
                     draftSessionId={draftSessionId}
-                    onDraftSessionCreated={handleDraftSessionCreated}
+                    onDraftSessionCreated={promoteDraft}
                   />
                 ) : (
                   <SessionPlaceholder />
