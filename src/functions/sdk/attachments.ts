@@ -2,9 +2,8 @@
 // writer (outbound prompt attachments) and the reader (persisted user.message
 // records) can never drift.
 
-import type { AttachmentBlob } from "@github/copilot-sdk";
+import type { Attachment as SdkAttachment, AttachmentBlob } from "@github/copilot-sdk";
 import type { Attachment } from "@/types";
-import { asRecord, readString } from "./extractors";
 
 /** Attachment → SDK blob, for session.send. */
 export function toSdkAttachmentBlobs(attachments?: Attachment[]): AttachmentBlob[] | undefined {
@@ -20,22 +19,17 @@ export function toSdkAttachmentBlobs(attachments?: Attachment[]): AttachmentBlob
 
 /** SDK blobs (from a persisted user.message record) → Attachments.
  *  Non-blob entries (e.g. legacy file references) are skipped. */
-export function readAttachmentBlobs(value: unknown): Attachment[] | undefined {
-  if (!Array.isArray(value) || value.length === 0) return undefined;
+export function readAttachmentBlobs(value: SdkAttachment[] | undefined): Attachment[] | undefined {
+  if (!value?.length) return undefined;
 
   const attachments = value.flatMap((entry) => {
-    const record = asRecord(entry);
-    if (!record || readString(record, "type") !== "blob") return [];
-
-    const base64 = readString(record, "data");
-    const mimeType = readString(record, "mimeType");
-    if (!base64 || !mimeType) return [];
+    if (entry.type !== "blob") return [];
 
     return [
       {
-        base64,
-        mimeType,
-        displayName: readString(record, "displayName") ?? "attachment",
+        base64: entry.data,
+        mimeType: entry.mimeType,
+        displayName: entry.displayName ?? "attachment",
       },
     ];
   });

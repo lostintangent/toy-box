@@ -36,7 +36,7 @@ describe("sessionLauncher", () => {
     } as unknown as CopilotSession;
     const fakeStream = {
       startTurn: () => {},
-      markSendFailure: () => {},
+      finishStream: () => {},
       detach: () => {},
     } as unknown as SessionStream;
     const createSessionMock = mock(
@@ -109,7 +109,7 @@ describe("sessionLauncher", () => {
     const sendMock = mock(async (_message: { prompt: string }) => {});
     sendMock.mockRejectedValue(new Error("boom"));
     const startTurnMock = mock((_prompt: string) => {});
-    const markSendFailureMock = mock(() => {});
+    const finishStreamMock = mock(() => {});
     const detachMock = mock(() => {});
 
     mockSessionCache({
@@ -126,7 +126,7 @@ describe("sessionLauncher", () => {
     streamModule.SessionStream.getOrCreate = (() =>
       ({
         startTurn: startTurnMock,
-        markSendFailure: markSendFailureMock,
+        finishStream: finishStreamMock,
         detach: detachMock,
       }) as unknown as SessionStream) as typeof originalGetOrCreate;
     onTestFinished(() => {
@@ -145,7 +145,7 @@ describe("sessionLauncher", () => {
 
     expect(startTurnMock).toHaveBeenCalledWith("Kick off a failing companion session");
     expect(sendMock).toHaveBeenCalledWith({ prompt: "Kick off a failing companion session" });
-    expect(markSendFailureMock).toHaveBeenCalledTimes(1);
+    expect(finishStreamMock).toHaveBeenCalledTimes(1);
     expect(detachMock).toHaveBeenCalledTimes(1);
   });
 

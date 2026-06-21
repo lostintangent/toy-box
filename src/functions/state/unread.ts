@@ -5,9 +5,10 @@
 // to all connected clients via the shared SSE pub/sub layer.
 
 import { emitSessionUnread, emitSessionRead } from "../runtime/broadcast";
+import { sharedSet } from "../runtime/processState";
 
 // Track sessions that finished streaming while no client was watching
-const unreadSessionIds = new Set<string>();
+const unreadSessionIds = sharedSet<string>("unread-session-ids");
 
 /** Get IDs of all unread sessions */
 export function getUnreadSessionIds(): string[] {

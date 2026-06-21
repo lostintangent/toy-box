@@ -6,11 +6,12 @@
 // session.upserted, session.deleted, session.running, etc. event.
 
 import type { SessionMetadataUpdate, SessionsUpdateEvent } from "@/types";
+import { sharedSet } from "./processState";
 
 const SESSION = "session" as const;
 
 type SessionsUpdateListener = (event: SessionsUpdateEvent) => void;
-const sessionsUpdateListeners = new Set<SessionsUpdateListener>();
+const sessionsUpdateListeners = sharedSet<SessionsUpdateListener>("session-events.listeners");
 
 export function emitSessionsUpdate(event: SessionsUpdateEvent): void {
   for (const listener of sessionsUpdateListeners) {

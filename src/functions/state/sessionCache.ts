@@ -28,9 +28,10 @@ import {
   upsertChildSession,
 } from "./childSessions";
 import { createWorktree, cleanupWorktree, detectGitRoot, getRepositoryName } from "../worktrees";
+import { sharedMap } from "../runtime/processState";
 import type { ModelConfiguration } from "@/types";
 
-const activeSessions = new Map<string, CopilotSession>();
+const activeSessions = sharedMap<CopilotSession>("active-sessions");
 
 export type CreateSessionOptions = {
   modelConfiguration?: ModelConfiguration;

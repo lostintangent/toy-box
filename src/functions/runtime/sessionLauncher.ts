@@ -48,7 +48,7 @@ export async function startManagedSessionTurn(
   try {
     await sessionHandle.session.send({ prompt });
   } catch (error) {
-    sessionHandle.stream.markSendFailure();
+    sessionHandle.stream.finishStream();
     sessionHandle.stream.detach();
     throw error;
   }

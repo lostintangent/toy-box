@@ -200,7 +200,7 @@ async function loadScheduler(options: {
       session: createFakeSession().session,
       stream: {
         startTurn: () => {},
-        markSendFailure: () => {},
+        finishStream: () => {},
         detach: () => {},
       },
     }),

@@ -1,7 +1,8 @@
 import { atom } from "jotai";
+import type { SessionGridPane } from "@/hooks/session/sessionPanes";
 
 /**
- * Maps each source session ID to the linked session IDs it has published.
- * Written by individual SessionView instances; read by useLinkedSessions.
+ * Maps each source session ID to the panes it has linked into the UI.
+ * Written by individual SessionView instances; read by pane derivation.
  */
-export const linkedSessionsAtom = atom<Record<string, string[]>>({});
+export const linkedPanesAtom = atom<Record<string, SessionGridPane[]>>({});

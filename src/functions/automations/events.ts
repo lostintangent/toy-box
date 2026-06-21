@@ -1,8 +1,9 @@
 import type { AutomationsUpdateEvent } from "@/types";
+import { sharedSet } from "@/functions/runtime/processState";
 
 type AutomationsUpdateListener = (event: AutomationsUpdateEvent) => void;
 
-const listeners = new Set<AutomationsUpdateListener>();
+const listeners = sharedSet<AutomationsUpdateListener>("automation-events.listeners");
 
 export function emitAutomationsUpdate(event: AutomationsUpdateEvent): void {
   for (const listener of listeners) {

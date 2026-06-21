@@ -4,6 +4,7 @@ import {
   applyStreamError,
   createInitialSession,
   prepareSessionForNextTurn,
+  toSessionSnapshot,
 } from "./sessionReducer";
 import type { AssistantMessage } from "@/types";
 
@@ -13,7 +14,7 @@ describe("sessionReducer", () => {
       const state = createInitialSession();
       for (const event of [
         { type: "user_message", content: "hello" },
-        { type: "thinking" },
+        { type: "status", status: "thinking" },
         {
           type: "tool_start",
           toolCallId: "t1",
@@ -22,7 +23,7 @@ describe("sessionReducer", () => {
         },
         { type: "tool_end", toolCallId: "t1", success: true, result: "ok" },
         { type: "delta", content: "Done." },
-        { type: "stream_end", reason: "idle" },
+        { type: "end", reason: "idle" },
       ] as const) {
         applySessionEvent(state, event);
       }
@@ -83,9 +84,59 @@ describe("sessionReducer", () => {
       expect((state.messages[1] as AssistantMessage).toolCalls).toBeUndefined();
       expect(state.pendingToolCalls.size).toBe(0);
     });
+
+    test("committed assistant messages append after thinking status", () => {
+      const state = createInitialSession();
+      applySessionEvent(state, { type: "user_message", content: "go" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
+      applySessionEvent(state, { type: "assistant_message", content: "Done." });
+
+      expect(state.messages).toHaveLength(2);
+      expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Done." });
+      expect(state.status).toBe("responding");
+    });
+
+    test("committed assistant messages reconcile streamed assistant text", () => {
+      const state = createInitialSession();
+      applySessionEvent(state, { type: "user_message", content: "go" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
+      applySessionEvent(state, { type: "delta", content: "Done" });
+      applySessionEvent(state, { type: "delta", content: "Done." });
+      applySessionEvent(state, { type: "assistant_message", content: "Done." });
+
+      expect(state.messages).toHaveLength(2);
+      expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Done." });
+      expect(state.status).toBe("responding");
+    });
+
+    test("committed assistant messages reconcile after reasoning without a text delta", () => {
+      const state = createInitialSession();
+      applySessionEvent(state, { type: "user_message", content: "go" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
+      applySessionEvent(state, { type: "reasoning", content: "Thinking..." });
+      applySessionEvent(state, { type: "assistant_message", content: "Done." });
+
+      expect(state.messages).toHaveLength(2);
+      expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Done." });
+      expect(state.status).toBe("responding");
+      expect(state.reasoningContent).toBe("");
+    });
   });
 
   describe("streaming content", () => {
+    test("status updates do not create assistant messages", () => {
+      const state = createInitialSession();
+      applySessionEvent(state, { type: "user_message", content: "go" });
+
+      applySessionEvent(state, { type: "status", status: "thinking" });
+
+      expect(state.status).toBe("thinking");
+      expect(state.reasoningContent).toBe("");
+      expect(state.messages).toEqual([
+        { role: "user", content: "go", attachments: undefined, timestamp: undefined },
+      ]);
+    });
+
     test("tracks reasoning status and clears it when a response starts", () => {
       const initial = createInitialSession();
       const afterReasoning = applySessionEvent(initial, {
@@ -103,7 +154,7 @@ describe("sessionReducer", () => {
     test("normalizes cumulative delta chunks without duplicating assistant content", () => {
       const state = createInitialSession();
       applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "thinking" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
 
       applySessionEvent(state, { type: "delta", content: "Let me look" });
       applySessionEvent(state, { type: "delta", content: "Let me look at the turn" });
@@ -121,7 +172,7 @@ describe("sessionReducer", () => {
     test("preserves repeated boundary characters for incremental delta chunks", () => {
       const state = createInitialSession();
       applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "thinking" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
 
       applySessionEvent(state, { type: "delta", content: "cof" });
       applySessionEvent(state, { type: "delta", content: "fee" });
@@ -147,7 +198,7 @@ describe("sessionReducer", () => {
 
     test("routes scoped reasoning chunks into the matching agent tool call", () => {
       const state = createInitialSession();
-      applySessionEvent(state, { type: "thinking" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
       applySessionEvent(state, {
         type: "tool_start",
         toolCallId: "agent-1",
@@ -174,7 +225,7 @@ describe("sessionReducer", () => {
 
     test("accumulates scoped assistant messages on the matching agent tool call", () => {
       const state = createInitialSession();
-      applySessionEvent(state, { type: "thinking" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
       applySessionEvent(state, {
         type: "tool_start",
         toolCallId: "agent-1",
@@ -201,7 +252,7 @@ describe("sessionReducer", () => {
     test("empty deltas do not fragment messages or clear pending tool calls", () => {
       const state = createInitialSession();
       applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "thinking" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
       applySessionEvent(state, {
         type: "tool_start",
         toolCallId: "t1",
@@ -266,7 +317,7 @@ describe("sessionReducer", () => {
 
     test("nests subagent tool calls under their pending parent agent call", () => {
       const state = createInitialSession();
-      applySessionEvent(state, { type: "thinking" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
       applySessionEvent(state, {
         type: "tool_start",
         toolCallId: "agent-1",
@@ -313,7 +364,7 @@ describe("sessionReducer", () => {
 
     test("routes scoped model changes into the matching agent tool call", () => {
       const state = createInitialSession();
-      applySessionEvent(state, { type: "thinking" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
       applySessionEvent(state, {
         type: "tool_start",
         toolCallId: "agent-1",
@@ -410,7 +461,7 @@ describe("sessionReducer", () => {
 
     test("ignores child tool events whose parent is unknown", () => {
       const state = createInitialSession();
-      applySessionEvent(state, { type: "thinking" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
 
       applySessionEvent(state, {
         type: "tool_start",
@@ -428,6 +479,132 @@ describe("sessionReducer", () => {
       });
 
       expect((state.messages[0] as AssistantMessage).toolCalls).toBeUndefined();
+    });
+  });
+
+  describe("canvases", () => {
+    test("stores opened canvases and bumps revision when a canvas reopens", () => {
+      const state = createInitialSession();
+
+      applySessionEvent(state, {
+        type: "canvas_opened",
+        canvas: {
+          extensionId: "user:documint",
+          canvasId: "documint-markdown-agent",
+          instanceId: "review-plan",
+          title: "Review Plan",
+          url: "http://127.0.0.1:51460/?instanceId=review-plan",
+          status: "session-state/plan.md",
+        },
+      });
+      applySessionEvent(state, {
+        type: "canvas_opened",
+        canvas: {
+          extensionId: "user:documint",
+          canvasId: "documint-markdown-agent",
+          instanceId: "review-plan",
+          title: "Review Plan",
+          url: "http://127.0.0.1:53950/?instanceId=review-plan",
+          availability: "ready",
+        },
+      });
+
+      expect(state.canvases).toEqual([
+        {
+          key: JSON.stringify(["user:documint", "documint-markdown-agent", "review-plan"]),
+          extensionId: "user:documint",
+          canvasId: "documint-markdown-agent",
+          instanceId: "review-plan",
+          title: "Review Plan",
+          url: "http://127.0.0.1:53950/?instanceId=review-plan",
+          availability: "ready",
+          revision: 2,
+        },
+      ]);
+      expect(toSessionSnapshot("session-1", state).canvases).toEqual(state.canvases);
+    });
+
+    test("reopen replaces a single matching canvas even when the instance id changes", () => {
+      const state = createInitialSession();
+
+      applySessionEvent(state, {
+        type: "canvas_opened",
+        canvas: {
+          extensionId: "session:canvas-ontology",
+          extensionName: "canvas-ontology",
+          canvasId: "canvas-ontology",
+          instanceId: "canvas-ontology-main",
+          title: "Canvas surface ontology",
+          url: "http://127.0.0.1:52922/",
+        },
+      });
+      applySessionEvent(state, {
+        type: "canvas_opened",
+        canvas: {
+          extensionId: "session:canvas-ontology",
+          extensionName: "canvas-ontology",
+          canvasId: "canvas-ontology",
+          instanceId: "session-canvas-ontology-canvas-ontology",
+          title: "Canvas surface ontology",
+          url: "http://127.0.0.1:58480/",
+          reopen: true,
+        },
+      });
+
+      expect(state.canvases).toEqual([
+        {
+          key: JSON.stringify([
+            "session:canvas-ontology",
+            "canvas-ontology",
+            "session-canvas-ontology-canvas-ontology",
+          ]),
+          extensionId: "session:canvas-ontology",
+          extensionName: "canvas-ontology",
+          canvasId: "canvas-ontology",
+          instanceId: "session-canvas-ontology-canvas-ontology",
+          title: "Canvas surface ontology",
+          url: "http://127.0.0.1:58480/",
+          reopen: true,
+          revision: 2,
+        },
+      ]);
+    });
+
+    test("reopen with a changed instance id does not replace ambiguous matching canvases", () => {
+      const state = createInitialSession();
+
+      for (const instanceId of ["first", "second"]) {
+        applySessionEvent(state, {
+          type: "canvas_opened",
+          canvas: {
+            extensionId: "session:canvas-ontology",
+            canvasId: "canvas-ontology",
+            instanceId,
+            title: `Canvas ${instanceId}`,
+            url: `http://127.0.0.1/${instanceId}`,
+          },
+        });
+      }
+
+      applySessionEvent(state, {
+        type: "canvas_opened",
+        canvas: {
+          extensionId: "session:canvas-ontology",
+          canvasId: "canvas-ontology",
+          instanceId: "third",
+          title: "Canvas third",
+          url: "http://127.0.0.1/third",
+          reopen: true,
+        },
+      });
+
+      expect(state.canvases).toHaveLength(3);
+      expect(state.canvases?.map((canvas) => canvas.instanceId)).toEqual([
+        "first",
+        "second",
+        "third",
+      ]);
+      expect(state.canvases?.map((canvas) => canvas.revision)).toEqual([1, 1, 1]);
     });
   });
 
@@ -546,9 +723,9 @@ describe("sessionReducer", () => {
       ]);
     });
 
-    test("applies structured todo patches and clears transient state at stream end", () => {
+    test("applies structured todo patches and clears transient state at end", () => {
       let state = createInitialSession();
-      state = applySessionEvent(state, { type: "thinking" });
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
       state = applySessionEvent(state, { type: "reasoning", content: "analyzing" });
       state = applySessionEvent(state, {
         type: "tool_start",
@@ -575,7 +752,7 @@ describe("sessionReducer", () => {
       });
       expect(state.todos).toBeUndefined();
 
-      state = applySessionEvent(state, { type: "stream_end", reason: "idle" });
+      state = applySessionEvent(state, { type: "end", reason: "idle" });
       expect(state.status).toBe("idle");
       expect(state.reasoningContent).toBe("");
       expect(state.pendingToolCalls.size).toBe(0);
@@ -592,7 +769,8 @@ describe("sessionReducer", () => {
     test("tracks event metadata across streamed events", () => {
       const initial = createInitialSession();
       const afterThinking = applySessionEvent(initial, {
-        type: "thinking",
+        type: "status",
+        status: "thinking",
         eventId: 10,
         turnId: "turn-1",
       });
@@ -677,6 +855,126 @@ describe("sessionReducer", () => {
       });
       expect(state.pendingOptimisticUserMessage).toBeUndefined();
     });
+
+    test("reconciles SDK user echoes without a client message id", () => {
+      const state = createInitialSession();
+
+      applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+      });
+      applySessionEvent(state, { type: "status", status: "thinking" });
+
+      applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        timestamp: "2026-02-09T00:00:00.000Z",
+        eventId: 10,
+      });
+
+      expect(state.messages).toEqual([
+        {
+          role: "user",
+          content: "hello",
+          timestamp: "2026-02-09T00:00:00.000Z",
+          attachments: undefined,
+        },
+      ]);
+      expect(state.status).toBe("thinking");
+      expect(state.pendingOptimisticUserMessage).toBeUndefined();
+    });
+
+    test("reconciles decorated server user echoes after local thinking starts", () => {
+      const state = createInitialSession();
+
+      applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+      });
+      applySessionEvent(state, { type: "status", status: "thinking" });
+
+      applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+        timestamp: "2026-02-09T00:00:00.000Z",
+        eventId: 10,
+        turnId: "turn-1",
+      });
+
+      expect(state.messages).toEqual([
+        {
+          role: "user",
+          content: "hello",
+          timestamp: "2026-02-09T00:00:00.000Z",
+          attachments: undefined,
+        },
+      ]);
+      expect(state.status).toBe("thinking");
+      expect(state.pendingOptimisticUserMessage).toBeUndefined();
+    });
+
+    test("drops SDK user echo after the decorated server echo already reconciled", () => {
+      const state = createInitialSession();
+
+      applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+      });
+      applySessionEvent(state, { type: "status", status: "thinking" });
+      applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+        eventId: 10,
+        turnId: "turn-1",
+      });
+      applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        timestamp: "2026-02-09T00:00:00.000Z",
+        eventId: 11,
+        turnId: "turn-1",
+      });
+
+      expect(state.messages).toEqual([
+        {
+          role: "user",
+          content: "hello",
+          timestamp: undefined,
+          attachments: undefined,
+        },
+      ]);
+      expect(state.status).toBe("thinking");
+      expect(state.pendingOptimisticUserMessage).toBeUndefined();
+    });
+
+    test("does not dedupe a dequeued message for a new active turn", () => {
+      const state = createInitialSession();
+      applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        eventId: 1,
+        turnId: "turn-1",
+      });
+      applySessionEvent(state, { type: "assistant_message", content: "hi", eventId: 2 });
+      applySessionEvent(state, {
+        type: "message_dequeued",
+        content: "hello",
+        queuedMessageId: "queued-1",
+        eventId: 3,
+        turnId: "turn-2",
+      });
+
+      expect(state.messages).toEqual([
+        { role: "user", content: "hello", attachments: undefined, timestamp: undefined },
+        { role: "assistant", content: "hi", toolCalls: undefined },
+        { role: "user", content: "hello" },
+      ]);
+    });
   });
 
   describe("lifecycle & status", () => {
@@ -724,7 +1022,7 @@ describe("sessionReducer", () => {
     test("applyStreamError replaces a partial assistant message with the error notice", () => {
       const state = createInitialSession();
       applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "thinking" });
+      applySessionEvent(state, { type: "status", status: "thinking" });
       applySessionEvent(state, { type: "delta", content: "partial resp" });
 
       applyStreamError(state, "Something broke.");
@@ -749,21 +1047,21 @@ describe("sessionReducer", () => {
 
     test("tracks compacting status and returns to thinking when done", () => {
       let state = createInitialSession();
-      state = applySessionEvent(state, { type: "thinking" });
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
       expect(state.status).toBe("thinking");
 
-      state = applySessionEvent(state, { type: "compacting_start" });
+      state = applySessionEvent(state, { type: "status", status: "compacting" });
       expect(state.status).toBe("compacting");
 
-      // Idempotent: duplicate start is a no-op
-      state = applySessionEvent(state, { type: "compacting_start" });
+      // Idempotent: duplicate status update is a no-op in practice.
+      state = applySessionEvent(state, { type: "status", status: "compacting" });
       expect(state.status).toBe("compacting");
 
-      state = applySessionEvent(state, { type: "compacting_end" });
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
       expect(state.status).toBe("thinking");
 
-      // End while not compacting is a no-op
-      state = applySessionEvent(state, { type: "compacting_end" });
+      // Re-applying the current status preserves it.
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
       expect(state.status).toBe("thinking");
     });
 
@@ -785,7 +1083,7 @@ describe("sessionReducer", () => {
 
     test("mutates state in-place", () => {
       const state = createInitialSession();
-      const sameRef = applySessionEvent(state, { type: "thinking" });
+      const sameRef = applySessionEvent(state, { type: "status", status: "thinking" });
       expect(sameRef).toBe(state);
       expect(state.status).toBe("thinking");
     });

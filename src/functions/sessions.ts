@@ -14,7 +14,7 @@ import {
   deleteSessionWorktree,
 } from "./state/worktreeMetadata";
 import { getChildSessionIds } from "./state/childSessions";
-import { SessionStream, createSessionEventStream } from "./runtime/stream";
+import { SessionStream, createClientSessionStream } from "./runtime/stream";
 import {
   cleanupWorktree,
   mergeWorktreeBranch,
@@ -204,7 +204,7 @@ function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): Readable
 export const connectSessionStream = createServerFn({ method: "POST" })
   .validator(zodValidator(streamInputSchema))
   .handler(async ({ data }) => {
-    const iterator = createSessionEventStream(data);
+    const iterator = createClientSessionStream(data);
     return new RawStream(createEventByteStream(iterator), { hint: "text" });
   });
 

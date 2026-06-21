@@ -18,7 +18,7 @@
 // callers use the static registry (get / getOrCreate / close) and instance
 // methods — never reaching into internal fields directly.
 
-import type { CopilotSession } from "@github/copilot-sdk";
+import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { createSession, getOrResumeSession } from "../state/sessionCache";
 import { markSessionUnread, markSessionRead } from "../state/unread";
 import {
@@ -36,7 +36,6 @@ import {
   createProjectionState,
   getSdkMetadataPatch,
   getSdkStreamTerminalDisposition,
-  type SdkSessionEvent,
   projectSdkEvent,
 } from "@/functions/sdk/projector";
 import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/historyReplay";
@@ -44,6 +43,7 @@ import { toSdkAttachmentBlobs } from "@/functions/sdk/attachments";
 import type { Attachment, ModelConfiguration, QueuedMessage, SessionEvent } from "@/types";
 import type { Session } from "@/lib/session/sessionReducer";
 import { areModelConfigurationsEqual, toSdkSetModelOptions } from "@/lib/modelConfiguration";
+import { sharedMap } from "./processState";
 
 // ============================================================================
 // Types
@@ -67,11 +67,6 @@ export type SendOrQueueSessionMessageOptions = Omit<
   "prompt" | "afterEventId"
 > & {
   prompt: string;
-};
-
-export type SendOrQueueSessionMessageResult = {
-  stream: SessionStream;
-  disposition: "queued" | "started" | "attached";
 };
 
 type SessionStreamSubscriber = (event: SessionEvent | null) => void;
@@ -100,13 +95,231 @@ function getLastAssistantResponse(messages: Session["messages"]): string {
 }
 
 // ============================================================================
-// SessionStream
+// Public Entry Points
 // ============================================================================
+
+/** Opens the client-facing session event stream. Without a prompt, attach to
+ *  an existing runtime stream and replay buffered events; with a prompt,
+ *  create/resume the SDK session, subscribe first, then send the prompt. */
+export async function* createClientSessionStream(
+  options: SessionStreamConfig,
+): AsyncGenerator<SessionEvent> {
+  const stream = SessionStream.get(options.sessionId);
+
+  if (!options.prompt) {
+    if (stream) yield* attachToRuntimeStream(stream, options.afterEventId);
+    return;
+  }
+
+  const promptOptions: SendOrQueueSessionMessageOptions = {
+    ...options,
+    prompt: options.prompt,
+  };
+
+  if (stream) {
+    if (!options.startNew) {
+      queuePromptForNextTurn(stream, promptOptions);
+      return;
+    }
+
+    // Stale draft retry: the original turn already exists, so attach to it
+    // instead of sending or queueing a duplicate prompt.
+    yield* attachToRuntimeStream(stream, options.afterEventId);
+    return;
+  }
+
+  const runtime = await createOrResumePromptStream(promptOptions);
+  yield* streamPromptTurn(runtime, promptOptions);
+}
+
+/** Delivers a prompt from a background/tool caller. No client is waiting for
+ *  streamed events here, so an active target session means queue for the next
+ *  turn; an idle target session means resume/create and send immediately. */
+export async function sendOrQueueSessionMessage(
+  options: SendOrQueueSessionMessageOptions,
+): Promise<void> {
+  const existing = SessionStream.get(options.sessionId);
+  if (existing) {
+    // A `startNew` request against a live stream is a stale draft retry (the
+    // draft sender raced or retried). The turn already exists, so do not send
+    // or queue the prompt again.
+    if (options.startNew) {
+      return;
+    }
+
+    queuePromptForNextTurn(existing, options);
+    return;
+  }
+
+  const { stream, sdkSession } = await createOrResumePromptStream(options);
+  await startTurnAndSendPrompt(stream, sdkSession, options);
+}
+
+function attachToRuntimeStream(
+  stream: SessionStream,
+  afterEventId?: number,
+): AsyncGenerator<SessionEvent> {
+  return yieldStreamEvents(stream, {
+    afterEventId,
+    replayBuffer: true,
+  });
+}
+
+type PromptStreamRuntime = {
+  stream: SessionStream;
+  sdkSession: CopilotSession;
+};
+
+async function createOrResumePromptStream(
+  options: SendOrQueueSessionMessageOptions,
+): Promise<PromptStreamRuntime> {
+  if (options.startNew) {
+    const sdkSession = await createSession(options.sessionId, {
+      modelConfiguration: options.modelConfiguration,
+      directory: options.directory,
+      useWorktree: options.useWorktree,
+    });
+    return {
+      sdkSession,
+      stream: SessionStream.getOrCreate(options.sessionId, sdkSession, {
+        modelConfiguration: options.modelConfiguration,
+      }),
+    };
+  }
+
+  const resumed = await getOrResumeSession(options.sessionId);
+  return {
+    sdkSession: resumed.session,
+    stream: SessionStream.getOrCreate(
+      options.sessionId,
+      resumed.session,
+      await initializeSessionStateFromSdkHistory(resumed.events),
+    ),
+  };
+}
+
+function streamPromptTurn(
+  runtime: PromptStreamRuntime,
+  options: SendOrQueueSessionMessageOptions,
+): AsyncGenerator<SessionEvent> {
+  return yieldStreamEvents(runtime.stream, {
+    replayBuffer: false,
+    afterSubscribe: () => startTurnAndSendPrompt(runtime.stream, runtime.sdkSession, options),
+  });
+}
+
+function queuePromptForNextTurn(
+  stream: SessionStream,
+  options: SendOrQueueSessionMessageOptions,
+): void {
+  stream.addQueuedMessage({
+    role: "user",
+    content: options.prompt,
+    attachments: options.attachments,
+    modelConfiguration: options.modelConfiguration,
+  });
+}
+
+async function startTurnAndSendPrompt(
+  stream: SessionStream,
+  sdkSession: CopilotSession,
+  options: SendOrQueueSessionMessageOptions,
+): Promise<void> {
+  stream.startTurn(options.prompt, options.clientMessageId);
+
+  if (options.modelConfiguration?.model) {
+    await stream.setModel(options.modelConfiguration);
+  }
+
+  try {
+    await sdkSession.send({
+      prompt: options.prompt,
+      attachments: toSdkAttachmentBlobs(options.attachments),
+    });
+  } catch (error) {
+    stream.finishStream();
+    throw error;
+  }
+}
+
+type StreamSubscriptionOptions = {
+  afterEventId?: number;
+  replayBuffer: boolean;
+  afterSubscribe?: () => Promise<void>;
+};
+
+async function* yieldStreamEvents(
+  stream: SessionStream,
+  options: StreamSubscriptionOptions,
+): AsyncGenerator<SessionEvent> {
+  const { push, pull } = createAsyncQueue<SessionEvent>();
+  const unsubscribe = stream.subscribe(push);
+
+  try {
+    const promptSend = options.afterSubscribe?.();
+    promptSend?.catch(() => push(null));
+
+    if (options.replayBuffer) {
+      for (const event of stream.getBufferSince(options.afterEventId)) {
+        yield event;
+      }
+    }
+
+    // Stream live events until the runtime signals completion (null).
+    while (true) {
+      const event = await pull();
+      if (event === null) {
+        await promptSend;
+        break;
+      }
+
+      yield event;
+    }
+  } finally {
+    unsubscribe();
+  }
+}
+
+/** Minimal single-consumer async queue bridging push-based subscribers to the
+ *  pull-based async generator below. Only one pull may be outstanding. */
+function createAsyncQueue<T>() {
+  const queue: (T | null)[] = [];
+  let resolve: ((value: T | null) => void) | null = null;
+
+  return {
+    push(item: T | null) {
+      if (resolve) {
+        resolve(item);
+        resolve = null;
+      } else {
+        queue.push(item);
+      }
+    },
+    pull(): Promise<T | null> {
+      if (queue.length > 0) {
+        return Promise.resolve(queue.shift()!);
+      }
+      return new Promise((r) => {
+        resolve = r;
+      });
+    },
+  };
+}
+
+// ============================================================================
+// SessionStream Runtime
+// ============================================================================
+
+// Dev HMR can reload this module while active turns are still running. Keep the
+// registry on globalThis so reconnects and stop requests keep finding the same
+// runtime object. A registered stream is therefore expected to mean "active or
+// reconnectable"; terminal paths must close/detach so idle sessions disappear.
+const sessionStreams = sharedMap<SessionStream>("session-streams");
 
 export class SessionStream {
   // ── Static registry ──────────────────────────────────────────────────
 
-  private static readonly streams = new Map<string, SessionStream>();
+  private static readonly streams = sessionStreams;
 
   static get(sessionId: string): SessionStream | undefined {
     return SessionStream.streams.get(sessionId);
@@ -118,7 +331,9 @@ export class SessionStream {
     initialState?: Partial<Session>,
   ): SessionStream {
     const existing = SessionStream.streams.get(sessionId);
-    if (existing) return existing;
+    if (existing) {
+      return existing;
+    }
 
     const stream = new SessionStream(sessionId, session, initialState);
     SessionStream.streams.set(sessionId, stream);
@@ -194,13 +409,13 @@ export class SessionStream {
 
   // ── Lifecycle ────────────────────────────────────────────────────────
   // Teardown composes from two primitives so each step exists exactly once:
-  //   markSendFailure = unread + buffer cleanup (keeps the runtime alive)
-  //   detach          = waiters + SDK listener + registry (no lifecycle events)
-  //   close           = markSendFailure + queue clear + end-of-stream + detach
+  //   finishStream = unread + buffer cleanup (keeps the runtime alive)
+  //   detach       = waiters + SDK listener + registry (no lifecycle events)
+  //   close        = finishStream + queue clear + end-of-stream + detach
 
   /** Full shutdown: buffer + queue + unread + broadcast + SDK listener. */
   close(): void {
-    this.markSendFailure();
+    this.finishStream();
     this.#sessionState.queuedMessages.length = 0;
     this.#broadcastToSubscribers(null);
     this.detach();
@@ -221,9 +436,9 @@ export class SessionStream {
     SessionStream.streams.delete(this.sessionId);
   }
 
-  /** Mark a send failure: clear the buffer and update unread, but keep
-   *  the runtime alive so the caller can still detach it. */
-  markSendFailure(): void {
+  /** Finish the active stream lifecycle: clear the reconnect buffer and mark
+   *  read/unread based on whether anyone was watching. */
+  finishStream(): void {
     this.#updateUnreadOnStreamEnd();
     this.#clearBuffer();
   }
@@ -484,7 +699,8 @@ export class SessionStream {
       return;
     }
 
-    for (const sessionEvent of projectSdkEvent(sdkEvent, this.#projectionState)) {
+    const projectedEvents = projectSdkEvent(sdkEvent, this.#projectionState);
+    for (const sessionEvent of projectedEvents) {
       this.#emit(sessionEvent, sdkEvent.type);
     }
   }
@@ -524,157 +740,5 @@ export class SessionStream {
     } finally {
       this.#isDrainingQueue = false;
     }
-  }
-}
-
-// ============================================================================
-// Streaming Entry Point
-// ============================================================================
-
-/** Minimal single-consumer async queue bridging push-based subscribers to the
- *  pull-based async generator below. Only one pull may be outstanding. */
-function createAsyncQueue<T>() {
-  const queue: (T | null)[] = [];
-  let resolve: ((value: T | null) => void) | null = null;
-
-  return {
-    push(item: T | null) {
-      if (resolve) {
-        resolve(item);
-        resolve = null;
-      } else {
-        queue.push(item);
-      }
-    },
-    pull(): Promise<T | null> {
-      if (queue.length > 0) {
-        return Promise.resolve(queue.shift()!);
-      }
-      return new Promise((r) => {
-        resolve = r;
-      });
-    },
-  };
-}
-
-/** Deliver a prompt to a session without making the caller care whether it
- *  needs to be queued behind an active turn, attached to an existing draft
- *  stream, or sent immediately by resuming/starting the session. */
-export async function sendOrQueueSessionMessage(
-  options: SendOrQueueSessionMessageOptions,
-): Promise<SendOrQueueSessionMessageResult> {
-  const existing = SessionStream.get(options.sessionId);
-  if (existing) {
-    // A `startNew` request against a live stream is a stale draft retry (the
-    // draft sender raced or retried) — attach to the in-flight turn instead
-    // of sending or queueing a duplicate prompt.
-    if (options.startNew) {
-      return { stream: existing, disposition: "attached" };
-    }
-
-    // Auto-queue: the session is already streaming; enqueue instead of
-    // corrupting the in-flight turn.
-    existing.addQueuedMessage({
-      role: "user",
-      content: options.prompt,
-      attachments: options.attachments,
-      modelConfiguration: options.modelConfiguration,
-    });
-    return { stream: existing, disposition: "queued" };
-  }
-
-  let sdkSession: CopilotSession;
-  let stream: SessionStream;
-  if (options.startNew) {
-    sdkSession = await createSession(options.sessionId, {
-      modelConfiguration: options.modelConfiguration,
-      directory: options.directory,
-      useWorktree: options.useWorktree,
-    });
-    stream = SessionStream.getOrCreate(options.sessionId, sdkSession, {
-      modelConfiguration: options.modelConfiguration,
-    });
-  } else {
-    const resumed = await getOrResumeSession(options.sessionId);
-    sdkSession = resumed.session;
-    stream = SessionStream.getOrCreate(
-      options.sessionId,
-      sdkSession,
-      await initializeSessionStateFromSdkHistory(resumed.events),
-    );
-  }
-
-  stream.startTurn(options.prompt, options.clientMessageId);
-
-  if (options.modelConfiguration?.model) {
-    await stream.setModel(options.modelConfiguration);
-  }
-  try {
-    await sdkSession.send({
-      prompt: options.prompt,
-      attachments: toSdkAttachmentBlobs(options.attachments),
-    });
-  } catch (error) {
-    stream.markSendFailure();
-    throw error;
-  }
-
-  return { stream, disposition: "started" };
-}
-
-export async function* createSessionEventStream(
-  options: SessionStreamConfig,
-): AsyncGenerator<SessionEvent> {
-  const hasPrompt = !!options.prompt;
-  let stream = SessionStream.get(options.sessionId);
-  let promptDisposition: SendOrQueueSessionMessageResult["disposition"] | undefined;
-
-  // Reconnect with no prompt and no active stream — nothing to do.
-  if (!hasPrompt && !stream) {
-    return;
-  }
-
-  if (hasPrompt) {
-    const delivery = await sendOrQueueSessionMessage({
-      sessionId: options.sessionId,
-      prompt: options.prompt!,
-      attachments: options.attachments,
-      modelConfiguration: options.modelConfiguration,
-      directory: options.directory,
-      useWorktree: options.useWorktree,
-      clientMessageId: options.clientMessageId,
-      startNew: options.startNew,
-    });
-    if (delivery.disposition === "queued") {
-      return;
-    }
-    stream = delivery.stream;
-    promptDisposition = delivery.disposition;
-  }
-
-  if (!stream) {
-    return;
-  }
-
-  const { push, pull } = createAsyncQueue<SessionEvent>();
-  const unsubscribe = stream.subscribe(push);
-
-  try {
-    if (!hasPrompt || promptDisposition === "attached") {
-      // Reconnect path: replay buffered events then wait for live events.
-      for (const event of stream.getBufferSince(options.afterEventId)) {
-        yield event;
-      }
-    }
-
-    // Stream live events until the runtime signals completion (null).
-    while (true) {
-      const event = await pull();
-      if (event === null) break;
-
-      yield event;
-    }
-  } finally {
-    unsubscribe();
   }
 }

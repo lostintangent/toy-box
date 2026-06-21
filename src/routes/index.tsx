@@ -1,8 +1,10 @@
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { createFileRoute, useNavigate, ClientOnly } from "@tanstack/react-router";
+import { createIsomorphicFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { useState, useMemo, useRef, useEffect, useCallback, lazy, Suspense } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
 import { z } from "zod";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { PanelLeft } from "lucide-react";
@@ -13,7 +15,6 @@ import { modelQueries } from "@/lib/queries";
 import { useAutomations } from "@/hooks/automations/useAutomations";
 import { useLocalStorage } from "@/hooks/browser/useLocalStorage";
 import { useDraftSession, SESSION_ID_PREFIX } from "@/hooks/session/useDraftSession";
-import { useLinkedSessions } from "@/hooks/session/useLinkedSessions";
 import { useModelConfiguration } from "@/hooks/session/useModelConfiguration";
 import { useSessions } from "@/hooks/session/useSessions";
 import { useViewport } from "@/hooks/browser/ViewportContext";
@@ -23,6 +24,12 @@ import { MobileSessionPager } from "@/components/session/MobileSessionPager";
 import { SessionGrid } from "@/components/session/SessionGrid";
 import { SessionPlaceholder } from "@/components/session/SessionPlaceholder";
 import { TerminalShell } from "@/components/terminal/TerminalShell";
+import { linkedPanesAtom } from "@/atoms";
+import {
+  deriveOpenSessionIds,
+  deriveVisibleSessionGridPanes,
+  type SessionGridPane,
+} from "@/hooks/session/sessionPanes";
 import {
   normalizeSessionDirectoryOptions,
   type SessionDirectoryOption,
@@ -66,20 +73,19 @@ function parseStoredBoolean(value: string): boolean {
   return value === "true";
 }
 
+const readLayoutCookieHeader = createIsomorphicFn()
+  .client(() => document.cookie)
+  .server(async () => {
+    const { getRequestHeader } = await import("@tanstack/react-start/server");
+    return getRequestHeader("cookie") ?? getRequestHeader("Cookie");
+  });
+
 async function loadLayoutPrefs() {
   const runtimeConfig = await getRuntimeConfig();
-
-  if (import.meta.env.SSR) {
-    const { getRequestHeader } = await import("@tanstack/react-start/server");
-    const cookieHeader = getRequestHeader("cookie") ?? getRequestHeader("Cookie");
-    return {
-      ...resolveLayoutPrefs(parseLayoutPrefs(cookieHeader)),
-      terminalWsPort: runtimeConfig.terminalWsPort,
-    };
-  }
+  const cookieHeader = await readLayoutCookieHeader();
 
   return {
-    ...resolveLayoutPrefs(parseLayoutPrefs(document.cookie)),
+    ...resolveLayoutPrefs(parseLayoutPrefs(cookieHeader)),
     terminalWsPort: runtimeConfig.terminalWsPort,
   };
 }
@@ -111,14 +117,16 @@ function SessionsPage() {
   );
 
   const primarySelectedSessionId = selectedSessionIds[0];
-  const {
-    visibleSessionIds,
-    dismissLinkedSession,
-    restoreLinkedSession,
-    resetDismissedLinkedSessions,
-  } = useLinkedSessions({
-    selectedSessionIds,
-  });
+  const linkedPanesBySource = useAtomValue(linkedPanesAtom);
+  const openPanes = useMemo(
+    () =>
+      deriveVisibleSessionGridPanes({
+        selectedSessionIds,
+        linkedPanesBySource,
+      }),
+    [linkedPanesBySource, selectedSessionIds],
+  );
+  const openSessionIds = useMemo(() => deriveOpenSessionIds(openPanes), [openPanes]);
 
   const { data: models = [] } = useQuery(modelQueries.list());
 
@@ -156,7 +164,7 @@ function SessionsPage() {
     worktreeSessionIds,
     childSessionIds,
   } = useSessions({
-    openSessionIds: visibleSessionIds,
+    openSessionIds,
   });
 
   // Draft session lifecycle. Three touchpoints in this component:
@@ -180,7 +188,6 @@ function SessionsPage() {
     runningAutomationIds,
   } = useAutomations({
     onUserRunRequested: (sessionId) => {
-      resetDismissedLinkedSessions();
       updateSelectedSessionIds([sessionId]);
     },
     streamingSessionIds,
@@ -193,30 +200,23 @@ function SessionsPage() {
     }
     return ids;
   }, [allSessions, automations]);
-  const openSessionIds = useMemo(() => {
-    if (isLoading) {
-      return visibleSessionIds;
-    }
-
-    return visibleSessionIds.filter((sessionId) => {
-      return sessionId === draftSessionId || availableSessionIds.has(sessionId);
-    });
-  }, [availableSessionIds, draftSessionId, isLoading, visibleSessionIds]);
-  const linkedOnlySessionIds = useMemo(() => {
-    return new Set(openSessionIds.filter((sessionId) => !selectedSessionIds.includes(sessionId)));
-  }, [openSessionIds, selectedSessionIds]);
-
   const handleCloseVisibleSession = useCallback(
     (sessionId: string) => {
-      dismissLinkedSession(sessionId);
-
       if (!selectedSessionIds.includes(sessionId)) {
         return;
       }
 
       updateSelectedSessionIds(selectedSessionIds.filter((id) => id !== sessionId));
     },
-    [dismissLinkedSession, selectedSessionIds, updateSelectedSessionIds],
+    [selectedSessionIds, updateSelectedSessionIds],
+  );
+
+  const handleCloseVisiblePane = useCallback(
+    (pane: SessionGridPane) => {
+      if (pane.kind !== "session" || pane.isLinkedOnly) return;
+      handleCloseVisibleSession(pane.sessionId);
+    },
+    [handleCloseVisibleSession],
   );
 
   const handleSessionSelect = useCallback(
@@ -227,29 +227,26 @@ function SessionsPage() {
       }
 
       if (!modifierKey || isMobileLayout) {
-        resetDismissedLinkedSessions();
         updateSelectedSessionIds([sessionId]);
         return;
       }
 
-      if (openSessionIds.includes(sessionId)) {
+      if (selectedSessionIds.includes(sessionId)) {
         handleCloseVisibleSession(sessionId);
         return;
       }
 
-      if (openSessionIds.length >= 4) {
+      if (openPanes.length >= 4 && !openSessionIds.includes(sessionId)) {
         return;
       }
 
-      restoreLinkedSession(sessionId);
       updateSelectedSessionIds([...selectedSessionIds, sessionId]);
     },
     [
       handleCloseVisibleSession,
       isMobileLayout,
       openSessionIds,
-      resetDismissedLinkedSessions,
-      restoreLinkedSession,
+      openPanes.length,
       selectedSessionIds,
       updateSelectedSessionIds,
     ],
@@ -267,17 +264,10 @@ function SessionsPage() {
         updateSelectedSessionIds([...selectedSessionIds, id]);
       } else {
         // Replace current view
-        resetDismissedLinkedSessions();
         updateSelectedSessionIds([id]);
       }
     },
-    [
-      createDraft,
-      openSessionIds.length,
-      resetDismissedLinkedSessions,
-      selectedSessionIds,
-      updateSelectedSessionIds,
-    ],
+    [createDraft, openSessionIds.length, selectedSessionIds, updateSelectedSessionIds],
   );
 
   // Keep URL session IDs aligned with available sessions.
@@ -653,7 +643,7 @@ function SessionsPage() {
         <div className="h-full w-full shrink-0">
           {primarySelectedSessionId && (
             <MobileSessionPager
-              sessionIds={openSessionIds}
+              panes={openPanes}
               selectedSessionId={primarySelectedSessionId}
               streamingSessionIds={streamingSessionIds}
               unreadSessionIds={unreadSessionIds}
@@ -737,11 +727,10 @@ function SessionsPage() {
                 )}
                 {openSessionIds.length > 0 ? (
                   <SessionGrid
-                    sessionIds={openSessionIds}
-                    linkedOnlySessionIds={linkedOnlySessionIds}
+                    panes={openPanes}
                     streamingSessionIds={streamingSessionIds}
                     unreadSessionIds={unreadSessionIds}
-                    onRemoveSession={handleCloseVisibleSession}
+                    onRemovePane={handleCloseVisiblePane}
                     models={models}
                     modelConfiguration={selectedModelConfiguration}
                     onModelConfigurationChange={handleModelConfigurationChange}

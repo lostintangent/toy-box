@@ -1,16 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import {
-  initializeSessionStateFromSdkHistory,
-  projectSessionEventsFromSdkHistory,
-  resolveHistoryAttachments,
-} from "@/functions/sdk/historyReplay";
-import {
-  applySessionEvent,
-  createInitialSession,
-  type Session,
-} from "@/lib/session/sessionReducer";
-import type { SdkSessionEvent } from "@/functions/sdk/extractors";
-import type { Attachment } from "@/types";
+import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
+import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/historyReplay";
+import type { Session } from "@/lib/session/sessionReducer";
 import { loadSessionFixture } from "./helpers";
 
 // State-level history replay coverage: persisted SDK events → historyReplay
@@ -19,16 +10,7 @@ import { loadSessionFixture } from "./helpers";
 // emitted event stream is an implementation detail of the streaming
 // projection, which has its own unit suite (projector.test.ts).
 
-function replayHistory(
-  events: SdkSessionEvent[],
-  attachmentsByEventIndex?: Map<number, Attachment[]>,
-): Session {
-  const state = createInitialSession();
-  for (const event of projectSessionEventsFromSdkHistory(events, attachmentsByEventIndex)) {
-    applySessionEvent(state, event);
-  }
-  return state;
-}
+const replayHistory = initializeSessionStateFromSdkHistory;
 
 function assistantToolCalls(state: Session) {
   return state.messages.flatMap((message) =>
@@ -38,11 +20,25 @@ function assistantToolCalls(state: Session) {
 
 describe("history replay", () => {
   test("replays the subagent fixture through reducer-owned state construction", async () => {
-    const state = replayHistory(await loadSessionFixture("subagents"));
+    const state = await replayHistory(await loadSessionFixture("subagents"));
     const agents = assistantToolCalls(state).filter((toolCall) => toolCall.name === "agent");
 
-    expect(state.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-    expect(state.modelConfiguration).toMatchObject({ model: "gpt-5.5" });
+    expect(state.messages.map((message) => message.role)).toEqual([
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    expect(state.messages[0]).toMatchObject({
+      role: "assistant",
+      toolCalls: [
+        {
+          id: "call_M1QBw3fDmRrrXoYP9bt4edOd",
+          name: "read",
+          result: { success: false, content: "Path does not exist" },
+        },
+      ],
+    });
+    expect(state.modelConfiguration).toMatchObject({ model: "gpt-5.5", reasoningEffort: "xhigh" });
     expect(agents).toHaveLength(7);
     expect(
       agents
@@ -54,82 +50,8 @@ describe("history replay", () => {
     expect(state.status).toBe("idle");
   });
 
-  test("normalizes legacy parentToolCallId fields into nested tool calls", () => {
-    const state = replayHistory([
-      {
-        type: "assistant.message",
-        data: {
-          content: "Starting agent",
-        },
-      },
-      {
-        type: "tool.execution_start",
-        data: {
-          toolCallId: "agent-1",
-          toolName: "task",
-          arguments: { agent_type: "explore", prompt: "Inspect" },
-        },
-      },
-      {
-        type: "assistant.message",
-        data: {
-          parentToolCallId: "agent-1",
-          content: "Reading files",
-        },
-      },
-      {
-        type: "tool.execution_start",
-        data: {
-          parentToolCallId: "agent-1",
-          toolCallId: "child-1",
-          toolName: "view",
-          arguments: { path: "src/index.ts" },
-        },
-      },
-      {
-        type: "tool.execution_complete",
-        data: {
-          parentToolCallId: "agent-1",
-          toolCallId: "child-1",
-          success: true,
-          result: { content: "file contents" },
-        },
-      },
-      {
-        type: "tool.execution_complete",
-        data: {
-          toolCallId: "agent-1",
-          success: true,
-          result: { content: "agent result" },
-        },
-      },
-    ] as SdkSessionEvent[]);
-
-    expect(state.messages).toHaveLength(1);
-    expect(state.messages[0]).toMatchObject({
-      role: "assistant",
-      toolCalls: [
-        {
-          id: "agent-1",
-          name: "agent",
-          result: { content: "agent result", success: true },
-          agent: {
-            content: "Reading files",
-            toolCalls: [
-              {
-                id: "child-1",
-                name: "read",
-                result: { content: "file contents", success: true },
-              },
-            ],
-          },
-        },
-      ],
-    });
-  });
-
-  test("drops orphan root tool lifecycle events before a visible turn", () => {
-    const state = replayHistory([
+  test("replays leading root tool lifecycle events even before a visible turn", async () => {
+    const state = await replayHistory([
       {
         type: "tool.execution_start",
         data: {
@@ -157,14 +79,27 @@ describe("history replay", () => {
     ] as SdkSessionEvent[]);
 
     expect(state.messages).toEqual([
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "orphan",
+            name: "read",
+            arguments: { path: "old.ts" },
+            result: { content: "old content", success: true, details: undefined },
+          },
+        ],
+      },
       { role: "user", content: "New turn", attachments: undefined, timestamp: undefined },
       { role: "assistant", content: "Fresh response" },
     ]);
   });
 
-  test("translates todo SQL into todos, keeps it out of the tool call list, and applies titles", () => {
-    const insertTodo = "INSERT INTO todos (id, title) VALUES ('inspect-sql-events', 'inspect SQL events');";
-    const state = replayHistory([
+  test("translates todo SQL into todos, keeps it out of the tool call list, and applies titles", async () => {
+    const insertTodo =
+      "INSERT INTO todos (id, title) VALUES ('inspect-sql-events', 'inspect SQL events');";
+    const state = await replayHistory([
       { type: "user.message", data: { content: "User prompt" } },
       { type: "assistant.message", data: { content: "Assistant response" } },
       {
@@ -197,19 +132,28 @@ describe("history replay", () => {
     ]);
   });
 
-  test("replays the model from session lifecycle and model_change events", () => {
-    const state = replayHistory([
-      { type: "session.start", data: { selectedModel: "claude-sonnet-4.5" } },
+  test("replays session model events through the streaming projector", async () => {
+    const state = await replayHistory([
+      {
+        type: "session.start",
+        data: {
+          sessionId: "session-1",
+          producer: "copilot-agent",
+          copilotVersion: "1.0.61",
+          startTime: "2026-06-10T20:29:43.232Z",
+          selectedModel: "claude-sonnet-4.5",
+        },
+      },
       { type: "session.model_change", data: { newModel: "claude-sonnet-4.6" } },
     ] as SdkSessionEvent[]);
 
     expect(state.modelConfiguration).toEqual({ model: "claude-sonnet-4.6" });
   });
 
-  test("normalizes apply_patch string arguments and preserves detailed diffs", () => {
+  test("normalizes apply_patch string arguments and preserves detailed diffs", async () => {
     const patchText = "*** Begin Patch\n*** Update File: notes.md\n@@\n-old\n+new\n*** End Patch";
     const patchDiff = "diff --git a/notes.md b/notes.md\n@@ -1 +1 @@\n-old\n+new";
-    const state = replayHistory([
+    const state = await replayHistory([
       { type: "user.message", data: { content: "Patch it" } },
       { type: "assistant.message", data: { content: "Applying patch." } },
       {
@@ -236,8 +180,8 @@ describe("history replay", () => {
     ]);
   });
 
-  test("restores linked sessions without surfacing the translated tool call", () => {
-    const state = replayHistory([
+  test("restores linked sessions without surfacing the translated tool call", async () => {
+    const state = await replayHistory([
       { type: "user.message", data: { content: "Spin one up" } },
       { type: "assistant.message", data: { content: "Opening a companion session." } },
       {
@@ -262,8 +206,8 @@ describe("history replay", () => {
     expect(assistantToolCalls(state)).toEqual([]);
   });
 
-  test("keeps omitted tools out of the transcript", () => {
-    const state = replayHistory([
+  test("keeps omitted tools out of the transcript", async () => {
+    const state = await replayHistory([
       { type: "user.message", data: { content: "Check status" } },
       { type: "assistant.message", data: { content: "Checking." } },
       {
@@ -281,8 +225,8 @@ describe("history replay", () => {
     expect(assistantToolCalls(state)).toEqual([]);
   });
 
-  test("keeps subagent prompts out of the root transcript", () => {
-    const state = replayHistory([
+  test("keeps subagent prompts out of the root transcript", async () => {
+    const state = await replayHistory([
       { type: "user.message", data: { content: "Real root turn" } },
       { type: "assistant.message", data: { content: "Delegating." } },
       {
@@ -325,28 +269,5 @@ describe("history replay", () => {
         attachments: [{ base64: "aW1hZ2U=", mimeType: "image/png", displayName: "image.png" }],
       },
     ]);
-  });
-
-  test("resolves attachments for user messages by event index", async () => {
-    const first: Attachment[] = [{ displayName: "a.png", mimeType: "image/png", base64: "YQ==" }];
-    const second: Attachment[] = [{ displayName: "b.png", mimeType: "image/png", base64: "Yg==" }];
-    const events = [
-      { type: "user.message", data: { content: "first" } },
-      { type: "assistant.message", data: { content: "ok" } },
-      { type: "user.message", data: { content: "second" } },
-    ] as SdkSessionEvent[];
-
-    let resolverCalls = 0;
-    const attachmentsByEventIndex = await resolveHistoryAttachments(events, async (_event, index) => {
-      resolverCalls += 1;
-      return index === 0 ? first : second;
-    });
-
-    // Only user.message events consult the resolver.
-    expect(resolverCalls).toBe(2);
-
-    const state = replayHistory(events, attachmentsByEventIndex);
-    expect(state.messages[0]).toMatchObject({ role: "user", attachments: first });
-    expect(state.messages[2]).toMatchObject({ role: "user", attachments: second });
   });
 });

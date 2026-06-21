@@ -46,6 +46,23 @@ export type TodoItemPatch =
 
 export type SessionStatus = "idle" | "thinking" | "compacting" | "reasoning" | "responding";
 
+export type SessionCanvas = {
+  key: string;
+  extensionId?: string;
+  extensionName?: string;
+  canvasId: string;
+  instanceId: string;
+  title: string;
+  url: string;
+  status?: string;
+  availability?: string;
+  input?: JsonValue;
+  reopen?: boolean;
+  revision: number;
+};
+
+export type SessionCanvasOpen = Omit<SessionCanvas, "key" | "revision">;
+
 export type SessionSnapshot = {
   id: string;
   messages: Message[];
@@ -53,6 +70,7 @@ export type SessionSnapshot = {
   modelConfiguration?: ModelConfiguration;
   todos?: TodoItem[];
   linkedSessionIds?: string[];
+  canvases?: SessionCanvas[];
   lastSeenEventId?: number;
   status: SessionStatus;
   reasoningContent: string;
@@ -152,11 +170,9 @@ export type SessionEvent = (
       result?: string;
       details?: string;
     }
-  | { type: "thinking" }
+  | { type: "status"; status: SessionStatus }
   | { type: "todos_patch"; patches: TodoItemPatch[] }
   | { type: "session_title_changed"; title: string }
-  | { type: "compacting_start" }
-  | { type: "compacting_end" }
   | { type: "message_queued"; queuedMessageId: string; content: string; attachments?: Attachment[] }
   | { type: "message_cancelled"; queuedMessageId: string }
   | { type: "message_dequeued"; content: string; queuedMessageId?: string }
@@ -164,7 +180,8 @@ export type SessionEvent = (
   | { type: "skills"; skills: SessionSkill[] }
   | { type: "linked_session_added"; sessionId: string }
   | { type: "linked_session_removed"; sessionId: string }
-  | { type: "stream_end"; reason: "idle" | "error" }
+  | { type: "canvas_opened"; canvas: SessionCanvasOpen }
+  | { type: "end"; reason: "idle" | "error" }
 ) & {
   eventId?: number;
   turnId?: string;

@@ -236,7 +236,7 @@ describe("SessionStream model configuration", () => {
   });
 });
 
-describe("createSessionEventStream", () => {
+describe("createClientSessionStream", () => {
   test("reuses the active stream for reconnects without replaying SDK history", async () => {
     onTestFinished(() => {
       mock.restore();
@@ -266,8 +266,10 @@ describe("createSessionEventStream", () => {
       updateSessionSummary: () => {},
     }));
 
-    const { SessionStream: ImportedSessionStream, createSessionEventStream: importedCreateStream } =
-      await import("./stream");
+    const {
+      SessionStream: ImportedSessionStream,
+      createClientSessionStream: importedCreateStream,
+    } = await import("./stream");
 
     const stream = ImportedSessionStream.getOrCreate("session-reconnect", fakeSession, {
       modelConfiguration: { model: "gpt-5" },
@@ -316,8 +318,10 @@ describe("createSessionEventStream", () => {
       updateSessionSummary: () => {},
     }));
 
-    const { SessionStream: ImportedSessionStream, createSessionEventStream: importedCreateStream } =
-      await import("./stream");
+    const {
+      SessionStream: ImportedSessionStream,
+      createClientSessionStream: importedCreateStream,
+    } = await import("./stream");
 
     const stream = ImportedSessionStream.getOrCreate("session-draft-race", fakeSession, {
       modelConfiguration: { model: "gpt-5" },
@@ -341,6 +345,73 @@ describe("createSessionEventStream", () => {
     expect(stream.getQueuedMessages()).toEqual([]);
     expect(sendMock).toHaveBeenCalledTimes(0);
   });
+
+  test("subscribes before sending so short committed responses are delivered", async () => {
+    onTestFinished(() => {
+      mock.restore();
+      SessionStream.close("session-short-response");
+    });
+
+    let sdkHandler: ((event: { type: string; data: unknown }) => void) | undefined;
+    const sendMock = mock(async (_message: { prompt: string }) => {
+      sdkHandler!({ type: "assistant.turn_start", data: {} });
+      sdkHandler!({
+        type: "assistant.message",
+        data: { content: "France's capital is Paris." },
+      });
+      sdkHandler!({ type: "session.idle", data: {} });
+    });
+    const fakeSession = {
+      on: (handler: (event: { type: string; data: unknown }) => void) => {
+        sdkHandler = handler;
+        return () => {};
+      },
+      send: sendMock,
+    } as unknown as CopilotSession;
+
+    mock.module("../state/sessionCache", () => ({
+      createSession: async () => {
+        throw new Error("createSession should not be used for an idle historical session");
+      },
+      getOrResumeSession: async () => ({
+        session: fakeSession,
+        events: [],
+      }),
+    }));
+    mock.module("../state/unread", () => ({
+      markSessionRead: () => {},
+      markSessionUnread: () => {},
+    }));
+    mock.module("./broadcast", () => ({
+      emitSessionRunning: () => {},
+      emitSessionIdle: () => {},
+      emitSessionTouched: () => {},
+      updateSessionSummary: () => {},
+    }));
+
+    const { createClientSessionStream: importedCreateStream } = await import("./stream");
+
+    const events: Array<{ type: string; content?: string }> = [];
+    for await (const event of importedCreateStream({
+      sessionId: "session-short-response",
+      prompt: "What is France's capital?",
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      expect.objectContaining({ type: "user_message", content: "What is France's capital?" }),
+      expect.objectContaining({ type: "status", status: "thinking" }),
+      expect.objectContaining({
+        type: "assistant_message",
+        content: "France's capital is Paris.",
+      }),
+    ]);
+    expect(sendMock).toHaveBeenCalledWith({
+      prompt: "What is France's capital?",
+      attachments: undefined,
+    });
+  });
 });
 
 describe("sendOrQueueSessionMessage", () => {
@@ -361,15 +432,11 @@ describe("sendOrQueueSessionMessage", () => {
 
     const { sendOrQueueSessionMessage: importedSendOrQueue } = await import("./stream");
 
-    const result = await importedSendOrQueue({
+    await importedSendOrQueue({
       sessionId: "session-queue-helper",
       prompt: "Queue this follow-up",
     });
 
-    expect(result).toMatchObject({
-      stream,
-      disposition: "queued",
-    });
     expect(stream.getQueuedMessages()).toEqual([
       expect.objectContaining({
         role: "user",
@@ -413,7 +480,7 @@ describe("sendOrQueueSessionMessage", () => {
     const { sendOrQueueSessionMessage: importedSendOrQueue, SessionStream: ImportedSessionStream } =
       await import("./stream");
 
-    const result = await importedSendOrQueue({
+    await importedSendOrQueue({
       sessionId: "session-start-helper",
       prompt: "Start this session again",
       attachments: [
@@ -425,7 +492,7 @@ describe("sendOrQueueSessionMessage", () => {
       ],
     });
 
-    expect(result.disposition).toBe("started");
+    expect(ImportedSessionStream.get("session-start-helper")).toBeDefined();
     expect(sendMock).toHaveBeenCalledWith({
       prompt: "Start this session again",
       attachments: [
@@ -437,7 +504,6 @@ describe("sendOrQueueSessionMessage", () => {
         },
       ],
     });
-    expect(ImportedSessionStream.get("session-start-helper")).toBeDefined();
   });
 });
 

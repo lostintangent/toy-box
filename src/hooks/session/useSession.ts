@@ -24,6 +24,7 @@ import type {
   Message,
   QueuedMessage,
   ModelConfiguration,
+  SessionCanvas,
   SessionEvent,
   SessionSnapshot,
   SessionStatus,
@@ -79,6 +80,7 @@ type SessionStateUpdate = {
   queuedMessages?: QueuedMessage[];
   todos?: TodoItem[];
   linkedSessionIds?: string[];
+  canvases?: SessionCanvas[];
   lastSeenEventId?: number;
   status?: SessionStatus;
   reasoningContent?: string;
@@ -170,6 +172,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     queuedMessages,
     todos,
     linkedSessionIds,
+    canvases,
     status: baseStatus,
     reasoningContent,
     modelConfiguration,
@@ -260,7 +263,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
         }
       } finally {
         if (outcome !== "aborted") {
-          applyEvent({ type: "stream_end", reason: "idle" });
+          applyEvent({ type: "end", reason: "idle" });
         }
         if (outcome === "completed") {
           setCachedSessionSnapshot(sessionRef.current!.state);
@@ -278,14 +281,14 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
   );
 
   // End streaming locally (used when detaching or force-stopping). The
-  // transient-state reset is the reducer's stream_end policy — applied
-  // directly so it can never drift from the server's stream end semantics.
+  // transient-state reset is the reducer's end policy, applied directly so it
+  // can never drift from the server's terminal cleanup semantics.
   const endStreamingLocally = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    applySessionEvent(sessionRef.current!.state, { type: "stream_end", reason: "idle" });
+    applySessionEvent(sessionRef.current!.state, { type: "end", reason: "idle" });
     updateRevision();
     setIsStreaming(false);
   }, [updateRevision]);
@@ -364,7 +367,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
         clientMessageId,
         timestamp: new Date().toISOString(),
       });
-      applyEvent({ type: "thinking" });
+      applyEvent({ type: "status", status: "thinking" });
 
       // Promote the draft once the server confirms the session exists. Fired
       // from both onFirstEvent and onSuccess (idempotent) because a stream
@@ -465,10 +468,8 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
   const updateState = useCallback(
     (snapshot: SessionStateUpdate) => {
       const state = createInitialSession({
-        messages: snapshot.messages,
+        ...snapshot,
         queuedMessages: snapshot.queuedMessages ?? [],
-        todos: snapshot.todos,
-        linkedSessionIds: snapshot.linkedSessionIds,
         status: snapshot.status ?? "idle",
         reasoningContent: snapshot.reasoningContent ?? "",
         // Keep the locally seeded/picked configuration when the snapshot has
@@ -495,7 +496,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
   );
 
   const attachToStream = useCallback(async () => {
-    if (abortControllerRef.current) return; // Already streaming
+    if (abortControllerRef.current) return;
 
     try {
       const outcome = await runStreamingLoop({
@@ -558,6 +559,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     modelConfiguration,
     todos,
     linkedSessionIds,
+    canvases,
     revision,
     hasSynced,
 

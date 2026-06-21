@@ -11,6 +11,15 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
       "type": "user_message",
     },
     {
+      "eventId": 1,
+      "modelConfiguration": {
+        "model": "gpt-5.5",
+        "reasoningEffort": "xhigh",
+      },
+      "turnId": "turn-0",
+      "type": "model_changed",
+    },
+    {
       "arguments": {
         "path": "/tmp/copilot-sdk-100-inspect-48621/package/dist/generated/session-events.d.ts",
         "view_range": [
@@ -18,7 +27,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
           2168,
         ],
       },
-      "eventId": 1,
+      "eventId": 2,
       "toolCallId": "call_M1QBw3fDmRrrXoYP9bt4edOd",
       "toolName": "read",
       "turnId": "turn-0",
@@ -26,7 +35,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
     },
     {
       "details": undefined,
-      "eventId": 2,
+      "eventId": 3,
       "result": "Path does not exist",
       "success": false,
       "toolCallId": "call_M1QBw3fDmRrrXoYP9bt4edOd",
@@ -34,25 +43,42 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
       "type": "tool_end",
     },
     {
-      "eventId": 3,
-      "turnId": "turn-0",
-      "type": "compacting_start",
-    },
-    {
       "eventId": 4,
+      "status": "compacting",
       "turnId": "turn-0",
-      "type": "compacting_end",
+      "type": "status",
     },
     {
       "eventId": 5,
+      "status": "thinking",
+      "turnId": "turn-0",
+      "type": "status",
+    },
+    {
+      "attachments": undefined,
+      "content": "What’s your thoughts on this change now? Maybe kick off a code review and a half dozen sub agents to go review different aspects of this change and see how they feel about itne2e",
+      "eventId": 6,
+      "timestamp": "2026-06-11T02:19:11.607Z",
+      "turnId": "turn-0",
+      "type": "user_message",
+    },
+    {
+      "eventId": 7,
+      "status": "thinking",
       "turnId": "turn-1",
-      "type": "thinking",
+      "type": "status",
+    },
+    {
+      "content": "My quick take: the shape is much cleaner now, but I’ll get independent reviews on the main risk areas before making a stronger call.",
+      "eventId": 8,
+      "turnId": "turn-1",
+      "type": "assistant_message",
     },
     {
       "arguments": {
         "intent": "Launching reviews",
       },
-      "eventId": 6,
+      "eventId": 9,
       "toolCallId": "call_RxF3q3DxvPVDWX1mvsjqs9iq",
       "toolName": "report_intent",
       "turnId": "turn-1",
@@ -66,7 +92,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
         "name": "full-diff-review",
         "prompt": "You are reviewing the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Focus only on high-signal correctness, security, regression, type-safety, and maintainability issues. Ignore formatting/style un…",
       },
-      "eventId": 7,
+      "eventId": 10,
       "toolCallId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
       "toolName": "agent",
       "turnId": "turn-1",
@@ -85,7 +111,7 @@ Intended behavior:
 - Client/UI…"
 ,
       },
-      "eventId": 8,
+      "eventId": 11,
       "toolCallId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
       "toolName": "agent",
       "turnId": "turn-1",
@@ -104,7 +130,7 @@ Intended behavior:
 - SessionEvent shapes remain unchanged/protocol-like: tool_start uses toolCallId/toolName; t…"
 ,
       },
-      "eventId": 9,
+      "eventId": 12,
       "toolCallId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
       "toolName": "agent",
       "turnId": "turn-1",
@@ -123,7 +149,7 @@ Intended behavior:
 - Patch tool start args are not parsed into FileDiff[]; raw apply_patch text displays whil…"
 ,
       },
-      "eventId": 10,
+      "eventId": 13,
       "toolCallId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
       "toolName": "agent",
       "turnId": "turn-1",
@@ -142,7 +168,7 @@ Focus areas:
 - Active stream state vs persisted history reconstruction a…"
 ,
       },
-      "eventId": 11,
+      "eventId": 14,
       "toolCallId": "call_7CE08h3s8nNulW1GHoiNsWeu",
       "toolName": "agent",
       "turnId": "turn-1",
@@ -160,7 +186,7 @@ Focus areas:
 Context: Changes include SDK blob attachments, semantic Attachment type, semantic ToolCall i…"
 ,
       },
-      "eventId": 12,
+      "eventId": 15,
       "toolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "toolName": "agent",
       "turnId": "turn-1",
@@ -179,7 +205,7 @@ Evaluate the overall design decisions:
 - Se…"
 ,
       },
-      "eventId": 13,
+      "eventId": 16,
       "toolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "toolName": "agent",
       "turnId": "turn-1",
@@ -187,7 +213,7 @@ Evaluate the overall design decisions:
     },
     {
       "agentId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
-      "eventId": 14,
+      "eventId": 17,
       "modelConfiguration": {
         "model": "gpt-5.5",
       },
@@ -196,7 +222,7 @@ Evaluate the overall design decisions:
     },
     {
       "details": "Launching reviews",
-      "eventId": 15,
+      "eventId": 18,
       "result": "Intent logged",
       "success": true,
       "toolCallId": "call_RxF3q3DxvPVDWX1mvsjqs9iq",
@@ -205,7 +231,7 @@ Evaluate the overall design decisions:
     },
     {
       "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
-      "eventId": 16,
+      "eventId": 19,
       "modelConfiguration": {
         "model": "claude-opus-4.8",
       },
@@ -214,33 +240,6 @@ Evaluate the overall design decisions:
     },
     {
       "agentId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
-      "eventId": 17,
-      "modelConfiguration": {
-        "model": "claude-haiku-4.5",
-      },
-      "turnId": "turn-1",
-      "type": "model_changed",
-    },
-    {
-      "agentId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
-      "eventId": 18,
-      "modelConfiguration": {
-        "model": "claude-haiku-4.5",
-      },
-      "turnId": "turn-1",
-      "type": "model_changed",
-    },
-    {
-      "agentId": "call_7CE08h3s8nNulW1GHoiNsWeu",
-      "eventId": 19,
-      "modelConfiguration": {
-        "model": "claude-haiku-4.5",
-      },
-      "turnId": "turn-1",
-      "type": "model_changed",
-    },
-    {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "eventId": 20,
       "modelConfiguration": {
         "model": "claude-haiku-4.5",
@@ -249,7 +248,7 @@ Evaluate the overall design decisions:
       "type": "model_changed",
     },
     {
-      "agentId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
+      "agentId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
       "eventId": 21,
       "modelConfiguration": {
         "model": "claude-haiku-4.5",
@@ -258,12 +257,46 @@ Evaluate the overall design decisions:
       "type": "model_changed",
     },
     {
+      "agentId": "call_7CE08h3s8nNulW1GHoiNsWeu",
+      "eventId": 22,
+      "modelConfiguration": {
+        "model": "claude-haiku-4.5",
+      },
+      "turnId": "turn-1",
+      "type": "model_changed",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "eventId": 23,
+      "modelConfiguration": {
+        "model": "claude-haiku-4.5",
+      },
+      "turnId": "turn-1",
+      "type": "model_changed",
+    },
+    {
+      "agentId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
+      "eventId": 24,
+      "modelConfiguration": {
+        "model": "claude-haiku-4.5",
+      },
+      "turnId": "turn-1",
+      "type": "model_changed",
+    },
+    {
+      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "content": "",
+      "eventId": 25,
+      "turnId": "turn-1",
+      "type": "assistant_message",
+    },
+    {
       "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "arguments": {
         "command": "cd /Users/lostintangent/Desktop/toy-box && git status",
         "description": "Check git status to see uncommitted changes",
       },
-      "eventId": 22,
+      "eventId": 26,
       "toolCallId": "toolu_bdrk_01Bc16CL9HSZ6uwrBHBTraGR",
       "toolName": "bash",
       "turnId": "turn-1",
@@ -275,7 +308,7 @@ Evaluate the overall design decisions:
         "command": "cd /Users/lostintangent/Desktop/toy-box && git diff --name-only",
         "description": "List modified files",
       },
-      "eventId": 23,
+      "eventId": 27,
       "toolCallId": "toolu_bdrk_01WYvdnAft499BoKhWbhRnnF",
       "toolName": "bash",
       "turnId": "turn-1",
@@ -287,7 +320,7 @@ Evaluate the overall design decisions:
         "command": "cd /Users/lostintangent/Desktop/toy-box && git status --porcelain",
         "description": "Get full status with untracked files",
       },
-      "eventId": 24,
+      "eventId": 28,
       "toolCallId": "toolu_bdrk_01CpyvLNVaTKQDdQt31piuC6",
       "toolName": "bash",
       "turnId": "turn-1",
@@ -303,7 +336,7 @@ Changes not staged for commit:
 	modified:   src/components/session/SessionView.tsx
 	modif…"
 ,
-      "eventId": 25,
+      "eventId": 29,
       "result": 
 "On branch main
 Changes not staged for commit:
@@ -327,7 +360,7 @@ src/components/session/messages/AssistantMessage.tsx
 src/components/session/messages/tools/AgentToolCall.tsx
 src…"
 ,
-      "eventId": 26,
+      "eventId": 30,
       "result": 
 "src/components/session/SessionView.tsx
 src/components/session/input/DiffPopup.tsx
@@ -350,7 +383,7 @@ src…"
  M src/components/session/messages/AssistantMessage.tsx
  M src/components/session/messages/tools/AgentTo…"
 ,
-      "eventId": 27,
+      "eventId": 31,
       "result": 
 "M src/components/session/SessionView.tsx
  M src/components/session/input/DiffPopup.tsx
@@ -365,10 +398,17 @@ src…"
     },
     {
       "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "content": "I'll start by examining the uncommitted changes to understand the design context.",
+      "eventId": 32,
+      "turnId": "turn-1",
+      "type": "assistant_message",
+    },
+    {
+      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "arguments": {
         "intent": "Examining uncommitted changes",
       },
-      "eventId": 28,
+      "eventId": 33,
       "toolCallId": "toolu_01U7w1ymeBtK62owAFb7pxSA",
       "toolName": "report_intent",
       "turnId": "turn-1",
@@ -380,7 +420,7 @@ src…"
         "command": "cd /Users/lostintangent/Desktop/toy-box && git --no-pager status && echo "===DIFFSTAT===" && git --no-pager diff --stat",
         "description": "Show git status and diff stat",
       },
-      "eventId": 29,
+      "eventId": 34,
       "toolCallId": "toolu_01AaNM5wZ1QXPthiuEr4vzZW",
       "toolName": "bash",
       "turnId": "turn-1",
@@ -389,7 +429,7 @@ src…"
     {
       "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "details": "Examining uncommitted changes",
-      "eventId": 30,
+      "eventId": 35,
       "result": "Intent logged",
       "success": true,
       "toolCallId": "toolu_01U7w1ymeBtK62owAFb7pxSA",
@@ -406,7 +446,7 @@ Changes not staged for commit:
 	modified:   src/components/session/SessionView.tsx
 	modif…"
 ,
-      "eventId": 31,
+      "eventId": 36,
       "result": 
 "On branch main
 Changes not staged for commit:
@@ -425,7 +465,7 @@ Changes not staged for commit:
       "arguments": {
         "path": "/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts",
       },
-      "eventId": 32,
+      "eventId": 37,
       "toolCallId": "toolu_bdrk_01DuKi1hYw5i5feiz5KeWwaC",
       "toolName": "read",
       "turnId": "turn-1",
@@ -439,7 +479,7 @@ diff --git a/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.
 index 0000000..0000000 100644
 --- a/Users/lostintangent/Desktop/toy-box/sr…"
 ,
-      "eventId": 33,
+      "eventId": 38,
       "result": 
 "1. import { describe, expect, test } from "bun:test";
 2. import { initializeSessionStateFromSdkHistory } from "./sessionState";
@@ -458,7 +498,7 @@ index 0000000..0000000 100644
         "command": "cd /Users/lostintangent/Desktop/toy-box && git --no-pager diff src/types.ts",
         "description": "Show diff of types.ts",
       },
-      "eventId": 34,
+      "eventId": 39,
       "toolCallId": "toolu_01TorsDVgPrQe3waDFEWnQvD",
       "toolName": "bash",
       "turnId": "turn-1",
@@ -476,7 +516,7 @@ index 375b1b8..9db9a3a 100644
  
  export…"
 ,
-      "eventId": 35,
+      "eventId": 40,
       "result": 
 "diff --git a/src/types.ts b/src/types.ts
 index 375b1b8..9db9a3a 100644
@@ -493,49 +533,49 @@ index 375b1b8..9db9a3a 100644
       "type": "tool_end",
     },
     {
-      "eventId": 36,
+      "eventId": 41,
       "success": true,
       "toolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "turnId": "turn-1",
       "type": "tool_end",
     },
     {
-      "eventId": 37,
+      "eventId": 42,
       "success": true,
       "toolCallId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
       "turnId": "turn-1",
       "type": "tool_end",
     },
     {
-      "eventId": 38,
+      "eventId": 43,
       "success": true,
       "toolCallId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
       "turnId": "turn-1",
       "type": "tool_end",
     },
     {
-      "eventId": 39,
+      "eventId": 44,
       "success": true,
       "toolCallId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
       "turnId": "turn-1",
       "type": "tool_end",
     },
     {
-      "eventId": 40,
+      "eventId": 45,
       "success": true,
       "toolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "turnId": "turn-1",
       "type": "tool_end",
     },
     {
-      "eventId": 41,
+      "eventId": 46,
       "success": true,
       "toolCallId": "call_7CE08h3s8nNulW1GHoiNsWeu",
       "turnId": "turn-1",
       "type": "tool_end",
     },
     {
-      "eventId": 42,
+      "eventId": 47,
       "success": true,
       "toolCallId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
       "turnId": "turn-1",
@@ -543,33 +583,34 @@ index 375b1b8..9db9a3a 100644
     },
     {
       "content": "Wrapping up.",
-      "eventId": 43,
+      "eventId": 48,
       "turnId": "turn-1",
       "type": "delta",
     },
     {
       "attachments": undefined,
       "content": "now fix the findings",
-      "eventId": 44,
+      "eventId": 49,
       "queuedMessageId": "queued-1",
       "turnId": "turn-1",
       "type": "message_queued",
     },
     {
       "content": "now fix the findings",
-      "eventId": 45,
+      "eventId": 50,
       "queuedMessageId": "queued-1",
       "turnId": "turn-2",
       "type": "message_dequeued",
     },
     {
-      "eventId": 46,
+      "eventId": 51,
+      "status": "thinking",
       "turnId": "turn-3",
-      "type": "thinking",
+      "type": "status",
     },
     {
       "content": "On it.",
-      "eventId": 47,
+      "eventId": 52,
       "turnId": "turn-3",
       "type": "delta",
     },
@@ -590,7 +631,7 @@ index 375b1b8..9db9a3a 100644
 exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, and close 2`] = `
 {
   "activeTurnId": "turn-3",
-  "lastSeenEventId": 47,
+  "lastSeenEventId": 52,
   "linkedSessionIds": [],
   "messages": [
     {
@@ -622,7 +663,13 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
       ],
     },
     {
-      "content": "",
+      "attachments": undefined,
+      "content": "What’s your thoughts on this change now? Maybe kick off a code review and a half dozen sub agents to go review different aspects of this change and see how they feel about itne2e",
+      "role": "user",
+      "timestamp": "2026-06-11T02:19:11.607Z",
+    },
+    {
+      "content": "My quick take: the shape is much cleaner now, but I’ll get independent reviews on the main risk areas before making a stronger call.",
       "role": "assistant",
       "toolCalls": [
         {
@@ -764,6 +811,7 @@ Focus areas:
         },
         {
           "agent": {
+            "content": "",
             "modelConfiguration": {
               "model": "claude-haiku-4.5",
             },
@@ -893,6 +941,7 @@ Context: Changes include SDK blob attachments, semantic Attachment type, semanti
         },
         {
           "agent": {
+            "content": "I'll start by examining the uncommitted changes to understand the design context.",
             "modelConfiguration": {
               "model": "claude-opus-4.8",
             },
@@ -1006,6 +1055,7 @@ Evaluate the overall design decisions:
   ],
   "modelConfiguration": {
     "model": "gpt-5.5",
+    "reasoningEffort": "xhigh",
   },
   "pendingOptimisticUserMessage": undefined,
   "pendingToolCalls": [],

@@ -13,9 +13,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowLeft, Bot } from "lucide-react";
 import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
-import type { Attachment, Message, ModelInfo, ModelConfiguration } from "@/types";
+import type { Attachment, Message, ModelInfo, ModelConfiguration, SessionCanvas } from "@/types";
 import { sessionQueries, skillQueries } from "@/lib/queries";
-import { linkedSessionsAtom } from "@/atoms";
+import { linkedPanesAtom } from "@/atoms";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Message as SessionMessage } from "./messages/Message";
@@ -31,6 +31,7 @@ import {
 } from "./sessionDirectoryOptions";
 import { SessionInput } from "./input/SessionInput";
 import { useSession, type SessionConfig } from "@/hooks/session/useSession";
+import { createLinkedPanes } from "@/hooks/session/sessionPanes";
 import { mergeSessionWorktree, applySessionWorktree } from "@/functions/sessions";
 import { getSettings } from "@/lib/config/settings";
 import { useEditDiffs } from "@/hooks/diffs/useEditDiffs";
@@ -38,13 +39,12 @@ import { EditDiffsProvider } from "@/hooks/diffs/EditDiffsContext";
 import { SessionCwdProvider } from "@/hooks/session/SessionCwdContext";
 import { resolveSessionStateSyncAction } from "@/lib/session/sessionSync";
 
-// Stable default values for non-streaming messages (enables memo to skip re-renders)
-
 // Only defer rendering for sessions above this threshold (avoids skeleton flash for small sessions)
 const DEFERRED_MESSAGE_THRESHOLD = 10;
-const EMPTY_LINKED_SESSION_IDS: string[] = [];
 
 type SessionOpenSyncMode = "subscribe-live" | "catch-up-unread" | "none";
+
+type LinkedPanePublishState = { linkedSessionIds: string[]; canvases: SessionCanvas[] } | undefined;
 
 function resolveSessionOpenSyncMode({
   isSessionRunning,
@@ -66,6 +66,44 @@ function resolveSessionOpenSyncMode({
     return "catch-up-unread";
   }
   return "none";
+}
+
+function resolveLinkedPanePublishState({
+  isDraft,
+  isStreaming,
+  linkedSessionIds,
+  canvases,
+  hasHydratedSessionData,
+  sessionData,
+}: {
+  isDraft: boolean;
+  isStreaming: boolean;
+  linkedSessionIds: string[];
+  canvases: SessionCanvas[] | undefined;
+  hasHydratedSessionData: boolean;
+  sessionData:
+    | {
+        linkedSessionIds?: string[];
+        canvases?: SessionCanvas[];
+      }
+    | undefined;
+}): LinkedPanePublishState {
+  if (isDraft) {
+    return { linkedSessionIds: [], canvases: [] };
+  }
+
+  if (isStreaming) {
+    return { linkedSessionIds, canvases: canvases ?? [] };
+  }
+
+  if (!hasHydratedSessionData) {
+    return undefined;
+  }
+
+  return {
+    linkedSessionIds: sessionData?.linkedSessionIds ?? [],
+    canvases: sessionData?.canvases ?? [],
+  };
 }
 
 // ============================================================================
@@ -317,6 +355,7 @@ export function SessionView({
     modelConfiguration: sessionModelConfiguration,
     todos,
     linkedSessionIds,
+    canvases,
     revision,
     hasSynced,
     sendMessage,
@@ -365,27 +404,46 @@ export function SessionView({
     enabled: !isDraft && !!selectedDirectory,
   });
   const hasHydratedSessionData = sessionData !== undefined;
-  const [, setLinkedSessions] = useAtom(linkedSessionsAtom);
+  const sessionDataLinkedSessionIds = sessionData?.linkedSessionIds;
+  const sessionDataCanvases = sessionData?.canvases;
+  const [, setLinkedPanes] = useAtom(linkedPanesAtom);
 
   useEffect(() => {
-    const ids =
-      isDraft || isStreaming
-        ? linkedSessionIds
-        : hasHydratedSessionData
-          ? (sessionData?.linkedSessionIds ?? EMPTY_LINKED_SESSION_IDS)
-          : undefined;
+    return () => setLinkedPanes(({ [sessionId]: _removed, ...rest }) => rest);
+  }, [sessionId, setLinkedPanes]);
 
-    if (ids === undefined) return;
-    setLinkedSessions((current) => ({ ...current, [sessionId]: ids }));
-    return () => setLinkedSessions(({ [sessionId]: _removed, ...rest }) => rest);
+  useEffect(() => {
+    const publishState = resolveLinkedPanePublishState({
+      isDraft,
+      isStreaming,
+      linkedSessionIds,
+      canvases,
+      hasHydratedSessionData,
+      sessionData: {
+        linkedSessionIds: sessionDataLinkedSessionIds,
+        canvases: sessionDataCanvases,
+      },
+    });
+    if (!publishState) return;
+
+    setLinkedPanes((current) => ({
+      ...current,
+      [sessionId]: createLinkedPanes(
+        sessionId,
+        publishState.linkedSessionIds,
+        publishState.canvases,
+      ),
+    }));
   }, [
+    canvases,
     hasHydratedSessionData,
     isDraft,
     isStreaming,
     linkedSessionIds,
-    sessionData?.linkedSessionIds,
+    sessionDataLinkedSessionIds,
+    sessionDataCanvases,
     sessionId,
-    setLinkedSessions,
+    setLinkedPanes,
   ]);
 
   // Check if this is a "session not found" error
@@ -427,6 +485,7 @@ export function SessionView({
         queuedMessages: sessionData.queuedMessages,
         todos: sessionData.todos,
         linkedSessionIds: sessionData.linkedSessionIds,
+        canvases: sessionData.canvases,
         lastSeenEventId: sessionData.lastSeenEventId,
         status: sessionData.status,
         reasoningContent: sessionData.reasoningContent,

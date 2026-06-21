@@ -1,4 +1,4 @@
-import type { SdkSessionEvent } from "@/functions/sdk/extractors";
+import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 
 /** Load a committed session fixture (raw SDK events, one JSON object per line). */
 export async function loadSessionFixture(name: string): Promise<SdkSessionEvent[]> {

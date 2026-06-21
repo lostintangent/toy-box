@@ -1,6 +1,5 @@
-import type { CopilotSession } from "@github/copilot-sdk";
+import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { describe, expect, mock, test } from "bun:test";
-import type { SdkSessionEvent } from "@/functions/sdk/extractors";
 import type { SessionEvent } from "@/types";
 import { loadSessionFixture } from "./helpers";
 
@@ -22,6 +21,10 @@ const sideEffects: string[] = [];
 const unused = () => {
   throw new Error("not used in stream golden replay");
 };
+
+function sdkEvent(event: unknown): SdkSessionEvent {
+  return event as SdkSessionEvent;
+}
 
 mock.module("@/functions/state/sessionCache", () => ({
   createSession: unused,
@@ -101,18 +104,20 @@ describe("stream golden replay", () => {
     for (const event of await loadSessionFixture("subagents")) {
       sdkHandler!(event);
     }
-    sdkHandler!({ type: "assistant.message_delta", data: { deltaContent: "Wrapping up." } });
+    sdkHandler!(
+      sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "Wrapping up." } }),
+    );
 
     // Queue a follow-up, then end turn 1 → drain dequeues and sends turn 2.
     stream.addQueuedMessage({ id: "queued-1", role: "user", content: "now fix the findings" });
-    sdkHandler!({ type: "session.idle", data: {} });
+    sdkHandler!(sdkEvent({ type: "session.idle", data: {} }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // Turn 2 streams, then idles with an empty queue → close.
-    sdkHandler!({ type: "assistant.turn_start", data: {} });
-    sdkHandler!({ type: "assistant.message_delta", data: { deltaContent: "On it." } });
+    sdkHandler!(sdkEvent({ type: "assistant.turn_start", data: {} }));
+    sdkHandler!(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "On it." } }));
     sideEffects.push("--- pre-close ---");
-    sdkHandler!({ type: "session.idle", data: {} });
+    sdkHandler!(sdkEvent({ type: "session.idle", data: {} }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // ── Invariants ─────────────────────────────────────────────────────

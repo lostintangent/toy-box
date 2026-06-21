@@ -3,8 +3,10 @@ import { X, Maximize2, Minimize2 } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { SessionView } from "./SessionView";
+import { CanvasPane } from "./CanvasPane";
 import { cn } from "@/lib/utils";
 import type { ModelInfo, ModelConfiguration } from "@/types";
+import type { SessionGridPane } from "@/hooks/session/sessionPanes";
 
 // ============================================================================
 // Session Grid - Multi-session grid layout (max 4 sessions)
@@ -22,11 +24,10 @@ import type { ModelInfo, ModelConfiguration } from "@/types";
 // ============================================================================
 
 export interface SessionGridProps {
-  sessionIds: string[]; // 1-4 session IDs
-  linkedOnlySessionIds?: ReadonlySet<string>;
+  panes: SessionGridPane[]; // 1-4 session/canvas panes
   streamingSessionIds: string[];
   unreadSessionIds: string[];
-  onRemoveSession: (sessionId: string) => void;
+  onRemovePane: (pane: SessionGridPane) => void;
   models?: ModelInfo[];
   modelConfiguration?: ModelConfiguration | null;
   onModelConfigurationChange?: (configuration: ModelConfiguration) => void;
@@ -102,34 +103,26 @@ export function applySessionGridCountChange(
 }
 
 export function SessionGrid({
-  sessionIds,
-  linkedOnlySessionIds,
+  panes,
   streamingSessionIds = [],
   unreadSessionIds,
-  onRemoveSession,
+  onRemovePane,
   models,
   modelConfiguration,
   onModelConfigurationChange,
   draftSessionId,
   onDraftSessionCreated,
 }: SessionGridProps) {
-  const count = sessionIds.length;
+  const count = panes.length;
   const [isDragging, setIsDragging] = useState(false);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
   const savedSizesRef = useRef<SessionGridSizes | null>(null);
-
-  // Props forwarded to every GridCell (not grid-position-specific)
-  const sessionProps = {
-    models,
-    modelConfiguration,
-    onModelConfigurationChange,
-    draftSessionId,
-    onDraftSessionCreated,
-  };
+  const streamingSessionIdSet = useMemo(() => new Set(streamingSessionIds), [streamingSessionIds]);
+  const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
 
   // Calculate initial panel sizes based on session count at mount time
   const initialSizes = useMemo(() => {
-    const c = sessionIds.length;
+    const c = panes.length;
     return {
       topRow: c >= 3 ? 50 : 100,
       topLeft: c >= 2 ? 50 : 100,
@@ -174,9 +167,9 @@ export function SessionGrid({
 
   // Handle maximize: save current sizes, then expand target cell
   const handleMaximize = useCallback(
-    (sessionId: string) => {
+    (paneId: string) => {
       savedSizesRef.current = readCurrentSizes();
-      setMaximizedId(sessionId);
+      setMaximizedId(paneId);
     },
     [readCurrentSizes],
   );
@@ -208,7 +201,7 @@ export function SessionGrid({
   useEffect(() => {
     if (!maximizedId) return;
 
-    const maxIdx = sessionIds.indexOf(maximizedId);
+    const maxIdx = panes.findIndex((pane) => pane.id === maximizedId);
     if (maxIdx === -1) {
       setMaximizedId(null);
       savedSizesRef.current = null;
@@ -224,7 +217,7 @@ export function SessionGrid({
     bottomRowRef.current?.resize(isTop ? 0 : 100);
     bottomLeftRef.current?.resize(!isTop && isLeft ? 100 : 0);
     bottomRightRef.current?.resize(!isTop && !isLeft ? 100 : 0);
-  }, [maximizedId, sessionIds]);
+  }, [maximizedId, panes]);
 
   // Handle session count changes
   useEffect(() => {
@@ -244,6 +237,48 @@ export function SessionGrid({
     resizePanels(nextSizes);
   }, [count, maximizedId, readCurrentSizes, resizePanels]);
 
+  const renderCell = useCallback(
+    (index: number, showControls: boolean) => {
+      const pane = panes[index];
+      if (!pane) return null;
+
+      const sessionId = pane.kind === "session" ? pane.sessionId : undefined;
+
+      return (
+        <GridCell
+          key={pane.id}
+          pane={pane}
+          isSessionRunning={sessionId ? streamingSessionIdSet.has(sessionId) : false}
+          isSessionUnread={sessionId ? unreadSessionIdSet.has(sessionId) : false}
+          onRemove={onRemovePane}
+          showControls={showControls}
+          isMaximized={maximizedId === pane.id}
+          onMaximize={handleMaximize}
+          onMinimize={handleMinimize}
+          models={models}
+          modelConfiguration={modelConfiguration}
+          onModelConfigurationChange={onModelConfigurationChange}
+          draftSessionId={draftSessionId}
+          onDraftSessionCreated={onDraftSessionCreated}
+        />
+      );
+    },
+    [
+      draftSessionId,
+      handleMaximize,
+      handleMinimize,
+      maximizedId,
+      modelConfiguration,
+      models,
+      onDraftSessionCreated,
+      onModelConfigurationChange,
+      onRemovePane,
+      panes,
+      streamingSessionIdSet,
+      unreadSessionIdSet,
+    ],
+  );
+
   return (
     <ResizablePanelGroup direction="vertical" className="h-full w-full">
       {/* Top Row */}
@@ -261,21 +296,7 @@ export function SessionGrid({
             minSize={0}
             className={transitionClass}
           >
-            {sessionIds[0] && (
-              <GridCell
-                key={sessionIds[0]}
-                sessionId={sessionIds[0]}
-                isLinkedOnly={linkedOnlySessionIds?.has(sessionIds[0]) ?? false}
-                isSessionRunning={streamingSessionIds.includes(sessionIds[0])}
-                isSessionUnread={unreadSessionIds.includes(sessionIds[0]) ?? false}
-                onRemove={onRemoveSession}
-                showControls={count > 1}
-                isMaximized={maximizedId === sessionIds[0]}
-                onMaximize={handleMaximize}
-                onMinimize={handleMinimize}
-                {...sessionProps}
-              />
-            )}
+            {renderCell(0, count > 1)}
           </ResizablePanel>
 
           <ResizableHandle onDragging={handleDragging} className={count < 2 ? "hidden" : ""} />
@@ -287,21 +308,7 @@ export function SessionGrid({
             minSize={0}
             className={transitionClass}
           >
-            {sessionIds[1] && (
-              <GridCell
-                key={sessionIds[1]}
-                sessionId={sessionIds[1]}
-                isLinkedOnly={linkedOnlySessionIds?.has(sessionIds[1]) ?? false}
-                isSessionRunning={streamingSessionIds.includes(sessionIds[1])}
-                isSessionUnread={unreadSessionIds.includes(sessionIds[1]) ?? false}
-                onRemove={onRemoveSession}
-                showControls={true}
-                isMaximized={maximizedId === sessionIds[1]}
-                onMaximize={handleMaximize}
-                onMinimize={handleMinimize}
-                {...sessionProps}
-              />
-            )}
+            {renderCell(1, true)}
           </ResizablePanel>
         </ResizablePanelGroup>
       </ResizablePanel>
@@ -323,21 +330,7 @@ export function SessionGrid({
             minSize={0}
             className={transitionClass}
           >
-            {sessionIds[2] && (
-              <GridCell
-                key={sessionIds[2]}
-                sessionId={sessionIds[2]}
-                isLinkedOnly={linkedOnlySessionIds?.has(sessionIds[2]) ?? false}
-                isSessionRunning={streamingSessionIds.includes(sessionIds[2])}
-                isSessionUnread={unreadSessionIds.includes(sessionIds[2]) ?? false}
-                onRemove={onRemoveSession}
-                showControls={true}
-                isMaximized={maximizedId === sessionIds[2]}
-                onMaximize={handleMaximize}
-                onMinimize={handleMinimize}
-                {...sessionProps}
-              />
-            )}
+            {renderCell(2, true)}
           </ResizablePanel>
 
           <ResizableHandle onDragging={handleDragging} className={count < 4 ? "hidden" : ""} />
@@ -349,21 +342,7 @@ export function SessionGrid({
             minSize={0}
             className={transitionClass}
           >
-            {sessionIds[3] && (
-              <GridCell
-                key={sessionIds[3]}
-                sessionId={sessionIds[3]}
-                isLinkedOnly={linkedOnlySessionIds?.has(sessionIds[3]) ?? false}
-                isSessionRunning={streamingSessionIds.includes(sessionIds[3])}
-                isSessionUnread={unreadSessionIds.includes(sessionIds[3]) ?? false}
-                onRemove={onRemoveSession}
-                showControls={true}
-                isMaximized={maximizedId === sessionIds[3]}
-                onMaximize={handleMaximize}
-                onMinimize={handleMinimize}
-                {...sessionProps}
-              />
-            )}
+            {renderCell(3, true)}
           </ResizablePanel>
         </ResizablePanelGroup>
       </ResizablePanel>
@@ -376,14 +355,13 @@ export function SessionGrid({
 // ============================================================================
 
 interface GridCellProps {
-  sessionId: string;
-  isLinkedOnly: boolean;
+  pane: SessionGridPane;
   isSessionRunning: boolean;
   isSessionUnread: boolean;
-  onRemove: (sessionId: string) => void;
+  onRemove: (pane: SessionGridPane) => void;
   showControls: boolean;
   isMaximized: boolean;
-  onMaximize: (sessionId: string) => void;
+  onMaximize: (paneId: string) => void;
   onMinimize: () => void;
   models?: ModelInfo[];
   modelConfiguration?: ModelConfiguration | null;
@@ -393,8 +371,7 @@ interface GridCellProps {
 }
 
 const GridCell = memo(function GridCell({
-  sessionId,
-  isLinkedOnly,
+  pane,
   isSessionRunning,
   isSessionUnread,
   onRemove,
@@ -411,6 +388,7 @@ const GridCell = memo(function GridCell({
   const btnClass =
     "bg-background/90 backdrop-blur-sm hover:bg-background border border-border rounded-md p-1.5 shadow-sm hover:shadow-md";
   const iconClass = "h-4 w-4 text-muted-foreground hover:text-foreground";
+  const isCloseable = pane.kind === "session" && !pane.isLinkedOnly;
 
   return (
     <div
@@ -419,7 +397,7 @@ const GridCell = memo(function GridCell({
         showControls && !isMaximized && "border-r border-b border-border",
       )}
     >
-      {isLinkedOnly && (
+      {pane.kind === "session" && pane.isLinkedOnly && (
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 z-10 ring-2 ring-inset ring-sky-500/80"
@@ -435,30 +413,36 @@ const GridCell = memo(function GridCell({
           ) : (
             <>
               <button
-                onClick={() => onMaximize(sessionId)}
+                onClick={() => onMaximize(pane.id)}
                 className={btnClass}
                 aria-label="Maximize"
               >
                 <Maximize2 className={iconClass} />
               </button>
-              <button onClick={() => onRemove(sessionId)} className={btnClass} aria-label="Remove">
-                <X className={iconClass} />
-              </button>
+              {isCloseable && (
+                <button onClick={() => onRemove(pane)} className={btnClass} aria-label="Remove">
+                  <X className={iconClass} />
+                </button>
+              )}
             </>
           )}
         </div>
       )}
 
-      <SessionView
-        sessionId={sessionId}
-        isSessionRunning={isSessionRunning}
-        isSessionUnread={isSessionUnread}
-        models={models}
-        modelConfiguration={modelConfiguration}
-        onModelConfigurationChange={onModelConfigurationChange}
-        draftSessionId={draftSessionId}
-        onDraftSessionCreated={onDraftSessionCreated}
-      />
+      {pane.kind === "session" ? (
+        <SessionView
+          sessionId={pane.sessionId}
+          isSessionRunning={isSessionRunning}
+          isSessionUnread={isSessionUnread}
+          models={models}
+          modelConfiguration={modelConfiguration}
+          onModelConfigurationChange={onModelConfigurationChange}
+          draftSessionId={draftSessionId}
+          onDraftSessionCreated={onDraftSessionCreated}
+        />
+      ) : (
+        <CanvasPane pane={pane} />
+      )}
     </div>
   );
 });

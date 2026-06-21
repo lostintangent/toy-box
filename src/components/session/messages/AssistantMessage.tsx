@@ -37,7 +37,9 @@ export function AssistantMessage({
             </Streamdown>
           ) : null}
           {/* Tool calls display */}
-          {hasToolCalls && <ToolCallsDisplay toolCalls={message.toolCalls!} />}
+          {hasToolCalls && (
+            <ToolCallsDisplay toolCalls={message.toolCalls!} isStreaming={isStreaming} />
+          )}
         </div>
       </div>
     </div>
@@ -71,7 +73,13 @@ function IntentDivider({ intent }: { intent: string }) {
   );
 }
 
-function ToolCallsDisplay({ toolCalls }: { toolCalls: ToolCall[] }) {
+function ToolCallsDisplay({
+  toolCalls,
+  isStreaming,
+}: {
+  toolCalls: ToolCall[];
+  isStreaming: boolean;
+}) {
   const deduplicated = useMemo(() => deduplicateIntents(toolCalls), [toolCalls]);
 
   return (
@@ -86,7 +94,7 @@ function ToolCallsDisplay({ toolCalls }: { toolCalls: ToolCall[] }) {
           <ToolCallMessage
             key={toolCall.id}
             toolCall={toolCall}
-            isActive={toolCall.result === undefined}
+            isActive={isStreaming && toolCall.result === undefined}
           />
         );
       })}

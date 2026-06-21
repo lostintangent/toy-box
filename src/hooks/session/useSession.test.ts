@@ -10,11 +10,11 @@ describe("useSession helpers", () => {
     });
 
     test("renders discrete events immediately", () => {
-      expect(isBatchableEvent({ type: "thinking" })).toBe(false);
+      expect(isBatchableEvent({ type: "status", status: "thinking" })).toBe(false);
       expect(
         isBatchableEvent({ type: "tool_start", toolName: "bash", toolCallId: "t1", arguments: {} }),
       ).toBe(false);
-      expect(isBatchableEvent({ type: "stream_end", reason: "idle" })).toBe(false);
+      expect(isBatchableEvent({ type: "end", reason: "idle" })).toBe(false);
     });
   });
 

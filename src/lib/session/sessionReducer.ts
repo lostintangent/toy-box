@@ -37,6 +37,7 @@ import type {
   Message,
   ModelConfiguration,
   QueuedMessage,
+  SessionCanvas,
   SessionEvent,
   SessionSnapshot,
   SessionStatus,
@@ -51,6 +52,7 @@ export type Session = {
   summary?: string;
   todos?: TodoItem[];
   linkedSessionIds: string[];
+  canvases?: SessionCanvas[];
   status: SessionStatus;
   reasoningContent: string;
   modelConfiguration?: ModelConfiguration;
@@ -74,6 +76,7 @@ export function createInitialSession(initial: Partial<Session> = {}): Session {
     summary: initial.summary,
     todos: initial.todos ? initial.todos.map((todo) => ({ ...todo })) : undefined,
     linkedSessionIds: initial.linkedSessionIds ? [...initial.linkedSessionIds] : [],
+    ...(initial.canvases ? { canvases: initial.canvases.map((canvas) => ({ ...canvas })) } : {}),
     status: initial.status ?? "idle",
     reasoningContent: initial.reasoningContent ?? "",
     modelConfiguration: initial.modelConfiguration,
@@ -97,6 +100,7 @@ export function toSessionSnapshot(
     modelConfiguration: state.modelConfiguration ?? previous?.modelConfiguration,
     todos: state.todos,
     linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
+    canvases: state.canvases && state.canvases.length > 0 ? state.canvases : undefined,
     lastSeenEventId: state.lastSeenEventId,
     status: state.status,
     reasoningContent: state.reasoningContent,
@@ -111,7 +115,7 @@ export function applySessionEvent(state: Session, event: SessionEvent): Session 
 }
 
 /** Reset turn-scoped state ahead of a new turn, preserving durable session
- *  state. The turn-boundary sibling of the stream_end handler below — the
+ *  state. The turn-boundary sibling of the end handler below — the
  *  same transient fields, but transitioning into "thinking" instead of idle. */
 export function prepareSessionForNextTurn(state: Session): Session {
   state.status = "thinking";
@@ -161,7 +165,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     case "user_message": {
       if (reconcileOptimisticUserMessage(state, event)) return;
-      if (isDuplicateUserMessage(state, event)) return;
+      if (hasUserMessageForActiveTurn(state, event)) return;
 
       state.messages.push({
         role: "user",
@@ -193,16 +197,20 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       }
 
       // Turn boundary: a committed root assistant message finalizes the
-      // previous message group's pending tool calls. Live streaming reaches
-      // the same boundary via its first text delta (ensureCleanAssistantMessage);
-      // committed assistant messages only occur in history replay, which has
-      // no deltas. Tool calls enter state through tool_start/tool_end only.
+      // previous message group's pending tool calls. In live streams it may
+      // arrive after thinking/deltas, so reconcile it with the in-flight
+      // assistant placeholder instead of appending duplicate text.
+      const reconcileLiveMessage =
+        state.status === "thinking" ||
+        state.status === "reasoning" ||
+        state.status === "responding";
       state.pendingToolCalls.clear();
 
-      state.messages.push({
-        role: "assistant",
-        content: event.content,
-      });
+      upsertCommittedAssistantMessage(state, event.content, reconcileLiveMessage);
+      if (reconcileLiveMessage && event.content) {
+        state.status = "responding";
+        state.reasoningContent = "";
+      }
       return;
     }
 
@@ -224,23 +232,15 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     case "message_dequeued": {
       removeQueuedMessage(state, event.queuedMessageId);
-      // Dedup: same as user_message — buffer replay after reconnect.
-      if (isDuplicateUserMessage(state, event)) return;
+      if (hasUserMessageForActiveTurn(state, event)) return;
       state.messages.push({ role: "user", content: event.content });
       return;
     }
 
     // ── Streaming content ─────────────────────────────────────────────
 
-    case "thinking": {
-      // A segment boundary: start a clean assistant message (finalizing the
-      // previous group's tool calls) and reset reasoning. The early return
-      // makes repeated/replayed thinking events no-ops.
-      const insertedAssistant = ensureCleanAssistantMessage(state);
-      if (!insertedAssistant && state.status === "thinking" && state.reasoningContent === "") {
-        return;
-      }
-      state.status = "thinking";
+    case "status": {
+      state.status = event.status;
       state.reasoningContent = "";
       return;
     }
@@ -347,16 +347,6 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     // ── Status & metadata ─────────────────────────────────────────────
 
-    case "compacting_start":
-      if (state.status === "compacting") return;
-      state.status = "compacting";
-      return;
-
-    case "compacting_end":
-      if (state.status !== "compacting") return;
-      state.status = "thinking";
-      return;
-
     case "session_title_changed":
       if (state.summary === event.title) return;
       state.summary = event.title;
@@ -382,6 +372,13 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       return;
     }
 
+    // ── Canvases ────────────────────────────────────────────────────────
+
+    case "canvas_opened": {
+      upsertCanvas(state, event.canvas);
+      return;
+    }
+
     // ── Model ─────────────────────────────────────────────────────────
 
     case "model_changed":
@@ -400,8 +397,8 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     // ── Lifecycle ─────────────────────────────────────────────────────
 
-    case "stream_end":
-      // Idempotent on purpose: clients synthesize a stream_end on every
+    case "end":
+      // Idempotent on purpose: clients synthesize an end event on every
       // stream close, and replays can deliver one after state is already
       // final.
       if (
@@ -426,16 +423,75 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 }
 
 // ============================================================================
+// Canvas helpers
+// ============================================================================
+
+function createCanvasKey(
+  canvas: Pick<SessionCanvas, "extensionId" | "canvasId" | "instanceId">,
+): string {
+  return JSON.stringify([canvas.extensionId ?? null, canvas.canvasId, canvas.instanceId]);
+}
+
+function upsertCanvas(state: Session, canvas: Omit<SessionCanvas, "key" | "revision">): void {
+  const key = createCanvasKey(canvas);
+  const currentCanvases = state.canvases ?? [];
+  const index = findCanvasUpsertIndex(currentCanvases, canvas, key);
+
+  if (index === -1) {
+    state.canvases = [...currentCanvases, { ...canvas, key, revision: 1 }];
+    return;
+  }
+
+  const current = currentCanvases[index];
+  const next = [...currentCanvases];
+  next[index] = {
+    ...canvas,
+    key,
+    revision: current.revision + 1,
+  };
+  state.canvases = next;
+}
+
+function findCanvasUpsertIndex(
+  currentCanvases: SessionCanvas[],
+  canvas: Omit<SessionCanvas, "key" | "revision">,
+  key: string,
+): number {
+  const exactIndex = currentCanvases.findIndex((candidate) => candidate.key === key);
+  if (exactIndex !== -1 || !canvas.reopen) return exactIndex;
+
+  const matchingIndexes = currentCanvases.reduce<number[]>((indexes, candidate, index) => {
+    if (
+      (candidate.extensionId ?? null) === (canvas.extensionId ?? null) &&
+      candidate.canvasId === canvas.canvasId
+    ) {
+      indexes.push(index);
+    }
+    return indexes;
+  }, []);
+
+  return matchingIndexes.length === 1 ? matchingIndexes[0] : -1;
+}
+
+// ============================================================================
 // Message helpers
 // ============================================================================
 
-function isDuplicateUserMessage(
+function hasUserMessageForActiveTurn(
   state: Session,
   event: { content: string; turnId?: string },
 ): boolean {
   if (!event.turnId || event.turnId !== state.activeTurnId) return false;
-  const prev = state.messages[state.messages.length - 1];
-  return prev?.role === "user" && prev.content === event.content;
+
+  // A live turn has one root user prompt. Server/user SDK echoes can arrive
+  // after the optimistic prompt and an empty assistant placeholder, but before
+  // any assistant content or tools make the turn distinct.
+  for (let i = state.messages.length - 1; i >= 0; i--) {
+    const message = state.messages[i];
+    if (message.role === "user") return true;
+    if (message.content || message.toolCalls?.length) return false;
+  }
+  return false;
 }
 
 /** Reconcile an incoming user_message with a previously optimistic one.
@@ -445,15 +501,19 @@ function reconcileOptimisticUserMessage(
   event: Extract<SessionEvent, { type: "user_message" }>,
 ): boolean {
   const pending = state.pendingOptimisticUserMessage;
-  if (!event.clientMessageId || !pending || pending.clientMessageId !== event.clientMessageId) {
-    return false;
-  }
+  if (!pending) return false;
 
   const existing = state.messages[pending.index];
   if (existing?.role !== "user") {
     state.pendingOptimisticUserMessage = undefined;
     return false;
   }
+
+  const matchesPending =
+    event.clientMessageId !== undefined
+      ? event.clientMessageId === pending.clientMessageId
+      : event.content === existing.content;
+  if (!matchesPending) return false;
 
   const nextAttachments = event.attachments ?? existing.attachments;
   const nextTimestamp = event.timestamp ?? existing.timestamp;
@@ -495,6 +555,27 @@ function ensureCleanAssistantMessage(state: Session): boolean {
   state.pendingToolCalls.clear();
   state.messages.push({ role: "assistant", content: "" });
   return true;
+}
+
+function upsertCommittedAssistantMessage(
+  state: Session,
+  content: string,
+  reconcileLiveMessage: boolean,
+): void {
+  const last = state.messages[state.messages.length - 1];
+  if (reconcileLiveMessage && last?.role === "assistant" && !last.toolCalls?.length) {
+    last.content = reconcileCommittedAssistantContent(last.content, content);
+    return;
+  }
+  state.messages.push({ role: "assistant", content });
+}
+
+function reconcileCommittedAssistantContent(existing: string, incoming: string): string {
+  if (!incoming) return existing;
+  if (!existing) return incoming;
+  if (incoming.startsWith(existing)) return incoming;
+  if (existing.startsWith(incoming)) return existing;
+  return incoming;
 }
 
 function mergeStreamingText(existing: string, incoming: string): string {

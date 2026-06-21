@@ -5,21 +5,16 @@
 //
 // The file reads top-down: policy tables (tool name aliases, argument-shape
 // adapters, stream-terminal dispositions, per-tool projection policies),
-// then types and public entry points, then the per-event projection tables
-// that do the work, and finally the policy factories and field readers they
-// dispatch to.
+// then types and public entry points, then event projection, policy factories,
+// and the small field adapters needed at tool-argument boundaries.
 
-import { type SessionEvent, type SessionSkill } from "@/types";
-import {
-  asRecord,
-  readArray,
-  readArguments,
-  readBoolean,
-  readPath,
-  readString,
-  readStringPath,
-  type SdkSessionEvent,
-} from "./extractors";
+import type {
+  CanvasOpenedData,
+  SessionEvent as SdkSessionEvent,
+  ToolExecutionCompleteData,
+} from "@github/copilot-sdk";
+import { type JsonValue, type SessionEvent, type ToolCall } from "@/types";
+import { readAttachmentBlobs } from "./attachments";
 import { parseTodoSql } from "./todoParser";
 
 // ============================================================================
@@ -62,7 +57,7 @@ const SDK_STREAM_TERMINAL: Record<string, SdkStreamTerminalDisposition | undefin
 // visible tool calls. Plain entries apply unconditionally; function entries
 // decide per call from the tool arguments (factories live in the "Tool call
 // policy resolution" section below).
-const TOOL_CALL_POLICIES = {
+const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
   read_agent: { kind: "omitted" },
   check_session_status: { kind: "omitted" },
   wait_for_sessions: { kind: "omitted" },
@@ -84,9 +79,10 @@ const TOOL_CALL_POLICIES = {
     kind: "translated",
     projectOnStart: projectLinkedSessionEvent(args, "linked_session_removed"),
   }),
+  open_canvas: projectOpenCanvasPolicy,
   sql: projectTodoSqlPolicy,
   agent: projectAgentPolicy,
-} satisfies Record<string, ToolCallPolicyEntry>;
+};
 
 // ============================================================================
 // Types
@@ -109,21 +105,24 @@ type ToolCallProjectionPolicy =
       kind: "translated";
       // Synthetic events to emit when the call starts / completes.
       projectOnStart?: SessionEvent[];
-      projectOnComplete?: (eventData: Record<string, unknown> | undefined) => SessionEvent[];
+      projectOnComplete?: (eventData: ToolExecutionCompleteData) => SessionEvent[];
+    }
+  | {
+      kind: "augmented";
+      // The tool remains visible, while completion also emits semantic events.
+      projectOnComplete?: (eventData: ToolExecutionCompleteData) => SessionEvent[];
     }
   | {
       kind: "deferred";
       completionEvents: {
-        success: SdkSessionEvent["type"];
-        failure: SdkSessionEvent["type"];
+        success: "subagent.completed";
+        failure: "subagent.failed";
       };
     };
 
-type ToolArguments = ReturnType<typeof readArguments>;
+type ToolArguments = ToolCall["arguments"];
 type ToolCallPolicyFactory = (args: ToolArguments) => ToolCallProjectionPolicy | undefined;
 type ToolCallPolicyEntry = ToolCallProjectionPolicy | ToolCallPolicyFactory;
-type SdkProjector = (event: SdkSessionEvent, state: ProjectionState) => SessionEvent[];
-type SdkMetadataPatcher = (event: SdkSessionEvent) => SessionMetadataPatch | undefined;
 
 // ============================================================================
 // Public API
@@ -135,7 +134,148 @@ export function createProjectionState(): ProjectionState {
 
 /** Map a single SDK event to canonical SessionEvents. */
 export function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): SessionEvent[] {
-  return SDK_PROJECTORS[event.type]?.(event, state) ?? [];
+  switch (event.type) {
+    // Empty-content deltas are dropped at the source: they carry nothing, and
+    // downstream consumers (reducer message fragmentation, stream buffering)
+    // should never have to guard against them.
+    case "user.message":
+      // Subagent prompts are not root user turns — they're already visible as
+      // the agent tool call's arguments.
+      return event.agentId
+        ? []
+        : [
+            {
+              type: "user_message",
+              content: event.data.content,
+              timestamp: event.timestamp,
+              attachments: readAttachmentBlobs(event.data.attachments),
+            },
+          ];
+    case "assistant.message":
+      return [
+        {
+          type: "assistant_message",
+          ...(event.agentId ? { agentId: event.agentId } : {}),
+          content: event.data.content,
+        },
+      ];
+    case "assistant.message_delta": {
+      // TODO: Route sub-agent deltas into their parent agent tool call once the
+      // agent tool UI can render live child assistant output.
+      if (event.agentId) return [];
+      const content = event.data.deltaContent;
+      return content ? [{ type: "delta", content }] : [];
+    }
+    case "assistant.reasoning_delta": {
+      const content = event.data.deltaContent;
+      const agentId = event.agentId;
+      return content ? [{ type: "reasoning", content, ...(agentId ? { agentId } : {}) }] : [];
+    }
+    case "assistant.turn_start":
+      return event.agentId ? [] : [{ type: "status", status: "thinking" }];
+    case "session.compaction_complete":
+      return event.agentId ? [] : [{ type: "status", status: "thinking" }];
+    case "session.compaction_start":
+      return event.agentId ? [] : [{ type: "status", status: "compacting" }];
+    case "session.start":
+      return projectSessionStart(event.data.selectedModel, event.data.reasoningEffort);
+    case "session.model_change":
+      return [
+        {
+          type: "model_changed",
+          modelConfiguration: {
+            model: event.data.newModel,
+            ...(event.data.reasoningEffort ? { reasoningEffort: event.data.reasoningEffort } : {}),
+          },
+        },
+      ];
+    case "session.skills_loaded": {
+      const skills = event.data.skills
+        .filter((skill) => skill.userInvocable && skill.enabled)
+        .map((skill) => ({ name: skill.name, description: skill.description }));
+      return skills.length > 0 ? [{ type: "skills", skills }] : [];
+    }
+    case "session.title_changed":
+      return [{ type: "session_title_changed", title: event.data.title }];
+    case "subagent.started": {
+      const agentId = event.data.toolCallId ?? event.agentId;
+      const model = event.data.model;
+      return agentId && model
+        ? [{ type: "model_changed", agentId, modelConfiguration: { model } }]
+        : [];
+    }
+    case "subagent.completed":
+    case "subagent.failed": {
+      const { toolCallId } = event.data;
+      const policy = state.toolCallPolicies.get(toolCallId);
+      if (policy?.kind !== "deferred") return [];
+
+      const { completionEvents } = policy;
+      const success = event.type === completionEvents.success;
+      state.toolCallPolicies.delete(toolCallId);
+      return [{ type: "tool_end", toolCallId, success }];
+    }
+    case "tool.execution_start": {
+      const rawToolName = event.data.toolName;
+      const toolName = normalizeToolName(rawToolName);
+      const args = readToolArguments(rawToolName, event.data.arguments);
+      const toolCallId = event.data.toolCallId;
+      const agentId = event.agentId;
+      const policy = resolveToolCallPolicy(toolName, args);
+
+      if (policy) state.toolCallPolicies.set(toolCallId, policy);
+      if (policy?.kind === "omitted") return [];
+      if (policy?.kind === "translated") return policy.projectOnStart ?? [];
+
+      return [
+        {
+          type: "tool_start",
+          toolName,
+          toolCallId,
+          ...(agentId ? { agentId } : {}),
+          arguments: args,
+        },
+      ];
+    }
+    case "tool.execution_complete": {
+      const { data } = event;
+      const { toolCallId } = data;
+      const agentId = event.agentId;
+      const policy = state.toolCallPolicies.get(toolCallId);
+
+      if (policy?.kind === "omitted") {
+        state.toolCallPolicies.delete(toolCallId);
+        return [];
+      }
+
+      if (policy?.kind === "translated") {
+        state.toolCallPolicies.delete(toolCallId);
+        return policy.projectOnComplete?.(data) ?? [];
+      }
+
+      const toolEnd: SessionEvent = {
+        type: "tool_end",
+        toolCallId,
+        ...(agentId ? { agentId } : {}),
+        success: data.success,
+        result: readToolResultText(data),
+        details: data.result?.detailedContent,
+      };
+
+      if (policy?.kind === "augmented") {
+        state.toolCallPolicies.delete(toolCallId);
+        return [toolEnd, ...(policy.projectOnComplete?.(data) ?? [])];
+      }
+
+      // Background tool calls can have a non-authoritative SDK completion event.
+      // Skip it when another declared SDK event is the real completion source.
+      if (policy?.kind === "deferred") return [];
+
+      return [toolEnd];
+    }
+    default:
+      return [];
+  }
 }
 
 export function getSdkStreamTerminalDisposition(
@@ -145,123 +285,15 @@ export function getSdkStreamTerminalDisposition(
 }
 
 export function getSdkMetadataPatch(event: SdkSessionEvent): SessionMetadataPatch | undefined {
-  return SDK_METADATA_PATCHERS[event.type]?.(event);
+  switch (event.type) {
+    case "session.handoff":
+      return event.data.summary ? { summary: event.data.summary, replaceSummary: true } : undefined;
+    case "session.title_changed":
+      return { summary: event.data.title, replaceSummary: true };
+    default:
+      return undefined;
+  }
 }
-
-// ============================================================================
-// Event projection tables
-// ============================================================================
-
-const SDK_PROJECTORS: Record<string, SdkProjector | undefined> = {
-  // Empty-content deltas are dropped at the source: they carry nothing, and
-  // downstream consumers (reducer message fragmentation, stream buffering)
-  // should never have to guard against them.
-  "assistant.message_delta": (event) => {
-    // TODO: Route sub-agent deltas into their parent agent tool call once the
-    // agent tool UI can render live child assistant output.
-    if (readString(event, "agentId")) return [];
-    const content = readString(event.data, "deltaContent") ?? "";
-    return content ? [{ type: "delta", content }] : [];
-  },
-  "assistant.reasoning_delta": (event) => {
-    const content = readString(event.data, "deltaContent") ?? "";
-    const agentId = readString(event, "agentId");
-    return content ? [{ type: "reasoning", content, ...(agentId ? { agentId } : {}) }] : [];
-  },
-  "assistant.turn_start": (event) =>
-    readString(event, "agentId") ? [] : [{ type: "thinking" }],
-  "session.compaction_complete": (event) =>
-    readString(event, "agentId") ? [] : [{ type: "compacting_end" }],
-  "session.compaction_start": (event) =>
-    readString(event, "agentId") ? [] : [{ type: "compacting_start" }],
-  "session.model_change": (event) => projectModelChanged(event, "newModel"),
-  "session.skills_loaded": (event) => {
-    const skills = readUserInvocableSkills(event);
-    return skills.length > 0 ? [{ type: "skills", skills }] : [];
-  },
-  "session.title_changed": (event) => {
-    const title = readString(event.data, "title");
-    return title ? [{ type: "session_title_changed", title }] : [];
-  },
-  "subagent.started": (event) => {
-    const agentId = readString(event.data, "toolCallId") ?? readString(event, "agentId");
-    const model = readString(event.data, "model");
-    return agentId && model
-      ? [{ type: "model_changed", agentId, modelConfiguration: { model } }]
-      : [];
-  },
-  "subagent.completed": projectBackgroundToolCompletion(),
-  "subagent.failed": projectBackgroundToolCompletion(),
-  "tool.execution_start": (event, state) => {
-    const rawToolName = readString(event.data, "toolName") ?? "";
-    const toolName = normalizeToolName(rawToolName);
-    const args = readToolArguments(rawToolName, readPath(event.data, "arguments"));
-    const toolCallId = readString(event.data, "toolCallId");
-    const agentId = readString(event, "agentId");
-    const policy = resolveToolCallPolicy(toolName, args);
-
-    if (policy && toolCallId) {
-      state.toolCallPolicies.set(toolCallId, policy);
-    }
-    if (policy?.kind === "omitted") {
-      return [];
-    }
-    if (policy?.kind === "translated") {
-      return policy.projectOnStart ?? [];
-    }
-
-    return [
-      {
-        type: "tool_start",
-        toolName,
-        toolCallId: toolCallId ?? "",
-        ...(agentId ? { agentId } : {}),
-        arguments: args,
-      },
-    ];
-  },
-  "tool.execution_complete": (event, state) => {
-    const toolCallId = readString(event.data, "toolCallId") ?? "";
-    const agentId = readString(event, "agentId");
-    const policy = state.toolCallPolicies.get(toolCallId);
-
-    if (policy?.kind === "omitted") {
-      state.toolCallPolicies.delete(toolCallId);
-      return [];
-    }
-
-    if (policy?.kind === "translated") {
-      state.toolCallPolicies.delete(toolCallId);
-      return policy.projectOnComplete?.(asRecord(event.data)) ?? [];
-    }
-
-    // Background tool calls can have a non-authoritative SDK completion event.
-    // Skip it when another declared SDK event is the real completion source.
-    if (policy?.kind === "deferred") return [];
-
-    return [
-      {
-        type: "tool_end",
-        toolCallId,
-        ...(agentId ? { agentId } : {}),
-        success: readBoolean(event.data, "success"),
-        result: readToolResultText(event.data),
-        details: readStringPath(event.data, "result", "detailedContent"),
-      },
-    ];
-  },
-};
-
-const SDK_METADATA_PATCHERS: Record<string, SdkMetadataPatcher | undefined> = {
-  "session.handoff": (event) => {
-    const summary = readString(event.data, "summary");
-    return summary ? { summary, replaceSummary: true } : undefined;
-  },
-  "session.title_changed": (event) => {
-    const title = readString(event.data, "title");
-    return title ? { summary: title, replaceSummary: true } : undefined;
-  },
-};
 
 // ============================================================================
 // Tool call policy resolution
@@ -276,14 +308,31 @@ function resolveToolCallPolicy(
   toolName: string,
   args: ToolArguments,
 ): ToolCallProjectionPolicy | undefined {
-  const entry = TOOL_CALL_POLICIES[toolName as keyof typeof TOOL_CALL_POLICIES];
+  const entry = TOOL_CALL_POLICIES[toolName];
   if (!entry) return undefined;
   return typeof entry === "function" ? entry(args) : entry;
 }
 
+function projectSessionStart(
+  model: string | undefined,
+  reasoningEffort: string | undefined,
+): SessionEvent[] {
+  return model
+    ? [
+        {
+          type: "model_changed",
+          modelConfiguration: {
+            model,
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+          },
+        },
+      ]
+    : [];
+}
+
 function projectTodoSqlPolicy(args: ToolArguments): ToolCallProjectionPolicy | undefined {
   // Todo-list SQL calls are translated into todos_patch events; other SQL stays visible.
-  const query = readString(args, "query");
+  const query = readStringArg(args, "query");
   const parsed = query ? parseTodoSql(query) : undefined;
   if (!parsed) return undefined;
   return {
@@ -293,10 +342,17 @@ function projectTodoSqlPolicy(args: ToolArguments): ToolCallProjectionPolicy | u
   };
 }
 
+function projectOpenCanvasPolicy(args: ToolArguments): ToolCallProjectionPolicy {
+  return {
+    kind: "augmented",
+    projectOnComplete: (eventData) => projectCanvasOpened(args, eventData),
+  };
+}
+
 function projectAgentPolicy(args: ToolArguments): ToolCallProjectionPolicy | undefined {
   // Background agent calls stay visible, but their SDK tool completion is
   // not the real completion signal. subagent.completed/failed owns that.
-  if (readString(args, "mode") !== "background") return undefined;
+  if (readStringArg(args, "mode") !== "background") return undefined;
   return {
     kind: "deferred",
     completionEvents: {
@@ -306,55 +362,62 @@ function projectAgentPolicy(args: ToolArguments): ToolCallProjectionPolicy | und
   };
 }
 
-// The projector-side half of the deferred policy above: when the declared
-// completion event arrives, emit the real tool_end.
-function projectBackgroundToolCompletion(): SdkProjector {
-  return (event, state) => {
-    const toolCallId = readString(event.data, "toolCallId");
-    if (!toolCallId) return [];
-
-    const policy = state.toolCallPolicies.get(toolCallId);
-    if (policy?.kind !== "deferred") return [];
-
-    const { completionEvents } = policy;
-    const success =
-      event.type === completionEvents.success
-        ? true
-        : event.type === completionEvents.failure
-          ? false
-          : undefined;
-    if (success === undefined) return [];
-
-    state.toolCallPolicies.delete(toolCallId);
-    return [{ type: "tool_end", toolCallId, success }];
-  };
-}
-
 function projectLinkedSessionEvent(
   args: Record<string, unknown> | undefined,
   type: "linked_session_added" | "linked_session_removed",
 ): SessionEvent[] {
-  const sessionId = readString(args, "sessionId");
+  const sessionId = readStringArg(args, "sessionId");
   return sessionId ? [{ type, sessionId }] : [];
 }
 
-function projectCreatedSession(eventData: Record<string, unknown> | undefined): SessionEvent[] {
-  if (!readBoolean(eventData, "success")) return [];
+function projectCanvasOpened(
+  startArgs: ToolArguments,
+  eventData: ToolExecutionCompleteData,
+): SessionEvent[] {
+  if (!eventData.success) return [];
+
+  const result = readJsonToolResult<CanvasOpenedData>(eventData);
+  if (!result?.url) return [];
+
+  const input = readCanvasInput(result, startArgs);
+  const title = result.title ?? readCanvasInputTitle(input) ?? result.canvasId;
+
+  return [
+    {
+      type: "canvas_opened",
+      canvas: {
+        canvasId: result.canvasId,
+        instanceId: result.instanceId,
+        url: result.url,
+        title,
+        extensionId: result.extensionId,
+        ...(result.extensionName ? { extensionName: result.extensionName } : {}),
+        ...(result.status ? { status: result.status } : {}),
+        availability: result.availability,
+        ...(input !== undefined ? { input } : {}),
+        ...(result.reopen ? { reopen: true } : {}),
+      },
+    },
+  ];
+}
+
+function readJsonToolResult<T>(eventData: ToolExecutionCompleteData): T | undefined {
+  const raw = eventData.result?.detailedContent ?? eventData.result?.content;
+  if (!raw) return undefined;
+
+  return JSON.parse(raw) as T;
+}
+
+type CreatedSessionResult = { sessionId: string };
+
+function projectCreatedSession(eventData: ToolExecutionCompleteData): SessionEvent[] {
+  if (!eventData.success) return [];
   const sessionId = readCreatedSessionId(eventData);
   return sessionId ? [{ type: "linked_session_added", sessionId }] : [];
 }
 
-function readCreatedSessionId(eventData: Record<string, unknown> | undefined): string | undefined {
-  const resultText =
-    readStringPath(eventData, "result", "content") ??
-    readStringPath(eventData, "result", "textResultForLlm");
-  if (!resultText) return undefined;
-
-  try {
-    return readStringPath(asRecord(JSON.parse(resultText)), "sessionId");
-  } catch {
-    return undefined;
-  }
+function readCreatedSessionId(eventData: ToolExecutionCompleteData): string | undefined {
+  return readJsonToolResult<CreatedSessionResult>(eventData)?.sessionId;
 }
 
 // ============================================================================
@@ -365,52 +428,42 @@ function normalizeToolName(name: string): string {
   return TOOL_NAME_ALIASES[name] ?? name;
 }
 
+function toToolArguments(value: Record<string, unknown> | undefined): ToolArguments {
+  return (value ?? {}) as ToolArguments;
+}
+
+function readStringArg(
+  value: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const result = value?.[key];
+  return typeof result === "string" ? result : undefined;
+}
+
+function readCanvasInput(
+  result: CanvasOpenedData,
+  startArgs: ToolArguments,
+): JsonValue | undefined {
+  return (result.input ?? startArgs.input) as JsonValue | undefined;
+}
+
+function readCanvasInputTitle(input: JsonValue | undefined): string | undefined {
+  return input &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    typeof input.title === "string"
+    ? input.title
+    : undefined;
+}
+
 function readToolArguments(rawToolName: string, rawArguments: unknown): ToolArguments {
-  const argumentsRecord = asRecord(rawArguments);
-  if (argumentsRecord) return readArguments(argumentsRecord);
+  if (rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)) {
+    return toToolArguments(rawArguments as Record<string, unknown>);
+  }
   return TOOL_ARGUMENT_ADAPTERS[rawToolName]?.(rawArguments) ?? {};
 }
 
 // Single source for tool result text so the fallback order can never drift.
-function readToolResultText(data: unknown): string | undefined {
-  return (
-    readStringPath(data, "result", "content") ??
-    readStringPath(data, "result", "textResultForLlm") ??
-    readStringPath(data, "error", "message")
-  );
+function readToolResultText(data: ToolExecutionCompleteData): string | undefined {
+  return data.result?.content ?? data.error?.message;
 }
-
-/** Project a model-bearing SDK event field into a model_changed event.
- *  Shared with historyReplay.ts, which reads the model from session
- *  lifecycle records (session.start/shutdown). */
-export function projectModelChanged(event: SdkSessionEvent, field: string): SessionEvent[] {
-  const model = readString(event.data, field);
-  if (!model) return [];
-
-  const reasoningEffort = readString(event.data, "reasoningEffort");
-  return [
-    {
-      type: "model_changed",
-      modelConfiguration: {
-        model,
-        ...(reasoningEffort ? { reasoningEffort } : {}),
-      },
-    },
-  ];
-}
-
-function readUserInvocableSkills(event: SdkSessionEvent): SessionSkill[] {
-  const raw = readArray(event.data, "skills");
-  if (!raw?.length) return [];
-
-  const skills: SessionSkill[] = [];
-  for (const entry of raw) {
-    const r = asRecord(entry);
-    if (!r || !readBoolean(r, "userInvocable") || !readBoolean(r, "enabled")) continue;
-    const name = readString(r, "name");
-    if (name) skills.push({ name, description: readString(r, "description") ?? "" });
-  }
-  return skills;
-}
-
-export type { SdkSessionEvent };

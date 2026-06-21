@@ -27,8 +27,15 @@ describe("history pipeline golden replay", () => {
       .sort();
     expect(childCounts).toEqual([3, 4]);
 
-    // ...subagent assistant messages stay out of the top-level transcript...
-    expect(state.messages.filter((m) => m.role === "assistant")).toHaveLength(1);
+    // ...subagent assistant messages stay nested, while root tool calls remain
+    // visible even if they appear before the first recorded user message...
+    const assistantMessages = state.messages.filter((m) => m.role === "assistant");
+    expect(assistantMessages).toHaveLength(2);
+    expect(assistantMessages[0].toolCalls?.[0]).toMatchObject({
+      id: "call_M1QBw3fDmRrrXoYP9bt4edOd",
+      name: "read",
+      result: { success: false, content: "Path does not exist" },
+    });
     expect(
       agents.some((tc) => tc.agent?.content?.includes("examining the uncommitted changes")),
     ).toBe(true);

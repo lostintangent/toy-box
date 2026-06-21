@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { createProjectionState, projectSdkEvent } from "@/functions/sdk/projector";
-import type { SdkSessionEvent } from "@/functions/sdk/extractors";
 import type { JsonValue, SessionEvent } from "@/types";
 
 function createStreamingContext() {
   return createProjectionState();
+}
+
+function sdkEvent(event: unknown): SdkSessionEvent {
+  return event as SdkSessionEvent;
 }
 
 // Every tool name from the projector's static omitted-tool policy.
@@ -34,17 +38,17 @@ const PATCH_DIFF = `diff --git a/Users/lostintangent/Desktop/toy-box/docs/notes.
 +new`;
 
 function modelChange(newModel: string, reasoningEffort?: string): SdkSessionEvent {
-  return {
+  return sdkEvent({
     type: "session.model_change",
     data: { newModel, ...(reasoningEffort ? { reasoningEffort } : {}) },
-  };
+  });
 }
 
 function titleChanged(title: string): SdkSessionEvent {
-  return {
+  return sdkEvent({
     type: "session.title_changed",
     data: { title },
-  };
+  });
 }
 
 function toolExecutionStart(
@@ -54,7 +58,7 @@ function toolExecutionStart(
   extraData: Record<string, unknown> = {},
   options: { agentId?: string } = {},
 ): SdkSessionEvent {
-  return {
+  return sdkEvent({
     type: "tool.execution_start",
     ...(options.agentId ? { agentId: options.agentId } : {}),
     data: {
@@ -63,35 +67,35 @@ function toolExecutionStart(
       arguments: argumentsRecord,
       ...extraData,
     },
-  };
+  });
 }
 
 function toolExecutionProgress(toolCallId: string, progressMessage: string): SdkSessionEvent {
-  return {
+  return sdkEvent({
     type: "tool.execution_progress",
     data: {
       toolCallId,
       progressMessage,
     },
-  };
+  });
 }
 
 function toolExecutionComplete(
   toolCallId: string,
   options: {
-    success: boolean;
+    success?: boolean;
     resultContent?: string;
     detailedContent?: string;
     errorMessage?: string;
     agentId?: string;
   },
 ): SdkSessionEvent {
-  return {
+  return sdkEvent({
     type: "tool.execution_complete",
     ...(options.agentId ? { agentId: options.agentId } : {}),
     data: {
       toolCallId,
-      success: options.success,
+      success: options.success ?? true,
       ...(options.resultContent !== undefined || options.detailedContent !== undefined
         ? {
             result: {
@@ -104,7 +108,7 @@ function toolExecutionComplete(
         : {}),
       ...(options.errorMessage !== undefined ? { error: { message: options.errorMessage } } : {}),
     },
-  };
+  });
 }
 
 function expectOmittedToolLifecycle(
@@ -259,6 +263,105 @@ describe("projector", () => {
         },
       ]);
     });
+
+    test("augments open_canvas completion with canvas metadata while preserving the visible tool call", () => {
+      const context = createStreamingContext();
+      const args = {
+        extensionId: "user:documint",
+        canvasId: "documint-markdown-agent",
+        instanceId: "review-plan",
+        input: {
+          path: "/tmp/plan.md",
+          title: "Review Plan",
+        },
+      };
+      const completion = {
+        availability: "ready",
+        canvasId: "documint-markdown-agent",
+        extensionId: "user:documint",
+        extensionName: "documint",
+        input: {
+          path: "/tmp/plan.md",
+          title: "Review Plan",
+        },
+        instanceId: "review-plan",
+        reopen: true,
+        status: "session-state/plan.md",
+        title: "Review Plan",
+        url: "http://127.0.0.1:51460/?instanceId=review-plan",
+      };
+      const detailedContent = JSON.stringify(completion);
+
+      expect(
+        projectSdkEvent(toolExecutionStart("open_canvas", "tool-canvas", args), context),
+      ).toEqual([
+        {
+          type: "tool_start",
+          toolName: "open_canvas",
+          toolCallId: "tool-canvas",
+          arguments: args,
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(toolExecutionComplete("tool-canvas", { detailedContent }), context),
+      ).toEqual([
+        {
+          type: "tool_end",
+          toolCallId: "tool-canvas",
+          success: true,
+          result: undefined,
+          details: detailedContent,
+        },
+        {
+          type: "canvas_opened",
+          canvas: {
+            availability: "ready",
+            canvasId: "documint-markdown-agent",
+            extensionId: "user:documint",
+            extensionName: "documint",
+            input: {
+              path: "/tmp/plan.md",
+              title: "Review Plan",
+            },
+            instanceId: "review-plan",
+            reopen: true,
+            status: "session-state/plan.md",
+            title: "Review Plan",
+            url: "http://127.0.0.1:51460/?instanceId=review-plan",
+          },
+        },
+      ]);
+    });
+
+    test("does not emit canvas state for failed open_canvas completions", () => {
+      const context = createStreamingContext();
+      projectSdkEvent(
+        toolExecutionStart("open_canvas", "tool-canvas", {
+          canvasId: "documint-markdown-agent",
+          instanceId: "review-plan",
+        }),
+        context,
+      );
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-canvas", {
+            success: false,
+            errorMessage: "extension failed",
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_end",
+          toolCallId: "tool-canvas",
+          success: false,
+          result: "extension failed",
+          details: undefined,
+        },
+      ]);
+    });
   });
 
   describe("streaming: subagents", () => {
@@ -331,7 +434,10 @@ describe("projector", () => {
 
       // The real completion signal arrives via subagent.completed.
       expect(
-        projectSdkEvent({ type: "subagent.completed", data: { toolCallId: "call-bg-1" } }, context),
+        projectSdkEvent(
+          sdkEvent({ type: "subagent.completed", data: { toolCallId: "call-bg-1" } }),
+          context,
+        ),
       ).toEqual([{ type: "tool_end", toolCallId: "call-bg-1", success: true }]);
     });
 
@@ -341,7 +447,10 @@ describe("projector", () => {
       projectSdkEvent(toolExecutionComplete("call-bg-2", { success: true }), context);
 
       expect(
-        projectSdkEvent({ type: "subagent.failed", data: { toolCallId: "call-bg-2" } }, context),
+        projectSdkEvent(
+          sdkEvent({ type: "subagent.failed", data: { toolCallId: "call-bg-2" } }),
+          context,
+        ),
       ).toEqual([{ type: "tool_end", toolCallId: "call-bg-2", success: false }]);
     });
   });
@@ -535,22 +644,92 @@ describe("projector", () => {
   });
 
   describe("streaming: deltas", () => {
+    test("projects committed user and assistant messages", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "user.message",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            data: {
+              content: "What is in this image?",
+              attachments: [
+                { type: "file", displayName: "legacy.png", path: "/tmp/legacy.png" },
+                { type: "blob", data: "aW1hZ2U=", mimeType: "image/png", displayName: "image.png" },
+              ],
+            },
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "user_message",
+          content: "What is in this image?",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          attachments: [{ base64: "aW1hZ2U=", mimeType: "image/png", displayName: "image.png" }],
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(
+          sdkEvent({ type: "assistant.message", data: { content: "Root response" } }),
+          context,
+        ),
+      ).toEqual([{ type: "assistant_message", content: "Root response" }]);
+
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "assistant.message",
+            agentId: "call-agent-1",
+            data: { content: "Agent response" },
+          }),
+          context,
+        ),
+      ).toEqual([
+        { type: "assistant_message", agentId: "call-agent-1", content: "Agent response" },
+      ]);
+    });
+
+    test("drops agent-scoped user messages", () => {
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "user.message",
+            agentId: "call-agent-1",
+            data: { content: "Agent prompt" },
+          }),
+          createStreamingContext(),
+        ),
+      ).toEqual([]);
+    });
+
     test("drops empty-content deltas at the source", () => {
       const context = createStreamingContext();
 
       expect(
-        projectSdkEvent({ type: "assistant.message_delta", data: { deltaContent: "" } }, context),
+        projectSdkEvent(
+          sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "" } }),
+          context,
+        ),
       ).toEqual([]);
       expect(
-        projectSdkEvent({ type: "assistant.reasoning_delta", data: { deltaContent: "" } }, context),
+        projectSdkEvent(
+          sdkEvent({ type: "assistant.reasoning_delta", data: { deltaContent: "" } }),
+          context,
+        ),
       ).toEqual([]);
 
       expect(
-        projectSdkEvent({ type: "assistant.message_delta", data: { deltaContent: "Hi" } }, context),
+        projectSdkEvent(
+          sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "Hi" } }),
+          context,
+        ),
       ).toEqual([{ type: "delta", content: "Hi" }]);
       expect(
         projectSdkEvent(
-          { type: "assistant.reasoning_delta", data: { deltaContent: "Hmm" } },
+          sdkEvent({ type: "assistant.reasoning_delta", data: { deltaContent: "Hmm" } }),
           context,
         ),
       ).toEqual([{ type: "reasoning", content: "Hmm" }]);
@@ -561,22 +740,22 @@ describe("projector", () => {
 
       expect(
         projectSdkEvent(
-          {
+          sdkEvent({
             type: "assistant.message_delta",
             agentId: "call-agent-1",
             data: { deltaContent: "Subagent text" },
-          },
+          }),
           context,
         ),
       ).toEqual([]);
 
       expect(
         projectSdkEvent(
-          {
+          sdkEvent({
             type: "assistant.reasoning_delta",
             agentId: "call-agent-1",
             data: { deltaContent: "Subagent reasoning" },
-          },
+          }),
           context,
         ),
       ).toEqual([{ type: "reasoning", agentId: "call-agent-1", content: "Subagent reasoning" }]);
@@ -587,32 +766,32 @@ describe("projector", () => {
     test("drops subagent status events so they do not mutate root status", () => {
       const context = createStreamingContext();
 
-      expect(projectSdkEvent({ type: "assistant.turn_start", data: {} }, context)).toEqual([
-        { type: "thinking" },
-      ]);
+      expect(
+        projectSdkEvent(sdkEvent({ type: "assistant.turn_start", data: {} }), context),
+      ).toEqual([{ type: "status", status: "thinking" }]);
       expect(
         projectSdkEvent(
-          { type: "assistant.turn_start", agentId: "call-agent-1", data: {} },
+          sdkEvent({ type: "assistant.turn_start", agentId: "call-agent-1", data: {} }),
           context,
         ),
       ).toEqual([]);
 
-      expect(projectSdkEvent({ type: "session.compaction_start", data: {} }, context)).toEqual([
-        { type: "compacting_start" },
-      ]);
+      expect(
+        projectSdkEvent(sdkEvent({ type: "session.compaction_start", data: {} }), context),
+      ).toEqual([{ type: "status", status: "compacting" }]);
       expect(
         projectSdkEvent(
-          { type: "session.compaction_start", agentId: "call-agent-1", data: {} },
+          sdkEvent({ type: "session.compaction_start", agentId: "call-agent-1", data: {} }),
           context,
         ),
       ).toEqual([]);
 
-      expect(projectSdkEvent({ type: "session.compaction_complete", data: {} }, context)).toEqual([
-        { type: "compacting_end" },
-      ]);
+      expect(
+        projectSdkEvent(sdkEvent({ type: "session.compaction_complete", data: {} }), context),
+      ).toEqual([{ type: "status", status: "thinking" }]);
       expect(
         projectSdkEvent(
-          { type: "session.compaction_complete", agentId: "call-agent-1", data: {} },
+          sdkEvent({ type: "session.compaction_complete", agentId: "call-agent-1", data: {} }),
           context,
         ),
       ).toEqual([]);
@@ -620,6 +799,28 @@ describe("projector", () => {
 
     test("projects model and title events into canonical session events", () => {
       const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "session.start",
+            data: {
+              sessionId: "session-1",
+              producer: "copilot-agent",
+              copilotVersion: "1.0.61",
+              startTime: "2026-06-10T20:29:43.232Z",
+              selectedModel: "gpt-5.5",
+              reasoningEffort: "xhigh",
+            },
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "model_changed",
+          modelConfiguration: { model: "gpt-5.5", reasoningEffort: "xhigh" },
+        },
+      ]);
 
       expect(projectSdkEvent(modelChange("claude-sonnet-4.6"), context)).toEqual([
         { type: "model_changed", modelConfiguration: { model: "claude-sonnet-4.6" } },
@@ -642,7 +843,7 @@ describe("projector", () => {
 
       expect(
         projectSdkEvent(
-          {
+          sdkEvent({
             type: "subagent.started",
             agentId: "call-agent-1",
             data: {
@@ -652,7 +853,7 @@ describe("projector", () => {
               agentDescription: "Searches code.",
               model: "claude-haiku-4.5",
             },
-          },
+          }),
           context,
         ),
       ).toEqual([
@@ -666,13 +867,12 @@ describe("projector", () => {
 
     test("returns no events for unknown SDK event types", () => {
       expect(
-        projectSdkEvent({ type: "unknown.event", data: {} }, createStreamingContext()),
+        projectSdkEvent(sdkEvent({ type: "unknown.event", data: {} }), createStreamingContext()),
       ).toEqual([]);
     });
   });
 
   // ── History: replaying a recorded session into a transcript ───────────
-
 });
 
 // Golden replays of real session fixtures live in tests/ (see tests/AGENTS.md).

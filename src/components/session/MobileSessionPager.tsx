@@ -1,9 +1,11 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import type { SessionGridPane } from "@/hooks/session/sessionPanes";
+import { CanvasPane } from "./CanvasPane";
 import { SessionView, type SessionViewProps } from "./SessionView";
 
 type MobileSessionPagerProps = Omit<SessionViewProps, "sessionId"> & {
-  sessionIds: string[];
+  panes: SessionGridPane[];
   selectedSessionId: string;
   streamingSessionIds: string[];
   unreadSessionIds: string[];
@@ -11,59 +13,69 @@ type MobileSessionPagerProps = Omit<SessionViewProps, "sessionId"> & {
 };
 
 export function MobileSessionPager({
-  sessionIds,
+  panes,
   selectedSessionId,
   streamingSessionIds,
   unreadSessionIds,
   onBack,
   ...sessionViewProps
 }: MobileSessionPagerProps) {
-  const [activeSessionId, setActiveSessionId] = useState(selectedSessionId);
-  const newSessionIds = useNewEntries(sessionIds);
+  const fallbackPane = createFallbackSessionPane(selectedSessionId);
+  const visiblePanes = panes.length > 0 ? panes : [fallbackPane];
+  const selectedPaneId =
+    visiblePanes.find((pane) => pane.kind === "session" && pane.sessionId === selectedSessionId)
+      ?.id ?? visiblePanes[0].id;
+  const paneIds = visiblePanes.map((pane) => pane.id);
+  const [activePaneId, setActivePaneId] = useState(selectedPaneId);
+  const newPaneIds = useNewEntries(paneIds);
 
-  // If the active session disappears from the list, fall back to selected.
+  // If the active pane disappears from the list, fall back to selected.
   // If the selected session changes (user picked a new one from sidebar), follow it.
-  const activeIsValid = sessionIds.includes(activeSessionId);
-  const effectiveActiveSessionId = activeIsValid ? activeSessionId : selectedSessionId;
+  const activeIsValid = paneIds.includes(activePaneId);
+  const effectiveActivePaneId = activeIsValid ? activePaneId : selectedPaneId;
 
   // Reset when user explicitly selects a different session from the sidebar
   const prevSelectedRef = useRef(selectedSessionId);
   useEffect(() => {
     if (prevSelectedRef.current !== selectedSessionId) {
       prevSelectedRef.current = selectedSessionId;
-      setActiveSessionId(selectedSessionId);
+      setActivePaneId(selectedPaneId);
     }
-  }, [selectedSessionId]);
+  }, [selectedPaneId, selectedSessionId]);
 
-  const handleDotPress = useCallback((sessionId: string) => {
-    setActiveSessionId(sessionId);
+  const handleDotPress = useCallback((paneId: string) => {
+    setActivePaneId(paneId);
   }, []);
 
   return (
     <div className="relative h-full">
-      {(sessionIds.length > 0 ? sessionIds : [selectedSessionId]).map((sessionId) => {
-        const isActive = sessionId === effectiveActiveSessionId;
+      {visiblePanes.map((pane) => {
+        const isActive = pane.id === effectiveActivePaneId;
         return (
-          <div key={sessionId} className={isActive ? "h-full" : "h-full hidden"}>
-            <SessionView
-              sessionId={sessionId}
-              isSessionRunning={streamingSessionIds.includes(sessionId)}
-              isSessionUnread={unreadSessionIds.includes(sessionId)}
-              onBack={onBack}
-              {...sessionViewProps}
-            />
+          <div key={pane.id} className={isActive ? "h-full" : "h-full hidden"}>
+            {pane.kind === "session" ? (
+              <SessionView
+                sessionId={pane.sessionId}
+                isSessionRunning={streamingSessionIds.includes(pane.sessionId)}
+                isSessionUnread={unreadSessionIds.includes(pane.sessionId)}
+                onBack={onBack}
+                {...sessionViewProps}
+              />
+            ) : (
+              <CanvasPane pane={pane} onBack={onBack} />
+            )}
           </div>
         );
       })}
-      {sessionIds.length > 1 && (
+      {visiblePanes.length > 1 && (
         <div className="absolute top-0 left-0 right-0 flex items-center justify-center h-8 pointer-events-none z-10 md:hidden">
           <div className="pointer-events-auto">
             <PagerDots
-              sessionIds={sessionIds}
-              activeSessionId={effectiveActiveSessionId}
+              panes={visiblePanes}
+              activePaneId={effectiveActivePaneId}
               streamingSessionIds={streamingSessionIds}
               unreadSessionIds={unreadSessionIds}
-              newSessionIds={newSessionIds}
+              newPaneIds={newPaneIds}
               onDotPress={handleDotPress}
             />
           </div>
@@ -76,20 +88,20 @@ export function MobileSessionPager({
 // ── Dot strip ───────────────────────────────────────────────────────────────
 
 interface PagerDotsProps {
-  sessionIds: string[];
-  activeSessionId: string;
+  panes: SessionGridPane[];
+  activePaneId: string;
   streamingSessionIds: string[];
   unreadSessionIds: string[];
-  newSessionIds: ReadonlySet<string>;
-  onDotPress: (sessionId: string) => void;
+  newPaneIds: ReadonlySet<string>;
+  onDotPress: (paneId: string) => void;
 }
 
 const PagerDots = memo(function PagerDots({
-  sessionIds,
-  activeSessionId,
+  panes,
+  activePaneId,
   streamingSessionIds,
   unreadSessionIds,
-  newSessionIds,
+  newPaneIds,
   onDotPress,
 }: PagerDotsProps) {
   return (
@@ -97,14 +109,14 @@ const PagerDots = memo(function PagerDots({
       className="flex items-center justify-center gap-1 rounded-full bg-muted/60 px-1.5 py-1"
       role="tablist"
     >
-      {sessionIds.map((sessionId) => (
+      {panes.map((pane) => (
         <PagerDot
-          key={sessionId}
-          sessionId={sessionId}
-          isActive={sessionId === activeSessionId}
-          isStreaming={streamingSessionIds.includes(sessionId)}
-          isUnread={unreadSessionIds.includes(sessionId)}
-          isNew={newSessionIds.has(sessionId)}
+          key={pane.id}
+          pane={pane}
+          isActive={pane.id === activePaneId}
+          isStreaming={pane.kind === "session" && streamingSessionIds.includes(pane.sessionId)}
+          isUnread={pane.kind === "session" && unreadSessionIds.includes(pane.sessionId)}
+          isNew={newPaneIds.has(pane.id)}
           onPress={onDotPress}
         />
       ))}
@@ -115,16 +127,16 @@ const PagerDots = memo(function PagerDots({
 // ── Individual dot ──────────────────────────────────────────────────────────
 
 interface PagerDotProps {
-  sessionId: string;
+  pane: SessionGridPane;
   isActive: boolean;
   isStreaming: boolean;
   isUnread: boolean;
   isNew: boolean;
-  onPress: (sessionId: string) => void;
+  onPress: (paneId: string) => void;
 }
 
 const PagerDot = memo(function PagerDot({
-  sessionId,
+  pane,
   isActive,
   isStreaming,
   isUnread,
@@ -132,8 +144,8 @@ const PagerDot = memo(function PagerDot({
   onPress,
 }: PagerDotProps) {
   const handlePress = useCallback(() => {
-    onPress(sessionId);
-  }, [onPress, sessionId]);
+    onPress(pane.id);
+  }, [onPress, pane.id]);
 
   // Visual state priority: active > streaming > unread > idle
   const dotClass = isActive
@@ -142,13 +154,17 @@ const PagerDot = memo(function PagerDot({
       ? "bg-sky-500 h-2.5 w-2.5 animate-pulse"
       : isUnread
         ? "bg-blue-500 h-2.5 w-2.5"
-        : "bg-muted-foreground/40 h-2.5 w-2.5";
+        : pane.kind === "canvas"
+          ? "bg-violet-500 h-2.5 w-2.5"
+          : "bg-muted-foreground/40 h-2.5 w-2.5";
+  const label =
+    pane.kind === "canvas" ? `Canvas ${pane.canvas.title || pane.canvas.canvasId}` : "Session";
 
   return (
     <button
       role="tab"
       aria-selected={isActive}
-      aria-label={`Session ${isActive ? "(active)" : ""}`}
+      aria-label={`${label} ${isActive ? "(active)" : ""}`}
       className="flex items-center justify-center h-5 w-5 touch-manipulation"
       onClick={handlePress}
     >
@@ -162,6 +178,17 @@ const PagerDot = memo(function PagerDot({
     </button>
   );
 });
+
+function createFallbackSessionPane(
+  sessionId: string,
+): Extract<SessionGridPane, { kind: "session" }> {
+  return {
+    kind: "session",
+    id: `session:${sessionId}`,
+    sessionId,
+    isLinkedOnly: false,
+  };
+}
 
 // ── Entry animation hook ────────────────────────────────────────────────────
 

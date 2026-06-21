@@ -5,6 +5,28 @@ exports[`history pipeline golden replay replaying a recorded session produces th
   "linkedSessionIds": [],
   "messages": [
     {
+      "content": "",
+      "role": "assistant",
+      "toolCalls": [
+        {
+          "arguments": {
+            "path": "/tmp/copilot-sdk-100-inspect-48621/package/dist/generated/session-events.d.ts",
+            "view_range": [
+              1970,
+              2168,
+            ],
+          },
+          "id": "call_M1QBw3fDmRrrXoYP9bt4edOd",
+          "name": "read",
+          "result": {
+            "content": "Path does not exist",
+            "details": undefined,
+            "success": false,
+          },
+        },
+      ],
+    },
+    {
       "attachments": undefined,
       "content": "What’s your thoughts on this change now? Maybe kick off a code review and a half dozen sub agents to go review different aspects of this change and see how they feel about itne2e",
       "role": "user",
