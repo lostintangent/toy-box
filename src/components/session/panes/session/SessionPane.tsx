@@ -8,36 +8,38 @@ import {
   useLayoutEffect,
   useState,
 } from "react";
-import { useAtom } from "jotai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowLeft, Bot } from "lucide-react";
 import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import type { Attachment, Message, ModelInfo, ModelConfiguration, SessionCanvas } from "@/types";
 import { sessionQueries, skillQueries } from "@/lib/queries";
-import { linkedPanesAtom } from "@/atoms";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Message as SessionMessage } from "./messages/Message";
-import { StatusIndicator, ReasoningDisplay } from "./SessionStatus";
+import { Message as SessionMessage } from "../../messages/Message";
+import { StatusIndicator, ReasoningDisplay } from "../../SessionStatus";
 import type { SessionStatus } from "@/types";
-import { SessionLocationPicker, type SessionLocationPickerProps } from "./SessionLocationPicker";
-import type { WorktreeProps } from "./WorktreeBranchMenu";
-import { SessionMetadataBadges } from "./SessionMetadataBadges";
+import {
+  SessionLocationPicker,
+  type SessionLocationPickerProps,
+} from "../../SessionLocationPicker";
+import type { WorktreeProps } from "../../WorktreeBranchMenu";
+import { SessionMetadataBadges } from "../../SessionMetadataBadges";
 import {
   findSessionDirectoryOption,
   normalizeSessionDirectoryOptions,
   type SessionDirectoryOption,
-} from "./sessionDirectoryOptions";
-import { SessionInput } from "./input/SessionInput";
+} from "../../sessionDirectoryOptions";
+import { SessionInput } from "../../input/SessionInput";
+import { useLinkedPanes } from "@/hooks/session/useLinkedPanes";
 import { useSession, type SessionConfig } from "@/hooks/session/useSession";
-import { createLinkedPanes } from "@/hooks/session/sessionPanes";
 import { mergeSessionWorktree, applySessionWorktree } from "@/functions/sessions";
 import { getSettings } from "@/lib/config/settings";
 import { useEditDiffs } from "@/hooks/diffs/useEditDiffs";
 import { EditDiffsProvider } from "@/hooks/diffs/EditDiffsContext";
 import { SessionCwdProvider } from "@/hooks/session/SessionCwdContext";
 import { resolveSessionStateSyncAction } from "@/lib/session/sessionSync";
+import { getSessionPaneModeCapabilities, type SessionPaneMode } from "./modes";
 
 // Only defer rendering for sessions above this threshold (avoids skeleton flash for small sessions)
 const DEFERRED_MESSAGE_THRESHOLD = 10;
@@ -107,10 +109,10 @@ function resolveLinkedPanePublishState({
 }
 
 // ============================================================================
-// Session View Skeleton
+// Session Pane Skeleton
 // ============================================================================
 
-function SessionViewSkeleton() {
+function SessionPaneSkeleton() {
   return (
     <div className="h-full space-y-4 p-4 bg-muted/50">
       {/* User message skeleton */}
@@ -153,10 +155,10 @@ function SessionViewSkeleton() {
 }
 
 // ============================================================================
-// Session View Component
+// Session Pane Component
 // ============================================================================
 
-export interface SessionViewProps {
+export interface SessionPaneProps {
   sessionId: string;
   isSessionRunning?: boolean;
   isSessionUnread?: boolean;
@@ -164,12 +166,12 @@ export interface SessionViewProps {
   models?: ModelInfo[];
   modelConfiguration?: ModelConfiguration | null;
   onModelConfigurationChange?: (configuration: ModelConfiguration) => void;
-  readOnly?: boolean; // Hide input area for preview mode
+  mode?: SessionPaneMode;
   draftSessionId?: string | null; // ID of the current draft session (if any)
   onDraftSessionCreated?: (sessionId: string) => void; // Called when draft becomes real session
 }
 
-export function SessionView({
+export function SessionPane({
   sessionId,
   isSessionRunning = false,
   isSessionUnread = false,
@@ -177,10 +179,12 @@ export function SessionView({
   models,
   modelConfiguration,
   onModelConfigurationChange,
-  readOnly = false,
+  mode = "interactive",
   draftSessionId,
   onDraftSessionCreated,
-}: SessionViewProps) {
+}: SessionPaneProps) {
+  const { showInput, showArtifactShortcuts, loadGlobalSessionState, ownsLinkedPanes } =
+    getSessionPaneModeCapabilities(mode);
   // Check if this is a draft session (not yet created on server)
   const isDraft = sessionId === draftSessionId;
 
@@ -188,7 +192,7 @@ export function SessionView({
 
   const { data: sessionsState } = useQuery({
     ...sessionQueries.state(),
-    enabled: !readOnly,
+    enabled: loadGlobalSessionState,
   });
   const sessionContext = useMemo(
     () => sessionsState?.sessions.find((session) => session.sessionId === sessionId)?.context,
@@ -356,6 +360,7 @@ export function SessionView({
     todos,
     linkedSessionIds,
     canvases,
+    artifacts,
     revision,
     hasSynced,
     sendMessage,
@@ -406,11 +411,12 @@ export function SessionView({
   const hasHydratedSessionData = sessionData !== undefined;
   const sessionDataLinkedSessionIds = sessionData?.linkedSessionIds;
   const sessionDataCanvases = sessionData?.canvases;
-  const [, setLinkedPanes] = useAtom(linkedPanesAtom);
+  const { publishSessionPanes, clearSessionPanes } = useLinkedPanes();
 
   useEffect(() => {
-    return () => setLinkedPanes(({ [sessionId]: _removed, ...rest }) => rest);
-  }, [sessionId, setLinkedPanes]);
+    if (!ownsLinkedPanes) return;
+    return () => clearSessionPanes(sessionId);
+  }, [clearSessionPanes, ownsLinkedPanes, sessionId]);
 
   useEffect(() => {
     const publishState = resolveLinkedPanePublishState({
@@ -424,26 +430,21 @@ export function SessionView({
         canvases: sessionDataCanvases,
       },
     });
-    if (!publishState) return;
+    if (!publishState || !ownsLinkedPanes) return;
 
-    setLinkedPanes((current) => ({
-      ...current,
-      [sessionId]: createLinkedPanes(
-        sessionId,
-        publishState.linkedSessionIds,
-        publishState.canvases,
-      ),
-    }));
+    publishSessionPanes(sessionId, publishState.linkedSessionIds, publishState.canvases, artifacts);
   }, [
+    artifacts,
     canvases,
     hasHydratedSessionData,
     isDraft,
     isStreaming,
     linkedSessionIds,
+    ownsLinkedPanes,
     sessionDataLinkedSessionIds,
     sessionDataCanvases,
     sessionId,
-    setLinkedPanes,
+    publishSessionPanes,
   ]);
 
   // Check if this is a "session not found" error
@@ -486,6 +487,7 @@ export function SessionView({
         todos: sessionData.todos,
         linkedSessionIds: sessionData.linkedSessionIds,
         canvases: sessionData.canvases,
+        artifacts: sessionData.artifacts,
         lastSeenEventId: sessionData.lastSeenEventId,
         status: sessionData.status,
         reasoningContent: sessionData.reasoningContent,
@@ -621,11 +623,10 @@ export function SessionView({
     () => ({ total: editDiffs.total, byFile: editDiffs.byFile }),
     [editDiffs.total, editDiffs.byFile],
   );
-
   return (
     <div className="flex flex-col h-full">
-      {/* Mobile Back Button Bar - Hidden entirely in read-only mode */}
-      {!readOnly && onBack && (
+      {/* Mobile Back Button Bar - Hidden in modes that do not show the composer */}
+      {showInput && onBack && (
         <div className="p-2 pt-0 border-b bg-background md:hidden shrink-0 flex items-center justify-between gap-2">
           <Button variant="ghost" size="sm" onClick={onBack} className="gap-2 shrink-0">
             <ArrowLeft className="h-4 w-4" />
@@ -652,7 +653,7 @@ export function SessionView({
             )}
           </div>
         ) : isHydratingSession ? (
-          <SessionViewSkeleton />
+          <SessionPaneSkeleton />
         ) : (
           <SessionCwdProvider value={selectedDirectory}>
             <EditDiffsProvider value={editDiffs.byToolCallId}>
@@ -670,9 +671,10 @@ export function SessionView({
         )}
       </div>
 
-      {!readOnly && !isSessionNotFound && (
+      {showInput && !isSessionNotFound && (
         <div className="px-4 pt-4 md:pb-4 border-t bg-background shrink-0">
           <SessionInput
+            sessionId={sessionId}
             onSubmit={handleSubmit}
             isStreaming={isStreaming}
             onStop={cancelStream}
@@ -683,6 +685,7 @@ export function SessionView({
             todos={todos}
             skills={skills}
             sessionDiff={sessionDiff}
+            artifacts={showArtifactShortcuts ? artifacts : []}
             queuedMessages={queuedMessages}
             onCancelQueuedMessage={cancelQueuedMessage}
           />
@@ -717,7 +720,7 @@ const MessageList = memo(function MessageList({
   // This prevents the "Start a conversation" flash while loading/syncing
   if (messages.length === 0) {
     if (!hasSynced) {
-      return <SessionViewSkeleton />;
+      return <SessionPaneSkeleton />;
     }
     return (
       <div className="h-full flex items-center justify-center bg-muted/50 p-8">
@@ -809,8 +812,11 @@ function MessageListContent({
               // eslint-disable-next-line react/no-array-index-key -- messages append in order and streaming updates replace content in place
               key={`${message.role}-${index}`}
               message={message}
-              isStreaming={isLast && isStreaming}
-              revision={isLast ? revision : message.revision}
+              isStreaming={isStreaming}
+              isLast={isLast}
+              revision={
+                isLast ? revision : message.role === "assistant" ? message.revision : undefined
+              }
             />
           );
         })}

@@ -43,13 +43,15 @@ export async function startManagedSessionTurn(
   sessionHandle: ManagedSessionHandle,
   prompt: string,
 ): Promise<void> {
-  sessionHandle.stream.startTurn(prompt);
+  sessionHandle.stream.startTurn({ id: crypto.randomUUID(), role: "user", content: prompt });
 
   try {
     await sessionHandle.session.send({ prompt });
   } catch (error) {
-    sessionHandle.stream.finishStream();
-    sessionHandle.stream.detach();
+    // The turn never started on the SDK: fully close so no dead stream stays
+    // registered. Managed sessions are freshly created, so the handle cannot
+    // be stale.
+    sessionHandle.stream.close();
     throw error;
   }
 }

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { computeFileDiffStats, getToolCallFileDiffs, parsePatch } from "./fileDiffs";
+import {
+  computeFileDiffStats,
+  getToolCallFileDiffs,
+  parsePatch,
+  parsePatchTouchedFiles,
+} from "./fileDiffs";
 import type { ToolCall } from "@/types";
 
 const cwd = "/Users/lostintangent/Desktop/toy-box";
@@ -139,6 +144,45 @@ index 0000000..0000000
     };
 
     expect(getToolCallFileDiffs(toolCall, cwd)).toBeUndefined();
+  });
+
+  test("parses touched files from apply_patch envelopes", () => {
+    const touchedFiles = parsePatchTouchedFiles(
+      `*** Begin Patch
+*** Add File: /Users/lostintangent/Desktop/toy-box/docs/new.md
+*** Update File: /Users/lostintangent/Desktop/toy-box/docs/notes.md
+*** Delete File: /Users/lostintangent/Desktop/toy-box/docs/old.md
+*** End Patch`,
+      cwd,
+    );
+
+    expect(touchedFiles).toEqual([
+      { path: "/Users/lostintangent/Desktop/toy-box/docs/new.md", status: "added" },
+      { path: "/Users/lostintangent/Desktop/toy-box/docs/notes.md", status: "modified" },
+      { path: "/Users/lostintangent/Desktop/toy-box/docs/old.md", status: "deleted" },
+    ]);
+  });
+
+  test("parses touched files from unified diff headers without hunk false positives", () => {
+    const touchedFiles = parsePatchTouchedFiles(
+      `diff --git a/docs/notes.md b/docs/notes.md
+--- a/docs/notes.md
++++ b/docs/notes.md
+@@ -1 +1 @@
+--- not a file header
++++ not a file header
+diff --git a/docs/old.md b/docs/old.md
+--- a/docs/old.md
++++ /dev/null
+@@ -1 +0,0 @@
+-old`,
+      cwd,
+    );
+
+    expect(touchedFiles).toEqual([
+      { path: "docs/notes.md", status: "modified" },
+      { path: "docs/old.md", status: "deleted" },
+    ]);
   });
 
   test("parses successful patch completion details", () => {

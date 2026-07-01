@@ -8,5 +8,10 @@ import { lifecycleTools } from "./lifecycle";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getTools(): Tool<any>[] {
-  return [...lifecycleTools, ...coordinationTools, ...automationTools];
+  return [...lifecycleTools, ...coordinationTools, ...automationTools].map((tool) => ({
+    ...tool,
+    // These are Toy Box control-plane tools, so they must be present in the
+    // model's immediate tool catalog on both new and resumed sessions.
+    defer: "never",
+  }));
 }

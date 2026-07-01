@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiEventsRouteImport } from './routes/api/events'
+import { Route as ApiWatchSessionIdSplatRouteImport } from './routes/api/watch/$sessionId/$'
+import { Route as ApiPreviewSessionIdSplatRouteImport } from './routes/api/preview/$sessionId/$'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +24,63 @@ const ApiEventsRoute = ApiEventsRouteImport.update({
   path: '/api/events',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiWatchSessionIdSplatRoute = ApiWatchSessionIdSplatRouteImport.update({
+  id: '/api/watch/$sessionId/$',
+  path: '/api/watch/$sessionId/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPreviewSessionIdSplatRoute =
+  ApiPreviewSessionIdSplatRouteImport.update({
+    id: '/api/preview/$sessionId/$',
+    path: '/api/preview/$sessionId/$',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/preview/$sessionId/$': typeof ApiPreviewSessionIdSplatRoute
+  '/api/watch/$sessionId/$': typeof ApiWatchSessionIdSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/preview/$sessionId/$': typeof ApiPreviewSessionIdSplatRoute
+  '/api/watch/$sessionId/$': typeof ApiWatchSessionIdSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/events': typeof ApiEventsRoute
+  '/api/preview/$sessionId/$': typeof ApiPreviewSessionIdSplatRoute
+  '/api/watch/$sessionId/$': typeof ApiWatchSessionIdSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/events'
+  fullPaths:
+    | '/'
+    | '/api/events'
+    | '/api/preview/$sessionId/$'
+    | '/api/watch/$sessionId/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/events'
-  id: '__root__' | '/' | '/api/events'
+  to:
+    | '/'
+    | '/api/events'
+    | '/api/preview/$sessionId/$'
+    | '/api/watch/$sessionId/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/events'
+    | '/api/preview/$sessionId/$'
+    | '/api/watch/$sessionId/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiEventsRoute: typeof ApiEventsRoute
+  ApiPreviewSessionIdSplatRoute: typeof ApiPreviewSessionIdSplatRoute
+  ApiWatchSessionIdSplatRoute: typeof ApiWatchSessionIdSplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +99,28 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/watch/$sessionId/$': {
+      id: '/api/watch/$sessionId/$'
+      path: '/api/watch/$sessionId/$'
+      fullPath: '/api/watch/$sessionId/$'
+      preLoaderRoute: typeof ApiWatchSessionIdSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/preview/$sessionId/$': {
+      id: '/api/preview/$sessionId/$'
+      path: '/api/preview/$sessionId/$'
+      fullPath: '/api/preview/$sessionId/$'
+      preLoaderRoute: typeof ApiPreviewSessionIdSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiEventsRoute: ApiEventsRoute,
+  ApiPreviewSessionIdSplatRoute: ApiPreviewSessionIdSplatRoute,
+  ApiWatchSessionIdSplatRoute: ApiWatchSessionIdSplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

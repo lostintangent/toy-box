@@ -13,6 +13,7 @@ import { SessionLocationPicker, type SessionLocationPickerProps } from "../Sessi
 import { TodoPopup } from "./TodoPopup";
 import { DiffPopup } from "./DiffPopup";
 import { SkillPicker } from "./SkillPicker";
+import { ArtifactsList } from "./ArtifactsList";
 import type {
   Attachment,
   ModelInfo,
@@ -24,11 +25,14 @@ import type {
 import { toDataUrl } from "@/types";
 import type { DiffStats, FileDiffSummary } from "@/hooks/diffs/useEditDiffs";
 import { useViewport } from "@/hooks/browser/ViewportContext";
+import { notificationLabel } from "@/lib/session/agentNotifications";
+import { cn } from "@/lib/utils";
 
 const TEXTAREA_MIN_HEIGHT = 40;
 const TEXTAREA_MAX_HEIGHT = 72;
 
 export interface SessionInputProps {
+  sessionId: string;
   onSubmit: (text: string, attachments: Attachment[]) => void;
   isStreaming: boolean;
   onStop: () => void;
@@ -39,6 +43,7 @@ export interface SessionInputProps {
   todos?: TodoItem[];
   skills?: SessionSkill[];
   sessionDiff?: { total: DiffStats; byFile: FileDiffSummary[] };
+  artifacts?: string[];
   queuedMessages?: QueuedMessage[];
   onCancelQueuedMessage?: (queuedMessageId: string) => void;
 }
@@ -91,7 +96,18 @@ function AttachmentPreview({
   );
 }
 
+function getQueuedMessageLabel(message: QueuedMessage): string {
+  return message.role === "agent_notification"
+    ? notificationLabel(message.notification)
+    : message.content;
+}
+
+function isNotificationQueuedMessage(message: QueuedMessage): boolean {
+  return message.role === "agent_notification";
+}
+
 export const SessionInput = memo(function SessionInput({
+  sessionId,
   onSubmit,
   isStreaming,
   onStop,
@@ -102,6 +118,7 @@ export const SessionInput = memo(function SessionInput({
   todos,
   skills,
   sessionDiff,
+  artifacts = [],
   queuedMessages = [],
   onCancelQueuedMessage,
 }: SessionInputProps) {
@@ -128,7 +145,7 @@ export const SessionInput = memo(function SessionInput({
   const handleEditQueuedMessage = useCallback(
     (queuedMessageId: string) => {
       const message = queuedMessages.find((m) => m.id === queuedMessageId);
-      if (!message) return;
+      if (!message || message.role !== "user") return;
       onCancelQueuedMessage?.(queuedMessageId);
       setInput(message.content);
       textareaRef.current?.focus();
@@ -253,6 +270,8 @@ export const SessionInput = memo(function SessionInput({
         suppressHydrationWarning
       />
 
+      <ArtifactsList sourceSessionId={sessionId} artifacts={artifacts} />
+
       {/* Queued messages */}
       {queuedMessages.length > 0 && (
         <div className="mb-3 space-y-2">
@@ -265,12 +284,17 @@ export const SessionInput = memo(function SessionInput({
                 type="button"
                 variant="ghost"
                 size="icon"
+                disabled={isNotificationQueuedMessage(message)}
                 className="h-5 w-5 shrink-0 rounded-full md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                 onClick={() => handleEditQueuedMessage(message.id)}
               >
                 <Pencil className="h-3 w-3" />
               </Button>
-              <span className="truncate flex-1">{message.content}</span>
+              <span
+                className={cn("truncate flex-1", isNotificationQueuedMessage(message) && "italic")}
+              >
+                {getQueuedMessageLabel(message)}
+              </span>
               <Button
                 type="button"
                 variant="ghost"

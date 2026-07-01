@@ -17,6 +17,7 @@ import { getTools } from "../sdk/tools";
 import { emitSessionUpsert, emitSessionDelete } from "../runtime/broadcast";
 import { SessionStream } from "../runtime/stream";
 import { deleteUnreadState } from "./unread";
+import { evictCachedSnapshot } from "./snapshotCache";
 import {
   getSessionWorktree,
   upsertSessionWorktree,
@@ -29,6 +30,7 @@ import {
 } from "./childSessions";
 import { createWorktree, cleanupWorktree, detectGitRoot, getRepositoryName } from "../worktrees";
 import { sharedMap } from "../runtime/processState";
+import { getAutomationIdFromSessionId } from "@/lib/automation/sessionId";
 import type { ModelConfiguration } from "@/types";
 
 const activeSessions = sharedMap<CopilotSession>("active-sessions");
@@ -36,6 +38,7 @@ const activeSessions = sharedMap<CopilotSession>("active-sessions");
 export type CreateSessionOptions = {
   modelConfiguration?: ModelConfiguration;
   directory?: string;
+  automationId?: string;
   useWorktree?: boolean;
   initialContext?: SessionContext;
   parentSessionId?: string;
@@ -123,8 +126,14 @@ export async function createSession(
   sessionId: string,
   options?: CreateSessionOptions,
 ): Promise<CopilotSession> {
-  const { modelConfiguration, directory, useWorktree, initialContext, parentSessionId } =
-    options ?? {};
+  const {
+    modelConfiguration,
+    directory,
+    automationId,
+    useWorktree,
+    initialContext,
+    parentSessionId,
+  } = options ?? {};
   const { executionDirectory, mergedDisplayContext, worktreeRecord } = await prepareSessionLocation(
     sessionId,
     {
@@ -140,6 +149,7 @@ export async function createSession(
   const session = await sdkCreateSession(sessionId, {
     modelConfiguration,
     directory: executionDirectory ?? homedir(),
+    automationId,
     tools: getTools(),
   });
   const now = new Date().toISOString();
@@ -183,7 +193,11 @@ export async function getCachedOrResumeSession(sessionId: string): Promise<Copil
   const cached = activeSessions.get(sessionId);
   if (cached) return cached;
 
-  const session = await sdkResumeSession(sessionId, getTools());
+  const session = await sdkResumeSession(
+    sessionId,
+    getTools(),
+    getAutomationIdFromSessionId(sessionId) ?? undefined,
+  );
   activeSessions.set(sessionId, session);
   return session;
 }
@@ -208,8 +222,7 @@ export async function getOrResumeSession(sessionId: string): Promise<{
     const events = await session.getEvents();
     return { session, events };
   } catch (error) {
-    if (!isSessionNotFoundError(error)) throw error;
-    evictCachedSession(sessionId);
+    if (!evictCachedSessionIfStale(sessionId, error)) throw error;
 
     session = await getCachedOrResumeSession(sessionId);
     const events = await session.getEvents();
@@ -220,6 +233,16 @@ export async function getOrResumeSession(sessionId: string): Promise<{
 /** Remove a cached session so the next access forces a resume */
 export function evictCachedSession(sessionId: string): void {
   activeSessions.delete(sessionId);
+}
+
+/** Drop a cached session handle when an error says the SDK no longer knows
+ *  the session, so the next access resumes fresh instead of reusing a stale
+ *  handle. Returns whether the error was a stale-session error. */
+export function evictCachedSessionIfStale(sessionId: string, error: unknown): boolean {
+  if (!isSessionNotFoundError(error)) return false;
+
+  evictCachedSession(sessionId);
+  return true;
 }
 
 /** Check whether a session currently has a cached live SDK session object. */
@@ -247,6 +270,7 @@ async function deleteSessionRecord(sessionId: string): Promise<void> {
 
   SessionStream.remove(sessionId);
   deleteUnreadState(sessionId);
+  evictCachedSnapshot(sessionId);
 
   await sdkDeleteSession(sessionId);
   emitSessionDelete(sessionId);

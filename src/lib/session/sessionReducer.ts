@@ -37,6 +37,7 @@ import type {
   Message,
   ModelConfiguration,
   QueuedMessage,
+  SessionArtifactPatch,
   SessionCanvas,
   SessionEvent,
   SessionSnapshot,
@@ -53,6 +54,7 @@ export type Session = {
   todos?: TodoItem[];
   linkedSessionIds: string[];
   canvases?: SessionCanvas[];
+  artifacts: string[];
   status: SessionStatus;
   reasoningContent: string;
   modelConfiguration?: ModelConfiguration;
@@ -77,6 +79,7 @@ export function createInitialSession(initial: Partial<Session> = {}): Session {
     todos: initial.todos ? initial.todos.map((todo) => ({ ...todo })) : undefined,
     linkedSessionIds: initial.linkedSessionIds ? [...initial.linkedSessionIds] : [],
     ...(initial.canvases ? { canvases: initial.canvases.map((canvas) => ({ ...canvas })) } : {}),
+    artifacts: initial.artifacts ? [...initial.artifacts] : [],
     status: initial.status ?? "idle",
     reasoningContent: initial.reasoningContent ?? "",
     modelConfiguration: initial.modelConfiguration,
@@ -101,10 +104,24 @@ export function toSessionSnapshot(
     todos: state.todos,
     linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
     canvases: state.canvases && state.canvases.length > 0 ? state.canvases : undefined,
+    artifacts: state.artifacts.length > 0 ? state.artifacts : undefined,
     lastSeenEventId: state.lastSeenEventId,
     status: state.status,
     reasoningContent: state.reasoningContent,
   };
+}
+
+/** Rebuild reducer seed state from a wire snapshot — the inverse of
+ *  toSessionSnapshot, for seeding a stream from a cached snapshot without
+ *  replaying history.
+ *  Drops the wire/per-stream fields (`id`, `lastSeenEventId`) so a fresh
+ *  stream stamps its own event sequence. createInitialSession copies the
+ *  collections; individual messages share structure with the snapshot, the
+ *  same convention the client uses when seeding its reducer from the cached
+ *  detail snapshot. */
+export function sessionSeedFromSnapshot(snapshot: SessionSnapshot): Partial<Session> {
+  const { id: _id, lastSeenEventId: _lastSeenEventId, ...seed } = snapshot;
+  return seed;
 }
 
 /** Mutates `state` in place and returns it (for chaining convenience).
@@ -165,7 +182,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     case "user_message": {
       if (reconcileOptimisticUserMessage(state, event)) return;
-      if (hasUserMessageForActiveTurn(state, event)) return;
+      if (isRedundantTurnStartEcho(state, event)) return;
 
       state.messages.push({
         role: "user",
@@ -182,6 +199,17 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
           index: state.messages.length - 1,
         };
       }
+      return;
+    }
+
+    case "agent_notification": {
+      if (isRedundantTurnStartEcho(state, event)) return;
+
+      state.messages.push({
+        role: "agent_notification",
+        notification: event.notification,
+        timestamp: event.timestamp,
+      });
       return;
     }
 
@@ -215,13 +243,8 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     }
 
     case "message_queued": {
-      if (state.queuedMessages.some((m) => m.id === event.queuedMessageId)) return;
-      state.queuedMessages.push({
-        id: event.queuedMessageId,
-        role: "user",
-        content: event.content,
-        attachments: event.attachments,
-      });
+      if (state.queuedMessages.some((m) => m.id === event.message.id)) return;
+      state.queuedMessages.push(event.message);
       return;
     }
 
@@ -231,9 +254,8 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     }
 
     case "message_dequeued": {
-      removeQueuedMessage(state, event.queuedMessageId);
-      if (hasUserMessageForActiveTurn(state, event)) return;
-      state.messages.push({ role: "user", content: event.content });
+      removeQueuedMessage(state, event.message.id);
+      appendQueuedMessageToTranscript(state, event.message);
       return;
     }
 
@@ -379,6 +401,13 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       return;
     }
 
+    // ── Artifacts ─────────────────────────────────────────────────────
+
+    case "artifacts_patch": {
+      applyArtifactPatches(state, event.patches);
+      return;
+    }
+
     // ── Model ─────────────────────────────────────────────────────────
 
     case "model_changed":
@@ -452,6 +481,28 @@ function upsertCanvas(state: Session, canvas: Omit<SessionCanvas, "key" | "revis
   state.canvases = next;
 }
 
+function upsertArtifact(state: Session, path: string): void {
+  if (state.artifacts.includes(path)) return;
+  state.artifacts = [...state.artifacts, path];
+}
+
+function removeArtifact(state: Session, path: string): void {
+  const artifacts = state.artifacts.filter((artifact) => artifact !== path);
+  if (artifacts.length === state.artifacts.length) return;
+  state.artifacts = artifacts;
+}
+
+function applyArtifactPatches(state: Session, patches: SessionArtifactPatch[]): void {
+  for (const patch of patches) {
+    if (patch.type === "delete") {
+      removeArtifact(state, patch.path);
+      continue;
+    }
+
+    upsertArtifact(state, patch.path);
+  }
+}
+
 function findCanvasUpsertIndex(
   currentCanvases: SessionCanvas[],
   canvas: Omit<SessionCanvas, "key" | "revision">,
@@ -477,21 +528,37 @@ function findCanvasUpsertIndex(
 // Message helpers
 // ============================================================================
 
-function hasUserMessageForActiveTurn(
-  state: Session,
-  event: { content: string; turnId?: string },
-): boolean {
+function isRedundantTurnStartEcho(state: Session, event: { turnId?: string }): boolean {
   if (!event.turnId || event.turnId !== state.activeTurnId) return false;
 
-  // A live turn has one root user prompt. Server/user SDK echoes can arrive
-  // after the optimistic prompt and an empty assistant placeholder, but before
-  // any assistant content or tools make the turn distinct.
+  // This is not optimistic reconciliation. The runtime already emitted the
+  // canonical event that starts this turn; this only drops a later SDK
+  // transport echo of that same user prompt or agent notification while the
+  // turn is still in its opening segment.
   for (let i = state.messages.length - 1; i >= 0; i--) {
     const message = state.messages[i];
-    if (message.role === "user") return true;
-    if (message.content || message.toolCalls?.length) return false;
+    if (message.role === "user" || message.role === "agent_notification") return true;
+    if (message.role === "assistant" && (message.content || message.toolCalls?.length)) {
+      return false;
+    }
   }
   return false;
+}
+
+function appendQueuedMessageToTranscript(state: Session, message: QueuedMessage): void {
+  if (message.role === "agent_notification") {
+    state.messages.push({
+      role: "agent_notification",
+      notification: message.notification,
+    });
+    return;
+  }
+
+  state.messages.push({
+    role: "user",
+    content: message.content,
+    attachments: message.attachments,
+  });
 }
 
 /** Reconcile an incoming user_message with a previously optimistic one.
@@ -509,11 +576,7 @@ function reconcileOptimisticUserMessage(
     return false;
   }
 
-  const matchesPending =
-    event.clientMessageId !== undefined
-      ? event.clientMessageId === pending.clientMessageId
-      : event.content === existing.content;
-  if (!matchesPending) return false;
+  if (event.clientMessageId !== pending.clientMessageId) return false;
 
   const nextAttachments = event.attachments ?? existing.attachments;
   const nextTimestamp = event.timestamp ?? existing.timestamp;
@@ -523,7 +586,7 @@ function reconcileOptimisticUserMessage(
     existing.timestamp !== nextTimestamp
   ) {
     state.messages[pending.index] = {
-      ...existing,
+      role: "user",
       content: event.content,
       attachments: nextAttachments,
       timestamp: nextTimestamp,

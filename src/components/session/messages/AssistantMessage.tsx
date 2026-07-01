@@ -11,9 +11,11 @@ import { ToolCallMessage } from "./tools/ToolCallMessage";
 export function AssistantMessage({
   message,
   isStreaming,
+  isLast,
 }: {
   message: AssistantMessageType;
   isStreaming: boolean;
+  isLast: boolean;
 }) {
   const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
 
@@ -29,7 +31,7 @@ export function AssistantMessage({
           {/* Text content */}
           {message.content ? (
             <Streamdown
-              isAnimating={isStreaming}
+              isAnimating={isLast && isStreaming}
               plugins={{ code }}
               className="text-sm [&_p]:my-2 [&_pre]:my-2 [&_ul]:my-2 [&_ol]:my-2"
             >

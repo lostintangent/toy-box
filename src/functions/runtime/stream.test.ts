@@ -1,6 +1,60 @@
 import type { CopilotSession } from "@github/copilot-sdk";
 import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import { SessionStream } from "./stream";
+import { SessionStream, sendOrQueueSessionMessage } from "./stream";
+import * as realSnapshotCache from "../state/snapshotCache";
+import type { QueuedMessage } from "@/types";
+
+const realSnapshotCacheExports = { ...realSnapshotCache };
+
+function userMessage(content: string, id: string = crypto.randomUUID()): QueuedMessage {
+  return { id, role: "user", content };
+}
+
+function artifactEdit(path: string, id: string = crypto.randomUUID()): QueuedMessage {
+  return { id, role: "agent_notification", notification: { type: "artifact_edited", path } };
+}
+
+/** Mock the runtime modules stream.ts imports so tests can drive streams with
+ *  fake SDK sessions. Callers override the sessionCache and snapshotCache
+ *  behavior they need; the defaults fail loudly if an unexpected path is
+ *  taken, and the default snapshot cache is always empty. */
+function mockStreamRuntimeModules(
+  sessionCacheOverrides: Record<string, unknown> = {},
+  snapshotCacheOverrides: Record<string, unknown> = {},
+) {
+  mock.module("../state/sessionCache", () => ({
+    createSession: async () => {
+      throw new Error("createSession mock was not provided");
+    },
+    getOrResumeSession: async () => {
+      throw new Error("getOrResumeSession mock was not provided");
+    },
+    getCachedOrResumeSession: async () => {
+      throw new Error("getCachedOrResumeSession mock was not provided");
+    },
+    evictCachedSessionIfStale: () => false,
+    ...sessionCacheOverrides,
+  }));
+  mock.module("../state/snapshotCache", () => ({
+    ...realSnapshotCacheExports,
+    getCachedSnapshot: async () => undefined,
+    cacheSnapshot: () => {},
+    evictCachedSnapshot: () => {},
+    ...snapshotCacheOverrides,
+  }));
+  onTestFinished(() => {
+    mock.module("../state/snapshotCache", () => realSnapshotCacheExports);
+  });
+  mock.module("../state/unread", () => ({
+    markSessionRead: () => {},
+    markSessionUnread: () => {},
+  }));
+  mock.module("./broadcast", () => ({
+    emitSessionRunning: () => {},
+    emitSessionIdle: () => {},
+    updateSessionSummary: () => {},
+  }));
+}
 
 describe("SessionStream lifecycle", () => {
   test("close clears the queue, signals end-of-stream, and deregisters", () => {
@@ -9,8 +63,8 @@ describe("SessionStream lifecycle", () => {
     } as unknown as CopilotSession;
 
     const stream = SessionStream.getOrCreate("session-close-semantics", fakeSession);
-    stream.startTurn("go");
-    stream.addQueuedMessage({ role: "user", content: "queued" });
+    stream.startTurn(userMessage("go"));
+    stream.addQueuedMessage(userMessage("queued"));
 
     const received: Array<unknown> = [];
     stream.subscribe((event) => received.push(event));
@@ -29,7 +83,7 @@ describe("SessionStream lifecycle", () => {
     } as unknown as CopilotSession;
 
     const stream = SessionStream.getOrCreate("session-detach-semantics", fakeSession);
-    stream.startTurn("go");
+    stream.startTurn(userMessage("go"));
 
     const received: Array<unknown> = [];
     stream.subscribe((event) => received.push(event));
@@ -58,8 +112,8 @@ describe("SessionStream lifecycle", () => {
     } as unknown as CopilotSession;
 
     const stream = SessionStream.getOrCreate("session-drain", fakeSession);
-    stream.startTurn("first turn");
-    stream.addQueuedMessage({ id: "q1", role: "user", content: "second turn" });
+    stream.startTurn(userMessage("first turn"));
+    stream.addQueuedMessage(userMessage("second turn", "q1"));
 
     const received: Array<{ type: string } | null> = [];
     stream.subscribe((event) => received.push(event));
@@ -94,8 +148,8 @@ describe("SessionStream lifecycle", () => {
     } as unknown as CopilotSession;
 
     const stream = SessionStream.getOrCreate("session-drain-failure", fakeSession);
-    stream.startTurn("first turn");
-    stream.addQueuedMessage({ role: "user", content: "doomed follow-up" });
+    stream.startTurn(userMessage("first turn"));
+    stream.addQueuedMessage(userMessage("doomed follow-up"));
 
     sdkHandler!({ type: "session.idle", data: {} });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -113,12 +167,47 @@ describe("SessionStream lifecycle", () => {
     } as unknown as CopilotSession;
 
     const stream = SessionStream.getOrCreate("session-queue-remove", fakeSession);
-    stream.addQueuedMessage({ id: "q1", role: "user", content: "keep me" });
-    stream.addQueuedMessage({ id: "q2", role: "user", content: "cancel me" });
+    stream.addQueuedMessage(userMessage("keep me", "q1"));
+    stream.addQueuedMessage(userMessage("cancel me", "q2"));
 
     expect(stream.removeQueuedMessage("missing")).toBe(false);
     expect(stream.removeQueuedMessage("q2")).toBe(true);
     expect(stream.getQueuedMessages().map((m) => m.id)).toEqual(["q1"]);
+  });
+});
+
+describe("queued-message coalescing", () => {
+  test("collapses equivalent notifications and always queues normal prompts", async () => {
+    onTestFinished(() => {
+      SessionStream.close("session-coalesce");
+    });
+
+    const fakeSession = { on: () => () => {} } as unknown as CopilotSession;
+    const stream = SessionStream.getOrCreate("session-coalesce", fakeSession);
+
+    // Editing the same artifact twice collapses to a single nudge.
+    const planEdited = artifactEdit("/tmp/plan.md", "plan-edit");
+    await sendOrQueueSessionMessage({ sessionId: "session-coalesce", message: planEdited });
+    await sendOrQueueSessionMessage({ sessionId: "session-coalesce", message: planEdited });
+    expect(stream.getQueuedMessages()).toHaveLength(1);
+
+    // A different artifact is its own notification.
+    await sendOrQueueSessionMessage({
+      sessionId: "session-coalesce",
+      message: artifactEdit("/tmp/other.md", "other-edit"),
+    });
+    expect(stream.getQueuedMessages()).toHaveLength(2);
+
+    // Normal prompts never coalesce.
+    await sendOrQueueSessionMessage({
+      sessionId: "session-coalesce",
+      message: userMessage("hello", "hello-1"),
+    });
+    await sendOrQueueSessionMessage({
+      sessionId: "session-coalesce",
+      message: userMessage("hello", "hello-2"),
+    });
+    expect(stream.getQueuedMessages()).toHaveLength(4);
   });
 });
 
@@ -133,9 +222,9 @@ describe("SessionStream buffer", () => {
     } as unknown as CopilotSession;
 
     const stream = SessionStream.getOrCreate("session-buffer-since", fakeSession);
-    stream.startTurn("go");
-    stream.addQueuedMessage({ id: "q1", role: "user", content: "one" });
-    stream.addQueuedMessage({ id: "q2", role: "user", content: "two" });
+    stream.startTurn(userMessage("go"));
+    stream.addQueuedMessage(userMessage("one", "q1"));
+    stream.addQueuedMessage(userMessage("two", "q2"));
 
     const all = stream.getBufferSince();
     expect(all.map((e) => e.type)).toEqual(["user_message", "message_queued", "message_queued"]);
@@ -185,12 +274,12 @@ describe("SessionStream event IDs", () => {
       }) as unknown as CopilotSession;
 
     const first = SessionStream.getOrCreate("session-event-id-reuse", makeFakeSession());
-    first.startTurn("First run");
+    first.startTurn(userMessage("First run"));
     const firstEventId = first.getBufferSince()[0]?.eventId;
     first.detach();
 
     const second = SessionStream.getOrCreate("session-event-id-reuse", makeFakeSession());
-    second.startTurn("Second run");
+    second.startTurn(userMessage("Second run"));
     const secondEventId = second.getBufferSince()[0]?.eventId;
 
     expect(firstEventId).toEqual(expect.any(Number));
@@ -247,24 +336,7 @@ describe("createClientSessionStream", () => {
       on: () => () => {},
     } as unknown as CopilotSession;
 
-    mock.module("../state/sessionCache", () => ({
-      createSession: async () => {
-        throw new Error("createSession should not be used for reconnect");
-      },
-      getOrResumeSession: async () => {
-        throw new Error("getOrResumeSession should not be used for reconnect");
-      },
-    }));
-    mock.module("../state/unread", () => ({
-      markSessionRead: () => {},
-      markSessionUnread: () => {},
-    }));
-    mock.module("./broadcast", () => ({
-      emitSessionRunning: () => {},
-      emitSessionIdle: () => {},
-      emitSessionTouched: () => {},
-      updateSessionSummary: () => {},
-    }));
+    mockStreamRuntimeModules();
 
     const {
       SessionStream: ImportedSessionStream,
@@ -274,7 +346,7 @@ describe("createClientSessionStream", () => {
     const stream = ImportedSessionStream.getOrCreate("session-reconnect", fakeSession, {
       modelConfiguration: { model: "gpt-5" },
     });
-    stream.startTurn("Reconnect me");
+    stream.startTurn(userMessage("Reconnect me"));
 
     const iterator = importedCreateStream({ sessionId: "session-reconnect" });
     const first = await iterator.next();
@@ -299,24 +371,7 @@ describe("createClientSessionStream", () => {
       on: () => () => {},
     } as unknown as CopilotSession;
 
-    mock.module("../state/sessionCache", () => ({
-      createSession: async () => {
-        throw new Error("createSession should not be used for a stale draft retry");
-      },
-      getOrResumeSession: async () => {
-        throw new Error("getOrResumeSession should not be used for a stale draft retry");
-      },
-    }));
-    mock.module("../state/unread", () => ({
-      markSessionRead: () => {},
-      markSessionUnread: () => {},
-    }));
-    mock.module("./broadcast", () => ({
-      emitSessionRunning: () => {},
-      emitSessionIdle: () => {},
-      emitSessionTouched: () => {},
-      updateSessionSummary: () => {},
-    }));
+    mockStreamRuntimeModules();
 
     const {
       SessionStream: ImportedSessionStream,
@@ -326,7 +381,7 @@ describe("createClientSessionStream", () => {
     const stream = ImportedSessionStream.getOrCreate("session-draft-race", fakeSession, {
       modelConfiguration: { model: "gpt-5" },
     });
-    stream.startTurn("Original draft prompt", "client-1");
+    stream.startTurn(userMessage("Original draft prompt", "client-1"));
 
     const iterator = importedCreateStream({
       sessionId: "session-draft-race",
@@ -369,25 +424,9 @@ describe("createClientSessionStream", () => {
       send: sendMock,
     } as unknown as CopilotSession;
 
-    mock.module("../state/sessionCache", () => ({
-      createSession: async () => {
-        throw new Error("createSession should not be used for an idle historical session");
-      },
-      getOrResumeSession: async () => ({
-        session: fakeSession,
-        events: [],
-      }),
-    }));
-    mock.module("../state/unread", () => ({
-      markSessionRead: () => {},
-      markSessionUnread: () => {},
-    }));
-    mock.module("./broadcast", () => ({
-      emitSessionRunning: () => {},
-      emitSessionIdle: () => {},
-      emitSessionTouched: () => {},
-      updateSessionSummary: () => {},
-    }));
+    mockStreamRuntimeModules({
+      getOrResumeSession: async () => ({ session: fakeSession, events: [] }),
+    });
 
     const { createClientSessionStream: importedCreateStream } = await import("./stream");
 
@@ -412,6 +451,43 @@ describe("createClientSessionStream", () => {
       attachments: undefined,
     });
   });
+
+  test("closes and deregisters the stream when the first send fails", async () => {
+    onTestFinished(() => {
+      mock.restore();
+      SessionStream.close("session-first-send-failure");
+    });
+
+    const evictMock = mock((_sessionId: string, _error: unknown) => false);
+    const fakeSession = {
+      on: () => () => {},
+      send: async () => {
+        throw new Error("send exploded");
+      },
+    } as unknown as CopilotSession;
+
+    mockStreamRuntimeModules({
+      getOrResumeSession: async () => ({ session: fakeSession, events: [] }),
+      evictCachedSessionIfStale: evictMock,
+    });
+
+    const {
+      SessionStream: ImportedSessionStream,
+      createClientSessionStream: importedCreateStream,
+    } = await import("./stream");
+
+    const iterator = importedCreateStream({
+      sessionId: "session-first-send-failure",
+      prompt: "doomed prompt",
+    });
+
+    const first = await iterator.next();
+    expect(first.value).toMatchObject({ type: "user_message", content: "doomed prompt" });
+
+    await expect(iterator.next()).rejects.toThrow("send exploded");
+    expect(ImportedSessionStream.isRunning("session-first-send-failure")).toBe(false);
+    expect(evictMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("sendOrQueueSessionMessage", () => {
@@ -428,13 +504,13 @@ describe("sendOrQueueSessionMessage", () => {
     const stream = SessionStream.getOrCreate("session-queue-helper", fakeSession, {
       modelConfiguration: { model: "gpt-5" },
     });
-    stream.startTurn("Already running");
+    stream.startTurn(userMessage("Already running"));
 
     const { sendOrQueueSessionMessage: importedSendOrQueue } = await import("./stream");
 
     await importedSendOrQueue({
       sessionId: "session-queue-helper",
-      prompt: "Queue this follow-up",
+      message: userMessage("Queue this follow-up"),
     });
 
     expect(stream.getQueuedMessages()).toEqual([
@@ -457,39 +533,27 @@ describe("sendOrQueueSessionMessage", () => {
       on: () => () => {},
     } as unknown as CopilotSession;
 
-    mock.module("../state/sessionCache", () => ({
-      createSession: async () => {
-        throw new Error("createSession should not be used for an idle historical session");
-      },
-      getOrResumeSession: async () => ({
-        session: fakeSession,
-        events: [],
-      }),
-    }));
-    mock.module("../state/unread", () => ({
-      markSessionRead: () => {},
-      markSessionUnread: () => {},
-    }));
-    mock.module("./broadcast", () => ({
-      emitSessionRunning: () => {},
-      emitSessionIdle: () => {},
-      emitSessionTouched: () => {},
-      updateSessionSummary: () => {},
-    }));
+    mockStreamRuntimeModules({
+      getOrResumeSession: async () => ({ session: fakeSession, events: [] }),
+    });
 
     const { sendOrQueueSessionMessage: importedSendOrQueue, SessionStream: ImportedSessionStream } =
       await import("./stream");
 
     await importedSendOrQueue({
       sessionId: "session-start-helper",
-      prompt: "Start this session again",
-      attachments: [
-        {
-          displayName: "image.png",
-          base64: "aW1hZ2U=",
-          mimeType: "image/png",
-        },
-      ],
+      message: {
+        id: "start-helper",
+        role: "user",
+        content: "Start this session again",
+        attachments: [
+          {
+            displayName: "image.png",
+            base64: "aW1hZ2U=",
+            mimeType: "image/png",
+          },
+        ],
+      },
     });
 
     expect(ImportedSessionStream.get("session-start-helper")).toBeDefined();
@@ -505,18 +569,155 @@ describe("sendOrQueueSessionMessage", () => {
       ],
     });
   });
+
+  test("seeds a resumed stream from a cached snapshot without fetching history", async () => {
+    onTestFinished(() => {
+      mock.restore();
+      SessionStream.close("session-snapshot-seed");
+    });
+
+    const sendMock = mock(async (_message: { prompt: string }) => {});
+    const fakeSession = {
+      send: sendMock,
+      on: () => () => {},
+    } as unknown as CopilotSession;
+
+    mockStreamRuntimeModules(
+      {
+        getOrResumeSession: async () => {
+          throw new Error("snapshot-seeded streams must not fetch history");
+        },
+        getCachedOrResumeSession: async () => fakeSession,
+      },
+      {
+        getCachedSnapshot: async () => ({
+          id: "session-snapshot-seed",
+          messages: [
+            { role: "user", content: "earlier prompt" },
+            { role: "assistant", content: "earlier answer" },
+          ],
+          queuedMessages: [],
+          status: "idle",
+          reasoningContent: "",
+        }),
+      },
+    );
+
+    const { sendOrQueueSessionMessage: importedSendOrQueue, SessionStream: ImportedSessionStream } =
+      await import("./stream");
+
+    await importedSendOrQueue({
+      sessionId: "session-snapshot-seed",
+      message: userMessage("follow-up question"),
+    });
+
+    const stream = ImportedSessionStream.get("session-snapshot-seed");
+    expect(stream).toBeDefined();
+    expect(
+      stream!
+        .getSessionState()
+        .messages.map((message) => ("content" in message ? message.content : "")),
+    ).toEqual(["earlier prompt", "earlier answer", "follow-up question"]);
+    expect(sendMock).toHaveBeenCalledWith({
+      prompt: "follow-up question",
+      attachments: undefined,
+    });
+  });
+
+  test("retries once when a snapshot-seeded send hits a stale cached handle", async () => {
+    onTestFinished(() => {
+      mock.restore();
+      SessionStream.close("session-snapshot-stale");
+    });
+
+    const staleSend = mock(async () => {
+      throw new Error("Session not found: session-snapshot-stale");
+    });
+    const freshSend = mock(async (_message: { prompt: string }) => {});
+    const staleSession = { on: () => () => {}, send: staleSend } as unknown as CopilotSession;
+    const freshSession = { on: () => () => {}, send: freshSend } as unknown as CopilotSession;
+
+    // First resume returns the stale cached handle; after eviction the next
+    // resume is fresh.
+    let resumeCount = 0;
+    mockStreamRuntimeModules(
+      {
+        getCachedOrResumeSession: async () => (resumeCount++ === 0 ? staleSession : freshSession),
+        evictCachedSessionIfStale: (_sessionId: string, error: unknown) =>
+          error instanceof Error && error.message.toLowerCase().includes("session not found"),
+      },
+      {
+        getCachedSnapshot: async () => ({
+          id: "session-snapshot-stale",
+          messages: [
+            { role: "user", content: "earlier prompt" },
+            { role: "assistant", content: "earlier answer" },
+          ],
+          queuedMessages: [],
+          status: "idle",
+          reasoningContent: "",
+        }),
+      },
+    );
+
+    const { sendOrQueueSessionMessage: importedSendOrQueue, SessionStream: ImportedSessionStream } =
+      await import("./stream");
+
+    await importedSendOrQueue({
+      sessionId: "session-snapshot-stale",
+      message: userMessage("retry me"),
+    });
+
+    expect(staleSend).toHaveBeenCalledTimes(1);
+    expect(freshSend).toHaveBeenCalledTimes(1);
+    // The healed stream is live, snapshot-seeded, and carries the retried turn.
+    const stream = ImportedSessionStream.get("session-snapshot-stale");
+    expect(
+      stream!
+        .getSessionState()
+        .messages.map((message) => ("content" in message ? message.content : "")),
+    ).toEqual(["earlier prompt", "earlier answer", "retry me"]);
+  });
 });
 
 describe("SessionStream.waitForClose", () => {
+  test("answers from a cached snapshot without fetching history when no stream is running", async () => {
+    onTestFinished(() => {
+      mock.restore();
+    });
+
+    mockStreamRuntimeModules(
+      {
+        getOrResumeSession: async () => {
+          throw new Error("waitForClose with a cached snapshot must not fetch history");
+        },
+      },
+      {
+        getCachedSnapshot: async () => ({
+          id: "session-snapshot-wait",
+          messages: [
+            { role: "user", content: "do the thing" },
+            { role: "assistant", content: "Cached result" },
+          ],
+          queuedMessages: [],
+          status: "idle",
+          reasoningContent: "",
+        }),
+      },
+    );
+    const { SessionStream: ImportedSessionStream } = await import("./stream");
+
+    await expect(ImportedSessionStream.waitForClose("session-snapshot-wait")).resolves.toBe(
+      "Cached result",
+    );
+  });
+
   test("falls back to persisted history when no stream is running for the session", async () => {
     onTestFinished(() => {
       mock.restore();
     });
 
-    mock.module("../state/sessionCache", () => ({
-      createSession: async () => {
-        throw new Error("createSession should not be used");
-      },
+    mockStreamRuntimeModules({
       getOrResumeSession: async () => ({
         session: {} as CopilotSession,
         events: [
@@ -526,17 +727,7 @@ describe("SessionStream.waitForClose", () => {
           },
         ],
       }),
-    }));
-    mock.module("../state/unread", () => ({
-      markSessionRead: () => {},
-      markSessionUnread: () => {},
-    }));
-    mock.module("./broadcast", () => ({
-      emitSessionRunning: () => {},
-      emitSessionIdle: () => {},
-      emitSessionTouched: () => {},
-      updateSessionSummary: () => {},
-    }));
+    });
     const { SessionStream: ImportedSessionStream } = await import("./stream");
     await expect(ImportedSessionStream.waitForClose("session-not-running")).resolves.toBe(
       "Persisted result",

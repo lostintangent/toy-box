@@ -2,6 +2,7 @@
 
 exports[`history pipeline golden replay replaying a recorded session produces the final session state 1`] = `
 {
+  "artifacts": [],
   "linkedSessionIds": [],
   "messages": [
     {

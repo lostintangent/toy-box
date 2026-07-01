@@ -1,3 +1,7 @@
+## 📅 v0.1.13 (07/02/26)
+
+- Add initial support for artifact panes (markdown and HTML)
+
 ## 📅 v0.1.12 (06/21/26)
 
 - Add initial support for canvas panes

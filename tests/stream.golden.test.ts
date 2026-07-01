@@ -1,6 +1,11 @@
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { describe, expect, mock, test } from "bun:test";
 import type { SessionEvent } from "@/types";
+import {
+  sessionSeedFromSnapshot,
+  toSessionSnapshot,
+  type Session,
+} from "@/lib/session/sessionReducer";
 import { loadSessionFixture } from "./helpers";
 
 // Golden replay of the full stream lifetime: real v1 CLI events from the
@@ -31,6 +36,7 @@ mock.module("@/functions/state/sessionCache", () => ({
   getOrResumeSession: unused,
   getCachedOrResumeSession: unused,
   evictCachedSession: () => {},
+  evictCachedSessionIfStale: () => false,
   hasCachedSession: () => false,
   deleteSession: unused,
 }));
@@ -43,8 +49,6 @@ mock.module("@/functions/state/unread", () => ({
 mock.module("@/functions/runtime/broadcast", () => ({
   emitSessionRunning: (id: string) => sideEffects.push(`running:${id}`),
   emitSessionIdle: (id: string) => sideEffects.push(`idle:${id}`),
-  emitSessionTouched: (id: string, opts?: { summary?: string }) =>
-    sideEffects.push(`touched:${id}:${opts?.summary ?? ""}`),
   updateSessionSummary: (id: string, summary: string) =>
     sideEffects.push(`summary:${id}:${summary}`),
   emitSessionsUpdate: () => {},
@@ -100,7 +104,7 @@ describe("stream golden replay", () => {
     stream.subscribe((event) => received.push(normalize(event)));
 
     // Turn 1: explicit start + full fixture replay through the SDK listener.
-    stream.startTurn("kick off the reviews", "client-1");
+    stream.startTurn({ id: "client-1", role: "user", content: "kick off the reviews" });
     for (const event of await loadSessionFixture("subagents")) {
       sdkHandler!(event);
     }
@@ -159,5 +163,84 @@ describe("stream golden replay", () => {
           : state.lastSeenEventId,
       activeTurnId: state.activeTurnId ? turnIds.get(state.activeTurnId) : state.activeTurnId,
     }).toMatchSnapshot();
+  });
+
+  test("a snapshot-seeded stream converges with an uninterrupted stream across turns", async () => {
+    // The same two turns travel two roads: one stream that lives through
+    // both, and a stream that closes cleanly after turn 1 (the snapshot capture
+    // point) and is reborn seeded from its snapshot — the reply-to-idle-
+    // session path. Both must reduce to identical session state.
+    const fixture = await loadSessionFixture("subagents");
+
+    type DrivenStream = {
+      stream: ReturnType<typeof SessionStream.getOrCreate>;
+      emit: (event: SdkSessionEvent) => void;
+    };
+
+    const driveStream = (sessionId: string, initialState?: Partial<Session>): DrivenStream => {
+      let handler: ((event: SdkSessionEvent) => void) | undefined;
+      const fakeSession = {
+        on: (h: (event: SdkSessionEvent) => void) => {
+          handler = h;
+          return () => {};
+        },
+        send: async () => {},
+        setModel: async () => {},
+      } as unknown as CopilotSession;
+
+      return {
+        stream: SessionStream.getOrCreate(sessionId, fakeSession, initialState),
+        emit: (event) => handler!(event),
+      };
+    };
+
+    const runTurnOne = async ({ stream, emit }: DrivenStream) => {
+      stream.startTurn({ id: "client-1", role: "user", content: "kick off the reviews" });
+      for (const event of fixture) {
+        emit(event);
+      }
+      emit(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "Wrapping up." } }));
+    };
+
+    const runTurnTwo = async ({ stream, emit }: DrivenStream) => {
+      stream.startTurn({ id: "queued-1", role: "user", content: "now fix the findings" });
+      emit(sdkEvent({ type: "assistant.turn_start", data: {} }));
+      emit(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "On it." } }));
+      emit(sdkEvent({ type: "session.idle", data: {} }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    const comparable = (state: Session): unknown => ({
+      ...state,
+      pendingToolCalls: [...state.pendingToolCalls.entries()],
+      lastSeenEventId: undefined,
+      activeTurnId: undefined,
+    });
+
+    // Road 1: both turns on one uninterrupted stream.
+    const uninterrupted = driveStream("golden-uninterrupted");
+    await runTurnOne(uninterrupted);
+    await runTurnTwo(uninterrupted);
+
+    // Road 2: turn 1 closes cleanly, capturing the normalized final state.
+    const interrupted = driveStream("golden-interrupted");
+    await runTurnOne(interrupted);
+    interrupted.emit(sdkEvent({ type: "session.idle", data: {} }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(SessionStream.isRunning("golden-interrupted")).toBe(false);
+
+    const capturedSnapshot = toSessionSnapshot(
+      "golden-interrupted",
+      interrupted.stream.getSessionState(),
+    );
+
+    // A new stream for the same session, seeded from the snapshot exactly as
+    // createOrResumePromptStream does on a cache hit, runs turn 2.
+    const seeded = driveStream("golden-interrupted", sessionSeedFromSnapshot(capturedSnapshot));
+    await runTurnTwo(seeded);
+
+    expect(comparable(seeded.stream.getSessionState())).toEqual(
+      comparable(uninterrupted.stream.getSessionState()),
+    );
   });
 });

@@ -8,7 +8,6 @@ function mockBroadcast(overrides: Record<string, unknown> = {}) {
     emitSessionIdle: () => {},
     emitSessionRead: () => {},
     emitSessionRunning: () => {},
-    emitSessionTouched: () => {},
     emitSessionUnread: () => {},
     updateSessionSummary: () => {},
     ...overrides,
@@ -24,6 +23,10 @@ function mockSessionCache(overrides: Record<string, unknown>) {
     getOrResumeSession: async () => {
       throw new Error("getOrResumeSession mock was not provided");
     },
+    getCachedOrResumeSession: async () => {
+      throw new Error("getCachedOrResumeSession mock was not provided");
+    },
+    evictCachedSessionIfStale: () => false,
     ...overrides,
   }));
 }
@@ -105,12 +108,11 @@ describe("sessionLauncher", () => {
     });
   });
 
-  test("createAndStartSession cleans up the stream when sending the initial prompt fails", async () => {
+  test("createAndStartSession closes the stream when sending the initial prompt fails", async () => {
     const sendMock = mock(async (_message: { prompt: string }) => {});
     sendMock.mockRejectedValue(new Error("boom"));
-    const startTurnMock = mock((_prompt: string) => {});
-    const finishStreamMock = mock(() => {});
-    const detachMock = mock(() => {});
+    const startTurnMock = mock(() => {});
+    const closeMock = mock(() => {});
 
     mockSessionCache({
       createSession: async () =>
@@ -126,8 +128,7 @@ describe("sessionLauncher", () => {
     streamModule.SessionStream.getOrCreate = (() =>
       ({
         startTurn: startTurnMock,
-        finishStream: finishStreamMock,
-        detach: detachMock,
+        close: closeMock,
       }) as unknown as SessionStream) as typeof originalGetOrCreate;
     onTestFinished(() => {
       streamModule.SessionStream.getOrCreate = originalGetOrCreate;
@@ -143,10 +144,14 @@ describe("sessionLauncher", () => {
       }),
     ).rejects.toThrow("boom");
 
-    expect(startTurnMock).toHaveBeenCalledWith("Kick off a failing companion session");
+    expect(startTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "user",
+        content: "Kick off a failing companion session",
+      }),
+    );
     expect(sendMock).toHaveBeenCalledWith({ prompt: "Kick off a failing companion session" });
-    expect(finishStreamMock).toHaveBeenCalledTimes(1);
-    expect(detachMock).toHaveBeenCalledTimes(1);
+    expect(closeMock).toHaveBeenCalledTimes(1);
   });
 
   test("createManagedSession forwards parent session metadata", async () => {

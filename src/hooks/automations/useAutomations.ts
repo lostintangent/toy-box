@@ -133,7 +133,7 @@ export function useAutomations({
       setKnownRunningAutomationIds((current) => addAutomationId(current, automationId));
     },
     onSuccess: ({ sessionId, started }, automationId) => {
-      // Reset the detail cache to an empty session so the SessionView's
+      // Reset the detail cache to an empty session so the SessionPane's
       // sync effect initializes from an empty snapshot, clearing local mutable
       // state. This avoids briefly showing the previous run's messages
       // when the same session ID is reused.

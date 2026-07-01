@@ -18,6 +18,8 @@ export type FileDiff = {
   hunks: DiffHunk[];
 };
 
+export type PatchTouchedFile = Pick<FileDiff, "path" | "status">;
+
 type FileDraft = FileDiff & {
   oldPath?: string;
   newPath?: string;
@@ -186,6 +188,82 @@ export function parsePatch(patch: string, cwd?: string): FileDiff[] {
 
   commitFile();
   return files;
+}
+
+export function parsePatchTouchedFiles(patch: string, cwd?: string): PatchTouchedFile[] {
+  const files = new Map<string, FileDiff["status"]>();
+  let oldPath: string | undefined;
+  let newPath: string | undefined;
+  let isInHunk = false;
+
+  function addFile(path: string, status: FileDiff["status"]) {
+    if (!path || path === DEV_NULL) return;
+    files.delete(path);
+    files.set(path, status);
+  }
+
+  function commitUnifiedFile() {
+    if (!oldPath && !newPath) return;
+
+    addFile(displayPathFromPaths(oldPath, newPath), statusFromPaths(oldPath, newPath));
+    oldPath = undefined;
+    newPath = undefined;
+  }
+
+  for (const line of patch.split("\n")) {
+    const applyPatchFile = readApplyPatchFile(line, cwd);
+    if (applyPatchFile) {
+      commitUnifiedFile();
+      addFile(applyPatchFile.path, applyPatchFile.status);
+      isInHunk = false;
+      continue;
+    }
+
+    if (line.startsWith("diff --git ")) {
+      commitUnifiedFile();
+      isInHunk = false;
+      continue;
+    }
+
+    if (line.startsWith("@@")) {
+      isInHunk = true;
+      continue;
+    }
+
+    if (isInHunk) continue;
+
+    if (line.startsWith("--- ")) {
+      oldPath = normalizeDiffPath(line.slice(4), cwd);
+      continue;
+    }
+
+    if (line.startsWith("+++ ")) {
+      newPath = normalizeDiffPath(line.slice(4), cwd);
+    }
+  }
+
+  commitUnifiedFile();
+
+  return Array.from(files, ([path, status]) => ({ path, status }));
+}
+
+function readApplyPatchFile(line: string, cwd?: string): PatchTouchedFile | undefined {
+  const match = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(line);
+  if (!match) return undefined;
+
+  const path = normalizeDiffPath(match[2], cwd);
+  if (!path || path === DEV_NULL) return undefined;
+
+  return {
+    path,
+    status: statusFromApplyPatchVerb(match[1] as "Add" | "Update" | "Delete"),
+  };
+}
+
+function statusFromApplyPatchVerb(verb: "Add" | "Update" | "Delete"): FileDiff["status"] {
+  if (verb === "Add") return "added";
+  if (verb === "Delete") return "deleted";
+  return "modified";
 }
 
 function getEditFileDiffs(toolCall: ToolCall): FileDiff[] {

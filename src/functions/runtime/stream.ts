@@ -19,19 +19,24 @@
 // methods — never reaching into internal fields directly.
 
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import { createSession, getOrResumeSession } from "../state/sessionCache";
-import { markSessionUnread, markSessionRead } from "../state/unread";
 import {
-  emitSessionRunning,
-  emitSessionIdle,
-  emitSessionTouched,
-  updateSessionSummary,
-} from "./broadcast";
+  createSession,
+  evictCachedSessionIfStale,
+  getCachedOrResumeSession,
+  getOrResumeSession,
+} from "../state/sessionCache";
+import { markSessionUnread, markSessionRead } from "../state/unread";
+import { notificationCoalesceKey } from "@/lib/session/agentNotifications";
+import { encodeSdkAgentNotification } from "@/functions/sdk/agentNotificationCodec";
+import { emitSessionRunning, emitSessionIdle, updateSessionSummary } from "./broadcast";
 import {
   applySessionEvent,
   createInitialSession,
   prepareSessionForNextTurn,
+  sessionSeedFromSnapshot,
+  toSessionSnapshot,
 } from "@/lib/session/sessionReducer";
+import { cacheSnapshot, getCachedSnapshot } from "../state/snapshotCache";
 import {
   createProjectionState,
   getSdkMetadataPatch,
@@ -64,9 +69,9 @@ export type SessionStreamConfig = {
 
 export type SendOrQueueSessionMessageOptions = Omit<
   SessionStreamConfig,
-  "prompt" | "afterEventId"
+  "prompt" | "afterEventId" | "attachments" | "modelConfiguration"
 > & {
-  prompt: string;
+  message: QueuedMessage;
 };
 
 type SessionStreamSubscriber = (event: SessionEvent | null) => void;
@@ -111,14 +116,20 @@ export async function* createClientSessionStream(
     return;
   }
 
-  const promptOptions: SendOrQueueSessionMessageOptions = {
+  const messageOptions: SendOrQueueSessionMessageOptions = {
     ...options,
-    prompt: options.prompt,
+    message: {
+      id: options.clientMessageId ?? crypto.randomUUID(),
+      role: "user",
+      content: options.prompt,
+      attachments: options.attachments,
+      modelConfiguration: options.modelConfiguration,
+    },
   };
 
   if (stream) {
     if (!options.startNew) {
-      queuePromptForNextTurn(stream, promptOptions);
+      queueMessageForNextTurn(stream, messageOptions);
       return;
     }
 
@@ -128,8 +139,8 @@ export async function* createClientSessionStream(
     return;
   }
 
-  const runtime = await createOrResumePromptStream(promptOptions);
-  yield* streamPromptTurn(runtime, promptOptions);
+  const runtime = await createOrResumePromptStream(messageOptions);
+  yield* streamMessageTurn(runtime, messageOptions);
 }
 
 /** Delivers a prompt from a background/tool caller. No client is waiting for
@@ -147,12 +158,23 @@ export async function sendOrQueueSessionMessage(
       return;
     }
 
-    queuePromptForNextTurn(existing, options);
+    queueMessageForNextTurn(existing, options);
     return;
   }
 
-  const { stream, sdkSession } = await createOrResumePromptStream(options);
-  await startTurnAndSendPrompt(stream, sdkSession, options);
+  try {
+    await startPromptTurn(options);
+  } catch (error) {
+    // A stale cached SDK handle (possible on the snapshot-seed path, which
+    // skips the replay path's getEvents probe) surfaces as a send failure
+    // after the send's catch evicted it and closed the stream. Background
+    // senders have no user to retry, so rebuild once — the resume is fresh by
+    // construction and the cached snapshot is still valid (the log never
+    // changed).
+    if (!evictCachedSessionIfStale(options.sessionId, error)) throw error;
+
+    await startPromptTurn(options);
+  }
 }
 
 function attachToRuntimeStream(
@@ -175,15 +197,33 @@ async function createOrResumePromptStream(
 ): Promise<PromptStreamRuntime> {
   if (options.startNew) {
     const sdkSession = await createSession(options.sessionId, {
-      modelConfiguration: options.modelConfiguration,
+      modelConfiguration: modelConfigurationForMessage(options.message),
       directory: options.directory,
       useWorktree: options.useWorktree,
     });
     return {
       sdkSession,
       stream: SessionStream.getOrCreate(options.sessionId, sdkSession, {
-        modelConfiguration: options.modelConfiguration,
+        modelConfiguration: modelConfigurationForMessage(options.message),
       }),
+    };
+  }
+
+  // A fresh cached snapshot is the same state a history replay would produce
+  // — captured from the live reducer at clean close, or by an actual replay
+  // on a cold read — so seed the stream from it and skip the SDK history
+  // fetch and replay. Any doubt (no entry, stale or missing log, expired)
+  // falls through to the replay path below.
+  const cachedSnapshot = await getCachedSnapshot(options.sessionId);
+  if (cachedSnapshot) {
+    const sdkSession = await getCachedOrResumeSession(options.sessionId);
+    return {
+      sdkSession,
+      stream: SessionStream.getOrCreate(
+        options.sessionId,
+        sdkSession,
+        sessionSeedFromSnapshot(cachedSnapshot),
+      ),
     };
   }
 
@@ -198,48 +238,85 @@ async function createOrResumePromptStream(
   };
 }
 
-function streamPromptTurn(
+/** Build the prompt-stream runtime and send the message as a new turn — one
+ *  complete background send attempt. */
+async function startPromptTurn(options: SendOrQueueSessionMessageOptions): Promise<void> {
+  const { stream, sdkSession } = await createOrResumePromptStream(options);
+  await startTurnAndSendMessage(stream, sdkSession, options);
+}
+
+function streamMessageTurn(
   runtime: PromptStreamRuntime,
   options: SendOrQueueSessionMessageOptions,
 ): AsyncGenerator<SessionEvent> {
   return yieldStreamEvents(runtime.stream, {
     replayBuffer: false,
-    afterSubscribe: () => startTurnAndSendPrompt(runtime.stream, runtime.sdkSession, options),
+    afterSubscribe: () => startTurnAndSendMessage(runtime.stream, runtime.sdkSession, options),
   });
 }
 
-function queuePromptForNextTurn(
+function queueMessageForNextTurn(
   stream: SessionStream,
   options: SendOrQueueSessionMessageOptions,
 ): void {
-  stream.addQueuedMessage({
-    role: "user",
-    content: options.prompt,
-    attachments: options.attachments,
-    modelConfiguration: options.modelConfiguration,
-  });
+  // Coalesce equivalent notifications (e.g. repeated edits to one artifact) so the agent
+  // isn't nudged twice for the same thing. Normal prompts have no key and pass through.
+  const coalesceKey = coalesceKeyForMessage(options.message);
+  if (
+    coalesceKey &&
+    stream.getQueuedMessages().some((message) => coalesceKeyForMessage(message) === coalesceKey)
+  ) {
+    return;
+  }
+
+  stream.addQueuedMessage(options.message);
 }
 
-async function startTurnAndSendPrompt(
+function coalesceKeyForMessage(message: QueuedMessage): string | undefined {
+  return message.role === "agent_notification"
+    ? notificationCoalesceKey(message.notification)
+    : undefined;
+}
+
+async function startTurnAndSendMessage(
   stream: SessionStream,
   sdkSession: CopilotSession,
   options: SendOrQueueSessionMessageOptions,
 ): Promise<void> {
-  stream.startTurn(options.prompt, options.clientMessageId);
+  stream.startTurn(options.message);
 
-  if (options.modelConfiguration?.model) {
-    await stream.setModel(options.modelConfiguration);
+  const modelConfiguration = modelConfigurationForMessage(options.message);
+  if (modelConfiguration?.model) {
+    await stream.setModel(modelConfiguration);
   }
 
   try {
     await sdkSession.send({
-      prompt: options.prompt,
-      attachments: toSdkAttachmentBlobs(options.attachments),
+      prompt: sdkPromptForMessage(options.message),
+      attachments: toSdkAttachmentBlobs(attachmentsForMessage(options.message)),
     });
   } catch (error) {
-    stream.finishStream();
+    // The turn never started on the SDK: fully close (not just finish) so no
+    // dead stream stays registered, and drop the session handle if the SDK
+    // no longer knows the session so a retry resumes fresh.
+    evictCachedSessionIfStale(stream.sessionId, error);
+    stream.close();
     throw error;
   }
+}
+
+function sdkPromptForMessage(message: QueuedMessage): string {
+  return message.role === "agent_notification"
+    ? encodeSdkAgentNotification(message.notification)
+    : message.content;
+}
+
+function attachmentsForMessage(message: QueuedMessage): Attachment[] | undefined {
+  return message.role === "user" ? message.attachments : undefined;
+}
+
+function modelConfigurationForMessage(message: QueuedMessage): ModelConfiguration | undefined {
+  return message.role === "user" ? message.modelConfiguration : undefined;
 }
 
 type StreamSubscriptionOptions = {
@@ -361,6 +438,11 @@ export class SessionStream {
   static async waitForClose(sessionId: string, timeoutMs?: number): Promise<string> {
     const stream = SessionStream.get(sessionId);
     if (!stream) {
+      const cachedSnapshot = await getCachedSnapshot(sessionId);
+      if (cachedSnapshot) {
+        return getLastAssistantResponse(cachedSnapshot.messages);
+      }
+
       const { events } = await getOrResumeSession(sessionId);
       return getLastAssistantResponse(
         (await initializeSessionStateFromSdkHistory(events)).messages,
@@ -376,8 +458,6 @@ export class SessionStream {
 
   // Event buffer
   #buffer: SessionEvent[] = [];
-  #lastEventId: number | undefined;
-  #announcedRunning = false;
 
   // Subscribers
   readonly #subscribers = new Set<SessionStreamSubscriber>();
@@ -409,7 +489,7 @@ export class SessionStream {
 
   // ── Lifecycle ────────────────────────────────────────────────────────
   // Teardown composes from two primitives so each step exists exactly once:
-  //   finishStream = unread + buffer cleanup (keeps the runtime alive)
+  //   finishStream = unread + replay cleanup + idle broadcast (keeps the runtime alive)
   //   detach       = waiters + SDK listener + registry (no lifecycle events)
   //   close        = finishStream + queue clear + end-of-stream + detach
 
@@ -436,11 +516,12 @@ export class SessionStream {
     SessionStream.streams.delete(this.sessionId);
   }
 
-  /** Finish the active stream lifecycle: clear the reconnect buffer and mark
-   *  read/unread based on whether anyone was watching. */
+  /** Finish the active stream lifecycle: mark read/unread, clear replay state,
+   *  and broadcast idle. */
   finishStream(): void {
     this.#updateUnreadOnStreamEnd();
-    this.#clearBuffer();
+    this.#clearReplayBuffer();
+    emitSessionIdle(this.sessionId);
   }
 
   // ── Model ───────────────────────────────────────────────────────────
@@ -466,41 +547,15 @@ export class SessionStream {
 
   // ── Buffer ───────────────────────────────────────────────────────────
 
-  /** Announce running/idle to the session list exactly once per transition. */
-  #setAnnouncedRunning(running: boolean): void {
-    if (this.#announcedRunning === running) return;
-    this.#announcedRunning = running;
-    if (running) {
-      emitSessionRunning(this.sessionId);
-    } else {
-      emitSessionIdle(this.sessionId);
-    }
-  }
-
-  /** Prepare buffer for a new turn. Emits "running" on the first call. */
-  #prepareBuffer(summaryHint?: string): void {
-    this.#buffer.length = 0;
-    this.#setAnnouncedRunning(true);
-    emitSessionTouched(this.sessionId, { summary: summaryHint });
-  }
-
   #appendToBuffer(event: SessionEvent): void {
-    if (event.eventId !== undefined) {
-      this.#lastEventId = event.eventId;
-    }
-
     this.#buffer.push(event);
     if (this.#buffer.length > MAX_BUFFER_EVENTS) {
       this.#buffer.splice(0, this.#buffer.length - MAX_BUFFER_EVENTS);
     }
-
-    this.#setAnnouncedRunning(true);
   }
 
-  #clearBuffer(): void {
+  #clearReplayBuffer(): void {
     this.#buffer.length = 0;
-    this.#lastEventId = undefined;
-    this.#setAnnouncedRunning(false);
   }
 
   /** Snapshot of buffered events after the given cursor. Returns a copy so
@@ -517,31 +572,19 @@ export class SessionStream {
     return this.#sessionState;
   }
 
-  getLastEventId(): number | undefined {
-    return this.#lastEventId;
-  }
-
   // ── Queue ────────────────────────────────────────────────────────────
 
   getQueuedMessages(): QueuedMessage[] {
     return this.#sessionState.queuedMessages;
   }
 
-  addQueuedMessage(message: Omit<QueuedMessage, "id"> & { id?: string }): QueuedMessage {
-    const queued: QueuedMessage = {
-      ...message,
-      role: "user",
-      id: message.id ?? crypto.randomUUID(),
-    };
-
+  addQueuedMessage(message: QueuedMessage): QueuedMessage {
     this.#emit({
       type: "message_queued",
-      queuedMessageId: queued.id,
-      content: queued.content,
-      attachments: queued.attachments,
+      message,
     });
 
-    return queued;
+    return message;
   }
 
   removeQueuedMessage(queuedMessageId: string): boolean {
@@ -560,6 +603,7 @@ export class SessionStream {
 
   subscribe(fn: SessionStreamSubscriber): () => void {
     this.#subscribers.add(fn);
+
     return () => {
       this.#subscribers.delete(fn);
       if (this.#isIdle()) this.detach();
@@ -640,12 +684,21 @@ export class SessionStream {
 
   /** Begin a new turn: reset state, emit the user message, and prepare
    *  the buffer for incoming assistant events. */
-  startTurn(prompt: string, clientMessageId?: string): void {
-    this.#prepareForNewTurn(prompt);
+  startTurn(message: QueuedMessage): void {
+    this.#prepareForNewTurn();
+    if (message.role === "agent_notification") {
+      this.#emit({
+        type: "agent_notification",
+        notification: message.notification,
+      });
+      return;
+    }
+
     this.#emit({
       type: "user_message",
-      content: prompt,
-      clientMessageId,
+      content: message.content,
+      attachments: message.attachments,
+      clientMessageId: message.id,
     });
   }
 
@@ -657,10 +710,13 @@ export class SessionStream {
     this.#broadcastToSubscribers(decorated);
   }
 
-  #prepareForNewTurn(summaryHint?: string): void {
-    this.#prepareBuffer(summaryHint);
+  #prepareForNewTurn(): void {
+    this.#clearReplayBuffer();
+
     this.#currentTurnId = this.#generateTurnId();
     prepareSessionForNextTurn(this.#sessionState);
+
+    emitSessionRunning(this.sessionId);
   }
 
   #generateTurnId(): string {
@@ -705,6 +761,19 @@ export class SessionStream {
     }
   }
 
+  // ── Snapshot capture ────────────────────────────────────────────────
+
+  /** Cache the final reduced state at the clean-close funnel — the one
+   *  moment every successful turn sequence passes through with nothing
+   *  pending. Normalizes with the reducer's idempotent end event first so
+   *  the cached snapshot cannot disagree with a cold replay of the same
+   *  log. Abort/error closes skip capture on purpose: their live state may
+   *  hold streamed content that was never persisted. */
+  #cacheFinalSnapshot(): void {
+    applySessionEvent(this.#sessionState, { type: "end", reason: "idle" });
+    cacheSnapshot(this.sessionId, toSessionSnapshot(this.sessionId, this.#sessionState));
+  }
+
   // ── Queue draining ──────────────────────────────────────────────────
 
   async #drainMessageQueue(): Promise<void> {
@@ -714,28 +783,29 @@ export class SessionStream {
     try {
       const queuedMessage = this.#sessionState.queuedMessages[0];
       if (!queuedMessage) {
+        this.#cacheFinalSnapshot();
         this.close();
         return;
       }
 
-      this.#prepareForNewTurn(queuedMessage.content);
+      this.#prepareForNewTurn();
 
       // Emit removes the message from #sessionState.queuedMessages via applySessionEvent.
       this.#emit({
         type: "message_dequeued",
-        content: queuedMessage.content,
-        queuedMessageId: queuedMessage.id,
+        message: queuedMessage,
       });
 
-      const attachments = toSdkAttachmentBlobs(queuedMessage.attachments);
+      const attachments = toSdkAttachmentBlobs(attachmentsForMessage(queuedMessage));
+      const modelConfiguration = modelConfigurationForMessage(queuedMessage);
 
-      if (queuedMessage.modelConfiguration?.model) {
-        await this.setModel(queuedMessage.modelConfiguration);
+      if (modelConfiguration?.model) {
+        await this.setModel(modelConfiguration);
       }
 
-      await this.sdkSession.send({ prompt: queuedMessage.content, attachments });
+      await this.sdkSession.send({ prompt: sdkPromptForMessage(queuedMessage), attachments });
     } catch (err) {
-      console.error(`[DRAIN] ${this.sessionId} error:`, err);
+      evictCachedSessionIfStale(this.sessionId, err);
       this.close();
     } finally {
       this.#isDrainingQueue = false;

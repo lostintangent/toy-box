@@ -5,7 +5,7 @@ import type { ToolCallProps } from "./types";
 import { useToolCallDiff } from "@/hooks/diffs/EditDiffsContext";
 import { useSessionCwd } from "@/hooks/session/SessionCwdContext";
 import { getToolCallFileDiffs, type DiffHunk, type FileDiff } from "@/lib/diffs/fileDiffs";
-import { toRelativePath } from "@/lib/utils";
+import { toRelativePath } from "@/lib/paths";
 import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";
 

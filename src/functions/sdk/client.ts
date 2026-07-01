@@ -9,6 +9,7 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { ModelConfiguration } from "@/types";
 import { toSdkSessionModelOptions } from "@/lib/modelConfiguration";
+import { SDK_AGENT_NOTIFICATION_INSTRUCTIONS } from "@/functions/sdk/agentNotificationCodec";
 
 // ============================================================================
 // CLI Path Resolution
@@ -90,18 +91,27 @@ function getCopilotClient(): Promise<CopilotClient> {
 /** Session ID prefix for sessions created by this web app */
 export const SESSION_ID_PREFIX = "toy-box-";
 
-function buildSessionSystemMessage(sessionId: string, directory?: string) {
+function buildSessionSystemMessage(sessionId: string, directory?: string, automationId?: string) {
   const parts: string[] = [];
+  const sessionStateDirectory = `~/.copilot/session-state/${sessionId}`;
 
   if (directory) {
     parts.push(
-      `The user's working directory is: ${directory}. All file paths should be interpreted relative to this directory, and file operations should target this location.`,
+      `The user's working directory is: ${directory}. Unless otherwise specified, all file paths should be interpreted relative to this directory, and file operations should target this location.`,
     );
   }
 
   parts.push(
     `This session's ID is: ${sessionId}.`,
-    `To discover other sessions, grep the files at ~/.copilot/session-state/${SESSION_ID_PREFIX}*/events.jsonl — each parent directory name is a session ID and the events.jsonl contains the full session history including user messages. Do NOT use a database to look up sessions; always grep these files directly.`,
+    ...(automationId
+      ? [
+          `This session belongs to automation ID: ${automationId}. If the user asks, you can read and edit that automation with the available automation tools.`,
+          `When the user edits an artifact in this session, interpret the change as potential intent for improving the automation's prompt based on what the user changed, such as excluding something from a generated layout (e.g. they deleted a footer and you can update the automation's prompt to call out this shouldn't be added).`,
+        ]
+      : []),
+    `This session's state folder is: ${sessionStateDirectory}. Unless otherwise specified, when the user asks you to create an artifact, spec, plan, or ephemeral session document, write it under this folder. If this session does not have a working directory, use this state folder as the default location for new files.`,
+    `If needed, you can discover other sessions by grepping the files at ~/.copilot/session-state/${SESSION_ID_PREFIX}*/events.jsonl — each parent directory name is a session ID and the events.jsonl contains the full session history including user messages. Do NOT use a database to look up sessions; always grep these files directly.`,
+    SDK_AGENT_NOTIFICATION_INSTRUCTIONS,
   );
 
   return {
@@ -114,6 +124,7 @@ type CreateSdkSessionOptions = {
   modelConfiguration?: ModelConfiguration;
   directory?: string;
   tools?: Tool<any>[];
+  automationId?: string;
 };
 
 export async function createSession(
@@ -121,11 +132,16 @@ export async function createSession(
   options: CreateSdkSessionOptions = {},
 ): Promise<CopilotSession> {
   const client = await getCopilotClient();
-  const systemMessage = buildSessionSystemMessage(sessionId, options.directory);
+  const systemMessage = buildSessionSystemMessage(
+    sessionId,
+    options.directory,
+    options.automationId,
+  );
 
   return client.createSession({
     sessionId,
     streaming: true,
+    requestCanvasRenderer: true,
     ...toSdkSessionModelOptions(options.modelConfiguration),
     workingDirectory: options.directory,
     systemMessage,
@@ -137,11 +153,13 @@ export async function createSession(
 export async function resumeSession(
   sessionId: string,
   tools?: Tool<any>[],
+  automationId?: string,
 ): Promise<CopilotSession> {
   const client = await getCopilotClient();
   return client.resumeSession(sessionId, {
     streaming: true,
-    systemMessage: buildSessionSystemMessage(sessionId),
+    requestCanvasRenderer: true,
+    systemMessage: buildSessionSystemMessage(sessionId, undefined, automationId),
     onPermissionRequest: approveAll,
     tools,
   });

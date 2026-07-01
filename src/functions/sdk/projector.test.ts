@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
+import { homedir } from "node:os";
+import { encodeSdkAgentNotification } from "@/functions/sdk/agentNotificationCodec";
 import { createProjectionState, projectSdkEvent } from "@/functions/sdk/projector";
 import type { JsonValue, SessionEvent } from "@/types";
 
@@ -36,6 +38,33 @@ const PATCH_DIFF = `diff --git a/Users/lostintangent/Desktop/toy-box/docs/notes.
 @@ -1 +1 @@
 -old
 +new`;
+const ARTIFACT_PATCH_PATH = `${homedir()}/.copilot/session-state/toy-box-session/plan.md`;
+const ARTIFACT_HTML_PATCH_PATH = `${homedir()}/.copilot/session-state/toy-box-session/plan.html`;
+const HOME_RELATIVE_ARTIFACT_PATCH_PATH = ".copilot/session-state/toy-box-session/plan.html";
+const ARTIFACT_PATCH_TEXT = `*** Begin Patch
+*** Add File: ${ARTIFACT_PATCH_PATH}
++# Plan
+*** End Patch`;
+const HOME_RELATIVE_ARTIFACT_PATCH_TEXT = `*** Begin Patch
+*** Add File: ${HOME_RELATIVE_ARTIFACT_PATCH_PATH}
+<!doctype html>
+*** End Patch`;
+const ARTIFACT_PATCH_DELETE_TEXT = `*** Begin Patch
+*** Delete File: ${ARTIFACT_PATCH_PATH}
+*** End Patch`;
+const ARTIFACT_CONVERSION_PATCH_TEXT = `*** Begin Patch
+*** Add File: ${ARTIFACT_HTML_PATCH_PATH}
+<!doctype html>
+*** Delete File: ${ARTIFACT_PATCH_PATH}
+*** End Patch`;
+const MIXED_ARTIFACT_PATCH_TEXT = `*** Begin Patch
+*** Add File: ${ARTIFACT_PATCH_PATH}
++# Plan
+*** Update File: /Users/lostintangent/Desktop/toy-box/docs/notes.md
+@@
+-old
++new
+*** End Patch`;
 
 function modelChange(newModel: string, reasoningEffort?: string): SdkSessionEvent {
   return sdkEvent({
@@ -116,7 +145,7 @@ function expectOmittedToolLifecycle(
   options: {
     toolName: string;
     toolCallId: string;
-    argumentsRecord?: { [key: string]: JsonValue };
+    argumentsRecord?: { [key: string]: JsonValue } | string;
     startEvents?: SessionEvent[];
     completionSuccess?: boolean;
     completionResultContent?: string;
@@ -501,6 +530,239 @@ describe("projector", () => {
       });
     });
 
+    test("create emits artifacts for files in copilot session state and is omitted", () => {
+      const context = createStreamingContext();
+      const artifactPath = "~/.copilot/session-state/toy-box-session/report.md";
+
+      expectOmittedToolLifecycle(context, {
+        toolName: "create",
+        toolCallId: "tool-create-artifact",
+        argumentsRecord: { path: artifactPath },
+        startEvents: [
+          { type: "artifacts_patch", patches: [{ type: "upsert", path: artifactPath }] },
+        ],
+        completionResultContent: "Created report.md",
+      });
+    });
+
+    test("create remains visible for files outside copilot session state", () => {
+      const context = createStreamingContext();
+
+      expectVisibleToolLifecycle(context, {
+        toolName: "create",
+        toolCallId: "tool-create-visible",
+        argumentsRecord: { path: "/tmp/report.md" },
+        progressMessage: "Creating report.md",
+        resultContent: "Created report.md",
+      });
+    });
+
+    test("read tools are omitted for artifact paths", () => {
+      const context = createStreamingContext();
+      const artifactPath = "~/.copilot/session-state/toy-box-session/report.md";
+
+      expectOmittedToolLifecycle(context, {
+        toolName: "read_file",
+        toolCallId: "tool-read-artifact",
+        argumentsRecord: { path: artifactPath },
+        completionResultContent: "# Report",
+      });
+
+      expectOmittedToolLifecycle(context, {
+        toolName: "view",
+        toolCallId: "tool-view-artifact",
+        argumentsRecord: { filePath: artifactPath },
+        completionResultContent: "# Report",
+      });
+    });
+
+    test("read tools stay visible for non-artifact paths", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("read_file", "tool-read-visible", { path: "/tmp/report.md" }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_start",
+          toolName: "read",
+          toolCallId: "tool-read-visible",
+          arguments: { path: "/tmp/report.md" },
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-read-visible", {
+            success: true,
+            resultContent: "# Report",
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_end",
+          toolCallId: "tool-read-visible",
+          success: true,
+          result: "# Report",
+          details: undefined,
+        },
+      ]);
+    });
+
+    test("apply_patch emits artifacts for patches that only touch copilot session state after success", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("apply_patch", "tool-patch-artifact", ARTIFACT_PATCH_TEXT),
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(toolExecutionProgress("tool-patch-artifact", "Applying"), context),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-patch-artifact", {
+            success: true,
+            resultContent: "Added 1 file(s)",
+          }),
+          context,
+        ),
+      ).toEqual([
+        { type: "artifacts_patch", patches: [{ type: "upsert", path: ARTIFACT_PATCH_PATH }] },
+      ]);
+    });
+
+    test("apply_patch normalizes home-relative copilot session state artifact paths", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart(
+            "apply_patch",
+            "tool-patch-home-relative-artifact",
+            HOME_RELATIVE_ARTIFACT_PATCH_TEXT,
+          ),
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-patch-home-relative-artifact", {
+            success: true,
+            resultContent: "Added 1 file(s)",
+          }),
+          context,
+        ),
+      ).toEqual([
+        { type: "artifacts_patch", patches: [{ type: "upsert", path: ARTIFACT_HTML_PATCH_PATH }] },
+      ]);
+    });
+
+    test("apply_patch removes deleted artifact paths after success", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("apply_patch", "tool-delete-artifact", ARTIFACT_PATCH_DELETE_TEXT),
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-delete-artifact", {
+            success: true,
+            resultContent: "Deleted 1 file(s)",
+          }),
+          context,
+        ),
+      ).toEqual([
+        { type: "artifacts_patch", patches: [{ type: "delete", path: ARTIFACT_PATCH_PATH }] },
+      ]);
+    });
+
+    test("apply_patch emits one artifact patch event for artifact additions and deletions", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart(
+            "apply_patch",
+            "tool-convert-artifact",
+            ARTIFACT_CONVERSION_PATCH_TEXT,
+          ),
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-convert-artifact", {
+            success: true,
+            resultContent: "Added 1 file(s)\nDeleted 1 file(s)",
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "artifacts_patch",
+          patches: [
+            { type: "upsert", path: ARTIFACT_HTML_PATCH_PATH },
+            { type: "delete", path: ARTIFACT_PATCH_PATH },
+          ],
+        },
+      ]);
+    });
+
+    test("apply_patch stays visible and emits artifacts for mixed patches", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("apply_patch", "tool-patch-mixed", MIXED_ARTIFACT_PATCH_TEXT),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_start",
+          toolName: "patch",
+          toolCallId: "tool-patch-mixed",
+          arguments: { patch: MIXED_ARTIFACT_PATCH_TEXT },
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-patch-mixed", {
+            success: true,
+            resultContent: "Modified 2 file(s)",
+            detailedContent: "diff",
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_end",
+          toolCallId: "tool-patch-mixed",
+          success: true,
+          result: "Modified 2 file(s)",
+          details: "diff",
+        },
+        {
+          type: "artifacts_patch",
+          patches: [{ type: "upsert", path: ARTIFACT_PATCH_PATH }],
+        },
+      ]);
+    });
+
     test("create_session projects a linked session only after successful completion", () => {
       const context = createStreamingContext();
 
@@ -703,6 +965,32 @@ describe("projector", () => {
           createStreamingContext(),
         ),
       ).toEqual([]);
+    });
+
+    test("decodes notification user message prompts at the SDK boundary", () => {
+      const content = encodeSdkAgentNotification({
+        type: "artifact_edited",
+        path: "/tmp/plan.md",
+      });
+
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "user.message",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            data: {
+              content,
+            },
+          }),
+          createStreamingContext(),
+        ),
+      ).toEqual([
+        {
+          type: "agent_notification",
+          notification: { type: "artifact_edited", path: "/tmp/plan.md" },
+          timestamp: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
     });
 
     test("drops empty-content deltas at the source", () => {

@@ -4,9 +4,10 @@ import {
   applyStreamError,
   createInitialSession,
   prepareSessionForNextTurn,
+  sessionSeedFromSnapshot,
   toSessionSnapshot,
 } from "./sessionReducer";
-import type { AssistantMessage } from "@/types";
+import type { AssistantMessage, SessionEvent } from "@/types";
 
 describe("sessionReducer", () => {
   describe("messages", () => {
@@ -93,6 +94,27 @@ describe("sessionReducer", () => {
 
       expect(state.messages).toHaveLength(2);
       expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Done." });
+      expect(state.status).toBe("responding");
+    });
+
+    test("agent notifications create visible turn boundaries", () => {
+      const state = createInitialSession();
+      const notification = { type: "artifact_edited", path: "/tmp/plan.md" } as const;
+
+      applySessionEvent(state, { type: "agent_notification", notification });
+      applySessionEvent(state, { type: "status", status: "thinking" });
+      applySessionEvent(state, { type: "assistant_message", content: "I reviewed the edit." });
+
+      applySessionEvent(state, { type: "agent_notification", notification });
+      applySessionEvent(state, { type: "status", status: "thinking" });
+      applySessionEvent(state, { type: "assistant_message", content: "I reviewed the update." });
+
+      expect(state.messages).toEqual([
+        { role: "agent_notification", notification, timestamp: undefined },
+        { role: "assistant", content: "I reviewed the edit." },
+        { role: "agent_notification", notification, timestamp: undefined },
+        { role: "assistant", content: "I reviewed the update." },
+      ]);
       expect(state.status).toBe("responding");
     });
 
@@ -608,6 +630,47 @@ describe("sessionReducer", () => {
     });
   });
 
+  describe("artifacts", () => {
+    test("appends artifact paths and includes them in snapshots", () => {
+      const state = createInitialSession();
+
+      applySessionEvent(state, {
+        type: "artifacts_patch",
+        patches: [{ type: "upsert", path: "~/.copilot/session-state/toy-box-session/report.md" }],
+      });
+      applySessionEvent(state, {
+        type: "artifacts_patch",
+        patches: [{ type: "upsert", path: "~/.copilot/session-state/toy-box-session/report.md" }],
+      });
+      applySessionEvent(state, {
+        type: "artifacts_patch",
+        patches: [{ type: "upsert", path: "~/.copilot/session-state/toy-box-session/notes.md" }],
+      });
+
+      expect(state.artifacts).toEqual([
+        "~/.copilot/session-state/toy-box-session/report.md",
+        "~/.copilot/session-state/toy-box-session/notes.md",
+      ]);
+      expect(toSessionSnapshot("session-1", state).artifacts).toEqual(state.artifacts);
+    });
+
+    test("removes deleted artifact paths", () => {
+      const state = createInitialSession({
+        artifacts: [
+          "~/.copilot/session-state/toy-box-session/report.md",
+          "~/.copilot/session-state/toy-box-session/notes.md",
+        ],
+      });
+
+      applySessionEvent(state, {
+        type: "artifacts_patch",
+        patches: [{ type: "delete", path: "~/.copilot/session-state/toy-box-session/report.md" }],
+      });
+
+      expect(state.artifacts).toEqual(["~/.copilot/session-state/toy-box-session/notes.md"]);
+    });
+  });
+
   describe("queued messages", () => {
     test("promotes queued message to main messages list", () => {
       const withQueue = createInitialSession({
@@ -620,8 +683,7 @@ describe("sessionReducer", () => {
 
       const state = applySessionEvent(withQueue, {
         type: "message_dequeued",
-        content: "first queued",
-        queuedMessageId: "q1",
+        message: { id: "q1", role: "user", content: "first queued" },
       });
 
       expect(state.queuedMessages).toHaveLength(1);
@@ -635,6 +697,25 @@ describe("sessionReducer", () => {
       });
     });
 
+    test("dequeues notification messages as visible agent notifications", () => {
+      const notification = { type: "artifact_edited", path: "/tmp/plan.md" } as const;
+      const withQueue = createInitialSession({
+        queuedMessages: [{ id: "q1", role: "agent_notification", notification }],
+        messages: [{ role: "assistant", content: "ready" }],
+      });
+
+      const state = applySessionEvent(withQueue, {
+        type: "message_dequeued",
+        message: { id: "q1", role: "agent_notification", notification },
+      });
+
+      expect(state.messages).toEqual([
+        { role: "assistant", content: "ready" },
+        { role: "agent_notification", notification },
+      ]);
+      expect(state.queuedMessages).toEqual([]);
+    });
+
     test("removes queued message by id when queue order diverges", () => {
       const withQueue = createInitialSession({
         queuedMessages: [
@@ -646,8 +727,7 @@ describe("sessionReducer", () => {
 
       const state = applySessionEvent(withQueue, {
         type: "message_dequeued",
-        content: "second queued",
-        queuedMessageId: "q2",
+        message: { id: "q2", role: "user", content: "second queued" },
       });
 
       expect(state.queuedMessages).toHaveLength(1);
@@ -666,8 +746,7 @@ describe("sessionReducer", () => {
 
       applySessionEvent(state, {
         type: "message_queued",
-        queuedMessageId: "q1",
-        content: "follow up",
+        message: { id: "q1", role: "user", content: "follow up" },
       });
 
       expect(state.queuedMessages).toHaveLength(1);
@@ -681,8 +760,7 @@ describe("sessionReducer", () => {
 
       applySessionEvent(state, {
         type: "message_queued",
-        queuedMessageId: "q1",
-        content: "follow up",
+        message: { id: "q1", role: "user", content: "follow up" },
       });
 
       expect(state.queuedMessages).toHaveLength(1);
@@ -856,7 +934,7 @@ describe("sessionReducer", () => {
       expect(state.pendingOptimisticUserMessage).toBeUndefined();
     });
 
-    test("reconciles SDK user echoes without a client message id", () => {
+    test("drops id-less SDK user echoes with the turn-start echo guard", () => {
       const state = createInitialSession();
 
       applySessionEvent(state, {
@@ -871,18 +949,13 @@ describe("sessionReducer", () => {
         content: "hello",
         timestamp: "2026-02-09T00:00:00.000Z",
         eventId: 10,
+        turnId: "turn-1",
       });
 
-      expect(state.messages).toEqual([
-        {
-          role: "user",
-          content: "hello",
-          timestamp: "2026-02-09T00:00:00.000Z",
-          attachments: undefined,
-        },
-      ]);
+      expect(state.messages).toEqual([{ role: "user", content: "hello" }]);
       expect(state.status).toBe("thinking");
-      expect(state.pendingOptimisticUserMessage).toBeUndefined();
+      expect(state.pendingOptimisticUserMessage).toEqual({ clientMessageId: "msg-1", index: 0 });
+      expect(state.lastSeenEventId).toBe(10);
     });
 
     test("reconciles decorated server user echoes after local thinking starts", () => {
@@ -963,8 +1036,7 @@ describe("sessionReducer", () => {
       applySessionEvent(state, { type: "assistant_message", content: "hi", eventId: 2 });
       applySessionEvent(state, {
         type: "message_dequeued",
-        content: "hello",
-        queuedMessageId: "queued-1",
+        message: { id: "queued-1", role: "user", content: "hello" },
         eventId: 3,
         turnId: "turn-2",
       });
@@ -1087,5 +1159,66 @@ describe("sessionReducer", () => {
       expect(sameRef).toBe(state);
       expect(state.status).toBe("thinking");
     });
+  });
+});
+
+describe("sessionSeedFromSnapshot", () => {
+  /** An idle session with every snapshot-visible field populated, as the
+   *  snapshot cached at clean close would produce it. */
+  function richIdleSession() {
+    const events: SessionEvent[] = [
+      { type: "user_message", content: "summarize the repo" },
+      { type: "status", status: "thinking" },
+      {
+        type: "tool_start",
+        toolCallId: "t1",
+        toolName: "read_file",
+        arguments: { path: "README.md" },
+      },
+      { type: "tool_end", toolCallId: "t1", success: true, result: "read it" },
+      { type: "delta", content: "Here is the summary." },
+      {
+        type: "todos_patch",
+        patches: [{ type: "upsert", id: "1", title: "Ship it", status: "done" }],
+      },
+      { type: "artifacts_patch", patches: [{ type: "upsert", path: "/tmp/state/summary.md" }] },
+      { type: "linked_session_added", sessionId: "toy-box-child" },
+      { type: "model_changed", modelConfiguration: { model: "gpt-5" } },
+      { type: "end", reason: "idle" },
+    ];
+
+    const state = createInitialSession();
+    for (const event of events) {
+      applySessionEvent(state, event);
+    }
+    return state;
+  }
+
+  test("a seeded session round-trips to the same snapshot, minus per-stream fields", () => {
+    const original = toSessionSnapshot("session-seed", richIdleSession());
+
+    const seeded = createInitialSession(sessionSeedFromSnapshot(original));
+    const roundTripped = toSessionSnapshot("session-seed", seeded);
+
+    expect(roundTripped).toEqual({ ...original, lastSeenEventId: undefined });
+    expect(seeded.pendingToolCalls.size).toBe(0);
+  });
+
+  // Individual messages intentionally share structure with the snapshot
+  // (the client seeds its reducer from cached snapshots the same way); the
+  // collections themselves must be copied so new turns never grow a cached
+  // snapshot behind its readers.
+  test("new turns grow the seeded session's collections, not the snapshot's", () => {
+    const snapshot = toSessionSnapshot("session-clone", richIdleSession());
+
+    const seeded = createInitialSession(sessionSeedFromSnapshot(snapshot));
+    const originalMessageCount = snapshot.messages.length;
+    seeded.messages.push({ role: "user", content: "a new turn" });
+    (seeded.todos ?? []).push({ id: "2", title: "Injected", status: "pending" });
+    seeded.artifacts.push("/tmp/state/other.md");
+
+    expect(snapshot.messages).toHaveLength(originalMessageCount);
+    expect(snapshot.todos).toHaveLength(1);
+    expect(snapshot.artifacts).toEqual(["/tmp/state/summary.md"]);
   });
 });

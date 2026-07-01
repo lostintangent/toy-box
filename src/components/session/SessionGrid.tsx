@@ -1,12 +1,32 @@
 import { useState, useRef, useEffect, useMemo, useCallback, memo } from "react";
+import { useAtom } from "jotai";
 import { X, Maximize2, Minimize2 } from "lucide-react";
+import { focusedPaneAtom } from "@/atoms";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import type { ImperativePanelHandle } from "react-resizable-panels";
-import { SessionView } from "./SessionView";
-import { CanvasPane } from "./CanvasPane";
+import { useSetting } from "@/hooks/browser/useSetting";
+import { useViewport } from "@/hooks/browser/ViewportContext";
+import { SessionPane } from "./panes/session/SessionPane";
+import { CanvasPane } from "./panes/CanvasPane";
+import { ArtifactPane } from "./panes/ArtifactPane";
+import { ArtifactModeMenu } from "./panes/chrome/ArtifactModeMenu";
+import { ArtifactSavingIndicator } from "./panes/chrome/ArtifactSavingIndicator";
+import {
+  PANE_OVERLAY_BUTTON_CLASS,
+  PANE_OVERLAY_ICON_CLASS,
+  SessionOverlay,
+  shouldShowSessionOverlay,
+} from "./panes/session/SessionOverlay";
+import { isAutomationRunSession } from "@/lib/automation/sessionId";
 import { cn } from "@/lib/utils";
+import type { SessionFeatureScope } from "@/lib/config/settings";
 import type { ModelInfo, ModelConfiguration } from "@/types";
-import type { SessionGridPane } from "@/hooks/session/sessionPanes";
+import {
+  isArtifactPane,
+  type ArtifactGridPane,
+  type ArtifactPaneMode,
+  type SessionGridPane,
+} from "@/hooks/session/sessionPanes";
 
 // ============================================================================
 // Session Grid - Multi-session grid layout (max 4 sessions)
@@ -18,16 +38,19 @@ import type { SessionGridPane } from "@/hooks/session/sessionPanes";
 // - 4 sessions: 2×2 grid
 //
 // Features:
-// - Maximize/minimize: Any cell can be temporarily expanded to full screen
+// - Maximize/minimize: The focused pane (focusedPaneAtom, shared with the
+//   mobile pager and written by auto-focus; see usePaneFocus) is expanded to
+//   full screen. This grid renders it and writes it back on user interaction.
 // - Smooth animations: All transitions use 300ms CSS transitions
 // - Drag resizing: Users can manually resize panels
 // ============================================================================
 
 export interface SessionGridProps {
-  panes: SessionGridPane[]; // 1-4 session/canvas panes
+  panes: SessionGridPane[]; // 1-4 session/canvas/artifact panes
   streamingSessionIds: string[];
   unreadSessionIds: string[];
   onRemovePane: (pane: SessionGridPane) => void;
+  onSetArtifactPaneMode?: (pane: ArtifactGridPane, mode: ArtifactPaneMode) => void;
   models?: ModelInfo[];
   modelConfiguration?: ModelConfiguration | null;
   onModelConfigurationChange?: (configuration: ModelConfiguration) => void;
@@ -43,6 +66,18 @@ type SessionGridSizes = {
   bottomLeft: number;
   bottomRight: number;
 };
+
+/** The canonical even-split layout for a pane count, before any user resizing. */
+function defaultSessionGridSizes(count: number): SessionGridSizes {
+  return {
+    topRow: count >= 3 ? 50 : 100,
+    topLeft: count >= 2 ? 50 : 100,
+    topRight: count >= 2 ? 50 : 0,
+    bottomRow: count >= 3 ? 50 : 0,
+    bottomLeft: count >= 4 ? 50 : 100,
+    bottomRight: count >= 4 ? 50 : 0,
+  };
+}
 
 function applySessionGridCountStep(
   prevCount: number,
@@ -107,6 +142,7 @@ export function SessionGrid({
   streamingSessionIds = [],
   unreadSessionIds,
   onRemovePane,
+  onSetArtifactPaneMode,
   models,
   modelConfiguration,
   onModelConfigurationChange,
@@ -115,23 +151,15 @@ export function SessionGrid({
 }: SessionGridProps) {
   const count = panes.length;
   const [isDragging, setIsDragging] = useState(false);
-  const [maximizedId, setMaximizedId] = useState<string | null>(null);
+  const [focusedPaneId, setFocusedPaneId] = useAtom(focusedPaneAtom);
   const savedSizesRef = useRef<SessionGridSizes | null>(null);
   const streamingSessionIdSet = useMemo(() => new Set(streamingSessionIds), [streamingSessionIds]);
   const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
+  const showSessionOverlay = useSetting("showSessionOverlay");
+  const { isDesktop } = useViewport();
 
   // Calculate initial panel sizes based on session count at mount time
-  const initialSizes = useMemo(() => {
-    const c = panes.length;
-    return {
-      topRow: c >= 3 ? 50 : 100,
-      topLeft: c >= 2 ? 50 : 100,
-      topRight: c >= 2 ? 50 : 0,
-      bottomRow: c >= 3 ? 50 : 0,
-      bottomLeft: c >= 4 ? 50 : 100,
-      bottomRight: c >= 4 ? 50 : 0,
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const initialSizes = useMemo(() => defaultSessionGridSizes(panes.length), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refs for imperative panel control
   const topRowRef = useRef<ImperativePanelHandle>(null);
@@ -165,47 +193,58 @@ export function SessionGrid({
     bottomRightRef.current?.resize(sizes.bottomRight);
   }, []);
 
-  // Handle maximize: save current sizes, then expand target cell
+  // Maximize is just focusing a pane. Every entry path — this button, an
+  // artifact pill, artifact auto-focus — writes the atom, and the effect
+  // below applies it (capturing the pre-maximize layout at that point).
   const handleMaximize = useCallback(
     (paneId: string) => {
-      savedSizesRef.current = readCurrentSizes();
-      setMaximizedId(paneId);
+      setFocusedPaneId(paneId);
     },
-    [readCurrentSizes],
+    [setFocusedPaneId],
   );
 
-  // Handle minimize: restore saved sizes
+  // Handle minimize: restore the pre-maximize layout.
   const handleMinimize = useCallback(() => {
     const saved = savedSizesRef.current;
-    if (saved) {
-      resizePanels(saved);
-      savedSizesRef.current = null;
-    }
-    setMaximizedId(null);
-  }, [resizePanels]);
+    savedSizesRef.current = null;
+    resizePanels(saved ?? defaultSessionGridSizes(panes.length));
+    setFocusedPaneId(null);
+  }, [setFocusedPaneId, panes.length, resizePanels]);
 
-  // Exit maximize mode on manual resize
-  const handleDragging = useCallback((dragging: boolean) => {
-    setIsDragging(dragging);
-    if (dragging) {
-      setMaximizedId((currentMaximizedId) => {
-        if (currentMaximizedId) {
-          savedSizesRef.current = null;
-        }
-        return null;
-      });
-    }
-  }, []);
+  // Exit maximize mode on manual resize; the user is taking over the layout,
+  // so the saved restore point no longer applies.
+  const handleDragging = useCallback(
+    (dragging: boolean) => {
+      setIsDragging(dragging);
+      if (dragging && focusedPaneId) {
+        savedSizesRef.current = null;
+        setFocusedPaneId(null);
+      }
+    },
+    [focusedPaneId, setFocusedPaneId],
+  );
 
-  // Animate to maximized state
+  // Apply focus as a maximize. Focus can be written from anywhere, so the
+  // pre-maximize layout is captured here, when a maximize is first applied —
+  // a set savedSizesRef is therefore the signal that one is in effect.
   useEffect(() => {
-    if (!maximizedId) return;
+    if (!focusedPaneId) return;
 
-    const maxIdx = panes.findIndex((pane) => pane.id === maximizedId);
+    const maxIdx = panes.findIndex((pane) => pane.id === focusedPaneId);
     if (maxIdx === -1) {
-      setMaximizedId(null);
+      // Focus points at a pane this grid doesn't render — a maximized pane
+      // that departed, or a focus request for a pane outside the visible cap.
+      // Clear it, restoring the layout only if a maximize was applied (the
+      // remaining panels were resized to 0 to maximize it).
+      const saved = savedSizesRef.current;
       savedSizesRef.current = null;
+      setFocusedPaneId(null);
+      if (saved) resizePanels(saved);
       return;
+    }
+
+    if (savedSizesRef.current === null) {
+      savedSizesRef.current = readCurrentSizes();
     }
 
     const isTop = maxIdx < 2;
@@ -217,7 +256,7 @@ export function SessionGrid({
     bottomRowRef.current?.resize(isTop ? 0 : 100);
     bottomLeftRef.current?.resize(!isTop && isLeft ? 100 : 0);
     bottomRightRef.current?.resize(!isTop && !isLeft ? 100 : 0);
-  }, [maximizedId, panes]);
+  }, [focusedPaneId, setFocusedPaneId, panes, readCurrentSizes, resizePanels]);
 
   // Handle session count changes
   useEffect(() => {
@@ -226,35 +265,40 @@ export function SessionGrid({
 
     if (count === prevCount) return;
 
-    // Clear maximize when sessions change
-    if (maximizedId) {
+    // Exit maximize when the pane count changes and restore the canonical
+    // layout for the new count (panel sizes still reflect the maximize).
+    if (focusedPaneId) {
       savedSizesRef.current = null;
-      setMaximizedId(null);
+      setFocusedPaneId(null);
+      resizePanels(defaultSessionGridSizes(count));
       return;
     }
 
     const nextSizes = applySessionGridCountChange(prevCount, count, readCurrentSizes());
     resizePanels(nextSizes);
-  }, [count, maximizedId, readCurrentSizes, resizePanels]);
+  }, [count, focusedPaneId, setFocusedPaneId, readCurrentSizes, resizePanels]);
 
   const renderCell = useCallback(
     (index: number, showControls: boolean) => {
       const pane = panes[index];
       if (!pane) return null;
 
-      const sessionId = pane.kind === "session" ? pane.sessionId : undefined;
+      const sourceSessionId = pane.kind === "session" ? pane.sessionId : pane.sourceSessionId;
 
       return (
         <GridCell
           key={pane.id}
           pane={pane}
-          isSessionRunning={sessionId ? streamingSessionIdSet.has(sessionId) : false}
-          isSessionUnread={sessionId ? unreadSessionIdSet.has(sessionId) : false}
+          isSourceSessionRunning={streamingSessionIdSet.has(sourceSessionId)}
+          isSourceSessionUnread={unreadSessionIdSet.has(sourceSessionId)}
           onRemove={onRemovePane}
           showControls={showControls}
-          isMaximized={maximizedId === pane.id}
+          isMaximized={focusedPaneId === pane.id}
           onMaximize={handleMaximize}
           onMinimize={handleMinimize}
+          isDesktop={isDesktop}
+          showSessionOverlay={showSessionOverlay}
+          onSetArtifactPaneMode={onSetArtifactPaneMode}
           models={models}
           modelConfiguration={modelConfiguration}
           onModelConfigurationChange={onModelConfigurationChange}
@@ -265,15 +309,18 @@ export function SessionGrid({
     },
     [
       draftSessionId,
+      focusedPaneId,
       handleMaximize,
       handleMinimize,
-      maximizedId,
+      isDesktop,
       modelConfiguration,
       models,
       onDraftSessionCreated,
       onModelConfigurationChange,
       onRemovePane,
+      onSetArtifactPaneMode,
       panes,
+      showSessionOverlay,
       streamingSessionIdSet,
       unreadSessionIdSet,
     ],
@@ -356,13 +403,16 @@ export function SessionGrid({
 
 interface GridCellProps {
   pane: SessionGridPane;
-  isSessionRunning: boolean;
-  isSessionUnread: boolean;
+  isSourceSessionRunning: boolean;
+  isSourceSessionUnread: boolean;
   onRemove: (pane: SessionGridPane) => void;
+  onSetArtifactPaneMode?: (pane: ArtifactGridPane, mode: ArtifactPaneMode) => void;
   showControls: boolean;
   isMaximized: boolean;
   onMaximize: (paneId: string) => void;
   onMinimize: () => void;
+  isDesktop: boolean;
+  showSessionOverlay: SessionFeatureScope;
   models?: ModelInfo[];
   modelConfiguration?: ModelConfiguration | null;
   onModelConfigurationChange?: (configuration: ModelConfiguration) => void;
@@ -372,23 +422,61 @@ interface GridCellProps {
 
 const GridCell = memo(function GridCell({
   pane,
-  isSessionRunning,
-  isSessionUnread,
+  isSourceSessionRunning,
+  isSourceSessionUnread,
   onRemove,
+  onSetArtifactPaneMode,
   showControls,
   isMaximized,
   onMaximize,
   onMinimize,
+  isDesktop,
+  showSessionOverlay,
   models,
   modelConfiguration,
   onModelConfigurationChange,
   draftSessionId,
   onDraftSessionCreated,
 }: GridCellProps) {
-  const btnClass =
-    "bg-background/90 backdrop-blur-sm hover:bg-background border border-border rounded-md p-1.5 shadow-sm hover:shadow-md";
-  const iconClass = "h-4 w-4 text-muted-foreground hover:text-foreground";
+  const [isArtifactSaving, setIsArtifactSaving] = useState(false);
+  const btnClass = PANE_OVERLAY_BUTTON_CLASS;
+  const iconClass = PANE_OVERLAY_ICON_CLASS;
+  const showControlsPersistently = isDesktop && isMaximized;
   const isCloseable = pane.kind === "session" && !pane.isLinkedOnly;
+  const artifactPane = isArtifactPane(pane) ? pane : undefined;
+
+  const associatedSessionId = pane.kind === "session" ? pane.sessionId : pane.sourceSessionId;
+
+  const shouldRenderSessionOverlay = shouldShowSessionOverlay({
+    visibility: showSessionOverlay,
+    sessionType: isAutomationRunSession(associatedSessionId) ? "automation" : "session",
+    isDesktop,
+    isMaximized,
+    isSessionPane: pane.kind === "session",
+  });
+
+  const sessionProps = {
+    sessionId: associatedSessionId,
+    isSessionRunning: isSourceSessionRunning,
+    isSessionUnread: isSourceSessionUnread,
+    models,
+    modelConfiguration,
+    onModelConfigurationChange,
+  };
+
+  const savingIndicator = artifactPane ? (
+    <ArtifactSavingIndicator isSaving={isArtifactSaving} />
+  ) : null;
+  const modeMenu =
+    artifactPane && onSetArtifactPaneMode ? (
+      <ArtifactModeMenu
+        mode={artifactPane.mode}
+        onModeChange={(mode) => onSetArtifactPaneMode(artifactPane, mode)}
+        className={btnClass}
+        iconClassName={iconClass}
+        showLabel={false}
+      />
+    ) : null;
 
   return (
     <div
@@ -405,13 +493,26 @@ const GridCell = memo(function GridCell({
       )}
 
       {showControls && (
-        <div className="absolute top-3 right-3 z-20 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+        <div
+          className={cn(
+            "absolute top-3 right-3 z-20 flex gap-1 transition-opacity duration-200",
+            showControlsPersistently
+              ? "opacity-100"
+              : "opacity-0 delay-150 focus-within:opacity-100 focus-within:delay-0 group-hover:opacity-100 group-hover:delay-0 has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:delay-0",
+          )}
+        >
           {isMaximized ? (
-            <button onClick={onMinimize} className={btnClass} aria-label="Minimize">
-              <Minimize2 className={iconClass} />
-            </button>
+            <>
+              {savingIndicator}
+              {modeMenu}
+              <button onClick={onMinimize} className={btnClass} aria-label="Minimize">
+                <Minimize2 className={iconClass} />
+              </button>
+            </>
           ) : (
             <>
+              {savingIndicator}
+              {modeMenu}
               <button
                 onClick={() => onMaximize(pane.id)}
                 className={btnClass}
@@ -430,19 +531,18 @@ const GridCell = memo(function GridCell({
       )}
 
       {pane.kind === "session" ? (
-        <SessionView
-          sessionId={pane.sessionId}
-          isSessionRunning={isSessionRunning}
-          isSessionUnread={isSessionUnread}
-          models={models}
-          modelConfiguration={modelConfiguration}
-          onModelConfigurationChange={onModelConfigurationChange}
+        <SessionPane
+          {...sessionProps}
           draftSessionId={draftSessionId}
           onDraftSessionCreated={onDraftSessionCreated}
         />
-      ) : (
+      ) : pane.kind === "canvas" ? (
         <CanvasPane pane={pane} />
+      ) : (
+        <ArtifactPane pane={pane} onSavingChange={setIsArtifactSaving} />
       )}
+
+      {shouldRenderSessionOverlay && <SessionOverlay {...sessionProps} />}
     </div>
   );
 });

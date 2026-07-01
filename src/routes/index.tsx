@@ -4,7 +4,6 @@ import { createIsomorphicFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { useState, useMemo, useRef, useEffect, useCallback, lazy, Suspense } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAtomValue } from "jotai";
 import { z } from "zod";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { PanelLeft } from "lucide-react";
@@ -24,9 +23,11 @@ import { MobileSessionPager } from "@/components/session/MobileSessionPager";
 import { SessionGrid } from "@/components/session/SessionGrid";
 import { SessionPlaceholder } from "@/components/session/SessionPlaceholder";
 import { TerminalShell } from "@/components/terminal/TerminalShell";
-import { linkedPanesAtom } from "@/atoms";
+import { useLinkedPanes } from "@/hooks/session/useLinkedPanes";
+import { usePaneFocus } from "@/hooks/session/usePaneFocus";
 import {
   deriveOpenSessionIds,
+  deriveReachableSessionIds,
   deriveVisibleSessionGridPanes,
   type SessionGridPane,
 } from "@/hooks/session/sessionPanes";
@@ -117,7 +118,11 @@ function SessionsPage() {
   );
 
   const primarySelectedSessionId = selectedSessionIds[0];
-  const linkedPanesBySource = useAtomValue(linkedPanesAtom);
+  const { linkedPanesBySource, setArtifactPaneMode, prunePaneSources } = useLinkedPanes();
+  const reachableSessionIds = useMemo(
+    () => deriveReachableSessionIds(selectedSessionIds, linkedPanesBySource),
+    [linkedPanesBySource, selectedSessionIds],
+  );
   const openPanes = useMemo(
     () =>
       deriveVisibleSessionGridPanes({
@@ -127,6 +132,12 @@ function SessionsPage() {
     [linkedPanesBySource, selectedSessionIds],
   );
   const openSessionIds = useMemo(() => deriveOpenSessionIds(openPanes), [openPanes]);
+
+  usePaneFocus(openPanes);
+
+  useEffect(() => {
+    prunePaneSources(new Set(reachableSessionIds));
+  }, [prunePaneSources, reachableSessionIds]);
 
   const { data: models = [] } = useQuery(modelQueries.list());
 
@@ -169,7 +180,7 @@ function SessionsPage() {
 
   // Draft session lifecycle. Three touchpoints in this component:
   // - handleCreateSession allocates a draft and opens it
-  // - SessionView promotes it (via onDraftSessionCreated -> promoteDraft)
+  // - SessionPane promotes it (via onDraftSessionCreated -> promoteDraft)
   //   once the first prompt's stream confirms the session on the server
   // - handleSessionDelete discards an unsent draft
   const { draftSessionId, draftSession, createDraft, promoteDraft, discardDraft } =
@@ -648,6 +659,7 @@ function SessionsPage() {
               streamingSessionIds={streamingSessionIds}
               unreadSessionIds={unreadSessionIds}
               onBack={() => handleSessionSelect(null)}
+              onSetArtifactPaneMode={setArtifactPaneMode}
               models={models}
               modelConfiguration={selectedModelConfiguration}
               onModelConfigurationChange={handleModelConfigurationChange}
@@ -725,12 +737,13 @@ function SessionsPage() {
                     <PanelLeft className="h-5 w-5" />
                   </button>
                 )}
-                {openSessionIds.length > 0 ? (
+                {openPanes.length > 0 ? (
                   <SessionGrid
                     panes={openPanes}
                     streamingSessionIds={streamingSessionIds}
                     unreadSessionIds={unreadSessionIds}
                     onRemovePane={handleCloseVisiblePane}
+                    onSetArtifactPaneMode={setArtifactPaneMode}
                     models={models}
                     modelConfiguration={selectedModelConfiguration}
                     onModelConfigurationChange={handleModelConfigurationChange}

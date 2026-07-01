@@ -65,8 +65,12 @@ const sendToSession = defineTool("send_to_session", {
 
     await sendOrQueueSessionMessage({
       sessionId,
-      prompt,
-      modelConfiguration,
+      message: {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: prompt,
+        modelConfiguration,
+      },
     });
 
     return JSON.stringify({ accepted: true });

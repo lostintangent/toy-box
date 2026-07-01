@@ -1,7 +1,9 @@
-// Server functions for filesystem access
+// Server functions for filesystem access.
+//
+// General-purpose, unconfined filesystem access is limited to listing directories
+// (used by the directory picker). Reading and writing files is exposed only through
+// the sandboxed session-artifact functions in `./artifacts`.
 
-import { readdir, stat } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { z } from "zod";
@@ -11,7 +13,7 @@ export type DirectoryEntry = {
   path: string;
 };
 
-export type ListDirectoryContentsResult =
+export type ListDirectoryResult =
   | {
       status: "ok";
       currentPath: string;
@@ -23,16 +25,28 @@ export type ListDirectoryContentsResult =
       message: string;
     };
 
-const listDirectoryContentsInputSchema = z.object({
+const listDirectoryInputSchema = z.object({
   path: z.string().optional(),
   showHidden: z.boolean().optional(),
 });
 
-/** List child directories at a given path (defaults to CWD) */
-export const listDirectoryContents = createServerFn({ method: "GET" })
-  .validator(zodValidator(listDirectoryContentsInputSchema))
-  .handler(async ({ data }): Promise<ListDirectoryContentsResult> => {
-    const targetPath = resolve(data.path ?? process.cwd());
+/** List child directories at a given path (defaults to CWD). */
+export const listDirectory = createServerFn({ method: "GET" })
+  .validator(zodValidator(listDirectoryInputSchema))
+  .handler(async ({ data }): Promise<ListDirectoryResult> => {
+    const [{ readdir, stat }, { homedir }, { dirname, resolve }] = await Promise.all([
+      import("node:fs/promises"),
+      import("node:os"),
+      import("node:path"),
+    ]);
+    // Expand a leading ~ before resolving the requested directory (defaults to CWD).
+    const requested = data.path ?? process.cwd();
+    const targetPath =
+      requested === "~"
+        ? homedir()
+        : requested.startsWith("~/")
+          ? resolve(homedir(), requested.slice(2))
+          : resolve(requested);
 
     try {
       const info = await stat(targetPath);

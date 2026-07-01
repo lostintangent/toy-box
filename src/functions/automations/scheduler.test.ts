@@ -11,6 +11,7 @@ type ManagedSessionOptions = {
   sessionId: string;
   modelConfiguration?: ModelConfiguration;
   directory?: string;
+  automationId?: string;
   summary?: string;
 };
 type ManagedSessionHandle = {
@@ -180,6 +181,10 @@ async function loadScheduler(options: {
       throw new Error("createSession should not be used by scheduler tests");
     },
     deleteSession: options.deleteSession ?? (async () => {}),
+    getCachedOrResumeSession: async () => {
+      throw new Error("getCachedOrResumeSession should not be used by scheduler tests");
+    },
+    evictCachedSessionIfStale: () => false,
   }));
   mock.module("@/functions/runtime/sessionLauncher", () => ({
     createManagedSession:
@@ -269,6 +274,7 @@ describe("automation scheduler", () => {
         model: "gpt-5",
       },
       directory: "/repo/automation",
+      automationId: automation.id,
       summary: "Daily summary",
     });
     expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, "session-reused");
@@ -314,6 +320,7 @@ describe("automation scheduler", () => {
     expect(launchOptions.modelConfiguration).toEqual({
       model: automation.modelConfiguration.model,
     });
+    expect(launchOptions.automationId).toBe(automation.id);
     expect(launchOptions.summary).toBe(automation.title);
     expect(result.sessionId).toBe(launchOptions.sessionId);
     expect(result.started).toBe(true);
@@ -395,6 +402,7 @@ describe("automation scheduler", () => {
 
     const [launchOptions] = createManagedSessionMock.mock.calls[0]!;
     expect(launchOptions.modelConfiguration?.reasoningEffort).toBe("high");
+    expect(launchOptions.automationId).toBe(automation.id);
   });
 
   test("emits started then finished(success) and updates lastRunAt after idle terminal", async () => {
@@ -447,6 +455,7 @@ describe("automation scheduler", () => {
     const [launchOptions] = createManagedSessionMock.mock.calls[0]!;
     expect(launchOptions.sessionId).toBe("session-success");
     expect(launchOptions.modelConfiguration?.model).toBe(automation.modelConfiguration.model);
+    expect(launchOptions.automationId).toBe(automation.id);
     expect(launchOptions.summary).toBe(automation.title);
     expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, "session-success");
     expect(startManagedSessionTurnMock).toHaveBeenCalledTimes(1);
@@ -518,6 +527,7 @@ describe("automation scheduler", () => {
     const [launchOptions] = createManagedSessionMock.mock.calls[0]!;
     expect(launchOptions.sessionId).toBe("session-failure");
     expect(launchOptions.modelConfiguration?.model).toBe(automation.modelConfiguration.model);
+    expect(launchOptions.automationId).toBe(automation.id);
     expect(launchOptions.summary).toBe(automation.title);
     expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, "session-failure");
     expect(startManagedSessionTurnMock).toHaveBeenCalledTimes(1);
@@ -581,6 +591,7 @@ describe("automation scheduler", () => {
     const [launchOptions] = createManagedSessionMock.mock.calls[0]!;
     expect(launchOptions.sessionId).toBe("session-send-failure");
     expect(launchOptions.modelConfiguration?.model).toBe(automation.modelConfiguration.model);
+    expect(launchOptions.automationId).toBe(automation.id);
     expect(launchOptions.summary).toBe(automation.title);
     expectPersistedLastRunSession(
       updateLastRunSessionIdMock,

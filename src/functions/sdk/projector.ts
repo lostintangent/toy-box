@@ -13,7 +13,15 @@ import type {
   SessionEvent as SdkSessionEvent,
   ToolExecutionCompleteData,
 } from "@github/copilot-sdk";
-import { type JsonValue, type SessionEvent, type ToolCall } from "@/types";
+import {
+  type JsonValue,
+  type SessionArtifactPatch,
+  type SessionEvent,
+  type ToolCall,
+} from "@/types";
+import { parsePatchTouchedFiles, type PatchTouchedFile } from "@/lib/diffs/fileDiffs";
+import { resolveSessionStatePath } from "@/lib/server/sandbox";
+import { decodeSdkAgentNotification } from "@/functions/sdk/agentNotificationCodec";
 import { readAttachmentBlobs } from "./attachments";
 import { parseTodoSql } from "./todoParser";
 
@@ -66,6 +74,9 @@ const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
   create_automation: { kind: "omitted" },
   edit_automation: { kind: "omitted" },
   run_automation: { kind: "omitted" },
+  read: projectReadPolicy,
+  create: projectCreatePolicy,
+  patch: projectPatchPolicy,
   create_session: { kind: "translated", projectOnComplete: projectCreatedSession },
   open_session: (args) => ({
     kind: "translated",
@@ -141,16 +152,27 @@ export function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState):
     case "user.message":
       // Subagent prompts are not root user turns — they're already visible as
       // the agent tool call's arguments.
-      return event.agentId
-        ? []
-        : [
-            {
-              type: "user_message",
-              content: event.data.content,
-              timestamp: event.timestamp,
-              attachments: readAttachmentBlobs(event.data.attachments),
-            },
-          ];
+      if (event.agentId) return [];
+
+      const notification = decodeSdkAgentNotification(event.data.content);
+      if (notification) {
+        return [
+          {
+            type: "agent_notification",
+            notification,
+            timestamp: event.timestamp,
+          },
+        ];
+      }
+
+      return [
+        {
+          type: "user_message",
+          content: event.data.content,
+          timestamp: event.timestamp,
+          attachments: readAttachmentBlobs(event.data.attachments),
+        },
+      ];
     case "assistant.message":
       return [
         {
@@ -362,6 +384,74 @@ function projectAgentPolicy(args: ToolArguments): ToolCallProjectionPolicy | und
   };
 }
 
+function projectCreatePolicy(args: ToolArguments): ToolCallProjectionPolicy | undefined {
+  const artifactPath = resolveSessionStatePath(readStringArg(args, "path"));
+  if (!artifactPath) return undefined;
+
+  return {
+    kind: "translated",
+    projectOnStart: projectArtifactUpsertEvents([artifactPath]),
+  };
+}
+
+function projectReadPolicy(args: ToolArguments): ToolCallProjectionPolicy | undefined {
+  const artifactPath = resolveSessionStatePath(readPathArg(args));
+  if (!artifactPath) return undefined;
+
+  return { kind: "omitted" };
+}
+
+function projectPatchPolicy(args: ToolArguments): ToolCallProjectionPolicy | undefined {
+  const patch = readStringArg(args, "patch");
+  const files = patch ? parsePatchTouchedFiles(patch) : [];
+  const artifactFiles = files.flatMap((file) => {
+    const path = resolveSessionStatePath(file.path);
+    return path ? [{ ...file, path }] : [];
+  });
+  if (artifactFiles.length === 0) return undefined;
+
+  const projectOnComplete = (eventData: ToolExecutionCompleteData) =>
+    eventData.success ? projectArtifactPatchEvents(artifactFiles) : [];
+  if (artifactFiles.length === files.length) {
+    return { kind: "translated", projectOnComplete };
+  }
+
+  return {
+    kind: "augmented",
+    projectOnComplete,
+  };
+}
+
+function projectArtifactUpsertEvents(paths: string[]): SessionEvent[] {
+  return projectArtifactPatchEvent(
+    Array.from(new Set(paths)).map((path) => ({ type: "upsert", path })),
+  );
+}
+
+function projectArtifactPatchEvents(files: PatchTouchedFile[]): SessionEvent[] {
+  return projectArtifactPatchEvent(
+    Array.from(
+      files.reduce<Map<string, SessionArtifactPatch["type"]>>((events, file) => {
+        events.delete(file.path);
+        events.set(file.path, artifactPatchTypeFromStatus(file.status));
+        return events;
+      }, new Map()),
+      ([path, type]) => ({ type, path }),
+    ),
+  );
+}
+
+function projectArtifactPatchEvent(patches: SessionArtifactPatch[]): SessionEvent[] {
+  if (patches.length === 0) return [];
+  return [{ type: "artifacts_patch", patches }];
+}
+
+function artifactPatchTypeFromStatus(
+  status: PatchTouchedFile["status"],
+): SessionArtifactPatch["type"] {
+  return status === "deleted" ? "delete" : "upsert";
+}
+
 function projectLinkedSessionEvent(
   args: Record<string, unknown> | undefined,
   type: "linked_session_added" | "linked_session_removed",
@@ -438,6 +528,10 @@ function readStringArg(
 ): string | undefined {
   const result = value?.[key];
   return typeof result === "string" ? result : undefined;
+}
+
+function readPathArg(value: Record<string, unknown> | undefined): string | undefined {
+  return readStringArg(value, "path") ?? readStringArg(value, "filePath");
 }
 
 function readCanvasInput(

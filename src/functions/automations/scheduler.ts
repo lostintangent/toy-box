@@ -87,6 +87,7 @@ export async function runAutomationWithDatabase(
     sessionId,
     modelConfiguration: automation.modelConfiguration,
     directory: automation.cwd,
+    automationId: automation.id,
     summary: automation.title,
   });
 

@@ -43,34 +43,14 @@ export function emitSessionRead(sessionId: string): void {
   emitSessionsUpdate({ type: `${SESSION}.read`, sessionId });
 }
 
-export function emitSessionTouched(
-  sessionId: string,
-  options?: {
-    summary?: string;
-    replaceSummary?: boolean;
-  },
-): void {
-  const session: SessionMetadataUpdate = {
-    sessionId,
-    modifiedTime: new Date().toISOString(),
-  };
-
-  if (options?.summary !== undefined) {
-    session.summary = options.summary;
-  }
-  if (options?.replaceSummary !== undefined) {
-    session.replaceSummary = options.replaceSummary;
-  }
-
-  emitSessionUpsert(session);
-}
-
 export function updateSessionSummary(
   sessionId: string,
   summary: string,
   options?: { replace?: boolean },
 ): void {
-  emitSessionTouched(sessionId, {
+  emitSessionUpsert({
+    sessionId,
+    modifiedTime: new Date().toISOString(),
     summary,
     replaceSummary: options?.replace ?? false,
   });

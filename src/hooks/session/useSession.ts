@@ -81,6 +81,7 @@ type SessionStateUpdate = {
   todos?: TodoItem[];
   linkedSessionIds?: string[];
   canvases?: SessionCanvas[];
+  artifacts?: string[];
   lastSeenEventId?: number;
   status?: SessionStatus;
   reasoningContent?: string;
@@ -173,6 +174,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     todos,
     linkedSessionIds,
     canvases,
+    artifacts,
     status: baseStatus,
     reasoningContent,
     modelConfiguration,
@@ -560,6 +562,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     todos,
     linkedSessionIds,
     canvases,
+    artifacts,
     revision,
     hasSynced,
 

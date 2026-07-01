@@ -4,6 +4,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
 {
   "received": [
     {
+      "attachments": undefined,
       "clientMessageId": "client-1",
       "content": "kick off the reviews",
       "eventId": 0,
@@ -588,17 +589,22 @@ index 375b1b8..9db9a3a 100644
       "type": "delta",
     },
     {
-      "attachments": undefined,
-      "content": "now fix the findings",
       "eventId": 49,
-      "queuedMessageId": "queued-1",
+      "message": {
+        "content": "now fix the findings",
+        "id": "queued-1",
+        "role": "user",
+      },
       "turnId": "turn-1",
       "type": "message_queued",
     },
     {
-      "content": "now fix the findings",
       "eventId": 50,
-      "queuedMessageId": "queued-1",
+      "message": {
+        "content": "now fix the findings",
+        "id": "queued-1",
+        "role": "user",
+      },
       "turnId": "turn-2",
       "type": "message_dequeued",
     },
@@ -618,8 +624,7 @@ index 375b1b8..9db9a3a 100644
   ],
   "sideEffects": [
     "running:golden-stream",
-    "touched:golden-stream:kick off the reviews",
-    "touched:golden-stream:now fix the findings",
+    "running:golden-stream",
     "--- pre-close ---",
     "read:golden-stream",
     "idle:golden-stream",
@@ -631,6 +636,7 @@ index 375b1b8..9db9a3a 100644
 exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, and close 2`] = `
 {
   "activeTurnId": "turn-3",
+  "artifacts": [],
   "lastSeenEventId": 52,
   "linkedSessionIds": [],
   "messages": [
@@ -1045,6 +1051,7 @@ Evaluate the overall design decisions:
       "role": "assistant",
     },
     {
+      "attachments": undefined,
       "content": "now fix the findings",
       "role": "user",
     },
@@ -1061,7 +1068,7 @@ Evaluate the overall design decisions:
   "pendingToolCalls": [],
   "queuedMessages": [],
   "reasoningContent": "",
-  "status": "responding",
+  "status": "idle",
   "summary": undefined,
   "todos": undefined,
 }

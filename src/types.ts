@@ -63,6 +63,11 @@ export type SessionCanvas = {
 
 export type SessionCanvasOpen = Omit<SessionCanvas, "key" | "revision">;
 
+export type SessionArtifactPatch = {
+  type: "upsert" | "delete";
+  path: string;
+};
+
 export type SessionSnapshot = {
   id: string;
   messages: Message[];
@@ -71,28 +76,36 @@ export type SessionSnapshot = {
   todos?: TodoItem[];
   linkedSessionIds?: string[];
   canvases?: SessionCanvas[];
+  artifacts?: string[];
   lastSeenEventId?: number;
   status: SessionStatus;
   reasoningContent: string;
 };
 
-type BaseMessage = {
+export type UserMessage = {
+  role: "user";
   content: string;
+  attachments?: Attachment[];
+  timestamp?: string;
+};
+
+export type AgentNotification = { type: "artifact_edited"; path: string };
+
+export type AgentNotificationMessage = {
+  role: "agent_notification";
+  notification: AgentNotification;
+  timestamp?: string;
+};
+
+export type AssistantMessage = {
+  role: "assistant";
+  content: string;
+  toolCalls?: ToolCall[];
   timestamp?: string;
   revision?: number;
 };
 
-export type UserMessage = BaseMessage & {
-  role: "user";
-  attachments?: Attachment[];
-};
-
-export type AssistantMessage = BaseMessage & {
-  role: "assistant";
-  toolCalls?: ToolCall[];
-};
-
-export type Message = UserMessage | AssistantMessage;
+export type Message = UserMessage | AgentNotificationMessage | AssistantMessage;
 
 export type SubAgent = {
   content?: string;
@@ -125,10 +138,16 @@ export function toDataUrl(attachment: Attachment): string | undefined {
   return `data:${attachment.mimeType};base64,${attachment.base64}`;
 }
 
-export type QueuedMessage = UserMessage & {
+export type QueuedUserMessage = Omit<UserMessage, "timestamp"> & {
   id: string;
   modelConfiguration?: ModelConfiguration;
 };
+
+export type QueuedAgentNotificationMessage = Omit<AgentNotificationMessage, "timestamp"> & {
+  id: string;
+};
+
+export type QueuedMessage = QueuedUserMessage | QueuedAgentNotificationMessage;
 
 export type JsonValue =
   | string
@@ -147,6 +166,11 @@ export type SessionEvent = (
       attachments?: Attachment[];
       timestamp?: string;
       clientMessageId?: string;
+    }
+  | {
+      type: "agent_notification";
+      notification: AgentNotification;
+      timestamp?: string;
     }
   | {
       type: "assistant_message";
@@ -173,14 +197,18 @@ export type SessionEvent = (
   | { type: "status"; status: SessionStatus }
   | { type: "todos_patch"; patches: TodoItemPatch[] }
   | { type: "session_title_changed"; title: string }
-  | { type: "message_queued"; queuedMessageId: string; content: string; attachments?: Attachment[] }
+  | {
+      type: "message_queued";
+      message: QueuedMessage;
+    }
   | { type: "message_cancelled"; queuedMessageId: string }
-  | { type: "message_dequeued"; content: string; queuedMessageId?: string }
+  | { type: "message_dequeued"; message: QueuedMessage }
   | { type: "model_changed"; modelConfiguration: ModelConfiguration; agentId?: string }
   | { type: "skills"; skills: SessionSkill[] }
   | { type: "linked_session_added"; sessionId: string }
   | { type: "linked_session_removed"; sessionId: string }
   | { type: "canvas_opened"; canvas: SessionCanvasOpen }
+  | { type: "artifacts_patch"; patches: SessionArtifactPatch[] }
   | { type: "end"; reason: "idle" | "error" }
 ) & {
   eventId?: number;
@@ -242,6 +270,8 @@ export type SessionMetadataUpdate = {
   worktree?: SessionWorktree;
   parentSessionId?: string;
 };
+
+export type FileWatchEvent = { type: "modified"; timestamp: number } | { type: "deleted" };
 
 /* Terminal (client->server protocol) */
 

@@ -26,34 +26,3 @@ export function generateUUID(): string {
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-
-/**
- * Convert absolute path to relative path with ~ for home directory.
- * TODO: Have the server provide the home directory to avoid regex patterns.
- */
-export function toRelativePath(absolutePath: string, cwd?: string): string {
-  // If a CWD is provided and the path starts with it, show relative to CWD
-  if (cwd) {
-    const normalizedCwd = cwd.endsWith("/") ? cwd : `${cwd}/`;
-    if (absolutePath.startsWith(normalizedCwd)) {
-      return absolutePath.slice(normalizedCwd.length);
-    }
-    if (absolutePath === cwd) {
-      return ".";
-    }
-  }
-
-  const homePatterns = [
-    /^\/Users\/[^/]+\//, // macOS: /Users/username/
-    /^\/home\/[^/]+\//, // Linux: /home/username/
-    /^C:\\Users\\[^\\]+\\/i, // Windows: C:\Users\username\
-  ];
-
-  for (const pattern of homePatterns) {
-    if (pattern.test(absolutePath)) {
-      return absolutePath.replace(pattern, "~/");
-    }
-  }
-
-  return absolutePath;
-}

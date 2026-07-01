@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { listDirectoryContents, type DirectoryEntry } from "@/functions/fs";
+import { listDirectory, type DirectoryEntry } from "@/functions/fs";
 import { cn } from "@/lib/utils";
 
 type DirectoryBrowserDialogProps = {
@@ -89,7 +89,7 @@ export function DirectoryBrowserDialog({
       setError(null);
 
       try {
-        const result = await listDirectoryContents({
+        const result = await listDirectory({
           data: { path, showHidden },
         });
         if (result.status === "ok") {

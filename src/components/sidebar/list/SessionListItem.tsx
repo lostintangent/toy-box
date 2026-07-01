@@ -14,7 +14,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { SessionView } from "@/components/session/SessionView";
+import { SessionPane } from "@/components/session/panes/session/SessionPane";
 import { SessionMetadataBadges } from "@/components/session/SessionMetadataBadges";
 import { RelativeTime } from "@/components/ui/relative-time";
 import type { SessionMetadata } from "@/types";
@@ -248,7 +248,7 @@ export function SessionListItem({
           />
         </PopoverTrigger>
 
-        {/* Hover preview - desktop only */}
+        {/* Hover preview (desktop only) */}
         <PopoverContent
           side="right"
           align="start"
@@ -259,7 +259,7 @@ export function SessionListItem({
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
         >
-          <SessionView key={session.sessionId} sessionId={session.sessionId} readOnly={true} />
+          <SessionPane key={session.sessionId} sessionId={session.sessionId} mode="readOnly" />
         </PopoverContent>
       </Popover>
 

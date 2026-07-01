@@ -1,15 +1,26 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAtom } from "jotai";
+import { focusedPaneAtom } from "@/atoms";
 import { cn } from "@/lib/utils";
-import type { SessionGridPane } from "@/hooks/session/sessionPanes";
-import { CanvasPane } from "./CanvasPane";
-import { SessionView, type SessionViewProps } from "./SessionView";
+import {
+  createSessionPane,
+  isArtifactPane,
+  type ArtifactGridPane,
+  type ArtifactPaneMode,
+  type SessionGridPane,
+} from "@/hooks/session/sessionPanes";
+import { CanvasPane } from "./panes/CanvasPane";
+import { ArtifactPane } from "./panes/ArtifactPane";
+import { ARTIFACT_KINDS } from "./panes/artifacts/kinds";
+import { SessionPane, type SessionPaneProps } from "./panes/session/SessionPane";
 
-type MobileSessionPagerProps = Omit<SessionViewProps, "sessionId"> & {
+type MobileSessionPagerProps = Omit<SessionPaneProps, "sessionId"> & {
   panes: SessionGridPane[];
   selectedSessionId: string;
   streamingSessionIds: string[];
   unreadSessionIds: string[];
   onBack: () => void;
+  onSetArtifactPaneMode?: (pane: ArtifactGridPane, mode: ArtifactPaneMode) => void;
 };
 
 export function MobileSessionPager({
@@ -18,57 +29,66 @@ export function MobileSessionPager({
   streamingSessionIds,
   unreadSessionIds,
   onBack,
+  onSetArtifactPaneMode,
   ...sessionViewProps
 }: MobileSessionPagerProps) {
-  const fallbackPane = createFallbackSessionPane(selectedSessionId);
-  const visiblePanes = panes.length > 0 ? panes : [fallbackPane];
+  const [focusedPaneId, setFocusedPaneId] = useAtom(focusedPaneAtom);
+  const fallbackPane = useMemo(
+    () => createSessionPane(selectedSessionId, false),
+    [selectedSessionId],
+  );
+  const visiblePanes = useMemo(
+    () => (panes.length > 0 ? panes : [fallbackPane]),
+    [fallbackPane, panes],
+  );
   const selectedPaneId =
     visiblePanes.find((pane) => pane.kind === "session" && pane.sessionId === selectedSessionId)
       ?.id ?? visiblePanes[0].id;
-  const paneIds = visiblePanes.map((pane) => pane.id);
-  const [activePaneId, setActivePaneId] = useState(selectedPaneId);
+  const paneIds = useMemo(() => visiblePanes.map((pane) => pane.id), [visiblePanes]);
   const newPaneIds = useNewEntries(paneIds);
 
-  // If the active pane disappears from the list, fall back to selected.
-  // If the selected session changes (user picked a new one from sidebar), follow it.
-  const activeIsValid = paneIds.includes(activePaneId);
-  const effectiveActivePaneId = activeIsValid ? activePaneId : selectedPaneId;
+  // The focused pane is the active page when it's one of ours; otherwise fall
+  // back to the selected session's pane. Focus clears centrally when its pane
+  // departs (see usePaneFocus), so a fresh selection lands on its own pane.
+  const effectiveActivePaneId =
+    focusedPaneId !== null && paneIds.includes(focusedPaneId) ? focusedPaneId : selectedPaneId;
 
-  // Reset when user explicitly selects a different session from the sidebar
-  const prevSelectedRef = useRef(selectedSessionId);
-  useEffect(() => {
-    if (prevSelectedRef.current !== selectedSessionId) {
-      prevSelectedRef.current = selectedSessionId;
-      setActivePaneId(selectedPaneId);
-    }
-  }, [selectedPaneId, selectedSessionId]);
-
-  const handleDotPress = useCallback((paneId: string) => {
-    setActivePaneId(paneId);
-  }, []);
+  const handleDotPress = useCallback(
+    (paneId: string) => {
+      setFocusedPaneId(paneId);
+    },
+    [setFocusedPaneId],
+  );
 
   return (
     <div className="relative h-full">
       {visiblePanes.map((pane) => {
         const isActive = pane.id === effectiveActivePaneId;
+        // Stack all panes and toggle visibility (not display) so inactive ones keep their
+        // layout — and therefore their scroll position — instead of being torn out and reset.
         return (
-          <div key={pane.id} className={isActive ? "h-full" : "h-full hidden"}>
+          <div
+            key={pane.id}
+            className={cn("absolute inset-0", !isActive && "invisible pointer-events-none")}
+          >
             {pane.kind === "session" ? (
-              <SessionView
+              <SessionPane
                 sessionId={pane.sessionId}
                 isSessionRunning={streamingSessionIds.includes(pane.sessionId)}
                 isSessionUnread={unreadSessionIds.includes(pane.sessionId)}
                 onBack={onBack}
                 {...sessionViewProps}
               />
-            ) : (
+            ) : pane.kind === "canvas" ? (
               <CanvasPane pane={pane} onBack={onBack} />
+            ) : (
+              <ArtifactPane pane={pane} onBack={onBack} onModeChange={onSetArtifactPaneMode} />
             )}
           </div>
         );
       })}
       {visiblePanes.length > 1 && (
-        <div className="absolute top-0 left-0 right-0 flex items-center justify-center h-8 pointer-events-none z-10 md:hidden">
+        <div className="pointer-events-none absolute top-0 right-0 left-0 z-10 flex h-8 items-center justify-center md:hidden">
           <div className="pointer-events-auto">
             <PagerDots
               panes={visiblePanes}
@@ -148,6 +168,7 @@ const PagerDot = memo(function PagerDot({
   }, [onPress, pane.id]);
 
   // Visual state priority: active > streaming > unread > idle
+  const artifactDot = isArtifactPane(pane) ? ARTIFACT_KINDS[pane.kind].dotClass : undefined;
   const dotClass = isActive
     ? "bg-foreground h-3 w-3"
     : isStreaming
@@ -156,9 +177,15 @@ const PagerDot = memo(function PagerDot({
         ? "bg-blue-500 h-2.5 w-2.5"
         : pane.kind === "canvas"
           ? "bg-violet-500 h-2.5 w-2.5"
-          : "bg-muted-foreground/40 h-2.5 w-2.5";
+          : artifactDot
+            ? `${artifactDot} h-2.5 w-2.5`
+            : "bg-muted-foreground/40 h-2.5 w-2.5";
   const label =
-    pane.kind === "canvas" ? `Canvas ${pane.canvas.title || pane.canvas.canvasId}` : "Session";
+    pane.kind === "canvas"
+      ? `Canvas ${pane.canvas.title || pane.canvas.canvasId}`
+      : isArtifactPane(pane)
+        ? pane.title
+        : "Session";
 
   return (
     <button
@@ -178,17 +205,6 @@ const PagerDot = memo(function PagerDot({
     </button>
   );
 });
-
-function createFallbackSessionPane(
-  sessionId: string,
-): Extract<SessionGridPane, { kind: "session" }> {
-  return {
-    kind: "session",
-    id: `session:${sessionId}`,
-    sessionId,
-    isLinkedOnly: false,
-  };
-}
 
 // ── Entry animation hook ────────────────────────────────────────────────────
 

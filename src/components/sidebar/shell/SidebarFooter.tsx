@@ -6,13 +6,67 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Toggle } from "@/components/ui/toggle";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { getSettings, updateSetting } from "@/lib/config/settings";
+import {
+  getSettings,
+  isSessionFeatureScope,
+  updateSetting,
+  type SessionFeatureScope,
+} from "@/lib/config/settings";
+
+const SESSION_FEATURE_SCOPE_OPTIONS = [
+  { value: "always", label: "Always" },
+  { value: "sessions", label: "Sessions" },
+  { value: "automations", label: "Automations" },
+  { value: "never", label: "Never" },
+] satisfies { value: SessionFeatureScope; label: string }[];
+
+type FeatureScopeSettingProps = {
+  id: string;
+  label: string;
+  value: SessionFeatureScope;
+  onValueChange: (value: SessionFeatureScope) => void;
+};
+
+function FeatureScopeSetting({ id, label, value, onValueChange }: FeatureScopeSettingProps) {
+  return (
+    <div className="grid min-w-0 gap-2">
+      <label htmlFor={id} className="text-sm font-medium text-foreground">
+        {label}
+      </label>
+      <Select
+        value={value}
+        onValueChange={(nextValue) => {
+          if (!isSessionFeatureScope(nextValue)) return;
+          onValueChange(nextValue);
+        }}
+      >
+        <SelectTrigger id={id} className="w-full min-w-0">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {SESSION_FEATURE_SCOPE_OPTIONS.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
 
 export interface SidebarFooterProps {
   onToggleTerminal?: () => void;
@@ -23,12 +77,16 @@ export function SidebarFooter({ onToggleTerminal, isTerminalOpen }: SidebarFoote
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shell, setShell] = useState("");
   const [useWorktree, setUseWorktree] = useState(false);
+  const [showSessionOverlay, setShowSessionOverlay] = useState<SessionFeatureScope>("always");
+  const [autoFocusArtifacts, setAutoFocusArtifacts] = useState<SessionFeatureScope>("always");
 
   useEffect(() => {
     if (settingsOpen) {
       const s = getSettings();
       setShell(s.terminalShell);
       setUseWorktree(s.useWorktree);
+      setShowSessionOverlay(s.showSessionOverlay);
+      setAutoFocusArtifacts(s.autoFocusArtifacts);
     }
   }, [settingsOpen]);
 
@@ -70,6 +128,26 @@ export function SidebarFooter({ onToggleTerminal, isTerminalOpen }: SidebarFoote
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <FeatureScopeSetting
+              id="show-session-overlay"
+              label="Session overlay"
+              value={showSessionOverlay}
+              onValueChange={(nextValue) => {
+                setShowSessionOverlay(nextValue);
+                updateSetting("showSessionOverlay", nextValue);
+              }}
+            />
+            <FeatureScopeSetting
+              id="auto-focus-artifacts"
+              label="Auto-focus artifacts"
+              value={autoFocusArtifacts}
+              onValueChange={(nextValue) => {
+                setAutoFocusArtifacts(nextValue);
+                updateSetting("autoFocusArtifacts", nextValue);
+              }}
+            />
+          </div>
           <div className="grid gap-2">
             <label htmlFor="terminal-shell" className="text-sm font-medium text-foreground">
               Terminal shell

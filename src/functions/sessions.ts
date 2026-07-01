@@ -7,6 +7,7 @@ import { zodValidator } from "@tanstack/zod-adapter";
 import { z } from "zod";
 import { listAllSessions, listAvailableModels } from "./sdk/client";
 import { getOrResumeSession, getCachedOrResumeSession, deleteSession } from "./state/sessionCache";
+import { cacheSnapshot, getCachedSnapshot } from "./state/snapshotCache";
 import { getUnreadSessionIds, markSessionUnread, markSessionRead } from "./state/unread";
 import {
   getAllSessionWorktrees,
@@ -14,7 +15,11 @@ import {
   deleteSessionWorktree,
 } from "./state/worktreeMetadata";
 import { getChildSessionIds } from "./state/childSessions";
-import { SessionStream, createClientSessionStream } from "./runtime/stream";
+import {
+  SessionStream,
+  createClientSessionStream,
+  sendOrQueueSessionMessage,
+} from "./runtime/stream";
 import {
   cleanupWorktree,
   mergeWorktreeBranch,
@@ -22,6 +27,7 @@ import {
   detectGitRoot,
 } from "./worktrees";
 import type {
+  AgentNotification,
   ModelInfo,
   SessionEvent,
   SessionMetadata,
@@ -29,6 +35,7 @@ import type {
   SessionSnapshot,
   SessionWorktree,
 } from "@/types";
+import { agentNotificationSchema } from "@/lib/session/agentNotifications";
 import { toSessionSnapshot } from "@/lib/session/sessionReducer";
 import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/historyReplay";
 import { encodeSessionEvent } from "@/lib/session/streamCodec";
@@ -77,6 +84,11 @@ const enqueueInputSchema = z.object({
       }),
     )
     .optional(),
+});
+
+const notifyAgentInputSchema = z.object({
+  sessionId: z.string(),
+  notification: agentNotificationSchema,
 });
 
 const cancelQueuedInputSchema = z.object({
@@ -168,7 +180,10 @@ export const listSessionSkills = createServerFn({ method: "POST" })
       .map((s) => ({ name: s.name, description: s.description }));
   });
 
-/** Resume a session and get its message history */
+/** A session's reduced transcript snapshot, served from the cheapest source
+ *  that is still truthful: the live stream's in-memory state, then the
+ *  snapshot cache, then SDK resume + full history replay (which repopulates
+ *  the cache for the next open). */
 export const querySession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
   .handler(async ({ data }): Promise<SessionSnapshot> => {
@@ -177,8 +192,17 @@ export const querySession = createServerFn({ method: "POST" })
       return toSessionSnapshot(data.sessionId, stream.getSessionState());
     }
 
+    const cachedSnapshot = await getCachedSnapshot(data.sessionId);
+    if (cachedSnapshot) return cachedSnapshot;
+
     const { session, events } = await getOrResumeSession(data.sessionId);
-    return toSessionSnapshot(session.sessionId, await initializeSessionStateFromSdkHistory(events));
+    const snapshot = toSessionSnapshot(
+      session.sessionId,
+      await initializeSessionStateFromSdkHistory(events),
+    );
+
+    cacheSnapshot(session.sessionId, snapshot);
+    return snapshot;
   });
 
 function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): ReadableStream<Uint8Array> {
@@ -217,7 +241,7 @@ export const enqueueMessage = createServerFn({ method: "POST" })
     if (!stream) return false;
 
     stream.addQueuedMessage({
-      id: data.queuedMessageId,
+      id: data.queuedMessageId ?? crypto.randomUUID(),
       role: "user",
       content: data.content,
       attachments: data.attachments,
@@ -225,6 +249,26 @@ export const enqueueMessage = createServerFn({ method: "POST" })
     });
     return true;
   });
+
+/** Deliver a side-channel notification to a session's agent. Active sessions queue it
+ *  (coalescing equivalents); idle historical sessions are resumed and processed. */
+export const sendAgentNotification = createServerFn({ method: "POST" })
+  .validator(zodValidator(notifyAgentInputSchema))
+  .handler(async ({ data }): Promise<void> => {
+    await sendOrQueueSessionMessage({
+      sessionId: data.sessionId,
+      message: {
+        id: crypto.randomUUID(),
+        role: "agent_notification",
+        notification: data.notification,
+      },
+    });
+  });
+
+/** Positional client helper over `sendAgentNotification`. */
+export function notifyAgent(sessionId: string, notification: AgentNotification): Promise<void> {
+  return sendAgentNotification({ data: { sessionId, notification } });
+}
 
 /** Cancel a queued message by ID (before it's been sent to the SDK) */
 export const cancelQueuedMessage = createServerFn({ method: "POST" })
