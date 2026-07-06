@@ -57,4 +57,45 @@ describe("worktree metadata", () => {
       },
     });
   });
+
+  test("stats patches preserve required worktree identity fields", async () => {
+    await openWorktreeMetadataTestDatabase();
+
+    await upsertSessionWorktree("toy-box-session", {
+      path: "/tmp/toy-box-session",
+      branch: "toy-box/session",
+      baseBranch: "main",
+    });
+    await upsertSessionWorktree("toy-box-session", {
+      linesAdded: 12,
+      linesRemoved: 3,
+    });
+
+    expect(await getSessionWorktree("toy-box-session")).toEqual({
+      path: "/tmp/toy-box-session",
+      branch: "toy-box/session",
+      baseBranch: "main",
+      linesAdded: 12,
+      linesRemoved: 3,
+    });
+  });
+
+  test("database requires complete worktree identity fields", async () => {
+    await openWorktreeMetadataTestDatabase();
+
+    await expect(currentDb!.sql`
+      INSERT INTO worktrees (session_id)
+      VALUES (${"toy-box-session"})
+    `).rejects.toThrow();
+  });
+
+  test("rejects partial required worktree identity updates", async () => {
+    await openWorktreeMetadataTestDatabase();
+
+    await expect(
+      upsertSessionWorktree("toy-box-session", {
+        path: "/tmp/toy-box-session",
+      }),
+    ).rejects.toThrow("Worktree path, branch, and baseBranch must be updated together");
+  });
 });

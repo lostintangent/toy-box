@@ -6,7 +6,7 @@ import { createProjectionState, projectSdkEvent } from "@/functions/sdk/projecto
 import type { JsonValue, SessionEvent } from "@/types";
 
 function createStreamingContext() {
-  return createProjectionState();
+  return createProjectionState("toy-box-session");
 }
 
 function sdkEvent(event: unknown): SdkSessionEvent {
@@ -38,9 +38,11 @@ const PATCH_DIFF = `diff --git a/Users/lostintangent/Desktop/toy-box/docs/notes.
 @@ -1 +1 @@
 -old
 +new`;
-const ARTIFACT_PATCH_PATH = `${homedir()}/.copilot/session-state/toy-box-session/plan.md`;
-const ARTIFACT_HTML_PATCH_PATH = `${homedir()}/.copilot/session-state/toy-box-session/plan.html`;
-const HOME_RELATIVE_ARTIFACT_PATCH_PATH = ".copilot/session-state/toy-box-session/plan.html";
+const ARTIFACT_PATCH_PATH = `${homedir()}/.copilot/session-state/toy-box-session/files/plan.md`;
+const ARTIFACT_HTML_PATCH_PATH = `${homedir()}/.copilot/session-state/toy-box-session/files/plan.html`;
+const HOME_RELATIVE_ARTIFACT_PATCH_PATH = ".copilot/session-state/toy-box-session/files/plan.html";
+const SESSION_STATE_PATCH_PATH = `${homedir()}/.copilot/session-state/toy-box-session/plan.md`;
+const OTHER_SESSION_ARTIFACT_PATH = `${homedir()}/.copilot/session-state/other-session/files/plan.md`;
 const ARTIFACT_PATCH_TEXT = `*** Begin Patch
 *** Add File: ${ARTIFACT_PATCH_PATH}
 +# Plan
@@ -64,6 +66,14 @@ const MIXED_ARTIFACT_PATCH_TEXT = `*** Begin Patch
 @@
 -old
 +new
+*** End Patch`;
+const SESSION_STATE_PATCH_TEXT = `*** Begin Patch
+*** Add File: ${SESSION_STATE_PATCH_PATH}
++# Plan
+*** End Patch`;
+const OTHER_SESSION_ARTIFACT_PATCH_TEXT = `*** Begin Patch
+*** Add File: ${OTHER_SESSION_ARTIFACT_PATH}
++# Plan
 *** End Patch`;
 
 function modelChange(newModel: string, reasoningEffort?: string): SdkSessionEvent {
@@ -293,7 +303,7 @@ describe("projector", () => {
       ]);
     });
 
-    test("augments open_canvas completion with canvas metadata while preserving the visible tool call", () => {
+    test("keeps open_canvas visible and projects typed canvas-opened events", () => {
       const context = createStreamingContext();
       const args = {
         extensionId: "user:documint",
@@ -304,22 +314,6 @@ describe("projector", () => {
           title: "Review Plan",
         },
       };
-      const completion = {
-        availability: "ready",
-        canvasId: "documint-markdown-agent",
-        extensionId: "user:documint",
-        extensionName: "documint",
-        input: {
-          path: "/tmp/plan.md",
-          title: "Review Plan",
-        },
-        instanceId: "review-plan",
-        reopen: true,
-        status: "session-state/plan.md",
-        title: "Review Plan",
-        url: "http://127.0.0.1:51460/?instanceId=review-plan",
-      };
-      const detailedContent = JSON.stringify(completion);
 
       expect(
         projectSdkEvent(toolExecutionStart("open_canvas", "tool-canvas", args), context),
@@ -333,19 +327,46 @@ describe("projector", () => {
       ]);
 
       expect(
-        projectSdkEvent(toolExecutionComplete("tool-canvas", { detailedContent }), context),
+        projectSdkEvent(
+          toolExecutionComplete("tool-canvas", {
+            resultContent: "Opened canvas",
+          }),
+          context,
+        ),
       ).toEqual([
         {
           type: "tool_end",
           toolCallId: "tool-canvas",
           success: true,
-          result: undefined,
-          details: detailedContent,
+          result: "Opened canvas",
+          details: undefined,
         },
+      ]);
+
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "session.canvas.opened",
+            data: {
+              canvasId: "documint-markdown-agent",
+              extensionId: "user:documint",
+              extensionName: "documint",
+              input: {
+                path: "/tmp/plan.md",
+                title: "Review Plan",
+              },
+              instanceId: "review-plan",
+              status: "session-state/plan.md",
+              title: "Review Plan",
+              url: "http://127.0.0.1:51460/?instanceId=review-plan",
+            },
+          }),
+          context,
+        ),
+      ).toEqual([
         {
           type: "canvas_opened",
           canvas: {
-            availability: "ready",
             canvasId: "documint-markdown-agent",
             extensionId: "user:documint",
             extensionName: "documint",
@@ -354,7 +375,6 @@ describe("projector", () => {
               title: "Review Plan",
             },
             instanceId: "review-plan",
-            reopen: true,
             status: "session-state/plan.md",
             title: "Review Plan",
             url: "http://127.0.0.1:51460/?instanceId=review-plan",
@@ -363,33 +383,22 @@ describe("projector", () => {
       ]);
     });
 
-    test("does not emit canvas state for failed open_canvas completions", () => {
+    test("drops canvas-opened events without a renderable URL", () => {
       const context = createStreamingContext();
-      projectSdkEvent(
-        toolExecutionStart("open_canvas", "tool-canvas", {
-          canvasId: "documint-markdown-agent",
-          instanceId: "review-plan",
-        }),
-        context,
-      );
-
       expect(
         projectSdkEvent(
-          toolExecutionComplete("tool-canvas", {
-            success: false,
-            errorMessage: "extension failed",
+          sdkEvent({
+            type: "session.canvas.opened",
+            data: {
+              canvasId: "documint-markdown-agent",
+              extensionId: "user:documint",
+              instanceId: "review-plan",
+              title: "Review Plan",
+            },
           }),
           context,
         ),
-      ).toEqual([
-        {
-          type: "tool_end",
-          toolCallId: "tool-canvas",
-          success: false,
-          result: "extension failed",
-          details: undefined,
-        },
-      ]);
+      ).toEqual([]);
     });
   });
 
@@ -530,18 +539,44 @@ describe("projector", () => {
       });
     });
 
-    test("create emits artifacts for files in copilot session state and is omitted", () => {
+    test("create emits artifacts for files in copilot session files and is omitted", () => {
       const context = createStreamingContext();
-      const artifactPath = "~/.copilot/session-state/toy-box-session/report.md";
+      const artifactPath = "~/.copilot/session-state/toy-box-session/files/report.md";
 
       expectOmittedToolLifecycle(context, {
         toolName: "create",
         toolCallId: "tool-create-artifact",
         argumentsRecord: { path: artifactPath },
         startEvents: [
-          { type: "artifacts_patch", patches: [{ type: "upsert", path: artifactPath }] },
+          { type: "artifacts_patch", patches: [{ type: "upsert", path: "report.md" }] },
         ],
         completionResultContent: "Created report.md",
+      });
+    });
+
+    test("create remains visible for files in another copilot session", () => {
+      const context = createStreamingContext();
+
+      expectVisibleToolLifecycle(context, {
+        toolName: "create",
+        toolCallId: "tool-create-other-session",
+        argumentsRecord: {
+          path: "~/.copilot/session-state/other-session/files/report.md",
+        },
+        progressMessage: "Creating report.md",
+        resultContent: "Created report.md",
+      });
+    });
+
+    test("create remains visible for root copilot session state files", () => {
+      const context = createStreamingContext();
+
+      expectVisibleToolLifecycle(context, {
+        toolName: "create",
+        toolCallId: "tool-create-session-state",
+        argumentsRecord: { path: "~/.copilot/session-state/toy-box-session/report.md" },
+        progressMessage: "Creating report.md",
+        resultContent: "Created report.md",
       });
     });
 
@@ -559,7 +594,7 @@ describe("projector", () => {
 
     test("read tools are omitted for artifact paths", () => {
       const context = createStreamingContext();
-      const artifactPath = "~/.copilot/session-state/toy-box-session/report.md";
+      const artifactPath = "~/.copilot/session-state/toy-box-session/files/report.md";
 
       expectOmittedToolLifecycle(context, {
         toolName: "read_file",
@@ -574,6 +609,44 @@ describe("projector", () => {
         argumentsRecord: { filePath: artifactPath },
         completionResultContent: "# Report",
       });
+    });
+
+    test("read tools stay visible for root copilot session state files", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("read_file", "tool-read-session-state", {
+            path: "~/.copilot/session-state/toy-box-session/report.md",
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_start",
+          toolName: "read",
+          toolCallId: "tool-read-session-state",
+          arguments: { path: "~/.copilot/session-state/toy-box-session/report.md" },
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-read-session-state", {
+            success: true,
+            resultContent: "# Report",
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_end",
+          toolCallId: "tool-read-session-state",
+          success: true,
+          result: "# Report",
+          details: undefined,
+        },
+      ]);
     });
 
     test("read tools stay visible for non-artifact paths", () => {
@@ -612,7 +685,7 @@ describe("projector", () => {
       ]);
     });
 
-    test("apply_patch emits artifacts for patches that only touch copilot session state after success", () => {
+    test("apply_patch emits artifacts for patches that only touch copilot session files after success", () => {
       const context = createStreamingContext();
 
       expect(
@@ -634,12 +707,68 @@ describe("projector", () => {
           }),
           context,
         ),
+      ).toEqual([{ type: "artifacts_patch", patches: [{ type: "upsert", path: "plan.md" }] }]);
+    });
+
+    test("apply_patch stays visible for root copilot session state files", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("apply_patch", "tool-patch-session-state", SESSION_STATE_PATCH_TEXT),
+          context,
+        ),
       ).toEqual([
-        { type: "artifacts_patch", patches: [{ type: "upsert", path: ARTIFACT_PATCH_PATH }] },
+        {
+          type: "tool_start",
+          toolName: "patch",
+          toolCallId: "tool-patch-session-state",
+          arguments: { patch: SESSION_STATE_PATCH_TEXT },
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-patch-session-state", {
+            success: true,
+            resultContent: "Added 1 file(s)",
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_end",
+          toolCallId: "tool-patch-session-state",
+          success: true,
+          result: "Added 1 file(s)",
+          details: undefined,
+        },
       ]);
     });
 
-    test("apply_patch normalizes home-relative copilot session state artifact paths", () => {
+    test("apply_patch stays visible for files in another copilot session", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart(
+            "apply_patch",
+            "tool-patch-other-session",
+            OTHER_SESSION_ARTIFACT_PATCH_TEXT,
+          ),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_start",
+          toolName: "patch",
+          toolCallId: "tool-patch-other-session",
+          arguments: { patch: OTHER_SESSION_ARTIFACT_PATCH_TEXT },
+        },
+      ]);
+    });
+
+    test("apply_patch normalizes home-relative copilot session files artifact paths", () => {
       const context = createStreamingContext();
 
       expect(
@@ -661,9 +790,7 @@ describe("projector", () => {
           }),
           context,
         ),
-      ).toEqual([
-        { type: "artifacts_patch", patches: [{ type: "upsert", path: ARTIFACT_HTML_PATCH_PATH }] },
-      ]);
+      ).toEqual([{ type: "artifacts_patch", patches: [{ type: "upsert", path: "plan.html" }] }]);
     });
 
     test("apply_patch removes deleted artifact paths after success", () => {
@@ -684,9 +811,7 @@ describe("projector", () => {
           }),
           context,
         ),
-      ).toEqual([
-        { type: "artifacts_patch", patches: [{ type: "delete", path: ARTIFACT_PATCH_PATH }] },
-      ]);
+      ).toEqual([{ type: "artifacts_patch", patches: [{ type: "delete", path: "plan.md" }] }]);
     });
 
     test("apply_patch emits one artifact patch event for artifact additions and deletions", () => {
@@ -715,8 +840,8 @@ describe("projector", () => {
         {
           type: "artifacts_patch",
           patches: [
-            { type: "upsert", path: ARTIFACT_HTML_PATCH_PATH },
-            { type: "delete", path: ARTIFACT_PATCH_PATH },
+            { type: "upsert", path: "plan.html" },
+            { type: "delete", path: "plan.md" },
           ],
         },
       ]);
@@ -758,7 +883,7 @@ describe("projector", () => {
         },
         {
           type: "artifacts_patch",
-          patches: [{ type: "upsert", path: ARTIFACT_PATCH_PATH }],
+          patches: [{ type: "upsert", path: "plan.md" }],
         },
       ]);
     });
@@ -919,6 +1044,12 @@ describe("projector", () => {
               attachments: [
                 { type: "file", displayName: "legacy.png", path: "/tmp/legacy.png" },
                 { type: "blob", data: "aW1hZ2U=", mimeType: "image/png", displayName: "image.png" },
+                {
+                  type: "blob",
+                  assetId: "sha256:asset-backed",
+                  mimeType: "image/png",
+                  displayName: "asset-backed.png",
+                },
               ],
             },
           }),
@@ -970,7 +1101,7 @@ describe("projector", () => {
     test("decodes notification user message prompts at the SDK boundary", () => {
       const content = encodeSdkAgentNotification({
         type: "artifact_edited",
-        path: "/tmp/plan.md",
+        path: "plan.md",
       });
 
       expect(
@@ -987,7 +1118,7 @@ describe("projector", () => {
       ).toEqual([
         {
           type: "agent_notification",
-          notification: { type: "artifact_edited", path: "/tmp/plan.md" },
+          notification: { type: "artifact_edited", path: "plan.md" },
           timestamp: "2026-01-01T00:00:00.000Z",
         },
       ]);

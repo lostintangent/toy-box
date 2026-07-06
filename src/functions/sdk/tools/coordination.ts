@@ -22,8 +22,8 @@ const checkSessionStatus = defineTool("check_session_status", {
 
 const waitForSessions = defineTool("wait_for_sessions", {
   description:
-    "Waits for one or more sessions' current runtime streams to end before returning. " +
-    "Returns the final assistant response from each completed session in the same order.",
+    "Waits for one or more sessions' current runtime streams to complete before returning. " +
+    "Returns the latest assistant response when available and an error when a session fails or times out.",
   parameters: z.object({
     sessionIds: z.array(z.string()).min(1).describe("One or more session IDs to wait for"),
     timeoutMs: z
@@ -38,10 +38,10 @@ const waitForSessions = defineTool("wait_for_sessions", {
   handler: async ({ sessionIds, timeoutMs }) => {
     return JSON.stringify({
       responses: await Promise.all(
-        sessionIds.map(async (sessionId) => ({
-          sessionId,
-          response: await SessionStream.waitForClose(sessionId, timeoutMs),
-        })),
+        sessionIds.map(async (sessionId) => {
+          const completion = await SessionStream.waitForCompletion(sessionId, timeoutMs);
+          return { sessionId, ...completion };
+        }),
       ),
     });
   },
@@ -61,9 +61,9 @@ const sendToSession = defineTool("send_to_session", {
   }),
   skipPermission: true,
   handler: async ({ sessionId, prompt, modelConfiguration }) => {
-    const { sendOrQueueSessionMessage } = await import("@/functions/runtime/stream");
+    const { deliverSessionMessage } = await import("@/functions/runtime/stream");
 
-    await sendOrQueueSessionMessage({
+    await deliverSessionMessage({
       sessionId,
       message: {
         id: crypto.randomUUID(),

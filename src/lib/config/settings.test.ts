@@ -29,8 +29,8 @@ describe("settings normalization", () => {
     ).toEqual({
       terminalShell: "",
       useWorktree: false,
-      showSessionOverlay: "always",
-      autoFocusArtifacts: "always",
+      showSessionOverlay: "sessions",
+      autoFocusArtifacts: "automations",
     });
   });
 });

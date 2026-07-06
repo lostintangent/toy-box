@@ -1,6 +1,6 @@
 // Canonical session state reducer — the single transition function for
 // Session state. Three consumers feed it the same SessionEvents:
-//   - server live streaming (SessionStream#emit, runtime/stream.ts)
+//   - server live streaming (SessionStream#emit, runtime/stream/index.ts)
 //   - server history replay (sdk/historyReplay.ts)
 //   - the client, for live SSE events and the buffered-event replay a
 //     late-connecting client catches up on (useSession#applyEvent)
@@ -70,6 +70,8 @@ export type Session = {
 // ============================================================================
 // Public API
 // ============================================================================
+
+const STREAM_ERROR_MESSAGE = "An error occurred. Please try again.";
 
 export function createInitialSession(initial: Partial<Session> = {}): Session {
   return {
@@ -142,21 +144,18 @@ export function prepareSessionForNextTurn(state: Session): Session {
   return state;
 }
 
-/** Client-side recovery for a failed stream: surface `content` as the
- *  trailing assistant message (replacing a partial one, or appending) and
- *  reset transient streaming state. */
-export function applyStreamError(state: Session, content: string): Session {
+function applyErrorEnd(state: Session): void {
   const last = state.messages[state.messages.length - 1];
   if (last?.role === "assistant") {
-    state.messages[state.messages.length - 1] = { ...last, content };
+    state.messages[state.messages.length - 1] = { ...last, content: STREAM_ERROR_MESSAGE };
   } else {
-    state.messages.push({ role: "assistant", content });
+    state.messages.push({ role: "assistant", content: STREAM_ERROR_MESSAGE });
   }
 
   state.status = "idle";
   state.reasoningContent = "";
   state.pendingToolCalls.clear();
-  return state;
+  state.pendingOptimisticUserMessage = undefined;
 }
 
 // ============================================================================
@@ -181,6 +180,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     // ── Messages ──────────────────────────────────────────────────────
 
     case "user_message": {
+      if (event.clientMessageId) removeQueuedMessage(state, event.clientMessageId);
       if (reconcileOptimisticUserMessage(state, event)) return;
       if (isRedundantTurnStartEcho(state, event)) return;
 
@@ -427,9 +427,14 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     // ── Lifecycle ─────────────────────────────────────────────────────
 
     case "end":
-      // Idempotent on purpose: clients synthesize an end event on every
-      // stream close, and replays can deliver one after state is already
-      // final.
+      // Idempotent on purpose: clients can synthesize fallback end events for
+      // event-less completions/transport failures, and replays can deliver one
+      // after state is already final.
+      if (event.reason === "error") {
+        applyErrorEnd(state);
+        return;
+      }
+
       if (
         state.status === "idle" &&
         state.reasoningContent === "" &&
@@ -464,7 +469,7 @@ function createCanvasKey(
 function upsertCanvas(state: Session, canvas: Omit<SessionCanvas, "key" | "revision">): void {
   const key = createCanvasKey(canvas);
   const currentCanvases = state.canvases ?? [];
-  const index = findCanvasUpsertIndex(currentCanvases, canvas, key);
+  const index = currentCanvases.findIndex((candidate) => candidate.key === key);
 
   if (index === -1) {
     state.canvases = [...currentCanvases, { ...canvas, key, revision: 1 }];
@@ -501,27 +506,6 @@ function applyArtifactPatches(state: Session, patches: SessionArtifactPatch[]): 
 
     upsertArtifact(state, patch.path);
   }
-}
-
-function findCanvasUpsertIndex(
-  currentCanvases: SessionCanvas[],
-  canvas: Omit<SessionCanvas, "key" | "revision">,
-  key: string,
-): number {
-  const exactIndex = currentCanvases.findIndex((candidate) => candidate.key === key);
-  if (exactIndex !== -1 || !canvas.reopen) return exactIndex;
-
-  const matchingIndexes = currentCanvases.reduce<number[]>((indexes, candidate, index) => {
-    if (
-      (candidate.extensionId ?? null) === (canvas.extensionId ?? null) &&
-      candidate.canvasId === canvas.canvasId
-    ) {
-      indexes.push(index);
-    }
-    return indexes;
-  }, []);
-
-  return matchingIndexes.length === 1 ? matchingIndexes[0] : -1;
 }
 
 // ============================================================================

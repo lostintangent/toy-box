@@ -20,9 +20,9 @@ export type SessionSkill = {
 };
 
 export type SessionWorktree = {
-  path?: string;
-  branch?: string;
-  baseBranch?: string;
+  path: string;
+  branch: string;
+  baseBranch: string;
   linesAdded?: number;
   linesRemoved?: number;
 };
@@ -55,9 +55,7 @@ export type SessionCanvas = {
   title: string;
   url: string;
   status?: string;
-  availability?: string;
   input?: JsonValue;
-  reopen?: boolean;
   revision: number;
 };
 
@@ -66,6 +64,27 @@ export type SessionCanvasOpen = Omit<SessionCanvas, "key" | "revision">;
 export type SessionArtifactPatch = {
   type: "upsert" | "delete";
   path: string;
+};
+
+/**
+ * A user-registered artifact viewer. Each one teaches Toy Box how to render (and
+ * optionally edit) files with a given extension using a self-contained HTML/JS
+ * template. Definitions live on disk under `~/.toy-box/artifacts/<name>/`
+ * (`artifact.json` + `index.html`) and are surfaced to the client through
+ * workspace state, so a session that produces a matching file opens straight into
+ * the custom view.
+ */
+export type CustomArtifactKind = {
+  /** Unique id and on-disk folder name, e.g. `json-tree`. */
+  name: string;
+  /** File extensions (without the dot) this kind claims, e.g. `["json"]`. */
+  extensions: string[];
+  /** Curated icon name (see the client icon map); falls back to a generic file icon. */
+  icon?: string;
+  /** Whether the template can write edits back to the file. Read-only when false. */
+  editable?: boolean;
+  /** The `index.html` template: a standalone document that renders the file content. */
+  html: string;
 };
 
 export type SessionSnapshot = {
@@ -157,6 +176,18 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+export type DraftSession = {
+  sessionId: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type DraftPrompt = {
+  text: string;
+  updatedAt: number;
+  origin: string;
+};
+
 /* Session types (server->client replay + streaming) */
 
 export type SessionEvent = (
@@ -217,19 +248,53 @@ export type SessionEvent = (
 
 /* SSE updates (server->client protocol) */
 
-export type ServerUpdateEvent = SessionsUpdateEvent | AutomationsUpdateEvent;
+export type ServerUpdateEvent = WorkspaceEvent | AutomationsUpdateEvent;
 
-export type SessionsUpdateEvent =
+export type WorkspaceEvent =
   | {
       type: "session.upserted";
       session: SessionMetadataUpdate;
     }
-  | SimpleSessionUpdateEvents<"deleted" | "running" | "idle" | "unread" | "read">;
+  | {
+      type: "session.draft.created";
+      draft: DraftSession;
+    }
+  | {
+      type: "session.prompt.drafted";
+      sessionId: string;
+      prompt: DraftPrompt;
+    }
+  | SimpleSessionUpdateEvents<
+      | "deleted"
+      | "running"
+      | "idle"
+      | "unread"
+      | "read"
+      | "draft.discarded"
+      | "hyper.created"
+      | "hyper.promoted"
+    >;
 
-type SimpleSessionUpdateEvents<EventName extends string> = {
-  type: `session.${EventName}`;
-  sessionId: string;
-};
+// Actions are the client-issuable subset of workspace events. `unread` is
+// intentionally absent: the server is authoritative for it (a session becomes
+// unread from agent output, never from a client request), so clients only ever
+// receive it as an event and dispatch its inverse, `session.read`.
+type WorkspaceActionType =
+  | "session.draft.created"
+  | "session.prompt.drafted"
+  | "session.draft.discarded"
+  | "session.hyper.created"
+  | "session.hyper.promoted"
+  | "session.read";
+
+export type WorkspaceAction = Extract<WorkspaceEvent, { type: WorkspaceActionType }>;
+
+type SimpleSessionUpdateEvents<EventName extends string> = EventName extends string
+  ? {
+      type: `session.${EventName}`;
+      sessionId: string;
+    }
+  : never;
 
 export type AutomationsUpdateEvent =
   | {
@@ -264,7 +329,6 @@ export type SessionMetadataUpdate = {
   startTime?: string; // ISO timestamp
   modifiedTime?: string; // ISO timestamp
   summary?: string;
-  replaceSummary?: boolean;
   isRemote?: boolean;
   context?: SessionContext;
   worktree?: SessionWorktree;

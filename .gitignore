@@ -16,3 +16,6 @@ playwright-report
 toy-box
 # Riptide artifacts (cloud-synced)
 .humanlayer/tasks/
+
+# Codex scratch output
+.codex-tmp/

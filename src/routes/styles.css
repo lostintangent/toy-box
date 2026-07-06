@@ -37,6 +37,12 @@
   transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Uppercase eyebrow/section heading (sidebar groups, transcript intent dividers). */
+@utility section-heading {
+  @apply text-2xs font-semibold text-foreground/70 uppercase;
+  letter-spacing: 0.08em;
+}
+
 @layer utilities {
   .sidebar-scroll-fade {
     --fade-size: 2rem;
@@ -99,6 +105,11 @@ code {
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Micro label size — below text-xs (12px); badges, counts, eyebrow headings. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -117,19 +128,6 @@ code {
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
   --color-diff-added: var(--diff-added);
   --color-diff-added-bg: var(--diff-added-bg);
   --color-diff-added-bg-strong: var(--diff-added-bg-strong);
@@ -139,6 +137,8 @@ code {
   --color-diff-modified-old-bg: var(--diff-modified-old-bg);
   --color-diff-modified-new-bg: var(--diff-modified-new-bg);
   --color-terminal-bg: var(--terminal-bg);
+  --color-hyper-accent: var(--hyper-accent);
+  --color-unread: var(--unread);
 }
 
 :root {
@@ -162,21 +162,6 @@ code {
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
 
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-
   --diff-added: oklch(0.527 0.194 149.214);
   --diff-added-bg: oklch(0.527 0.194 149.214 / 15%);
   --diff-added-bg-strong: oklch(0.527 0.194 149.214 / 30%);
@@ -187,6 +172,13 @@ code {
   --diff-modified-new-bg: oklch(0.527 0.194 149.214 / 10%);
 
   --terminal-bg: #ffffff;
+
+  /* Amber shared by the hyper deck's minimize traffic light and the sidebar's
+     minimized-hyper indicator dot (yellow-400; reads well in both modes). */
+  --hyper-accent: oklch(85.2% 0.199 91.936);
+
+  /* Unread-activity indicator (session + automation list dots). blue-500. */
+  --unread: oklch(0.623 0.214 259.815);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -210,21 +202,6 @@ code {
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
 
-    --chart-1: oklch(0.488 0.243 264.376);
-    --chart-2: oklch(0.696 0.17 162.48);
-    --chart-3: oklch(0.769 0.188 70.08);
-    --chart-4: oklch(0.627 0.265 303.9);
-    --chart-5: oklch(0.645 0.246 16.439);
-
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
-
     --diff-added: oklch(0.65 0.18 149.579);
     --diff-added-bg: oklch(0.65 0.18 149.579 / 15%);
     --diff-added-bg-strong: oklch(0.65 0.18 149.579 / 30%);
@@ -235,6 +212,9 @@ code {
     --diff-modified-new-bg: oklch(0.65 0.18 149.579 / 10%);
 
     --terminal-bg: #1e1e1e;
+
+    /* blue-400 for stronger contrast on dark surfaces. */
+    --unread: oklch(0.707 0.165 254.624);
   }
 }
 

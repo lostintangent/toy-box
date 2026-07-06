@@ -3,7 +3,6 @@ import { useHydrated } from "@tanstack/react-router";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SessionListItem } from "./SessionListItem";
 import { buildSessionListEntries, type SessionListEntry } from "./sessionGrouping";
-import { cn } from "@/lib/utils";
 import type { SessionMetadata } from "@/types";
 
 // ============================================================================
@@ -38,6 +37,7 @@ export interface SessionListProps {
   sessions: SessionMetadata[];
   isLoading: boolean;
   onSessionSelect: (sessionId: string | null, modifierKey?: boolean) => void;
+  onSessionRename: (sessionId: string) => void;
   onSessionDelete: (sessionId: string) => void;
   deletingSessionId: string | null;
   activeSessionIds?: string[] | null;
@@ -45,13 +45,14 @@ export interface SessionListProps {
   unreadSessionIds: string[];
   worktreeSessionIds: string[];
   emptyMessage?: string;
-  draftSession?: SessionMetadata | null;
+  draftSessions?: SessionMetadata[];
 }
 
 export function SessionList({
   sessions,
   isLoading,
   onSessionSelect,
+  onSessionRename,
   onSessionDelete,
   deletingSessionId,
   activeSessionIds,
@@ -59,15 +60,17 @@ export function SessionList({
   unreadSessionIds,
   worktreeSessionIds,
   emptyMessage,
-  draftSession,
+  draftSessions = [],
 }: SessionListProps) {
   const hydrated = useHydrated();
-  const hasDraft = !!draftSession;
+  const hasDrafts = draftSessions.length > 0;
+  const draftSessionIds = useMemo(
+    () => new Set(draftSessions.map((draft) => draft.sessionId)),
+    [draftSessions],
+  );
 
   // Filter out draft from sessions list if it somehow got included
-  const filteredSessions = draftSession
-    ? sessions.filter((s) => s.sessionId !== draftSession.sessionId)
-    : sessions;
+  const filteredSessions = sessions.filter((session) => !draftSessionIds.has(session.sessionId));
   const listEntries = useMemo<SessionListEntry[]>(
     () =>
       hydrated
@@ -79,7 +82,7 @@ export function SessionList({
           })),
     [filteredSessions, hydrated],
   );
-  const isEmpty = filteredSessions.length === 0 && !hasDraft;
+  const isEmpty = filteredSessions.length === 0 && !hasDrafts;
 
   if (isLoading) {
     return <SessionListSkeleton />;
@@ -95,17 +98,8 @@ export function SessionList({
 
   return (
     <ul className="flex flex-col gap-2">
-      {/* Always render the draft slot - animates in/out via scale transform */}
-      <li
-        className={cn(
-          "origin-top",
-          hasDraft
-            ? "scale-y-100 opacity-100 transition-all duration-300 ease-out"
-            : "scale-y-0 opacity-0 -mb-2",
-        )}
-        aria-hidden={!hasDraft}
-      >
-        {draftSession && (
+      {draftSessions.map((draftSession) => (
+        <li key={draftSession.sessionId}>
           <SessionListItem
             session={draftSession}
             onSelect={onSessionSelect}
@@ -116,17 +110,15 @@ export function SessionList({
             isUnread={false}
             isDraft={true}
           />
-        )}
-      </li>
+        </li>
+      ))}
       {listEntries.map((entry) => {
         if (entry.type === "heading") {
           return (
             <li key={entry.key} className="pt-3 pb-1">
               <div className="flex items-center gap-2 px-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground/70">
-                  {entry.label}
-                </span>
-                <span className="text-[10px] font-medium tabular-nums text-foreground/60">
+                <span className="section-heading">{entry.label}</span>
+                <span className="text-2xs font-medium tabular-nums text-foreground/60">
                   ({entry.count})
                 </span>
                 <div className="h-px flex-1 bg-border" />
@@ -143,6 +135,7 @@ export function SessionList({
             <SessionListItem
               session={session}
               onSelect={onSessionSelect}
+              onRename={() => onSessionRename(session.sessionId)}
               onDelete={() => onSessionDelete(session.sessionId)}
               isDeleting={deletingSessionId === session.sessionId}
               isActive={isActive}

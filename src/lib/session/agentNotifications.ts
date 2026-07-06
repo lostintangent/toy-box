@@ -11,7 +11,7 @@ const REGISTRY: NotificationRegistry = {
   artifact_edited: {
     schema: z.object({ type: z.literal("artifact_edited"), path: z.string().min(1) }),
     instruction:
-      "The user edited the artifact at the given `path`. Review its latest contents and respond only if a follow-up would help.",
+      "The user edited the artifact at the given `path`, relative to this session's files folder. Review its latest contents and respond only if a follow-up would help.",
     label: (notification) => `Edited artifact (${getPathBasename(notification.path)})`,
     coalesceKey: (notification) => `artifact_edited:${notification.path}`,
   },

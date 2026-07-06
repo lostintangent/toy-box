@@ -17,7 +17,11 @@ export function getRouter() {
   const router = createRouter({
     routeTree,
     context: { queryClient },
-    scrollRestoration: true,
+    // The app shell never scrolls the window, and the one scroll surface that
+    // tracks navigation — the session list — derives its position from the URL
+    // (it scrolls the active session into view). So there is nothing to restore,
+    // and restoration actively fought that centering on back/forward.
+    scrollRestoration: false,
     defaultPreload: "intent",
     defaultNotFoundComponent: () => (
       <div className="flex h-full items-center justify-center">

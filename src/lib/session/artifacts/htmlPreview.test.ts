@@ -10,23 +10,15 @@ import {
 
 describe("HTML preview helpers", () => {
   test("creates preview URLs rooted at the HTML file directory", () => {
-    const url = createHtmlPreviewUrl(
-      "toy-box-session",
-      "~/.copilot/session-state/toy-box-session/files/index.html",
-      42,
-    );
+    const url = createHtmlPreviewUrl("toy-box-session", "index.html", 42);
 
-    expect(url).toBe("/api/preview/toy-box-session/files/index.html?v=42");
+    expect(url).toBe("/api/preview/toy-box-session/index.html?v=42");
   });
 
   test("creates an origin-qualified, directory-rooted base URI for relative embeds", () => {
-    const baseUri = createHtmlPreviewBaseUri(
-      "toy-box-session",
-      "~/.copilot/session-state/toy-box-session/files/plan.md",
-      "http://localhost:3100",
-    );
+    const baseUri = createHtmlPreviewBaseUri("toy-box-session", "plan.md", "http://localhost:3100");
 
-    expect(baseUri).toBe("http://localhost:3100/api/preview/toy-box-session/files/");
+    expect(baseUri).toBe("http://localhost:3100/api/preview/toy-box-session/");
     // Relative embeds land inside the preview namespace (root-absolute paths would not).
     expect(new URL("chart.html", baseUri).href).toBe(`${baseUri}chart.html`);
     expect(new URL("nested/chart.html", baseUri).href).toBe(`${baseUri}nested/chart.html`);

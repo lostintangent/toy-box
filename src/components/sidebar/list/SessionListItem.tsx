@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { useViewport } from "@/hooks/browser/ViewportContext";
-import { Circle, Loader2, Trash2 } from "lucide-react";
+import { Circle, Loader2, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -11,11 +11,18 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { SessionPane } from "@/components/session/panes/session/SessionPane";
-import { SessionMetadataBadges } from "@/components/session/SessionMetadataBadges";
+import { SessionPane } from "@/components/workspace/panes/session/SessionPane";
+import { VIEWPORT_OVERLAY_BOUNDS } from "@/components/workspace/overlayWindow";
+import { SessionMetadataBadges } from "@/components/workspace/panes/session/location/SessionMetadataBadges";
 import { RelativeTime } from "@/components/ui/relative-time";
 import type { SessionMetadata } from "@/types";
 import { SidebarListItemMainButton, SidebarListItemShell } from "./SidebarListItemShell";
@@ -30,18 +37,24 @@ interface SessionActionProps {
   isUnread: boolean;
   isDraft: boolean;
   isDeleting: boolean;
+  sessionLabel: string;
+  onRename?: () => void;
   onDelete: () => void;
 }
 
-const DELETE_BUTTON_CLASS = "ml-2 text-destructive hover:text-destructive hover:bg-destructive/10";
+const ACTION_BUTTON_CLASS = "ml-2 h-8 w-8 shrink-0";
 
 function SessionAction({
   isStreaming,
   isUnread,
   isDraft,
   isDeleting,
+  sessionLabel,
+  onRename,
   onDelete,
 }: SessionActionProps) {
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
   if (isStreaming) {
     return (
       <div className="ml-2 flex items-center justify-center w-8 h-8">
@@ -53,66 +66,68 @@ function SessionAction({
   if (isUnread) {
     return (
       <div className="ml-2 flex items-center justify-center w-8 h-8">
-        <Circle className="h-2.5 w-2.5 fill-blue-500 text-blue-500" />
+        <Circle className="h-2.5 w-2.5 fill-unread text-unread" />
       </div>
     );
   }
 
-  // Draft sessions can be deleted immediately without confirmation
-  if (isDraft) {
-    return (
-      <Button
-        variant="ghost"
-        size="icon"
-        disabled={isDeleting}
-        className={DELETE_BUTTON_CLASS}
-        aria-label="Delete session"
-        onClick={onDelete}
-      >
-        <Trash2 className="h-4 w-4" />
-      </Button>
-    );
-  }
-
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={isDeleting}
-          className={DELETE_BUTTON_CLASS}
-          aria-label="Delete session"
-          onClick={(e) => {
-            // Shift+click to delete without confirmation
-            if (e.shiftKey) {
-              e.preventDefault();
-              onDelete();
-            }
-          }}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete session?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This will permanently delete this session and all its messages. This action cannot be
-            undone.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={onDelete}
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={isDeleting}
+            className={ACTION_BUTTON_CLASS}
+            aria-label={`Actions for ${sessionLabel}`}
           >
-            Delete
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem disabled={isDraft || !onRename} onSelect={onRename}>
+            <Pencil className="h-3.5 w-3.5" />
+            Rename session
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            disabled={isDeleting}
+            onSelect={(event) => {
+              event.preventDefault();
+              setDeleteOpen(true);
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete session
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete session?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this session and all its messages. This action cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                onDelete();
+                setDeleteOpen(false);
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -123,6 +138,7 @@ function SessionAction({
 export interface SessionListItemProps {
   session: SessionMetadata;
   onSelect: (sessionId: string | null, modifierKey?: boolean) => void;
+  onRename?: () => void;
   onDelete: () => void;
   isDeleting: boolean;
   isActive?: boolean;
@@ -135,6 +151,7 @@ export interface SessionListItemProps {
 export function SessionListItem({
   session,
   onSelect,
+  onRename,
   onDelete,
   isDeleting,
   isActive = false,
@@ -145,6 +162,7 @@ export function SessionListItem({
 }: SessionListItemProps) {
   const { hydrated, isMobile } = useViewport();
   const allowScrollIntoView = hydrated && !isMobile;
+  const sessionLabel = session.summary || (isDraft ? "Draft session" : "New session");
   const { headlineRef, updateScrollFades } = useSidebarScrollFade(session.summary);
 
   // Hover preview state
@@ -152,12 +170,12 @@ export function SessionListItem({
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const leaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // [GRID-FEATURE] Handle click with Cmd/Ctrl key support for multi-session grid
+  // Cmd/Ctrl toggles a session in the multi-pane workspace.
   const handleClick = (e: React.MouseEvent) => {
     const hasModifier = e.metaKey || e.ctrlKey;
 
     // Always pass the session ID and modifier state to parent
-    // Parent will handle removal from grid if already active
+    // Parent handles removal from the workspace when already active.
     onSelect(session.sessionId, hasModifier);
   };
 
@@ -178,7 +196,7 @@ export function SessionListItem({
     // Don't show preview for already active sessions or drafts
     if (isActive || isDraft) return;
 
-    // Don't show preview when modifier key is held (grid operations)
+    // Don't show preview when modifier key is held (workspace selection).
     if (e?.metaKey || e?.ctrlKey) return;
 
     // Delay showing preview by 750ms
@@ -223,7 +241,7 @@ export function SessionListItem({
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
             aria-current={isActive ? "page" : undefined}
-            headline={session.summary || "New session"}
+            headline={sessionLabel}
             headlineRef={headlineRef}
             onHeadlineScroll={updateScrollFades}
             onHeadlinePointerEnter={updateScrollFades}
@@ -253,7 +271,8 @@ export function SessionListItem({
           side="right"
           align="start"
           sideOffset={5}
-          className="w-[450px] h-[600px] p-0 hidden md:block"
+          className="p-0 hidden md:block"
+          style={VIEWPORT_OVERLAY_BOUNDS}
           onOpenAutoFocus={(e) => e.preventDefault()}
           onCloseAutoFocus={(e) => e.preventDefault()}
           onMouseEnter={handleMouseEnter}
@@ -268,6 +287,8 @@ export function SessionListItem({
         isUnread={isUnread}
         isDraft={isDraft}
         isDeleting={isDeleting}
+        sessionLabel={sessionLabel}
+        onRename={onRename}
         onDelete={onDelete}
       />
     </SidebarListItemShell>

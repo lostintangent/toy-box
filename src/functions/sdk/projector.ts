@@ -9,7 +9,6 @@
 // and the small field adapters needed at tool-argument boundaries.
 
 import type {
-  CanvasOpenedData,
   SessionEvent as SdkSessionEvent,
   ToolExecutionCompleteData,
 } from "@github/copilot-sdk";
@@ -20,7 +19,7 @@ import {
   type ToolCall,
 } from "@/types";
 import { parsePatchTouchedFiles, type PatchTouchedFile } from "@/lib/diffs/fileDiffs";
-import { resolveSessionStatePath } from "@/lib/server/sandbox";
+import { projectSessionArtifactPath } from "@/lib/server/sandbox";
 import { decodeSdkAgentNotification } from "@/functions/sdk/agentNotificationCodec";
 import { readAttachmentBlobs } from "./attachments";
 import { parseTodoSql } from "./todoParser";
@@ -90,7 +89,6 @@ const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
     kind: "translated",
     projectOnStart: projectLinkedSessionEvent(args, "linked_session_removed"),
   }),
-  open_canvas: projectOpenCanvasPolicy,
   sql: projectTodoSqlPolicy,
   agent: projectAgentPolicy,
 };
@@ -100,9 +98,10 @@ const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
 // ============================================================================
 
 export type SdkStreamTerminalDisposition = "idle" | "error";
-export type SessionMetadataPatch = { summary: string; replaceSummary?: boolean };
+export type SessionMetadataPatch = { summary: string };
 
 export type ProjectionState = {
+  sessionId: string;
   toolCallPolicies: Map<string, ToolCallProjectionPolicy>;
 };
 
@@ -132,15 +131,18 @@ type ToolCallProjectionPolicy =
     };
 
 type ToolArguments = ToolCall["arguments"];
-type ToolCallPolicyFactory = (args: ToolArguments) => ToolCallProjectionPolicy | undefined;
+type ToolCallPolicyFactory = (
+  args: ToolArguments,
+  state: ProjectionState,
+) => ToolCallProjectionPolicy | undefined;
 type ToolCallPolicyEntry = ToolCallProjectionPolicy | ToolCallPolicyFactory;
 
 // ============================================================================
 // Public API
 // ============================================================================
 
-export function createProjectionState(): ProjectionState {
-  return { toolCallPolicies: new Map() };
+export function createProjectionState(sessionId: string): ProjectionState {
+  return { sessionId, toolCallPolicies: new Map() };
 }
 
 /** Map a single SDK event to canonical SessionEvents. */
@@ -219,6 +221,28 @@ export function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState):
     }
     case "session.title_changed":
       return [{ type: "session_title_changed", title: event.data.title }];
+    case "session.canvas.opened": {
+      if (!event.data.url) return [];
+
+      const input = event.data.input as JsonValue | undefined;
+      const title = event.data.title ?? readCanvasInputTitle(input) ?? event.data.canvasId;
+
+      return [
+        {
+          type: "canvas_opened",
+          canvas: {
+            canvasId: event.data.canvasId,
+            instanceId: event.data.instanceId,
+            url: event.data.url,
+            title,
+            extensionId: event.data.extensionId,
+            ...(event.data.extensionName ? { extensionName: event.data.extensionName } : {}),
+            ...(event.data.status ? { status: event.data.status } : {}),
+            ...(input !== undefined ? { input } : {}),
+          },
+        },
+      ];
+    }
     case "subagent.started": {
       const agentId = event.data.toolCallId ?? event.agentId;
       const model = event.data.model;
@@ -243,7 +267,7 @@ export function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState):
       const args = readToolArguments(rawToolName, event.data.arguments);
       const toolCallId = event.data.toolCallId;
       const agentId = event.agentId;
-      const policy = resolveToolCallPolicy(toolName, args);
+      const policy = resolveToolCallPolicy(toolName, args, state);
 
       if (policy) state.toolCallPolicies.set(toolCallId, policy);
       if (policy?.kind === "omitted") return [];
@@ -309,9 +333,9 @@ export function getSdkStreamTerminalDisposition(
 export function getSdkMetadataPatch(event: SdkSessionEvent): SessionMetadataPatch | undefined {
   switch (event.type) {
     case "session.handoff":
-      return event.data.summary ? { summary: event.data.summary, replaceSummary: true } : undefined;
+      return event.data.summary ? { summary: event.data.summary } : undefined;
     case "session.title_changed":
-      return { summary: event.data.title, replaceSummary: true };
+      return { summary: event.data.title };
     default:
       return undefined;
   }
@@ -321,18 +345,19 @@ export function getSdkMetadataPatch(event: SdkSessionEvent): SessionMetadataPatc
 // Tool call policy resolution
 // ============================================================================
 
-// Decide how a tool call projects, purely from its CANONICAL name (post-
-// TOOL_NAME_ALIASES, so e.g. the SDK's "task" resolves the "agent" policy)
-// and arguments. Static policies live in TOOL_CALL_POLICIES; dynamic policies
-// use arguments to build translated events or to detect tool calls completed
-// by another lifecycle.
+// Decide how a tool call projects from its CANONICAL name (post-
+// TOOL_NAME_ALIASES, so e.g. the SDK's "task" resolves the "agent" policy),
+// arguments, and projection state. Static policies live in TOOL_CALL_POLICIES;
+// dynamic policies use arguments/state to build translated events or to detect
+// tool calls completed by another lifecycle.
 function resolveToolCallPolicy(
   toolName: string,
   args: ToolArguments,
+  state: ProjectionState,
 ): ToolCallProjectionPolicy | undefined {
   const entry = TOOL_CALL_POLICIES[toolName];
   if (!entry) return undefined;
-  return typeof entry === "function" ? entry(args) : entry;
+  return typeof entry === "function" ? entry(args, state) : entry;
 }
 
 function projectSessionStart(
@@ -364,13 +389,6 @@ function projectTodoSqlPolicy(args: ToolArguments): ToolCallProjectionPolicy | u
   };
 }
 
-function projectOpenCanvasPolicy(args: ToolArguments): ToolCallProjectionPolicy {
-  return {
-    kind: "augmented",
-    projectOnComplete: (eventData) => projectCanvasOpened(args, eventData),
-  };
-}
-
 function projectAgentPolicy(args: ToolArguments): ToolCallProjectionPolicy | undefined {
   // Background agent calls stay visible, but their SDK tool completion is
   // not the real completion signal. subagent.completed/failed owns that.
@@ -384,8 +402,11 @@ function projectAgentPolicy(args: ToolArguments): ToolCallProjectionPolicy | und
   };
 }
 
-function projectCreatePolicy(args: ToolArguments): ToolCallProjectionPolicy | undefined {
-  const artifactPath = resolveSessionStatePath(readStringArg(args, "path"));
+function projectCreatePolicy(
+  args: ToolArguments,
+  state: ProjectionState,
+): ToolCallProjectionPolicy | undefined {
+  const artifactPath = projectSessionArtifactPath(state.sessionId, readStringArg(args, "path"));
   if (!artifactPath) return undefined;
 
   return {
@@ -394,18 +415,24 @@ function projectCreatePolicy(args: ToolArguments): ToolCallProjectionPolicy | un
   };
 }
 
-function projectReadPolicy(args: ToolArguments): ToolCallProjectionPolicy | undefined {
-  const artifactPath = resolveSessionStatePath(readPathArg(args));
+function projectReadPolicy(
+  args: ToolArguments,
+  state: ProjectionState,
+): ToolCallProjectionPolicy | undefined {
+  const artifactPath = projectSessionArtifactPath(state.sessionId, readPathArg(args));
   if (!artifactPath) return undefined;
 
   return { kind: "omitted" };
 }
 
-function projectPatchPolicy(args: ToolArguments): ToolCallProjectionPolicy | undefined {
+function projectPatchPolicy(
+  args: ToolArguments,
+  state: ProjectionState,
+): ToolCallProjectionPolicy | undefined {
   const patch = readStringArg(args, "patch");
   const files = patch ? parsePatchTouchedFiles(patch) : [];
   const artifactFiles = files.flatMap((file) => {
-    const path = resolveSessionStatePath(file.path);
+    const path = projectSessionArtifactPath(state.sessionId, file.path);
     return path ? [{ ...file, path }] : [];
   });
   if (artifactFiles.length === 0) return undefined;
@@ -460,37 +487,6 @@ function projectLinkedSessionEvent(
   return sessionId ? [{ type, sessionId }] : [];
 }
 
-function projectCanvasOpened(
-  startArgs: ToolArguments,
-  eventData: ToolExecutionCompleteData,
-): SessionEvent[] {
-  if (!eventData.success) return [];
-
-  const result = readJsonToolResult<CanvasOpenedData>(eventData);
-  if (!result?.url) return [];
-
-  const input = readCanvasInput(result, startArgs);
-  const title = result.title ?? readCanvasInputTitle(input) ?? result.canvasId;
-
-  return [
-    {
-      type: "canvas_opened",
-      canvas: {
-        canvasId: result.canvasId,
-        instanceId: result.instanceId,
-        url: result.url,
-        title,
-        extensionId: result.extensionId,
-        ...(result.extensionName ? { extensionName: result.extensionName } : {}),
-        ...(result.status ? { status: result.status } : {}),
-        availability: result.availability,
-        ...(input !== undefined ? { input } : {}),
-        ...(result.reopen ? { reopen: true } : {}),
-      },
-    },
-  ];
-}
-
 function readJsonToolResult<T>(eventData: ToolExecutionCompleteData): T | undefined {
   const raw = eventData.result?.detailedContent ?? eventData.result?.content;
   if (!raw) return undefined;
@@ -532,13 +528,6 @@ function readStringArg(
 
 function readPathArg(value: Record<string, unknown> | undefined): string | undefined {
   return readStringArg(value, "path") ?? readStringArg(value, "filePath");
-}
-
-function readCanvasInput(
-  result: CanvasOpenedData,
-  startArgs: ToolArguments,
-): JsonValue | undefined {
-  return (result.input ?? startArgs.input) as JsonValue | undefined;
 }
 
 function readCanvasInputTitle(input: JsonValue | undefined): string | undefined {

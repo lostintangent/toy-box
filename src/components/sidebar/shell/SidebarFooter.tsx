@@ -1,121 +1,69 @@
-import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Settings, SquareTerminal } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
+import { MessageCirclePlus, Settings, SquareTerminal } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/toggle";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
-  getSettings,
-  isSessionFeatureScope,
-  updateSetting,
-  type SessionFeatureScope,
-} from "@/lib/config/settings";
-
-const SESSION_FEATURE_SCOPE_OPTIONS = [
-  { value: "always", label: "Always" },
-  { value: "sessions", label: "Sessions" },
-  { value: "automations", label: "Automations" },
-  { value: "never", label: "Never" },
-] satisfies { value: SessionFeatureScope; label: string }[];
-
-type FeatureScopeSettingProps = {
-  id: string;
-  label: string;
-  value: SessionFeatureScope;
-  onValueChange: (value: SessionFeatureScope) => void;
-};
-
-function FeatureScopeSetting({ id, label, value, onValueChange }: FeatureScopeSettingProps) {
-  return (
-    <div className="grid min-w-0 gap-2">
-      <label htmlFor={id} className="text-sm font-medium text-foreground">
-        {label}
-      </label>
-      <Select
-        value={value}
-        onValueChange={(nextValue) => {
-          if (!isSessionFeatureScope(nextValue)) return;
-          onValueChange(nextValue);
-        }}
-      >
-        <SelectTrigger id={id} className="w-full min-w-0">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {SESSION_FEATURE_SCOPE_OPTIONS.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
 
 export interface SidebarFooterProps {
+  onOpenSettings: () => void;
+  onToggleHyper?: () => void;
+  isHyperOpen?: boolean;
+  hasHyperSessions?: boolean;
   onToggleTerminal?: () => void;
   isTerminalOpen?: boolean;
 }
 
-export function SidebarFooter({ onToggleTerminal, isTerminalOpen }: SidebarFooterProps) {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [shell, setShell] = useState("");
-  const [useWorktree, setUseWorktree] = useState(false);
-  const [showSessionOverlay, setShowSessionOverlay] = useState<SessionFeatureScope>("always");
-  const [autoFocusArtifacts, setAutoFocusArtifacts] = useState<SessionFeatureScope>("always");
-
-  useEffect(() => {
-    if (settingsOpen) {
-      const s = getSettings();
-      setShell(s.terminalShell);
-      setUseWorktree(s.useWorktree);
-      setShowSessionOverlay(s.showSessionOverlay);
-      setAutoFocusArtifacts(s.autoFocusArtifacts);
-    }
-  }, [settingsOpen]);
-
+export function SidebarFooter({
+  onOpenSettings,
+  onToggleHyper,
+  isHyperOpen,
+  hasHyperSessions,
+  onToggleTerminal,
+  isTerminalOpen,
+}: SidebarFooterProps) {
   return (
-    <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-      <div className="px-3 pt-3 md:pb-3 border-t flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <DialogTrigger asChild>
-            <button
-              className="text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Settings"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-          </DialogTrigger>
-          <Separator
-            orientation="vertical"
-            className="h-4! w-px! bg-muted-foreground/50! mx-1 translate-y-px"
-          />
-          <Link to="/" className="font-bold text-foreground hover:text-primary transition-colors">
-            {import.meta.env.VITE_APP_TITLE}
-          </Link>
-        </div>
+    <div className="px-3 pt-3 md:pb-3 border-t flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          aria-label="Settings"
+          onClick={onOpenSettings}
+        >
+          <Settings className="h-4 w-4" />
+        </Button>
+        <Separator
+          orientation="vertical"
+          className="h-4! w-px! bg-muted-foreground/50! mx-1 translate-y-px"
+        />
+        <Link to="/" className="font-bold text-foreground hover:text-primary transition-colors">
+          {import.meta.env.VITE_APP_TITLE}
+        </Link>
+      </div>
+      <div className="flex items-center gap-3">
+        {onToggleHyper && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onToggleHyper}
+            className="relative inline-flex h-6 w-6"
+            aria-label="Toggle hyper session"
+            title="Toggle hyper session"
+          >
+            <MessageCirclePlus className="h-4 w-4" />
+            {hasHyperSessions && !isHyperOpen && (
+              <span className="absolute right-px top-px h-2.5 w-2.5 rounded-full bg-hyper-accent" />
+            )}
+          </Button>
+        )}
         {onToggleTerminal && (
           <Toggle
             pressed={!!isTerminalOpen}
             onPressedChange={() => onToggleTerminal()}
             size="sm"
-            className="h-6 w-6 min-w-6 p-0"
+            className="h-6 w-6 min-w-6 p-0 hover:bg-accent hover:text-accent-foreground"
             aria-label="Toggle terminal"
             title="Toggle terminal"
           >
@@ -123,63 +71,6 @@ export function SidebarFooter({ onToggleTerminal, isTerminalOpen }: SidebarFoote
           </Toggle>
         )}
       </div>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
-        </DialogHeader>
-        <div className="grid gap-4">
-          <div className="grid grid-cols-2 gap-4">
-            <FeatureScopeSetting
-              id="show-session-overlay"
-              label="Session overlay"
-              value={showSessionOverlay}
-              onValueChange={(nextValue) => {
-                setShowSessionOverlay(nextValue);
-                updateSetting("showSessionOverlay", nextValue);
-              }}
-            />
-            <FeatureScopeSetting
-              id="auto-focus-artifacts"
-              label="Auto-focus artifacts"
-              value={autoFocusArtifacts}
-              onValueChange={(nextValue) => {
-                setAutoFocusArtifacts(nextValue);
-                updateSetting("autoFocusArtifacts", nextValue);
-              }}
-            />
-          </div>
-          <div className="grid gap-2">
-            <label htmlFor="terminal-shell" className="text-sm font-medium text-foreground">
-              Terminal shell
-            </label>
-            <Input
-              id="terminal-shell"
-              value={shell}
-              onChange={(event) => setShell(event.target.value)}
-              onBlur={() => updateSetting("terminalShell", shell.trim())}
-              placeholder="/bin/zsh or zsh"
-              spellCheck={false}
-            />
-            <p className="text-xs text-muted-foreground">
-              Provide a full path or a binary on your PATH. Close and reopen the terminal to apply.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="use-worktree"
-              checked={useWorktree}
-              onCheckedChange={(checked) => {
-                const value = checked === true;
-                setUseWorktree(value);
-                updateSetting("useWorktree", value);
-              }}
-            />
-            <label htmlFor="use-worktree" className="text-sm font-medium text-foreground">
-              Start new sessions in a worktree
-            </label>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+    </div>
   );
 }

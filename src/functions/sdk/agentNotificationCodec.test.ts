@@ -7,7 +7,7 @@ import {
 
 describe("SDK agent notification codec", () => {
   test("round-trips notification markers", () => {
-    const notification = { type: "artifact_edited", path: "/tmp/session/plan.md" } as const;
+    const notification = { type: "artifact_edited", path: "plan.md" } as const;
 
     expect(decodeSdkAgentNotification(encodeSdkAgentNotification(notification))).toEqual(
       notification,

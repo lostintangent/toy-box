@@ -11,7 +11,7 @@ import { useServerEvents } from "@/hooks/events/useServerEvents";
 import { applyAutomationsUpdateEvent } from "./cache";
 import { getAutomationIdFromSessionId } from "@/lib/automation/sessionId";
 import { automationQueries, sessionQueries } from "@/lib/queries";
-import { prependSessionIfMissing } from "@/lib/session/sessionsCache";
+import { prependSessionIfMissing } from "@/lib/session/queryCache";
 import type { AutomationOptions, AutomationsUpdateEvent, SessionSnapshot } from "@/types";
 
 type UseAutomationsOptions = {

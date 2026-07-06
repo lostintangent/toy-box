@@ -1,6 +1,12 @@
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import { describe, expect, mock, test } from "bun:test";
-import type { SessionEvent } from "@/types";
+import { describe, expect, mock, onTestFinished, test } from "bun:test";
+import type {
+  DraftPrompt,
+  DraftSession,
+  SessionEvent,
+  SessionMetadataUpdate,
+  WorkspaceEvent,
+} from "@/types";
 import {
   sessionSeedFromSnapshot,
   toSessionSnapshot,
@@ -13,7 +19,7 @@ import { loadSessionFixture } from "./helpers";
 // replay, queueing a follow-up, the idle→drain handoff, and the final
 // idle→close teardown. The projector/reducer goldens lock the data pipeline;
 // this locks the runtime around it: event sequencing (eventId/turnId
-// decoration), buffering, broadcast ordering, and teardown.
+// decoration), buffering, global broadcast ordering, and teardown.
 //
 // Nondeterministic ids (Date.now-seeded eventIds, timestamped turnIds) are
 // normalized to stable ordinals before asserting.
@@ -23,53 +29,94 @@ import { loadSessionFixture } from "./helpers";
 // later test files that import the missing exports.
 
 const sideEffects: string[] = [];
+const workspaceEventListeners = new Set<(event: WorkspaceEvent) => void>();
 const unused = () => {
   throw new Error("not used in stream golden replay");
 };
+
+function emitMockWorkspaceEvent(event: WorkspaceEvent): void {
+  for (const listener of workspaceEventListeners) {
+    listener(event);
+  }
+}
 
 function sdkEvent(event: unknown): SdkSessionEvent {
   return event as SdkSessionEvent;
 }
 
-mock.module("@/functions/state/sessionCache", () => ({
+mock.module("@/functions/state/sessionRegistry", () => ({
   createSession: unused,
-  getOrResumeSession: unused,
-  getCachedOrResumeSession: unused,
+  getSession: unused,
+  withSession: unused,
   evictCachedSession: () => {},
   evictCachedSessionIfStale: () => false,
   hasCachedSession: () => false,
   deleteSession: unused,
 }));
-mock.module("@/functions/state/unread", () => ({
-  markSessionRead: (id: string) => sideEffects.push(`read:${id}`),
-  markSessionUnread: (id: string) => sideEffects.push(`unread:${id}`),
-  getUnreadSessionIds: () => [],
-  deleteUnreadState: () => false,
-}));
 mock.module("@/functions/runtime/broadcast", () => ({
-  emitSessionRunning: (id: string) => sideEffects.push(`running:${id}`),
-  emitSessionIdle: (id: string) => sideEffects.push(`idle:${id}`),
-  updateSessionSummary: (id: string, summary: string) =>
-    sideEffects.push(`summary:${id}:${summary}`),
-  emitSessionsUpdate: () => {},
-  emitSessionUpsert: () => {},
-  emitSessionDelete: () => {},
-  emitSessionUnread: () => {},
-  emitSessionRead: () => {},
-  subscribeSessionsUpdates: () => () => {},
+  emitSessionRunning: (sessionId: string) => {
+    sideEffects.push(`running:${sessionId}`);
+    emitMockWorkspaceEvent({ type: "session.running", sessionId });
+  },
+  emitSessionIdle: (sessionId: string) => {
+    sideEffects.push(`idle:${sessionId}`);
+    emitMockWorkspaceEvent({ type: "session.idle", sessionId });
+  },
+  updateSessionName: (sessionId: string, name: string) => {
+    sideEffects.push(`summary:${sessionId}:${name}`);
+    emitMockWorkspaceEvent({
+      type: "session.upserted",
+      session: {
+        sessionId,
+        modifiedTime: new Date().toISOString(),
+        summary: name,
+      },
+    });
+  },
+  emitWorkspaceEvent: emitMockWorkspaceEvent,
+  emitSessionUpsert: (session: SessionMetadataUpdate) =>
+    emitMockWorkspaceEvent({ type: "session.upserted", session }),
+  emitSessionDelete: (sessionId: string) =>
+    emitMockWorkspaceEvent({ type: "session.deleted", sessionId }),
+  emitSessionUnread: (sessionId: string) =>
+    emitMockWorkspaceEvent({ type: "session.unread", sessionId }),
+  emitSessionRead: (sessionId: string) =>
+    emitMockWorkspaceEvent({ type: "session.read", sessionId }),
+  emitDraftCreated: (draft: DraftSession) =>
+    emitMockWorkspaceEvent({ type: "session.draft.created", draft }),
+  emitDraftDiscarded: (sessionId: string) =>
+    emitMockWorkspaceEvent({ type: "session.draft.discarded", sessionId }),
+  emitSessionHyper: (sessionId: string) =>
+    emitMockWorkspaceEvent({ type: "session.hyper.created", sessionId }),
+  emitSessionPromoted: (sessionId: string) =>
+    emitMockWorkspaceEvent({ type: "session.hyper.promoted", sessionId }),
+  emitDraftPromptChanged: (sessionId: string, prompt: DraftPrompt) =>
+    emitMockWorkspaceEvent({ type: "session.prompt.drafted", sessionId, prompt }),
+  subscribeWorkspaceEvents: (listener: (event: WorkspaceEvent) => void) => {
+    workspaceEventListeners.add(listener);
+    return () => {
+      workspaceEventListeners.delete(listener);
+    };
+  },
+  emitAutomationsUpdate: () => {},
+  subscribeAutomationsUpdates: () => () => {},
 }));
 
 const { SessionStream } = await import("@/functions/runtime/stream");
+const { deleteUnreadState } = await import("@/functions/state/workspace");
 
 const SESSION_ID = "golden-stream";
 
 describe("stream golden replay", () => {
   test("two-turn lifetime: fixture replay, queue drain, and close", async () => {
+    onTestFinished(() => {
+      deleteUnreadState(SESSION_ID);
+    });
+
     // ── Normalization for nondeterministic ids ─────────────────────────
     let baseEventId: number | undefined;
     const turnIds = new Map<string, string>();
-    const normalize = (event: SessionEvent | null): unknown => {
-      if (event === null) return "<<STREAM-CLOSED>>";
+    const normalize = (event: SessionEvent): unknown => {
       const e = { ...event } as Record<string, unknown>;
       if (typeof e.eventId === "number") {
         baseEventId ??= e.eventId;
@@ -101,10 +148,16 @@ describe("stream golden replay", () => {
       modelConfiguration: { model: "gpt-5.5" },
     });
     const received: unknown[] = [];
-    stream.subscribe((event) => received.push(normalize(event)));
+    const events = stream.subscribe();
+    const collector = (async () => {
+      for await (const event of events) {
+        received.push(normalize(event));
+      }
+      received.push("<<STREAM-CLOSED>>");
+    })();
 
     // Turn 1: explicit start + full fixture replay through the SDK listener.
-    stream.startTurn({ id: "client-1", role: "user", content: "kick off the reviews" });
+    await stream.startTurn({ id: "client-1", role: "user", content: "kick off the reviews" });
     for (const event of await loadSessionFixture("subagents")) {
       sdkHandler!(event);
     }
@@ -123,16 +176,19 @@ describe("stream golden replay", () => {
     sideEffects.push("--- pre-close ---");
     sdkHandler!(sdkEvent({ type: "session.idle", data: {} }));
     await new Promise((resolve) => setTimeout(resolve, 0));
+    await collector;
 
     // ── Invariants ─────────────────────────────────────────────────────
-    // The drain sent exactly the queued prompt to the SDK.
+    // Each turn sent exactly its prompt to the SDK: the explicit start,
+    // then the drained queue prompt.
     expect(sdkCalls).toEqual([
+      { send: { prompt: "kick off the reviews", attachments: undefined } },
       { send: { prompt: "now fix the findings", attachments: undefined } },
     ]);
-    // Teardown sequence: unread update, idle announcement, end-of-stream
-    // marker to subscribers, SDK unsubscribe — in that order.
+    // Teardown sequence: idle announcement, end-of-stream marker to subscribers,
+    // SDK unsubscribe — in that order. The workspace read action is silent when
+    // the session was not unread.
     expect(sideEffects.slice(sideEffects.indexOf("--- pre-close ---") + 1)).toEqual([
-      `read:${SESSION_ID}`,
       `idle:${SESSION_ID}`,
       "sdk:unsubscribed",
     ]);
@@ -166,6 +222,11 @@ describe("stream golden replay", () => {
   });
 
   test("a snapshot-seeded stream converges with an uninterrupted stream across turns", async () => {
+    onTestFinished(() => {
+      deleteUnreadState("golden-uninterrupted");
+      deleteUnreadState("golden-interrupted");
+    });
+
     // The same two turns travel two roads: one stream that lives through
     // both, and a stream that closes cleanly after turn 1 (the snapshot capture
     // point) and is reborn seeded from its snapshot — the reply-to-idle-
@@ -195,7 +256,7 @@ describe("stream golden replay", () => {
     };
 
     const runTurnOne = async ({ stream, emit }: DrivenStream) => {
-      stream.startTurn({ id: "client-1", role: "user", content: "kick off the reviews" });
+      await stream.startTurn({ id: "client-1", role: "user", content: "kick off the reviews" });
       for (const event of fixture) {
         emit(event);
       }
@@ -203,7 +264,7 @@ describe("stream golden replay", () => {
     };
 
     const runTurnTwo = async ({ stream, emit }: DrivenStream) => {
-      stream.startTurn({ id: "queued-1", role: "user", content: "now fix the findings" });
+      await stream.startTurn({ id: "queued-1", role: "user", content: "now fix the findings" });
       emit(sdkEvent({ type: "assistant.turn_start", data: {} }));
       emit(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "On it." } }));
       emit(sdkEvent({ type: "session.idle", data: {} }));
@@ -235,7 +296,7 @@ describe("stream golden replay", () => {
     );
 
     // A new stream for the same session, seeded from the snapshot exactly as
-    // createOrResumePromptStream does on a cache hit, runs turn 2.
+    // delivery acquisition does on a cache hit, runs turn 2.
     const seeded = driveStream("golden-interrupted", sessionSeedFromSnapshot(capturedSnapshot));
     await runTurnTwo(seeded);
 

@@ -16,11 +16,15 @@ type SessionWorktreeRow = {
   lines_removed: number | null;
 };
 
-function mapRowToWorktree(row: SessionWorktreeRow): SessionWorktree {
+function mapRowToWorktree(row: SessionWorktreeRow): SessionWorktree | null {
+  if (!row.worktree_path || !row.worktree_branch || !row.worktree_base_branch) {
+    return null;
+  }
+
   return {
-    path: row.worktree_path ?? undefined,
-    branch: row.worktree_branch ?? undefined,
-    baseBranch: row.worktree_base_branch ?? undefined,
+    path: row.worktree_path,
+    branch: row.worktree_branch,
+    baseBranch: row.worktree_base_branch,
     linesAdded: row.lines_added ?? undefined,
     linesRemoved: row.lines_removed ?? undefined,
   };
@@ -45,31 +49,47 @@ export async function getAllSessionWorktrees(): Promise<Record<string, SessionWo
 
   const result: Record<string, SessionWorktree> = {};
   for (const row of rows as SessionWorktreeRow[]) {
-    result[row.session_id] = mapRowToWorktree(row);
+    const worktree = mapRowToWorktree(row);
+    if (worktree) {
+      result[row.session_id] = worktree;
+    }
   }
   return result;
 }
 
-/** Insert or update a session's worktree record. Only touches columns present in the patch. */
+/** Insert or update a complete worktree record, or patch diff stats on an existing one. */
 export async function upsertSessionWorktree(
   sessionId: string,
   data: Partial<SessionWorktree>,
 ): Promise<void> {
   const db = await getAppDatabase();
 
-  const worktreePath = data.path ?? null;
-  const worktreeBranch = data.branch ?? null;
-  const worktreeBaseBranch = data.baseBranch ?? null;
   const linesAdded = data.linesAdded ?? null;
   const linesRemoved = data.linesRemoved ?? null;
+  const hasCoreFields =
+    data.path !== undefined && data.branch !== undefined && data.baseBranch !== undefined;
+
+  if (!hasCoreFields) {
+    if (data.path !== undefined || data.branch !== undefined || data.baseBranch !== undefined) {
+      throw new Error("Worktree path, branch, and baseBranch must be updated together");
+    }
+
+    await db.sql`
+      UPDATE worktrees SET
+        lines_added = COALESCE(${linesAdded}, lines_added),
+        lines_removed = COALESCE(${linesRemoved}, lines_removed)
+      WHERE session_id = ${sessionId}
+    `;
+    return;
+  }
 
   await db.sql`
     INSERT INTO worktrees (session_id, worktree_path, worktree_branch, worktree_base_branch, lines_added, lines_removed)
-    VALUES (${sessionId}, ${worktreePath}, ${worktreeBranch}, ${worktreeBaseBranch}, ${linesAdded}, ${linesRemoved})
+    VALUES (${sessionId}, ${data.path}, ${data.branch}, ${data.baseBranch}, ${linesAdded}, ${linesRemoved})
     ON CONFLICT(session_id) DO UPDATE SET
-      worktree_path = COALESCE(excluded.worktree_path, worktrees.worktree_path),
-      worktree_branch = COALESCE(excluded.worktree_branch, worktrees.worktree_branch),
-      worktree_base_branch = COALESCE(excluded.worktree_base_branch, worktrees.worktree_base_branch),
+      worktree_path = excluded.worktree_path,
+      worktree_branch = excluded.worktree_branch,
+      worktree_base_branch = excluded.worktree_base_branch,
       lines_added = COALESCE(excluded.lines_added, worktrees.lines_added),
       lines_removed = COALESCE(excluded.lines_removed, worktrees.lines_removed)
   `;

@@ -77,9 +77,9 @@ async function initializeSchema(db: Database, path: string): Promise<void> {
   await db.exec(`
     CREATE TABLE IF NOT EXISTS worktrees (
       session_id           TEXT PRIMARY KEY,
-      worktree_path        TEXT,
-      worktree_branch      TEXT,
-      worktree_base_branch TEXT,
+      worktree_path        TEXT NOT NULL,
+      worktree_branch      TEXT NOT NULL,
+      worktree_base_branch TEXT NOT NULL,
       lines_added          INTEGER,
       lines_removed        INTEGER
     );

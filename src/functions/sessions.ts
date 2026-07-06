@@ -6,20 +6,22 @@ import { RawStream } from "@tanstack/router-core";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { z } from "zod";
 import { listAllSessions, listAvailableModels } from "./sdk/client";
-import { getOrResumeSession, getCachedOrResumeSession, deleteSession } from "./state/sessionCache";
-import { cacheSnapshot, getCachedSnapshot } from "./state/snapshotCache";
-import { getUnreadSessionIds, markSessionUnread, markSessionRead } from "./state/unread";
+import * as sessionRegistry from "./state/sessionRegistry";
+import { loadSessionSnapshot } from "./state/snapshotCache";
+import {
+  applyWorkspaceAction,
+  clearDraftPrompt,
+  getWorkspaceState as readWorkspaceState,
+  loadCustomArtifacts,
+  sweepExpiredDrafts,
+} from "./state/workspace";
 import {
   getAllSessionWorktrees,
   getSessionWorktree,
   deleteSessionWorktree,
 } from "./state/worktreeMetadata";
 import { getChildSessionIds } from "./state/childSessions";
-import {
-  SessionStream,
-  createClientSessionStream,
-  sendOrQueueSessionMessage,
-} from "./runtime/stream";
+import { deliverSessionMessage, SessionStream, connectClientStream } from "./runtime/stream";
 import {
   cleanupWorktree,
   mergeWorktreeBranch,
@@ -27,7 +29,6 @@ import {
   detectGitRoot,
 } from "./worktrees";
 import type {
-  AgentNotification,
   ModelInfo,
   SessionEvent,
   SessionMetadata,
@@ -35,11 +36,12 @@ import type {
   SessionSnapshot,
   SessionWorktree,
 } from "@/types";
+import type { WorkspaceState } from "@/lib/workspace/state";
 import { agentNotificationSchema } from "@/lib/session/agentNotifications";
 import { toSessionSnapshot } from "@/lib/session/sessionReducer";
-import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/historyReplay";
 import { encodeSessionEvent } from "@/lib/session/streamCodec";
 import { modelConfigurationSchema } from "@/lib/modelConfiguration";
+import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 
 // ============================================================================
 // Input Schemas (Zod)
@@ -47,6 +49,11 @@ import { modelConfigurationSchema } from "@/lib/modelConfiguration";
 
 const sessionInputSchema = z.object({
   sessionId: z.string(),
+});
+
+const renameSessionInputSchema = z.object({
+  sessionId: z.string(),
+  name: z.string().trim().min(1).max(100),
 });
 
 const streamInputSchema = z.object({
@@ -70,10 +77,10 @@ const streamInputSchema = z.object({
   useWorktree: z.boolean().optional(),
 });
 
-const enqueueInputSchema = z.object({
+const deliverMessageInputSchema = z.object({
   sessionId: z.string(),
   content: z.string(),
-  queuedMessageId: z.string().optional(),
+  clientMessageId: z.string().optional(),
   modelConfiguration: modelConfigurationSchema.optional(),
   attachments: z
     .array(
@@ -96,11 +103,45 @@ const cancelQueuedInputSchema = z.object({
   queuedMessageId: z.string(),
 });
 
-const sessionsStateInputSchema = z
-  .object({
-    openSessionIds: z.array(z.string()).max(4).optional(),
-  })
-  .default({});
+const draftSessionSchema = z.object({
+  sessionId: z.string().startsWith(SESSION_ID_PREFIX),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+
+const draftPromptSchema = z.object({
+  text: z.string().max(64 * 1024),
+  updatedAt: z.number(),
+  origin: z.string().min(1).max(128),
+});
+
+const workspaceActionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("session.draft.created"),
+    draft: draftSessionSchema,
+  }),
+  z.object({
+    type: z.literal("session.draft.discarded"),
+    sessionId: z.string(),
+  }),
+  z.object({
+    type: z.literal("session.prompt.drafted"),
+    sessionId: z.string(),
+    prompt: draftPromptSchema,
+  }),
+  z.object({
+    type: z.literal("session.hyper.created"),
+    sessionId: z.string(),
+  }),
+  z.object({
+    type: z.literal("session.hyper.promoted"),
+    sessionId: z.string(),
+  }),
+  z.object({
+    type: z.literal("session.read"),
+    sessionId: z.string(),
+  }),
+]);
 
 // ============================================================================
 // Middleware
@@ -117,20 +158,13 @@ const withSessionId = createMiddleware({ type: "function" }).validator(
 
 export type SessionsState = {
   sessions: SessionMetadata[];
-  streamingSessionIds: string[];
-  unreadSessionIds: string[];
   worktrees: Record<string, SessionWorktree>;
   childSessionIds: string[];
 };
 
-/** Fetch list + streaming + unread + app metadata in a single round-trip */
-export const getSessionsState = createServerFn({ method: "GET" })
-  .validator(zodValidator(sessionsStateInputSchema))
-  .handler(async ({ data }): Promise<SessionsState> => {
-    for (const sessionId of new Set(data.openSessionIds ?? [])) {
-      markSessionRead(sessionId);
-    }
-
+/** Fetch durable session list metadata in a single round-trip. */
+export const getSessionsState = createServerFn({ method: "GET" }).handler(
+  async (): Promise<SessionsState> => {
     const [sessions, worktrees, childSessionIds] = await Promise.all([
       listAllSessions(),
       getAllSessionWorktrees(),
@@ -139,27 +173,27 @@ export const getSessionsState = createServerFn({ method: "GET" })
 
     return {
       sessions,
-      streamingSessionIds: SessionStream.getRunningSessionIds(),
-      unreadSessionIds: getUnreadSessionIds(),
       worktrees,
       childSessionIds,
     };
-  });
+  },
+);
 
-/** Mark a session as read */
-export const markSessionAsRead = createServerFn({ method: "POST" })
-  .middleware([withSessionId])
-  .handler(async ({ data }): Promise<boolean> => {
-    markSessionRead(data.sessionId);
-    return true;
-  });
+export const getWorkspaceState = createServerFn({ method: "GET" }).handler(
+  async (): Promise<WorkspaceState> => {
+    sweepExpiredDrafts();
+    const customArtifacts = await loadCustomArtifacts();
+    return readWorkspaceState({
+      runningSessionIds: SessionStream.getRunningSessionIds(),
+      customArtifacts,
+    });
+  },
+);
 
-/** Mark a session as unread */
-export const markSessionAsUnread = createServerFn({ method: "POST" })
-  .middleware([withSessionId])
-  .handler(async ({ data }): Promise<boolean> => {
-    markSessionUnread(data.sessionId);
-    return true;
+export const dispatchWorkspaceAction = createServerFn({ method: "POST" })
+  .validator(zodValidator(workspaceActionSchema))
+  .handler(async ({ data }): Promise<void> => {
+    applyWorkspaceAction(data);
   });
 
 /** List available models */
@@ -173,8 +207,9 @@ export const listModels = createServerFn({ method: "GET" }).handler(
 export const listSessionSkills = createServerFn({ method: "POST" })
   .middleware([withSessionId])
   .handler(async ({ data }): Promise<SessionSkill[]> => {
-    const session = await getCachedOrResumeSession(data.sessionId);
-    const result = await session.rpc.skills.list();
+    const result = await sessionRegistry.withSession(data.sessionId, (session) =>
+      session.rpc.skills.list(),
+    );
     return result.skills
       .filter((s) => s.userInvocable && s.enabled)
       .map((s) => ({ name: s.name, description: s.description }));
@@ -182,8 +217,8 @@ export const listSessionSkills = createServerFn({ method: "POST" })
 
 /** A session's reduced transcript snapshot, served from the cheapest source
  *  that is still truthful: the live stream's in-memory state, then the
- *  snapshot cache, then SDK resume + full history replay (which repopulates
- *  the cache for the next open). */
+ *  cold-path ladder (snapshot cache, then SDK resume + full history replay,
+ *  which repopulates the cache for the next open). */
 export const querySession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
   .handler(async ({ data }): Promise<SessionSnapshot> => {
@@ -192,17 +227,7 @@ export const querySession = createServerFn({ method: "POST" })
       return toSessionSnapshot(data.sessionId, stream.getSessionState());
     }
 
-    const cachedSnapshot = await getCachedSnapshot(data.sessionId);
-    if (cachedSnapshot) return cachedSnapshot;
-
-    const { session, events } = await getOrResumeSession(data.sessionId);
-    const snapshot = toSessionSnapshot(
-      session.sessionId,
-      await initializeSessionStateFromSdkHistory(events),
-    );
-
-    cacheSnapshot(session.sessionId, snapshot);
-    return snapshot;
+    return loadSessionSnapshot(data.sessionId);
   });
 
 function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): ReadableStream<Uint8Array> {
@@ -216,11 +241,13 @@ function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): Readable
         }
         controller.enqueue(encodeSessionEvent(next.value));
       } catch (error) {
+        // Expected runtime failures are emitted as session end/error events.
+        // Reaching the transport error path means the adapter itself failed.
         controller.error(error);
       }
     },
     async cancel() {
-      await iterator.return?.(undefined);
+      await iterator.return(undefined);
     },
   });
 }
@@ -228,34 +255,37 @@ function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): Readable
 export const connectSessionStream = createServerFn({ method: "POST" })
   .validator(zodValidator(streamInputSchema))
   .handler(async ({ data }) => {
-    const iterator = createClientSessionStream(data);
+    const iterator = connectClientStream({
+      ...data,
+      onDelivered: () => clearDraftPrompt(data.sessionId),
+    });
     return new RawStream(createEventByteStream(iterator), { hint: "text" });
   });
 
-/** Enqueue a message to be sent after the current turn finishes.
- *  Stored on the stream so it survives client navigation and can be cancelled. */
-export const enqueueMessage = createServerFn({ method: "POST" })
-  .validator(zodValidator(enqueueInputSchema))
-  .handler(async ({ data }): Promise<boolean> => {
-    const stream = SessionStream.get(data.sessionId);
-    if (!stream) return false;
-
-    stream.addQueuedMessage({
-      id: data.queuedMessageId ?? crypto.randomUUID(),
-      role: "user",
-      content: data.content,
-      attachments: data.attachments,
-      modelConfiguration: data.modelConfiguration,
+/** Deliver a follow-up message. The runtime decides whether it sends now or queues. */
+export const deliverMessage = createServerFn({ method: "POST" })
+  .validator(zodValidator(deliverMessageInputSchema))
+  .handler(async ({ data }): Promise<{ disposition: "sent" | "queued" }> => {
+    const receipt = await deliverSessionMessage({
+      sessionId: data.sessionId,
+      message: {
+        id: data.clientMessageId ?? crypto.randomUUID(),
+        role: "user",
+        content: data.content,
+        attachments: data.attachments,
+        modelConfiguration: data.modelConfiguration,
+      },
     });
-    return true;
+    clearDraftPrompt(data.sessionId);
+    return { disposition: receipt.disposition };
   });
 
-/** Deliver a side-channel notification to a session's agent. Active sessions queue it
+/** Notify a session's agent over the side channel. Active sessions queue it
  *  (coalescing equivalents); idle historical sessions are resumed and processed. */
-export const sendAgentNotification = createServerFn({ method: "POST" })
+export const notifyAgent = createServerFn({ method: "POST" })
   .validator(zodValidator(notifyAgentInputSchema))
   .handler(async ({ data }): Promise<void> => {
-    await sendOrQueueSessionMessage({
+    await deliverSessionMessage({
       sessionId: data.sessionId,
       message: {
         id: crypto.randomUUID(),
@@ -265,17 +295,12 @@ export const sendAgentNotification = createServerFn({ method: "POST" })
     });
   });
 
-/** Positional client helper over `sendAgentNotification`. */
-export function notifyAgent(sessionId: string, notification: AgentNotification): Promise<void> {
-  return sendAgentNotification({ data: { sessionId, notification } });
-}
-
 /** Cancel a queued message by ID (before it's been sent to the SDK) */
 export const cancelQueuedMessage = createServerFn({ method: "POST" })
   .validator(zodValidator(cancelQueuedInputSchema))
   .handler(async ({ data }): Promise<boolean> => {
     const stream = SessionStream.get(data.sessionId);
-    return stream?.removeQueuedMessage(data.queuedMessageId) ?? false;
+    return stream?.cancelQueuedMessage(data.queuedMessageId) ?? false;
   });
 
 /** Abort the currently processing message in a session.
@@ -290,55 +315,55 @@ export const abortSession = createServerFn({ method: "POST" })
     return true;
   });
 
-/** Destroy a session and release resources */
-export const destroySession = createServerFn({ method: "POST" })
+/** Delete a session and release resources */
+export const deleteSession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
   .handler(async ({ data }): Promise<boolean> => {
-    SessionStream.close(data.sessionId);
-    await deleteSession(data.sessionId);
+    await sessionRegistry.deleteSession(data.sessionId);
+    return true;
+  });
+
+/** Rename a session using the SDK's persisted friendly-name metadata. */
+export const renameSession = createServerFn({ method: "POST" })
+  .validator(zodValidator(renameSessionInputSchema))
+  .handler(async ({ data }): Promise<boolean> => {
+    await sessionRegistry.renameSession(data.sessionId, data.name);
     return true;
   });
 
 /**
  * Resolve and validate a worktree session's metadata + git root, then run the
- * given callback. Returns `{ status: "no-worktree" }` if the session has no
- * worktree. On success, cleans up the worktree automatically.
+ * given callback. Successful operations clean up the worktree automatically;
+ * failures throw so the client can treat them as unresolved conflicts.
  */
-async function withWorktreeSession<T extends { status: string }>(
+async function withWorktreeSession(
   sessionId: string,
-  action: (gitRoot: string, info: { branch: string; baseBranch: string }) => Promise<T>,
-  successStatus: T["status"],
-): Promise<T | { status: "no-worktree" }> {
+  action: (gitRoot: string, info: { branch: string; baseBranch: string }) => Promise<void>,
+): Promise<void> {
   const worktree = await getSessionWorktree(sessionId);
-  if (!worktree?.path || !worktree.branch || !worktree.baseBranch) {
-    return { status: "no-worktree" as const };
-  }
-  const gitRoot = await detectGitRoot(worktree.path);
-  if (!gitRoot) return { status: "no-worktree" as const };
+  if (!worktree) return;
 
-  const result = await action(gitRoot, {
+  const gitRoot = await detectGitRoot(worktree.path);
+  if (!gitRoot) return;
+
+  await action(gitRoot, {
     branch: worktree.branch,
     baseBranch: worktree.baseBranch,
   });
 
-  // Clean up the worktree + record after a successful operation
-  if (result.status === successStatus) {
-    await cleanupWorktree({
-      path: worktree.path,
-      branch: worktree.branch,
-    }).catch(console.error);
-    await deleteSessionWorktree(sessionId);
-  }
-
-  return result;
+  await cleanupWorktree({
+    path: worktree.path,
+    branch: worktree.branch,
+  }).catch(console.error);
+  await deleteSessionWorktree(sessionId);
 }
 
 /** Merge a worktree session's changes back into its base branch */
 export const mergeSessionWorktree = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(async ({ data }) => withWorktreeSession(data.sessionId, mergeWorktreeBranch, "merged"));
+  .handler(async ({ data }) => withWorktreeSession(data.sessionId, mergeWorktreeBranch));
 
 /** Apply a worktree session's changes to its base branch as uncommitted modifications */
 export const applySessionWorktree = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(async ({ data }) => withWorktreeSession(data.sessionId, applyWorktreeBranch, "applied"));
+  .handler(async ({ data }) => withWorktreeSession(data.sessionId, applyWorktreeBranch));

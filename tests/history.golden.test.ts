@@ -16,7 +16,10 @@ describe("history pipeline golden replay", () => {
   }
 
   test("replaying a recorded session produces the final session state", async () => {
-    const state = await initializeSessionStateFromSdkHistory(await loadSessionFixture("subagents"));
+    const state = await initializeSessionStateFromSdkHistory(
+      "history-golden-session",
+      await loadSessionFixture("subagents"),
+    );
 
     // Every subagent's work is grouped under its agent call...
     const agents = agentToolCalls(state);

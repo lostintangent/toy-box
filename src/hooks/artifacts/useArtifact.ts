@@ -5,7 +5,7 @@ import {
   writeSessionArtifact,
 } from "@/functions/artifacts";
 import { notifyAgent } from "@/functions/sessions";
-import type { ArtifactPaneMode } from "@/hooks/session/sessionPanes";
+import type { ArtifactPaneMode } from "@/lib/workspace/panes";
 import { createSessionArtifactRouteUrl } from "@/lib/session/artifacts/paths";
 import type { FileWatchEvent } from "@/types";
 
@@ -228,8 +228,10 @@ function useArtifactEditNotification({
     clearTimer();
     if (!enabledRef.current) return;
 
-    void notifyAgent(sessionId, { type: "artifact_edited", path }).catch((error) => {
-      console.error("Failed to send artifact edit notification:", error);
+    void notifyAgent({
+      data: { sessionId, notification: { type: "artifact_edited", path } },
+    }).catch((error) => {
+      console.error("Failed to notify agent about artifact edit:", error);
     });
   }, [clearTimer, path, sessionId]);
 

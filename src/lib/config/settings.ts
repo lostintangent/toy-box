@@ -22,8 +22,8 @@ const SETTINGS_CHANGE_EVENT = "toybox:settings-change";
 const DEFAULTS: Settings = {
   terminalShell: "",
   useWorktree: false,
-  showSessionOverlay: "always",
-  autoFocusArtifacts: "always",
+  showSessionOverlay: "sessions",
+  autoFocusArtifacts: "automations",
 };
 
 export function getSettings(): Settings {

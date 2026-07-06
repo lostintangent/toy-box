@@ -1,9 +1,9 @@
 import { useEffect } from "react";
 import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
-import type { AutomationsUpdateEvent, ServerUpdateEvent, SessionsUpdateEvent } from "@/types";
+import type { AutomationsUpdateEvent, ServerUpdateEvent, WorkspaceEvent } from "@/types";
 
 type ServerEventsByNamespace = {
-  session: SessionsUpdateEvent;
+  session: WorkspaceEvent;
   automation: AutomationsUpdateEvent;
 };
 

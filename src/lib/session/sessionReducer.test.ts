@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   applySessionEvent,
-  applyStreamError,
   createInitialSession,
   prepareSessionForNextTurn,
   sessionSeedFromSnapshot,
@@ -99,7 +98,7 @@ describe("sessionReducer", () => {
 
     test("agent notifications create visible turn boundaries", () => {
       const state = createInitialSession();
-      const notification = { type: "artifact_edited", path: "/tmp/plan.md" } as const;
+      const notification = { type: "artifact_edited", path: "plan.md" } as const;
 
       applySessionEvent(state, { type: "agent_notification", notification });
       applySessionEvent(state, { type: "status", status: "thinking" });
@@ -505,7 +504,7 @@ describe("sessionReducer", () => {
   });
 
   describe("canvases", () => {
-    test("stores opened canvases and bumps revision when a canvas reopens", () => {
+    test("stores opened canvases and bumps revision when the same instance opens again", () => {
       const state = createInitialSession();
 
       applySessionEvent(state, {
@@ -527,7 +526,6 @@ describe("sessionReducer", () => {
           instanceId: "review-plan",
           title: "Review Plan",
           url: "http://127.0.0.1:53950/?instanceId=review-plan",
-          availability: "ready",
         },
       });
 
@@ -539,14 +537,13 @@ describe("sessionReducer", () => {
           instanceId: "review-plan",
           title: "Review Plan",
           url: "http://127.0.0.1:53950/?instanceId=review-plan",
-          availability: "ready",
           revision: 2,
         },
       ]);
       expect(toSessionSnapshot("session-1", state).canvases).toEqual(state.canvases);
     });
 
-    test("reopen replaces a single matching canvas even when the instance id changes", () => {
+    test("keeps different canvas instances as separate panes", () => {
       const state = createInitialSession();
 
       applySessionEvent(state, {
@@ -569,11 +566,24 @@ describe("sessionReducer", () => {
           instanceId: "session-canvas-ontology-canvas-ontology",
           title: "Canvas surface ontology",
           url: "http://127.0.0.1:58480/",
-          reopen: true,
         },
       });
 
       expect(state.canvases).toEqual([
+        {
+          key: JSON.stringify([
+            "session:canvas-ontology",
+            "canvas-ontology",
+            "canvas-ontology-main",
+          ]),
+          extensionId: "session:canvas-ontology",
+          extensionName: "canvas-ontology",
+          canvasId: "canvas-ontology",
+          instanceId: "canvas-ontology-main",
+          title: "Canvas surface ontology",
+          url: "http://127.0.0.1:52922/",
+          revision: 1,
+        },
         {
           key: JSON.stringify([
             "session:canvas-ontology",
@@ -586,47 +596,9 @@ describe("sessionReducer", () => {
           instanceId: "session-canvas-ontology-canvas-ontology",
           title: "Canvas surface ontology",
           url: "http://127.0.0.1:58480/",
-          reopen: true,
-          revision: 2,
+          revision: 1,
         },
       ]);
-    });
-
-    test("reopen with a changed instance id does not replace ambiguous matching canvases", () => {
-      const state = createInitialSession();
-
-      for (const instanceId of ["first", "second"]) {
-        applySessionEvent(state, {
-          type: "canvas_opened",
-          canvas: {
-            extensionId: "session:canvas-ontology",
-            canvasId: "canvas-ontology",
-            instanceId,
-            title: `Canvas ${instanceId}`,
-            url: `http://127.0.0.1/${instanceId}`,
-          },
-        });
-      }
-
-      applySessionEvent(state, {
-        type: "canvas_opened",
-        canvas: {
-          extensionId: "session:canvas-ontology",
-          canvasId: "canvas-ontology",
-          instanceId: "third",
-          title: "Canvas third",
-          url: "http://127.0.0.1/third",
-          reopen: true,
-        },
-      });
-
-      expect(state.canvases).toHaveLength(3);
-      expect(state.canvases?.map((canvas) => canvas.instanceId)).toEqual([
-        "first",
-        "second",
-        "third",
-      ]);
-      expect(state.canvases?.map((canvas) => canvas.revision)).toEqual([1, 1, 1]);
     });
   });
 
@@ -636,38 +608,32 @@ describe("sessionReducer", () => {
 
       applySessionEvent(state, {
         type: "artifacts_patch",
-        patches: [{ type: "upsert", path: "~/.copilot/session-state/toy-box-session/report.md" }],
+        patches: [{ type: "upsert", path: "report.md" }],
       });
       applySessionEvent(state, {
         type: "artifacts_patch",
-        patches: [{ type: "upsert", path: "~/.copilot/session-state/toy-box-session/report.md" }],
+        patches: [{ type: "upsert", path: "report.md" }],
       });
       applySessionEvent(state, {
         type: "artifacts_patch",
-        patches: [{ type: "upsert", path: "~/.copilot/session-state/toy-box-session/notes.md" }],
+        patches: [{ type: "upsert", path: "notes.md" }],
       });
 
-      expect(state.artifacts).toEqual([
-        "~/.copilot/session-state/toy-box-session/report.md",
-        "~/.copilot/session-state/toy-box-session/notes.md",
-      ]);
+      expect(state.artifacts).toEqual(["report.md", "notes.md"]);
       expect(toSessionSnapshot("session-1", state).artifacts).toEqual(state.artifacts);
     });
 
     test("removes deleted artifact paths", () => {
       const state = createInitialSession({
-        artifacts: [
-          "~/.copilot/session-state/toy-box-session/report.md",
-          "~/.copilot/session-state/toy-box-session/notes.md",
-        ],
+        artifacts: ["report.md", "notes.md"],
       });
 
       applySessionEvent(state, {
         type: "artifacts_patch",
-        patches: [{ type: "delete", path: "~/.copilot/session-state/toy-box-session/report.md" }],
+        patches: [{ type: "delete", path: "report.md" }],
       });
 
-      expect(state.artifacts).toEqual(["~/.copilot/session-state/toy-box-session/notes.md"]);
+      expect(state.artifacts).toEqual(["notes.md"]);
     });
   });
 
@@ -698,7 +664,7 @@ describe("sessionReducer", () => {
     });
 
     test("dequeues notification messages as visible agent notifications", () => {
-      const notification = { type: "artifact_edited", path: "/tmp/plan.md" } as const;
+      const notification = { type: "artifact_edited", path: "plan.md" } as const;
       const withQueue = createInitialSession({
         queuedMessages: [{ id: "q1", role: "agent_notification", notification }],
         messages: [{ role: "assistant", content: "ready" }],
@@ -741,7 +707,7 @@ describe("sessionReducer", () => {
       });
     });
 
-    test("adds queued message from cross-client broadcast", () => {
+    test("adds queued message from cross-client queue update", () => {
       const state = createInitialSession();
 
       applySessionEvent(state, {
@@ -764,6 +730,22 @@ describe("sessionReducer", () => {
       });
 
       expect(state.queuedMessages).toHaveLength(1);
+    });
+
+    test("removes an optimistic queued message when delivery starts it immediately", () => {
+      const state = createInitialSession({
+        queuedMessages: [{ id: "q1", role: "user", content: "follow up" }],
+      });
+
+      applySessionEvent(state, {
+        type: "user_message",
+        content: "follow up",
+        clientMessageId: "q1",
+        eventId: 1,
+      });
+
+      expect(state.queuedMessages).toEqual([]);
+      expect(state.messages.at(-1)).toMatchObject({ role: "user", content: "follow up" });
     });
 
     test("removes queued message on message_cancelled", () => {
@@ -1091,29 +1073,49 @@ describe("sessionReducer", () => {
       expect(nextState.pendingOptimisticUserMessage).toBeUndefined();
     });
 
-    test("applyStreamError replaces a partial assistant message with the error notice", () => {
+    test("end/error replaces a partial assistant message with the error notice", () => {
       const state = createInitialSession();
       applySessionEvent(state, { type: "user_message", content: "go" });
       applySessionEvent(state, { type: "status", status: "thinking" });
       applySessionEvent(state, { type: "delta", content: "partial resp" });
 
-      applyStreamError(state, "Something broke.");
+      applySessionEvent(state, { type: "end", reason: "error" });
 
       expect(state.messages).toHaveLength(2);
-      expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Something broke." });
+      expect(state.messages[1]).toMatchObject({
+        role: "assistant",
+        content: "An error occurred. Please try again.",
+      });
       expect(state.status).toBe("idle");
       expect(state.reasoningContent).toBe("");
       expect(state.pendingToolCalls.size).toBe(0);
     });
 
-    test("applyStreamError appends an assistant message when none is trailing", () => {
+    test("end/error appends an assistant message when none is trailing", () => {
       const state = createInitialSession();
       applySessionEvent(state, { type: "user_message", content: "go" });
 
-      applyStreamError(state, "Something broke.");
+      applySessionEvent(state, { type: "end", reason: "error" });
 
       expect(state.messages).toHaveLength(2);
-      expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Something broke." });
+      expect(state.messages[1]).toMatchObject({
+        role: "assistant",
+        content: "An error occurred. Please try again.",
+      });
+      expect(state.status).toBe("idle");
+    });
+
+    test("a synthesized end/idle does not clobber an earlier end/error", () => {
+      const state = createInitialSession();
+      applySessionEvent(state, { type: "user_message", content: "go" });
+      applySessionEvent(state, { type: "end", reason: "error" });
+
+      applySessionEvent(state, { type: "end", reason: "idle" });
+
+      expect(state.messages.at(-1)).toMatchObject({
+        role: "assistant",
+        content: "An error occurred. Please try again.",
+      });
       expect(state.status).toBe("idle");
     });
 
@@ -1162,6 +1164,52 @@ describe("sessionReducer", () => {
   });
 });
 
+describe("toSessionSnapshot", () => {
+  test("maps live session state into the detail query snapshot shape", () => {
+    const state = createInitialSession({
+      messages: [{ role: "user", content: "hello" }],
+      queuedMessages: [{ id: "q1", role: "user", content: "next" }],
+      todos: [{ id: "t1", title: "todo", status: "pending" }],
+      linkedSessionIds: ["linked-1"],
+      artifacts: ["report.md"],
+      status: "responding",
+      reasoningContent: "thinking...",
+      modelConfiguration: { model: "gpt-5.5" },
+    });
+    state.lastSeenEventId = 42;
+
+    expect(toSessionSnapshot("session-1", state)).toEqual({
+      id: "session-1",
+      messages: state.messages,
+      queuedMessages: state.queuedMessages,
+      modelConfiguration: { model: "gpt-5.5" },
+      todos: state.todos,
+      linkedSessionIds: ["linked-1"],
+      artifacts: ["report.md"],
+      lastSeenEventId: 42,
+      status: "responding",
+      reasoningContent: "thinking...",
+    });
+  });
+
+  test("preserves the previous snapshot's id and falls back to its model configuration", () => {
+    const state = createInitialSession();
+    const snapshot = toSessionSnapshot("session-new", state, {
+      id: "session-existing",
+      messages: [],
+      queuedMessages: [],
+      status: "idle",
+      reasoningContent: "",
+      modelConfiguration: { model: "claude-opus-4.8" },
+    });
+
+    expect(snapshot.id).toBe("session-existing");
+    expect(snapshot.modelConfiguration).toEqual({ model: "claude-opus-4.8" });
+    // Empty linked sessions collapse to undefined rather than [].
+    expect(snapshot.linkedSessionIds).toBeUndefined();
+  });
+});
+
 describe("sessionSeedFromSnapshot", () => {
   /** An idle session with every snapshot-visible field populated, as the
    *  snapshot cached at clean close would produce it. */
@@ -1181,7 +1229,10 @@ describe("sessionSeedFromSnapshot", () => {
         type: "todos_patch",
         patches: [{ type: "upsert", id: "1", title: "Ship it", status: "done" }],
       },
-      { type: "artifacts_patch", patches: [{ type: "upsert", path: "/tmp/state/summary.md" }] },
+      {
+        type: "artifacts_patch",
+        patches: [{ type: "upsert", path: "summary.md" }],
+      },
       { type: "linked_session_added", sessionId: "toy-box-child" },
       { type: "model_changed", modelConfiguration: { model: "gpt-5" } },
       { type: "end", reason: "idle" },
@@ -1219,6 +1270,6 @@ describe("sessionSeedFromSnapshot", () => {
 
     expect(snapshot.messages).toHaveLength(originalMessageCount);
     expect(snapshot.todos).toHaveLength(1);
-    expect(snapshot.artifacts).toEqual(["/tmp/state/summary.md"]);
+    expect(snapshot.artifacts).toEqual(["summary.md"]);
   });
 });

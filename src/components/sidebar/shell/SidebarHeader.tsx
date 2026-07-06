@@ -38,14 +38,15 @@ export function SidebarHeader({
       suppressHydrationWarning
     >
       {onCollapse && (
-        <button
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={onCollapse}
-          className="text-muted-foreground hover:text-foreground"
           aria-label="Collapse sidebar"
           suppressHydrationWarning
         >
-          <PanelLeftClose className="h-5 w-5" />
-        </button>
+          <PanelLeftClose className="size-5" />
+        </Button>
       )}
       <div className="relative flex-1">
         <DropdownMenu>

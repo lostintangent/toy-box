@@ -10,8 +10,8 @@ Toy Box is a single-tenant server with multi-client realtime behavior. Multiple 
 
 - One executable runs the full stack (CLI entrypoint + web server + terminal WebSocket server).
 - SSR provides fast first paint; React hydration provides client interactivity.
-- Sessions use two synchronized data planes: list/global metadata (sessions, running, unread) and per-session detail (messages, status, queued work).
-- Realtime updates are pushed to clients and folded into React Query caches.
+- Sessions use three coordinated state paths: durable resources (session list, models, skills, automations), workspace state (drafts, prompts, unread, hyper, running), and per-session detail (messages, status, queued work).
+- Realtime updates are pushed to clients and applied at the layer that owns the state: Jotai for workspace state, React Query for durable list/automation caches, and `useSession` for one open session's live reducer.
 
 ### Design Constraints
 
@@ -28,14 +28,16 @@ Mental model: not all state has the same persistence guarantees.
 
 - Durable state:
   - session history persisted by Copilot SDK
-- Ephemeral server state (lost on process restart):
+- Process-local server state (lost on process restart):
   - streaming buffers
-  - unread/read tracking sets
+  - workspace state: drafts, draft prompts, unread markers, and hyper membership
   - queued in-flight messages
   - active session object cache
   - live terminal PTY sessions
-- Ephemeral client state:
+- Client-local state:
   - React Query caches
+  - Jotai workspace store and local UI atoms
+  - per-open-session reducer refs inside `useSession`
   - local optimistic UI state
 
 The key implication is that restart recovery is history-first: durable session history remains, transient realtime coordination is rebuilt.
@@ -72,6 +74,17 @@ Mental model: render on server first, then hydrate into a realtime client.
 
 This gives fast initial render with responsive client behavior after hydration.
 
+### Client State Library Roles
+
+Mental model: each client state tool has one job.
+
+- **TanStack Start server functions** are the typed RPC boundary for reads and mutations (`getSessionsState`, `getWorkspaceState`, `querySession`, `dispatchWorkspaceAction`, stream functions).
+- **React Query** owns fetched resources and refetch healing: durable session-list metadata, session detail snapshots, models, skills, automations, and the baseline/refetch `WorkspaceState` snapshot.
+- **Jotai** owns shared reactive client stores: the live `WorkspaceStore` reduced from `WorkspaceEvent`s, pane focus/link atoms, and hyper surface UI state.
+- **React hooks** own lifecycle integration: `useWorkspace` installs the workspace event sink, hydration/reconnect policy, and optimistic `WorkspaceAction` dispatch; `useSession` owns one open session's live stream reducer; feature hooks adapt domain state for components.
+
+React Query is not used as the app's reducer store, and Jotai is not used to fetch server resources. The handoff is: server snapshot through React Query, then live workspace updates through the Jotai store, with `useWorkspace` as the action boundary and React Query refetch as the repair path.
+
 ### Server Functions and Routes
 
 - Server functions are the typed RPC boundary for app operations (sessions, runtime config, mutations).
@@ -80,13 +93,17 @@ This gives fast initial render with responsive client behavior after hydration.
 
 ## Realtime Subsystems
 
-### Sessions List Channel (SSE)
+### Workspace State Channel (SSE)
 
-Scope: global sessions metadata (`sessions`, `streamingSessionIds`, `unreadSessionIds`).
+Scope: workspace coordination facts (`drafts`, `draftPrompts`, `runningSessionIds`,
+`unreadSessionIds`, and `hyperSessionIds`) plus durable session-list hints
+(`session.upserted`, `session.deleted`).
 
-- Baseline source: `getSessionsBootstrapState` via `sessionQueries.state()`.
+- Workspace baseline source: `getWorkspaceState` via `workspaceQueries.state()`.
+- Durable list baseline source: `getSessionsState` via `sessionQueries.state()`.
 - Realtime source: SSE `GET /api/events` (`src/routes/api/events.ts`) consumed via `useServerEvents({ namespace: "session" })`.
-- Cache integration: SSE events are applied to React Query state in `src/lib/session/sessionsCache.ts`.
+- Workspace integration: `useWorkspace` applies accepted `WorkspaceEvent`s to the Jotai workspace store and dispatches optimistic `WorkspaceAction`s through one server function.
+- React Query integration: `src/lib/session/queryCache.ts` only syncs durable session-list cache data from `session.upserted` and `session.deleted`.
 
 This keeps list-level updates cheap and shared across all connected clients.
 
@@ -118,7 +135,7 @@ The Copilot SDK emits untyped session events during both streaming and history r
 
 1. **Extractors** (`src/functions/sdk/extractors.ts`): Defensive field accessors over untyped `Record<string, unknown>` event data. Centralises runtime narrowing so downstream stages stay declarative.
 2. **Projector** (`src/functions/sdk/projector.ts`): Maps SDK events into canonical `SessionEvent` values. A declarative dispatch table with mode wrappers (`streamingOnly` / `historyOnly`) controls which events emit in each context. Hidden tools (e.g. `read_agent`) are filtered at the single `projectSdkEvent` entry point via toolCallId tracking, so they never reach the reducer.
-3. **Reducer** (`src/lib/session/stateReducer.ts`): Pure state machine that applies `SessionEvent` values to `SessionState`. Mutation-based for performance, idempotent for safe reconnect replay. Shared by server snapshots, live streaming, and history replay.
+3. **Reducer** (`src/lib/session/sessionReducer.ts`): Pure state machine that applies `SessionEvent` values to `SessionState`. Mutation-based for performance, idempotent for safe reconnect replay. Shared by server snapshots, live streaming, and history replay.
 4. **Codec** (`src/lib/session/streamCodec.ts`): NDJSON encode/decode for `SessionEvent` transport over HTTP streaming. Handles partial lines across chunk boundaries.
 
 The boundary between SDK-specific and app-domain code is the `SessionEvent` type: the `sdk/` modules produce it, `lib/session/` modules consume it.
@@ -128,7 +145,7 @@ The boundary between SDK-specific and app-domain code is the `SessionEvent` type
 Mental model: this channel owns high-frequency realtime state for each open session pane.
 
 - Scope: one conversation's detailed state (messages, queued messages, status, reasoning, todo).
-- Baseline source: `resumeSession` via `sessionQueries.detail(sessionId)`.
+- Baseline source: `querySession` via `sessionQueries.detail(sessionId)`.
 - Realtime source: `connectSessionStream` (server function stream events).
 - Event processing: history and stream events share one canonical application path (`applySessionEvent`) through the state reducer.
 
@@ -161,7 +178,7 @@ This is not complexity for its own sake. The goal is reliable continuity (resume
 
 Mental model: a single SDK callback becomes a React render through a chain of single-purpose stages with no shortcuts.
 
-**Server** (`src/functions/stream/runtime.ts` → `src/functions/sessions.ts`):
+**Server** (`src/functions/runtime/stream/index.ts` → `src/functions/sessions.ts`):
 
 1. SDK fires a callback → `handleSdkEvent` receives it.
 2. `projectSdkEvent` maps the SDK event into canonical `SessionEvent` values (filtering empty deltas and hidden tools).
@@ -215,7 +232,8 @@ replay behavior, see `terminal-server/AGENTS.md`.
 
 Mental model: server is authoritative; clients optimize for responsiveness then converge.
 
-- Baseline truth comes from server functions (`getSessionsBootstrapState`, `resumeSession`).
+- Baseline truth comes from server functions (`getSessionsState`, `getWorkspaceState`, `querySession`).
+- Workspace truth comes from `getWorkspaceState`, then live `WorkspaceEvent`s keep the Jotai workspace store current.
 - Realtime channels (SSE + stream events) keep active clients up to date with low latency.
 - Clients perform optimistic/local updates where needed, then reconcile using stream completion and query invalidation/refetch.
 - Focus/reconnect refetch policies provide a safety net for missed realtime updates.
@@ -278,22 +296,30 @@ flowchart LR
 sequenceDiagram
     participant C as Client
     participant RQ as React Query Cache
+    participant JA as Jotai Workspace Store
     participant SF as Server Functions
     participant SSE as /api/events
     participant ST as Server Session State
     participant SDK as Copilot SDK
 
-    C->>SF: getSessionsBootstrapState()
-    SF->>ST: read sessions/streaming/unread
-    SF-->>C: baseline list snapshot
+    C->>SF: getSessionsState()
+    SF->>SDK: list durable session metadata
+    SF-->>C: durable session-list state
     C->>RQ: write sessionQueries.state()
 
-    C->>SSE: subscribe (session namespace)
-    ST-->>SSE: session.running / idle / unread / read / upserted / deleted
-    SSE-->>C: event stream
-    C->>RQ: patch sessionQueries.state()
+    C->>SF: getWorkspaceState()
+    SF->>ST: read workspace state + running projection
+    SF-->>C: workspace snapshot
+    C->>RQ: cache workspaceQueries.state()
+    C->>JA: hydrate WorkspaceStore
 
-    C->>SF: resumeSession(sessionId)
+    C->>SSE: subscribe (session namespace)
+    ST-->>SSE: WorkspaceEvent stream
+    SSE-->>C: event stream
+    C->>JA: apply workspace event
+    C->>RQ: sync durable list hints
+
+    C->>SF: querySession(sessionId)
     SF->>SDK: get persisted session events
     SF-->>C: baseline detail snapshot
     C->>RQ: write sessionQueries.detail(sessionId)
@@ -302,7 +328,8 @@ sequenceDiagram
     SF->>SDK: subscribe/send stream events
     SF->>ST: buffer + mark runtime state
     SF-->>C: stream events
-    C->>RQ: apply detail updates via useSession/store
+    C->>C: reduce live session state in useSession
+    C->>RQ: update detail snapshot cache as a cache artifact
 ```
 
 ### Key File Map
@@ -326,18 +353,21 @@ sequenceDiagram
 - `extractors.ts` — defensive field accessors over untyped SDK event data
 - `projector.ts` — maps SDK events into canonical `SessionEvent` values
 
-**`src/functions/state/`** — in-memory server state (ephemeral, lost on restart)
+**`src/functions/state/`** — process-local server state (lost on restart)
 
-- `store.ts` — session cache, streaming buffers, unread tracking, queued messages, attachments
+- `sessionRegistry.ts` — SDK session cache and session create/delete lifecycle
+- `snapshotCache.ts` — cached idle snapshots reconstructed from SDK history
+- `workspace/` — workspace state facets for drafts, draft prompts, unread markers, hyper membership, and workspace snapshots
 
 **`src/functions/automations/`** — automation scheduling and persistence
 
 - `scheduler.ts` — cron-driven poll loop; claims and dispatches due automations
 - `data.ts` — SQLite persistence for automation definitions and run metadata
 
-**`src/functions/stream/`** — per-session streaming runtime
+**`src/functions/runtime/stream/`** — per-session streaming runtime
 
-- `runtime.ts` — event pipeline (SDK callback → decorated event → buffer + reduce → broadcast), turn lifecycle, queued-message drain loop, and the `createSessionEventStream` async generator
+- `index.ts` — event pipeline (SDK callback → decorated event → buffer + reduce → broadcast), turn lifecycle, queued-message drain loop, and the `connectSessionStream` runtime
+- `buffer.ts` — replayable stream buffer with monotonic event IDs
 
 **`src/functions/`** — server function RPC boundary
 
@@ -346,14 +376,16 @@ sequenceDiagram
 
 **`src/lib/session/`** — app-domain session logic (SDK-agnostic, consumes `SessionEvent`)
 
-- `stateReducer.ts` — pure state machine; applies events to `SessionState`
+- `sessionReducer.ts` — pure state machine; applies events to `SessionState`
 - `streamCodec.ts` — NDJSON encode/decode for `SessionEvent` over HTTP
-- `sessionsCache.ts` — React Query cache helpers for sidebar session list metadata
+- `queryCache.ts` — React Query cache helpers for sidebar session list metadata
 
 **`src/hooks/`** — client-side React hooks
 
-- `session/useSessions.ts` — session list subscription and SSE integration
+- `workspace/useWorkspace.ts` — workspace state hydration, SSE event sink, reconnect healing, and open-session read clearing
+- `session/useSessions.ts` — durable session-list query adapter
 - `session/useSession.ts` — per-session detail stream and state management
+- `session/useDrafts.ts`, `session/useDraftPrompt.ts`, `session/useHyperSessions.ts` — workspace state adapters for draft, prompt, and hyper session behavior
 - `automations/useAutomations.ts` — automation mutations and running state
 - `automations/cache.ts` — folds automation SSE events into React Query
 

@@ -12,7 +12,7 @@ the full pipeline — one per consumption mode:
   server uses to open a recorded session.
 - `stream.golden.test.ts` — the live mode: raw SDK events → SessionStream
   (projector streaming → reducer → eventId/turnId decoration, buffering,
-  queue draining, broadcast ordering, teardown) through a full two-turn
+  queue draining, global broadcast ordering, teardown) through a full two-turn
   lifetime. Nondeterministic ids are normalized to ordinals. When mocking
   modules here, cover the FULL export surface — `mock.module` persists for
   the rest of the bun test process and partial mocks poison later suites.

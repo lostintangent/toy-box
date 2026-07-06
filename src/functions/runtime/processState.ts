@@ -1,3 +1,7 @@
+// Process-wide registries for runtime state that should survive module reloads
+// in development, such as live session streams, pending acquisitions, and
+// global broadcast listener sets.
+
 function getProcessValue<T>(name: string, create: () => T): T {
   const key = Symbol.for(`toy-box.${name}`);
   const store = globalThis as typeof globalThis & Record<symbol, T | undefined>;

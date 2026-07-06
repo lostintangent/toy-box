@@ -620,13 +620,18 @@ index 375b1b8..9db9a3a 100644
       "turnId": "turn-3",
       "type": "delta",
     },
+    {
+      "eventId": 53,
+      "reason": "idle",
+      "turnId": "turn-3",
+      "type": "end",
+    },
     "<<STREAM-CLOSED>>",
   ],
   "sideEffects": [
     "running:golden-stream",
     "running:golden-stream",
     "--- pre-close ---",
-    "read:golden-stream",
     "idle:golden-stream",
     "sdk:unsubscribed",
   ],
@@ -637,7 +642,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
 {
   "activeTurnId": "turn-3",
   "artifacts": [],
-  "lastSeenEventId": 52,
+  "lastSeenEventId": 53,
   "linkedSessionIds": [],
   "messages": [
     {

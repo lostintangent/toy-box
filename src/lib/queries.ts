@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import {
   querySession,
   getSessionsState,
+  getWorkspaceState,
   listModels,
   listSessionSkills,
 } from "@/functions/sessions";
@@ -13,8 +14,6 @@ export type { SessionsState };
 export function createEmptySessionsState(): SessionsState {
   return {
     sessions: [],
-    streamingSessionIds: [],
-    unreadSessionIds: [],
     worktrees: {},
     childSessionIds: [],
   };
@@ -36,13 +35,12 @@ export const sessionQueries = {
   // Canonical key for unified sidebar/list state
   stateKey: () => [...sessionQueries.all(), "state"] as const,
 
-  // Unified sidebar/list snapshot (sessions + streaming + unread).
-  // Keep this query independent from view-local selection state to avoid
-  // stale fetches (with different openSessionIds) racing on one cache key.
+  // Durable sidebar/list snapshot. Workspace facts such as running and unread
+  // membership live in workspaceQueries.state().
   state: () =>
     queryOptions({
       queryKey: sessionQueries.stateKey(),
-      queryFn: () => getSessionsState({ data: {} }),
+      queryFn: getSessionsState,
       staleTime: Infinity,
       refetchOnWindowFocus: "always",
       refetchOnReconnect: "always",
@@ -60,6 +58,21 @@ export const sessionQueries = {
       refetchOnWindowFocus: "always",
       refetchOnReconnect: "always",
       retry: false, // Don't retry on "session not found" errors
+    }),
+};
+
+export const workspaceQueries = {
+  all: () => ["workspace"] as const,
+
+  stateKey: () => [...workspaceQueries.all(), "state"] as const,
+
+  state: () =>
+    queryOptions({
+      queryKey: workspaceQueries.stateKey(),
+      queryFn: getWorkspaceState,
+      staleTime: Infinity,
+      refetchOnWindowFocus: "always",
+      refetchOnReconnect: "always",
     }),
 };
 

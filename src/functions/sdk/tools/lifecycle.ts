@@ -42,10 +42,7 @@ const createSession = defineTool("create_session", {
   }),
   skipPermission: true,
   handler: async (args, invocation) => {
-    const [{ SessionStream }, { createAndStartSession }] = await Promise.all([
-      import("@/functions/runtime/stream"),
-      import("@/functions/runtime/sessionLauncher"),
-    ]);
+    const { deliverSessionMessage, SessionStream } = await import("@/functions/runtime/stream");
     const inheritedWorkspaceContext =
       args.directory === undefined
         ? normalizeInheritedWorkspaceContext(
@@ -57,14 +54,21 @@ const createSession = defineTool("create_session", {
     const inheritedModelConfiguration =
       args.modelConfiguration ??
       SessionStream.get(invocation.sessionId)?.getSessionState().modelConfiguration;
-    const { sessionId } = await createAndStartSession({
-      sessionId: `${SESSION_ID_PREFIX}${crypto.randomUUID()}`,
-      prompt: args.prompt,
-      modelConfiguration: inheritedModelConfiguration,
-      directory: inheritedExecutionDirectory,
-      useWorktree: args.useWorktree ?? false,
-      parentSessionId: invocation.sessionId,
-      initialContext: inheritedWorkspaceContext,
+    const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
+    await deliverSessionMessage({
+      sessionId,
+      message: {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: args.prompt,
+        modelConfiguration: inheritedModelConfiguration,
+      },
+      create: {
+        directory: inheritedExecutionDirectory,
+        useWorktree: args.useWorktree ?? false,
+        parentSessionId: invocation.sessionId,
+        initialContext: inheritedWorkspaceContext,
+      },
     });
 
     return JSON.stringify({ sessionId });
@@ -103,7 +107,7 @@ const deleteSessionTool = defineTool("delete_session", {
   }),
   skipPermission: true,
   handler: async ({ sessionId }) => {
-    const { deleteSession } = await import("@/functions/state/sessionCache");
+    const { deleteSession } = await import("@/functions/state/sessionRegistry");
 
     await deleteSession(sessionId);
     return JSON.stringify({ deleted: true });

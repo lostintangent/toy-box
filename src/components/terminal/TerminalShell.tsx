@@ -85,7 +85,7 @@ export function TerminalShell({ onClose, onQuickKey, children }: TerminalShellPr
               onQuickKey={onQuickKey}
               keyData={QUICK_KEYS.tab}
               size="xs"
-              className="px-2 text-[10px] font-semibold tracking-wide"
+              className="px-2 text-2xs font-semibold tracking-wide"
               label="Tab"
             >
               Tab
@@ -95,7 +95,7 @@ export function TerminalShell({ onClose, onQuickKey, children }: TerminalShellPr
               onQuickKey={onQuickKey}
               keyData={QUICK_KEYS.esc}
               size="xs"
-              className="px-2 text-[10px] font-semibold tracking-wide"
+              className="px-2 text-2xs font-semibold tracking-wide"
               label="Esc"
             >
               Esc
@@ -106,7 +106,7 @@ export function TerminalShell({ onClose, onQuickKey, children }: TerminalShellPr
             keyData={QUICK_KEYS.ctrlC}
             variant="outline"
             size="xs"
-            className="px-2 text-[10px] font-semibold tracking-wide shadow-xs bg-muted/40 rounded-md"
+            className="px-2 text-2xs font-semibold tracking-wide shadow-xs bg-muted/40 rounded-md"
             label="Ctrl+C"
           >
             Cmd+C

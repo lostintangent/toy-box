@@ -1,22 +1,21 @@
-import type { CopilotSession } from "@github/copilot-sdk";
 import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import type { Automation, AutomationsUpdateEvent, ModelConfiguration } from "@/types";
+import type {
+  Automation,
+  AutomationsUpdateEvent,
+  ModelConfiguration,
+  QueuedMessage,
+} from "@/types";
 import type { AutomationDatabase } from "./database";
+import type { AutomationSchedulerDependencies } from "./scheduler";
 
-type SessionTerminalDisposition = "idle" | "error";
-type SessionEvent = {
-  type: string;
-};
-type ManagedSessionOptions = {
-  sessionId: string;
+type CreateSessionOptions = {
   modelConfiguration?: ModelConfiguration;
   directory?: string;
   automationId?: string;
-  summary?: string;
 };
-type ManagedSessionHandle = {
+type DeliverSessionMessageOptions = {
   sessionId: string;
-  session: CopilotSession;
+  message: QueuedMessage;
 };
 type MockCallReader<Args extends readonly unknown[]> = {
   mock: {
@@ -41,43 +40,31 @@ function createAutomation(overrides: Partial<Automation> = {}): Automation {
   };
 }
 
-function createFakeSession() {
-  const listeners = new Set<(event: SessionEvent) => void>();
-
-  const session = {
-    on(listener: (event: SessionEvent) => void) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-  } as unknown as CopilotSession;
-
-  return {
-    session,
-    emit(type: string) {
-      for (const listener of Array.from(listeners)) {
-        listener({ type });
-      }
-    },
-  };
-}
-
-function resolveTerminalDisposition(type: string): SessionTerminalDisposition | undefined {
-  if (type === "session.idle") return "idle";
-  if (type === "session.error") return "error";
-  return undefined;
-}
-
 async function flushAsyncEffects(): Promise<void> {
   await Bun.sleep(1);
 }
 
-function buildCreateManagedSessionMock(session: CopilotSession) {
-  return mock(async (options: ManagedSessionOptions) => ({
+function createDeliveryMock() {
+  let resolveCompletion!: (result: { response?: string; error?: string }) => void;
+  const completionPromise = new Promise<{ response?: string; error?: string }>((resolve) => {
+    resolveCompletion = resolve;
+  });
+  const deliverSessionMessageMock = mock(async (options: DeliverSessionMessageOptions) => ({
     sessionId: options.sessionId,
-    session,
+    disposition: "sent" as const,
+    completion: () => completionPromise,
   }));
+  return {
+    deliverSessionMessageMock,
+    complete: (result: { response?: string; error?: string } = {}) => resolveCompletion(result),
+  };
+}
+
+function mockCreateSession() {
+  return mock(
+    async (_sessionId: string, _options?: CreateSessionOptions) =>
+      ({}) as Awaited<ReturnType<AutomationSchedulerDependencies["createSession"]>>,
+  );
 }
 
 function readEmittedAutomationEvents(
@@ -169,66 +156,35 @@ function createFakeDb(overrides: AutomationDatabaseOverrides = {}): AutomationDa
 
 async function loadScheduler(options: {
   db: AutomationDatabase;
-  deleteSession?: (sessionId: string) => Promise<void>;
-  createManagedSession?: (options: ManagedSessionOptions) => Promise<ManagedSessionHandle>;
-  startManagedSessionTurn?: (sessionHandle: ManagedSessionHandle, prompt: string) => Promise<void>;
-  emitAutomationsUpdate?: (event: AutomationsUpdateEvent) => void;
-  getSdkStreamTerminalDisposition?: (type: string) => SessionTerminalDisposition | undefined;
-  isSessionRunning?: (sessionId: string) => boolean;
+  deleteSession?: AutomationSchedulerDependencies["deleteSession"];
+  createSession?: AutomationSchedulerDependencies["createSession"];
+  deliverSessionMessage?: AutomationSchedulerDependencies["deliverSessionMessage"];
+  updateSessionName?: AutomationSchedulerDependencies["updateSessionName"];
+  emitAutomationsUpdate?: AutomationSchedulerDependencies["emitAutomationsUpdate"];
+  isSessionRunning?: AutomationSchedulerDependencies["isSessionRunning"];
 }) {
-  mock.module("@/functions/state/sessionCache", () => ({
-    createSession: async () => {
-      throw new Error("createSession should not be used by scheduler tests");
-    },
-    deleteSession: options.deleteSession ?? (async () => {}),
-    getCachedOrResumeSession: async () => {
-      throw new Error("getCachedOrResumeSession should not be used by scheduler tests");
-    },
-    evictCachedSessionIfStale: () => false,
-  }));
-  mock.module("@/functions/runtime/sessionLauncher", () => ({
-    createManagedSession:
-      options.createManagedSession ??
-      (async (launchOptions: ManagedSessionOptions) => ({
-        sessionId: launchOptions.sessionId,
-        session: createFakeSession().session,
-      })),
-    startManagedSessionTurn: options.startManagedSessionTurn ?? (async () => {}),
-    createAndStartSession: async (launchOptions: {
-      sessionId: string;
-      prompt: string;
-      modelConfiguration?: ModelConfiguration;
-      directory?: string;
-      useWorktree?: boolean;
-    }) => ({
-      sessionId: launchOptions.sessionId,
-      session: createFakeSession().session,
-      stream: {
-        startTurn: () => {},
-        finishStream: () => {},
-        detach: () => {},
-      },
-    }),
-  }));
-  mock.module("./events", () => ({
-    emitAutomationsUpdate: options.emitAutomationsUpdate ?? (() => {}),
-  }));
-  mock.module("@/functions/sdk/projector", () => ({
-    getSdkStreamTerminalDisposition:
-      options.getSdkStreamTerminalDisposition ?? resolveTerminalDisposition,
-  }));
-  mock.module("@/functions/runtime/stream", () => ({
-    SessionStream: {
-      isRunning: options.isSessionRunning ?? (() => false),
-    },
-  }));
-
   const scheduler = await import("./scheduler");
+  const deps: AutomationSchedulerDependencies = {
+    createSession:
+      options.createSession ??
+      (async () => ({}) as Awaited<ReturnType<AutomationSchedulerDependencies["createSession"]>>),
+    deleteSession: options.deleteSession ?? (async () => {}),
+    deliverSessionMessage:
+      options.deliverSessionMessage ??
+      (async (deliveryOptions) => ({
+        sessionId: deliveryOptions.sessionId,
+        disposition: "sent" as const,
+        completion: async () => ({}),
+      })),
+    updateSessionName: options.updateSessionName ?? (() => {}),
+    emitAutomationsUpdate: options.emitAutomationsUpdate ?? (() => {}),
+    isSessionRunning: options.isSessionRunning ?? (() => false),
+  };
 
   return {
     ...scheduler,
     runAutomation: (automationId: string) =>
-      scheduler.runAutomationWithDatabase(automationId, options.db),
+      scheduler.runAutomationWithDatabase(automationId, options.db, deps),
   };
 }
 
@@ -249,10 +205,9 @@ describe("automation scheduler", () => {
     const updateLastRunSessionIdMock = mock(
       async (_automationId: string, _sessionId: string) => {},
     );
-    const createManagedSessionMock = buildCreateManagedSessionMock(createFakeSession().session);
-    const startManagedSessionTurnMock = mock(
-      async (_sessionHandle: ManagedSessionHandle, _prompt: string) => {},
-    );
+    const createSessionMock = mockCreateSession();
+    const updateSessionNameMock = mock((_sessionId: string, _summary: string) => {});
+    const { deliverSessionMessageMock } = createDeliveryMock();
 
     const { runAutomation } = await loadScheduler({
       db: createFakeDb({
@@ -260,28 +215,33 @@ describe("automation scheduler", () => {
         updateLastRunSessionId: updateLastRunSessionIdMock,
       }),
       deleteSession: deleteSessionMock,
-      createManagedSession: createManagedSessionMock,
-      startManagedSessionTurn: startManagedSessionTurnMock,
+      createSession: createSessionMock,
+      deliverSessionMessage: deliverSessionMessageMock,
+      updateSessionName: updateSessionNameMock,
     });
 
     const result = await runAutomation(automation.id);
 
     expect(result).toEqual({ sessionId: "session-reused", started: true });
     expect(deleteSessionMock).toHaveBeenCalledWith("session-reused");
-    expect(createManagedSessionMock).toHaveBeenCalledWith({
-      sessionId: "session-reused",
+    expect(createSessionMock).toHaveBeenCalledWith("session-reused", {
       modelConfiguration: {
         model: "gpt-5",
       },
       directory: "/repo/automation",
       automationId: automation.id,
-      summary: "Daily summary",
     });
+    expect(updateSessionNameMock).toHaveBeenCalledWith("session-reused", "Daily summary");
     expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, "session-reused");
-    expect(startManagedSessionTurnMock).toHaveBeenCalledTimes(1);
-    const [sessionHandle, prompt] = startManagedSessionTurnMock.mock.calls[0]!;
-    expect(sessionHandle.sessionId).toBe("session-reused");
-    expect(prompt).toBe("run with reuse");
+    expect(deliverSessionMessageMock).toHaveBeenCalledTimes(1);
+    expect(deliverSessionMessageMock).toHaveBeenCalledWith({
+      sessionId: "session-reused",
+      message: expect.objectContaining({
+        role: "user",
+        content: "run with reuse",
+        modelConfiguration: automation.modelConfiguration,
+      }),
+    });
   });
 
   test("generates a new session ID when reuseSession is true but no prior session exists", async () => {
@@ -298,41 +258,41 @@ describe("automation scheduler", () => {
     const updateLastRunSessionIdMock = mock(
       async (_automationId: string, _sessionId: string) => {},
     );
-    const createManagedSessionMock = buildCreateManagedSessionMock(createFakeSession().session);
-    const startManagedSessionTurnMock = mock(
-      async (_sessionHandle: ManagedSessionHandle, _prompt: string) => {},
-    );
+    const createSessionMock = mockCreateSession();
+    const updateSessionNameMock = mock((_sessionId: string, _summary: string) => {});
+    const { deliverSessionMessageMock } = createDeliveryMock();
 
     const { runAutomation } = await loadScheduler({
       db: createFakeDb({
         getById: async () => automation,
         updateLastRunSessionId: updateLastRunSessionIdMock,
       }),
-      createManagedSession: createManagedSessionMock,
-      startManagedSessionTurn: startManagedSessionTurnMock,
+      createSession: createSessionMock,
+      deliverSessionMessage: deliverSessionMessageMock,
+      updateSessionName: updateSessionNameMock,
     });
 
     const result = await runAutomation(automation.id);
 
-    expect(createManagedSessionMock).toHaveBeenCalledTimes(1);
-    const [launchOptions] = createManagedSessionMock.mock.calls[0]!;
-    expect(launchOptions.sessionId).toStartWith("toy-box-auto-reuse-no-prior--run-");
-    expect(launchOptions.modelConfiguration).toEqual({
+    expect(createSessionMock).toHaveBeenCalledTimes(1);
+    const [createdSessionId, createOptions] = createSessionMock.mock.calls[0]!;
+    expect(createdSessionId).toStartWith("toy-box-auto-reuse-no-prior--run-");
+    expect(createOptions?.modelConfiguration).toEqual({
       model: automation.modelConfiguration.model,
     });
-    expect(launchOptions.automationId).toBe(automation.id);
-    expect(launchOptions.summary).toBe(automation.title);
-    expect(result.sessionId).toBe(launchOptions.sessionId);
+    expect(createOptions?.automationId).toBe(automation.id);
+    expect(updateSessionNameMock).toHaveBeenCalledWith(createdSessionId, automation.title);
+    expect(result.sessionId).toBe(createdSessionId);
     expect(result.started).toBe(true);
-    expectPersistedLastRunSession(
-      updateLastRunSessionIdMock,
-      automation.id,
-      launchOptions.sessionId,
-    );
-    expect(startManagedSessionTurnMock).toHaveBeenCalledTimes(1);
-    const [sessionHandle, prompt] = startManagedSessionTurnMock.mock.calls[0]!;
-    expect(sessionHandle.sessionId).toBe(launchOptions.sessionId);
-    expect(prompt).toBe("first run");
+    expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, createdSessionId);
+    expect(deliverSessionMessageMock).toHaveBeenCalledWith({
+      sessionId: createdSessionId,
+      message: expect.objectContaining({
+        role: "user",
+        content: "first run",
+        modelConfiguration: automation.modelConfiguration,
+      }),
+    });
   });
 
   test("does not delete or restart a reused session while it is still running", async () => {
@@ -349,10 +309,8 @@ describe("automation scheduler", () => {
     const updateLastRunSessionIdMock = mock(
       async (_automationId: string, _sessionId: string) => {},
     );
-    const createManagedSessionMock = buildCreateManagedSessionMock(createFakeSession().session);
-    const startManagedSessionTurnMock = mock(
-      async (_sessionHandle: ManagedSessionHandle, _prompt: string) => {},
-    );
+    const createSessionMock = mockCreateSession();
+    const { deliverSessionMessageMock } = createDeliveryMock();
     const emitAutomationsUpdateMock = mock((_event: AutomationsUpdateEvent) => {});
 
     const { runAutomation } = await loadScheduler({
@@ -361,8 +319,8 @@ describe("automation scheduler", () => {
         updateLastRunSessionId: updateLastRunSessionIdMock,
       }),
       deleteSession: deleteSessionMock,
-      createManagedSession: createManagedSessionMock,
-      startManagedSessionTurn: startManagedSessionTurnMock,
+      createSession: createSessionMock,
+      deliverSessionMessage: deliverSessionMessageMock,
       emitAutomationsUpdate: emitAutomationsUpdateMock,
       isSessionRunning: (sessionId) => sessionId === "session-running",
     });
@@ -371,9 +329,9 @@ describe("automation scheduler", () => {
 
     expect(result).toEqual({ sessionId: "session-running", started: false });
     expect(deleteSessionMock).toHaveBeenCalledTimes(0);
-    expect(createManagedSessionMock).toHaveBeenCalledTimes(0);
+    expect(createSessionMock).toHaveBeenCalledTimes(0);
     expect(updateLastRunSessionIdMock).toHaveBeenCalledTimes(0);
-    expect(startManagedSessionTurnMock).toHaveBeenCalledTimes(0);
+    expect(deliverSessionMessageMock).toHaveBeenCalledTimes(0);
     expect(emitAutomationsUpdateMock).toHaveBeenCalledTimes(0);
   });
 
@@ -388,21 +346,28 @@ describe("automation scheduler", () => {
       reuseSession: false,
       lastRunSessionId: undefined,
     });
-    const createManagedSessionMock = buildCreateManagedSessionMock(createFakeSession().session);
+    const createSessionMock = mockCreateSession();
+    const { deliverSessionMessageMock } = createDeliveryMock();
 
     const { runAutomation } = await loadScheduler({
       db: createFakeDb({
         getById: async () => automation,
         updateLastRunSessionId: async (_automationId: string, _sessionId: string) => {},
       }),
-      createManagedSession: createManagedSessionMock,
+      createSession: createSessionMock,
+      deliverSessionMessage: deliverSessionMessageMock,
     });
 
     await runAutomation(automation.id);
 
-    const [launchOptions] = createManagedSessionMock.mock.calls[0]!;
-    expect(launchOptions.modelConfiguration?.reasoningEffort).toBe("high");
-    expect(launchOptions.automationId).toBe(automation.id);
+    const [, createOptions] = createSessionMock.mock.calls[0]!;
+    expect(createOptions?.modelConfiguration?.reasoningEffort).toBe("high");
+    expect(createOptions?.automationId).toBe(automation.id);
+    const [deliveryOptions] = deliverSessionMessageMock.mock.calls[0]!;
+    expect(deliveryOptions.message).toMatchObject({
+      role: "user",
+      modelConfiguration: { reasoningEffort: "high" },
+    });
   });
 
   test("emits started then finished(success) and updates lastRunAt after idle terminal", async () => {
@@ -421,17 +386,15 @@ describe("automation scheduler", () => {
       lastRunAt: "2026-02-14T10:05:00.000Z",
       updatedAt: "2026-02-14T10:05:00.000Z",
     });
-    const fakeSession = createFakeSession();
     const updateLastRunSessionIdMock = mock(
       async (_automationId: string, _sessionId: string) => {},
     );
     const updateLastRunMock = mock(
       async (_automationId: string, _runDate: Date, _sessionId: string) => {},
     );
-    const createManagedSessionMock = buildCreateManagedSessionMock(fakeSession.session);
-    const startManagedSessionTurnMock = mock(
-      async (_sessionHandle: ManagedSessionHandle, _prompt: string) => {},
-    );
+    const createSessionMock = mockCreateSession();
+    const updateSessionNameMock = mock((_sessionId: string, _summary: string) => {});
+    const { deliverSessionMessageMock, complete } = createDeliveryMock();
     const emitAutomationsUpdateMock = mock((_event: AutomationsUpdateEvent) => {});
 
     let getCalls = 0;
@@ -444,26 +407,37 @@ describe("automation scheduler", () => {
         updateLastRunSessionId: updateLastRunSessionIdMock,
         updateLastRun: updateLastRunMock,
       }),
-      createManagedSession: createManagedSessionMock,
-      startManagedSessionTurn: startManagedSessionTurnMock,
+      createSession: createSessionMock,
+      deliverSessionMessage: deliverSessionMessageMock,
+      updateSessionName: updateSessionNameMock,
       emitAutomationsUpdate: emitAutomationsUpdateMock,
     });
 
     const result = await runAutomation(automation.id);
 
     expect(result).toEqual({ sessionId: "session-success", started: true });
-    const [launchOptions] = createManagedSessionMock.mock.calls[0]!;
-    expect(launchOptions.sessionId).toBe("session-success");
-    expect(launchOptions.modelConfiguration?.model).toBe(automation.modelConfiguration.model);
-    expect(launchOptions.automationId).toBe(automation.id);
-    expect(launchOptions.summary).toBe(automation.title);
+    expect(createSessionMock).toHaveBeenCalledWith(
+      "session-success",
+      expect.objectContaining({
+        modelConfiguration: automation.modelConfiguration,
+        automationId: automation.id,
+      }),
+    );
+    expect(updateSessionNameMock).toHaveBeenCalledWith("session-success", automation.title);
     expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, "session-success");
-    expect(startManagedSessionTurnMock).toHaveBeenCalledTimes(1);
+    expect(deliverSessionMessageMock).toHaveBeenCalledWith({
+      sessionId: "session-success",
+      message: expect.objectContaining({
+        role: "user",
+        content: "run now",
+        modelConfiguration: automation.modelConfiguration,
+      }),
+    });
     let emittedEvents = readEmittedAutomationEvents(emitAutomationsUpdateMock);
     expect(emittedEvents).toHaveLength(1);
     expectStartedAutomationEvent(emittedEvents[0], automation.id, "session-success");
 
-    fakeSession.emit("session.idle");
+    complete();
     await flushAsyncEffects();
 
     expectRecordedLastRun(updateLastRunMock, automation.id, "session-success");
@@ -493,17 +467,15 @@ describe("automation scheduler", () => {
       lastRunAt: "2026-02-14T10:06:00.000Z",
       updatedAt: "2026-02-14T10:06:00.000Z",
     });
-    const fakeSession = createFakeSession();
     const updateLastRunSessionIdMock = mock(
       async (_automationId: string, _sessionId: string) => {},
     );
     const updateLastRunMock = mock(
       async (_automationId: string, _runDate: Date, _sessionId: string) => {},
     );
-    const createManagedSessionMock = buildCreateManagedSessionMock(fakeSession.session);
-    const startManagedSessionTurnMock = mock(
-      async (_sessionHandle: ManagedSessionHandle, _prompt: string) => {},
-    );
+    const createSessionMock = mockCreateSession();
+    const updateSessionNameMock = mock((_sessionId: string, _summary: string) => {});
+    const { deliverSessionMessageMock, complete } = createDeliveryMock();
     const emitAutomationsUpdateMock = mock((_event: AutomationsUpdateEvent) => {});
 
     let getCalls = 0;
@@ -516,26 +488,37 @@ describe("automation scheduler", () => {
         updateLastRunSessionId: updateLastRunSessionIdMock,
         updateLastRun: updateLastRunMock,
       }),
-      createManagedSession: createManagedSessionMock,
-      startManagedSessionTurn: startManagedSessionTurnMock,
+      createSession: createSessionMock,
+      deliverSessionMessage: deliverSessionMessageMock,
+      updateSessionName: updateSessionNameMock,
       emitAutomationsUpdate: emitAutomationsUpdateMock,
     });
 
     const result = await runAutomation(automation.id);
 
     expect(result).toEqual({ sessionId: "session-failure", started: true });
-    const [launchOptions] = createManagedSessionMock.mock.calls[0]!;
-    expect(launchOptions.sessionId).toBe("session-failure");
-    expect(launchOptions.modelConfiguration?.model).toBe(automation.modelConfiguration.model);
-    expect(launchOptions.automationId).toBe(automation.id);
-    expect(launchOptions.summary).toBe(automation.title);
+    expect(createSessionMock).toHaveBeenCalledWith(
+      "session-failure",
+      expect.objectContaining({
+        modelConfiguration: automation.modelConfiguration,
+        automationId: automation.id,
+      }),
+    );
+    expect(updateSessionNameMock).toHaveBeenCalledWith("session-failure", automation.title);
     expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, "session-failure");
-    expect(startManagedSessionTurnMock).toHaveBeenCalledTimes(1);
+    expect(deliverSessionMessageMock).toHaveBeenCalledWith({
+      sessionId: "session-failure",
+      message: expect.objectContaining({
+        role: "user",
+        content: "run and fail",
+        modelConfiguration: automation.modelConfiguration,
+      }),
+    });
     let emittedEvents = readEmittedAutomationEvents(emitAutomationsUpdateMock);
     expect(emittedEvents).toHaveLength(1);
     expectStartedAutomationEvent(emittedEvents[0], automation.id, "session-failure");
 
-    fakeSession.emit("session.error");
+    complete({ error: "The session ended with an error." });
     await flushAsyncEffects();
 
     expectRecordedLastRun(updateLastRunMock, automation.id, "session-failure");
@@ -560,18 +543,17 @@ describe("automation scheduler", () => {
       reuseSession: true,
       lastRunSessionId: "session-send-failure",
     });
-    const fakeSession = createFakeSession();
     const updateLastRunSessionIdMock = mock(
       async (_automationId: string, _sessionId: string) => {},
     );
     const updateLastRunMock = mock(
       async (_automationId: string, _runDate: Date, _sessionId: string) => {},
     );
-    const createManagedSessionMock = buildCreateManagedSessionMock(fakeSession.session);
-    const startManagedSessionTurnMock = mock(
-      async (_sessionHandle: ManagedSessionHandle, _prompt: string) => {},
-    );
-    startManagedSessionTurnMock.mockRejectedValue(new Error("boom"));
+    const createSessionMock = mockCreateSession();
+    const updateSessionNameMock = mock((_sessionId: string, _summary: string) => {});
+    const deliverSessionMessageMock = mock(async (_options: DeliverSessionMessageOptions) => {
+      throw new Error("boom");
+    });
     const emitAutomationsUpdateMock = mock((_event: AutomationsUpdateEvent) => {});
 
     const { runAutomation } = await loadScheduler({
@@ -580,25 +562,29 @@ describe("automation scheduler", () => {
         updateLastRunSessionId: updateLastRunSessionIdMock,
         updateLastRun: updateLastRunMock,
       }),
-      createManagedSession: createManagedSessionMock,
-      startManagedSessionTurn: startManagedSessionTurnMock,
+      createSession: createSessionMock,
+      deliverSessionMessage: deliverSessionMessageMock,
+      updateSessionName: updateSessionNameMock,
       emitAutomationsUpdate: emitAutomationsUpdateMock,
     });
 
     await expect(runAutomation(automation.id)).rejects.toThrow("boom");
 
     expect(updateLastRunMock).toHaveBeenCalledTimes(0);
-    const [launchOptions] = createManagedSessionMock.mock.calls[0]!;
-    expect(launchOptions.sessionId).toBe("session-send-failure");
-    expect(launchOptions.modelConfiguration?.model).toBe(automation.modelConfiguration.model);
-    expect(launchOptions.automationId).toBe(automation.id);
-    expect(launchOptions.summary).toBe(automation.title);
+    expect(createSessionMock).toHaveBeenCalledWith(
+      "session-send-failure",
+      expect.objectContaining({
+        modelConfiguration: automation.modelConfiguration,
+        automationId: automation.id,
+      }),
+    );
+    expect(updateSessionNameMock).toHaveBeenCalledWith("session-send-failure", automation.title);
     expectPersistedLastRunSession(
       updateLastRunSessionIdMock,
       automation.id,
       "session-send-failure",
     );
-    expect(startManagedSessionTurnMock).toHaveBeenCalledTimes(1);
+    expect(deliverSessionMessageMock).toHaveBeenCalledTimes(1);
     const emittedEvents = readEmittedAutomationEvents(emitAutomationsUpdateMock);
     expect(emittedEvents).toHaveLength(2);
     expectStartedAutomationEvent(emittedEvents[0], automation.id, "session-send-failure");
@@ -608,7 +594,6 @@ describe("automation scheduler", () => {
       success: false,
     });
 
-    fakeSession.emit("session.idle");
     await flushAsyncEffects();
 
     expect(readEmittedAutomationEvents(emitAutomationsUpdateMock)).toHaveLength(2);

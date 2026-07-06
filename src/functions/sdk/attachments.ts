@@ -2,11 +2,13 @@
 // writer (outbound prompt attachments) and the reader (persisted user.message
 // records) can never drift.
 
-import type { Attachment as SdkAttachment, AttachmentBlob } from "@github/copilot-sdk";
+import type { Attachment as SdkAttachment, MessageOptions } from "@github/copilot-sdk";
 import type { Attachment } from "@/types";
 
 /** Attachment → SDK blob, for session.send. */
-export function toSdkAttachmentBlobs(attachments?: Attachment[]): AttachmentBlob[] | undefined {
+export function toSdkAttachmentBlobs(
+  attachments?: Attachment[],
+): MessageOptions["attachments"] | undefined {
   return attachments?.length
     ? attachments.map((attachment) => ({
         type: "blob",
@@ -24,6 +26,7 @@ export function readAttachmentBlobs(value: SdkAttachment[] | undefined): Attachm
 
   const attachments = value.flatMap((entry) => {
     if (entry.type !== "blob") return [];
+    if (typeof entry.data !== "string") return [];
 
     return [
       {

@@ -6,11 +6,11 @@ import {
   createLinkedPanes,
   isArtifactPane,
   type ArtifactPaneMode,
-  type ArtifactGridPane,
-  type SessionGridPane,
-} from "./sessionPanes";
+  type ArtifactWorkspacePane,
+  type WorkspacePane,
+} from "@/lib/workspace/panes";
 
-export type LinkedPanesBySource = Record<string, SessionGridPane[]>;
+export type LinkedPanesBySource = Record<string, WorkspacePane[]>;
 
 export function useLinkedPanes() {
   const [linkedPanesBySource, setLinkedPanesBySource] = useAtom(linkedPanesAtom);
@@ -64,7 +64,7 @@ export function useLinkedPanes() {
   );
 
   const setArtifactPaneMode = useCallback(
-    (pane: ArtifactGridPane, mode: ArtifactPaneMode) => {
+    (pane: ArtifactWorkspacePane, mode: ArtifactPaneMode) => {
       setLinkedPanesBySource((current) => setArtifactPaneModeState(current, pane, mode));
     },
     [setLinkedPanesBySource],
@@ -81,7 +81,7 @@ export function useLinkedPanes() {
 
 function setArtifactPaneModeState(
   current: LinkedPanesBySource,
-  pane: ArtifactGridPane,
+  pane: ArtifactWorkspacePane,
   mode: ArtifactPaneMode,
 ): LinkedPanesBySource {
   const sourcePanes = current[pane.sourceSessionId] ?? [];
@@ -114,7 +114,7 @@ function removePaneSource(
   return rest;
 }
 
-function haveSamePaneState(left: SessionGridPane[], right: SessionGridPane[]): boolean {
+function haveSamePaneState(left: WorkspacePane[], right: WorkspacePane[]): boolean {
   return (
     left.length === right.length &&
     left.every((pane, index) => {

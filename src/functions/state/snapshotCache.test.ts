@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, mock, onTestFinished, test } from "bun:test";
+import * as realFsPromises from "node:fs/promises";
 import type { SessionSnapshot } from "@/types";
 import {
   cacheSnapshot,
@@ -109,6 +110,40 @@ describe.serial("snapshot cache", () => {
     evictCachedSnapshot("snapshot-cache-test-evicted");
 
     expect(hasCachedSnapshot("snapshot-cache-test-evicted")).toBe(false);
+  });
+
+  test("stores and serves snapshots as private copies", async () => {
+    const realFsExports = { ...realFsPromises };
+    onTestFinished(() => {
+      mock.module("node:fs/promises", () => realFsExports);
+      evictCachedSnapshot("snapshot-cache-test-clone");
+    });
+    // Freshness would consult the session's real events log; stub the stat so
+    // the entry reads as fresh and the served value is what's under test.
+    mock.module("node:fs/promises", () => ({
+      ...realFsExports,
+      stat: async () => ({ mtimeMs: Date.now() }),
+    }));
+
+    const original = snapshot("snapshot-cache-test-clone");
+    cacheSnapshot("snapshot-cache-test-clone", original);
+
+    // Mutating the caller's object after caching must not reach the cache...
+    original.messages[0]! = { role: "assistant", content: "mutated by the producer" };
+    const served = await getCachedSnapshot("snapshot-cache-test-clone");
+    expect(served?.messages[0]).toEqual({
+      role: "assistant",
+      content: "final response for snapshot-cache-test-clone",
+    });
+
+    // ...and mutating a served snapshot (e.g. a snapshot-seeded stream's late
+    // tool completion) must not corrupt what the cache serves next.
+    served!.messages[0]! = { role: "assistant", content: "mutated by a reader" };
+    const servedAgain = await getCachedSnapshot("snapshot-cache-test-clone");
+    expect(servedAgain?.messages[0]).toEqual({
+      role: "assistant",
+      content: "final response for snapshot-cache-test-clone",
+    });
   });
 });
 

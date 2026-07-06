@@ -9,7 +9,7 @@ import {
 import type { Automation } from "@/types";
 import { getAppDatabase } from "./database";
 import { AutomationDatabase } from "./automations/database";
-import { emitAutomationsUpdate } from "./automations/events";
+import { emitAutomationsUpdate } from "./runtime/broadcast";
 import { runAutomation } from "./automations/scheduler";
 
 const deleteAutomationInputSchema = z.object({

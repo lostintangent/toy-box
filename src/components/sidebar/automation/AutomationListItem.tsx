@@ -64,7 +64,7 @@ export function AutomationListItem({
             className="flex h-7 w-7 shrink-0 items-center justify-center"
             aria-label={`${automation.title} has unread activity`}
           >
-            <Circle className="h-2.5 w-2.5 fill-blue-500 text-blue-500" />
+            <Circle className="h-2.5 w-2.5 fill-unread text-unread" />
           </div>
         ) : (
           <DropdownMenu>

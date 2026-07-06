@@ -10,7 +10,8 @@ import { loadSessionFixture } from "./helpers";
 // emitted event stream is an implementation detail of the streaming
 // projection, which has its own unit suite (projector.test.ts).
 
-const replayHistory = initializeSessionStateFromSdkHistory;
+const replayHistory = (events: SdkSessionEvent[]) =>
+  initializeSessionStateFromSdkHistory("history-replay-session", events);
 
 function assistantToolCalls(state: Session) {
   return state.messages.flatMap((message) =>
@@ -247,7 +248,7 @@ describe("history replay", () => {
   });
 
   test("reads persisted blob attachments by default, skipping legacy file entries", async () => {
-    const state = await initializeSessionStateFromSdkHistory([
+    const state = await replayHistory([
       {
         type: "user.message",
         timestamp: "2026-01-01T00:00:00.000Z",

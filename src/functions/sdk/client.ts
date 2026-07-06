@@ -9,7 +9,12 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { ModelConfiguration } from "@/types";
 import { toSdkSessionModelOptions } from "@/lib/modelConfiguration";
+import { SESSION_STATE_PATH } from "@/lib/paths";
+import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 import { SDK_AGENT_NOTIFICATION_INSTRUCTIONS } from "@/functions/sdk/agentNotificationCodec";
+import type { SessionScope } from "./tools";
+
+export { SESSION_ID_PREFIX };
 
 // ============================================================================
 // CLI Path Resolution
@@ -88,12 +93,10 @@ function getCopilotClient(): Promise<CopilotClient> {
 // SDK Operations
 // ============================================================================
 
-/** Session ID prefix for sessions created by this web app */
-export const SESSION_ID_PREFIX = "toy-box-";
-
 function buildSessionSystemMessage(sessionId: string, directory?: string, automationId?: string) {
   const parts: string[] = [];
-  const sessionStateDirectory = `~/.copilot/session-state/${sessionId}`;
+  const sessionStateDirectory = `~/${SESSION_STATE_PATH}/${sessionId}`;
+  const sessionFilesDirectory = `${sessionStateDirectory}/files`;
 
   if (directory) {
     parts.push(
@@ -109,8 +112,8 @@ function buildSessionSystemMessage(sessionId: string, directory?: string, automa
           `When the user edits an artifact in this session, interpret the change as potential intent for improving the automation's prompt based on what the user changed, such as excluding something from a generated layout (e.g. they deleted a footer and you can update the automation's prompt to call out this shouldn't be added).`,
         ]
       : []),
-    `This session's state folder is: ${sessionStateDirectory}. Unless otherwise specified, when the user asks you to create an artifact, spec, plan, or ephemeral session document, write it under this folder. If this session does not have a working directory, use this state folder as the default location for new files.`,
-    `If needed, you can discover other sessions by grepping the files at ~/.copilot/session-state/${SESSION_ID_PREFIX}*/events.jsonl — each parent directory name is a session ID and the events.jsonl contains the full session history including user messages. Do NOT use a database to look up sessions; always grep these files directly.`,
+    `This session's state folder is: ${sessionStateDirectory}. This session's files folder is: ${sessionFilesDirectory}. Unless otherwise specified, when the user asks you to create an artifact, spec, plan, or ephemeral session document, write it under the files folder. Artifact paths in Toy Box notifications are relative to this files folder. If this session does not have a working directory, use this files folder as the default location for new files.`,
+    `If needed, you can discover other sessions by grepping the files at ~/${SESSION_STATE_PATH}/${SESSION_ID_PREFIX}*/events.jsonl — each parent directory name is a session ID and the events.jsonl contains the full session history including user messages. Do NOT use a database to look up sessions; always grep these files directly.`,
     SDK_AGENT_NOTIFICATION_INSTRUCTIONS,
   );
 
@@ -232,20 +235,41 @@ async function backfillMissingContext(sessions: SessionMetadata[]): Promise<void
 }
 
 /**
+ * A session created without an explicit directory records the SDK's homedir
+ * fallback (or no context at all) with no meaningful git info. This predicate
+ * detects that "directory-less" shape so list display and tool gating agree on
+ * which sessions are global/user-scoped.
+ */
+function isDirectoryLessContext(context: SessionContext | undefined): boolean {
+  if (!context) return true;
+  return context.workingDirectory === homedir() && !context.gitRoot && !context.repository;
+}
+
+/**
  * Strip SDK-defaulted context from sessions that were created without an
  * explicit directory. The SDK always writes a workingDirectory (falling back to
  * homedir), so sessions without a real location end up with a misleading
- * context. We detect these by checking for workingDirectory === homedir() with no
- * meaningful git info.
+ * context.
  */
 function stripHomedirFallbackContext(sessions: SessionMetadata[]): void {
-  const home = homedir();
   for (const session of sessions) {
-    const ctx = session.context;
-    if (ctx && ctx.workingDirectory === home && !ctx.gitRoot && !ctx.repository) {
+    if (isDirectoryLessContext(session.context)) {
       session.context = undefined;
     }
   }
+}
+
+/**
+ * Classify a persisted session as user- or directory-scoped from its SDK
+ * metadata, so resumed sessions gate control-plane tools the same way new
+ * sessions do. When the SDK omits context (a known gap the list path backfills
+ * from events), we treat the session as user-scoped — the benign direction,
+ * since it only offers an extra global tool rather than withholding one.
+ */
+export async function getSessionScope(sessionId: string): Promise<SessionScope> {
+  const client = await getCopilotClient();
+  const metadata = await client.getSessionMetadata(sessionId);
+  return isDirectoryLessContext(metadata?.context) ? "user" : "directory";
 }
 
 /** List available models */

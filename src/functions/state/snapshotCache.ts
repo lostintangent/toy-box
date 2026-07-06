@@ -1,29 +1,23 @@
-// Session snapshot cache — the reduced SessionSnapshot of recently finished
-// or recently opened sessions, so querySession can answer an idle open from
-// memory instead of SDK resume + full-log replay. sessionCache caches live
-// SDK session handles; this module caches what querySession would compute
-// from them.
+// Session snapshot cache and cold-path loader. Live streams own active state;
+// idle sessions resolve from this in-memory snapshot first, then SDK history.
 //
-// The cache pays off when a client has no detail cached yet: automations that
-// ran while nobody was watching, and sessions driven from another device.
-// In-process writes are self-maintaining — every write path runs through a
-// SessionStream whose clean close re-caches the final state — while
-// out-of-band writes (e.g. the copilot CLI appending to the same session) are
-// caught by comparing the session event log's mtime against the capture time,
-// with a small grace window for the SDK's own trailing flush of the turn we
-// just observed.
+// Freshness is guarded by the SDK event log mtime so out-of-process writes
+// force a replay, with a small grace window for the SDK's trailing flush.
 
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { SESSION_STATE_PATH } from "@/lib/session/sessionState";
+import { withSession } from "./sessionRegistry";
+import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/historyReplay";
+import { toSessionSnapshot } from "@/lib/session/sessionReducer";
+import { SESSION_STATE_PATH } from "@/lib/paths";
 import { sharedMap } from "../runtime/processState";
 import type { SessionSnapshot } from "@/types";
 
 const SNAPSHOT_CACHE_MAX_ENTRIES = 10;
 const SNAPSHOT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-/** Log writes this soon after capture are the SDK flushing the turn we just
- *  observed, not new content; anything later means the log changed under us. */
+// Log writes inside this window are treated as the SDK flushing the turn we
+// just observed, not new content.
 const EVENTS_LOG_WRITE_GRACE_MS = 2_000;
 
 export type CachedSnapshotEntry = {
@@ -33,8 +27,22 @@ export type CachedSnapshotEntry = {
 
 const snapshotCache = sharedMap<CachedSnapshotEntry>("session-snapshot-cache");
 
-/** Pure freshness policy: an entry serves until it ages out, its session's
- *  event log disappears, or the log was written meaningfully after capture. */
+/** Load an idle session snapshot from cache, or replay SDK history and cache it. */
+export async function loadSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
+  const cachedSnapshot = await getCachedSnapshot(sessionId);
+  if (cachedSnapshot) return cachedSnapshot;
+
+  const events = await withSession(sessionId, (session) => session.getEvents());
+  const snapshot = toSessionSnapshot(
+    sessionId,
+    await initializeSessionStateFromSdkHistory(sessionId, events),
+  );
+
+  cacheSnapshot(sessionId, snapshot);
+  return snapshot;
+}
+
+/** Whether a cached snapshot is still truthful enough to serve. */
 export function isCachedSnapshotFresh(
   entry: CachedSnapshotEntry,
   eventsLogMtimeMs: number | undefined,
@@ -45,12 +53,10 @@ export function isCachedSnapshotFresh(
   return eventsLogMtimeMs <= entry.capturedAt + EVENTS_LOG_WRITE_GRACE_MS;
 }
 
-/** Cache the final reduced form of a session, rotating out the least
- *  recently used entry beyond the cap. Synchronous so stream teardown can
- *  call it inline. */
+/** Cache a private copy of a reduced session snapshot. */
 export function cacheSnapshot(sessionId: string, snapshot: SessionSnapshot): void {
   snapshotCache.delete(sessionId);
-  snapshotCache.set(sessionId, { snapshot, capturedAt: Date.now() });
+  snapshotCache.set(sessionId, { snapshot: structuredClone(snapshot), capturedAt: Date.now() });
 
   while (snapshotCache.size > SNAPSHOT_CACHE_MAX_ENTRIES) {
     const oldest = snapshotCache.keys().next().value;
@@ -59,8 +65,7 @@ export function cacheSnapshot(sessionId: string, snapshot: SessionSnapshot): voi
   }
 }
 
-/** The cached snapshot for a session, if one is present and still fresh.
- *  Stale entries are dropped so the caller's cold path repopulates them. */
+/** Return a fresh cached snapshot copy, evicting stale entries. */
 export async function getCachedSnapshot(sessionId: string): Promise<SessionSnapshot | undefined> {
   const entry = snapshotCache.get(sessionId);
   if (!entry) return undefined;
@@ -73,7 +78,7 @@ export async function getCachedSnapshot(sessionId: string): Promise<SessionSnaps
   // Refresh recency so sessions the user keeps returning to stay cached.
   snapshotCache.delete(sessionId);
   snapshotCache.set(sessionId, entry);
-  return entry.snapshot;
+  return structuredClone(entry.snapshot);
 }
 
 export function evictCachedSnapshot(sessionId: string): void {

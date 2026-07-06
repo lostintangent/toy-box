@@ -4,22 +4,37 @@
 // previous run session. The scheduler also exposes `runAutomation` for
 // on-demand manual runs from the UI.
 
-import type { CopilotSession } from "@github/copilot-sdk";
-import { deleteSession } from "@/functions/state/sessionCache";
-import { createManagedSession, startManagedSessionTurn } from "@/functions/runtime/sessionLauncher";
-import { SessionStream } from "@/functions/runtime/stream";
-import { getSdkStreamTerminalDisposition } from "@/functions/sdk/projector";
+import { createSession, deleteSession } from "@/functions/state/sessionRegistry";
+import { deliverSessionMessage, SessionStream } from "@/functions/runtime/stream";
+import { emitAutomationsUpdate, updateSessionName } from "@/functions/runtime/broadcast";
 import { createAutomationRunSessionId } from "@/lib/automation/sessionId";
 import type { Automation } from "@/types";
 import { getAppDatabase } from "@/functions/database";
 import { AutomationDatabase } from "./database";
-import { emitAutomationsUpdate } from "./events";
 
 const AUTOMATION_SCHEDULER_POLL_MS = 30_000;
 
 export type AutomationRunResult = {
   sessionId: string;
   started: boolean;
+};
+
+export type AutomationSchedulerDependencies = {
+  createSession: typeof createSession;
+  deleteSession: typeof deleteSession;
+  deliverSessionMessage: typeof deliverSessionMessage;
+  updateSessionName: typeof updateSessionName;
+  emitAutomationsUpdate: typeof emitAutomationsUpdate;
+  isSessionRunning(sessionId: string): boolean;
+};
+
+const defaultSchedulerDependencies: AutomationSchedulerDependencies = {
+  createSession,
+  deleteSession,
+  deliverSessionMessage,
+  updateSessionName,
+  emitAutomationsUpdate,
+  isSessionRunning: (sessionId) => SessionStream.isRunning(sessionId),
 };
 
 /** Ensure the scheduler's polling loop is started */
@@ -66,6 +81,7 @@ export async function runAutomation(automationId: string): Promise<AutomationRun
 export async function runAutomationWithDatabase(
   automationId: string,
   db: AutomationDatabase,
+  deps = defaultSchedulerDependencies,
 ): Promise<AutomationRunResult> {
   const automation = await db.getById(automationId);
   if (!automation) {
@@ -73,53 +89,74 @@ export async function runAutomationWithDatabase(
   }
 
   const reusedSessionId = automation.reuseSession ? automation.lastRunSessionId : undefined;
-  if (reusedSessionId && SessionStream.isRunning(reusedSessionId)) {
+  if (reusedSessionId && deps.isSessionRunning(reusedSessionId)) {
     return { sessionId: reusedSessionId, started: false };
   }
 
   const sessionId = reusedSessionId ?? createAutomationRunSessionId(automation.id);
 
   if (reusedSessionId) {
-    await deleteSession(sessionId);
+    await deps.deleteSession(sessionId);
   }
 
-  const sessionHandle = await createManagedSession({
-    sessionId,
+  await deps.createSession(sessionId, {
     modelConfiguration: automation.modelConfiguration,
     directory: automation.cwd,
     automationId: automation.id,
-    summary: automation.title,
   });
+  deps.updateSessionName(sessionId, automation.title);
 
   // Persist the session ID immediately so the automation list item is clickable
   // and the session can be filtered from the regular session list while running.
   await db.updateLastRunSessionId(automation.id, sessionId);
 
-  emitAutomationsUpdate({
+  deps.emitAutomationsUpdate({
     type: "automation.started",
     automationId: automation.id,
     sessionId,
     startedAt: new Date().toISOString(),
   });
 
-  const stopCompletionObserver = observeRunCompletion(db, {
-    automationId: automation.id,
-    sessionId,
-    session: sessionHandle.session,
-  });
-
   try {
-    await startManagedSessionTurn(sessionHandle, automation.prompt);
+    const receipt = await deps.deliverSessionMessage({
+      sessionId,
+      message: {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: automation.prompt,
+        modelConfiguration: automation.modelConfiguration,
+      },
+    });
+    void receipt
+      .completion()
+      .then((completion) =>
+        finalizeAutomationRun(
+          db,
+          {
+            automationId: automation.id,
+            sessionId,
+            success: !completion.error,
+            updateLastRun: true,
+          },
+          deps,
+        ),
+      )
+      .catch((error) => {
+        console.error(`Failed to finalize automation run ${automation.id}:`, error);
+      });
 
     return { sessionId, started: true };
   } catch (error) {
-    stopCompletionObserver();
-    await finalizeAutomationRun(db, {
-      automationId: automation.id,
-      sessionId,
-      success: false,
-      updateLastRun: false,
-    });
+    await finalizeAutomationRun(
+      db,
+      {
+        automationId: automation.id,
+        sessionId,
+        success: false,
+        updateLastRun: false,
+      },
+      deps,
+    );
     throw error;
   }
 }
@@ -127,40 +164,6 @@ export async function runAutomationWithDatabase(
 // ============================================================================
 // Internal Helpers
 // ============================================================================
-
-/** Subscribe to session events and finalize the run on a terminal event. Returns a dispose function. */
-function observeRunCompletion(
-  db: AutomationDatabase,
-  options: {
-    automationId: string;
-    sessionId: string;
-    session: CopilotSession;
-  },
-): () => void {
-  let settled = false;
-
-  const unsubscribe = options.session.on((event) => {
-    const terminalDisposition = getSdkStreamTerminalDisposition(event.type);
-    if (!terminalDisposition || settled) return;
-
-    settled = true;
-    unsubscribe();
-    void finalizeAutomationRun(db, {
-      automationId: options.automationId,
-      sessionId: options.sessionId,
-      success: terminalDisposition === "idle",
-      updateLastRun: true,
-    }).catch((error) => {
-      console.error(`Failed to finalize automation run ${options.automationId}:`, error);
-    });
-  });
-
-  return () => {
-    if (settled) return;
-    settled = true;
-    unsubscribe();
-  };
-}
 
 /** Persist the run result and emit a finished event to connected clients. */
 async function finalizeAutomationRun(
@@ -171,6 +174,7 @@ async function finalizeAutomationRun(
     success: boolean;
     updateLastRun: boolean;
   },
+  deps = defaultSchedulerDependencies,
 ): Promise<void> {
   const finishedAt = new Date();
   let updatedAutomation: Automation | undefined;
@@ -180,7 +184,7 @@ async function finalizeAutomationRun(
     updatedAutomation = (await db.getById(options.automationId)) ?? undefined;
   }
 
-  emitAutomationsUpdate({
+  deps.emitAutomationsUpdate({
     type: "automation.finished",
     automationId: options.automationId,
     sessionId: options.sessionId,

@@ -30,21 +30,21 @@ export const Route = createFileRoute("/api/preview/$sessionId/$")({
     handlers: {
       GET: async ({ params }) => {
         const { sessionId, _splat } = params as PreviewRouteParams;
-        const { path: targetPath, error } = await resolveArtifactRequest(sessionId, _splat);
+        const { absolutePath, error } = await resolveArtifactRequest(sessionId, _splat);
         if (error) return error;
 
         try {
           const { readFile } = await import("node:fs/promises");
-          const body = isHtmlPreviewPath(targetPath)
-            ? injectHtmlPreviewBridge(await readFile(targetPath, "utf-8"))
-            : await readFile(targetPath);
+          const body = isHtmlPreviewPath(absolutePath)
+            ? injectHtmlPreviewBridge(await readFile(absolutePath, "utf-8"))
+            : await readFile(absolutePath);
 
           return new Response(body, {
             headers: {
               "Cache-Control": "no-store",
               "Content-Security-Policy":
                 "sandbox allow-downloads allow-forms allow-modals allow-popups allow-scripts allow-top-navigation-by-user-activation",
-              "Content-Type": getContentType(targetPath),
+              "Content-Type": getContentType(absolutePath),
               "X-Content-Type-Options": "nosniff",
             },
           });

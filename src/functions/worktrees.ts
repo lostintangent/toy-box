@@ -7,20 +7,9 @@ import { execFile as execFileCb } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import type { SessionWorktree } from "@/types";
 
 const execFile = promisify(execFileCb);
-
-export type WorktreeInfo = {
-  path: string;
-  branch: string;
-  baseBranch: string;
-};
-
-export type MergeResult = { status: "merged" } | { status: "conflicts" } | { status: "no-changes" };
-export type ApplyResult =
-  | { status: "applied" }
-  | { status: "conflicts" }
-  | { status: "no-changes" };
 
 /** Run a git command in the given directory and return trimmed stdout. */
 async function git(cwd: string, ...args: string[]): Promise<string> {
@@ -49,7 +38,7 @@ export async function detectGitRoot(directory: string): Promise<string | null> {
 }
 
 /** Create a new worktree + branch for a session. */
-export async function createWorktree(gitRoot: string, sessionId: string): Promise<WorktreeInfo> {
+export async function createWorktree(gitRoot: string, sessionId: string): Promise<SessionWorktree> {
   const shortId = sessionId.replace(/^toy-box-/, "").slice(0, 12);
   const branch = `toy-box/${shortId}`;
   const path = join(homedir(), ".toy-box", "worktrees", shortId);
@@ -108,11 +97,11 @@ async function detectMainGitDir(directory: string): Promise<string | null> {
 export async function mergeWorktreeBranch(
   gitRoot: string,
   info: { branch: string; baseBranch: string },
-): Promise<MergeResult> {
+): Promise<void> {
   // Check if there are any changes to merge
   try {
     await git(gitRoot, "diff", "--quiet", `${info.baseBranch}...${info.branch}`);
-    return { status: "no-changes" };
+    return;
   } catch {
     // Non-zero exit means there are differences — continue to merge
   }
@@ -122,15 +111,14 @@ export async function mergeWorktreeBranch(
   try {
     await git(gitRoot, "checkout", info.baseBranch);
     await git(gitRoot, "merge", "--no-ff", info.branch, "-m", `Merge session ${info.branch}`);
-    return { status: "merged" };
-  } catch {
+  } catch (error) {
     // Merge failed — abort and restore
     try {
       await git(gitRoot, "merge", "--abort");
     } catch {
       // Ignore if abort fails (no merge in progress)
     }
-    return { status: "conflicts" };
+    throw error;
   } finally {
     // Restore original branch if we switched away
     if (originalBranch !== info.baseBranch) {
@@ -147,11 +135,11 @@ export async function mergeWorktreeBranch(
 export async function applyWorktreeBranch(
   gitRoot: string,
   info: { branch: string; baseBranch: string },
-): Promise<ApplyResult> {
+): Promise<void> {
   // Check if there are any changes to apply
   try {
     await git(gitRoot, "diff", "--quiet", `${info.baseBranch}...${info.branch}`);
-    return { status: "no-changes" };
+    return;
   } catch {
     // Non-zero exit means there are differences — continue
   }
@@ -163,8 +151,7 @@ export async function applyWorktreeBranch(
     await git(gitRoot, "checkout", info.baseBranch);
     await git(gitRoot, "merge", "--squash", info.branch);
     await git(gitRoot, "reset", "HEAD");
-    return { status: "applied" };
-  } catch {
+  } catch (error) {
     // Squash merge failed — abort and restore clean state
     try {
       await git(gitRoot, "merge", "--abort");
@@ -176,7 +163,7 @@ export async function applyWorktreeBranch(
     } catch {
       // Best effort
     }
-    return { status: "conflicts" };
+    throw error;
   } finally {
     // Restore original branch if we switched away
     if (originalBranch !== info.baseBranch) {

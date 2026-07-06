@@ -1,17 +1,16 @@
 import { atom } from "jotai";
-import type { SessionGridPane } from "@/hooks/session/sessionPanes";
+import type { WorkspacePane } from "@/lib/workspace/panes";
+import { createEmptyWorkspaceState, type WorkspaceState } from "@/lib/workspace/state";
 
 /**
  * Maps each source session ID to the panes it has published into the UI.
  * Written by individual SessionPane instances; read by pane derivation.
  */
-export const linkedPanesAtom = atom<Record<string, SessionGridPane[]>>({});
+export const linkedPanesAtom = atom<Record<string, WorkspacePane[]>>({});
 
-/**
- * The visible pane that currently has the stage, or null when none does.
- * Each layout renders it with its own mechanism (the desktop grid maximizes
- * it, the mobile pager pages to it), and both write it on user interaction.
- * Null means "no focus", so artifact auto-focus may claim it; see usePaneFocus
- * for the write policy.
- */
-export const focusedPaneAtom = atom<string | null>(null);
+/** Workspace store state. useWorkspace owns writes, transport, and hydration. */
+export const workspaceStateAtom = atom<WorkspaceState>(createEmptyWorkspaceState());
+
+/** True once useWorkspace has hydrated the store from the server. Lets readers
+ *  tell "no drafts" apart from "not loaded yet" without a second query. */
+export const workspaceHydratedAtom = atom(false);

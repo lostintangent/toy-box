@@ -28,10 +28,11 @@ import { createProjectionState, projectSdkEvent } from "./projector";
 /** The replay thesis as code: project the log through the shared SDK projector
  *  and let the canonical reducer build the final Session. */
 export async function initializeSessionStateFromSdkHistory(
+  sessionId: string,
   events: SdkSessionEvent[],
 ): Promise<Session> {
   const state = createInitialSession();
-  const projectionState = createProjectionState();
+  const projectionState = createProjectionState(sessionId);
 
   for (const sdkEvent of events) {
     for (const sessionEvent of projectSdkEvent(sdkEvent, projectionState)) {

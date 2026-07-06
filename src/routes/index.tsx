@@ -2,55 +2,64 @@ import { useHotkey } from "@tanstack/react-hotkeys";
 import { createFileRoute, useNavigate, ClientOnly } from "@tanstack/react-router";
 import { createIsomorphicFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
-import { useState, useMemo, useRef, useEffect, useCallback, lazy, Suspense } from "react";
+import {
+  useState,
+  useMemo,
+  useRef,
+  useEffect,
+  useCallback,
+  useDeferredValue,
+  lazy,
+  Suspense,
+} from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { PanelLeft } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
-import { destroySession } from "@/functions/sessions";
+import { deleteSession, renameSession } from "@/functions/sessions";
 import { getRuntimeConfig } from "@/functions/config";
-import { modelQueries } from "@/lib/queries";
+import { modelQueries, workspaceQueries } from "@/lib/queries";
 import { useAutomations } from "@/hooks/automations/useAutomations";
 import { useLocalStorage } from "@/hooks/browser/useLocalStorage";
-import { useDraftSession, SESSION_ID_PREFIX } from "@/hooks/session/useDraftSession";
+import { useDrafts } from "@/hooks/session/useDrafts";
+import { useHyperSessions } from "@/hooks/session/useHyperSessions";
 import { useModelConfiguration } from "@/hooks/session/useModelConfiguration";
 import { useSessions } from "@/hooks/session/useSessions";
+import { useWorkspace } from "@/hooks/workspace/useWorkspace";
+import { WorkspaceProvider } from "@/hooks/workspace/context";
 import { useViewport } from "@/hooks/browser/ViewportContext";
 import { usePanelTransition } from "@/hooks/browser/usePanelTransition";
 import { Sidebar, SidebarProps } from "@/components/sidebar/Sidebar";
-import { MobileSessionPager } from "@/components/session/MobileSessionPager";
-import { SessionGrid } from "@/components/session/SessionGrid";
-import { SessionPlaceholder } from "@/components/session/SessionPlaceholder";
+import { RenameDialog } from "@/components/config/sessions/RenameDialog";
+import { SessionGrid } from "@/components/workspace/layout/SessionGrid";
+import { HyperSession } from "@/components/workspace/layout/HyperSession";
+import { SessionPager } from "@/components/workspace/layout/SessionPager";
+import { WorkspacePlaceholder } from "@/components/workspace/layout/WorkspacePlaceholder";
 import { TerminalShell } from "@/components/terminal/TerminalShell";
 import { useLinkedPanes } from "@/hooks/session/useLinkedPanes";
-import { usePaneFocus } from "@/hooks/session/usePaneFocus";
+import { useWorkspaceFocus } from "@/hooks/workspace/useWorkspaceFocus";
+import type { HyperSessionState } from "@/hooks/session/useHyperSessions";
 import {
   deriveOpenSessionIds,
   deriveReachableSessionIds,
-  deriveVisibleSessionGridPanes,
-  type SessionGridPane,
-} from "@/hooks/session/sessionPanes";
+  deriveVisibleWorkspacePanes,
+  type WorkspacePane,
+} from "@/lib/workspace/panes";
 import {
   normalizeSessionDirectoryOptions,
   type SessionDirectoryOption,
-} from "@/components/session/sessionDirectoryOptions";
-import {
-  AUTOMATIONS_EXPANDED_COOKIE,
-  buildLayoutCookie,
-  parseLayoutPrefs,
-  resolveLayoutPrefs,
-  SIDEBAR_OPEN_COOKIE,
-  SIDEBAR_SIZE_COOKIE,
-  TERMINAL_OPEN_COOKIE,
-  TERMINAL_SIZE_COOKIE,
-} from "@/lib/config/layoutPrefs";
+} from "@/components/workspace/panes/session/location/directory/directoryOptions";
+import { parseLayoutPrefs, resolveLayoutPrefs } from "@/lib/config/layoutPrefs";
+import { useLayoutCookie } from "@/hooks/browser/useLayoutCookie";
 import {
   cancelSessionsState,
   getSessionsStateSnapshot,
   removeSessionFromState,
   replaceSessionsState,
-} from "@/lib/session/sessionsCache";
+  upsertSessionInState,
+} from "@/lib/session/queryCache";
+import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 const Terminal = lazy(() =>
   import("@/components/terminal/Terminal").then((m) => ({ default: m.Terminal })),
 );
@@ -64,7 +73,13 @@ const searchSchema = z.object({
 
 export const Route = createFileRoute("/")({
   validateSearch: zodValidator(searchSchema),
-  loader: async () => loadLayoutPrefs(),
+  loader: async ({ context }) => {
+    const [layoutPrefs] = await Promise.all([
+      loadLayoutPrefs(),
+      context.queryClient.ensureQueryData(workspaceQueries.state()),
+    ]);
+    return layoutPrefs;
+  },
   component: SessionsPage,
 });
 
@@ -91,6 +106,15 @@ async function loadLayoutPrefs() {
   };
 }
 
+type HyperLayoutState = Pick<HyperSessionState, "open" | "position">;
+
+function restoreHyperSessionState(
+  sessionId: string | undefined,
+  layout: HyperLayoutState,
+): HyperSessionState | null {
+  return sessionId ? { sessionId, ...layout } : null;
+}
+
 function SessionsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -102,6 +126,8 @@ function SessionsPage() {
     sidebarOpen: initialSidebarOpen,
     terminalOpen: initialTerminalOpen,
     automationsExpanded: initialAutomationsExpanded,
+    hyperOpen: initialHyperOpen,
+    hyperPosition: initialHyperPosition,
     terminalWsPort,
   } = Route.useLoaderData();
   const { isMobile: isMobileLayout, hydrated } = useViewport();
@@ -125,7 +151,7 @@ function SessionsPage() {
   );
   const openPanes = useMemo(
     () =>
-      deriveVisibleSessionGridPanes({
+      deriveVisibleWorkspacePanes({
         selectedSessionIds,
         linkedPanesBySource,
       }),
@@ -133,11 +159,7 @@ function SessionsPage() {
   );
   const openSessionIds = useMemo(() => deriveOpenSessionIds(openPanes), [openPanes]);
 
-  usePaneFocus(openPanes);
-
-  useEffect(() => {
-    prunePaneSources(new Set(reachableSessionIds));
-  }, [prunePaneSources, reachableSessionIds]);
+  useWorkspaceFocus(openPanes);
 
   const { data: models = [] } = useQuery(modelQueries.list());
 
@@ -169,22 +191,26 @@ function SessionsPage() {
   const {
     allSessions,
     sessions,
-    isLoading,
-    streamingSessionIds,
-    unreadSessionIds,
+    isLoading: isSessionsLoading,
     worktreeSessionIds,
     childSessionIds,
-  } = useSessions({
+  } = useSessions();
+  const workspace = useWorkspace({
     openSessionIds,
   });
+  const isLoading = isSessionsLoading || workspace.isLoading;
+  const hyperSessionIds = workspace.hyperSessionIds;
+  const streamingSessionIds = workspace.runningSessionIds;
+  const unreadSessionIds = workspace.unreadSessionIds;
 
-  // Draft session lifecycle. Three touchpoints in this component:
-  // - handleCreateSession allocates a draft and opens it
-  // - SessionPane promotes it (via onDraftSessionCreated -> promoteDraft)
-  //   once the first prompt's stream confirms the session on the server
-  // - handleSessionDelete discards an unsent draft
-  const { draftSessionId, draftSession, createDraft, promoteDraft, discardDraft } =
-    useDraftSession(sessions);
+  const hyperSessionIdSet = useMemo(() => new Set(hyperSessionIds), [hyperSessionIds]);
+  const { listedDrafts, isDraft, createDraft, discardDraft } = useDrafts({
+    sessions: allSessions,
+    drafts: workspace.drafts,
+    hyperSessionIds,
+    draftPromptsBySessionId: workspace.draftPromptsBySessionId,
+    dispatchWorkspaceAction: workspace.dispatchWorkspaceAction,
+  });
 
   const {
     automations,
@@ -205,12 +231,15 @@ function SessionsPage() {
   });
   const availableSessionIds = useMemo(() => {
     const ids = new Set(allSessions.map((session) => session.sessionId));
+    for (const draft of workspace.drafts) {
+      ids.add(draft.sessionId);
+    }
     for (const automation of automations) {
       if (!automation.lastRunSessionId) continue;
       ids.add(automation.lastRunSessionId);
     }
     return ids;
-  }, [allSessions, automations]);
+  }, [allSessions, automations, workspace.drafts]);
   const handleCloseVisibleSession = useCallback(
     (sessionId: string) => {
       if (!selectedSessionIds.includes(sessionId)) {
@@ -223,7 +252,7 @@ function SessionsPage() {
   );
 
   const handleCloseVisiblePane = useCallback(
-    (pane: SessionGridPane) => {
+    (pane: WorkspacePane) => {
       if (pane.kind !== "session" || pane.isLinkedOnly) return;
       handleCloseVisibleSession(pane.sessionId);
     },
@@ -263,15 +292,15 @@ function SessionsPage() {
     ],
   );
 
-  // Create a new draft session (client-side only until first message)
-  // With modifier key (Cmd/Ctrl), adds to the grid instead of replacing
+  // Create a new draft session (client-side only until first message).
+  // With modifier key (Cmd/Ctrl), adds to the workspace instead of replacing.
   const handleCreateSession = useCallback(
     (e?: React.MouseEvent) => {
       const id = createDraft();
 
       const hasModifier = e?.metaKey || e?.ctrlKey;
       if (hasModifier && openSessionIds.length > 0 && openSessionIds.length < 4) {
-        // Add to grid
+        // Add to the workspace.
         updateSelectedSessionIds([...selectedSessionIds, id]);
       } else {
         // Replace current view
@@ -287,23 +316,18 @@ function SessionsPage() {
     if (isLoading) return;
     if (selectedSessionIds.length === 0) return;
 
-    const validSessionIds = selectedSessionIds.filter((sessionId) => {
-      if (sessionId === draftSessionId) return true;
-      return availableSessionIds.has(sessionId);
-    });
+    const validSessionIds = selectedSessionIds.filter((sessionId) =>
+      availableSessionIds.has(sessionId),
+    );
 
     if (validSessionIds.length === selectedSessionIds.length) return;
 
     updateSelectedSessionIds(validSessionIds, { replace: true });
-  }, [
-    availableSessionIds,
-    draftSessionId,
-    isLoading,
-    selectedSessionIds,
-    updateSelectedSessionIds,
-  ]);
+  }, [availableSessionIds, isLoading, selectedSessionIds, updateSelectedSessionIds]);
 
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [isSidebarDragging, setIsSidebarDragging] = useState(false);
   const [isTerminalDragging, setIsTerminalDragging] = useState(false);
@@ -341,30 +365,14 @@ function SessionsPage() {
   }, [sidebarSize]);
 
   useEffect(() => {
-    document.cookie = buildLayoutCookie(SIDEBAR_OPEN_COOKIE, isSidebarOpen);
-  }, [isSidebarOpen]);
-
-  useEffect(() => {
-    if (!Number.isFinite(sidebarSize)) return;
-    document.cookie = buildLayoutCookie(SIDEBAR_SIZE_COOKIE, sidebarSize);
-  }, [sidebarSize]);
-
-  useEffect(() => {
     terminalSizeRef.current = terminalSize;
   }, [terminalSize]);
 
-  useEffect(() => {
-    document.cookie = buildLayoutCookie(TERMINAL_OPEN_COOKIE, isTerminalOpen);
-  }, [isTerminalOpen]);
-
-  useEffect(() => {
-    if (!Number.isFinite(terminalSize)) return;
-    document.cookie = buildLayoutCookie(TERMINAL_SIZE_COOKIE, terminalSize);
-  }, [terminalSize]);
-
-  useEffect(() => {
-    document.cookie = buildLayoutCookie(AUTOMATIONS_EXPANDED_COOKIE, isAutomationsExpanded);
-  }, [isAutomationsExpanded]);
+  useLayoutCookie("sidebarOpen", isSidebarOpen);
+  useLayoutCookie("sidebarSize", sidebarSize);
+  useLayoutCookie("terminalOpen", isTerminalOpen);
+  useLayoutCookie("terminalSize", terminalSize);
+  useLayoutCookie("automationsExpanded", isAutomationsExpanded);
 
   const handleSidebarResize = useCallback(
     (size: number) => {
@@ -470,6 +478,8 @@ function SessionsPage() {
     });
   }, []);
 
+  const deferredFilter = useDeferredValue(filter);
+
   // Hide reusable automation sessions from the main session list, then apply source/text filters.
   const filteredSessions = useMemo(() => {
     const hiddenReusableAutomationSessionIds = new Set<string>();
@@ -479,7 +489,9 @@ function SessionsPage() {
     }
 
     let result = sessions.filter(
-      (session) => !hiddenReusableAutomationSessionIds.has(session.sessionId),
+      (session) =>
+        !hiddenReusableAutomationSessionIds.has(session.sessionId) &&
+        !hyperSessionIdSet.has(session.sessionId),
     );
 
     if (!showChildSessions) {
@@ -492,11 +504,19 @@ function SessionsPage() {
     }
 
     // Finally apply the text filter on summary.
-    const lowerFilter = filter.trim().toLowerCase();
+    const lowerFilter = deferredFilter.trim().toLowerCase();
     if (!lowerFilter) return result;
 
     return result.filter((session) => session.summary?.toLowerCase().includes(lowerFilter));
-  }, [sessions, automations, showChildSessions, childSessionIds, showExternalSessions, filter]);
+  }, [
+    sessions,
+    automations,
+    hyperSessionIdSet,
+    showChildSessions,
+    childSessionIds,
+    showExternalSessions,
+    deferredFilter,
+  ]);
 
   const directoryOptions = useMemo<SessionDirectoryOption[]>(() => {
     const rawOptions = sessions.reduce<SessionDirectoryOption[]>((acc, session) => {
@@ -515,7 +535,7 @@ function SessionsPage() {
   }, [sessions]);
 
   const deleteMutation = useMutation({
-    mutationFn: (sessionId: string) => destroySession({ data: { sessionId } }),
+    mutationFn: (sessionId: string) => deleteSession({ data: { sessionId } }),
     onMutate: async (sessionId) => {
       setDeletingSessionId(sessionId);
 
@@ -542,11 +562,35 @@ function SessionsPage() {
     },
   });
 
+  const renameMutation = useMutation({
+    mutationFn: ({ sessionId, name }: { sessionId: string; name: string }) =>
+      renameSession({ data: { sessionId, name } }),
+    onMutate: async ({ sessionId, name }) => {
+      setRenamingSessionId(sessionId);
+      await cancelSessionsState(queryClient);
+
+      const previousSessionsState = getSessionsStateSnapshot(queryClient);
+      upsertSessionInState(queryClient, {
+        sessionId,
+        summary: name,
+      });
+
+      return { previousSessionsState };
+    },
+    onError: (_err, _input, context) => {
+      if (context?.previousSessionsState) {
+        replaceSessionsState(queryClient, context.previousSessionsState);
+      }
+    },
+    onSettled: () => {
+      setRenamingSessionId(null);
+    },
+  });
+
   const handleSessionDelete = useCallback(
     (sessionIdToDelete: string) => {
-      // If deleting a draft session, just clear the draft state (no server call)
-      if (sessionIdToDelete === draftSessionId) {
-        discardDraft();
+      if (isDraft(sessionIdToDelete)) {
+        discardDraft(sessionIdToDelete);
       } else {
         deleteMutation.mutate(sessionIdToDelete);
       }
@@ -555,8 +599,89 @@ function SessionsPage() {
         updateSelectedSessionIds(selectedSessionIds.filter((id) => id !== sessionIdToDelete));
       }
     },
-    [deleteMutation, discardDraft, draftSessionId, selectedSessionIds, updateSelectedSessionIds],
+    [deleteMutation, discardDraft, isDraft, selectedSessionIds, updateSelectedSessionIds],
   );
+
+  const renameTargetSession = useMemo(
+    () => allSessions.find((session) => session.sessionId === renameTargetId) ?? null,
+    [allSessions, renameTargetId],
+  );
+
+  const handleSessionRename = useCallback((sessionId: string) => {
+    setRenameTargetId(sessionId);
+  }, []);
+
+  const handleRenameDialogOpenChange = useCallback((open: boolean) => {
+    if (!open) {
+      setRenameTargetId(null);
+    }
+  }, []);
+
+  const handlePromotedHyperSession = useCallback(
+    (sessionId: string) => {
+      if (!selectedSessionIds.includes(sessionId)) {
+        const nextSelectedSessionIds =
+          openPanes.length >= 4 && !openSessionIds.includes(sessionId)
+            ? [sessionId]
+            : [...selectedSessionIds, sessionId];
+        updateSelectedSessionIds(nextSelectedSessionIds);
+      }
+    },
+    [openPanes.length, openSessionIds, selectedSessionIds, updateSelectedSessionIds],
+  );
+
+  const hyperSessionId = hyperSessionIds[0];
+  const restoredHyperSession = useMemo(
+    () =>
+      restoreHyperSessionState(hyperSessionId, {
+        position: initialHyperPosition,
+        open: initialHyperOpen,
+      }),
+    [hyperSessionId, initialHyperOpen, initialHyperPosition],
+  );
+
+  const hyperSessions = useHyperSessions({
+    hyperSessionIds,
+    initialState: restoredHyperSession,
+    createDraft,
+    dispatchWorkspaceAction: workspace.dispatchWorkspaceAction,
+    onDeleteSession: handleSessionDelete,
+    onPromotedSession: handlePromotedHyperSession,
+  });
+  const hyperSession = hyperSessions.state;
+
+  useLayoutCookie("hyperOpen", hyperSessions.isOpen);
+  useLayoutCookie("hyperPosition", hyperSession?.position);
+
+  // The hyper session has no floating deck on mobile; opening it there means
+  // selecting it into the main view — the same URL navigation any list session
+  // uses — so a reload restores it through the existing selected-session SSR.
+  const toggleHyper = useCallback(() => {
+    if (!isMobileLayout) {
+      hyperSessions.toggle();
+      return;
+    }
+    updateSelectedSessionIds([hyperSessions.getOrCreateSessionId()]);
+  }, [isMobileLayout, hyperSessions, updateSelectedSessionIds]);
+
+  // "Open" is viewport-relative: the deck is open on desktop; on mobile the hyper
+  // session is open when it's the one in view. The sidebar dot is its inverse.
+  const isHyperOpen = isMobileLayout
+    ? hyperSessionId !== undefined && primarySelectedSessionId === hyperSessionId
+    : hyperSessions.isOpen;
+
+  // The hyper deck publishes its linked panes under its own source id, which the
+  // "selected" reachable set doesn't include — union it in so those panes survive
+  // pruning. deriveReachableSessionIds also follows any linked sub-sessions.
+  const hyperReachableSessionIds = useMemo(
+    () =>
+      hyperSession ? deriveReachableSessionIds([hyperSession.sessionId], linkedPanesBySource) : [],
+    [hyperSession, linkedPanesBySource],
+  );
+
+  useEffect(() => {
+    prunePaneSources(new Set([...reachableSessionIds, ...hyperReachableSessionIds]));
+  }, [prunePaneSources, reachableSessionIds, hyperReachableSessionIds]);
 
   const hasSelectedSession = selectedSessionIds.length > 0;
 
@@ -576,7 +701,7 @@ function SessionsPage() {
 
   const terminalBodySkeleton = (
     <div className="relative flex-1 min-h-0 p-2 pb-0">
-      <div className="h-5 w-75 max-w-full rounded-md bg-white/5 animate-pulse" />
+      <div className="h-5 w-72 max-w-full rounded-md bg-foreground/5 animate-pulse" />
     </div>
   );
 
@@ -607,14 +732,15 @@ function SessionsPage() {
     sessions: filteredSessions,
     isLoading,
     onSessionSelect: handleSessionSelect,
+    onSessionRename: handleSessionRename,
     onSessionDelete: handleSessionDelete,
     deletingSessionId,
     activeSessionIds: openSessionIds,
     streamingSessionIds,
     unreadSessionIds,
     worktreeSessionIds,
-    emptyMessage: filter ? "No sessions match your filter" : undefined,
-    draftSession,
+    emptyMessage: deferredFilter ? "No sessions match your filter" : undefined,
+    draftSessions: listedDrafts,
     directoryOptions,
     automations,
     isAutomationsLoading,
@@ -633,6 +759,9 @@ function SessionsPage() {
     deletingAutomationId,
     runningAutomationIds,
     onCreateSession: handleCreateSession,
+    onToggleHyper: toggleHyper,
+    isHyperOpen,
+    hasHyperSessions: hyperSessions.hasHyperSessions,
     onToggleTerminal: toggleTerminal,
     isTerminalOpen,
   } as SidebarProps;
@@ -653,7 +782,7 @@ function SessionsPage() {
         {/* Session View */}
         <div className="h-full w-full shrink-0">
           {primarySelectedSessionId && (
-            <MobileSessionPager
+            <SessionPager
               panes={openPanes}
               selectedSessionId={primarySelectedSessionId}
               streamingSessionIds={streamingSessionIds}
@@ -663,8 +792,6 @@ function SessionsPage() {
               models={models}
               modelConfiguration={selectedModelConfiguration}
               onModelConfigurationChange={handleModelConfigurationChange}
-              draftSessionId={draftSessionId}
-              onDraftSessionCreated={promoteDraft}
             />
           )}
         </div>
@@ -747,11 +874,9 @@ function SessionsPage() {
                     models={models}
                     modelConfiguration={selectedModelConfiguration}
                     onModelConfigurationChange={handleModelConfigurationChange}
-                    draftSessionId={draftSessionId}
-                    onDraftSessionCreated={promoteDraft}
                   />
                 ) : (
-                  <SessionPlaceholder />
+                  <WorkspacePlaceholder />
                 )}
               </div>
             </ResizablePanel>
@@ -783,21 +908,46 @@ function SessionsPage() {
           </ResizablePanelGroup>
         </ResizablePanel>
       </ResizablePanelGroup>
+      {hyperSession?.open && (
+        <HyperSession
+          state={hyperSession}
+          setHyperSession={hyperSessions.setHyperSession}
+          streamingSessionIds={streamingSessionIds}
+          unreadSessionIds={unreadSessionIds}
+          models={models}
+          modelConfiguration={selectedModelConfiguration}
+          onModelConfigurationChange={handleModelConfigurationChange}
+          onClose={hyperSessions.close}
+          onMinimize={hyperSessions.minimize}
+          onPromote={hyperSessions.promote}
+        />
+      )}
     </div>
   );
 
   return (
-    <div className="h-full overflow-hidden">
-      {!hydrated ? (
-        <>
-          {mobileLayout}
-          {desktopLayout}
-        </>
-      ) : isMobileLayout ? (
-        mobileLayout
-      ) : (
-        desktopLayout
-      )}
-    </div>
+    <WorkspaceProvider value={workspace.actions}>
+      <div className="h-full overflow-hidden">
+        {!hydrated ? (
+          <>
+            {mobileLayout}
+            {desktopLayout}
+          </>
+        ) : isMobileLayout ? (
+          mobileLayout
+        ) : (
+          desktopLayout
+        )}
+      </div>
+      <RenameDialog
+        open={renameTargetId !== null}
+        session={renameTargetSession}
+        isSubmitting={renameTargetId !== null && renamingSessionId === renameTargetId}
+        onOpenChange={handleRenameDialogOpenChange}
+        onRenameSession={async (input) => {
+          await renameMutation.mutateAsync(input);
+        }}
+      />
+    </WorkspaceProvider>
   );
 }

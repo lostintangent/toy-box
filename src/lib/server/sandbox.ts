@@ -1,22 +1,54 @@
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { SESSION_STATE_PATH } from "@/lib/session/sessionState";
+import { SESSION_STATE_PATH } from "@/lib/paths";
 
-/** Resolve an artifact path under a session's persisted state directory. */
-export function resolveSessionArtifactPath(sessionId: string, artifactPath: string): string | null {
+const SESSION_FILES_DIRECTORY = "files";
+
+export type ResolvedSessionArtifact = {
+  path: string;
+  absolutePath: string;
+};
+
+/** Resolve a domain artifact path under a session's files directory. */
+export function resolveSessionArtifactPath(
+  sessionId: string,
+  artifactPath: string,
+): ResolvedSessionArtifact | null {
   const sessionRoot = resolveSessionRoot(sessionId);
   if (!sessionRoot) return null;
 
-  return resolvePathInsideRoot(sessionRoot, artifactPath);
+  const filesRoot = resolve(sessionRoot, SESSION_FILES_DIRECTORY);
+  const relativePath = artifactPath.trim();
+  if (!relativePath) return null;
+  if (
+    isAbsolute(relativePath) ||
+    relativePath.startsWith("~/") ||
+    isSessionStateRelativePath(relativePath)
+  ) {
+    return null;
+  }
+
+  const absolutePath = resolve(filesRoot, relativePath);
+  if (!isPathInsideRoot(filesRoot, absolutePath)) return null;
+
+  return { path: relativeArtifactPath(filesRoot, absolutePath), absolutePath };
 }
 
-/** Return a session-state path reference when the input is inside session state. */
-export function resolveSessionStatePath(path: string | undefined): string | undefined {
-  const pathReference = normalizeSessionStatePathReference(path);
-  if (!pathReference) return undefined;
+/** Convert an SDK file path into the session artifact path the reducer stores. */
+export function projectSessionArtifactPath(
+  sessionId: string,
+  path: string | undefined,
+): string | undefined {
+  const absolutePath = resolveSdkSessionStatePath(path);
+  if (!absolutePath) return undefined;
 
-  const absolutePath = resolveHomePath(pathReference);
-  return isPathInsideRoot(getSessionStateRoot(), absolutePath) ? pathReference : undefined;
+  const sessionRoot = resolveSessionRoot(sessionId);
+  if (!sessionRoot) return undefined;
+
+  const filesRoot = resolve(sessionRoot, SESSION_FILES_DIRECTORY);
+  return isPathInsideRoot(filesRoot, absolutePath)
+    ? relativeArtifactPath(filesRoot, absolutePath)
+    : undefined;
 }
 
 function getSessionStateRoot(): string {
@@ -29,43 +61,27 @@ function resolveSessionRoot(sessionId: string): string | null {
   return isPathInsideRoot(sessionStateRoot, sessionRoot) ? sessionRoot : null;
 }
 
-function resolvePathInsideRoot(rootPath: string, path: string): string | null {
-  const normalizedPath = normalizePathInput(path);
-  if (!normalizedPath) return null;
-
-  const targetPath = isAbsolute(normalizedPath)
-    ? resolve(normalizedPath)
-    : resolve(rootPath, normalizedPath);
-
-  return isPathInsideRoot(rootPath, targetPath) ? targetPath : null;
-}
-
-function normalizeSessionStatePathReference(path: string | undefined): string | undefined {
+function resolveSdkSessionStatePath(path: string | undefined): string | null {
   const trimmed = path?.trim();
-  if (!trimmed) return undefined;
-
-  return isSessionStateRelativePath(trimmed) ? resolve(homedir(), trimmed) : trimmed;
-}
-
-function normalizePathInput(path: string): string | null {
-  const trimmed = path.trim();
   if (!trimmed) return null;
 
-  if (isSessionStateRelativePath(trimmed)) return resolve(homedir(), trimmed);
+  let absolutePath = trimmed;
+  if (isSessionStateRelativePath(trimmed)) {
+    absolutePath = resolve(homedir(), trimmed);
+  } else if (trimmed.startsWith("~/")) {
+    absolutePath = resolve(homedir(), trimmed.slice(2));
+  }
+  if (!isAbsolute(absolutePath)) return null;
 
-  return expandHomePath(trimmed, homedir());
+  return isPathInsideRoot(getSessionStateRoot(), absolutePath) ? absolutePath : null;
 }
 
 function isSessionStateRelativePath(path: string): boolean {
   return path === SESSION_STATE_PATH || path.startsWith(`${SESSION_STATE_PATH}/`);
 }
 
-function resolveHomePath(path: string): string {
-  return resolve(expandHomePath(path, homedir()));
-}
-
-function expandHomePath(path: string, homeDirectory: string): string {
-  return path.startsWith("~/") ? resolve(homeDirectory, path.slice(2)) : path;
+function relativeArtifactPath(filesRoot: string, absolutePath: string): string {
+  return relative(filesRoot, absolutePath).split(sep).join("/");
 }
 
 function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {

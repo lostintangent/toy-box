@@ -11,17 +11,17 @@ type WatchRouteParams = {
 
 const WATCH_DEBOUNCE_MS = 50;
 
-async function statWatchedFile(path: string): Promise<FileWatchEvent> {
+async function statWatchedFile(absolutePath: string): Promise<FileWatchEvent> {
   try {
     const { stat } = await import("node:fs/promises");
-    return { type: "modified", timestamp: (await stat(path)).mtimeMs };
+    return { type: "modified", timestamp: (await stat(absolutePath)).mtimeMs };
   } catch {
     return { type: "deleted" };
   }
 }
 
 async function createWatchResponse(params: WatchRouteParams, request: Request): Promise<Response> {
-  const { path: targetPath, error } = await resolveArtifactRequest(params.sessionId, params._splat);
+  const { absolutePath, error } = await resolveArtifactRequest(params.sessionId, params._splat);
   if (error) return error;
 
   return createSseResponse<FileWatchEvent>(request, async (send, close) => {
@@ -31,13 +31,13 @@ async function createWatchResponse(params: WatchRouteParams, request: Request): 
     const sendChangeEvent = () => {
       if (changeTimer) clearTimeout(changeTimer);
       changeTimer = setTimeout(async () => {
-        send(await statWatchedFile(targetPath));
+        send(await statWatchedFile(absolutePath));
       }, WATCH_DEBOUNCE_MS);
     };
 
     try {
       const { watch } = await import("node:fs");
-      watcher = watch(targetPath, sendChangeEvent);
+      watcher = watch(absolutePath, sendChangeEvent);
       watcher.on("error", close);
     } catch {
       close();

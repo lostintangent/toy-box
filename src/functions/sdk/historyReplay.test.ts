@@ -15,7 +15,7 @@ describe("history replay", () => {
       sdkEvent({ type: "assistant.message", data: { content: "Done." } }),
     ];
 
-    const state = await initializeSessionStateFromSdkHistory(events);
+    const state = await initializeSessionStateFromSdkHistory("history-replay-session", events);
 
     expect(state.status).toBe("idle");
     expect(state.reasoningContent).toBe("");

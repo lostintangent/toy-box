@@ -1,8 +1,8 @@
 // Server functions for reading and writing session artifacts.
 //
-// Every artifact lives under a session's persisted state directory. Both handlers
+// Every artifact lives under a session's files directory. Both handlers
 // resolve the caller-supplied path through the sandbox first, so an artifact can
-// only ever be read or written inside its own session's folder. Node I/O errors
+// only ever be read or written inside its own session's files folder. Node I/O errors
 // (missing file, not a file, permission denied) propagate to the client, which
 // shows its own message based on the operation it attempted.
 
@@ -20,37 +20,40 @@ const writeArtifactInputSchema = readArtifactInputSchema.extend({
   content: z.string(),
 });
 
-/** Read a UTF-8 artifact from a session's state directory. */
+/** Read a UTF-8 artifact from a session's files directory. */
 export const readSessionArtifact = createServerFn({ method: "GET" })
   .validator(zodValidator(readArtifactInputSchema))
   .handler(async ({ data }): Promise<{ content: string; timestamp: number }> => {
-    const target = confineArtifactPath(data.sessionId, data.path);
+    const absolutePath = resolveArtifactAbsolutePath(data.sessionId, data.path);
     const { readFile, stat } = await import("node:fs/promises");
-    const [content, info] = await Promise.all([readFile(target, "utf-8"), stat(target)]);
+    const [content, info] = await Promise.all([
+      readFile(absolutePath, "utf-8"),
+      stat(absolutePath),
+    ]);
     return { content, timestamp: info.mtimeMs };
   });
 
-/** Write a UTF-8 artifact into a session's state directory. */
+/** Write a UTF-8 artifact into a session's files directory. */
 export const writeSessionArtifact = createServerFn({ method: "POST" })
   .validator(zodValidator(writeArtifactInputSchema))
   .handler(async ({ data }): Promise<{ timestamp: number }> => {
-    const target = confineArtifactPath(data.sessionId, data.path);
+    const absolutePath = resolveArtifactAbsolutePath(data.sessionId, data.path);
     const { stat, writeFile } = await import("node:fs/promises");
-    await writeFile(target, data.content, "utf-8");
-    return { timestamp: (await stat(target)).mtimeMs };
+    await writeFile(absolutePath, data.content, "utf-8");
+    return { timestamp: (await stat(absolutePath)).mtimeMs };
   });
 
 /** Stat an artifact without reading its body — for preview kinds that render out-of-band. */
 export const statSessionArtifact = createServerFn({ method: "GET" })
   .validator(zodValidator(readArtifactInputSchema))
   .handler(async ({ data }): Promise<{ timestamp: number }> => {
-    const target = confineArtifactPath(data.sessionId, data.path);
+    const absolutePath = resolveArtifactAbsolutePath(data.sessionId, data.path);
     const { stat } = await import("node:fs/promises");
-    return { timestamp: (await stat(target)).mtimeMs };
+    return { timestamp: (await stat(absolutePath)).mtimeMs };
   });
 
-function confineArtifactPath(sessionId: string, path: string): string {
+function resolveArtifactAbsolutePath(sessionId: string, path: string): string {
   const target = resolveSessionArtifactPath(sessionId, path);
   if (!target) throw new Error("Invalid artifact path.");
-  return target;
+  return target.absolutePath;
 }
