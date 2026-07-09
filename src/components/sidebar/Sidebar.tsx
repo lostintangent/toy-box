@@ -1,105 +1,74 @@
 import { useState } from "react";
 import { SettingsDialog } from "@/components/config/SettingsDialog";
 import { cn } from "@/lib/utils";
-import type {
-  Automation,
-  AutomationOptions,
-  ModelConfiguration,
-  SessionMetadata,
-  ModelInfo,
-} from "@/types";
-import type { SessionDirectoryOption } from "@/components/workspace/panes/session/location/directory/directoryOptions";
+import type { Automation, AutomationOptions, SessionMetadata } from "@/types";
 import { SidebarHeader } from "./shell/SidebarHeader";
 import { SidebarFooter } from "./shell/SidebarFooter";
 import { SessionList } from "./list/SessionList";
 import { AutomationPanel } from "./automation/AutomationPanel";
 
-export interface SidebarProps {
-  // Filter props
+export type SidebarProps = {
   filter: string;
   onFilterChange: (value: string) => void;
-  showChildSessions: boolean;
-  onShowChildSessionsChange: (value: boolean) => void;
   showExternalSessions: boolean;
   onShowExternalSessionsChange: (value: boolean) => void;
 
-  // Session list props
   sessions: SessionMetadata[];
   isLoading: boolean;
-  onSessionSelect: (sessionId: string | null, modifierKey?: boolean) => void;
+  onSessionSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
   onSessionRename: (sessionId: string) => void;
   onSessionDelete: (sessionId: string) => void;
   deletingSessionId: string | null;
-  activeSessionIds: string[];
-  streamingSessionIds: string[];
-  unreadSessionIds: string[];
+  openSessionIds: string[];
   worktreeSessionIds: string[];
   emptyMessage?: string;
   draftSessions: SessionMetadata[];
-  directoryOptions: SessionDirectoryOption[];
 
-  // Automation panel props
   automations: Automation[];
   isAutomationsLoading: boolean;
-  models: ModelInfo[];
-  defaultAutomationModelConfiguration?: ModelConfiguration;
   isAutomationsExpanded: boolean;
   onAutomationsExpandedChange: (expanded: boolean) => void;
   onCreateAutomation: (input: AutomationOptions) => Promise<void>;
   onUpdateAutomation: (input: AutomationOptions & { automationId: string }) => Promise<void>;
   onDeleteAutomation: (automationId: string) => Promise<void>;
   onRunAutomation: (automationId: string) => Promise<void>;
-  creatingAutomation?: boolean;
-  updatingAutomationId?: string | null;
-  deletingAutomationId?: string | null;
-  runningAutomationIds?: Set<string>;
+  creatingAutomation: boolean;
+  updatingAutomationId: string | null;
+  deletingAutomationId: string | null;
 
-  // Action props
-  onCreateSession: (e?: React.MouseEvent) => void;
-  onToggleHyper?: () => void;
-  isHyperOpen?: boolean;
-  hasHyperSessions?: boolean;
+  onCreateSession: (addToWorkspace: boolean) => void;
+  onToggleHyper: () => void;
+  isHyperOpen: boolean;
+  onOpenInbox: () => void;
+  isInboxOpen: boolean;
 
-  // Shell props (desktop only)
   onCollapse?: () => void;
 
-  // Terminal props
-  onToggleTerminal?: () => void;
-  isTerminalOpen?: boolean;
+  onToggleTerminal: () => void;
+  isTerminalOpen: boolean;
 
-  // Styling
   className?: string;
-}
+};
 
 export function Sidebar({
-  // Filter props
   filter,
   onFilterChange,
-  showChildSessions,
-  onShowChildSessionsChange,
   showExternalSessions,
   onShowExternalSessionsChange,
 
-  // Session list props
   sessions,
   isLoading,
   onSessionSelect,
   onSessionRename,
   onSessionDelete,
   deletingSessionId,
-  activeSessionIds,
-  streamingSessionIds,
-  unreadSessionIds,
+  openSessionIds,
   worktreeSessionIds,
   emptyMessage,
   draftSessions,
-  directoryOptions,
 
-  // Automation panel props
   automations,
   isAutomationsLoading,
-  models,
-  defaultAutomationModelConfiguration,
   isAutomationsExpanded,
   onAutomationsExpandedChange,
   onCreateAutomation,
@@ -109,22 +78,16 @@ export function Sidebar({
   creatingAutomation,
   updatingAutomationId,
   deletingAutomationId,
-  runningAutomationIds,
 
-  // Action props
   onCreateSession,
   onToggleHyper,
   isHyperOpen,
-  hasHyperSessions,
+  onOpenInbox,
+  isInboxOpen,
 
-  // Shell props
   onCollapse,
-
-  // Terminal props
   onToggleTerminal,
   isTerminalOpen,
-
-  // Styling
   className,
 }: SidebarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -140,11 +103,9 @@ export function Sidebar({
         <SidebarHeader
           filter={filter}
           onFilterChange={onFilterChange}
-          showChildSessions={showChildSessions}
-          onShowChildSessionsChange={onShowChildSessionsChange}
           showExternalSessions={showExternalSessions}
           onShowExternalSessionsChange={onShowExternalSessionsChange}
-          filteredSessionsCount={sessions.length}
+          sessionCount={sessions.length}
           onCreateSession={onCreateSession}
           onCollapse={onCollapse}
         />
@@ -158,9 +119,7 @@ export function Sidebar({
               onSessionRename={onSessionRename}
               onSessionDelete={onSessionDelete}
               deletingSessionId={deletingSessionId}
-              activeSessionIds={activeSessionIds}
-              streamingSessionIds={streamingSessionIds}
-              unreadSessionIds={unreadSessionIds}
+              openSessionIds={openSessionIds}
               worktreeSessionIds={worktreeSessionIds}
               emptyMessage={emptyMessage}
               draftSessions={draftSessions}
@@ -169,13 +128,9 @@ export function Sidebar({
           <AutomationPanel
             automations={automations}
             isLoading={isAutomationsLoading}
-            models={models}
-            defaultModelConfiguration={defaultAutomationModelConfiguration}
-            directoryOptions={directoryOptions}
             isExpanded={isAutomationsExpanded}
             onExpandedChange={onAutomationsExpandedChange}
-            activeSessionIds={activeSessionIds}
-            unreadSessionIds={unreadSessionIds}
+            openSessionIds={openSessionIds}
             onSessionSelect={onSessionSelect}
             onCreateAutomation={onCreateAutomation}
             onUpdateAutomation={onUpdateAutomation}
@@ -184,7 +139,6 @@ export function Sidebar({
             creatingAutomation={creatingAutomation}
             updatingAutomationId={updatingAutomationId}
             deletingAutomationId={deletingAutomationId}
-            runningAutomationIds={runningAutomationIds}
           />
         </div>
 
@@ -192,7 +146,8 @@ export function Sidebar({
           onOpenSettings={() => setSettingsOpen(true)}
           onToggleHyper={onToggleHyper}
           isHyperOpen={isHyperOpen}
-          hasHyperSessions={hasHyperSessions}
+          onOpenInbox={onOpenInbox}
+          isInboxOpen={isInboxOpen}
           onToggleTerminal={onToggleTerminal}
           isTerminalOpen={isTerminalOpen}
         />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, memo, useState } from "react";
+import { useEffect, useState } from "react";
 import { terminalManager } from "@/lib/terminal/terminalManager";
 import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 
@@ -10,31 +10,28 @@ export interface TerminalProps {
   wsPort?: number;
 }
 
-export const Terminal = memo(function ({
+export function Terminal({
   onClose,
   isResizing = false,
   wsPort = DEFAULT_TERMINAL_WS_PORT,
 }: TerminalProps) {
   const [isPtyReady, setIsPtyReady] = useState(false);
 
-  const terminalRefCallback = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) {
-        terminalManager.detach();
-        return;
-      }
+  function terminalRefCallback(node: HTMLDivElement | null) {
+    if (!node) {
+      terminalManager.detach();
+      return;
+    }
 
-      terminalManager.attach(
-        node,
-        {
-          onReady: setIsPtyReady,
-          onClose,
-        },
-        wsPort,
-      );
-    },
-    [onClose, wsPort],
-  );
+    terminalManager.attach(
+      node,
+      {
+        onReady: setIsPtyReady,
+        onClose,
+      },
+      wsPort,
+    );
+  }
 
   // Debounce PTY resizing while the user is actively resizing the panel
   useEffect(() => {
@@ -56,4 +53,4 @@ export const Terminal = memo(function ({
       )}
     </div>
   );
-});
+}

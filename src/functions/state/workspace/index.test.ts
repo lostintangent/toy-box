@@ -1,143 +1,256 @@
-import { describe, expect, onTestFinished, test } from "bun:test";
+import { describe, expect, mock, onTestFinished, test } from "bun:test";
+import type { Database } from "db0";
 import { subscribeWorkspaceEvents } from "@/functions/runtime/broadcast";
+import { createTestDatabase } from "../database";
+import { deleteHyperState } from "./hyperSessions";
+import { deleteSessionState, getSessionState } from "./sessions";
 import type { WorkspaceEvent } from "@/types";
-import {
-  createDraft,
-  deleteDraftPromptState,
-  deleteDraftState,
-  deleteHyperState,
-  deleteUnreadState,
-  discardDraft,
-  getDraftPrompt,
-  getWorkspaceState,
-  markSessionHyper,
-  markSessionRead,
-  markSessionUnread,
-  setDraftPrompt,
-  sweepExpiredDrafts,
-} from ".";
+import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+let currentDb: Database | undefined;
 
-function captureWorkspaceEvents(sessionId: string): WorkspaceEvent[] {
+mock.module("../database", () => ({
+  getAppDatabase: async (options?: { createIfMissing?: boolean }) => {
+    if (!currentDb && options?.createIfMissing === false) return null;
+    if (!currentDb) throw new Error("Test database has not been opened");
+    return currentDb;
+  },
+}));
+
+const {
+  applyWorkspaceAction,
+  createPendingInboxEntry,
+  deleteInboxEntry,
+  deleteSessionWorkspaceState,
+  getWorkspaceState,
+  linkArtifactCommentSession,
+  sendToInbox,
+  setSessionStatus,
+  sweepExpiredDrafts,
+  unlinkArtifactCommentSession,
+} = await import(".");
+const { deleteInboxEntryState } = await import("./inbox");
+
+async function openWorkspaceTestDatabase(): Promise<void> {
+  currentDb = await createTestDatabase();
+  onTestFinished(async () => {
+    await currentDb?.dispose();
+    currentDb = undefined;
+  });
+}
+
+function capture(sessionId: string): WorkspaceEvent[] {
   const events: WorkspaceEvent[] = [];
   const unsubscribe = subscribeWorkspaceEvents((event) => {
-    if ("sessionId" in event && event.sessionId === sessionId) {
-      events.push(event);
-      return;
-    }
-    if (event.type === "session.draft.created" && event.draft.sessionId === sessionId) {
-      events.push(event);
-    }
+    if ("sessionId" in event && event.sessionId === sessionId) events.push(event);
   });
   onTestFinished(unsubscribe);
   return events;
 }
 
 function cleanup(sessionId: string): void {
-  deleteDraftState(sessionId);
-  deleteDraftPromptState(sessionId);
+  deleteSessionState(sessionId);
   deleteHyperState(sessionId);
-  deleteUnreadState(sessionId);
+}
+
+function snapshot() {
+  return getWorkspaceState({
+    customArtifacts: [],
+    environment: { terminalWsPort: DEFAULT_TERMINAL_WS_PORT, voiceEnabled: false },
+  });
 }
 
 describe("workspace state", () => {
-  test("snapshot combines stored workspace facts with caller-owned running projection", () => {
+  test("snapshot exposes one canonical session-state map", async () => {
     const sessionId = `workspace-snapshot-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));
 
-    const draft = createDraft(sessionId);
-    setDraftPrompt(sessionId, "hello", "client-a");
-    markSessionUnread(sessionId);
-    markSessionHyper(sessionId);
-
-    const state = getWorkspaceState({ runningSessionIds: [sessionId], customArtifacts: [] });
-
-    expect(state.drafts).toContainEqual(draft);
-    expect(state.draftPromptsBySessionId[sessionId]).toMatchObject({
-      text: "hello",
-      origin: "client-a",
+    applyWorkspaceAction({
+      type: "session.draft.created",
+      sessionId,
+      createdAt: 0,
+      hyper: true,
     });
-    expect(state.unreadSessionIds).toContain(sessionId);
+    applyWorkspaceAction({
+      type: "session.prompt.drafted",
+      sessionId,
+      prompt: { text: "hello", origin: "client-a", updatedAt: 0 },
+    });
+
+    const state = await snapshot();
+    expect(state.sessionStates[sessionId]).toMatchObject({
+      status: "draft",
+      prompt: { text: "hello", origin: "client-a" },
+    });
     expect(state.hyperSessionIds).toContain(sessionId);
-    expect(state.runningSessionIds).toEqual([sessionId]);
   });
 
-  test("discard is guarded by draft membership and cascades prompt and hyper cleanup", () => {
+  test("discard removes the draft, prompt, and hyper membership in one transition", async () => {
     const sessionId = `workspace-discard-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));
-    const events = captureWorkspaceEvents(sessionId);
+    const events = capture(sessionId);
 
-    createDraft(sessionId);
-    setDraftPrompt(sessionId, "discard me", "client-a");
-    markSessionHyper(sessionId);
+    applyWorkspaceAction({
+      type: "session.draft.created",
+      sessionId,
+      createdAt: 0,
+      hyper: true,
+    });
+    applyWorkspaceAction({
+      type: "session.prompt.drafted",
+      sessionId,
+      prompt: { text: "discard me", origin: "client-a", updatedAt: 0 },
+    });
+    applyWorkspaceAction({ type: "session.draft.discarded", sessionId });
+    applyWorkspaceAction({ type: "session.draft.discarded", sessionId });
 
-    discardDraft(sessionId);
-    // Second discard is a no-op — proven by the single draft.discarded event below.
-    discardDraft(sessionId);
-    expect(getDraftPrompt(sessionId)).toBeNull();
-    expect(
-      getWorkspaceState({ runningSessionIds: [], customArtifacts: [] }).hyperSessionIds,
-    ).not.toContain(sessionId);
+    expect(getSessionState(sessionId)).toBeUndefined();
+    expect((await snapshot()).hyperSessionIds).not.toContain(sessionId);
     expect(events.map((event) => event.type)).toEqual([
       "session.draft.created",
       "session.prompt.drafted",
-      "session.hyper.created",
       "session.draft.discarded",
     ]);
   });
 
-  test("stale discard leaves prompt and hyper state intact", () => {
-    const sessionId = `workspace-stale-discard-${crypto.randomUUID()}`;
-    onTestFinished(() => cleanup(sessionId));
-
-    createDraft(sessionId);
-    setDraftPrompt(sessionId, "keep me", "client-a");
-    markSessionHyper(sessionId);
-    deleteDraftState(sessionId);
-
-    // Draft record already gone: discard is a stale no-op that must not cascade.
-    discardDraft(sessionId);
-    expect(getDraftPrompt(sessionId)).toMatchObject({ text: "keep me", origin: "client-a" });
-    expect(
-      getWorkspaceState({ runningSessionIds: [], customArtifacts: [] }).hyperSessionIds,
-    ).toContain(sessionId);
-  });
-
-  test("draft TTL sweep silently cascades prompt and hyper cleanup", () => {
+  test("draft expiry uses prompt activity and cascades hyper cleanup", async () => {
     const sessionId = `workspace-expired-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));
-    const events = captureWorkspaceEvents(sessionId);
 
-    createDraft(sessionId);
-    setDraftPrompt(sessionId, "expire me", "client-a");
-    markSessionHyper(sessionId);
+    applyWorkspaceAction({
+      type: "session.draft.created",
+      sessionId,
+      createdAt: 0,
+      hyper: true,
+    });
+    applyWorkspaceAction({
+      type: "session.prompt.drafted",
+      sessionId,
+      prompt: { text: "expire me", origin: "client-a", updatedAt: 0 },
+    });
 
     expect(sweepExpiredDrafts(Date.now() + DAY_MS + 1)).toContain(sessionId);
-    expect(getDraftPrompt(sessionId)).toBeNull();
-    expect(
-      getWorkspaceState({ runningSessionIds: [], customArtifacts: [] }).hyperSessionIds,
-    ).not.toContain(sessionId);
+    expect(getSessionState(sessionId)).toBeUndefined();
+    expect((await snapshot()).hyperSessionIds).not.toContain(sessionId);
+  });
+
+  test("creation and activity statuses broadcast only real transitions", () => {
+    const sessionId = `workspace-status-${crypto.randomUUID()}`;
+    onTestFinished(() => cleanup(sessionId));
+    const events = capture(sessionId);
+
+    applyWorkspaceAction({ type: "session.draft.created", sessionId, createdAt: 0 });
+    setSessionStatus(sessionId, "creating");
+    setSessionStatus(sessionId, "creating");
+    setSessionStatus(sessionId, "running");
+    setSessionStatus(sessionId, "unread");
+    setSessionStatus(sessionId, "unread");
+    applyWorkspaceAction({ type: "session.read", sessionId });
+    applyWorkspaceAction({ type: "session.read", sessionId });
+
     expect(events.map((event) => event.type)).toEqual([
       "session.draft.created",
-      "session.prompt.drafted",
-      "session.hyper.created",
+      "session.creating",
+      "session.running",
+      "session.unread",
+      "session.read",
+    ]);
+    expect(getSessionState(sessionId)).toBeUndefined();
+  });
+
+  test("idle restores a draft when creation fails", () => {
+    const sessionId = `workspace-creation-failure-${crypto.randomUUID()}`;
+    onTestFinished(() => cleanup(sessionId));
+
+    applyWorkspaceAction({ type: "session.draft.created", sessionId, createdAt: 0 });
+    setSessionStatus(sessionId, "creating");
+    setSessionStatus(sessionId, "idle");
+
+    expect(getSessionState(sessionId)).toEqual({
+      status: "draft",
+      createdAt: expect.any(Number),
+    });
+  });
+
+  test("snapshots and broadcasts artifact comment session links", async () => {
+    const commentSession = {
+      sessionId: `comment-session-${crypto.randomUUID()}`,
+      sourceSessionId: `comment-source-${crypto.randomUUID()}`,
+      path: "plan.md",
+      threadId: "thread-a",
+    };
+    onTestFinished(() => unlinkArtifactCommentSession(commentSession.sessionId));
+    const events: WorkspaceEvent[] = [];
+    const unsubscribe = subscribeWorkspaceEvents((event) => {
+      if (
+        (event.type === "artifact.comment_session.linked" &&
+          event.commentSession.sessionId === commentSession.sessionId) ||
+        (event.type === "artifact.comment_session.unlinked" &&
+          event.sessionId === commentSession.sessionId)
+      ) {
+        events.push(event);
+      }
+    });
+    onTestFinished(unsubscribe);
+
+    linkArtifactCommentSession(commentSession);
+    expect((await snapshot()).artifactCommentSessions).toEqual([commentSession]);
+
+    unlinkArtifactCommentSession(commentSession.sessionId);
+    unlinkArtifactCommentSession(commentSession.sessionId);
+    expect((await snapshot()).artifactCommentSessions).toEqual([]);
+    expect(events).toEqual([
+      { type: "artifact.comment_session.linked", commentSession },
+      {
+        type: "artifact.comment_session.unlinked",
+        sessionId: commentSession.sessionId,
+      },
     ]);
   });
 
-  test("read and unread membership emit only on real transitions", () => {
-    const sessionId = `workspace-unread-${crypto.randomUUID()}`;
+  test("inbox creation, completion, and deletion broadcast state-bearing transitions", async () => {
+    await openWorkspaceTestDatabase();
+    const sessionId = `toy-box-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));
-    const events = captureWorkspaceEvents(sessionId);
+    const message = `inbox-${crypto.randomUUID()}`;
+    const events: WorkspaceEvent[] = [];
+    const unsubscribe = subscribeWorkspaceEvents((event) => {
+      if (event.type === "inbox.entry.upserted" && event.entry.id === sessionId) events.push(event);
+      if (event.type === "inbox.entry.deleted" && event.entryId === sessionId) events.push(event);
+    });
+    onTestFinished(unsubscribe);
 
-    markSessionUnread(sessionId);
-    markSessionUnread(sessionId);
-    markSessionRead(sessionId);
-    markSessionRead(sessionId);
+    const pending = await createPendingInboxEntry(sessionId);
+    const entry = await sendToInbox(sessionId, message, {
+      filename: "report.md",
+      content: "# Report",
+    });
+    onTestFinished(() => deleteInboxEntryState(entry.id));
+    await deleteInboxEntry(entry.id);
+    await deleteInboxEntry(entry.id);
 
+    expect(entry.artifact).toBe("report.md");
+    expect((await snapshot()).inboxEntries).toEqual([]);
     expect(events).toEqual([
-      { type: "session.unread", sessionId },
-      { type: "session.read", sessionId },
+      { type: "inbox.entry.upserted", entry: pending },
+      { type: "inbox.entry.upserted", entry },
+      { type: "inbox.entry.deleted", entryId: entry.id },
     ]);
+  });
+
+  test("inbox entries remain durable when transient session state is deleted", async () => {
+    await openWorkspaceTestDatabase();
+    const sessionId = `toy-box-${crypto.randomUUID()}`;
+    await createPendingInboxEntry(sessionId);
+    const entry = await sendToInbox(sessionId, "Report ready", {
+      filename: "report.md",
+      content: "# Report",
+    });
+    onTestFinished(() => deleteInboxEntryState(entry.id));
+
+    deleteSessionWorkspaceState(sessionId);
+
+    expect((await snapshot()).inboxEntries).toContainEqual(entry);
   });
 });

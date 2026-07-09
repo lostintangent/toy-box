@@ -1,40 +1,22 @@
-# Golden tests
+# Golden Tests
 
-Project-level snapshot tests that replay **real, sanitized Copilot CLI sessions**
-(committed under `fixtures/`) end-to-end and lock the output with Bun
-snapshots. Unit tests live beside their source files and localize regressions
-to a layer (projector / sessionReducer / SessionStream); the goldens here lock
-the full pipeline — one per consumption mode:
+Golden tests protect the two pipelines behind a central Toy Box promise: Copilot activity should produce the same session whether it is watched live or reconstructed from history. They play back real, sanitized Copilot sessions through production history, projector, reducer, and runtime code with narrow boundary mocks, then lock each result with Bun snapshots.
 
-- `history.golden.test.ts` — the resume/replay mode: raw SDK events →
-  history replay adapter (historyReplay.ts) → streaming projector →
-  sessionReducer → final `Session`, via the same production entry point the
-  server uses to open a recorded session.
-- `stream.golden.test.ts` — the live mode: raw SDK events → SessionStream
-  (projector streaming → reducer → eventId/turnId decoration, buffering,
-  queue draining, global broadcast ordering, teardown) through a full two-turn
-  lifetime. Nondeterministic ids are normalized to ordinals. When mocking
-  modules here, cover the FULL export surface — `mock.module` persists for
-  the rest of the bun test process and partial mocks poison later suites.
+Unit tests remain beside their source files to localize projector, reducer, runtime, and protocol failures. These project-level tests exercise the whole pipeline in its two consumption modes:
 
-Both modes assert the same convergence invariants (subagent work grouped
-under agent calls) — they must agree on the conversation shape, because the
-server and client share the reducer. Each test asserts named invariants first
-(so a failure says _what behavior_ broke), then snapshots the full output (so
-the diff says _where_).
+- `history.golden.test.ts` feeds raw SDK events through history replay, the stateful projector, and the session reducer to produce the idle `Session` the server returns for a recorded session.
+- `stream.golden.test.ts` feeds raw SDK events through a two-delivery `SessionStream` lifetime, including projection, reduction, event and agent-loop segment identity, queue draining, shared updates, and teardown. Nondeterministic IDs are normalized to stable ordinals.
+
+Both modes assert named invariants before snapshotting their complete output. An invariant failure explains what contract broke; the snapshot diff shows where that pipeline changed. Shared conversation-shape invariants, including subagent grouping, must agree because both modes use the same projector and reducer. The stream suite separately proves that snapshot-seeded resume converges with uninterrupted streaming across deliveries.
+
+When mocking modules here, provide their complete export surface. Bun's `mock.module` remains active for the test process, so a partial replacement can corrupt unrelated suites.
 
 ## Updating snapshots
 
-After an intentional behavior change: `bun test -u`, then review the `.snap`
-diff in code review like any other artifact.
+After an intentional behavior change, run `bun test -u` and review the `.snap` diff like any other code change. Snapshot acceptance is not a substitute for checking the named invariants.
 
 ## Adding a fixture
 
-Fixtures are contiguous-order, sanitized slices of real `events.jsonl` session
-logs (strings truncated, `encryptedContent`/`reasoningOpaque`/`toolTelemetry`
-stripped). The playbook: when toy-box misrenders a real session, curate a
-minimal slice of that session's events into `fixtures/`, add invariants for
-the behavior it exposes, and snapshot it. `fixtures/subagents.jsonl` is the
-session that exposed the v1 `agentId` grouping regression: 7 parallel
-background subagents, todo SQL, a failed tool call, compaction, and
-interleaved subagent tool calls/messages.
+Fixtures are contiguous, sanitized slices of real `events.jsonl` logs. Truncate user content and remove `encryptedContent`, `reasoningOpaque`, and `toolTelemetry` before committing them.
+
+When Toy Box misrenders a real session, curate the smallest event slice that preserves the behavior, add named invariants for the regression, and snapshot the complete result. `fixtures/subagents.jsonl` is the canonical complex fixture: parallel background agents, todo SQL, failure, compaction, and interleaved subagent activity.

@@ -51,8 +51,8 @@ exports[`history pipeline golden replay replaying a recorded session produces th
         },
         {
           "agent": {
-            "modelConfiguration": {
-              "model": "gpt-5.5",
+            "model": {
+              "name": "gpt-5.5",
             },
           },
           "arguments": {
@@ -72,8 +72,8 @@ exports[`history pipeline golden replay replaying a recorded session produces th
         },
         {
           "agent": {
-            "modelConfiguration": {
-              "model": "claude-haiku-4.5",
+            "model": {
+              "name": "claude-haiku-4.5",
             },
           },
           "arguments": {
@@ -98,8 +98,8 @@ Intended behavior:
         },
         {
           "agent": {
-            "modelConfiguration": {
-              "model": "claude-haiku-4.5",
+            "model": {
+              "name": "claude-haiku-4.5",
             },
           },
           "arguments": {
@@ -124,8 +124,8 @@ Intended behavior:
         },
         {
           "agent": {
-            "modelConfiguration": {
-              "model": "claude-haiku-4.5",
+            "model": {
+              "name": "claude-haiku-4.5",
             },
           },
           "arguments": {
@@ -150,8 +150,8 @@ Intended behavior:
         },
         {
           "agent": {
-            "modelConfiguration": {
-              "model": "claude-haiku-4.5",
+            "model": {
+              "name": "claude-haiku-4.5",
             },
           },
           "arguments": {
@@ -177,8 +177,8 @@ Focus areas:
         {
           "agent": {
             "content": "",
-            "modelConfiguration": {
-              "model": "claude-haiku-4.5",
+            "model": {
+              "name": "claude-haiku-4.5",
             },
             "toolCalls": [
               {
@@ -307,8 +307,8 @@ Context: Changes include SDK blob attachments, semantic Attachment type, semanti
         {
           "agent": {
             "content": "I'll start by examining the uncommitted changes to understand the design context.",
-            "modelConfiguration": {
-              "model": "claude-opus-4.8",
+            "model": {
+              "name": "claude-opus-4.8",
             },
             "toolCalls": [
               {
@@ -406,8 +406,8 @@ Evaluate the overall design decisions:
       ],
     },
   ],
-  "modelConfiguration": {
-    "model": "gpt-5.5",
+  "model": {
+    "name": "gpt-5.5",
     "reasoningEffort": "xhigh",
   },
   "pendingOptimisticUserMessage": undefined,

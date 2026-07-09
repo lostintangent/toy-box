@@ -2,41 +2,22 @@ import { queryOptions } from "@tanstack/react-query";
 import {
   querySession,
   getSessionsState,
-  getWorkspaceState,
   listModels,
   listSessionSkills,
 } from "@/functions/sessions";
 import type { SessionsState } from "@/functions/sessions";
-import { listServerAutomations } from "@/functions/automations";
+import { getWorkspaceState } from "@/functions/workspace";
+import { listAutomations } from "@/functions/automations";
 
 export type { SessionsState };
 
-export function createEmptySessionsState(): SessionsState {
-  return {
-    sessions: [],
-    worktrees: {},
-    childSessionIds: [],
-  };
-}
-
-/**
- * Query factory for session-related queries.
- *
- * Uses hierarchical keys for easy bulk invalidation:
- * - sessionQueries.all() -> ['sessions'] - invalidates everything
- * - sessionQueries.stateKey() -> ['sessions', 'state'] - sidebar/list state snapshot key
- * - sessionQueries.state() -> query options for the sidebar/list state snapshot
- * - sessionQueries.detail(id) -> ['sessions', 'detail', id] - specific session
- */
 export const sessionQueries = {
-  // Base key for all session queries - useful for bulk invalidation
   all: () => ["sessions"] as const,
 
-  // Canonical key for unified sidebar/list state
   stateKey: () => [...sessionQueries.all(), "state"] as const,
 
-  // Durable sidebar/list snapshot. Workspace facts such as running and unread
-  // membership live in workspaceQueries.state().
+  // Durable sidebar/list snapshot. Shared lifecycle and composer state lives
+  // in workspaceQueries.state().
   state: () =>
     queryOptions({
       queryKey: sessionQueries.stateKey(),
@@ -46,10 +27,8 @@ export const sessionQueries = {
       refetchOnReconnect: "always",
     }),
 
-  // Base key for session detail queries
   details: () => [...sessionQueries.all(), "detail"] as const,
 
-  // Single session detail (messages, metadata, etc.)
   detail: (sessionId: string) =>
     queryOptions({
       queryKey: [...sessionQueries.details(), sessionId] as const,
@@ -60,6 +39,14 @@ export const sessionQueries = {
       retry: false, // Don't retry on "session not found" errors
     }),
 };
+
+export function createEmptySessionsState(): SessionsState {
+  return {
+    sessions: [],
+    worktrees: {},
+    childSessionIds: [],
+  };
+}
 
 export const workspaceQueries = {
   all: () => ["workspace"] as const,
@@ -76,32 +63,24 @@ export const workspaceQueries = {
     }),
 };
 
-/**
- * Query factory for model-related queries.
- */
 export const modelQueries = {
-  // Base key for all model queries
   all: () => ["models"] as const,
 
-  // Available models list
   list: () =>
     queryOptions({
       queryKey: modelQueries.all(),
       queryFn: listModels,
-      staleTime: 1000 * 60 * 5, // Cache for 5 minutes
+      staleTime: 5 * 60_000,
     }),
 };
 
-/**
- * Query factory for automation-related queries.
- */
 export const automationQueries = {
   all: () => ["automations"] as const,
 
   list: () =>
     queryOptions({
       queryKey: automationQueries.all(),
-      queryFn: listServerAutomations,
+      queryFn: listAutomations,
       staleTime: 30_000,
       refetchOnWindowFocus: "always",
       refetchOnReconnect: "always",
@@ -124,6 +103,8 @@ export const skillQueries = {
 
   /** Fetch skills via RPC. Requires a sessionId for the SDK handle but caches by CWD. */
   list: (sessionId: string, cwd: string) =>
+    // The session ID is only the transport handle; the directory is the cached resource identity.
+    // oxlint-disable-next-line @tanstack/query/exhaustive-deps
     queryOptions({
       queryKey: skillQueries.byCwd(cwd),
       queryFn: () => listSessionSkills({ data: { sessionId } }),

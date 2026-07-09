@@ -7,30 +7,19 @@
 // `loadCustomArtifacts` feeds workspace state on every hydration; the SDK
 // `register_artifact_kind` tool is the sole writer.
 
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { CustomArtifactKind } from "@/types";
 
-const ARTIFACTS_ROOT_SEGMENTS = [".toy-box", "artifacts"];
 const METADATA_FILE = "artifact.json";
 const TEMPLATE_FILE = "index.html";
 
 /** Folder + metadata id must be a safe single path segment (no traversal, no separators). */
 const SAFE_NAME = /^[a-z0-9][a-z0-9-]*$/;
 
-function artifactsRoot(): string {
-  return join(homedir(), ...ARTIFACTS_ROOT_SEGMENTS);
-}
-
-function artifactDirectory(name: string): string {
-  if (!SAFE_NAME.test(name)) throw new Error(`Invalid artifact kind name: ${name}`);
-  return join(artifactsRoot(), name);
-}
-
 /** Read every registered kind. Missing or malformed folders are skipped, never fatal. */
 export async function loadCustomArtifacts(): Promise<CustomArtifactKind[]> {
-  const { readdir } = await import("node:fs/promises");
-
   let entries;
   try {
     entries = await readdir(artifactsRoot(), { withFileTypes: true });
@@ -50,7 +39,6 @@ export async function loadCustomArtifacts(): Promise<CustomArtifactKind[]> {
 
 /** Write (or overwrite) a kind's folder. The name is validated as a safe path segment. */
 export async function writeCustomArtifact(kind: CustomArtifactKind): Promise<void> {
-  const { mkdir, writeFile } = await import("node:fs/promises");
   const directory = artifactDirectory(kind.name);
   await mkdir(directory, { recursive: true });
 
@@ -66,8 +54,19 @@ export async function writeCustomArtifact(kind: CustomArtifactKind): Promise<voi
   ]);
 }
 
+/** Bare, lowercased, de-duplicated extensions (a leading dot is tolerated and stripped). */
+export function normalizeExtensions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const extension = entry.trim().replace(/^\.+/, "").toLowerCase();
+    if (extension) seen.add(extension);
+  }
+  return Array.from(seen);
+}
+
 async function readCustomArtifact(name: string): Promise<CustomArtifactKind | null> {
-  const { readFile } = await import("node:fs/promises");
   const directory = join(artifactsRoot(), name);
 
   try {
@@ -106,16 +105,13 @@ function parseCustomArtifact(
   };
 }
 
-/** Bare, lowercased, de-duplicated extensions (a leading dot is tolerated and stripped). */
-export function normalizeExtensions(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  for (const entry of value) {
-    if (typeof entry !== "string") continue;
-    const extension = entry.trim().replace(/^\.+/, "").toLowerCase();
-    if (extension) seen.add(extension);
-  }
-  return Array.from(seen);
+function artifactsRoot(): string {
+  return join(homedir(), ".toy-box", "artifacts");
+}
+
+function artifactDirectory(name: string): string {
+  if (!SAFE_NAME.test(name)) throw new Error(`Invalid artifact kind name: ${name}`);
+  return join(artifactsRoot(), name);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

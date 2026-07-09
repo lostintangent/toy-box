@@ -1,62 +1,50 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import type { ArtifactContentProps } from "./index";
+import { useEffect, useRef } from "react";
+import type { ArtifactRendererProps } from "./index";
 import {
-  createHtmlPreviewUrl,
-  HTML_PREVIEW_CHANGE_MESSAGE_TYPE,
-  HTML_PREVIEW_EDITABLE_MESSAGE_TYPE,
-  stripHtmlPreviewBridge,
-} from "@/lib/session/artifacts/htmlPreview";
+  injectBaseHref,
+  wrapArtifactDocument,
+  HTML_CHANGE_MESSAGE_TYPE,
+  HTML_EDITABLE_MESSAGE_TYPE,
+} from "@/lib/session/artifacts/html";
 
-type HtmlPreviewChangeMessage = {
-  type: typeof HTML_PREVIEW_CHANGE_MESSAGE_TYPE;
-  html: string;
+type HtmlChangeMessage = {
+  type: typeof HTML_CHANGE_MESSAGE_TYPE;
+  content: string;
 };
 
-/** A live, optionally editable HTML preview. Edits made in the sandboxed iframe are
- *  relayed back through the preview bridge and persisted via the artifact. */
-export function HtmlArtifact({ pane, artifact }: ArtifactContentProps) {
+/** Sandboxed HTML/SVG document with bridged editing and relative resource serving. */
+export function HtmlArtifact({ path, title, mode, baseUri, artifact }: ArtifactRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const canEditPreview = pane.mode !== "read";
-  const { revision, save } = artifact;
+  const canEdit = mode !== "read";
+  const { content, save } = artifact;
 
-  // The preview reloads only when the file changes externally (revision advances),
-  // never on our own saves — so in-place editing keeps its cursor and scroll.
-  const previewUrl = useMemo(
-    () => createHtmlPreviewUrl(pane.sourceSessionId, pane.path, revision),
-    [revision, pane.path, pane.sourceSessionId],
-  );
+  // Own saves do not update the external baseline, preserving iframe state while editing.
+  const srcDoc =
+    content === null || !baseUri
+      ? ""
+      : injectBaseHref(wrapArtifactDocument(path, content), baseUri);
 
-  const syncPreviewMode = useCallback(() => {
-    iframeRef.current?.contentWindow?.postMessage(
-      { type: HTML_PREVIEW_EDITABLE_MESSAGE_TYPE, editable: canEditPreview },
-      "*",
-    );
-  }, [canEditPreview]);
-
-  // Persist the edits the in-page bridge posts back while the preview is editable.
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== iframeRef.current?.contentWindow) return;
-      if (!isHtmlPreviewChangeMessage(event.data)) return;
-      if (!canEditPreview) return;
-      save(stripHtmlPreviewBridge(event.data.html));
+      if (!isHtmlChangeMessage(event.data)) return;
+      if (!canEdit) return;
+      save(event.data.content);
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [canEditPreview, save]);
+  }, [canEdit, save]);
 
-  // Keep the iframe's edit mode in sync with the pane mode.
   useEffect(() => {
-    syncPreviewMode();
-  }, [syncPreviewMode]);
+    syncEditMode(iframeRef.current, canEdit);
+  }, [canEdit]);
 
   return (
     <iframe
       ref={iframeRef}
-      key={previewUrl}
-      src={previewUrl}
-      title={pane.title}
-      onLoad={syncPreviewMode}
+      srcDoc={srcDoc}
+      title={title}
+      onLoad={(event) => syncEditMode(event.currentTarget, canEdit)}
       className="h-full w-full border-0 bg-background"
       referrerPolicy="no-referrer"
       sandbox="allow-downloads allow-forms allow-modals allow-popups allow-scripts allow-top-navigation-by-user-activation"
@@ -64,9 +52,13 @@ export function HtmlArtifact({ pane, artifact }: ArtifactContentProps) {
   );
 }
 
-function isHtmlPreviewChangeMessage(value: unknown): value is HtmlPreviewChangeMessage {
+function syncEditMode(iframe: HTMLIFrameElement | null, editable: boolean) {
+  iframe?.contentWindow?.postMessage({ type: HTML_EDITABLE_MESSAGE_TYPE, editable }, "*");
+}
+
+function isHtmlChangeMessage(value: unknown): value is HtmlChangeMessage {
   if (!value || typeof value !== "object") return false;
 
-  const message = value as Partial<HtmlPreviewChangeMessage>;
-  return message.type === HTML_PREVIEW_CHANGE_MESSAGE_TYPE && typeof message.html === "string";
+  const message = value as Partial<HtmlChangeMessage>;
+  return message.type === HTML_CHANGE_MESSAGE_TYPE && typeof message.content === "string";
 }

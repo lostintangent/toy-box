@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/historyReplay";
+import { replaySdkHistory } from "@/functions/sdk/historyReplay";
 import type { Session } from "@/lib/session/sessionReducer";
 import { loadSessionFixture } from "./helpers";
 
@@ -16,10 +16,7 @@ describe("history pipeline golden replay", () => {
   }
 
   test("replaying a recorded session produces the final session state", async () => {
-    const state = await initializeSessionStateFromSdkHistory(
-      "history-golden-session",
-      await loadSessionFixture("subagents"),
-    );
+    const state = replaySdkHistory("history-golden-session", await loadSessionFixture("subagents"));
 
     // Every subagent's work is grouped under its agent call...
     const agents = agentToolCalls(state);

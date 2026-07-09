@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useAtom } from "jotai";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -10,73 +10,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  getSettings,
+  autoFocusArtifactsAtom,
   isSessionFeatureScope,
-  updateSetting,
-  type SessionFeatureScope,
+  terminalShellAtom,
+  worktreeAtom,
 } from "@/lib/config/settings";
 
-const SESSION_FEATURE_SCOPE_OPTIONS = [
-  { value: "always", label: "Always" },
-  { value: "sessions", label: "Sessions" },
-  { value: "automations", label: "Automations" },
-  { value: "never", label: "Never" },
-] satisfies { value: SessionFeatureScope; label: string }[];
-
-type FeatureScopeSettingProps = {
-  id: string;
-  label: string;
-  value: SessionFeatureScope;
-  onValueChange: (value: SessionFeatureScope) => void;
-};
-
-function FeatureScopeSetting({ id, label, value, onValueChange }: FeatureScopeSettingProps) {
-  return (
-    <div className="grid min-w-0 gap-2">
-      <label htmlFor={id} className="text-sm font-medium text-foreground">
-        {label}
-      </label>
-      <Select
-        value={value}
-        onValueChange={(nextValue) => {
-          if (!isSessionFeatureScope(nextValue)) return;
-          onValueChange(nextValue);
-        }}
-      >
-        <SelectTrigger id={id} className="w-full min-w-0">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {SESSION_FEATURE_SCOPE_OPTIONS.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
-export type SettingsDialogProps = {
+export function SettingsDialog({
+  open,
+  onOpenChange,
+}: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-};
-
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const [shell, setShell] = useState("");
-  const [useWorktree, setUseWorktree] = useState(false);
-  const [autoFocusArtifacts, setAutoFocusArtifacts] = useState<SessionFeatureScope>("automations");
-  const [showSessionOverlay, setShowSessionOverlay] = useState<SessionFeatureScope>("sessions");
-
-  useEffect(() => {
-    if (!open) return;
-    const settings = getSettings();
-    setShell(settings.terminalShell);
-    setUseWorktree(settings.useWorktree);
-    setShowSessionOverlay(settings.showSessionOverlay);
-    setAutoFocusArtifacts(settings.autoFocusArtifacts);
-  }, [open]);
+}) {
+  const [terminalShell, setTerminalShell] = useAtom(terminalShellAtom);
+  const [useWorktree, setUseWorktree] = useAtom(worktreeAtom);
+  const [autoFocusArtifacts, setAutoFocusArtifacts] = useAtom(autoFocusArtifactsAtom);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -85,35 +34,40 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4">
-          <div className="grid grid-cols-2 gap-4">
-            <FeatureScopeSetting
-              id="auto-focus-artifacts"
-              label="Auto-focus artifacts"
+          <div className="grid gap-2">
+            <label htmlFor="auto-focus-artifacts" className="text-sm font-medium text-foreground">
+              Auto-focus artifacts
+            </label>
+            <Select
               value={autoFocusArtifacts}
-              onValueChange={(nextValue) => {
-                setAutoFocusArtifacts(nextValue);
-                updateSetting("autoFocusArtifacts", nextValue);
+              onValueChange={(value) => {
+                if (isSessionFeatureScope(value)) setAutoFocusArtifacts(value);
               }}
-            />
-            <FeatureScopeSetting
-              id="show-session-overlay"
-              label="Session overlay"
-              value={showSessionOverlay}
-              onValueChange={(nextValue) => {
-                setShowSessionOverlay(nextValue);
-                updateSetting("showSessionOverlay", nextValue);
-              }}
-            />
+            >
+              <SelectTrigger id="auto-focus-artifacts" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="always">Always</SelectItem>
+                <SelectItem value="sessions">Sessions</SelectItem>
+                <SelectItem value="automations">Automations</SelectItem>
+                <SelectItem value="never">Never</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="grid gap-2">
             <label htmlFor="terminal-shell" className="text-sm font-medium text-foreground">
               Terminal shell
             </label>
             <Input
+              key={terminalShell}
               id="terminal-shell"
-              value={shell}
-              onChange={(event) => setShell(event.target.value)}
-              onBlur={() => updateSetting("terminalShell", shell.trim())}
+              defaultValue={terminalShell}
+              onBlur={(event) => {
+                const value = event.currentTarget.value.trim();
+                event.currentTarget.value = value;
+                setTerminalShell(value);
+              }}
               placeholder="/bin/zsh or zsh"
               spellCheck={false}
             />
@@ -126,9 +80,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               id="use-worktree"
               checked={useWorktree}
               onCheckedChange={(checked) => {
-                const value = checked === true;
-                setUseWorktree(value);
-                updateSetting("useWorktree", value);
+                setUseWorktree(checked === true);
               }}
             />
             <label htmlFor="use-worktree" className="text-sm font-medium text-foreground">

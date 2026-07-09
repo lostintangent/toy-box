@@ -8,119 +8,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { createEmptySessionsState, sessionQueries, type SessionsState } from "@/lib/queries";
 import type { SessionMetadata, SessionMetadataUpdate, WorkspaceEvent } from "@/types";
 
-function addSessionId(list: string[], sessionId: string): string[] {
-  if (list.includes(sessionId)) return list;
-  return [...list, sessionId];
-}
-
-function removeSessionId(list: string[], sessionId: string): string[] {
-  if (!list.includes(sessionId)) return list;
-  return list.filter((id) => id !== sessionId);
-}
-
-function parseEventDate(value: string | undefined, fallback: Date): Date {
-  if (!value) return fallback;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
-}
-
-function applySessionUpsert(
-  existing: SessionMetadata | undefined,
-  update: SessionMetadataUpdate,
-): SessionMetadata {
-  const now = new Date();
-  const fallbackModified = existing?.modifiedTime ?? now;
-  const modifiedTime = parseEventDate(update.modifiedTime, fallbackModified);
-  const fallbackStart = existing?.startTime ?? modifiedTime;
-  const startTime = parseEventDate(update.startTime, fallbackStart);
-
-  return {
-    sessionId: update.sessionId,
-    startTime,
-    modifiedTime,
-    summary: update.summary ?? existing?.summary ?? "",
-    isRemote: update.isRemote ?? existing?.isRemote ?? false,
-    context: update.context ?? existing?.context,
-  };
-}
-
-export function getSessionsStateSnapshot(queryClient: QueryClient): SessionsState | undefined {
-  return queryClient.getQueryData<SessionsState>(sessionQueries.stateKey());
-}
-
-export function getSessionsState(queryClient: QueryClient): SessionsState {
-  return getSessionsStateSnapshot(queryClient) ?? createEmptySessionsState();
-}
-
-export function replaceSessionsState(queryClient: QueryClient, state: SessionsState): void {
-  queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), state);
-}
-
-function updateSessionsState(
-  queryClient: QueryClient,
-  updater: (state: SessionsState) => SessionsState,
-): void {
-  queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), (old) =>
-    updater(old ?? createEmptySessionsState()),
-  );
-}
-
-export function prependSessionIfMissing(queryClient: QueryClient, session: SessionMetadata): void {
-  updateSessionsState(queryClient, (old) => {
-    if (old.sessions.some((item) => item.sessionId === session.sessionId)) {
-      return old;
-    }
-
-    return {
-      ...old,
-      sessions: [session, ...old.sessions],
-    };
-  });
-}
-
-export function removeSessionFromState(queryClient: QueryClient, sessionId: string): void {
-  updateSessionsState(queryClient, (old) => {
-    const { [sessionId]: _, ...remainingMetadata } = old.worktrees;
-    return {
-      ...old,
-      sessions: old.sessions.filter((session) => session.sessionId !== sessionId),
-      childSessionIds: removeSessionId(old.childSessionIds, sessionId),
-      worktrees: remainingMetadata,
-    };
-  });
-}
-
-export function upsertSessionInState(
-  queryClient: QueryClient,
-  sessionUpdate: SessionMetadataUpdate,
-): void {
-  updateSessionsState(queryClient, (old) => {
-    const index = old.sessions.findIndex(
-      (session) => session.sessionId === sessionUpdate.sessionId,
-    );
-    const existing = index === -1 ? undefined : old.sessions[index];
-    const upserted = applySessionUpsert(existing, sessionUpdate);
-
-    const sessions = index === -1 ? [upserted, ...old.sessions] : [...old.sessions];
-    if (index !== -1) sessions[index] = upserted;
-
-    const worktrees = sessionUpdate.worktree
-      ? { ...old.worktrees, [sessionUpdate.sessionId]: sessionUpdate.worktree }
-      : old.worktrees;
-    const childSessionIds = sessionUpdate.parentSessionId
-      ? addSessionId(old.childSessionIds, sessionUpdate.sessionId)
-      : old.childSessionIds;
-
-    return {
-      ...old,
-      sessions,
-      worktrees,
-      childSessionIds,
-    };
-  });
-}
-
-export function syncSessionQueriesFromWorkspaceEvent(
+export function applyWorkspaceEventToSessionQueries(
   queryClient: QueryClient,
   event: WorkspaceEvent,
 ): void {
@@ -134,10 +22,117 @@ export function syncSessionQueriesFromWorkspaceEvent(
   }
 }
 
-export async function cancelSessionsState(queryClient: QueryClient): Promise<void> {
+export function snapshotSessionsState(queryClient: QueryClient): SessionsState | undefined {
+  return queryClient.getQueryData<SessionsState>(sessionQueries.stateKey());
+}
+
+export function restoreSessionsState(queryClient: QueryClient, state: SessionsState): void {
+  queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), state);
+}
+
+export function addSessionIfMissing(queryClient: QueryClient, session: SessionMetadata): void {
+  updateSessionsState(queryClient, (state) => {
+    if (state.sessions.some((existing) => existing.sessionId === session.sessionId)) {
+      return state;
+    }
+
+    return {
+      ...state,
+      sessions: [session, ...state.sessions],
+    };
+  });
+}
+
+export function removeSessionFromState(queryClient: QueryClient, sessionId: string): void {
+  updateSessionsState(queryClient, (state) => {
+    if (
+      !state.sessions.some((session) => session.sessionId === sessionId) &&
+      !state.childSessionIds.includes(sessionId) &&
+      !(sessionId in state.worktrees)
+    ) {
+      return state;
+    }
+
+    const { [sessionId]: _, ...remainingWorktrees } = state.worktrees;
+    return {
+      ...state,
+      sessions: state.sessions.filter((session) => session.sessionId !== sessionId),
+      childSessionIds: state.childSessionIds.filter((id) => id !== sessionId),
+      worktrees: remainingWorktrees,
+    };
+  });
+}
+
+export function upsertSessionInState(
+  queryClient: QueryClient,
+  sessionUpdate: SessionMetadataUpdate,
+): void {
+  updateSessionsState(queryClient, (state) => {
+    const sessionIndex = state.sessions.findIndex(
+      (session) => session.sessionId === sessionUpdate.sessionId,
+    );
+    const existing = sessionIndex === -1 ? undefined : state.sessions[sessionIndex];
+    const session = mergeSessionMetadata(existing, sessionUpdate);
+
+    const sessions = sessionIndex === -1 ? [session, ...state.sessions] : [...state.sessions];
+    if (sessionIndex !== -1) sessions[sessionIndex] = session;
+
+    const worktrees = sessionUpdate.worktree
+      ? { ...state.worktrees, [sessionUpdate.sessionId]: sessionUpdate.worktree }
+      : state.worktrees;
+    const childSessionIds =
+      sessionUpdate.parentSessionId && !state.childSessionIds.includes(sessionUpdate.sessionId)
+        ? [...state.childSessionIds, sessionUpdate.sessionId]
+        : state.childSessionIds;
+
+    return {
+      ...state,
+      sessions,
+      worktrees,
+      childSessionIds,
+    };
+  });
+}
+
+export async function cancelSessionsStateQuery(queryClient: QueryClient): Promise<void> {
   await queryClient.cancelQueries({ queryKey: sessionQueries.stateKey() });
 }
 
-export async function invalidateSessionsState(queryClient: QueryClient): Promise<void> {
+export async function invalidateSessionsStateQuery(queryClient: QueryClient): Promise<void> {
   await queryClient.invalidateQueries({ queryKey: sessionQueries.stateKey() });
+}
+
+function updateSessionsState(
+  queryClient: QueryClient,
+  updater: (state: SessionsState) => SessionsState,
+): void {
+  queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), (old) =>
+    updater(old ?? createEmptySessionsState()),
+  );
+}
+
+function mergeSessionMetadata(
+  existing: SessionMetadata | undefined,
+  update: SessionMetadataUpdate,
+): SessionMetadata {
+  const now = new Date();
+  const fallbackModifiedTime = existing?.modifiedTime ?? now;
+  const modifiedTime = parseEventDate(update.modifiedTime, fallbackModifiedTime);
+  const fallbackStartTime = existing?.startTime ?? modifiedTime;
+  const startTime = parseEventDate(update.startTime, fallbackStartTime);
+
+  return {
+    sessionId: update.sessionId,
+    startTime,
+    modifiedTime,
+    summary: update.summary ?? existing?.summary ?? "",
+    isRemote: update.isRemote ?? existing?.isRemote ?? false,
+    context: update.context ?? existing?.context,
+  };
+}
+
+function parseEventDate(value: string | undefined, fallback: Date): Date {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
 }

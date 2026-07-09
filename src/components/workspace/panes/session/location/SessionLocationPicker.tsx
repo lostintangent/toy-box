@@ -1,19 +1,15 @@
 import { SessionDirectoryPicker } from "./directory/SessionDirectoryPicker";
 import { SessionBranchMenu, type WorktreeBranchActions } from "./git/SessionBranchMenu";
-import type { SessionDirectoryOption } from "./directory/directoryOptions";
 
 export type SessionLocationPickerProps = {
-  value?: string;
+  value?: string | null;
   repository?: string;
   gitRoot?: string;
   className?: string;
-
-  // Used when rendering the directory picker.
-  options?: SessionDirectoryOption[];
+  isLoading?: boolean;
 
   // Draft sessions can change their working directory and opt into a worktree.
-  onValueChange?: (cwd: string | undefined) => void;
-  disabled?: boolean;
+  onValueChange?: (cwd: string | null) => void;
   useWorktree?: boolean;
   onUseWorktreeChange?: (value: boolean) => void;
 
@@ -26,23 +22,25 @@ export function SessionLocationPicker({
   value,
   repository,
   gitRoot,
-  options = [],
   className,
+  isLoading,
   onValueChange,
-  disabled,
   useWorktree,
   onUseWorktreeChange,
   branch,
   worktreeActions,
 }: SessionLocationPickerProps) {
-  const isDraft = Boolean(onValueChange);
-  if (!isDraft && (branch || worktreeActions)) {
+  if (isLoading) {
+    return <SessionDirectoryPicker className={className} isLoading />;
+  }
+
+  if (!onValueChange && (branch || worktreeActions)) {
     return (
       <SessionBranchMenu
         branch={branch}
         repository={repository}
         gitRoot={gitRoot}
-        cwd={value}
+        cwd={value ?? undefined}
         className={className}
         {...worktreeActions}
       />
@@ -54,10 +52,8 @@ export function SessionLocationPicker({
       value={value}
       repository={repository}
       gitRoot={gitRoot}
-      options={options}
       className={className}
       onValueChange={onValueChange}
-      disabled={disabled}
       useWorktree={useWorktree}
       onUseWorktreeChange={onUseWorktreeChange}
     />

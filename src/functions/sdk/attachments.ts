@@ -5,8 +5,8 @@
 import type { Attachment as SdkAttachment, MessageOptions } from "@github/copilot-sdk";
 import type { Attachment } from "@/types";
 
-/** Attachment → SDK blob, for session.send. */
-export function toSdkAttachmentBlobs(
+/** Domain attachments → SDK blobs, for session.send. */
+export function toSdkAttachments(
   attachments?: Attachment[],
 ): MessageOptions["attachments"] | undefined {
   return attachments?.length
@@ -19,9 +19,9 @@ export function toSdkAttachmentBlobs(
     : undefined;
 }
 
-/** SDK blobs (from a persisted user.message record) → Attachments.
+/** SDK blobs (from a persisted user.message record) → domain attachments.
  *  Non-blob entries (e.g. legacy file references) are skipped. */
-export function readAttachmentBlobs(value: SdkAttachment[] | undefined): Attachment[] | undefined {
+export function fromSdkAttachments(value: SdkAttachment[] | undefined): Attachment[] | undefined {
   if (!value?.length) return undefined;
 
   const attachments = value.flatMap((entry) => {

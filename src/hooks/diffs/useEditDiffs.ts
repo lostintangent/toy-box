@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useState } from "react";
 import type { Message, ToolCall } from "@/types";
 import {
   computeDiffStats,
@@ -23,90 +23,122 @@ export interface SessionDiffs {
   byToolCallId: Map<string, DiffStats>;
 }
 
-type CachedToolDiff = {
+type ToolDiff = {
   cwd?: string;
+  toolCall: ToolCall;
 } & ReturnType<typeof computeFileDiffStats>;
 
-function isFileDiffToolCall(toolCall: ToolCall): boolean {
-  return toolCall.name === "edit" || toolCall.name === "patch";
+function getFileDiffToolCalls(messages: Message[]): ToolCall[] {
+  const toolCalls: ToolCall[] = [];
+
+  for (const message of messages) {
+    if (message.role !== "assistant" || !message.toolCalls) continue;
+    for (const toolCall of message.toolCalls) {
+      if (toolCall.name === "edit" || toolCall.name === "patch") toolCalls.push(toolCall);
+    }
+  }
+
+  return toolCalls;
 }
 
 function computeToolDiff(
   toolCall: ToolCall,
-  cache: Map<string, CachedToolDiff>,
+  cache: Map<string, ToolDiff>,
   cwd?: string,
-): CachedToolDiff | undefined {
-  if (!isFileDiffToolCall(toolCall) || toolCall.result?.success !== true) {
+): ToolDiff | undefined {
+  if (toolCall.result?.success !== true) {
     cache.delete(toolCall.id);
     return undefined;
   }
 
   const cached = cache.get(toolCall.id);
-  if (cached && cached.cwd === cwd) return cached;
+  if (cached && cached.cwd === cwd && cached.toolCall === toolCall) return cached;
 
   const fileDiffs = getToolCallFileDiffs(toolCall, cwd);
   if (!fileDiffs) return undefined;
 
   const diff = computeFileDiffStats(fileDiffs);
-  const next = { cwd, total: diff.total, byFile: diff.byFile };
+  const next = { cwd, toolCall, total: diff.total, byFile: diff.byFile };
   cache.set(toolCall.id, next);
   return next;
 }
 
-export function computeSessionDiffs(
-  messages: Message[],
-  cache: Map<string, CachedToolDiff>,
-  cwd?: string,
+function summarizeSessionDiffs(
+  toolCalls: ToolCall[],
+  cwd: string | undefined,
+  toolDiffs: Map<string, ToolDiff>,
 ): SessionDiffs {
   const byToolCallId = new Map<string, DiffStats>();
-  const fileAccumulator = new Map<string, { path: string; displayPath: string; diff: DiffStats }>();
+  const files = new Map<string, FileDiffSummary>();
+  const total = { added: 0, removed: 0 };
 
-  let totalAdded = 0;
-  let totalRemoved = 0;
+  for (const toolCall of toolCalls) {
+    const toolDiff = computeToolDiff(toolCall, toolDiffs, cwd);
+    if (!toolDiff) continue;
 
-  for (const message of messages) {
-    if (message.role !== "assistant" || !message.toolCalls) continue;
+    byToolCallId.set(toolCall.id, toolDiff.total);
+    total.added += toolDiff.total.added;
+    total.removed += toolDiff.total.removed;
 
-    for (const toolCall of message.toolCalls) {
-      const toolDiff = computeToolDiff(toolCall, cache, cwd);
-      if (!toolDiff) continue;
-
-      byToolCallId.set(toolCall.id, toolDiff.total);
-
-      for (const file of toolDiff.byFile) {
-        const existing = fileAccumulator.get(file.path);
-        if (existing) {
-          existing.diff.added += file.diff.added;
-          existing.diff.removed += file.diff.removed;
-        } else {
-          fileAccumulator.set(file.path, {
-            path: file.path,
-            displayPath: toRelativePath(file.path, cwd),
-            diff: { added: file.diff.added, removed: file.diff.removed },
-          });
-        }
+    for (const file of toolDiff.byFile) {
+      const existing = files.get(file.path);
+      if (existing) {
+        existing.diff.added += file.diff.added;
+        existing.diff.removed += file.diff.removed;
+      } else {
+        files.set(file.path, {
+          path: file.path,
+          displayPath: toRelativePath(file.path, cwd),
+          diff: { ...file.diff },
+        });
       }
-
-      totalAdded += toolDiff.total.added;
-      totalRemoved += toolDiff.total.removed;
     }
   }
 
   return {
-    total: { added: totalAdded, removed: totalRemoved },
-    byFile: Array.from(fileAccumulator.values()),
+    total,
+    byFile: Array.from(files.values()),
     byToolCallId,
   };
 }
 
+/** Computes diff totals for successful edit and patch tool calls. */
+export function computeSessionDiffs(messages: Message[], cwd?: string): SessionDiffs {
+  return summarizeSessionDiffs(getFileDiffToolCalls(messages), cwd, new Map());
+}
+
+type EditDiffCache = {
+  toolCalls: ToolCall[];
+  toolDiffs: Map<string, ToolDiff>;
+  cwd?: string;
+  result?: SessionDiffs;
+};
+
+function projectSessionDiffs(
+  messages: Message[],
+  cwd: string | undefined,
+  cache: EditDiffCache,
+): SessionDiffs {
+  const toolCalls = getFileDiffToolCalls(messages);
+  const inputsUnchanged =
+    cache.cwd === cwd &&
+    cache.toolCalls.length === toolCalls.length &&
+    cache.toolCalls.every((toolCall, index) => toolCall === toolCalls[index]);
+
+  if (cache.result && inputsUnchanged) return cache.result;
+
+  const result = summarizeSessionDiffs(toolCalls, cwd, cache.toolDiffs);
+  cache.toolCalls = toolCalls;
+  cache.cwd = cwd;
+  cache.result = result;
+  return result;
+}
+
 /**
- * Hook to compute diff stats at session, file, and tool-call levels.
- *
- * Tool-specific adapters convert edit/patch calls into file diffs before stats
- * are computed.
+ * Projects edit diffs from a session transcript. Immutable tool-call identity
+ * keeps the projection stable while unrelated text streams.
  */
 export function useEditDiffs(messages: Message[], cwd?: string): SessionDiffs {
-  const cacheRef = useRef(new Map<string, CachedToolDiff>());
-
-  return useMemo(() => computeSessionDiffs(messages, cacheRef.current, cwd), [messages, cwd]);
+  const [cache] = useState<EditDiffCache>(() => ({ toolCalls: [], toolDiffs: new Map() }));
+  return projectSessionDiffs(messages, cwd, cache);
 }

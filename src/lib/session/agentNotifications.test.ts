@@ -12,6 +12,7 @@ describe("agent notifications", () => {
 
     expect(parseAgentNotification(notification)).toEqual(notification);
     expect(parseAgentNotification({ type: "nope" })).toBeUndefined();
+    expect(parseAgentNotification({ type: "toString" })).toBeUndefined();
     expect(parseAgentNotification({ type: "artifact_edited", path: "" })).toBeUndefined();
   });
 
@@ -24,7 +25,7 @@ describe("agent notifications", () => {
 
   test("system instructions enumerate every registered type", () => {
     expect(AGENT_NOTIFICATION_TYPE_INSTRUCTIONS).toContain(
-      "- artifact_edited: The user edited the artifact at the given `path`, relative to this session's files folder. Review its latest contents and respond only if a follow-up would help.",
+      "- artifact_edited: The user edited the artifact at the given `path`. Review its latest contents and respond only if a follow-up would help.",
     );
   });
 });

@@ -1,60 +1,66 @@
 import { Component, Suspense, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import type { CommentThread } from "documint";
 import { Skeleton } from "@/components/ui/skeleton";
+import { respondToArtifactComment } from "@/functions/artifacts";
 import { useArtifact } from "@/hooks/artifacts/useArtifact";
-import type { ArtifactWorkspacePane, ArtifactPaneMode } from "@/lib/workspace/panes";
-import { useArtifactKind, type ArtifactContentProps, type ArtifactKind } from "./kinds";
+import { useLinkedPaneActions } from "@/hooks/workspace/layout/useLinkedPanes";
+import type { ArtifactWorkspacePane } from "@/lib/workspace/panes";
+import { createArtifactBaseUri } from "@/lib/session/artifacts/html";
+import { useArtifactKind, type ArtifactRendererProps, type ArtifactKind } from "./kinds";
 import type { PaneProps } from "../types";
 import { ArtifactActions } from "./actions";
 
 type ArtifactPaneProps = PaneProps & {
   pane: ArtifactWorkspacePane;
-  onModeChange?: (pane: ArtifactWorkspacePane, mode: ArtifactPaneMode) => void;
 };
 
-/** The host-facing artifact pane. It owns the artifact lifecycle (load/save/watch), the
- *  loading / error states, and its own title-bar actions (saving indicator + mode menu),
- *  which it declares — styled by `variant` — into the host's actions slot when one is
- *  provided. Both hosts provide a slot: the grid's hover overlay ("normal" variant, icon
- *  buttons) and the pager's title bar ("compact" variant, labeled badge). With no slot it
- *  stays content-only. */
-export function ArtifactPane({
-  pane,
-  onModeChange,
-  variant = "normal",
-  actionsSlot,
-}: ArtifactPaneProps) {
-  const kind = useArtifactKind(pane.path);
-  const artifact = useArtifact({
-    sessionId: pane.sourceSessionId,
-    path: pane.path,
-    mode: pane.mode,
-    usesPreview: kind.usesPreview,
-  });
+/** Composes one session-owned artifact's file lifecycle, actions, and renderer. */
+export function ArtifactPane({ pane, variant = "normal", actionsSlot }: ArtifactPaneProps) {
+  const { sourceSessionId: sessionId, path, title, mode } = pane;
+  const { setArtifactPaneMode } = useLinkedPaneActions();
+  const kind = useArtifactKind(path);
+  const artifact = useArtifact({ sessionId, path, mode });
+  const baseUri =
+    typeof window === "undefined"
+      ? undefined
+      : createArtifactBaseUri(sessionId, path, window.location.origin);
   const { error, isLoading, isSaving, isReady } = artifact;
+
+  async function respondToComment(threadId: string, thread: CommentThread) {
+    await artifact.flush({ notifyAgent: false });
+    await respondToArtifactComment({ data: { sessionId, path, threadId, thread } });
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      {/* Read-only kinds can't be edited, so their mode switcher and saving indicator would
-          be inert — omit the title-bar actions entirely for them. Editable by default. */}
       {actionsSlot &&
-        kind.editable !== false &&
+        kind.editable &&
         createPortal(
           <ArtifactActions
-            pane={pane}
+            mode={mode}
             isSaving={isSaving}
-            onModeChange={onModeChange}
+            onModeChange={(nextMode) => setArtifactPaneMode(pane, nextMode)}
             variant={variant}
           />,
           actionsSlot,
         )}
-      {/* A non-fatal error (e.g. a failed save or watch) shown above still-readable content. */}
       {isReady && error && <ArtifactBanner>{error}</ArtifactBanner>}
       <div className="min-h-0 flex-1">
         {isLoading ? (
           <ArtifactSkeleton />
         ) : isReady ? (
-          <ArtifactContent kind={kind} pane={pane} artifact={artifact} />
+          <ArtifactContent
+            kind={kind}
+            sessionId={sessionId}
+            path={path}
+            title={title}
+            mode={mode}
+            baseUri={baseUri}
+            definition={kind.definition}
+            artifact={artifact}
+            respondToComment={respondToComment}
+          />
         ) : (
           <ArtifactMessage>{error ?? "Unable to load this artifact."}</ArtifactMessage>
         )}
@@ -63,13 +69,12 @@ export function ArtifactPane({
   );
 }
 
-function ArtifactContent({ kind, pane, artifact }: ArtifactContentProps & { kind: ArtifactKind }) {
-  const { Component: Content } = kind;
+function ArtifactContent({ kind, ...props }: ArtifactRendererProps & { kind: ArtifactKind }) {
+  const { Renderer } = kind;
   return (
     <ArtifactErrorBoundary fallback={<ArtifactMessage>Unable to load this view.</ArtifactMessage>}>
-      {/* Suspense covers a lazily-loaded content chunk; the boundary covers a failed load. */}
       <Suspense fallback={<ArtifactSkeleton />}>
-        <Content pane={pane} artifact={artifact} />
+        <Renderer {...props} />
       </Suspense>
     </ArtifactErrorBoundary>
   );

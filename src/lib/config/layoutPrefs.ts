@@ -1,36 +1,29 @@
-// Layout preferences that round-trip through cookies so SSR can render the shell
-// (sidebar, terminal, hyper deck) in the same shape the user last left it, before
-// the client hydrates. Each pref is declared once in LAYOUT_PREFS; parsing,
-// defaulting, and writing all derive from that table.
+// Layout preferences round-trip through cookies so SSR and the hydrated shell
+// start with the same sidebar, terminal, automation, Hyper, and mobile Inbox layout.
 
-export const LAYOUT_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+const LAYOUT_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
-export const DEFAULT_SIDEBAR_SIZE = 15;
-export const DEFAULT_TERMINAL_SIZE = 30;
-export const DEFAULT_AUTOMATIONS_EXPANDED = true;
+const DEFAULT_SIDEBAR_SIZE = 15;
+const DEFAULT_TERMINAL_SIZE = 30;
+const DEFAULT_AUTOMATIONS_EXPANDED = true;
+const DEFAULT_MOBILE_INBOX_OPEN = false;
 
-export const SIDEBAR_MIN_SIZE = 10;
-export const SIDEBAR_MAX_SIZE = 40;
-export const TERMINAL_MIN_SIZE = 15;
-export const TERMINAL_MAX_SIZE = 80;
+const SIDEBAR_MIN_SIZE = 10;
+const SIDEBAR_MAX_SIZE = 40;
+const TERMINAL_MIN_SIZE = 15;
+const TERMINAL_MAX_SIZE = 80;
 
-export type Point = { x: number; y: number };
+type Point = { x: number; y: number };
 
-export const DEFAULT_HYPER_POSITION: Point = { x: 24, y: 24 };
+const DEFAULT_HYPER_POSITION: Point = { x: 24, y: 24 };
 
-export function clampSidebarSize(value: number): number {
+function clampSidebarSize(value: number): number {
   return Math.min(SIDEBAR_MAX_SIZE, Math.max(SIDEBAR_MIN_SIZE, value));
 }
 
-export function clampTerminalSize(value: number): number {
+function clampTerminalSize(value: number): number {
   return Math.min(TERMINAL_MAX_SIZE, Math.max(TERMINAL_MIN_SIZE, value));
 }
-
-// ── Cookie codecs ─────────────────────────────────────────────────────────────
-// A codec is the single home for one pref's wire encoding. `parse` returns
-// undefined for an absent or invalid cookie so callers fall back to the default;
-// size clamps live in the codec so they apply on every read. `serialize` defaults
-// to `String`, so only non-primitive values (e.g. a point) need their own.
 
 type CookieCodec<T> = {
   parse: (raw: string) => T | undefined;
@@ -56,13 +49,8 @@ const pointCodec: CookieCodec<Point> = {
   serialize: ({ x, y }) => `${x},${y}`,
 };
 
-// ── Pref registry ─────────────────────────────────────────────────────────────
-// One entry per round-tripped pref — cookie name, codec, and default. `pref`
-// infers each value type from its codec and checks the default against it. Adding
-// a pref is one line here plus one `useLayoutCookie` call at its owner.
-
-// Cookies share one jar per host across ports (localhost dev especially), so we
-// namespace every name to avoid colliding with another app's `sidebar_open`.
+// Cookies share a jar across ports, so names are app-specific. This registry is
+// the single declaration of each preference's name, wire codec, and default.
 const COOKIE_PREFIX = "toybox_";
 
 type LayoutPref<T> = { cookie: string; codec: CookieCodec<T>; default: T };
@@ -71,7 +59,7 @@ function pref<T>(name: string, codec: CookieCodec<T>, fallback: T): LayoutPref<T
   return { cookie: `${COOKIE_PREFIX}${name}`, codec, default: fallback };
 }
 
-export const LAYOUT_PREFS = {
+const LAYOUT_PREFS = {
   sidebarSize: pref("sidebar_size", numberCodec(clampSidebarSize), DEFAULT_SIDEBAR_SIZE),
   terminalSize: pref("terminal_size", numberCodec(clampTerminalSize), DEFAULT_TERMINAL_SIZE),
   sidebarOpen: pref("sidebar_open", booleanCodec, true),
@@ -79,19 +67,16 @@ export const LAYOUT_PREFS = {
   automationsExpanded: pref("automations_expanded", booleanCodec, DEFAULT_AUTOMATIONS_EXPANDED),
   hyperOpen: pref("hyper_open", booleanCodec, false),
   hyperPosition: pref("hyper_pos", pointCodec, DEFAULT_HYPER_POSITION),
+  mobileInboxOpen: pref("mobile_inbox_open", booleanCodec, DEFAULT_MOBILE_INBOX_OPEN),
 };
 
 export type LayoutPrefKey = keyof typeof LAYOUT_PREFS;
 
-// Value types derive from each codec (not the default), so a literal default like
-// 15 doesn't narrow the pref type to `15`.
 export type LayoutPrefs = {
   [K in LayoutPrefKey]: (typeof LAYOUT_PREFS)[K] extends LayoutPref<infer T> ? T : never;
 };
 
 const LAYOUT_PREF_KEYS = Object.keys(LAYOUT_PREFS) as LayoutPrefKey[];
-
-// ── Read / resolve / write ────────────────────────────────────────────────────
 
 function parseCookies(header?: string | null): Record<string, string> {
   if (!header) return {};
@@ -132,12 +117,10 @@ export function resolveLayoutPrefs(prefs: Partial<LayoutPrefs>): LayoutPrefs {
   return resolved as LayoutPrefs;
 }
 
-export function buildLayoutCookie(name: string, value: string | number | boolean): string {
+function buildLayoutCookie(name: string, value: string | number | boolean): string {
   return `${name}=${String(value)}; Path=/; Max-Age=${LAYOUT_COOKIE_MAX_AGE}; SameSite=Lax`;
 }
 
-// Serialize one pref to its full `Set-Cookie` string via the registry codec. Used
-// by `useLayoutCookie` so a component persists a pref by name, not by wire format.
 export function serializeLayoutCookie<K extends LayoutPrefKey>(
   key: K,
   value: LayoutPrefs[K],

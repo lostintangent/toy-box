@@ -1,6 +1,6 @@
 import { defineTool } from "@github/copilot-sdk";
 import { z } from "zod";
-import { normalizeExtensions, writeCustomArtifact } from "@/functions/state/workspace";
+import { normalizeExtensions, registerArtifactKind } from "@/functions/state/workspace";
 
 // The contract a template must follow, embedded in the tool description so the model
 // only reads it when actually registering a kind (rather than paying for it in every
@@ -13,7 +13,7 @@ const TEMPLATE_CONTRACT = [
   "Guidelines: inline all CSS/JS (no local file references); handle malformed content gracefully; keep the whole viewer self-contained. Do not add a file watcher, fetch the file, or read query params — content always arrives via `onRender`.",
 ].join("\n");
 
-const registerArtifactKind = defineTool("register_artifact_kind", {
+const registerArtifactKindTool = defineTool("register_artifact_kind", {
   description:
     "Registers a custom artifact viewer ('kind') so that files with the given extension(s) open in a bespoke rendered view inside Toy Box, instead of the default Markdown/HTML handling. " +
     "Use this when the user asks to create or customize how a file type is displayed (e.g. 'render JSON files as a collapsible tree'). " +
@@ -64,14 +64,14 @@ const registerArtifactKind = defineTool("register_artifact_kind", {
       html: input.html,
     };
 
-    await writeCustomArtifact(kind);
+    await registerArtifactKind(kind);
 
     return JSON.stringify({
       registered: kind.name,
       extensions: kind.extensions,
-      note: "Open (or reopen) a matching file to view it with this kind.",
+      note: "Matching files now use this kind.",
     });
   },
 });
 
-export const artifactKindTools = [registerArtifactKind];
+export const artifactKindTools = [registerArtifactKindTool];

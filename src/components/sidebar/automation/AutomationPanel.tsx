@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { useHydrated } from "@tanstack/react-router";
-import { Loader2, Plus } from "lucide-react";
-import { AutomationDialog } from "@/components/config/automations/AutomationDialog";
+import { Plus } from "lucide-react";
+import { AutomationDialog } from "./AutomationDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,166 +13,96 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import type { SessionDirectoryOption } from "@/components/workspace/panes/session/location/directory/directoryOptions";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import {
-  type Automation,
-  type AutomationOptions,
-  type ModelConfiguration,
-  type ModelInfo,
-} from "@/types";
+import { type Automation, type AutomationOptions } from "@/types";
 import { AutomationListItem } from "./AutomationListItem";
 
-function AutomationPanelSkeleton() {
-  return (
-    <ul className="min-w-0 space-y-3 px-2 py-1">
-      <li>
-        <div className="min-w-0 flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1 space-y-2">
-            <Skeleton className="h-4 w-2/3" />
-            <div className="flex items-center gap-2">
-              <Skeleton className="h-3 w-1/3" />
-              <Skeleton className="h-3 w-1/4" />
-            </div>
-          </div>
-          <Skeleton className="h-7 w-7 rounded-md" />
-        </div>
-      </li>
-    </ul>
-  );
-}
-
-export interface AutomationPanelProps {
+type AutomationPanelProps = {
   automations: Automation[];
   isLoading: boolean;
-  models: ModelInfo[];
-  defaultModelConfiguration?: ModelConfiguration;
-  directoryOptions: SessionDirectoryOption[];
   isExpanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
-  activeSessionIds: string[];
-  unreadSessionIds: string[];
-  onSessionSelect: (sessionId: string | null, modifierKey?: boolean) => void;
+  openSessionIds: string[];
+  onSessionSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
   onCreateAutomation: (input: AutomationOptions) => Promise<void>;
   onUpdateAutomation: (input: AutomationOptions & { automationId: string }) => Promise<void>;
   onDeleteAutomation: (automationId: string) => Promise<void>;
   onRunAutomation: (automationId: string) => Promise<void>;
-  creatingAutomation?: boolean;
-  updatingAutomationId?: string | null;
-  deletingAutomationId?: string | null;
-  runningAutomationIds?: Set<string>;
-}
+  creatingAutomation: boolean;
+  updatingAutomationId: string | null;
+  deletingAutomationId: string | null;
+};
 
 type AutomationDialogState = { mode: "create" } | { mode: "edit"; automationId: string };
 
 export function AutomationPanel({
   automations,
   isLoading,
-  models,
-  defaultModelConfiguration,
-  directoryOptions,
   isExpanded,
   onExpandedChange,
-  activeSessionIds,
-  unreadSessionIds,
+  openSessionIds,
   onSessionSelect,
   onCreateAutomation,
   onUpdateAutomation,
   onDeleteAutomation,
   onRunAutomation,
-  creatingAutomation = false,
-  updatingAutomationId = null,
-  deletingAutomationId = null,
-  runningAutomationIds = new Set<string>(),
+  creatingAutomation,
+  updatingAutomationId,
+  deletingAutomationId,
 }: AutomationPanelProps) {
   const hydrated = useHydrated();
-  const automationCount = automations.length;
-
   const [dialogState, setDialogState] = useState<AutomationDialogState | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
-  const closeDialog = useCallback(() => {
+  function closeDialog() {
     setDialogState(null);
-  }, []);
+  }
 
-  const openCreateDialog = useCallback(() => {
+  function openCreateDialog() {
     setDialogState({ mode: "create" });
-  }, []);
+  }
 
-  const openEditDialog = useCallback((automation: Automation) => {
-    setDialogState({ mode: "edit", automationId: automation.id });
-  }, []);
+  function openEditDialog(automationId: string) {
+    setDialogState({ mode: "edit", automationId });
+  }
 
-  const handleDialogOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open) closeDialog();
-    },
-    [closeDialog],
-  );
-
-  const handleExpandedToggle = useCallback(() => {
+  function toggleExpanded() {
     const nextExpanded = !isExpanded;
-    if (!nextExpanded) {
-      closeDialog();
-    }
+    if (!nextExpanded) closeDialog();
     onExpandedChange(nextExpanded);
-  }, [closeDialog, isExpanded, onExpandedChange]);
+  }
 
-  const handleHeaderKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      handleExpandedToggle();
-    },
-    [handleExpandedToggle],
-  );
-
-  const isDialogOpen = dialogState !== null;
   const isEditing = dialogState?.mode === "edit";
   const dialogAutomationId = dialogState?.mode === "edit" ? dialogState.automationId : null;
-  const dialogTargetAutomation = useMemo(() => {
-    if (!dialogAutomationId) return null;
-    return automations.find((automation) => automation.id === dialogAutomationId) ?? null;
-  }, [automations, dialogAutomationId]);
+  const dialogTargetAutomation =
+    automations.find((automation) => automation.id === dialogAutomationId) ?? null;
+  const isDialogOpen = dialogState?.mode === "create" || dialogTargetAutomation !== null;
   const isDialogSubmitting = isEditing
-    ? dialogAutomationId !== null && updatingAutomationId === dialogAutomationId
+    ? updatingAutomationId === dialogAutomationId
     : creatingAutomation;
-  const deleteTargetAutomation = useMemo(
-    () => automations.find((automation) => automation.id === deleteTargetId) ?? null,
-    [automations, deleteTargetId],
-  );
-  const isDeletingTarget = deleteTargetId !== null && deletingAutomationId === deleteTargetId;
-
-  useEffect(() => {
-    if (dialogState?.mode !== "edit") return;
-    if (dialogTargetAutomation) return;
-    closeDialog();
-  }, [closeDialog, dialogState, dialogTargetAutomation]);
-
-  useEffect(() => {
-    if (deleteTargetId && !deleteTargetAutomation) {
-      setDeleteTargetId(null);
-    }
-  }, [deleteTargetAutomation, deleteTargetId]);
+  const deleteTargetAutomation =
+    automations.find((automation) => automation.id === deleteTargetId) ?? null;
 
   return (
     <div className="min-w-0 overflow-hidden border-t">
       <div
-        role="button"
-        tabIndex={0}
-        aria-label={isExpanded ? "Collapse automations" : "Expand automations"}
-        aria-expanded={isExpanded}
-        onClick={handleExpandedToggle}
-        onKeyDown={handleHeaderKeyDown}
         className={cn(
-          "flex items-center justify-between gap-2 px-3 py-2 bg-background cursor-pointer",
+          "flex items-center gap-2 bg-background px-3 py-2",
           isExpanded && "border-b border-border",
         )}
       >
-        <span className="section-heading">
-          Automations{automationCount > 0 ? ` (${automationCount})` : ""}
-        </span>
+        <button
+          type="button"
+          aria-label={isExpanded ? "Collapse automations" : "Expand automations"}
+          aria-expanded={isExpanded}
+          onClick={toggleExpanded}
+          className="min-w-0 flex-1 cursor-pointer text-left"
+        >
+          <span className="section-heading">
+            Automations{automations.length > 0 ? ` (${automations.length})` : ""}
+          </span>
+        </button>
 
         {isExpanded && (
           <Button
@@ -180,10 +110,7 @@ export function AutomationPanel({
             variant="ghost"
             className="h-6 w-6"
             aria-label="Add automation"
-            onClick={(event) => {
-              event.stopPropagation();
-              openCreateDialog();
-            }}
+            onClick={openCreateDialog}
           >
             <Plus className="h-4 w-4" />
           </Button>
@@ -211,22 +138,12 @@ export function AutomationPanel({
             ) : (
               <ul className="max-h-52 min-w-0 space-y-2 overflow-y-auto pr-1">
                 {automations.map((automation) => {
-                  const isSelected = Boolean(
-                    automation.lastRunSessionId &&
-                    activeSessionIds.includes(automation.lastRunSessionId),
-                  );
-                  const isUnread = Boolean(
-                    automation.lastRunSessionId &&
-                    unreadSessionIds.includes(automation.lastRunSessionId),
-                  );
-
+                  const isSelected = openSessionIds.includes(automation.id);
                   return (
                     <li key={automation.id}>
                       <AutomationListItem
                         automation={automation}
                         isSelected={isSelected}
-                        isRunning={runningAutomationIds.has(automation.id)}
-                        isUnread={isUnread}
                         isDeleting={deletingAutomationId === automation.id}
                         isUpdating={updatingAutomationId === automation.id}
                         onOpenSession={(sessionId) => onSessionSelect(sessionId, false)}
@@ -234,7 +151,7 @@ export function AutomationPanel({
                           void onRunAutomation(automation.id);
                         }}
                         onEdit={() => {
-                          openEditDialog(automation);
+                          openEditDialog(automation.id);
                         }}
                         onDelete={() => {
                           setDeleteTargetId(automation.id);
@@ -253,17 +170,16 @@ export function AutomationPanel({
         open={isDialogOpen}
         mode={dialogState?.mode ?? "create"}
         automation={dialogTargetAutomation}
-        models={models}
-        defaultModelConfiguration={defaultModelConfiguration ?? null}
-        directoryOptions={directoryOptions}
         isSubmitting={isDialogSubmitting}
-        onOpenChange={handleDialogOpenChange}
+        onOpenChange={(open) => {
+          if (!open) closeDialog();
+        }}
         onCreateAutomation={onCreateAutomation}
         onUpdateAutomation={onUpdateAutomation}
       />
 
       <AlertDialog
-        open={deleteTargetId !== null}
+        open={deleteTargetAutomation !== null}
         onOpenChange={(open) => {
           if (!open) {
             setDeleteTargetId(null);
@@ -274,27 +190,45 @@ export function AutomationPanel({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete automation?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes {deleteTargetAutomation?.title ?? "the automation"} schedule. Existing
-              sessions remain.
+              This removes {deleteTargetAutomation?.title ?? "the automation"}, its schedule, and
+              its session.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={isDeletingTarget || !deleteTargetId}
+              disabled={!deleteTargetAutomation}
               onClick={() => {
-                if (!deleteTargetId) return;
-                void onDeleteAutomation(deleteTargetId);
+                if (!deleteTargetAutomation) return;
+                void onDeleteAutomation(deleteTargetAutomation.id);
                 setDeleteTargetId(null);
               }}
             >
-              {isDeletingTarget && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function AutomationPanelSkeleton() {
+  return (
+    <ul className="min-w-0 space-y-3 px-2 py-1">
+      <li>
+        <div className="min-w-0 flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-4 w-2/3" />
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-3 w-1/3" />
+              <Skeleton className="h-3 w-1/4" />
+            </div>
+          </div>
+          <Skeleton className="h-7 w-7 rounded-md" />
+        </div>
+      </li>
+    </ul>
   );
 }

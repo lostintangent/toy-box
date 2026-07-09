@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import { initializeSessionStateFromSdkHistory } from "@/functions/sdk/historyReplay";
+import { replaySdkHistory } from "@/functions/sdk/historyReplay";
 import type { Session } from "@/lib/session/sessionReducer";
 import { loadSessionFixture } from "./helpers";
 
@@ -11,7 +11,7 @@ import { loadSessionFixture } from "./helpers";
 // projection, which has its own unit suite (projector.test.ts).
 
 const replayHistory = (events: SdkSessionEvent[]) =>
-  initializeSessionStateFromSdkHistory("history-replay-session", events);
+  replaySdkHistory("history-replay-session", events);
 
 function assistantToolCalls(state: Session) {
   return state.messages.flatMap((message) =>
@@ -39,7 +39,7 @@ describe("history replay", () => {
         },
       ],
     });
-    expect(state.modelConfiguration).toMatchObject({ model: "gpt-5.5", reasoningEffort: "xhigh" });
+    expect(state.model).toMatchObject({ name: "gpt-5.5", reasoningEffort: "xhigh" });
     expect(agents).toHaveLength(7);
     expect(
       agents
@@ -148,7 +148,7 @@ describe("history replay", () => {
       { type: "session.model_change", data: { newModel: "claude-sonnet-4.6" } },
     ] as SdkSessionEvent[]);
 
-    expect(state.modelConfiguration).toEqual({ model: "claude-sonnet-4.6" });
+    expect(state.model).toEqual({ name: "claude-sonnet-4.6" });
   });
 
   test("normalizes apply_patch string arguments and preserves detailed diffs", async () => {

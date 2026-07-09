@@ -1,33 +1,27 @@
-// Server function definitions for session management
-// These are the RPC boundary — safe to import from anywhere
+// Server function implementations for session management. The shared request
+// protocol lives in "@/lib/session/protocol".
 
 import { createMiddleware, createServerFn } from "@tanstack/react-start";
 import { RawStream } from "@tanstack/router-core";
 import { zodValidator } from "@tanstack/zod-adapter";
-import { z } from "zod";
-import { listAllSessions, listAvailableModels } from "./sdk/client";
-import * as sessionRegistry from "./state/sessionRegistry";
-import { loadSessionSnapshot } from "./state/snapshotCache";
+import { listModels as listSdkModels, listSessions as listSdkSessions } from "./sdk/client";
+import * as sessionRegistry from "./state/session/registry";
+import { loadSessionSnapshot } from "./state/session/snapshots";
+import { clearDraftPrompt, createPendingInboxEntry, deleteInboxEntry } from "./state/workspace";
+import { getInboxEntry } from "./state/workspace/inbox";
 import {
-  applyWorkspaceAction,
-  clearDraftPrompt,
-  getWorkspaceState as readWorkspaceState,
-  loadCustomArtifacts,
-  sweepExpiredDrafts,
-} from "./state/workspace";
-import {
+  applySessionWorktree as applyWorktree,
   getAllSessionWorktrees,
-  getSessionWorktree,
-  deleteSessionWorktree,
-} from "./state/worktreeMetadata";
-import { getChildSessionIds } from "./state/childSessions";
-import { deliverSessionMessage, SessionStream, connectClientStream } from "./runtime/stream";
+  mergeSessionWorktree as mergeWorktree,
+} from "./state/session/worktrees";
+import { getChildSessionIds } from "./state/session/children";
 import {
-  cleanupWorktree,
-  mergeWorktreeBranch,
-  applyWorktreeBranch,
-  detectGitRoot,
-} from "./worktrees";
+  createSession as createRuntimeSession,
+  deliverSessionMessage,
+  SessionStream,
+  streamSession as streamSessionEvents,
+} from "./runtime/stream";
+import type { SessionStreamCompletion } from "./runtime/stream";
 import type {
   ModelInfo,
   SessionEvent,
@@ -36,112 +30,18 @@ import type {
   SessionSnapshot,
   SessionWorktree,
 } from "@/types";
-import type { WorkspaceState } from "@/lib/workspace/state";
-import { agentNotificationSchema } from "@/lib/session/agentNotifications";
+import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 import { toSessionSnapshot } from "@/lib/session/sessionReducer";
 import { encodeSessionEvent } from "@/lib/session/streamCodec";
-import { modelConfigurationSchema } from "@/lib/modelConfiguration";
-import { SESSION_ID_PREFIX } from "@/lib/session/constants";
-
-// ============================================================================
-// Input Schemas (Zod)
-// ============================================================================
-
-const sessionInputSchema = z.object({
-  sessionId: z.string(),
-});
-
-const renameSessionInputSchema = z.object({
-  sessionId: z.string(),
-  name: z.string().trim().min(1).max(100),
-});
-
-const streamInputSchema = z.object({
-  sessionId: z.string(),
-  prompt: z.string().optional(),
-  clientMessageId: z.string().optional(),
-  afterEventId: z.number().int().nonnegative().optional(),
-  attachments: z
-    .array(
-      z.object({
-        displayName: z.string(),
-        mimeType: z.string(),
-        base64: z.string(),
-      }),
-    )
-    .optional(),
-  // For draft sessions: create the session on first message instead of resuming
-  startNew: z.boolean().optional(),
-  modelConfiguration: modelConfigurationSchema.optional(),
-  directory: z.string().optional(),
-  useWorktree: z.boolean().optional(),
-});
-
-const deliverMessageInputSchema = z.object({
-  sessionId: z.string(),
-  content: z.string(),
-  clientMessageId: z.string().optional(),
-  modelConfiguration: modelConfigurationSchema.optional(),
-  attachments: z
-    .array(
-      z.object({
-        displayName: z.string(),
-        mimeType: z.string(),
-        base64: z.string(),
-      }),
-    )
-    .optional(),
-});
-
-const notifyAgentInputSchema = z.object({
-  sessionId: z.string(),
-  notification: agentNotificationSchema,
-});
-
-const cancelQueuedInputSchema = z.object({
-  sessionId: z.string(),
-  queuedMessageId: z.string(),
-});
-
-const draftSessionSchema = z.object({
-  sessionId: z.string().startsWith(SESSION_ID_PREFIX),
-  createdAt: z.number(),
-  updatedAt: z.number(),
-});
-
-const draftPromptSchema = z.object({
-  text: z.string().max(64 * 1024),
-  updatedAt: z.number(),
-  origin: z.string().min(1).max(128),
-});
-
-const workspaceActionSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("session.draft.created"),
-    draft: draftSessionSchema,
-  }),
-  z.object({
-    type: z.literal("session.draft.discarded"),
-    sessionId: z.string(),
-  }),
-  z.object({
-    type: z.literal("session.prompt.drafted"),
-    sessionId: z.string(),
-    prompt: draftPromptSchema,
-  }),
-  z.object({
-    type: z.literal("session.hyper.created"),
-    sessionId: z.string(),
-  }),
-  z.object({
-    type: z.literal("session.hyper.promoted"),
-    sessionId: z.string(),
-  }),
-  z.object({
-    type: z.literal("session.read"),
-    sessionId: z.string(),
-  }),
-]);
+import {
+  cancelQueuedInputSchema,
+  createSessionInputSchema,
+  deliverMessageInputSchema,
+  notifyAgentInputSchema,
+  renameSessionInputSchema,
+  sessionInputSchema,
+  streamSessionRequestSchema,
+} from "@/lib/session/protocol";
 
 // ============================================================================
 // Middleware
@@ -166,7 +66,7 @@ export type SessionsState = {
 export const getSessionsState = createServerFn({ method: "GET" }).handler(
   async (): Promise<SessionsState> => {
     const [sessions, worktrees, childSessionIds] = await Promise.all([
-      listAllSessions(),
+      listSdkSessions(),
       getAllSessionWorktrees(),
       getChildSessionIds(),
     ]);
@@ -179,27 +79,10 @@ export const getSessionsState = createServerFn({ method: "GET" }).handler(
   },
 );
 
-export const getWorkspaceState = createServerFn({ method: "GET" }).handler(
-  async (): Promise<WorkspaceState> => {
-    sweepExpiredDrafts();
-    const customArtifacts = await loadCustomArtifacts();
-    return readWorkspaceState({
-      runningSessionIds: SessionStream.getRunningSessionIds(),
-      customArtifacts,
-    });
-  },
-);
-
-export const dispatchWorkspaceAction = createServerFn({ method: "POST" })
-  .validator(zodValidator(workspaceActionSchema))
-  .handler(async ({ data }): Promise<void> => {
-    applyWorkspaceAction(data);
-  });
-
 /** List available models */
 export const listModels = createServerFn({ method: "GET" }).handler(
   async (): Promise<ModelInfo[]> => {
-    return listAvailableModels();
+    return listSdkModels();
   },
 );
 
@@ -252,30 +135,67 @@ function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): Readable
   });
 }
 
-export const connectSessionStream = createServerFn({ method: "POST" })
-  .validator(zodValidator(streamInputSchema))
+export const streamSession = createServerFn({ method: "POST" })
+  .validator(zodValidator(streamSessionRequestSchema))
   .handler(async ({ data }) => {
-    const iterator = connectClientStream({
-      ...data,
-      onDelivered: () => clearDraftPrompt(data.sessionId),
-    });
+    const iterator = streamSessionEvents(data);
     return new RawStream(createEventByteStream(iterator), { hint: "text" });
   });
+
+/** Create a session and run its first turn without any client stream attached.
+ *  Clients observe progress through the broadcast plane alone (upsert →
+ *  running → idle/unread), the same way automation and agent-spawned sessions
+ *  surface. Resolves once the turn has opened, not when it completes. */
+export const createSession = createServerFn({ method: "POST" })
+  .validator(zodValidator(createSessionInputSchema))
+  .handler(async ({ data }): Promise<{ sessionId: string }> => {
+    const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
+    if (data.background) await createPendingInboxEntry(sessionId);
+
+    let receipt;
+    try {
+      receipt = await createRuntimeSession(sessionId, data.message, {
+        directory: data.directory,
+        useWorktree: data.useWorktree,
+        sessionType: data.background ? "inbox" : "standard",
+      });
+    } catch (error) {
+      if (data.background) await deleteFailedInboxSession(sessionId);
+      throw error;
+    }
+
+    if (data.background) {
+      void finishInboxSession(sessionId, receipt.waitForCompletion).catch((error) => {
+        console.error(`Failed to finish inbox session ${sessionId}:`, error);
+      });
+    }
+    return { sessionId };
+  });
+
+async function finishInboxSession(
+  sessionId: string,
+  waitForCompletion: () => Promise<SessionStreamCompletion>,
+): Promise<void> {
+  const completion = await waitForCompletion();
+  if (completion.status !== "completed") return;
+
+  const entry = await getInboxEntry(sessionId);
+  if (!entry || entry.message !== undefined) return;
+
+  await sessionRegistry.deleteSessionIfExists(sessionId);
+  await deleteInboxEntry(sessionId);
+}
+
+async function deleteFailedInboxSession(sessionId: string): Promise<void> {
+  await sessionRegistry.deleteSessionIfExists(sessionId).catch(console.error);
+  await deleteInboxEntry(sessionId).catch(console.error);
+}
 
 /** Deliver a follow-up message. The runtime decides whether it sends now or queues. */
 export const deliverMessage = createServerFn({ method: "POST" })
   .validator(zodValidator(deliverMessageInputSchema))
-  .handler(async ({ data }): Promise<{ disposition: "sent" | "queued" }> => {
-    const receipt = await deliverSessionMessage({
-      sessionId: data.sessionId,
-      message: {
-        id: data.clientMessageId ?? crypto.randomUUID(),
-        role: "user",
-        content: data.content,
-        attachments: data.attachments,
-        modelConfiguration: data.modelConfiguration,
-      },
-    });
+  .handler(async ({ data }): Promise<{ disposition: "started" | "queued" }> => {
+    const receipt = await deliverSessionMessage(data.sessionId, data.message);
     clearDraftPrompt(data.sessionId);
     return { disposition: receipt.disposition };
   });
@@ -285,13 +205,8 @@ export const deliverMessage = createServerFn({ method: "POST" })
 export const notifyAgent = createServerFn({ method: "POST" })
   .validator(zodValidator(notifyAgentInputSchema))
   .handler(async ({ data }): Promise<void> => {
-    await deliverSessionMessage({
-      sessionId: data.sessionId,
-      message: {
-        id: crypto.randomUUID(),
-        role: "agent_notification",
-        notification: data.notification,
-      },
+    await deliverSessionMessage(data.sessionId, {
+      notification: data.notification,
     });
   });
 
@@ -331,39 +246,12 @@ export const renameSession = createServerFn({ method: "POST" })
     return true;
   });
 
-/**
- * Resolve and validate a worktree session's metadata + git root, then run the
- * given callback. Successful operations clean up the worktree automatically;
- * failures throw so the client can treat them as unresolved conflicts.
- */
-async function withWorktreeSession(
-  sessionId: string,
-  action: (gitRoot: string, info: { branch: string; baseBranch: string }) => Promise<void>,
-): Promise<void> {
-  const worktree = await getSessionWorktree(sessionId);
-  if (!worktree) return;
-
-  const gitRoot = await detectGitRoot(worktree.path);
-  if (!gitRoot) return;
-
-  await action(gitRoot, {
-    branch: worktree.branch,
-    baseBranch: worktree.baseBranch,
-  });
-
-  await cleanupWorktree({
-    path: worktree.path,
-    branch: worktree.branch,
-  }).catch(console.error);
-  await deleteSessionWorktree(sessionId);
-}
-
 /** Merge a worktree session's changes back into its base branch */
 export const mergeSessionWorktree = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(async ({ data }) => withWorktreeSession(data.sessionId, mergeWorktreeBranch));
+  .handler(async ({ data }) => mergeWorktree(data.sessionId));
 
 /** Apply a worktree session's changes to its base branch as uncommitted modifications */
 export const applySessionWorktree = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(async ({ data }) => withWorktreeSession(data.sessionId, applyWorktreeBranch));
+  .handler(async ({ data }) => applyWorktree(data.sessionId));

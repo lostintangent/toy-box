@@ -1,7 +1,7 @@
 import { getPathDirname } from "@/lib/paths";
 
-/** Build a route URL for an artifact path relative to the session files directory. */
-export function createSessionArtifactRouteUrl(
+/** Build a route URL for an artifact path owned by a session. */
+export function createArtifactRouteUrl(
   routePrefix: string,
   sessionId: string,
   path: string,
@@ -12,7 +12,7 @@ export function createSessionArtifactRouteUrl(
 }
 
 /** Build a trailing-slash route base URL for resolving sibling artifact embeds. */
-export function createSessionArtifactRouteBaseUrl(
+export function createArtifactRouteBaseUrl(
   routePrefix: string,
   sessionId: string,
   path: string,

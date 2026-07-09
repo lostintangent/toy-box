@@ -47,6 +47,7 @@ describe("automation simple schedule helpers", () => {
     expect(cronToSimpleSchedule("*/5 * * * *")).toBeNull();
     expect(cronToSimpleSchedule("0 9 1 * *")).toBeNull();
     expect(cronToSimpleSchedule("15 */4 * * *")).toBeNull();
+    expect(cronToSimpleSchedule("0 9 * * constructor")).toBeNull();
   });
 
   test("normalizes simple schedule bounds", () => {

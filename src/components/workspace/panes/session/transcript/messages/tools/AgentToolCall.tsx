@@ -15,7 +15,7 @@ export function AgentToolCall({ toolCall, ...props }: ToolCallProps) {
   const label = description ? `${agentLabel}: ${description}` : agentLabel;
 
   const isBackground = toolCall.arguments.mode === "background";
-  const model = toolCall.agent?.modelConfiguration?.model;
+  const model = toolCall.agent?.model?.name;
   const agentContent = toolCall.agent?.content;
   const reasoningContent = toolCall.agent?.reasoningContent;
   const agentToolCalls = toolCall.agent?.toolCalls;

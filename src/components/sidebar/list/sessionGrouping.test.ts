@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionMetadata } from "@/types";
-import { buildSessionListEntries, getSessionTimeBucket } from "./sessionGrouping";
+import { groupSessionsByTime } from "./sessionGrouping";
 
 function createSession(sessionId: string, modifiedTime: Date): SessionMetadata {
   return {
@@ -16,127 +16,105 @@ function localDate(year: number, month: number, day: number, hour = 12): Date {
   return new Date(year, month - 1, day, hour, 0, 0, 0);
 }
 
-describe("session grouping", () => {
-  test("returns no entries for an empty list", () => {
-    expect(buildSessionListEntries([], localDate(2026, 2, 20, 14))).toEqual([]);
+function summarizeGroups(groups: ReturnType<typeof groupSessionsByTime>) {
+  return groups.map((group) => ({
+    label: group.label,
+    sessions: group.sessions.map((session) => session.sessionId),
+  }));
+}
+
+describe("session time groups", () => {
+  test("returns no groups for an empty list", () => {
+    expect(groupSessionsByTime([], localDate(2026, 2, 20, 14))).toEqual([]);
   });
 
-  test("does not insert headings for today sessions", () => {
+  test("keeps today's sessions together without a heading", () => {
     const now = localDate(2026, 2, 20, 14);
-    const sessions = [
-      createSession("s1", localDate(2026, 2, 20, 13)),
-      createSession("s2", localDate(2026, 2, 20, 9)),
-    ];
 
-    const entries = buildSessionListEntries(sessions, now);
-
-    expect(entries.map((entry) => entry.type)).toEqual(["session", "session"]);
-  });
-
-  test("inserts headings at bucket transitions after today", () => {
-    const now = localDate(2026, 2, 20, 14);
-    const sessions = [
-      createSession("today", localDate(2026, 2, 20, 10)),
-      createSession("yesterday", localDate(2026, 2, 19, 18)),
-      createSession("this-week", localDate(2026, 2, 17, 12)),
-      createSession("this-month", localDate(2026, 2, 3, 12)),
-      createSession("older", localDate(2026, 1, 28, 12)),
-    ];
-
-    const entries = buildSessionListEntries(sessions, now);
-
-    expect(entries.map((entry) => entry.type)).toEqual([
-      "session",
-      "heading",
-      "session",
-      "heading",
-      "session",
-      "heading",
-      "session",
-      "heading",
-      "session",
-    ]);
     expect(
-      entries
-        .filter((entry) => entry.type === "heading")
-        .map((entry) =>
-          entry.type === "heading"
-            ? {
-                label: entry.label,
-                count: entry.count,
-              }
-            : null,
+      summarizeGroups(
+        groupSessionsByTime(
+          [
+            createSession("s1", localDate(2026, 2, 20, 13)),
+            createSession("s2", localDate(2026, 2, 20, 9)),
+          ],
+          now,
         ),
+      ),
+    ).toEqual([{ label: undefined, sessions: ["s1", "s2"] }]);
+  });
+
+  test("groups older sessions under progressively broader headings", () => {
+    const now = localDate(2026, 2, 20, 14);
+
+    expect(
+      summarizeGroups(
+        groupSessionsByTime(
+          [
+            createSession("today", localDate(2026, 2, 20, 10)),
+            createSession("yesterday", localDate(2026, 2, 19, 18)),
+            createSession("this-week", localDate(2026, 2, 17, 12)),
+            createSession("this-month", localDate(2026, 2, 3, 12)),
+            createSession("older", localDate(2026, 1, 28, 12)),
+          ],
+          now,
+        ),
+      ),
     ).toEqual([
-      { label: "Yesterday", count: 1 },
-      { label: "This Week", count: 1 },
-      { label: "This Month", count: 1 },
-      { label: "Older", count: 1 },
+      { label: undefined, sessions: ["today"] },
+      { label: "Yesterday", sessions: ["yesterday"] },
+      { label: "This Week", sessions: ["this-week"] },
+      { label: "This Month", sessions: ["this-month"] },
+      { label: "Older", sessions: ["older"] },
     ]);
   });
 
-  test("inserts a heading before the first non-today bucket", () => {
+  test("creates one group per contiguous time segment", () => {
     const now = localDate(2026, 2, 20, 14);
-    const sessions = [
-      createSession("yesterday", localDate(2026, 2, 19, 10)),
-      createSession("this-week", localDate(2026, 2, 17, 10)),
-    ];
 
-    const entries = buildSessionListEntries(sessions, now);
-
-    expect(entries[0]).toMatchObject({
-      type: "heading",
-      label: "Yesterday",
-      bucket: "yesterday",
-    });
-  });
-
-  test("adds one heading per contiguous bucket segment", () => {
-    const now = localDate(2026, 2, 20, 14);
-    const sessions = [
-      createSession("yesterday-a", localDate(2026, 2, 19, 21)),
-      createSession("yesterday-b", localDate(2026, 2, 19, 9)),
-      createSession("this-week-a", localDate(2026, 2, 18, 17)),
-      createSession("this-week-b", localDate(2026, 2, 17, 8)),
-    ];
-
-    const entries = buildSessionListEntries(sessions, now);
-    const headings = entries
-      .filter((entry) => entry.type === "heading")
-      .map((entry) =>
-        entry.type === "heading"
-          ? {
-              label: entry.label,
-              count: entry.count,
-            }
-          : null,
-      );
-
-    expect(headings).toEqual([
-      { label: "Yesterday", count: 2 },
-      { label: "This Week", count: 2 },
-    ]);
-    expect(entries.map((entry) => entry.type)).toEqual([
-      "heading",
-      "session",
-      "session",
-      "heading",
-      "session",
-      "session",
+    expect(
+      summarizeGroups(
+        groupSessionsByTime(
+          [
+            createSession("yesterday-a", localDate(2026, 2, 19, 21)),
+            createSession("yesterday-b", localDate(2026, 2, 19, 9)),
+            createSession("this-week-a", localDate(2026, 2, 18, 17)),
+            createSession("this-week-b", localDate(2026, 2, 17, 8)),
+          ],
+          now,
+        ),
+      ),
+    ).toEqual([
+      { label: "Yesterday", sessions: ["yesterday-a", "yesterday-b"] },
+      { label: "This Week", sessions: ["this-week-a", "this-week-b"] },
     ]);
   });
 
-  test("classifies month and older boundaries deterministically", () => {
-    const now = localDate(2026, 2, 20, 14);
+  test("uses calendar-month and rolling-seven-day boundaries", () => {
+    const lateMonth = localDate(2026, 2, 20, 14);
+    expect(
+      summarizeGroups(
+        groupSessionsByTime(
+          [
+            createSession("month", localDate(2026, 2, 1, 0)),
+            createSession("older", localDate(2026, 1, 31, 23)),
+          ],
+          lateMonth,
+        ),
+      ).map((group) => group.label),
+    ).toEqual(["This Month", "Older"]);
 
-    expect(getSessionTimeBucket(localDate(2026, 2, 1, 0), now)).toBe("thisMonth");
-    expect(getSessionTimeBucket(localDate(2026, 1, 31, 23), now)).toBe("older");
-  });
-
-  test("uses a rolling last-7-days window for this week", () => {
-    const now = localDate(2026, 2, 6, 14);
-
-    expect(getSessionTimeBucket(localDate(2026, 1, 31, 12), now)).toBe("thisWeek");
-    expect(getSessionTimeBucket(localDate(2026, 1, 29, 12), now)).toBe("older");
+    const earlyMonth = localDate(2026, 2, 6, 14);
+    expect(
+      summarizeGroups(
+        groupSessionsByTime(
+          [
+            createSession("week", localDate(2026, 1, 31, 12)),
+            createSession("older", localDate(2026, 1, 29, 12)),
+          ],
+          earlyMonth,
+        ),
+      ).map((group) => group.label),
+    ).toEqual(["This Week", "Older"]);
   });
 });

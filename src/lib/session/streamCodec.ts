@@ -52,3 +52,31 @@ export async function* decodeSessionEvents(
     reader.releaseLock();
   }
 }
+
+/** Consume decoded events until the stream ends or this subscriber aborts.
+ *  Returns whether at least one event reached the consumer. */
+export async function consumeSessionEvents(
+  stream: ReadableStream<Uint8Array>,
+  {
+    signal,
+    onEvent,
+    onFirstEvent,
+  }: {
+    signal: AbortSignal;
+    onEvent: (event: SessionEvent) => void;
+    onFirstEvent?: () => void;
+  },
+): Promise<boolean> {
+  let receivedEvent = false;
+
+  for await (const event of decodeSessionEvents(stream)) {
+    if (signal.aborted) break;
+    if (!receivedEvent) {
+      receivedEvent = true;
+      onFirstEvent?.();
+    }
+    onEvent(event);
+  }
+
+  return receivedEvent;
+}

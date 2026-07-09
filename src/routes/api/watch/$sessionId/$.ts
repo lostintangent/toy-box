@@ -21,7 +21,8 @@ async function statWatchedFile(absolutePath: string): Promise<FileWatchEvent> {
 }
 
 async function createWatchResponse(params: WatchRouteParams, request: Request): Promise<Response> {
-  const { absolutePath, error } = await resolveArtifactRequest(params.sessionId, params._splat);
+  const { sessionId, _splat } = params;
+  const { absolutePath, error } = await resolveArtifactRequest(sessionId, _splat);
   if (error) return error;
 
   return createSseResponse<FileWatchEvent>(request, async (send, close) => {

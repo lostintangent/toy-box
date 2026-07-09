@@ -1,601 +1,290 @@
-import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import type {
-  Automation,
-  AutomationsUpdateEvent,
-  ModelConfiguration,
-  QueuedMessage,
-} from "@/types";
-import type { AutomationDatabase } from "./database";
-import type { AutomationSchedulerDependencies } from "./scheduler";
+import type { Database } from "db0";
+import {
+  afterAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  onTestFinished,
+  setSystemTime,
+  spyOn,
+  test,
+} from "bun:test";
+import * as databaseModule from "@/functions/state/database";
+import * as sessionRegistryModule from "@/functions/state/session/registry";
+import * as streamModule from "@/functions/runtime/stream";
+import * as broadcastModule from "@/functions/runtime/broadcast";
+import type { Automation, AutomationEvent, AutomationOptions } from "@/types";
+import { AutomationDatabase } from "./database";
 
-type CreateSessionOptions = {
-  modelConfiguration?: ModelConfiguration;
-  directory?: string;
-  automationId?: string;
-};
-type DeliverSessionMessageOptions = {
-  sessionId: string;
-  message: QueuedMessage;
-};
-type MockCallReader<Args extends readonly unknown[]> = {
-  mock: {
-    calls: ReadonlyArray<Args>;
-  };
-};
+const realDatabaseModule = { ...databaseModule };
+const realSessionRegistryModule = { ...sessionRegistryModule };
+const realStreamModule = { ...streamModule };
+const realBroadcastModule = { ...broadcastModule };
 
-function createAutomation(overrides: Partial<Automation> = {}): Automation {
-  return {
-    id: overrides.id ?? "automation-1",
-    title: overrides.title ?? "Daily summary",
-    prompt: overrides.prompt ?? "Summarize repository status.",
-    modelConfiguration: overrides.modelConfiguration ?? { model: "gpt-5" },
-    cron: overrides.cron ?? "0 9 * * *",
-    reuseSession: overrides.reuseSession ?? true,
-    cwd: overrides.cwd,
-    createdAt: overrides.createdAt ?? "2026-02-14T10:00:00.000Z",
-    updatedAt: overrides.updatedAt ?? "2026-02-14T10:00:00.000Z",
-    nextRunAt: overrides.nextRunAt ?? "2026-02-15T09:00:00.000Z",
-    lastRunAt: overrides.lastRunAt,
-    lastRunSessionId: "lastRunSessionId" in overrides ? overrides.lastRunSessionId : "session-1",
-  };
-}
+type CreateSession = typeof streamModule.createSession;
+type CreationArguments = Parameters<CreateSession>;
+type CreationReceipt = Awaited<ReturnType<CreateSession>>;
 
-async function flushAsyncEffects(): Promise<void> {
-  await Bun.sleep(1);
-}
+let appDatabase: Database;
+let automationDatabase: AutomationDatabase;
+let create: (...args: CreationArguments) => Promise<CreationReceipt>;
+let removeSession: typeof sessionRegistryModule.deleteSessionIfExists;
+const runningSessionIds = new Set<string>();
 
-function createDeliveryMock() {
-  let resolveCompletion!: (result: { response?: string; error?: string }) => void;
-  const completionPromise = new Promise<{ response?: string; error?: string }>((resolve) => {
-    resolveCompletion = resolve;
-  });
-  const deliverSessionMessageMock = mock(async (options: DeliverSessionMessageOptions) => ({
-    sessionId: options.sessionId,
-    disposition: "sent" as const,
-    completion: () => completionPromise,
-  }));
-  return {
-    deliverSessionMessageMock,
-    complete: (result: { response?: string; error?: string } = {}) => resolveCompletion(result),
-  };
-}
+const createSessionMock = mock((...args: CreationArguments) => create(...args));
+const deleteSessionIfExistsMock = mock((sessionId: string) => removeSession(sessionId));
+const emitAutomationEventMock = mock((_event: AutomationEvent) => {});
 
-function mockCreateSession() {
-  return mock(
-    async (_sessionId: string, _options?: CreateSessionOptions) =>
-      ({}) as Awaited<ReturnType<AutomationSchedulerDependencies["createSession"]>>,
-  );
-}
-
-function readEmittedAutomationEvents(
-  emitAutomationsUpdateMock: MockCallReader<readonly [AutomationsUpdateEvent]>,
-): AutomationsUpdateEvent[] {
-  return emitAutomationsUpdateMock.mock.calls.map(([event]) => event);
-}
-
-function expectPersistedLastRunSession(
-  updateLastRunSessionIdMock: MockCallReader<readonly [string, string]>,
-  automationId: string,
-  sessionId: string,
-): void {
-  expect(updateLastRunSessionIdMock.mock.calls).toEqual([[automationId, sessionId]]);
-}
-
-function expectRecordedLastRun(
-  updateLastRunMock: MockCallReader<readonly [string, Date, string]>,
-  automationId: string,
-  sessionId: string,
-): void {
-  expect(updateLastRunMock.mock.calls).toHaveLength(1);
-  const [calledAutomationId, runDate, calledSessionId] = updateLastRunMock.mock.calls[0]!;
-  expect(calledAutomationId).toBe(automationId);
-  expect(runDate).toEqual(expect.any(Date));
-  expect(calledSessionId).toBe(sessionId);
-}
-
-function expectStartedAutomationEvent(
-  event: AutomationsUpdateEvent | undefined,
-  automationId: string,
-  sessionId: string,
-): void {
-  expect(event).toEqual({
-    type: "automation.started",
-    automationId,
-    sessionId,
-    startedAt: expect.any(String),
-  });
-}
-
-function expectFinishedAutomationEvent(
-  event: AutomationsUpdateEvent | undefined,
-  options: {
-    automationId: string;
-    sessionId: string;
-    success: boolean;
-    automation?: Automation;
+mock.module("@/functions/state/database", () => ({
+  getAppDatabase: async () => appDatabase,
+}));
+mock.module("@/functions/state/session/registry", () => ({
+  deleteSessionIfExists: deleteSessionIfExistsMock,
+}));
+mock.module("@/functions/runtime/stream", () => ({
+  createSession: createSessionMock,
+  SessionStream: {
+    isRunning: (sessionId: string) => runningSessionIds.has(sessionId),
   },
-): void {
-  expect(event).toEqual({
-    type: "automation.finished",
-    automationId: options.automationId,
-    sessionId: options.sessionId,
-    finishedAt: expect.any(String),
-    success: options.success,
-    automation: options.automation,
-  });
-}
+}));
+mock.module("@/functions/runtime/broadcast", () => ({
+  emitAutomationEvent: emitAutomationEventMock,
+}));
 
-type AutomationDatabaseOverrides = Partial<
-  Pick<
-    AutomationDatabase,
-    | "list"
-    | "getById"
-    | "create"
-    | "update"
-    | "remove"
-    | "updateLastRunSessionId"
-    | "updateLastRun"
-    | "claimDue"
-  >
->;
+const { runSchedulerTick, startAutomationRun } = await import("./scheduler");
 
-function createFakeDb(overrides: AutomationDatabaseOverrides = {}): AutomationDatabase {
-  const fakeDb = {
-    list: overrides.list ?? (async () => []),
-    getById: overrides.getById ?? (async () => null),
-    create: overrides.create ?? (async () => createAutomation()),
-    update: overrides.update ?? (async () => null),
-    remove: overrides.remove ?? (async () => true),
-    updateLastRunSessionId: overrides.updateLastRunSessionId ?? (async () => {}),
-    updateLastRun: overrides.updateLastRun ?? (async () => {}),
-    claimDue: overrides.claimDue ?? (async () => []),
-  };
+afterAll(() => {
+  mock.module("@/functions/state/database", () => realDatabaseModule);
+  mock.module("@/functions/state/session/registry", () => realSessionRegistryModule);
+  mock.module("@/functions/runtime/stream", () => realStreamModule);
+  mock.module("@/functions/runtime/broadcast", () => realBroadcastModule);
+});
 
-  return fakeDb as unknown as AutomationDatabase;
-}
-
-async function loadScheduler(options: {
-  db: AutomationDatabase;
-  deleteSession?: AutomationSchedulerDependencies["deleteSession"];
-  createSession?: AutomationSchedulerDependencies["createSession"];
-  deliverSessionMessage?: AutomationSchedulerDependencies["deliverSessionMessage"];
-  updateSessionName?: AutomationSchedulerDependencies["updateSessionName"];
-  emitAutomationsUpdate?: AutomationSchedulerDependencies["emitAutomationsUpdate"];
-  isSessionRunning?: AutomationSchedulerDependencies["isSessionRunning"];
-}) {
-  const scheduler = await import("./scheduler");
-  const deps: AutomationSchedulerDependencies = {
-    createSession:
-      options.createSession ??
-      (async () => ({}) as Awaited<ReturnType<AutomationSchedulerDependencies["createSession"]>>),
-    deleteSession: options.deleteSession ?? (async () => {}),
-    deliverSessionMessage:
-      options.deliverSessionMessage ??
-      (async (deliveryOptions) => ({
-        sessionId: deliveryOptions.sessionId,
-        disposition: "sent" as const,
-        completion: async () => ({}),
-      })),
-    updateSessionName: options.updateSessionName ?? (() => {}),
-    emitAutomationsUpdate: options.emitAutomationsUpdate ?? (() => {}),
-    isSessionRunning: options.isSessionRunning ?? (() => false),
-  };
-
-  return {
-    ...scheduler,
-    runAutomation: (automationId: string) =>
-      scheduler.runAutomationWithDatabase(automationId, options.db, deps),
-  };
-}
-
-describe("automation scheduler", () => {
-  test("reuses the last session ID when reuseSession is true", async () => {
-    onTestFinished(() => {
-      mock.restore();
-    });
-
-    const automation = createAutomation({
-      id: "reuse-automation",
-      prompt: "run with reuse",
-      reuseSession: true,
-      lastRunSessionId: "session-reused",
-      cwd: "/repo/automation",
-    });
-    const deleteSessionMock = mock(async (_sessionId: string) => {});
-    const updateLastRunSessionIdMock = mock(
-      async (_automationId: string, _sessionId: string) => {},
-    );
-    const createSessionMock = mockCreateSession();
-    const updateSessionNameMock = mock((_sessionId: string, _summary: string) => {});
-    const { deliverSessionMessageMock } = createDeliveryMock();
-
-    const { runAutomation } = await loadScheduler({
-      db: createFakeDb({
-        getById: async () => automation,
-        updateLastRunSessionId: updateLastRunSessionIdMock,
-      }),
-      deleteSession: deleteSessionMock,
-      createSession: createSessionMock,
-      deliverSessionMessage: deliverSessionMessageMock,
-      updateSessionName: updateSessionNameMock,
-    });
-
-    const result = await runAutomation(automation.id);
-
-    expect(result).toEqual({ sessionId: "session-reused", started: true });
-    expect(deleteSessionMock).toHaveBeenCalledWith("session-reused");
-    expect(createSessionMock).toHaveBeenCalledWith("session-reused", {
-      modelConfiguration: {
-        model: "gpt-5",
-      },
-      directory: "/repo/automation",
-      automationId: automation.id,
-    });
-    expect(updateSessionNameMock).toHaveBeenCalledWith("session-reused", "Daily summary");
-    expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, "session-reused");
-    expect(deliverSessionMessageMock).toHaveBeenCalledTimes(1);
-    expect(deliverSessionMessageMock).toHaveBeenCalledWith({
-      sessionId: "session-reused",
-      message: expect.objectContaining({
-        role: "user",
-        content: "run with reuse",
-        modelConfiguration: automation.modelConfiguration,
-      }),
-    });
-  });
-
-  test("generates a new session ID when reuseSession is true but no prior session exists", async () => {
-    onTestFinished(() => {
-      mock.restore();
-    });
-
-    const automation = createAutomation({
-      id: "reuse-no-prior",
-      prompt: "first run",
-      reuseSession: true,
-      lastRunSessionId: undefined,
-    });
-    const updateLastRunSessionIdMock = mock(
-      async (_automationId: string, _sessionId: string) => {},
-    );
-    const createSessionMock = mockCreateSession();
-    const updateSessionNameMock = mock((_sessionId: string, _summary: string) => {});
-    const { deliverSessionMessageMock } = createDeliveryMock();
-
-    const { runAutomation } = await loadScheduler({
-      db: createFakeDb({
-        getById: async () => automation,
-        updateLastRunSessionId: updateLastRunSessionIdMock,
-      }),
-      createSession: createSessionMock,
-      deliverSessionMessage: deliverSessionMessageMock,
-      updateSessionName: updateSessionNameMock,
-    });
-
-    const result = await runAutomation(automation.id);
-
-    expect(createSessionMock).toHaveBeenCalledTimes(1);
-    const [createdSessionId, createOptions] = createSessionMock.mock.calls[0]!;
-    expect(createdSessionId).toStartWith("toy-box-auto-reuse-no-prior--run-");
-    expect(createOptions?.modelConfiguration).toEqual({
-      model: automation.modelConfiguration.model,
-    });
-    expect(createOptions?.automationId).toBe(automation.id);
-    expect(updateSessionNameMock).toHaveBeenCalledWith(createdSessionId, automation.title);
-    expect(result.sessionId).toBe(createdSessionId);
-    expect(result.started).toBe(true);
-    expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, createdSessionId);
-    expect(deliverSessionMessageMock).toHaveBeenCalledWith({
-      sessionId: createdSessionId,
-      message: expect.objectContaining({
-        role: "user",
-        content: "first run",
-        modelConfiguration: automation.modelConfiguration,
-      }),
-    });
-  });
-
-  test("does not delete or restart a reused session while it is still running", async () => {
-    onTestFinished(() => {
-      mock.restore();
-    });
-
-    const automation = createAutomation({
-      id: "already-running-automation",
-      reuseSession: true,
-      lastRunSessionId: "session-running",
-    });
-    const deleteSessionMock = mock(async (_sessionId: string) => {});
-    const updateLastRunSessionIdMock = mock(
-      async (_automationId: string, _sessionId: string) => {},
-    );
-    const createSessionMock = mockCreateSession();
-    const { deliverSessionMessageMock } = createDeliveryMock();
-    const emitAutomationsUpdateMock = mock((_event: AutomationsUpdateEvent) => {});
-
-    const { runAutomation } = await loadScheduler({
-      db: createFakeDb({
-        getById: async () => automation,
-        updateLastRunSessionId: updateLastRunSessionIdMock,
-      }),
-      deleteSession: deleteSessionMock,
-      createSession: createSessionMock,
-      deliverSessionMessage: deliverSessionMessageMock,
-      emitAutomationsUpdate: emitAutomationsUpdateMock,
-      isSessionRunning: (sessionId) => sessionId === "session-running",
-    });
-
-    const result = await runAutomation(automation.id);
-
-    expect(result).toEqual({ sessionId: "session-running", started: false });
-    expect(deleteSessionMock).toHaveBeenCalledTimes(0);
-    expect(createSessionMock).toHaveBeenCalledTimes(0);
-    expect(updateLastRunSessionIdMock).toHaveBeenCalledTimes(0);
-    expect(deliverSessionMessageMock).toHaveBeenCalledTimes(0);
-    expect(emitAutomationsUpdateMock).toHaveBeenCalledTimes(0);
-  });
-
-  test("passes optional reasoning effort when launching an automation", async () => {
-    onTestFinished(() => {
-      mock.restore();
-    });
-
-    const automation = createAutomation({
-      id: "reasoning-automation",
-      modelConfiguration: { model: "gpt-5", reasoningEffort: "high" },
-      reuseSession: false,
-      lastRunSessionId: undefined,
-    });
-    const createSessionMock = mockCreateSession();
-    const { deliverSessionMessageMock } = createDeliveryMock();
-
-    const { runAutomation } = await loadScheduler({
-      db: createFakeDb({
-        getById: async () => automation,
-        updateLastRunSessionId: async (_automationId: string, _sessionId: string) => {},
-      }),
-      createSession: createSessionMock,
-      deliverSessionMessage: deliverSessionMessageMock,
-    });
-
-    await runAutomation(automation.id);
-
-    const [, createOptions] = createSessionMock.mock.calls[0]!;
-    expect(createOptions?.modelConfiguration?.reasoningEffort).toBe("high");
-    expect(createOptions?.automationId).toBe(automation.id);
-    const [deliveryOptions] = deliverSessionMessageMock.mock.calls[0]!;
-    expect(deliveryOptions.message).toMatchObject({
-      role: "user",
-      modelConfiguration: { reasoningEffort: "high" },
-    });
-  });
-
-  test("emits started then finished(success) and updates lastRunAt after idle terminal", async () => {
-    onTestFinished(() => {
-      mock.restore();
-    });
-
-    const automation = createAutomation({
-      id: "success-automation",
-      prompt: "run now",
-      reuseSession: true,
-      lastRunSessionId: "session-success",
-    });
-    const updatedAutomation = createAutomation({
-      ...automation,
-      lastRunAt: "2026-02-14T10:05:00.000Z",
-      updatedAt: "2026-02-14T10:05:00.000Z",
-    });
-    const updateLastRunSessionIdMock = mock(
-      async (_automationId: string, _sessionId: string) => {},
-    );
-    const updateLastRunMock = mock(
-      async (_automationId: string, _runDate: Date, _sessionId: string) => {},
-    );
-    const createSessionMock = mockCreateSession();
-    const updateSessionNameMock = mock((_sessionId: string, _summary: string) => {});
-    const { deliverSessionMessageMock, complete } = createDeliveryMock();
-    const emitAutomationsUpdateMock = mock((_event: AutomationsUpdateEvent) => {});
-
-    let getCalls = 0;
-    const { runAutomation } = await loadScheduler({
-      db: createFakeDb({
-        getById: async () => {
-          getCalls += 1;
-          return getCalls === 1 ? automation : updatedAutomation;
-        },
-        updateLastRunSessionId: updateLastRunSessionIdMock,
-        updateLastRun: updateLastRunMock,
-      }),
-      createSession: createSessionMock,
-      deliverSessionMessage: deliverSessionMessageMock,
-      updateSessionName: updateSessionNameMock,
-      emitAutomationsUpdate: emitAutomationsUpdateMock,
-    });
-
-    const result = await runAutomation(automation.id);
-
-    expect(result).toEqual({ sessionId: "session-success", started: true });
-    expect(createSessionMock).toHaveBeenCalledWith(
-      "session-success",
-      expect.objectContaining({
-        modelConfiguration: automation.modelConfiguration,
-        automationId: automation.id,
-      }),
-    );
-    expect(updateSessionNameMock).toHaveBeenCalledWith("session-success", automation.title);
-    expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, "session-success");
-    expect(deliverSessionMessageMock).toHaveBeenCalledWith({
-      sessionId: "session-success",
-      message: expect.objectContaining({
-        role: "user",
-        content: "run now",
-        modelConfiguration: automation.modelConfiguration,
-      }),
-    });
-    let emittedEvents = readEmittedAutomationEvents(emitAutomationsUpdateMock);
-    expect(emittedEvents).toHaveLength(1);
-    expectStartedAutomationEvent(emittedEvents[0], automation.id, "session-success");
-
-    complete();
-    await flushAsyncEffects();
-
-    expectRecordedLastRun(updateLastRunMock, automation.id, "session-success");
-    emittedEvents = readEmittedAutomationEvents(emitAutomationsUpdateMock);
-    expect(emittedEvents).toHaveLength(2);
-    expectFinishedAutomationEvent(emittedEvents[1], {
-      automationId: automation.id,
-      sessionId: "session-success",
-      success: true,
-      automation: updatedAutomation,
-    });
-  });
-
-  test("emits started then finished(failure) and updates lastRunAt after error terminal", async () => {
-    onTestFinished(() => {
-      mock.restore();
-    });
-
-    const automation = createAutomation({
-      id: "failed-automation",
-      prompt: "run and fail",
-      reuseSession: true,
-      lastRunSessionId: "session-failure",
-    });
-    const updatedAutomation = createAutomation({
-      ...automation,
-      lastRunAt: "2026-02-14T10:06:00.000Z",
-      updatedAt: "2026-02-14T10:06:00.000Z",
-    });
-    const updateLastRunSessionIdMock = mock(
-      async (_automationId: string, _sessionId: string) => {},
-    );
-    const updateLastRunMock = mock(
-      async (_automationId: string, _runDate: Date, _sessionId: string) => {},
-    );
-    const createSessionMock = mockCreateSession();
-    const updateSessionNameMock = mock((_sessionId: string, _summary: string) => {});
-    const { deliverSessionMessageMock, complete } = createDeliveryMock();
-    const emitAutomationsUpdateMock = mock((_event: AutomationsUpdateEvent) => {});
-
-    let getCalls = 0;
-    const { runAutomation } = await loadScheduler({
-      db: createFakeDb({
-        getById: async () => {
-          getCalls += 1;
-          return getCalls === 1 ? automation : updatedAutomation;
-        },
-        updateLastRunSessionId: updateLastRunSessionIdMock,
-        updateLastRun: updateLastRunMock,
-      }),
-      createSession: createSessionMock,
-      deliverSessionMessage: deliverSessionMessageMock,
-      updateSessionName: updateSessionNameMock,
-      emitAutomationsUpdate: emitAutomationsUpdateMock,
-    });
-
-    const result = await runAutomation(automation.id);
-
-    expect(result).toEqual({ sessionId: "session-failure", started: true });
-    expect(createSessionMock).toHaveBeenCalledWith(
-      "session-failure",
-      expect.objectContaining({
-        modelConfiguration: automation.modelConfiguration,
-        automationId: automation.id,
-      }),
-    );
-    expect(updateSessionNameMock).toHaveBeenCalledWith("session-failure", automation.title);
-    expectPersistedLastRunSession(updateLastRunSessionIdMock, automation.id, "session-failure");
-    expect(deliverSessionMessageMock).toHaveBeenCalledWith({
-      sessionId: "session-failure",
-      message: expect.objectContaining({
-        role: "user",
-        content: "run and fail",
-        modelConfiguration: automation.modelConfiguration,
-      }),
-    });
-    let emittedEvents = readEmittedAutomationEvents(emitAutomationsUpdateMock);
-    expect(emittedEvents).toHaveLength(1);
-    expectStartedAutomationEvent(emittedEvents[0], automation.id, "session-failure");
-
-    complete({ error: "The session ended with an error." });
-    await flushAsyncEffects();
-
-    expectRecordedLastRun(updateLastRunMock, automation.id, "session-failure");
-    emittedEvents = readEmittedAutomationEvents(emitAutomationsUpdateMock);
-    expect(emittedEvents).toHaveLength(2);
-    expectFinishedAutomationEvent(emittedEvents[1], {
-      automationId: automation.id,
-      sessionId: "session-failure",
-      success: false,
-      automation: updatedAutomation,
-    });
-  });
-
-  test("send failures finalize the run without updating lastRun", async () => {
-    onTestFinished(() => {
-      mock.restore();
-    });
-
-    const automation = createAutomation({
-      id: "send-failure-automation",
-      prompt: "run and fail before streaming",
-      reuseSession: true,
-      lastRunSessionId: "session-send-failure",
-    });
-    const updateLastRunSessionIdMock = mock(
-      async (_automationId: string, _sessionId: string) => {},
-    );
-    const updateLastRunMock = mock(
-      async (_automationId: string, _runDate: Date, _sessionId: string) => {},
-    );
-    const createSessionMock = mockCreateSession();
-    const updateSessionNameMock = mock((_sessionId: string, _summary: string) => {});
-    const deliverSessionMessageMock = mock(async (_options: DeliverSessionMessageOptions) => {
-      throw new Error("boom");
-    });
-    const emitAutomationsUpdateMock = mock((_event: AutomationsUpdateEvent) => {});
-
-    const { runAutomation } = await loadScheduler({
-      db: createFakeDb({
-        getById: async () => automation,
-        updateLastRunSessionId: updateLastRunSessionIdMock,
-        updateLastRun: updateLastRunMock,
-      }),
-      createSession: createSessionMock,
-      deliverSessionMessage: deliverSessionMessageMock,
-      updateSessionName: updateSessionNameMock,
-      emitAutomationsUpdate: emitAutomationsUpdateMock,
-    });
-
-    await expect(runAutomation(automation.id)).rejects.toThrow("boom");
-
-    expect(updateLastRunMock).toHaveBeenCalledTimes(0);
-    expect(createSessionMock).toHaveBeenCalledWith(
-      "session-send-failure",
-      expect.objectContaining({
-        modelConfiguration: automation.modelConfiguration,
-        automationId: automation.id,
-      }),
-    );
-    expect(updateSessionNameMock).toHaveBeenCalledWith("session-send-failure", automation.title);
-    expectPersistedLastRunSession(
-      updateLastRunSessionIdMock,
-      automation.id,
-      "session-send-failure",
-    );
-    expect(deliverSessionMessageMock).toHaveBeenCalledTimes(1);
-    const emittedEvents = readEmittedAutomationEvents(emitAutomationsUpdateMock);
-    expect(emittedEvents).toHaveLength(2);
-    expectStartedAutomationEvent(emittedEvents[0], automation.id, "session-send-failure");
-    expectFinishedAutomationEvent(emittedEvents[1], {
-      automationId: automation.id,
-      sessionId: "session-send-failure",
-      success: false,
-    });
-
-    await flushAsyncEffects();
-
-    expect(readEmittedAutomationEvents(emitAutomationsUpdateMock)).toHaveLength(2);
+beforeEach(async () => {
+  setSystemTime();
+  appDatabase = await realDatabaseModule.createTestDatabase();
+  automationDatabase = new AutomationDatabase(appDatabase);
+  runningSessionIds.clear();
+  deleteSessionIfExistsMock.mockClear();
+  createSessionMock.mockClear();
+  emitAutomationEventMock.mockClear();
+  removeSession = async () => false;
+  create = async () => ({
+    disposition: "started",
+    waitForCompletion: () => new Promise(() => {}),
   });
 });
+
+describe.serial("automation scheduler", () => {
+  test("resets the owned session and creates it through the configured prompt", async () => {
+    const automation = await createAutomation({
+      title: "Daily summary",
+      prompt: "Summarize repository status.",
+      model: { name: "gpt-5", reasoningEffort: "high" },
+      cwd: "/repo/automation",
+    });
+
+    const result = await startAutomationRun(automation.id);
+
+    expect(result).toEqual({ sessionId: automation.id, started: true });
+    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith(automation.id);
+    expect(createSessionMock).toHaveBeenCalledWith(
+      automation.id,
+      {
+        content: automation.prompt,
+        model: automation.model,
+      },
+      {
+        directory: automation.cwd,
+        summary: automation.title,
+        sessionType: "automation",
+      },
+    );
+    expect(readAutomationEvents()).toEqual([]);
+  });
+
+  test("does not start when resetting the owned session fails", async () => {
+    const automation = await createAutomation();
+    removeSession = async () => {
+      throw new Error("delete failed");
+    };
+
+    await expect(startAutomationRun(automation.id)).rejects.toThrow("delete failed");
+    expect(createSessionMock).not.toHaveBeenCalled();
+    expect(readAutomationEvents()).toEqual([]);
+  });
+
+  test("uses the same owned session across idle runs", async () => {
+    const automation = await createAutomation();
+
+    const first = await startAutomationRun(automation.id);
+    const second = await startAutomationRun(automation.id);
+
+    expect(first).toEqual({ sessionId: automation.id, started: true });
+    expect(second).toEqual({ sessionId: automation.id, started: true });
+    expect(deleteSessionIfExistsMock).toHaveBeenCalledTimes(2);
+    expect(createSessionMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not overlap an active run", async () => {
+    const automation = await createAutomation();
+    runningSessionIds.add(automation.id);
+
+    await expect(startAutomationRun(automation.id)).resolves.toEqual({
+      sessionId: automation.id,
+      started: false,
+    });
+    expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
+    expect(createSessionMock).not.toHaveBeenCalled();
+    expect(readAutomationEvents()).toEqual([]);
+  });
+
+  test("coalesces concurrent attempts before the run reaches the stream registry", async () => {
+    const automation = await createAutomation();
+    let releaseDelivery!: () => void;
+    const deliveryGate = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    create = async () => {
+      await deliveryGate;
+      return {
+        disposition: "started",
+        waitForCompletion: () => new Promise(() => {}),
+      };
+    };
+
+    const first = startAutomationRun(automation.id);
+    const second = startAutomationRun(automation.id);
+    releaseDelivery();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.started).toBe(true);
+    expect(secondResult).toEqual({ sessionId: firstResult.sessionId, started: false });
+    expect(createSessionMock).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    { name: "completed", completion: { status: "completed" as const } },
+    { name: "failed", completion: { status: "failed" as const } },
+  ])("records and broadcasts metadata after a $name stream", async ({ completion }) => {
+    const automation = await createAutomation();
+    const heldCompletion = holdCompletion();
+
+    const { sessionId } = await startAutomationRun(automation.id);
+    heldCompletion.resolve(completion);
+    await waitForAutomationEvents(1);
+
+    const updated = (await automationDatabase.get(automation.id))!;
+    expect(updated?.lastRunAt).toEqual(expect.any(String));
+    expect(updated?.id).toBe(sessionId);
+    expect(readAutomationEvents()).toEqual([{ type: "automation.updated", automation: updated }]);
+  });
+
+  test("leaves automation metadata unchanged when creation cannot start", async () => {
+    const automation = await createAutomation();
+    create = async () => {
+      throw new Error("delivery failed");
+    };
+
+    await expect(startAutomationRun(automation.id)).rejects.toThrow("delivery failed");
+
+    expect(readAutomationEvents()).toEqual([]);
+    expect((await automationDatabase.get(automation.id))?.lastRunAt).toBeUndefined();
+  });
+
+  test("does not publish an update when run metadata cannot be persisted", async () => {
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    onTestFinished(() => consoleError.mockRestore());
+    const automation = await createAutomation();
+    const heldCompletion = holdCompletion();
+
+    await startAutomationRun(automation.id);
+    await appDatabase.exec("DROP TABLE automations");
+    heldCompletion.resolve({ status: "completed" });
+    await waitFor(() => consoleError.mock.calls.length === 1);
+
+    expect(readAutomationEvents()).toEqual([]);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+
+  test("claims every due automation once and continues after one cannot start", async () => {
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    onTestFinished(() => {
+      consoleError.mockRestore();
+      setSystemTime();
+    });
+    setSystemTime(new Date("2026-02-14T10:00:00.000Z"));
+    const failing = await createAutomation({ title: "Fails", cron: "* * * * *" });
+    const succeeding = await createAutomation({ title: "Runs", cron: "* * * * *" });
+    setSystemTime(new Date("2026-02-14T10:01:30.000Z"));
+    create = async (sessionId) => {
+      if (sessionId === failing.id) throw new Error("delivery failed");
+      return {
+        disposition: "started",
+        waitForCompletion: () => new Promise(() => {}),
+      };
+    };
+
+    await runSchedulerTick();
+
+    expect(createSessionMock).toHaveBeenCalledTimes(2);
+    expect(createSessionMock.mock.calls.map(([sessionId]) => sessionId)).toContainAllValues([
+      failing.id,
+      succeeding.id,
+    ]);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+
+    await runSchedulerTick();
+    expect(createSessionMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+async function createAutomation(overrides: Partial<AutomationOptions> = {}): Promise<Automation> {
+  return automationDatabase.create({
+    title: "Repository summary",
+    prompt: "Summarize repository status.",
+    model: { name: "gpt-5" },
+    cron: "0 9 * * *",
+    ...overrides,
+  });
+}
+
+function holdCompletion(): {
+  resolve: (completion: {
+    status: "completed" | "failed" | "timed_out";
+    response?: string;
+  }) => void;
+} {
+  let resolve!: (completion: {
+    status: "completed" | "failed" | "timed_out";
+    response?: string;
+  }) => void;
+  const completion = new Promise<{
+    status: "completed" | "failed" | "timed_out";
+    response?: string;
+  }>((accept) => {
+    resolve = accept;
+  });
+  create = async () => ({
+    disposition: "started",
+    waitForCompletion: () => completion,
+  });
+  return { resolve };
+}
+
+function readAutomationEvents(): AutomationEvent[] {
+  return emitAutomationEventMock.mock.calls.map(([event]) => event);
+}
+
+async function waitForAutomationEvents(count: number): Promise<void> {
+  await waitFor(() => readAutomationEvents().length >= count);
+  expect(readAutomationEvents()).toHaveLength(count);
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 20 && !condition(); attempt++) {
+    await Bun.sleep(1);
+  }
+  expect(condition()).toBe(true);
+}

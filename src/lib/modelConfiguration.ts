@@ -4,7 +4,7 @@ import type { ModelConfiguration, ReasoningEffort } from "@/types";
 
 export const modelConfigurationSchema = z
   .object({
-    model: z.string().trim().min(1).describe("Model ID"),
+    name: z.string().trim().min(1).describe("Model name"),
     reasoningEffort: z
       .string()
       .trim()
@@ -45,7 +45,7 @@ export function toSdkSessionModelOptions(
   configuration?: ModelConfiguration,
 ): SdkSessionModelOptions {
   return {
-    model: configuration?.model,
+    model: configuration?.name,
     ...toSdkSetModelOptions(configuration),
   };
 }
@@ -95,10 +95,10 @@ export function normalizeModelConfiguration(
 ): ModelConfiguration | null {
   if (models.length === 0) return configuration ?? null;
 
-  const model = models.find((candidate) => candidate.id === configuration?.model) ?? models[0];
+  const model = models.find((candidate) => candidate.id === configuration?.name) ?? models[0];
   return resolveModelConfigurationForModel(model, {
     ...configuration,
-    model: model.id,
+    name: model.id,
   });
 }
 

@@ -1,27 +1,21 @@
 import { useEffect } from "react";
 import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
-import type { AutomationsUpdateEvent, ServerUpdateEvent, WorkspaceEvent } from "@/types";
+import type { AutomationEvent, ServerUpdate, WorkspaceEvent } from "@/types";
 
-type ServerEventsByNamespace = {
-  session: WorkspaceEvent;
-  automation: AutomationsUpdateEvent;
+type ServerEventsByTopic = {
+  workspace: WorkspaceEvent;
+  automation: AutomationEvent;
 };
 
-type NamespacedServerEvent<Namespace extends string | undefined> =
-  Namespace extends keyof ServerEventsByNamespace
-    ? ServerEventsByNamespace[Namespace]
-    : ServerUpdateEvent;
-
 type ServerEventsListener = {
-  namespace?: string;
-  onEvent: (event: ServerUpdateEvent) => void;
-  onReconnect?: () => void;
+  topic: keyof ServerEventsByTopic;
+  onEvent: (event: WorkspaceEvent | AutomationEvent) => void;
+  onOpen?: () => void;
 };
 
 type ServerEventsState = {
   source: EventSource | null;
   listeners: Set<ServerEventsListener>;
-  hasOpened: boolean;
 };
 
 let serverEventsState: ServerEventsState | undefined;
@@ -31,7 +25,6 @@ function getServerEventsState(): ServerEventsState {
     serverEventsState = {
       source: null,
       listeners: new Set(),
-      hasOpened: false,
     };
   }
 
@@ -46,33 +39,25 @@ function ensureServerEventsSource(): void {
   state.source = source;
 
   source.onopen = () => {
-    if (state.hasOpened) {
-      for (const listener of state.listeners) {
-        listener.onReconnect?.();
-      }
+    // The initial query snapshot and this at-most-once stream cannot be opened
+    // atomically. Heal on every connection so events missed in that gap—or
+    // while hidden or offline—cannot leave shared state stale.
+    for (const listener of state.listeners) {
+      listener.onOpen?.();
     }
-    state.hasOpened = true;
   };
 
   source.onmessage = (message) => {
     if (!message.data) return;
 
     try {
-      const event = JSON.parse(message.data) as ServerUpdateEvent;
+      const update = JSON.parse(message.data) as ServerUpdate;
       for (const listener of state.listeners) {
-        if (listener.namespace && !event.type.startsWith(`${listener.namespace}.`)) {
-          continue;
-        }
-        listener.onEvent(event);
+        if (listener.topic !== update.topic) continue;
+        listener.onEvent(update.event);
       }
     } catch (error) {
       console.error("Failed to parse server events update:", error);
-    }
-  };
-
-  source.onerror = (error) => {
-    if (source.readyState === EventSource.CLOSED) {
-      console.error("Server events SSE closed:", error);
     }
   };
 }
@@ -88,34 +73,33 @@ function subscribeServerEvents(listener: ServerEventsListener): () => void {
 
     state.source?.close();
     state.source = null;
-    state.hasOpened = false;
   };
 }
 
-type UseServerEventsOptions<Namespace extends string | undefined = undefined> = {
+type UseServerEventsOptions<Topic extends keyof ServerEventsByTopic> = {
   enabled?: boolean;
-  namespace?: Namespace;
-  onEvent: (event: NamespacedServerEvent<Namespace>) => void;
-  onReconnect?: () => void;
+  topic: Topic;
+  onEvent: (event: ServerEventsByTopic[Topic]) => void;
+  onOpen?: () => void;
 };
 
-export function useServerEvents<Namespace extends string | undefined = undefined>({
+export function useServerEvents<Topic extends keyof ServerEventsByTopic>({
   enabled = true,
-  namespace,
+  topic,
   onEvent,
-  onReconnect,
-}: UseServerEventsOptions<Namespace>) {
+  onOpen,
+}: UseServerEventsOptions<Topic>) {
   const isVisible = usePageVisibility();
   const shouldSubscribe = enabled && isVisible;
 
   useEffect(() => {
     if (!shouldSubscribe) return;
     return subscribeServerEvents({
-      namespace,
+      topic,
       onEvent: (event) => {
-        onEvent(event as NamespacedServerEvent<Namespace>);
+        onEvent(event as ServerEventsByTopic[Topic]);
       },
-      onReconnect,
+      onOpen,
     });
-  }, [namespace, onEvent, onReconnect, shouldSubscribe]);
+  }, [onEvent, onOpen, shouldSubscribe, topic]);
 }

@@ -2,13 +2,14 @@
 
 import type { SessionContext } from "@github/copilot-sdk";
 export type { SessionMetadata, SessionContext, ModelInfo } from "@github/copilot-sdk";
+import type { WorkspaceAction } from "@/lib/workspace/actions";
 
 /** Open-ended on purpose: the SDK's public union can lag the wire protocol
  *  and model catalog values such as "none" and "max". */
 export type ReasoningEffort = string;
 
 export type ModelConfiguration = {
-  model: string;
+  name: string;
   reasoningEffort?: ReasoningEffort;
 };
 
@@ -42,9 +43,12 @@ export type TodoItemPatch =
   | { type: "update_all"; status: TodoStatus }
   | { type: "delete"; id: string };
 
-/* Session types (client) */
+/* Session state */
 
 export type SessionStatus = "idle" | "thinking" | "compacting" | "reasoning" | "responding";
+
+/** A session's product role, derived from the domain record that manages it. */
+export type SessionType = "standard" | "automation" | "inbox" | "hyper" | "child";
 
 export type SessionCanvas = {
   key: string;
@@ -91,7 +95,7 @@ export type SessionSnapshot = {
   id: string;
   messages: Message[];
   queuedMessages: QueuedMessage[];
-  modelConfiguration?: ModelConfiguration;
+  model?: ModelConfiguration;
   todos?: TodoItem[];
   linkedSessionIds?: string[];
   canvases?: SessionCanvas[];
@@ -121,14 +125,13 @@ export type AssistantMessage = {
   content: string;
   toolCalls?: ToolCall[];
   timestamp?: string;
-  revision?: number;
 };
 
 export type Message = UserMessage | AgentNotificationMessage | AssistantMessage;
 
 export type SubAgent = {
   content?: string;
-  modelConfiguration?: ModelConfiguration;
+  model?: ModelConfiguration;
   reasoningContent?: string;
   toolCalls?: ToolCall[];
 };
@@ -159,7 +162,7 @@ export function toDataUrl(attachment: Attachment): string | undefined {
 
 export type QueuedUserMessage = Omit<UserMessage, "timestamp"> & {
   id: string;
-  modelConfiguration?: ModelConfiguration;
+  model?: ModelConfiguration;
 };
 
 export type QueuedAgentNotificationMessage = Omit<AgentNotificationMessage, "timestamp"> & {
@@ -176,16 +179,26 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type DraftSession = {
-  sessionId: string;
-  createdAt: number;
-  updatedAt: number;
-};
-
 export type DraftPrompt = {
   text: string;
   updatedAt: number;
   origin: string;
+};
+
+export type InboxEntry = {
+  id: string;
+  message?: string;
+  createdAt: string;
+  /** File name of the entry-owned file under `~/.toy-box/inbox/<id>/`. */
+  artifact?: string;
+};
+
+/** Links a child session to one anchored comment on its source artifact. */
+export type ArtifactCommentSession = {
+  sessionId: string;
+  sourceSessionId: string;
+  path: string;
+  threadId: string;
 };
 
 /* Session types (server->client replay + streaming) */
@@ -234,7 +247,7 @@ export type SessionEvent = (
     }
   | { type: "message_cancelled"; queuedMessageId: string }
   | { type: "message_dequeued"; message: QueuedMessage }
-  | { type: "model_changed"; modelConfiguration: ModelConfiguration; agentId?: string }
+  | { type: "model_changed"; model: ModelConfiguration; agentId?: string }
   | { type: "skills"; skills: SessionSkill[] }
   | { type: "linked_session_added"; sessionId: string }
   | { type: "linked_session_removed"; sessionId: string }
@@ -248,46 +261,39 @@ export type SessionEvent = (
 
 /* SSE updates (server->client protocol) */
 
-export type ServerUpdateEvent = WorkspaceEvent | AutomationsUpdateEvent;
-
+// Every workspace state transition broadcast to clients. The first arm is the
+// client-issuable subset (WorkspaceAction, defined and validated in
+// @/lib/workspace/actions); the rest are server-authoritative events a client
+// only receives.
 export type WorkspaceEvent =
+  | WorkspaceAction
   | {
       type: "session.upserted";
       session: SessionMetadataUpdate;
     }
+  | SimpleSessionUpdateEvents<"deleted" | "creating" | "running" | "idle" | "unread">
   | {
-      type: "session.draft.created";
-      draft: DraftSession;
+      type: "inbox.entry.upserted";
+      entry: InboxEntry;
     }
   | {
-      type: "session.prompt.drafted";
+      type: "inbox.entry.deleted";
+      entryId: string;
+    }
+  | {
+      type: "artifact.kind.registered";
+      kind: CustomArtifactKind;
+    }
+  | {
+      type: "artifact.comment_session.linked";
+      commentSession: ArtifactCommentSession;
+    }
+  | {
+      type: "artifact.comment_session.unlinked";
       sessionId: string;
-      prompt: DraftPrompt;
-    }
-  | SimpleSessionUpdateEvents<
-      | "deleted"
-      | "running"
-      | "idle"
-      | "unread"
-      | "read"
-      | "draft.discarded"
-      | "hyper.created"
-      | "hyper.promoted"
-    >;
+    };
 
-// Actions are the client-issuable subset of workspace events. `unread` is
-// intentionally absent: the server is authoritative for it (a session becomes
-// unread from agent output, never from a client request), so clients only ever
-// receive it as an event and dispatch its inverse, `session.read`.
-type WorkspaceActionType =
-  | "session.draft.created"
-  | "session.prompt.drafted"
-  | "session.draft.discarded"
-  | "session.hyper.created"
-  | "session.hyper.promoted"
-  | "session.read";
-
-export type WorkspaceAction = Extract<WorkspaceEvent, { type: WorkspaceActionType }>;
+export type { WorkspaceAction };
 
 type SimpleSessionUpdateEvents<EventName extends string> = EventName extends string
   ? {
@@ -296,7 +302,7 @@ type SimpleSessionUpdateEvents<EventName extends string> = EventName extends str
     }
   : never;
 
-export type AutomationsUpdateEvent =
+export type AutomationEvent =
   | {
       type: "automation.added";
       automation: Automation;
@@ -308,21 +314,11 @@ export type AutomationsUpdateEvent =
   | {
       type: "automation.updated";
       automation: Automation;
-    }
-  | {
-      type: "automation.started";
-      automationId: string;
-      sessionId: string;
-      startedAt: string; // ISO timestamp
-    }
-  | {
-      type: "automation.finished";
-      automationId: string;
-      sessionId: string;
-      finishedAt: string; // ISO timestamp
-      success: boolean;
-      automation?: Automation;
     };
+
+export type ServerUpdate =
+  | { topic: "workspace"; event: WorkspaceEvent }
+  | { topic: "automation"; event: AutomationEvent };
 
 export type SessionMetadataUpdate = {
   sessionId: string;
@@ -353,9 +349,8 @@ export type TerminalServerMessage = { type: "ready"; resumed: boolean } | { type
 export type AutomationOptions = {
   title: string;
   prompt: string;
-  modelConfiguration: ModelConfiguration;
+  model: ModelConfiguration;
   cron: string;
-  reuseSession: boolean;
   cwd?: string;
 };
 
@@ -365,5 +360,4 @@ export type Automation = AutomationOptions & {
   updatedAt: string; // ISO timestamp
   nextRunAt: string; // ISO timestamp
   lastRunAt?: string; // ISO timestamp
-  lastRunSessionId?: string;
 };

@@ -65,7 +65,7 @@ diff --git a/Users/lostintangent/Desktop/toy-box/docs/new.md b/Users/lostintange
       },
     ];
 
-    const diffs = computeSessionDiffs(messages, new Map(), cwd);
+    const diffs = computeSessionDiffs(messages, cwd);
 
     expect(diffs.total).toEqual({ added: 4, removed: 2 });
     expect(diffs.byToolCallId).toEqual(

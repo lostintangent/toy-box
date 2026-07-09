@@ -1,8 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, mock, onTestFinished, setSystemTime, test } from "bun:test";
-import { createTestDatabase } from "../database";
+import { describe, expect, onTestFinished, setSystemTime, spyOn, test } from "bun:test";
+import { createTestDatabase } from "../state/database";
 import { AutomationDatabase } from "./database";
 
 function mockTime(date: string | Date): void {
@@ -30,9 +30,8 @@ describe("automation database", () => {
     const created = await db1.create({
       title: "Daily summary",
       prompt: "Summarize open pull requests.",
-      modelConfiguration: { model: "gpt-5", reasoningEffort: "high" },
+      model: { name: "gpt-5", reasoningEffort: "high" },
       cron: "0 9 * * *",
-      reuseSession: true,
       cwd: "/Users/test/project",
     });
 
@@ -45,9 +44,10 @@ describe("automation database", () => {
     const reloaded = reloadedList.find((a) => a.id === created.id);
     expect(reloaded?.title).toBe("Daily summary");
     expect(reloaded?.prompt).toBe("Summarize open pull requests.");
-    expect(reloaded?.modelConfiguration).toEqual({ model: "gpt-5", reasoningEffort: "high" });
+    expect(reloaded?.model).toEqual({ name: "gpt-5", reasoningEffort: "high" });
     expect(reloaded?.cron).toBe("0 9 * * *");
-    expect(reloaded?.reuseSession).toBe(true);
+    expect(reloaded?.id).toBe(created.id);
+    expect(reloaded?.id).toStartWith("toy-box-auto-");
     expect(reloaded?.cwd).toBe("/Users/test/project");
   });
 
@@ -58,11 +58,9 @@ describe("automation database", () => {
     const created = await db.create({
       title: "Minute ping",
       prompt: "Ping",
-      modelConfiguration: { model: "gpt-5" },
+      model: { name: "gpt-5" },
       cron: "* * * * *",
-      reuseSession: false,
     });
-    expect(created.reuseSession).toBe(false);
     expect(created.cwd).toBeUndefined();
 
     setSystemTime(new Date("2026-02-14T10:00:30.000Z"));
@@ -72,8 +70,12 @@ describe("automation database", () => {
     setSystemTime(new Date("2026-02-14T10:01:30.000Z"));
     const due = await db.claimDue();
     expect(due.map((a) => a.id)).toEqual([created.id]);
+    expect(new Date(due[0]!.nextRunAt).getTime()).toBeGreaterThan(
+      new Date("2026-02-14T10:01:30.000Z").getTime(),
+    );
+    expect(await db.claimDue()).toEqual([]);
 
-    const updated = await db.getById(created.id);
+    const updated = await db.get(created.id);
     expect(updated).not.toBeNull();
     expect(new Date(updated!.nextRunAt).getTime()).toBeGreaterThan(
       new Date("2026-02-14T10:01:30.000Z").getTime(),
@@ -87,9 +89,8 @@ describe("automation database", () => {
     const created = await db.create({
       title: "Original title",
       prompt: "Original prompt",
-      modelConfiguration: { model: "gpt-5" },
+      model: { name: "gpt-5" },
       cron: "0 9 * * *",
-      reuseSession: false,
     });
 
     setSystemTime(new Date("2026-02-14T10:05:00.000Z"));
@@ -97,39 +98,67 @@ describe("automation database", () => {
       title: "Updated title",
       prompt: "Updated prompt",
       cron: "0 12 * * *",
-      modelConfiguration: { model: "gpt-5", reasoningEffort: "medium" },
-      reuseSession: false,
+      model: { name: "gpt-5", reasoningEffort: "medium" },
       cwd: "/tmp/updated",
     });
     expect(updated).not.toBeNull();
     expect(updated?.title).toBe("Updated title");
     expect(updated?.prompt).toBe("Updated prompt");
     expect(updated?.cron).toBe("0 12 * * *");
-    expect(updated?.modelConfiguration).toEqual({ model: "gpt-5", reasoningEffort: "medium" });
+    expect(updated?.model).toEqual({ name: "gpt-5", reasoningEffort: "medium" });
     expect(updated?.cwd).toBe("/tmp/updated");
+    expect(updated?.nextRunAt).not.toBe(created.nextRunAt);
+  });
+
+  test("deletes an existing automation once", async () => {
+    const db = await openTestDatabase();
+    const created = await db.create({
+      title: "Temporary",
+      prompt: "Run once.",
+      model: { name: "gpt-5" },
+      cron: "0 9 * * *",
+    });
+
+    expect(await db.delete(created.id)).toBe(true);
+    expect(await db.get(created.id)).toBeNull();
+    expect(await db.delete(created.id)).toBe(false);
+  });
+
+  test("records completion metadata without changing automation identity", async () => {
+    mockTime("2026-02-14T10:00:00.000Z");
+    const db = await openTestDatabase();
+    const created = await db.create({
+      title: "Daily summary",
+      prompt: "Summarize status.",
+      model: { name: "gpt-5" },
+      cron: "0 9 * * *",
+    });
+
+    const finishedAt = new Date("2026-02-14T10:05:00.000Z");
+    await db.recordRunFinish(created.id, finishedAt);
+    expect(await db.get(created.id)).toMatchObject({
+      id: created.id,
+      lastRunAt: finishedAt.toISOString(),
+      updatedAt: finishedAt.toISOString(),
+    });
   });
 
   test("skips malformed automation rows when listing", async () => {
     mockTime("2026-02-14T10:00:00.000Z");
-    const originalConsoleError = console.error;
-    const consoleErrorMock = mock(() => {});
-    console.error = consoleErrorMock;
-    onTestFinished(() => {
-      console.error = originalConsoleError;
-    });
+    const consoleErrorMock = spyOn(console, "error").mockImplementation(() => {});
+    onTestFinished(() => consoleErrorMock.mockRestore());
     const rawDb = await createTestDatabase();
     const db = new AutomationDatabase(rawDb);
 
     const valid = await db.create({
       title: "Valid automation",
       prompt: "Summarize status.",
-      modelConfiguration: { model: "gpt-5" },
+      model: { name: "gpt-5" },
       cron: "0 9 * * *",
-      reuseSession: false,
     });
     await rawDb.sql`
-      INSERT INTO automations (id, title, prompt, model_configuration, cron, reuse_session, cwd, created_at, updated_at, next_run_at)
-      VALUES (${"broken"}, ${"Broken automation"}, ${"noop"}, ${"{bad json"}, ${"0 9 * * *"}, ${0}, ${null}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"})
+      INSERT INTO automations (id, title, prompt, model_configuration, cron, cwd, created_at, updated_at, next_run_at)
+      VALUES (${"broken"}, ${"Broken automation"}, ${"noop"}, ${"{bad json"}, ${"0 9 * * *"}, ${null}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"})
     `;
 
     expect((await db.list()).map((automation) => automation.id)).toEqual([valid.id]);
@@ -138,25 +167,20 @@ describe("automation database", () => {
 
   test("skips malformed due rows without dropping valid claims", async () => {
     mockTime("2026-02-14T10:00:00.000Z");
-    const originalConsoleError = console.error;
-    const consoleErrorMock = mock(() => {});
-    console.error = consoleErrorMock;
-    onTestFinished(() => {
-      console.error = originalConsoleError;
-    });
+    const consoleErrorMock = spyOn(console, "error").mockImplementation(() => {});
+    onTestFinished(() => consoleErrorMock.mockRestore());
     const rawDb = await createTestDatabase();
     const db = new AutomationDatabase(rawDb);
 
     const valid = await db.create({
       title: "Valid due automation",
       prompt: "Summarize status.",
-      modelConfiguration: { model: "gpt-5" },
+      model: { name: "gpt-5" },
       cron: "* * * * *",
-      reuseSession: false,
     });
     await rawDb.sql`
-      INSERT INTO automations (id, title, prompt, model_configuration, cron, reuse_session, cwd, created_at, updated_at, next_run_at)
-      VALUES (${"broken-due"}, ${"Broken due automation"}, ${"noop"}, ${"{bad json"}, ${"* * * * *"}, ${0}, ${null}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"})
+      INSERT INTO automations (id, title, prompt, model_configuration, cron, cwd, created_at, updated_at, next_run_at)
+      VALUES (${"broken-due"}, ${"Broken due automation"}, ${"noop"}, ${"{bad json"}, ${"* * * * *"}, ${null}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"})
     `;
 
     setSystemTime(new Date("2026-02-14T10:01:30.000Z"));

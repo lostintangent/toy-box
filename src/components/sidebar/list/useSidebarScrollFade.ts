@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 export function useSidebarScrollFade(content: string | undefined) {
   const headlineRef = useRef<HTMLDivElement>(null);
 
-  const updateScrollFades = useCallback(() => {
+  function updateScrollFades() {
     const element = headlineRef.current;
     if (!element) return;
 
@@ -12,7 +12,7 @@ export function useSidebarScrollFade(content: string | undefined) {
 
     element.toggleAttribute("data-left-fade", left);
     element.toggleAttribute("data-right-fade", right);
-  }, []);
+  }
 
   useEffect(() => {
     const raf = requestAnimationFrame(updateScrollFades);
@@ -27,6 +27,8 @@ export function useSidebarScrollFade(content: string | undefined) {
       cancelled = true;
       cancelAnimationFrame(raf);
     };
+    // React Compiler keeps the dependency-free DOM updater stable.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [content, updateScrollFades]);
 
   return {

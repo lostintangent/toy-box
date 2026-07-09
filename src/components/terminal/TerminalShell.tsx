@@ -114,7 +114,7 @@ export function TerminalShell({ onClose, onQuickKey, children }: TerminalShellPr
         </div>
       </div>
 
-      {/* Desktop close button (matches SessionGrid styling) */}
+      {/* Desktop close button (matches WorkspaceGrid styling) */}
       <button
         onClick={onClose}
         className="absolute top-3 right-3 z-20 hidden md:block bg-background/90 backdrop-blur-sm hover:bg-background border border-border rounded-md p-1.5 shadow-sm hover:shadow-md opacity-0 group-hover:opacity-100 transition-opacity duration-200"

@@ -1,29 +1,19 @@
 // Broadcast plane for the shared /api/events SSE stream. Unlike the session
-// stream buffer, this has no cursor or replay; consumers heal missed
-// updates by refetching their query cache.
+// event bus, this has no cursor or replay; consumers heal missed
+// updates from authoritative snapshots or query refetches.
 
-import type {
-  AutomationsUpdateEvent,
-  DraftPrompt,
-  DraftSession,
-  SessionMetadataUpdate,
-  WorkspaceEvent,
-} from "@/types";
+import type { AutomationEvent, SessionMetadataUpdate, WorkspaceEvent } from "@/types";
 import { sharedSet } from "./processState";
 
-const SESSION = "session" as const;
+type Listener<T> = (event: T) => void;
 
-type BroadcastTopicListener<T> = (event: T) => void;
-type WorkspaceEventListener = (event: WorkspaceEvent) => void;
-type AutomationsUpdateListener = (event: AutomationsUpdateEvent) => void;
-
-type BroadcastTopic<T> = {
+type Topic<T> = {
   emit(event: T): void;
-  subscribe(listener: BroadcastTopicListener<T>): () => void;
+  subscribe(listener: Listener<T>): () => void;
 };
 
-function createBroadcastTopic<T>(name: string): BroadcastTopic<T> {
-  const listeners = sharedSet<BroadcastTopicListener<T>>(`${name}.listeners`);
+function createTopic<T>(name: string): Topic<T> {
+  const listeners = sharedSet<Listener<T>>(`${name}.listeners`);
 
   return {
     emit(event) {
@@ -41,72 +31,37 @@ function createBroadcastTopic<T>(name: string): BroadcastTopic<T> {
   };
 }
 
-const workspaceEvents = createBroadcastTopic<WorkspaceEvent>("session-events");
-const automationUpdates = createBroadcastTopic<AutomationsUpdateEvent>("automation-events");
+const workspaceEvents = createTopic<WorkspaceEvent>("workspace-events");
+const automationEvents = createTopic<AutomationEvent>("automation-events");
 
-export function emitWorkspaceEvent(event: WorkspaceEvent): void {
-  workspaceEvents.emit(event);
+/** Broadcast the event a transition produced, or nothing when it was a no-op (null). */
+export function broadcast(event: WorkspaceEvent | null): void {
+  if (event) workspaceEvents.emit(event);
 }
 
 export function emitSessionUpsert(session: SessionMetadataUpdate): void {
-  emitWorkspaceEvent({ type: `${SESSION}.upserted`, session });
+  workspaceEvents.emit({ type: "session.upserted", session });
 }
 
 export function emitSessionDelete(sessionId: string): void {
-  emitWorkspaceEvent({ type: `${SESSION}.deleted`, sessionId });
+  workspaceEvents.emit({ type: "session.deleted", sessionId });
 }
 
-export function emitSessionRunning(sessionId: string): void {
-  emitWorkspaceEvent({ type: `${SESSION}.running`, sessionId });
-}
-
-export function emitSessionIdle(sessionId: string): void {
-  emitWorkspaceEvent({ type: `${SESSION}.idle`, sessionId });
-}
-
-export function emitSessionUnread(sessionId: string): void {
-  emitWorkspaceEvent({ type: `${SESSION}.unread`, sessionId });
-}
-
-export function emitSessionRead(sessionId: string): void {
-  emitWorkspaceEvent({ type: `${SESSION}.read`, sessionId });
-}
-
-export function emitDraftCreated(draft: DraftSession): void {
-  emitWorkspaceEvent({ type: `${SESSION}.draft.created`, draft });
-}
-
-export function emitDraftDiscarded(sessionId: string): void {
-  emitWorkspaceEvent({ type: `${SESSION}.draft.discarded`, sessionId });
-}
-
-export function emitSessionHyper(sessionId: string): void {
-  emitWorkspaceEvent({ type: `${SESSION}.hyper.created`, sessionId });
-}
-
-export function emitSessionPromoted(sessionId: string): void {
-  emitWorkspaceEvent({ type: `${SESSION}.hyper.promoted`, sessionId });
-}
-
-export function emitDraftPromptChanged(sessionId: string, prompt: DraftPrompt): void {
-  emitWorkspaceEvent({ type: `${SESSION}.prompt.drafted`, sessionId, prompt });
-}
-
-export function updateSessionName(sessionId: string, name: string): void {
+export function emitSessionNameUpdate(sessionId: string, name: string): void {
   emitSessionUpsert({
     sessionId,
     summary: name,
   });
 }
 
-export function subscribeWorkspaceEvents(listener: WorkspaceEventListener): () => void {
+export function subscribeWorkspaceEvents(listener: Listener<WorkspaceEvent>): () => void {
   return workspaceEvents.subscribe(listener);
 }
 
-export function emitAutomationsUpdate(event: AutomationsUpdateEvent): void {
-  automationUpdates.emit(event);
+export function emitAutomationEvent(event: AutomationEvent): void {
+  automationEvents.emit(event);
 }
 
-export function subscribeAutomationsUpdates(listener: AutomationsUpdateListener): () => void {
-  return automationUpdates.subscribe(listener);
+export function subscribeAutomationEvents(listener: Listener<AutomationEvent>): () => void {
+  return automationEvents.subscribe(listener);
 }

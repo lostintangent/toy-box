@@ -6,8 +6,13 @@ import {
   createLinkedPanes,
   createLinkedSessionPane,
   deriveOpenSessionIds,
+  paneSourceSessionId,
+  deriveReachablePaneIds,
   createSessionPane,
+  createSessionPaneId,
   deriveVisibleWorkspacePanes,
+  deriveWorkspaceRootPanes,
+  INBOX_PANE,
   resolveArtifactAutoFocus,
   type WorkspacePane,
 } from "@/lib/workspace/panes";
@@ -15,6 +20,16 @@ import type { SessionCanvas } from "@/types";
 
 function selectedSessionPane(sessionId: string): Extract<WorkspacePane, { kind: "session" }> {
   return createSessionPane(sessionId, false);
+}
+
+function derivePanes(
+  selectedSessionIds: string[],
+  linkedPanesByPublisher: Record<string, WorkspacePane[]>,
+) {
+  return deriveVisibleWorkspacePanes({
+    rootPanes: deriveWorkspaceRootPanes(selectedSessionIds),
+    linkedPanesByPublisher,
+  });
 }
 
 function canvas(overrides: Partial<SessionCanvas> = {}): SessionCanvas {
@@ -31,6 +46,28 @@ function canvas(overrides: Partial<SessionCanvas> = {}): SessionCanvas {
 }
 
 describe("workspace pane derivation", () => {
+  test("uses Inbox as the fallback root pane", () => {
+    expect(deriveWorkspaceRootPanes([])).toEqual([INBOX_PANE]);
+    expect(deriveWorkspaceRootPanes(["A"])).toEqual([selectedSessionPane("A")]);
+  });
+
+  test("resolves source sessions without assigning one to Inbox", () => {
+    expect(paneSourceSessionId(INBOX_PANE)).toBeUndefined();
+    expect(paneSourceSessionId(selectedSessionPane("A"))).toBe("A");
+    expect(paneSourceSessionId(createArtifactPane("A", "report.md"))).toBe("A");
+  });
+
+  test("lets the Inbox pane publish an Inbox artifact", () => {
+    const artifactPane = createArtifactPane("inbox-1", "result.md", "edit");
+    const linkedPanesByPublisher = { [INBOX_PANE.id]: [artifactPane] };
+
+    expect(derivePanes([], linkedPanesByPublisher)).toEqual([INBOX_PANE, artifactPane]);
+    expect(deriveReachablePaneIds([INBOX_PANE], linkedPanesByPublisher)).toEqual([
+      INBOX_PANE.id,
+      artifactPane.id,
+    ]);
+  });
+
   test("keeps selected session panes first and appends canvases within the four-pane workspace cap", () => {
     const firstCanvas = canvas();
     const secondCanvas = canvas({
@@ -41,11 +78,11 @@ describe("workspace pane derivation", () => {
     });
 
     expect(
-      deriveVisibleWorkspacePanes({
-        selectedSessionIds: ["A", "B"],
-        linkedPanesBySource: {
-          A: [createLinkedCanvasPane("A", firstCanvas), createLinkedCanvasPane("A", secondCanvas)],
-        },
+      derivePanes(["A", "B"], {
+        [createSessionPaneId("A")]: [
+          createLinkedCanvasPane("A", firstCanvas),
+          createLinkedCanvasPane("A", secondCanvas),
+        ],
       }),
     ).toEqual([
       { kind: "session", id: "session:A", sessionId: "A", isLinkedOnly: false },
@@ -75,15 +112,12 @@ describe("workspace pane derivation", () => {
     });
 
     expect(
-      deriveVisibleWorkspacePanes({
-        selectedSessionIds: ["A"],
-        linkedPanesBySource: {
-          A: [
-            createLinkedSessionPane("B"),
-            createLinkedCanvasPane("A", firstCanvas),
-            createLinkedCanvasPane("A", secondCanvas),
-          ],
-        },
+      derivePanes(["A"], {
+        [createSessionPaneId("A")]: [
+          createLinkedSessionPane("B"),
+          createLinkedCanvasPane("A", firstCanvas),
+          createLinkedCanvasPane("A", secondCanvas),
+        ],
       }),
     ).toEqual([
       { kind: "session", id: "session:A", sessionId: "A", isLinkedOnly: false },
@@ -108,11 +142,12 @@ describe("workspace pane derivation", () => {
     const markdownPane = createArtifactPane("A", "plan.md");
 
     expect(
-      deriveVisibleWorkspacePanes({
-        selectedSessionIds: ["A"],
-        linkedPanesBySource: {
-          A: [createLinkedSessionPane("B"), markdownPane, createLinkedCanvasPane("A", firstCanvas)],
-        },
+      derivePanes(["A"], {
+        [createSessionPaneId("A")]: [
+          createLinkedSessionPane("B"),
+          markdownPane,
+          createLinkedCanvasPane("A", firstCanvas),
+        ],
       }),
     ).toEqual([
       { kind: "session", id: "session:A", sessionId: "A", isLinkedOnly: false },
@@ -127,7 +162,7 @@ describe("workspace pane derivation", () => {
     ]);
   });
 
-  test("classifies HTML artifacts as HTML panes", () => {
+  test("creates artifact identity from its source session and path", () => {
     const htmlPane = createArtifactPane("A", "preview.html");
 
     expect(htmlPane).toEqual({
@@ -140,8 +175,12 @@ describe("workspace pane derivation", () => {
     });
   });
 
+  test("uses product names for recognized artifact paths", () => {
+    expect(createArtifactPane("A", "plan.md").title).toBe("Plan");
+  });
+
   test("defaults automation artifacts to read mode", () => {
-    const sourceSessionId = "toy-box-auto-layout-review--run-123";
+    const sourceSessionId = "toy-box-auto-11111111-1111-4111-8111-111111111111";
 
     expect(createArtifactPane(sourceSessionId, "plan.md").mode).toBe("read");
   });
@@ -163,12 +202,12 @@ describe("workspace pane derivation", () => {
     const descendantCanvas = canvas();
 
     expect(
-      deriveVisibleWorkspacePanes({
-        selectedSessionIds: ["A"],
-        linkedPanesBySource: {
-          A: [createLinkedSessionPane("B")],
-          B: [createLinkedSessionPane("C"), createLinkedCanvasPane("B", descendantCanvas)],
-        },
+      derivePanes(["A"], {
+        [createSessionPaneId("A")]: [createLinkedSessionPane("B")],
+        [createSessionPaneId("B")]: [
+          createLinkedSessionPane("C"),
+          createLinkedCanvasPane("B", descendantCanvas),
+        ],
       }),
     ).toEqual([
       { kind: "session", id: "session:A", sessionId: "A", isLinkedOnly: false },
@@ -199,7 +238,7 @@ describe("workspace pane derivation", () => {
 });
 
 describe("artifact auto-focus", () => {
-  const automationSessionId = "toy-box-auto-daily-report--run-123";
+  const automationSessionId = "toy-box-auto-22222222-2222-4222-8222-222222222222";
   const chatPane = selectedSessionPane(automationSessionId);
   const artifactPane = createArtifactPane(automationSessionId, "report.md");
   const regularChatPane = selectedSessionPane("session-1");

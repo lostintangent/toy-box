@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useSyncExternalStore } from "react";
+import { createContext, useContext, useSyncExternalStore } from "react";
 import { useHydrated } from "@tanstack/react-router";
 
 const MOBILE_BREAKPOINT = 768;
@@ -30,14 +30,11 @@ export function ViewportProvider({ children }: { children: React.ReactNode }) {
     () => false,
   );
 
-  const value = useMemo(
-    () => ({
-      hydrated,
-      isMobile,
-      isDesktop: !isMobile,
-    }),
-    [hydrated, isMobile],
-  );
+  const value = {
+    hydrated,
+    isMobile,
+    isDesktop: !isMobile,
+  };
 
   return <ViewportContext.Provider value={value}>{children}</ViewportContext.Provider>;
 }

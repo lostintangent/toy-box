@@ -8,14 +8,9 @@ export type SimpleSchedule = {
   daysOfWeek: number[];
 };
 
-type WeekdayOption = {
-  value: number;
-  label: string;
-};
-
 const ALL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6] as const;
 
-export const WEEKDAY_OPTIONS: WeekdayOption[] = [
+export const WEEKDAY_OPTIONS = [
   { value: 0, label: "Sunday" },
   { value: 1, label: "Monday" },
   { value: 2, label: "Tuesday" },
@@ -160,7 +155,6 @@ function parseIntervalHoursField(value: string): number | null {
   if (!match) return null;
 
   const parsed = Number.parseInt(match[1], 10);
-  if (!Number.isFinite(parsed)) return null;
   if (parsed < 1 || parsed > 24) return null;
   return parsed;
 }
@@ -182,7 +176,7 @@ function parseNumericField(value: string, min: number, max: number): number | nu
 
 function parseDayOfWeekField(value: string): number | null {
   const lowered = value.toLowerCase();
-  if (lowered in WEEKDAY_NAME_TO_VALUE) {
+  if (Object.hasOwn(WEEKDAY_NAME_TO_VALUE, lowered)) {
     return WEEKDAY_NAME_TO_VALUE[lowered];
   }
 

@@ -1,16 +1,11 @@
-// Bridge between the host `CustomArtifact` pane and a custom viewer template.
-//
-// A custom artifact kind is a static HTML/JS document that only knows how to draw
-// file content and (optionally) signal edits. This module injects a small script
-// that exposes that contract as a `window.Toybox` global and hides all the
-// postMessage plumbing:
+// Bridge between CustomArtifact and a registered HTML viewer template. It hides
+// postMessage behind the template-facing API:
 //
 //   Toybox.onRender((content, { editable }) => { ...render into the DOM... })
 //   Toybox.emitChange(nextContent)   // persist an in-view edit back to the file
 //
-// The host posts a render message on load and whenever the file changes; the
-// bridge relays edits back. It is the mirror of the HTML-preview bridge — there
-// the file *is* the document, here the file is *data* passed into a separate view.
+// Here the file is data rendered by a separate document; in the HTML bridge the
+// file itself is the document.
 
 export const CUSTOM_ARTIFACT_RENDER_MESSAGE_TYPE = "toybox-artifact:render";
 export const CUSTOM_ARTIFACT_CHANGE_MESSAGE_TYPE = "toybox-artifact:change";

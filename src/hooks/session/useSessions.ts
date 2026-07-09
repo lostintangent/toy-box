@@ -3,30 +3,23 @@
  * useWorkspace, not by this hook.
  */
 
-import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createEmptySessionsState, sessionQueries } from "@/lib/queries";
 
 export function useSessions() {
   const { data, isLoading } = useQuery(sessionQueries.state());
-  const sessionsState = data ?? createEmptySessionsState();
-  const { sessions: allSessions, worktrees, childSessionIds } = sessionsState;
+  const { sessions, worktrees, childSessionIds } = data ?? createEmptySessionsState();
 
-  const sessions = useMemo(
-    () =>
-      [...allSessions]
-        .sort((a, b) => b.modifiedTime.getTime() - a.modifiedTime.getTime())
-        .slice(0, 50),
-    [allSessions],
-  );
+  const recentSessions = [...sessions]
+    .sort((a, b) => b.modifiedTime.getTime() - a.modifiedTime.getTime())
+    .slice(0, 50);
 
-  const worktreeSessionIds = useMemo(() => Object.keys(worktrees), [worktrees]);
+  const worktreeSessionIds = Object.keys(worktrees);
 
   return {
     isLoading,
-    sessionsState,
     sessions,
-    allSessions,
+    recentSessions,
     worktreeSessionIds,
     childSessionIds,
   };

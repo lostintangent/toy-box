@@ -2,26 +2,38 @@ import { describe, expect, test } from "bun:test";
 import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { homedir } from "node:os";
 import { encodeSdkAgentNotification } from "@/functions/sdk/agentNotificationCodec";
-import { createProjectionState, projectSdkEvent } from "@/functions/sdk/projector";
+import {
+  createSdkEventProjector,
+  getSdkSessionName,
+  getSdkTurnEndReason,
+} from "@/functions/sdk/projector";
 import type { JsonValue, SessionEvent } from "@/types";
 
 function createStreamingContext() {
-  return createProjectionState("toy-box-session");
+  return createSdkEventProjector("toy-box-session");
+}
+
+function projectSdkEvent(
+  event: SdkSessionEvent,
+  projector: ReturnType<typeof createSdkEventProjector>,
+) {
+  return projector(event);
 }
 
 function sdkEvent(event: unknown): SdkSessionEvent {
   return event as SdkSessionEvent;
 }
 
-// Every tool name from the projector's static omitted-tool policy.
+// Every tool name resolved by the omitted-tool policy.
 const OMITTED_TOOL_NAMES = [
   "read_agent",
   "check_session_status",
   "wait_for_sessions",
-  "send_to_session",
+  "deliver_message",
+  "send_to_inbox",
   "list_automations",
   "create_automation",
-  "edit_automation",
+  "update_automation",
   "run_automation",
 ];
 
@@ -592,6 +604,87 @@ describe("projector", () => {
       });
     });
 
+    test("edit emits an artifact upsert for copilot session files after success and is omitted", () => {
+      const context = createStreamingContext();
+      const artifactPath = "~/.copilot/session-state/toy-box-session/files/report.md";
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("edit", "tool-edit-artifact", { path: artifactPath }),
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(toolExecutionProgress("tool-edit-artifact", "Editing"), context),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-edit-artifact", {
+            success: true,
+            resultContent: "Edited report.md",
+          }),
+          context,
+        ),
+      ).toEqual([{ type: "artifacts_patch", patches: [{ type: "upsert", path: "report.md" }] }]);
+    });
+
+    test("edit normalizes the replace_string_in_file alias and filePath argument for artifacts", () => {
+      const context = createStreamingContext();
+      const artifactPath = "~/.copilot/session-state/toy-box-session/files/report.md";
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("replace_string_in_file", "tool-edit-alias", {
+            filePath: artifactPath,
+          }),
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-edit-alias", { success: true, resultContent: "Edited" }),
+          context,
+        ),
+      ).toEqual([{ type: "artifacts_patch", patches: [{ type: "upsert", path: "report.md" }] }]);
+    });
+
+    test("edit emits no artifact and stays hidden when the edit fails", () => {
+      const context = createStreamingContext();
+      const artifactPath = "~/.copilot/session-state/toy-box-session/files/report.md";
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("edit", "tool-edit-failed", { path: artifactPath }),
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-edit-failed", {
+            success: false,
+            errorMessage: "String to replace not found",
+          }),
+          context,
+        ),
+      ).toEqual([]);
+    });
+
+    test("edit remains visible for files outside copilot session state", () => {
+      const context = createStreamingContext();
+
+      expectVisibleToolLifecycle(context, {
+        toolName: "edit",
+        toolCallId: "tool-edit-visible",
+        argumentsRecord: { path: "/tmp/report.md" },
+        progressMessage: "Editing report.md",
+        resultContent: "Edited report.md",
+      });
+    });
+
     test("read tools are omitted for artifact paths", () => {
       const context = createStreamingContext();
       const artifactPath = "~/.copilot/session-state/toy-box-session/files/report.md";
@@ -926,6 +1019,26 @@ describe("projector", () => {
         completionErrorMessage: "boom",
       });
     });
+
+    test("malformed create_session results stay omitted at the SDK boundary", () => {
+      const context = createStreamingContext();
+      projectSdkEvent(
+        toolExecutionStart("create_session", "tool-create-session-malformed", {
+          prompt: "Review the auth flow",
+        }),
+        context,
+      );
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-create-session-malformed", {
+            success: true,
+            resultContent: "not json",
+          }),
+          context,
+        ),
+      ).toEqual([]);
+    });
   });
 
   describe("streaming: todo SQL", () => {
@@ -1182,6 +1295,22 @@ describe("projector", () => {
   });
 
   describe("streaming: session events", () => {
+    test("reads SDK session names and turn endings for the runtime", () => {
+      expect(getSdkSessionName(titleChanged("Friendly title"))).toBe("Friendly title");
+      expect(
+        getSdkSessionName(
+          sdkEvent({ type: "session.handoff", data: { summary: "Compacted summary" } }),
+        ),
+      ).toBe("Compacted summary");
+
+      expect(getSdkTurnEndReason(sdkEvent({ type: "session.idle", data: {} }))).toBe("idle");
+      expect(getSdkTurnEndReason(sdkEvent({ type: "session.error", data: {} }))).toBe("error");
+      expect(getSdkTurnEndReason(sdkEvent({ type: "abort", data: {} }))).toBe("error");
+      expect(
+        getSdkTurnEndReason(sdkEvent({ type: "assistant.turn_end", data: { turnId: "1" } })),
+      ).toBeUndefined();
+    });
+
     test("drops subagent status events so they do not mutate root status", () => {
       const context = createStreamingContext();
 
@@ -1237,18 +1366,18 @@ describe("projector", () => {
       ).toEqual([
         {
           type: "model_changed",
-          modelConfiguration: { model: "gpt-5.5", reasoningEffort: "xhigh" },
+          model: { name: "gpt-5.5", reasoningEffort: "xhigh" },
         },
       ]);
 
       expect(projectSdkEvent(modelChange("claude-sonnet-4.6"), context)).toEqual([
-        { type: "model_changed", modelConfiguration: { model: "claude-sonnet-4.6" } },
+        { type: "model_changed", model: { name: "claude-sonnet-4.6" } },
       ]);
 
       expect(projectSdkEvent(modelChange("gpt-5", "high"), context)).toEqual([
         {
           type: "model_changed",
-          modelConfiguration: { model: "gpt-5", reasoningEffort: "high" },
+          model: { name: "gpt-5", reasoningEffort: "high" },
         },
       ]);
 
@@ -1279,7 +1408,7 @@ describe("projector", () => {
         {
           type: "model_changed",
           agentId: "call-agent-1",
-          modelConfiguration: { model: "claude-haiku-4.5" },
+          model: { name: "claude-haiku-4.5" },
         },
       ]);
     });

@@ -12,6 +12,10 @@ export function getHyperSessionIds(): string[] {
   return Array.from(hyperSessionIds);
 }
 
+export function hasHyperSession(sessionId: string): boolean {
+  return hyperSessionIds.has(sessionId);
+}
+
 export function addHyperSession(sessionId: string): boolean {
   if (hyperSessionIds.has(sessionId)) return false;
   hyperSessionIds.add(sessionId);

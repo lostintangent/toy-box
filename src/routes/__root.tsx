@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
+import { Provider as JotaiProvider } from "jotai";
 
 import appCss from "./styles.css?url";
 import { ViewportProvider } from "@/hooks/browser/ViewportContext";
@@ -48,9 +49,11 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 
 function RootComponent() {
   return (
-    <ViewportProvider>
-      <Outlet />
-    </ViewportProvider>
+    <JotaiProvider>
+      <ViewportProvider>
+        <Outlet />
+      </ViewportProvider>
+    </JotaiProvider>
   );
 }
 

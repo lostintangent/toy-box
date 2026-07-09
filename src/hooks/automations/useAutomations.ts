@@ -1,101 +1,55 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import {
-  createServerAutomation,
-  deleteServerAutomation,
-  runServerAutomation,
-  updateServerAutomation,
+  createAutomation,
+  deleteAutomation,
+  runAutomation,
+  updateAutomation,
 } from "@/functions/automations";
-import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
 import { useServerEvents } from "@/hooks/events/useServerEvents";
-import { applyAutomationsUpdateEvent } from "./cache";
-import { getAutomationIdFromSessionId } from "@/lib/automation/sessionId";
-import { automationQueries, sessionQueries } from "@/lib/queries";
-import { prependSessionIfMissing } from "@/lib/session/queryCache";
-import type { AutomationOptions, AutomationsUpdateEvent, SessionSnapshot } from "@/types";
+import { applyAutomationEvent } from "@/lib/automation/queryCache";
+import { automationQueries, sessionQueries, workspaceQueries } from "@/lib/queries";
+import { addSessionIfMissing } from "@/lib/session/queryCache";
+import type { AutomationEvent, AutomationOptions, SessionSnapshot, WorkspaceEvent } from "@/types";
 
-type UseAutomationsOptions = {
-  onUserRunRequested?: (sessionId: string) => void;
-  streamingSessionIds?: string[];
-};
-
-/**
- * Provides automation state + actions for the UI by combining query data,
- * realtime automation events, and mutation handlers.
- */
 export function useAutomations({
   onUserRunRequested,
-  streamingSessionIds,
-}: UseAutomationsOptions = {}) {
+  applyWorkspaceEvent,
+}: {
+  onUserRunRequested?: (sessionId: string) => void;
+  applyWorkspaceEvent?: (event: WorkspaceEvent) => void;
+} = {}) {
   const [updatingAutomationId, setUpdatingAutomationId] = useState<string | null>(null);
   const [deletingAutomationId, setDeletingAutomationId] = useState<string | null>(null);
-  const [knownRunningAutomationIds, setKnownRunningAutomationIds] = useState<Set<string>>(
-    new Set(),
-  );
-
-  const { data: automationsData, isLoading } = useQuery(automationQueries.list());
-
+  const { data: automations = [], isLoading } = useQuery(automationQueries.list());
   const queryClient = useQueryClient();
-  const isVisible = usePageVisibility();
 
-  const automations = automationsData ?? [];
-
-  const invalidateAutomations = useCallback(() => {
+  function invalidateAutomations() {
     void queryClient.invalidateQueries({ queryKey: automationQueries.all() });
-  }, [queryClient]);
+  }
 
-  const runningAutomationIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const automationId of knownRunningAutomationIds) {
-      ids.add(automationId);
-    }
+  function handleServerEvent(event: AutomationEvent) {
+    applyAutomationEvent(queryClient, event);
+  }
 
-    for (const sessionId of streamingSessionIds ?? []) {
-      const automationId = getAutomationIdFromSessionId(sessionId);
-      if (!automationId) continue;
-      ids.add(automationId);
-    }
-
-    return ids;
-  }, [knownRunningAutomationIds, streamingSessionIds]);
-
-  const handleServerEvent = useCallback(
-    (event: AutomationsUpdateEvent) => {
-      applyAutomationsUpdateEvent(queryClient, event);
-      if (event.type === "automation.started") {
-        setKnownRunningAutomationIds((current) => addAutomationId(current, event.automationId));
-      }
-      if (event.type === "automation.finished") {
-        setKnownRunningAutomationIds((current) => removeAutomationId(current, event.automationId));
-      }
-    },
-    [queryClient],
-  );
-
-  const handleServerReconnect = useCallback(() => {
-    setKnownRunningAutomationIds((current) => (current.size === 0 ? current : new Set()));
+  function handleServerOpen() {
     invalidateAutomations();
-  }, [invalidateAutomations]);
-
-  useEffect(() => {
-    if (isVisible) return;
-    setKnownRunningAutomationIds((current) => (current.size === 0 ? current : new Set()));
-  }, [isVisible]);
+  }
 
   useServerEvents({
-    namespace: "automation",
+    topic: "automation",
     onEvent: handleServerEvent,
-    onReconnect: handleServerReconnect,
+    onOpen: handleServerOpen,
   });
 
   const createMutation = useMutation({
-    mutationFn: (input: AutomationOptions) => createServerAutomation({ data: input }),
+    mutationFn: (input: AutomationOptions) => createAutomation({ data: input }),
     onSuccess: invalidateAutomations,
   });
 
   const updateMutation = useMutation({
     mutationFn: async (input: AutomationOptions & { automationId: string }) => {
-      const automation = await updateServerAutomation({ data: input });
+      const automation = await updateAutomation({ data: input });
       if (!automation) {
         throw new Error("Automation not found");
       }
@@ -112,7 +66,7 @@ export function useAutomations({
 
   const deleteMutation = useMutation({
     mutationFn: async (automationId: string) => {
-      const deleted = await deleteServerAutomation({ data: { automationId } });
+      const deleted = await deleteAutomation({ data: { automationId } });
       if (!deleted) {
         throw new Error("Automation not found");
       }
@@ -128,27 +82,24 @@ export function useAutomations({
   });
 
   const runMutation = useMutation({
-    mutationFn: (automationId: string) => runServerAutomation({ data: { automationId } }),
+    mutationFn: (automationId: string) => runAutomation({ data: { automationId } }),
     onMutate: (automationId) => {
-      setKnownRunningAutomationIds((current) => addAutomationId(current, automationId));
+      applyWorkspaceEvent?.({ type: "session.creating", sessionId: automationId });
     },
     onSuccess: ({ sessionId, started }, automationId) => {
-      // Reset the detail cache to an empty session so the SessionPane's
-      // sync effect initializes from an empty snapshot, clearing local mutable
-      // state. This avoids briefly showing the previous run's messages
-      // when the same session ID is reused.
+      // Reset the stable session cache while its new stream connects.
       if (started) {
         const automation = automations.find((candidate) => candidate.id === automationId);
         queryClient.setQueryData<SessionSnapshot>(sessionQueries.detail(sessionId).queryKey, {
           id: sessionId,
           messages: [],
           queuedMessages: [],
-          modelConfiguration: automation?.modelConfiguration,
+          model: automation?.model,
           status: "thinking",
           reasoningContent: "",
         });
 
-        prependSessionIfMissing(queryClient, {
+        addSessionIfMissing(queryClient, {
           sessionId,
           startTime: new Date(),
           modifiedTime: new Date(),
@@ -159,10 +110,10 @@ export function useAutomations({
 
       onUserRunRequested?.(sessionId);
     },
-    onSettled: (_data, _error, automationId) => {
-      if (automationId) {
-        setKnownRunningAutomationIds((current) => removeAutomationId(current, automationId));
-      }
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: workspaceQueries.stateKey() });
+    },
+    onSettled: () => {
       invalidateAutomations();
     },
   });
@@ -185,20 +136,5 @@ export function useAutomations({
     isCreatingAutomation: createMutation.isPending,
     updatingAutomationId,
     deletingAutomationId,
-    runningAutomationIds,
   };
-}
-
-function addAutomationId(current: Set<string>, automationId: string): Set<string> {
-  if (current.has(automationId)) return current;
-  const next = new Set(current);
-  next.add(automationId);
-  return next;
-}
-
-function removeAutomationId(current: Set<string>, automationId: string): Set<string> {
-  if (!current.has(automationId)) return current;
-  const next = new Set(current);
-  next.delete(automationId);
-  return next;
 }

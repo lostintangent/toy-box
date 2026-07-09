@@ -4,11 +4,10 @@
 
 import type { TodoItemPatch, TodoStatus } from "@/types";
 
-export type ParsedTodoSql = {
-  patches: TodoItemPatch[];
-};
-
-export function parseTodoSql(query: string): ParsedTodoSql | undefined {
+/** Return todo patches when SQL touches the todo tables; undefined means the
+ *  statement is unrelated. An empty array intentionally hides read-only or
+ *  dependency-only todo SQL without inventing state changes. */
+export function parseTodoSql(query: string): TodoItemPatch[] | undefined {
   let touchesTodos = false;
   const patches: TodoItemPatch[] = [];
 
@@ -17,13 +16,13 @@ export function parseTodoSql(query: string): ParsedTodoSql | undefined {
     if (!parsedStatement) continue;
 
     touchesTodos = true;
-    patches.push(...parsedStatement.patches);
+    patches.push(...parsedStatement);
   }
 
-  return touchesTodos ? { patches } : undefined;
+  return touchesTodos ? patches : undefined;
 }
 
-function parseTodoStatement(statement: string): ParsedTodoSql | undefined {
+function parseTodoStatement(statement: string): TodoItemPatch[] | undefined {
   const trimmed = statement.trim();
   if (!trimmed) return undefined;
 
@@ -36,21 +35,21 @@ function parseTodoStatement(statement: string): ParsedTodoSql | undefined {
   );
 }
 
-function parseTodoInsert(statement: string): ParsedTodoSql | undefined {
+function parseTodoInsert(statement: string): TodoItemPatch[] | undefined {
   const match = statement.match(/^insert\s+(?:or\s+(?:ignore|replace)\s+)?into\s+todos\b/i);
   if (!match) return undefined;
 
   const rest = statement.slice(match[0].length).trimStart();
   const columns = readParenthesized(rest);
-  if (!columns) return { patches: [] };
+  if (!columns) return [];
 
   const valuesInput = rest.slice(columns.end).trimStart();
-  if (!valuesInput.match(/^values\b/i)) return { patches: [] };
+  if (!valuesInput.match(/^values\b/i)) return [];
 
   const columnNames = splitTopLevel(columns.value, ",")
     .map(normalizeIdentifier)
     .filter((value): value is string => value !== undefined);
-  if (columnNames.length === 0) return { patches: [] };
+  if (columnNames.length === 0) return [];
 
   const patches: TodoItemPatch[] = [];
   const rows = splitTopLevel(valuesInput.slice("values".length).trimStart(), ",");
@@ -83,10 +82,10 @@ function parseTodoInsert(statement: string): ParsedTodoSql | undefined {
     });
   }
 
-  return { patches };
+  return patches;
 }
 
-function parseTodoUpdate(statement: string): ParsedTodoSql | undefined {
+function parseTodoUpdate(statement: string): TodoItemPatch[] | undefined {
   const match = statement.match(/^update\s+todos\s+set\b/i);
   if (!match) return undefined;
 
@@ -97,58 +96,49 @@ function parseTodoUpdate(statement: string): ParsedTodoSql | undefined {
 
   if (whereIndex === -1) {
     return parsedUpdate.status !== undefined
-      ? { patches: [{ type: "update_all", status: parsedUpdate.status }] }
-      : { patches: [] };
+      ? [{ type: "update_all", status: parsedUpdate.status }]
+      : [];
   }
 
   const whereClause = rest.slice(whereIndex + "where".length).trim();
   const ids = parseTodoIdsWhereClause(whereClause);
-  if (ids.length === 0) return { patches: [] };
+  if (ids.length === 0) return [];
 
   if (parsedUpdate.title === undefined && parsedUpdate.status === undefined) {
-    return { patches: [] };
+    return [];
   }
 
-  return {
-    patches: ids.map((id) => {
-      const patch: TodoItemPatch = { type: "upsert", id };
-      patch.title = parsedUpdate.title;
-      patch.status = parsedUpdate.status;
-      return patch;
-    }),
-  };
+  return ids.map((id) => ({
+    type: "upsert",
+    id,
+    title: parsedUpdate.title,
+    status: parsedUpdate.status,
+  }));
 }
 
-function parseTodoDelete(statement: string): ParsedTodoSql | undefined {
+function parseTodoDelete(statement: string): TodoItemPatch[] | undefined {
   const match = statement.match(/^delete\s+from\s+todos\b/i);
   if (!match) return undefined;
 
   const rest = statement.slice(match[0].length).trimStart();
   const whereIndex = findTopLevelKeyword(rest, "where");
-  if (whereIndex === -1) return { patches: [] };
+  if (whereIndex === -1) return [];
 
   const ids = parseTodoIdsWhereClause(rest.slice(whereIndex + "where".length).trim());
-  return ids.length > 0 ? { patches: ids.map((id) => ({ type: "delete", id })) } : { patches: [] };
+  return ids.map((id) => ({ type: "delete", id }));
 }
 
-function parseTodoSelect(statement: string): ParsedTodoSql | undefined {
-  return /\bselect\b[\s\S]*\bfrom\s+todos\b/i.test(statement) ? { patches: [] } : undefined;
+function parseTodoSelect(statement: string): TodoItemPatch[] | undefined {
+  return /\bselect\b[\s\S]*\bfrom\s+todos\b/i.test(statement) ? [] : undefined;
 }
 
-function parseTodoFallback(statement: string): ParsedTodoSql | undefined {
-  return /\b(?:into|from|update)\s+todo(?:s|_deps)\b/i.test(statement)
-    ? { patches: [] }
-    : undefined;
+function parseTodoFallback(statement: string): TodoItemPatch[] | undefined {
+  return /\b(?:into|from|update)\s+todo(?:s|_deps)\b/i.test(statement) ? [] : undefined;
 }
 
-function parseTodoAssignments(assignments: string): {
-  title?: string;
-  status?: TodoStatus;
-} {
-  const parsed: {
-    title?: string;
-    status?: TodoStatus;
-  } = {};
+function parseTodoAssignments(assignments: string) {
+  let title: string | undefined;
+  let status: TodoStatus | undefined;
 
   for (const assignment of splitTopLevel(assignments, ",")) {
     const equalsIndex = findTopLevelChar(assignment, "=");
@@ -159,17 +149,17 @@ function parseTodoAssignments(assignments: string): {
     if (!column || value === undefined) continue;
 
     if (column === "title") {
-      parsed.title = value;
+      title = value;
       continue;
     }
 
     if (column === "status") {
-      const status = parseTodoStatus(value);
-      if (status) parsed.status = status;
+      const nextStatus = parseTodoStatus(value);
+      if (nextStatus) status = nextStatus;
     }
   }
 
-  return parsed;
+  return { title, status };
 }
 
 function parseTodoIdComparison(input: string): string | undefined {

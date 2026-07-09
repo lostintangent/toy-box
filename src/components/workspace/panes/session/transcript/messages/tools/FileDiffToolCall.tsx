@@ -1,4 +1,4 @@
-import React, { memo, startTransition, useEffect, useMemo, useState } from "react";
+import React, { startTransition, useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
 import type { ThemedToken } from "shiki/core";
 import type { ToolCallProps } from "./types";
@@ -363,7 +363,7 @@ function DiffLineRenderer({ line }: { line: DiffLine }) {
   return <div>{renderTokens(line.tokens, content)}</div>;
 }
 
-const DiffView = memo(function DiffView({ diffLines }: { diffLines: DiffLine[] }) {
+function DiffView({ diffLines }: { diffLines: DiffLine[] }) {
   return (
     <pre className="text-xs p-2 rounded overflow-x-auto max-h-64 font-mono bg-muted/50">
       <div className="inline-block min-w-full">
@@ -376,7 +376,46 @@ const DiffView = memo(function DiffView({ diffLines }: { diffLines: DiffLine[] }
       </div>
     </pre>
   );
-});
+}
+
+async function highlightDiffLines(
+  diffLines: DiffLine[],
+  oldText: string,
+  newText: string,
+  path: string,
+  minIndent: number,
+): Promise<DiffLine[]> {
+  const { highlightCode, getLangFromPath } = await import("@/lib/diffs/highlight");
+  const lang = getLangFromPath(path);
+  const [oldHighlighted, newHighlighted] = await Promise.all([
+    highlightCode(oldText, lang),
+    highlightCode(newText, lang),
+  ]);
+  let oldLineIndex = 0;
+  let newLineIndex = 0;
+
+  return diffLines.map((line): DiffLine => {
+    const oldTokens = stripTokensIndent(oldHighlighted?.[oldLineIndex]?.tokens, minIndent);
+    const newTokens = stripTokensIndent(newHighlighted?.[newLineIndex]?.tokens, minIndent);
+
+    switch (line.type) {
+      case "context":
+        oldLineIndex++;
+        newLineIndex++;
+        return { ...line, tokens: oldTokens };
+      case "removed":
+        oldLineIndex++;
+        return { ...line, tokens: oldTokens };
+      case "added":
+        newLineIndex++;
+        return { ...line, tokens: newTokens };
+      case "modified":
+        oldLineIndex++;
+        newLineIndex++;
+        return { ...line, tokens: oldTokens, newTokens };
+    }
+  });
+}
 
 function useSyntaxHighlightedDiff(
   diffLines: DiffLine[],
@@ -389,52 +428,11 @@ function useSyntaxHighlightedDiff(
 
   useEffect(() => {
     let cancelled = false;
-
-    async function highlight() {
-      const { highlightCode, getLangFromPath } = await import("@/lib/diffs/highlight");
-      const lang = getLangFromPath(path);
-
-      const [oldHighlighted, newHighlighted] = await Promise.all([
-        highlightCode(oldText, lang),
-        highlightCode(newText, lang),
-      ]);
-
+    void highlightDiffLines(diffLines, oldText, newText, path, minIndent).then((enhanced) => {
       if (cancelled) return;
+      startTransition(() => setHighlightedLines(enhanced));
+    });
 
-      let oldLineIdx = 0;
-      let newLineIdx = 0;
-
-      const enhanced = diffLines.map((line): DiffLine => {
-        const oldTokens = stripTokensIndent(oldHighlighted?.[oldLineIdx]?.tokens, minIndent);
-        const newTokens = stripTokensIndent(newHighlighted?.[newLineIdx]?.tokens, minIndent);
-
-        switch (line.type) {
-          case "context":
-            oldLineIdx++;
-            newLineIdx++;
-            return { ...line, tokens: oldTokens };
-
-          case "removed":
-            oldLineIdx++;
-            return { ...line, tokens: oldTokens };
-
-          case "added":
-            newLineIdx++;
-            return { ...line, tokens: newTokens };
-
-          case "modified":
-            oldLineIdx++;
-            newLineIdx++;
-            return { ...line, tokens: oldTokens, newTokens };
-        }
-      });
-
-      startTransition(() => {
-        setHighlightedLines(enhanced);
-      });
-    }
-
-    highlight();
     return () => {
       cancelled = true;
     };
@@ -444,13 +442,9 @@ function useSyntaxHighlightedDiff(
 }
 
 function DiffHunkView({ hunk, path }: { hunk: DiffHunk; path: string }) {
-  const { lines: diffLines, minIndent } = useMemo(
-    () =>
-      hunk.lines
-        ? diffLinesFromChangeLines(hunk.lines)
-        : computeIntuitiveDiff(hunk.oldText, hunk.newText),
-    [hunk.lines, hunk.oldText, hunk.newText],
-  );
+  const { lines: diffLines, minIndent } = hunk.lines
+    ? diffLinesFromChangeLines(hunk.lines)
+    : computeIntuitiveDiff(hunk.oldText, hunk.newText);
   const displayDiffLines = useSyntaxHighlightedDiff(
     diffLines,
     hunk.oldText,
@@ -549,12 +543,12 @@ function getFileDiffToolCallLabel(
     return toRelativePath(fileDiffs[0].path, cwd);
   }
 
-  return isPatch ? `Patch - ${fileDiffs.length} files` : `${fileDiffs.length} files`;
+  return isPatch ? `Edit (${fileDiffs.length} files)` : `${fileDiffs.length} files`;
 }
 
 export function FileDiffToolCall({ toolCall, ...props }: ToolCallProps) {
   const cwd = useSessionCwd();
-  const fileDiffs = useMemo(() => getToolCallFileDiffs(toolCall, cwd), [toolCall, cwd]);
+  const fileDiffs = getToolCallFileDiffs(toolCall, cwd);
   const lineDiff = useToolCallDiff(toolCall.id);
   const patch = typeof toolCall.arguments.patch === "string" ? toolCall.arguments.patch : undefined;
   const fallbackContent =

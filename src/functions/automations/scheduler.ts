@@ -1,65 +1,39 @@
-// Automation scheduler: polls for due automations and executes them.
-//
-// Each run creates a fresh session unless reuseSession points at an idle
-// previous run session. The scheduler also exposes `runAutomation` for
-// on-demand manual runs from the UI.
+// Runs automations on demand and polls for scheduled work. Both paths converge
+// here so reset, overlap prevention, creation, and completion metadata follow
+// one lifecycle.
 
-import { createSession, deleteSession } from "@/functions/state/sessionRegistry";
-import { deliverSessionMessage, SessionStream } from "@/functions/runtime/stream";
-import { emitAutomationsUpdate, updateSessionName } from "@/functions/runtime/broadcast";
-import { createAutomationRunSessionId } from "@/lib/automation/sessionId";
-import type { Automation } from "@/types";
-import { getAppDatabase } from "@/functions/database";
+import { deleteSessionIfExists } from "@/functions/state/session/registry";
+import { createSession, SessionStream } from "@/functions/runtime/stream";
+import type { SessionStreamCompletion } from "@/functions/runtime/stream";
+import { emitAutomationEvent } from "@/functions/runtime/broadcast";
+import { getAppDatabase } from "@/functions/state/database";
 import { AutomationDatabase } from "./database";
 
 const AUTOMATION_SCHEDULER_POLL_MS = 30_000;
 
-export type AutomationRunResult = {
-  sessionId: string;
-  started: boolean;
-};
+let schedulerStarted = false;
+let schedulerTickInProgress = false;
+let schedulerTimer: ReturnType<typeof setTimeout> | undefined;
+const pendingAutomationRuns = new Map<string, ReturnType<typeof beginAutomationRun>>();
 
-export type AutomationSchedulerDependencies = {
-  createSession: typeof createSession;
-  deleteSession: typeof deleteSession;
-  deliverSessionMessage: typeof deliverSessionMessage;
-  updateSessionName: typeof updateSessionName;
-  emitAutomationsUpdate: typeof emitAutomationsUpdate;
-  isSessionRunning(sessionId: string): boolean;
-};
-
-const defaultSchedulerDependencies: AutomationSchedulerDependencies = {
-  createSession,
-  deleteSession,
-  deliverSessionMessage,
-  updateSessionName,
-  emitAutomationsUpdate,
-  isSessionRunning: (sessionId) => SessionStream.isRunning(sessionId),
-};
-
-/** Ensure the scheduler's polling loop is started */
-let started = false;
-export function ensureSchedulerStarted() {
-  if (started) return;
-  started = true;
-
-  scheduleNextTick(0);
+export function ensureSchedulerStarted(): void {
+  if (schedulerStarted) return;
+  schedulerStarted = true;
+  scheduleSchedulerTick(0);
 }
 
-/** Poll for due automations and run them. */
-let tickInProgress = false;
-export async function runSchedulerTick() {
-  if (tickInProgress) return;
-  tickInProgress = true;
+export async function runSchedulerTick(): Promise<void> {
+  if (schedulerTickInProgress) return;
+  schedulerTickInProgress = true;
 
   try {
     const appDatabase = await getAppDatabase({ createIfMissing: false });
     if (!appDatabase) return;
-    const db = new AutomationDatabase(appDatabase);
-    const dueAutomations = await db.claimDue();
-    for (const automation of dueAutomations) {
+
+    const database = new AutomationDatabase(appDatabase);
+    for (const automation of await database.claimDue()) {
       try {
-        await runAutomationWithDatabase(automation.id, db);
+        await startAutomationRun(automation.id);
       } catch (error) {
         console.error(`Failed to run scheduled automation ${automation.id}:`, error);
       }
@@ -67,138 +41,87 @@ export async function runSchedulerTick() {
   } catch (error) {
     console.error("Failed to run automation scheduler tick:", error);
   } finally {
-    tickInProgress = false;
-    scheduleNextTick();
+    schedulerTickInProgress = false;
   }
 }
 
-/** Create a fresh session for an automation and send its prompt. */
-export async function runAutomation(automationId: string): Promise<AutomationRunResult> {
-  const db = new AutomationDatabase(await getAppDatabase());
-  return runAutomationWithDatabase(automationId, db);
-}
-
-export async function runAutomationWithDatabase(
-  automationId: string,
-  db: AutomationDatabase,
-  deps = defaultSchedulerDependencies,
-): Promise<AutomationRunResult> {
-  const automation = await db.getById(automationId);
-  if (!automation) {
-    throw new Error("Automation not found");
+export async function startAutomationRun(automationId: string) {
+  const pending = pendingAutomationRuns.get(automationId);
+  if (pending) {
+    const { sessionId } = await pending;
+    return { sessionId, started: false };
   }
 
-  const reusedSessionId = automation.reuseSession ? automation.lastRunSessionId : undefined;
-  if (reusedSessionId && deps.isSessionRunning(reusedSessionId)) {
-    return { sessionId: reusedSessionId, started: false };
-  }
-
-  const sessionId = reusedSessionId ?? createAutomationRunSessionId(automation.id);
-
-  if (reusedSessionId) {
-    await deps.deleteSession(sessionId);
-  }
-
-  await deps.createSession(sessionId, {
-    modelConfiguration: automation.modelConfiguration,
-    directory: automation.cwd,
-    automationId: automation.id,
-  });
-  deps.updateSessionName(sessionId, automation.title);
-
-  // Persist the session ID immediately so the automation list item is clickable
-  // and the session can be filtered from the regular session list while running.
-  await db.updateLastRunSessionId(automation.id, sessionId);
-
-  deps.emitAutomationsUpdate({
-    type: "automation.started",
-    automationId: automation.id,
-    sessionId,
-    startedAt: new Date().toISOString(),
-  });
+  const run = beginAutomationRun(automationId);
+  pendingAutomationRuns.set(automationId, run);
 
   try {
-    const receipt = await deps.deliverSessionMessage({
-      sessionId,
-      message: {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: automation.prompt,
-        modelConfiguration: automation.modelConfiguration,
-      },
-    });
-    void receipt
-      .completion()
-      .then((completion) =>
-        finalizeAutomationRun(
-          db,
-          {
-            automationId: automation.id,
-            sessionId,
-            success: !completion.error,
-            updateLastRun: true,
-          },
-          deps,
-        ),
-      )
-      .catch((error) => {
-        console.error(`Failed to finalize automation run ${automation.id}:`, error);
-      });
-
-    return { sessionId, started: true };
-  } catch (error) {
-    await finalizeAutomationRun(
-      db,
-      {
-        automationId: automation.id,
-        sessionId,
-        success: false,
-        updateLastRun: false,
-      },
-      deps,
-    );
-    throw error;
+    return await run;
+  } finally {
+    pendingAutomationRuns.delete(automationId);
   }
 }
 
-// ============================================================================
-// Internal Helpers
-// ============================================================================
+async function beginAutomationRun(automationId: string) {
+  const database = new AutomationDatabase(await getAppDatabase());
+  const automation = await database.get(automationId);
+  if (!automation) throw new Error("Automation not found");
 
-/** Persist the run result and emit a finished event to connected clients. */
-async function finalizeAutomationRun(
-  db: AutomationDatabase,
-  options: {
-    automationId: string;
-    sessionId: string;
-    success: boolean;
-    updateLastRun: boolean;
-  },
-  deps = defaultSchedulerDependencies,
-): Promise<void> {
-  const finishedAt = new Date();
-  let updatedAutomation: Automation | undefined;
-
-  if (options.updateLastRun) {
-    await db.updateLastRun(options.automationId, finishedAt, options.sessionId);
-    updatedAutomation = (await db.getById(options.automationId)) ?? undefined;
+  if (SessionStream.isRunning(automation.id)) {
+    return { sessionId: automation.id, started: false };
   }
 
-  deps.emitAutomationsUpdate({
-    type: "automation.finished",
-    automationId: options.automationId,
-    sessionId: options.sessionId,
-    finishedAt: finishedAt.toISOString(),
-    success: options.success,
-    automation: updatedAutomation,
+  await deleteSessionIfExists(automation.id);
+  const receipt = await createSession(
+    automation.id,
+    {
+      content: automation.prompt,
+      model: automation.model,
+    },
+    {
+      directory: automation.cwd,
+      summary: automation.title,
+      sessionType: "automation",
+    },
+  );
+
+  void finishWhenComplete(database, automation.id, receipt.waitForCompletion).catch((error) => {
+    console.error(`Failed to finalize automation run ${automation.id}:`, error);
   });
+  return { sessionId: automation.id, started: true };
 }
 
-let timer = null as ReturnType<typeof setTimeout> | null;
-function scheduleNextTick(delayMs = AUTOMATION_SCHEDULER_POLL_MS) {
-  if (timer) {
-    clearTimeout(timer);
+async function finishWhenComplete(
+  database: AutomationDatabase,
+  automationId: string,
+  waitForCompletion: () => Promise<SessionStreamCompletion>,
+): Promise<void> {
+  try {
+    await waitForCompletion();
+  } catch (error) {
+    console.error(`Failed to observe automation run ${automationId}:`, error);
   }
 
-  timer = setTimeout(runSchedulerTick, delayMs);
+  try {
+    await database.recordRunFinish(automationId, new Date());
+    const automation = await database.get(automationId);
+    if (automation) {
+      emitAutomationEvent({ type: "automation.updated", automation });
+    }
+  } catch (error) {
+    console.error(`Failed to persist automation run ${automationId}:`, error);
+  }
+}
+
+function scheduleSchedulerTick(delayMs = AUTOMATION_SCHEDULER_POLL_MS): void {
+  if (schedulerTimer) clearTimeout(schedulerTimer);
+  schedulerTimer = setTimeout(() => {
+    void runSchedulerLoop();
+  }, delayMs);
+  schedulerTimer.unref?.();
+}
+
+async function runSchedulerLoop(): Promise<void> {
+  await runSchedulerTick();
+  if (schedulerStarted) scheduleSchedulerTick();
 }

@@ -1,50 +1,33 @@
-import {
-  isArtifactPane,
-  type ArtifactWorkspacePane,
-  type ArtifactPaneMode,
-  type WorkspacePane,
-} from "@/lib/workspace/panes";
+import type { WorkspacePane } from "@/lib/workspace/panes";
+import { InboxPane } from "./inbox/InboxPane";
 import { CanvasPane } from "./CanvasPane";
 import { ArtifactPane } from "./artifacts/ArtifactPane";
-import { SessionPane, type SessionPaneProps } from "./session/SessionPane";
+import { SessionPane } from "./session/SessionPane";
+import type { PaneProps } from "./types";
 
-type WorkspacePaneViewProps = Omit<SessionPaneProps, "sessionId"> & {
+type WorkspacePaneViewProps = PaneProps & {
   pane: WorkspacePane;
-  onSetArtifactPaneMode?: (pane: ArtifactWorkspacePane, mode: ArtifactPaneMode) => void;
+  onFocusPane?: (paneId: string) => void;
 };
 
-/**
- * The single view of a workspace pane: given a `WorkspacePane` (data) plus the
- * host-provided `variant` + `actionsSlot` and the shared session view props, it
- * renders the right pane component for the pane's kind. Both hosts — SessionGrid
- * ("normal") and SessionPager ("compact") — render this instead of switching on
- * kind themselves, so the pane-kind → component mapping lives in exactly one place.
- *
- * The artifact arm defers to the ARTIFACT_KINDS registry (via `isArtifactPane`), so
- * a new artifact kind flows through here with no edit — only a genuinely new pane
- * category would touch this switch.
- */
+/** One pane-kind-to-component mapping shared by the grid and pager hosts. */
 export function WorkspacePaneView({
   pane,
-  onSetArtifactPaneMode,
-  ...sessionProps
+  variant,
+  actionsSlot,
+  onFocusPane,
 }: WorkspacePaneViewProps) {
+  if (pane.kind === "inbox") {
+    return <InboxPane onFocusPane={onFocusPane} />;
+  }
+
   if (pane.kind === "session") {
-    return <SessionPane sessionId={pane.sessionId} {...sessionProps} />;
+    return <SessionPane sessionId={pane.sessionId} variant={variant} actionsSlot={actionsSlot} />;
   }
 
   if (pane.kind === "canvas") {
-    return <CanvasPane pane={pane} />;
+    return <CanvasPane canvas={pane.canvas} />;
   }
 
-  if (!isArtifactPane(pane)) return null;
-
-  return (
-    <ArtifactPane
-      pane={pane}
-      variant={sessionProps.variant}
-      actionsSlot={sessionProps.actionsSlot}
-      onModeChange={onSetArtifactPaneMode}
-    />
-  );
+  return <ArtifactPane pane={pane} variant={variant} actionsSlot={actionsSlot} />;
 }

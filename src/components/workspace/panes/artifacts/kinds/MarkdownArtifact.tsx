@@ -1,11 +1,60 @@
-import { useMemo } from "react";
-import { Documint, type EditorTheme } from "documint";
-import type { ArtifactContentProps } from "./index";
-import { createHtmlPreviewBaseUri } from "@/lib/session/artifacts/htmlPreview";
+import { useAtomValue } from "jotai";
+import {
+  Documint,
+  type CommentChange,
+  type DocumentPresence,
+  type DocumentUser,
+  type EditorTheme,
+} from "documint";
+import { artifactCommentSessionsAtom } from "@/hooks/workspace/atoms";
+import type { ArtifactRendererProps } from "./index";
 import {
   usePreferredColorScheme,
   type PreferredColorScheme,
 } from "@/hooks/browser/usePreferredColorScheme";
+
+const COPILOT_USER = {
+  id: "copilot",
+  username: "copilot",
+  fullName: "Copilot",
+} satisfies DocumentUser;
+const DOCUMINT_USERS = [COPILOT_USER];
+
+/** Rich Markdown editing with live external diffs and inline Copilot responses. */
+export function MarkdownArtifact({
+  sessionId,
+  path,
+  mode,
+  artifact,
+  respondToComment,
+}: ArtifactRendererProps) {
+  const theme = useDocumintTheme();
+  const commentSessions = useAtomValue(artifactCommentSessionsAtom(sessionId, path));
+  const presence: DocumentPresence[] = commentSessions.map((commentSession) => ({
+    userId: COPILOT_USER.id,
+    cursor: { threadId: commentSession.threadId },
+    color: "#8b5cf6",
+  }));
+
+  async function handleCommentChanged(change: CommentChange) {
+    if (change.kind !== "added") return;
+
+    await respondToComment(change.threadId, change.thread);
+  }
+
+  return (
+    <Documint
+      content={artifact.content ?? ""}
+      onCommentChanged={handleCommentChanged}
+      onContentChanged={artifact.save}
+      readOnly={mode === "read"}
+      users={DOCUMINT_USERS}
+      presence={presence}
+      showDiffs={mode !== "edit"}
+      theme={theme}
+    />
+  );
+}
 
 const DOCUMINT_THEME_FALLBACKS = {
   light: {
@@ -27,37 +76,10 @@ const DOCUMINT_THEME_FALLBACKS = {
 } satisfies Record<PreferredColorScheme, EditorTheme>;
 const DOCUMINT_FONT_SIZE = 14;
 
-/** A rich Markdown editor. External edits surface as inline diffs (outside edit mode). */
-export function MarkdownArtifact({ pane, artifact }: ArtifactContentProps) {
-  const theme = useDocumintTheme();
-  // Resolve relative embed URLs (e.g. `chart.html`) against this session's preview
-  // endpoint, so sibling artifacts render in place.
-  const baseUri = useMemo(
-    () =>
-      typeof window === "undefined"
-        ? undefined
-        : createHtmlPreviewBaseUri(pane.sourceSessionId, pane.path, window.location.origin),
-    [pane.path, pane.sourceSessionId],
-  );
-
-  return (
-    <Documint
-      key={pane.path}
-      className="h-full"
-      baseUri={baseUri}
-      content={artifact.content ?? ""}
-      onContentChanged={artifact.save}
-      readOnly={pane.mode === "read"}
-      showDiffs={pane.mode !== "edit"}
-      theme={theme}
-    />
-  );
-}
-
 function useDocumintTheme(): EditorTheme {
   const colorScheme = usePreferredColorScheme();
 
-  return useMemo(() => createDocumintTheme(colorScheme), [colorScheme]);
+  return createDocumintTheme(colorScheme);
 }
 
 function createDocumintTheme(colorScheme: PreferredColorScheme): EditorTheme {

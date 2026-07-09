@@ -5,35 +5,55 @@ import {
   prepareSessionForNextTurn,
   sessionSeedFromSnapshot,
   toSessionSnapshot,
+  type Session,
 } from "./sessionReducer";
-import type { AssistantMessage, SessionEvent } from "@/types";
+import type { AssistantMessage, Message, SessionEvent } from "@/types";
+
+function reduceEvents(events: readonly SessionEvent[], initial = createInitialSession()): Session {
+  return events.reduce(applySessionEvent, initial);
+}
+
+function assistantMessageAt(state: Session, index: number): AssistantMessage {
+  const message = state.messages[index];
+  if (message?.role !== "assistant") {
+    throw new Error(`Expected assistant message at index ${index}`);
+  }
+  return message;
+}
+
+function expectMessageIdentities(
+  previous: Message[],
+  next: Message[],
+  count = previous.length,
+): void {
+  for (let index = 0; index < count; index++) {
+    expect(next[index]).toBe(previous[index]);
+  }
+}
 
 describe("sessionReducer", () => {
   describe("messages", () => {
     test("replays a streamed turn with tool calls into interleaved assistant messages", () => {
-      const state = createInitialSession();
-      for (const event of [
+      const state = reduceEvents([
         { type: "user_message", content: "hello" },
         { type: "status", status: "thinking" },
         {
           type: "tool_start",
           toolCallId: "t1",
           toolName: "read_file",
-          arguments: { path: "docs/design.md" },
+          arguments: { path: "README.md" },
         },
         { type: "tool_end", toolCallId: "t1", success: true, result: "ok" },
         { type: "delta", content: "Done." },
         { type: "end", reason: "idle" },
-      ] as const) {
-        applySessionEvent(state, event);
-      }
+      ]);
 
       expect(state.messages).toHaveLength(3);
       expect(state.messages[0]).toMatchObject({ role: "user", content: "hello" });
       // First assistant message: tool call group
       expect(state.messages[1].role).toBe("assistant");
-      expect((state.messages[1] as AssistantMessage).toolCalls).toHaveLength(1);
-      expect((state.messages[1] as AssistantMessage).toolCalls?.[0]).toMatchObject({
+      expect(assistantMessageAt(state, 1).toolCalls).toHaveLength(1);
+      expect(assistantMessageAt(state, 1).toolCalls?.[0]).toMatchObject({
         id: "t1",
         name: "read_file",
         result: {
@@ -43,7 +63,7 @@ describe("sessionReducer", () => {
       });
       // Second assistant message: text after tool calls
       expect(state.messages[2]).toMatchObject({ role: "assistant", content: "Done." });
-      expect((state.messages[2] as AssistantMessage).toolCalls).toBeUndefined();
+      expect(assistantMessageAt(state, 2).toolCalls).toBeUndefined();
       expect(state.status).toBe("idle");
     });
 
@@ -51,28 +71,25 @@ describe("sessionReducer", () => {
       // Replay interleaving: a committed message's tools attach via the
       // pending map, and the next committed message is a turn boundary that
       // must not drag the previous group's tool calls along.
-      const state = createInitialSession();
-      for (const event of [
-        { type: "assistant_message" as const, content: "First" },
+      const state = reduceEvents([
+        { type: "assistant_message", content: "First" },
         {
-          type: "tool_start" as const,
+          type: "tool_start",
           toolCallId: "t1",
           toolName: "glob",
           arguments: { pattern: "*.ts" },
         },
-        { type: "tool_end" as const, toolCallId: "t1", success: true, result: "ok" },
-        { type: "assistant_message" as const, content: "Second" },
-      ]) {
-        applySessionEvent(state, event);
-      }
+        { type: "tool_end", toolCallId: "t1", success: true, result: "ok" },
+        { type: "assistant_message", content: "Second" },
+      ]);
 
       expect(state.messages).toHaveLength(2);
       expect(state.messages[0]).toMatchObject({
         role: "assistant",
         content: "First",
       });
-      expect((state.messages[0] as AssistantMessage).toolCalls).toHaveLength(1);
-      expect((state.messages[0] as AssistantMessage).toolCalls?.[0]).toMatchObject({
+      expect(assistantMessageAt(state, 0).toolCalls).toHaveLength(1);
+      expect(assistantMessageAt(state, 0).toolCalls?.[0]).toMatchObject({
         id: "t1",
         name: "glob",
         result: { content: "ok", success: true },
@@ -81,15 +98,16 @@ describe("sessionReducer", () => {
         role: "assistant",
         content: "Second",
       });
-      expect((state.messages[1] as AssistantMessage).toolCalls).toBeUndefined();
+      expect(assistantMessageAt(state, 1).toolCalls).toBeUndefined();
       expect(state.pendingToolCalls.size).toBe(0);
     });
 
     test("committed assistant messages append after thinking status", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, { type: "assistant_message", content: "Done." });
+      const state = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "status", status: "thinking" },
+        { type: "assistant_message", content: "Done." },
+      ]);
 
       expect(state.messages).toHaveLength(2);
       expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Done." });
@@ -97,16 +115,15 @@ describe("sessionReducer", () => {
     });
 
     test("agent notifications create visible turn boundaries", () => {
-      const state = createInitialSession();
       const notification = { type: "artifact_edited", path: "plan.md" } as const;
-
-      applySessionEvent(state, { type: "agent_notification", notification });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, { type: "assistant_message", content: "I reviewed the edit." });
-
-      applySessionEvent(state, { type: "agent_notification", notification });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, { type: "assistant_message", content: "I reviewed the update." });
+      const state = reduceEvents([
+        { type: "agent_notification", notification },
+        { type: "status", status: "thinking" },
+        { type: "assistant_message", content: "I reviewed the edit." },
+        { type: "agent_notification", notification },
+        { type: "status", status: "thinking" },
+        { type: "assistant_message", content: "I reviewed the update." },
+      ]);
 
       expect(state.messages).toEqual([
         { role: "agent_notification", notification, timestamp: undefined },
@@ -118,12 +135,13 @@ describe("sessionReducer", () => {
     });
 
     test("committed assistant messages reconcile streamed assistant text", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, { type: "delta", content: "Done" });
-      applySessionEvent(state, { type: "delta", content: "Done." });
-      applySessionEvent(state, { type: "assistant_message", content: "Done." });
+      const state = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "status", status: "thinking" },
+        { type: "delta", content: "Done" },
+        { type: "delta", content: "Done." },
+        { type: "assistant_message", content: "Done." },
+      ]);
 
       expect(state.messages).toHaveLength(2);
       expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Done." });
@@ -131,11 +149,12 @@ describe("sessionReducer", () => {
     });
 
     test("committed assistant messages reconcile after reasoning without a text delta", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, { type: "reasoning", content: "Thinking..." });
-      applySessionEvent(state, { type: "assistant_message", content: "Done." });
+      const state = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "status", status: "thinking" },
+        { type: "reasoning", content: "Thinking..." },
+        { type: "assistant_message", content: "Done." },
+      ]);
 
       expect(state.messages).toHaveLength(2);
       expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Done." });
@@ -146,10 +165,10 @@ describe("sessionReducer", () => {
 
   describe("streaming content", () => {
     test("status updates do not create assistant messages", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "user_message", content: "go" });
-
-      applySessionEvent(state, { type: "status", status: "thinking" });
+      const state = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "status", status: "thinking" },
+      ]);
 
       expect(state.status).toBe("thinking");
       expect(state.reasoningContent).toBe("");
@@ -173,16 +192,13 @@ describe("sessionReducer", () => {
     });
 
     test("normalizes cumulative delta chunks without duplicating assistant content", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-
-      applySessionEvent(state, { type: "delta", content: "Let me look" });
-      applySessionEvent(state, { type: "delta", content: "Let me look at the turn" });
-      applySessionEvent(state, {
-        type: "delta",
-        content: "Let me look at the turn that corresponds",
-      });
+      const state = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "status", status: "thinking" },
+        { type: "delta", content: "Let me look" },
+        { type: "delta", content: "Let me look at the turn" },
+        { type: "delta", content: "Let me look at the turn that corresponds" },
+      ]);
 
       expect(state.messages[state.messages.length - 1]).toMatchObject({
         role: "assistant",
@@ -191,12 +207,12 @@ describe("sessionReducer", () => {
     });
 
     test("preserves repeated boundary characters for incremental delta chunks", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-
-      applySessionEvent(state, { type: "delta", content: "cof" });
-      applySessionEvent(state, { type: "delta", content: "fee" });
+      const state = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "status", status: "thinking" },
+        { type: "delta", content: "cof" },
+        { type: "delta", content: "fee" },
+      ]);
 
       expect(state.messages[state.messages.length - 1]).toMatchObject({
         role: "assistant",
@@ -204,77 +220,81 @@ describe("sessionReducer", () => {
       });
     });
 
-    test("normalizes cumulative reasoning chunks without duplication", () => {
-      const state = createInitialSession();
-
-      applySessionEvent(state, { type: "reasoning", content: "Now I can" });
-      applySessionEvent(state, { type: "reasoning", content: "Now I can see" });
-      applySessionEvent(state, {
-        type: "reasoning",
-        content: "Now I can see the pattern clearly.",
+    test("replaces only the growing assistant message for streamed deltas", () => {
+      let state = createInitialSession({
+        messages: [
+          { role: "user", content: "go" },
+          { role: "assistant", content: "First" },
+        ],
+        status: "responding",
       });
+      const previousState = state;
+      const previousMessages = state.messages;
+      const previousUserMessage = state.messages[0];
+      const previousAssistantMessage = assistantMessageAt(state, 1);
+
+      state = applySessionEvent(state, { type: "delta", content: " update" });
+
+      expect(state).not.toBe(previousState);
+      expect(state.messages).not.toBe(previousMessages);
+      expect(state.messages[0]).toBe(previousUserMessage);
+      expect(state.messages[1]).not.toBe(previousAssistantMessage);
+      expect(state.messages[1]).toMatchObject({ content: "First update" });
+      expect(previousAssistantMessage.content).toBe("First");
+    });
+
+    test("normalizes cumulative reasoning chunks without duplication", () => {
+      const state = reduceEvents([
+        { type: "reasoning", content: "Now I can" },
+        { type: "reasoning", content: "Now I can see" },
+        { type: "reasoning", content: "Now I can see the pattern clearly." },
+      ]);
 
       expect(state.reasoningContent).toBe("Now I can see the pattern clearly.");
     });
 
     test("routes scoped reasoning chunks into the matching agent tool call", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "agent-1",
-        toolName: "agent",
-        arguments: { agent_type: "explore" },
-      });
+      const state = reduceEvents([
+        { type: "status", status: "thinking" },
+        {
+          type: "tool_start",
+          toolCallId: "agent-1",
+          toolName: "agent",
+          arguments: { agent_type: "explore" },
+        },
+        { type: "reasoning", agentId: "agent-1", content: "Inspecting" },
+        { type: "reasoning", agentId: "agent-1", content: "Inspecting files" },
+      ]);
 
-      applySessionEvent(state, {
-        type: "reasoning",
-        agentId: "agent-1",
-        content: "Inspecting",
-      });
-      applySessionEvent(state, {
-        type: "reasoning",
-        agentId: "agent-1",
-        content: "Inspecting files",
-      });
-
-      const message = state.messages[0] as AssistantMessage;
+      const message = assistantMessageAt(state, 0);
       expect(message.toolCalls?.[0].agent?.reasoningContent).toBe("Inspecting files");
       expect(state.reasoningContent).toBe("");
       expect(state.status).toBe("thinking");
     });
 
     test("accumulates scoped assistant messages on the matching agent tool call", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "agent-1",
-        toolName: "agent",
-        arguments: { agent_type: "explore" },
-      });
+      const state = reduceEvents([
+        { type: "status", status: "thinking" },
+        {
+          type: "tool_start",
+          toolCallId: "agent-1",
+          toolName: "agent",
+          arguments: { agent_type: "explore" },
+        },
+        { type: "assistant_message", agentId: "agent-1", content: "Reading files" },
+        { type: "assistant_message", agentId: "agent-1", content: "Summarizing findings" },
+      ]);
 
-      applySessionEvent(state, {
-        type: "assistant_message",
-        agentId: "agent-1",
-        content: "Reading files",
-      });
-      applySessionEvent(state, {
-        type: "assistant_message",
-        agentId: "agent-1",
-        content: "Summarizing findings",
-      });
-
-      const message = state.messages[0] as AssistantMessage;
+      const message = assistantMessageAt(state, 0);
       expect(message.toolCalls?.[0].agent?.content).toBe("Reading files\n\nSummarizing findings");
       expect(state.messages).toHaveLength(1);
     });
 
     test("empty deltas do not fragment messages or clear pending tool calls", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, {
+      let state = createInitialSession();
+      state = applySessionEvent(state, { type: "user_message", content: "go" });
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
+      state = applySessionEvent(state, {
         type: "tool_start",
         toolCallId: "t1",
         toolName: "edit",
@@ -285,21 +305,21 @@ describe("sessionReducer", () => {
       // Previously it called ensureCleanAssistantMessage, which cleared
       // pendingToolCalls and created a new message — dropping the tool
       // call result when tool_end arrived afterward.
-      applySessionEvent(state, { type: "delta", content: "" });
+      state = applySessionEvent(state, { type: "delta", content: "" });
 
       expect(state.pendingToolCalls.size).toBe(1);
       // Only user + 1 assistant message (no spurious empty message)
       expect(state.messages).toHaveLength(2);
-      expect((state.messages[1] as AssistantMessage).toolCalls).toHaveLength(1);
+      expect(assistantMessageAt(state, 1).toolCalls).toHaveLength(1);
 
       // tool_end should find the tool call and attach the result
-      applySessionEvent(state, {
+      state = applySessionEvent(state, {
         type: "tool_end",
         toolCallId: "t1",
         success: true,
         result: "applied",
       });
-      expect((state.messages[1] as AssistantMessage).toolCalls?.[0]).toMatchObject({
+      expect(assistantMessageAt(state, 1).toolCalls?.[0]).toMatchObject({
         result: {
           content: "applied",
           success: true,
@@ -310,23 +330,23 @@ describe("sessionReducer", () => {
 
   describe("tool calls", () => {
     test("stores tool result details on completed tool calls", () => {
-      const state = createInitialSession();
+      const state = reduceEvents([
+        {
+          type: "tool_start",
+          toolCallId: "patch-1",
+          toolName: "patch",
+          arguments: { patch: "*** Begin Patch\n*** End Patch" },
+        },
+        {
+          type: "tool_end",
+          toolCallId: "patch-1",
+          success: true,
+          result: "Modified 1 file(s)",
+          details: "diff --git a/file b/file",
+        },
+      ]);
 
-      applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "patch-1",
-        toolName: "patch",
-        arguments: { patch: "*** Begin Patch\n*** End Patch" },
-      });
-      applySessionEvent(state, {
-        type: "tool_end",
-        toolCallId: "patch-1",
-        success: true,
-        result: "Modified 1 file(s)",
-        details: "diff --git a/file b/file",
-      });
-
-      const message = state.messages[0] as AssistantMessage;
+      const message = assistantMessageAt(state, 0);
       expect(message.toolCalls?.[0]).toMatchObject({
         result: {
           content: "Modified 1 file(s)",
@@ -337,36 +357,37 @@ describe("sessionReducer", () => {
     });
 
     test("nests subagent tool calls under their pending parent agent call", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "agent-1",
-        toolName: "agent",
-        arguments: { agentName: "explore" },
-      });
-      applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "child-1",
-        toolName: "read",
-        arguments: { path: "a.ts" },
-        agentId: "agent-1",
-      });
-      applySessionEvent(state, {
-        type: "tool_end",
-        toolCallId: "child-1",
-        success: true,
-        result: "contents",
-        agentId: "agent-1",
-      });
-      applySessionEvent(state, {
-        type: "tool_end",
-        toolCallId: "agent-1",
-        success: true,
-        result: "Review complete",
-      });
+      const state = reduceEvents([
+        { type: "status", status: "thinking" },
+        {
+          type: "tool_start",
+          toolCallId: "agent-1",
+          toolName: "agent",
+          arguments: { agentName: "explore" },
+        },
+        {
+          type: "tool_start",
+          toolCallId: "child-1",
+          toolName: "read",
+          arguments: { path: "a.ts" },
+          agentId: "agent-1",
+        },
+        {
+          type: "tool_end",
+          toolCallId: "child-1",
+          success: true,
+          result: "contents",
+          agentId: "agent-1",
+        },
+        {
+          type: "tool_end",
+          toolCallId: "agent-1",
+          success: true,
+          result: "Review complete",
+        },
+      ]);
 
-      const message = state.messages[0] as AssistantMessage;
+      const message = assistantMessageAt(state, 0);
       // The child is nested, not a top-level tool call.
       expect(message.toolCalls).toHaveLength(1);
       const parent = message.toolCalls?.[0];
@@ -384,256 +405,140 @@ describe("sessionReducer", () => {
     });
 
     test("routes scoped model changes into the matching agent tool call", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "agent-1",
-        toolName: "agent",
-        arguments: { agent_type: "explore" },
-      });
+      const state = reduceEvents([
+        { type: "status", status: "thinking" },
+        {
+          type: "tool_start",
+          toolCallId: "agent-1",
+          toolName: "agent",
+          arguments: { agent_type: "explore" },
+        },
+        {
+          type: "model_changed",
+          agentId: "agent-1",
+          model: { name: "claude-haiku-4.5" },
+        },
+      ]);
 
-      applySessionEvent(state, {
-        type: "model_changed",
-        agentId: "agent-1",
-        modelConfiguration: { model: "claude-haiku-4.5" },
+      const message = assistantMessageAt(state, 0);
+      expect(message.toolCalls?.[0].agent?.model).toEqual({
+        name: "claude-haiku-4.5",
       });
-
-      const message = state.messages[0] as AssistantMessage;
-      expect(message.toolCalls?.[0].agent?.modelConfiguration).toEqual({
-        model: "claude-haiku-4.5",
-      });
-      expect(state.modelConfiguration).toBeUndefined();
+      expect(state.model).toBeUndefined();
     });
 
-    test("nests late subagent tool calls under a committed parent and bumps the message revision", () => {
+    test("replaces a committed parent as late subagent tool calls change", () => {
       // Resume-mid-turn: the parent agent call arrived committed in a server
       // snapshot (initial state), then live child events arrive for it.
-      const state = createInitialSession({
+      let state = createInitialSession({
         messages: [
           {
             role: "assistant",
             content: "Kicking off review.",
             toolCalls: [{ id: "agent-1", name: "agent", arguments: { agentName: "explore" } }],
           },
+          { role: "assistant", content: "Continuing in the meantime." },
         ],
       });
-      const message = state.messages[0] as AssistantMessage;
-      const initialRevision = message.revision ?? 0;
+      const originalMessages = state.messages;
+      const originalParentMessage = assistantMessageAt(state, 0);
+      const unaffectedMessage = state.messages[1];
 
-      applySessionEvent(state, {
+      state = applySessionEvent(state, {
         type: "tool_start",
         toolCallId: "child-1",
         toolName: "bash",
         arguments: { command: "ls" },
         agentId: "agent-1",
       });
-      applySessionEvent(state, {
+      const startedParentMessage = assistantMessageAt(state, 0);
+
+      expect(state.messages).not.toBe(originalMessages);
+      expect(startedParentMessage).not.toBe(originalParentMessage);
+      expect(state.messages[1]).toBe(unaffectedMessage);
+      expect(originalParentMessage.toolCalls?.[0].agent?.toolCalls).toBeUndefined();
+      expect(startedParentMessage.toolCalls?.[0].agent?.toolCalls?.[0].id).toBe("child-1");
+      expect(startedParentMessage.toolCalls?.[0].agent?.toolCalls?.[0].result).toBeUndefined();
+
+      state = applySessionEvent(state, {
         type: "tool_end",
         toolCallId: "child-1",
         success: true,
         result: "ok",
         agentId: "agent-1",
       });
+      const completedParentMessage = assistantMessageAt(state, 0);
 
-      // The committed parent's tool calls survive (no pending-map wipe)...
-      expect(message.toolCalls).toHaveLength(1);
-      expect(message.toolCalls?.[0].agent?.toolCalls).toHaveLength(1);
-      expect(message.toolCalls?.[0].agent?.toolCalls?.[0]).toMatchObject({
+      expect(completedParentMessage).not.toBe(startedParentMessage);
+      expect(state.messages[1]).toBe(unaffectedMessage);
+      expect(completedParentMessage.toolCalls).toHaveLength(1);
+      expect(completedParentMessage.toolCalls?.[0].agent?.toolCalls).toHaveLength(1);
+      expect(completedParentMessage.toolCalls?.[0].agent?.toolCalls?.[0]).toMatchObject({
         id: "child-1",
         result: { content: "ok", success: true },
       });
-      // ...and the message revision was bumped so memoized renderers update.
-      expect(message.revision ?? 0).toBeGreaterThan(initialRevision);
+      expect(startedParentMessage.toolCalls?.[0].agent?.toolCalls?.[0].result).toBeUndefined();
     });
 
     test("completes a committed root tool call after a message boundary (late background completion)", () => {
       // A background agent task is started, the assistant moves on (text
       // after the tool group commits the call and clears pending), and the
       // deferred completion (subagent.completed → tool_end) arrives later.
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "delta", content: "Kicking off a background review." });
-      applySessionEvent(state, {
+      let state = createInitialSession();
+      state = applySessionEvent(state, {
+        type: "delta",
+        content: "Kicking off a background review.",
+      });
+      state = applySessionEvent(state, {
         type: "tool_start",
         toolCallId: "task-1",
         toolName: "agent",
         arguments: { mode: "background" },
       });
-      applySessionEvent(state, { type: "delta", content: "Continuing while it runs." });
+      state = applySessionEvent(state, { type: "delta", content: "Continuing while it runs." });
 
-      const committedMessage = state.messages[0] as AssistantMessage;
-      const initialRevision = committedMessage.revision ?? 0;
+      const previousMessages = state.messages;
+      const committedMessage = assistantMessageAt(state, 0);
+      const currentMessage = state.messages[1];
       expect(state.pendingToolCalls.size).toBe(0);
 
-      applySessionEvent(state, {
+      state = applySessionEvent(state, {
         type: "tool_end",
         toolCallId: "task-1",
         success: true,
       });
 
-      // The result lands on the committed call, and the revision bump tells
-      // memoized renderers to update.
-      expect(committedMessage.toolCalls?.[0]).toMatchObject({
+      const completedMessage = assistantMessageAt(state, 0);
+      expect(state.messages).not.toBe(previousMessages);
+      expect(completedMessage).not.toBe(committedMessage);
+      expect(state.messages[1]).toBe(currentMessage);
+      expect(completedMessage.toolCalls?.[0]).toMatchObject({
         id: "task-1",
         result: { content: "", success: true },
       });
-      expect(committedMessage.revision ?? 0).toBeGreaterThan(initialRevision);
+      expect(committedMessage.toolCalls?.[0].result).toBeUndefined();
     });
 
     test("ignores child tool events whose parent is unknown", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "status", status: "thinking" });
-
-      applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "child-x",
-        toolName: "bash",
-        arguments: {},
-        agentId: "missing-parent",
-      });
-      applySessionEvent(state, {
-        type: "tool_end",
-        toolCallId: "child-x",
-        success: true,
-        result: "ok",
-        agentId: "missing-parent",
-      });
-
-      expect((state.messages[0] as AssistantMessage).toolCalls).toBeUndefined();
-    });
-  });
-
-  describe("canvases", () => {
-    test("stores opened canvases and bumps revision when the same instance opens again", () => {
-      const state = createInitialSession();
-
-      applySessionEvent(state, {
-        type: "canvas_opened",
-        canvas: {
-          extensionId: "user:documint",
-          canvasId: "documint-markdown-agent",
-          instanceId: "review-plan",
-          title: "Review Plan",
-          url: "http://127.0.0.1:51460/?instanceId=review-plan",
-          status: "session-state/plan.md",
-        },
-      });
-      applySessionEvent(state, {
-        type: "canvas_opened",
-        canvas: {
-          extensionId: "user:documint",
-          canvasId: "documint-markdown-agent",
-          instanceId: "review-plan",
-          title: "Review Plan",
-          url: "http://127.0.0.1:53950/?instanceId=review-plan",
-        },
-      });
-
-      expect(state.canvases).toEqual([
+      const state = reduceEvents([
+        { type: "status", status: "thinking" },
         {
-          key: JSON.stringify(["user:documint", "documint-markdown-agent", "review-plan"]),
-          extensionId: "user:documint",
-          canvasId: "documint-markdown-agent",
-          instanceId: "review-plan",
-          title: "Review Plan",
-          url: "http://127.0.0.1:53950/?instanceId=review-plan",
-          revision: 2,
+          type: "tool_start",
+          toolCallId: "child-x",
+          toolName: "bash",
+          arguments: {},
+          agentId: "missing-parent",
+        },
+        {
+          type: "tool_end",
+          toolCallId: "child-x",
+          success: true,
+          result: "ok",
+          agentId: "missing-parent",
         },
       ]);
-      expect(toSessionSnapshot("session-1", state).canvases).toEqual(state.canvases);
-    });
 
-    test("keeps different canvas instances as separate panes", () => {
-      const state = createInitialSession();
-
-      applySessionEvent(state, {
-        type: "canvas_opened",
-        canvas: {
-          extensionId: "session:canvas-ontology",
-          extensionName: "canvas-ontology",
-          canvasId: "canvas-ontology",
-          instanceId: "canvas-ontology-main",
-          title: "Canvas surface ontology",
-          url: "http://127.0.0.1:52922/",
-        },
-      });
-      applySessionEvent(state, {
-        type: "canvas_opened",
-        canvas: {
-          extensionId: "session:canvas-ontology",
-          extensionName: "canvas-ontology",
-          canvasId: "canvas-ontology",
-          instanceId: "session-canvas-ontology-canvas-ontology",
-          title: "Canvas surface ontology",
-          url: "http://127.0.0.1:58480/",
-        },
-      });
-
-      expect(state.canvases).toEqual([
-        {
-          key: JSON.stringify([
-            "session:canvas-ontology",
-            "canvas-ontology",
-            "canvas-ontology-main",
-          ]),
-          extensionId: "session:canvas-ontology",
-          extensionName: "canvas-ontology",
-          canvasId: "canvas-ontology",
-          instanceId: "canvas-ontology-main",
-          title: "Canvas surface ontology",
-          url: "http://127.0.0.1:52922/",
-          revision: 1,
-        },
-        {
-          key: JSON.stringify([
-            "session:canvas-ontology",
-            "canvas-ontology",
-            "session-canvas-ontology-canvas-ontology",
-          ]),
-          extensionId: "session:canvas-ontology",
-          extensionName: "canvas-ontology",
-          canvasId: "canvas-ontology",
-          instanceId: "session-canvas-ontology-canvas-ontology",
-          title: "Canvas surface ontology",
-          url: "http://127.0.0.1:58480/",
-          revision: 1,
-        },
-      ]);
-    });
-  });
-
-  describe("artifacts", () => {
-    test("appends artifact paths and includes them in snapshots", () => {
-      const state = createInitialSession();
-
-      applySessionEvent(state, {
-        type: "artifacts_patch",
-        patches: [{ type: "upsert", path: "report.md" }],
-      });
-      applySessionEvent(state, {
-        type: "artifacts_patch",
-        patches: [{ type: "upsert", path: "report.md" }],
-      });
-      applySessionEvent(state, {
-        type: "artifacts_patch",
-        patches: [{ type: "upsert", path: "notes.md" }],
-      });
-
-      expect(state.artifacts).toEqual(["report.md", "notes.md"]);
-      expect(toSessionSnapshot("session-1", state).artifacts).toEqual(state.artifacts);
-    });
-
-    test("removes deleted artifact paths", () => {
-      const state = createInitialSession({
-        artifacts: ["report.md", "notes.md"],
-      });
-
-      applySessionEvent(state, {
-        type: "artifacts_patch",
-        patches: [{ type: "delete", path: "report.md" }],
-      });
-
-      expect(state.artifacts).toEqual(["notes.md"]);
+      expect(assistantMessageAt(state, 0).toolCalls).toBeUndefined();
     });
   });
 
@@ -708,9 +613,9 @@ describe("sessionReducer", () => {
     });
 
     test("adds queued message from cross-client queue update", () => {
-      const state = createInitialSession();
+      let state = createInitialSession();
 
-      applySessionEvent(state, {
+      state = applySessionEvent(state, {
         type: "message_queued",
         message: { id: "q1", role: "user", content: "follow up" },
       });
@@ -720,11 +625,11 @@ describe("sessionReducer", () => {
     });
 
     test("deduplicates message_queued when already present optimistically", () => {
-      const state = createInitialSession({
+      let state = createInitialSession({
         queuedMessages: [{ id: "q1", role: "user", content: "follow up" }],
       });
 
-      applySessionEvent(state, {
+      state = applySessionEvent(state, {
         type: "message_queued",
         message: { id: "q1", role: "user", content: "follow up" },
       });
@@ -733,11 +638,11 @@ describe("sessionReducer", () => {
     });
 
     test("removes an optimistic queued message when delivery starts it immediately", () => {
-      const state = createInitialSession({
+      let state = createInitialSession({
         queuedMessages: [{ id: "q1", role: "user", content: "follow up" }],
       });
 
-      applySessionEvent(state, {
+      state = applySessionEvent(state, {
         type: "user_message",
         content: "follow up",
         clientMessageId: "q1",
@@ -749,30 +654,368 @@ describe("sessionReducer", () => {
     });
 
     test("removes queued message on message_cancelled", () => {
-      const state = createInitialSession({
+      let state = createInitialSession({
         queuedMessages: [
           { id: "q1", role: "user", content: "first" },
           { id: "q2", role: "user", content: "second" },
         ],
       });
 
-      applySessionEvent(state, { type: "message_cancelled", queuedMessageId: "q1" });
+      state = applySessionEvent(state, { type: "message_cancelled", queuedMessageId: "q1" });
 
       expect(state.queuedMessages).toHaveLength(1);
       expect(state.queuedMessages[0]).toMatchObject({ id: "q2", content: "second" });
     });
   });
 
+  describe("lifecycle & status", () => {
+    test("prepareSessionForNextTurn preserves durable state while clearing turn-scoped state", () => {
+      const previousState = createInitialSession({
+        messages: [
+          { role: "user", content: "Open the ocean session" },
+          { role: "assistant", content: "Done." },
+        ],
+        queuedMessages: [{ id: "queued-1", role: "user", content: "Now summarize it" }],
+        todos: [{ id: "todo-1", title: "Inspect stream state", status: "in_progress" }],
+        linkedSessionIds: ["session-1", "session-2"],
+        status: "responding",
+        reasoningContent: "thinking...",
+        model: { name: "claude-sonnet-4.6" },
+      });
+      previousState.pendingToolCalls.set("tool-1", {
+        id: "tool-1",
+        name: "open_session",
+        arguments: { sessionId: "session-1" },
+      });
+
+      const nextState = prepareSessionForNextTurn(previousState);
+
+      expect(nextState).not.toBe(previousState);
+      expect(nextState.messages).toBe(previousState.messages);
+      expect(nextState.queuedMessages).toBe(previousState.queuedMessages);
+      expect(nextState.todos).toBe(previousState.todos);
+      expect(nextState.linkedSessionIds).toBe(previousState.linkedSessionIds);
+      expect(nextState.messages).toEqual([
+        { role: "user", content: "Open the ocean session" },
+        { role: "assistant", content: "Done." },
+      ]);
+      expect(nextState.todos).toEqual([
+        { id: "todo-1", title: "Inspect stream state", status: "in_progress" },
+      ]);
+      expect(nextState.linkedSessionIds).toEqual(["session-1", "session-2"]);
+      expect(nextState.model).toEqual({ name: "claude-sonnet-4.6" });
+      expect(nextState.queuedMessages).toEqual([
+        { id: "queued-1", role: "user", content: "Now summarize it" },
+      ]);
+
+      expect(nextState.reasoningContent).toBe("");
+      expect(nextState.status).toBe("thinking");
+      expect(nextState.pendingToolCalls.size).toBe(0);
+      expect(nextState.pendingOptimisticUserMessage).toBeUndefined();
+      expect(previousState.status).toBe("responding");
+      expect(previousState.reasoningContent).toBe("thinking...");
+      expect(previousState.pendingToolCalls.size).toBe(1);
+    });
+
+    test("end/error replaces a partial assistant message with the error notice", () => {
+      const state = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "status", status: "thinking" },
+        { type: "delta", content: "partial resp" },
+        { type: "end", reason: "error" },
+      ]);
+
+      expect(state.messages).toHaveLength(2);
+      expect(state.messages[1]).toMatchObject({
+        role: "assistant",
+        content: "An error occurred. Please try again.",
+      });
+      expect(state.status).toBe("idle");
+      expect(state.reasoningContent).toBe("");
+      expect(state.pendingToolCalls.size).toBe(0);
+    });
+
+    test("end/error appends an assistant message when none is trailing", () => {
+      const state = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "end", reason: "error" },
+      ]);
+
+      expect(state.messages).toHaveLength(2);
+      expect(state.messages[1]).toMatchObject({
+        role: "assistant",
+        content: "An error occurred. Please try again.",
+      });
+      expect(state.status).toBe("idle");
+    });
+
+    test("a synthesized end/idle does not clobber an earlier end/error", () => {
+      const state = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "end", reason: "error" },
+        { type: "end", reason: "idle" },
+      ]);
+
+      expect(state.messages.at(-1)).toMatchObject({
+        role: "assistant",
+        content: "An error occurred. Please try again.",
+      });
+      expect(state.status).toBe("idle");
+    });
+
+    test("tracks compacting status and returns to thinking when done", () => {
+      let state = createInitialSession();
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
+      expect(state.status).toBe("thinking");
+
+      state = applySessionEvent(state, { type: "status", status: "compacting" });
+      expect(state.status).toBe("compacting");
+
+      // Idempotent: duplicate status update is a no-op in practice.
+      state = applySessionEvent(state, { type: "status", status: "compacting" });
+      expect(state.status).toBe("compacting");
+
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
+      expect(state.status).toBe("thinking");
+
+      // Re-applying the current status preserves it.
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
+      expect(state.status).toBe("thinking");
+    });
+
+    test("events without a status transition preserve the current status", () => {
+      let state = createInitialSession();
+      const initialStatus = state.status;
+
+      state = applySessionEvent(state, { type: "skills", skills: [] });
+      expect(state.status).toEqual(initialStatus);
+
+      state = applySessionEvent(state, {
+        type: "tool_start",
+        toolCallId: "tc-2",
+        toolName: "search",
+        arguments: { query: "tanstack" },
+      });
+      expect(state.status).toEqual(initialStatus);
+    });
+  });
+
+  describe("event replay & dedup", () => {
+    test("tracks event metadata across streamed events", () => {
+      const initial = createInitialSession();
+      const afterThinking = applySessionEvent(initial, {
+        type: "status",
+        status: "thinking",
+        eventId: 10,
+        turnId: "turn-1",
+      });
+      const afterToolStart = applySessionEvent(afterThinking, {
+        type: "tool_start",
+        toolCallId: "tc-1",
+        toolName: "glob",
+        arguments: { pattern: "*.ts" },
+        eventId: 11,
+      });
+
+      expect(afterToolStart.lastSeenEventId).toBe(11);
+      expect(afterToolStart.activeTurnId).toBe("turn-1");
+    });
+
+    test("skips replayed events that are older than the current snapshot", () => {
+      let state = createInitialSession({
+        messages: [{ role: "user", content: "already synced" }],
+      });
+      state.lastSeenEventId = 20;
+
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "already synced",
+        eventId: 20,
+      });
+      state = applySessionEvent(state, {
+        type: "assistant_message",
+        content: "stale response",
+        eventId: 19,
+      });
+
+      expect(state.messages).toEqual([{ role: "user", content: "already synced" }]);
+      expect(state.lastSeenEventId).toBe(20);
+    });
+
+    test("keeps optimistic local events and newer stream events after stale-event filtering", () => {
+      let state = createInitialSession();
+      state.lastSeenEventId = 20;
+
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "optimistic",
+        clientMessageId: "client-1",
+      });
+      state = applySessionEvent(state, {
+        type: "assistant_message",
+        content: "new response",
+        eventId: 21,
+      });
+
+      expect(state.messages).toEqual([
+        { role: "user", content: "optimistic" },
+        { role: "assistant", content: "new response", toolCalls: undefined },
+      ]);
+      expect(state.lastSeenEventId).toBe(21);
+    });
+
+    test("deduplicates replayed user messages by clientMessageId", () => {
+      let state = createInitialSession();
+
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+      });
+      expect(state.pendingOptimisticUserMessage).toEqual({ clientMessageId: "msg-1", index: 0 });
+
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+        timestamp: "2026-02-09T00:00:00.000Z",
+        eventId: 10,
+      });
+
+      expect(state.messages).toHaveLength(1);
+      expect(state.messages[0]).toMatchObject({
+        role: "user",
+        content: "hello",
+        timestamp: "2026-02-09T00:00:00.000Z",
+      });
+      expect(state.pendingOptimisticUserMessage).toBeUndefined();
+    });
+
+    test("drops id-less SDK user echoes with the turn-start echo guard", () => {
+      let state = createInitialSession();
+
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+      });
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
+
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        timestamp: "2026-02-09T00:00:00.000Z",
+        eventId: 10,
+        turnId: "turn-1",
+      });
+
+      expect(state.messages).toEqual([{ role: "user", content: "hello" }]);
+      expect(state.status).toBe("thinking");
+      expect(state.pendingOptimisticUserMessage).toEqual({ clientMessageId: "msg-1", index: 0 });
+      expect(state.lastSeenEventId).toBe(10);
+    });
+
+    test("reconciles decorated server user echoes after local thinking starts", () => {
+      let state = createInitialSession();
+
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+      });
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
+
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+        timestamp: "2026-02-09T00:00:00.000Z",
+        eventId: 10,
+        turnId: "turn-1",
+      });
+
+      expect(state.messages).toEqual([
+        {
+          role: "user",
+          content: "hello",
+          timestamp: "2026-02-09T00:00:00.000Z",
+          attachments: undefined,
+        },
+      ]);
+      expect(state.status).toBe("thinking");
+      expect(state.pendingOptimisticUserMessage).toBeUndefined();
+    });
+
+    test("drops SDK user echo after the decorated server echo already reconciled", () => {
+      let state = createInitialSession();
+
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+      });
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        clientMessageId: "msg-1",
+        eventId: 10,
+        turnId: "turn-1",
+      });
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        timestamp: "2026-02-09T00:00:00.000Z",
+        eventId: 11,
+        turnId: "turn-1",
+      });
+
+      expect(state.messages).toEqual([
+        {
+          role: "user",
+          content: "hello",
+          timestamp: undefined,
+          attachments: undefined,
+        },
+      ]);
+      expect(state.status).toBe("thinking");
+      expect(state.pendingOptimisticUserMessage).toBeUndefined();
+    });
+
+    test("does not dedupe a dequeued message for a new active turn", () => {
+      let state = createInitialSession();
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "hello",
+        eventId: 1,
+        turnId: "turn-1",
+      });
+      state = applySessionEvent(state, { type: "assistant_message", content: "hi", eventId: 2 });
+      state = applySessionEvent(state, {
+        type: "message_dequeued",
+        message: { id: "queued-1", role: "user", content: "hello" },
+        eventId: 3,
+        turnId: "turn-2",
+      });
+
+      expect(state.messages).toEqual([
+        { role: "user", content: "hello", attachments: undefined, timestamp: undefined },
+        { role: "assistant", content: "hi", toolCalls: undefined },
+        { role: "user", content: "hello" },
+      ]);
+    });
+  });
+
   describe("todos & metadata", () => {
     test("applies bulk todo status patches to existing todos", () => {
-      const state = createInitialSession({
+      let state = createInitialSession({
         todos: [
           { id: "oak-task", title: "oak task", status: "pending" },
           { id: "pine-task", title: "pine task", status: "in_progress" },
         ],
       });
 
-      applySessionEvent(state, {
+      state = applySessionEvent(state, {
         type: "todos_patch",
         patches: [{ type: "update_all", status: "done" }],
       });
@@ -819,347 +1062,196 @@ describe("sessionReducer", () => {
     });
 
     test("stores session title updates from metadata events", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "session_title_changed", title: "Friendly title" });
+      let state = createInitialSession();
+      state = applySessionEvent(state, { type: "session_title_changed", title: "Friendly title" });
       expect(state.summary).toBe("Friendly title");
     });
   });
 
-  describe("event replay & dedup", () => {
-    test("tracks event metadata across streamed events", () => {
-      const initial = createInitialSession();
-      const afterThinking = applySessionEvent(initial, {
-        type: "status",
-        status: "thinking",
-        eventId: 10,
-        turnId: "turn-1",
+  describe("artifacts", () => {
+    test("appends artifact paths and includes them in snapshots", () => {
+      let state = createInitialSession();
+
+      state = applySessionEvent(state, {
+        type: "artifacts_patch",
+        patches: [{ type: "upsert", path: "report.md" }],
       });
-      const afterToolStart = applySessionEvent(afterThinking, {
-        type: "tool_start",
-        toolCallId: "tc-1",
-        toolName: "glob",
-        arguments: { pattern: "*.ts" },
-        eventId: 11,
+      state = applySessionEvent(state, {
+        type: "artifacts_patch",
+        patches: [{ type: "upsert", path: "report.md" }],
+      });
+      state = applySessionEvent(state, {
+        type: "artifacts_patch",
+        patches: [{ type: "upsert", path: "notes.md" }],
       });
 
-      expect(afterToolStart.lastSeenEventId).toBe(11);
-      expect(afterToolStart.activeTurnId).toBe("turn-1");
+      expect(state.artifacts).toEqual(["report.md", "notes.md"]);
+      expect(toSessionSnapshot("session-1", state).artifacts).toEqual(state.artifacts);
     });
 
-    test("skips replayed events that are older than the current snapshot", () => {
-      const state = createInitialSession({
-        messages: [{ role: "user", content: "already synced" }],
-      });
-      state.lastSeenEventId = 20;
-
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "already synced",
-        eventId: 20,
-      });
-      applySessionEvent(state, {
-        type: "assistant_message",
-        content: "stale response",
-        eventId: 19,
+    test("removes deleted artifact paths", () => {
+      let state = createInitialSession({
+        artifacts: ["report.md", "notes.md"],
       });
 
-      expect(state.messages).toEqual([{ role: "user", content: "already synced" }]);
-      expect(state.lastSeenEventId).toBe(20);
+      state = applySessionEvent(state, {
+        type: "artifacts_patch",
+        patches: [{ type: "delete", path: "report.md" }],
+      });
+
+      expect(state.artifacts).toEqual(["notes.md"]);
     });
+  });
 
-    test("keeps optimistic local events and newer stream events after stale-event filtering", () => {
-      const state = createInitialSession();
-      state.lastSeenEventId = 20;
+  describe("canvases", () => {
+    test("stores opened canvases and bumps revision when the same instance opens again", () => {
+      let state = createInitialSession();
 
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "optimistic",
-        clientMessageId: "client-1",
+      state = applySessionEvent(state, {
+        type: "canvas_opened",
+        canvas: {
+          extensionId: "user:documint",
+          canvasId: "documint-markdown-agent",
+          instanceId: "review-plan",
+          title: "Review Plan",
+          url: "http://127.0.0.1:51460/?instanceId=review-plan",
+          status: "session-state/plan.md",
+        },
       });
-      applySessionEvent(state, {
-        type: "assistant_message",
-        content: "new response",
-        eventId: 21,
-      });
-
-      expect(state.messages).toEqual([
-        { role: "user", content: "optimistic" },
-        { role: "assistant", content: "new response", toolCalls: undefined },
-      ]);
-      expect(state.lastSeenEventId).toBe(21);
-    });
-
-    test("deduplicates replayed user messages by clientMessageId", () => {
-      const state = createInitialSession();
-
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-      });
-      expect(state.pendingOptimisticUserMessage).toEqual({ clientMessageId: "msg-1", index: 0 });
-
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-        timestamp: "2026-02-09T00:00:00.000Z",
-        eventId: 10,
+      state = applySessionEvent(state, {
+        type: "canvas_opened",
+        canvas: {
+          extensionId: "user:documint",
+          canvasId: "documint-markdown-agent",
+          instanceId: "review-plan",
+          title: "Review Plan",
+          url: "http://127.0.0.1:53950/?instanceId=review-plan",
+        },
       });
 
-      expect(state.messages).toHaveLength(1);
-      expect(state.messages[0]).toMatchObject({
-        role: "user",
-        content: "hello",
-        timestamp: "2026-02-09T00:00:00.000Z",
-      });
-      expect(state.pendingOptimisticUserMessage).toBeUndefined();
-    });
-
-    test("drops id-less SDK user echoes with the turn-start echo guard", () => {
-      const state = createInitialSession();
-
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-      });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        timestamp: "2026-02-09T00:00:00.000Z",
-        eventId: 10,
-        turnId: "turn-1",
-      });
-
-      expect(state.messages).toEqual([{ role: "user", content: "hello" }]);
-      expect(state.status).toBe("thinking");
-      expect(state.pendingOptimisticUserMessage).toEqual({ clientMessageId: "msg-1", index: 0 });
-      expect(state.lastSeenEventId).toBe(10);
-    });
-
-    test("reconciles decorated server user echoes after local thinking starts", () => {
-      const state = createInitialSession();
-
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-      });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-        timestamp: "2026-02-09T00:00:00.000Z",
-        eventId: 10,
-        turnId: "turn-1",
-      });
-
-      expect(state.messages).toEqual([
+      expect(state.canvases).toEqual([
         {
-          role: "user",
-          content: "hello",
-          timestamp: "2026-02-09T00:00:00.000Z",
-          attachments: undefined,
+          key: JSON.stringify(["user:documint", "documint-markdown-agent", "review-plan"]),
+          extensionId: "user:documint",
+          canvasId: "documint-markdown-agent",
+          instanceId: "review-plan",
+          title: "Review Plan",
+          url: "http://127.0.0.1:53950/?instanceId=review-plan",
+          revision: 2,
         },
       ]);
-      expect(state.status).toBe("thinking");
-      expect(state.pendingOptimisticUserMessage).toBeUndefined();
+      expect(toSessionSnapshot("session-1", state).canvases).toEqual(state.canvases);
     });
 
-    test("drops SDK user echo after the decorated server echo already reconciled", () => {
-      const state = createInitialSession();
+    test("keeps different canvas instances as separate panes", () => {
+      let state = createInitialSession();
 
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-      });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-        eventId: 10,
-        turnId: "turn-1",
-      });
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        timestamp: "2026-02-09T00:00:00.000Z",
-        eventId: 11,
-        turnId: "turn-1",
-      });
-
-      expect(state.messages).toEqual([
-        {
-          role: "user",
-          content: "hello",
-          timestamp: undefined,
-          attachments: undefined,
+      state = applySessionEvent(state, {
+        type: "canvas_opened",
+        canvas: {
+          extensionId: "session:canvas-ontology",
+          extensionName: "canvas-ontology",
+          canvasId: "canvas-ontology",
+          instanceId: "canvas-ontology-main",
+          title: "Canvas surface ontology",
+          url: "http://127.0.0.1:52922/",
         },
-      ]);
-      expect(state.status).toBe("thinking");
-      expect(state.pendingOptimisticUserMessage).toBeUndefined();
-    });
-
-    test("does not dedupe a dequeued message for a new active turn", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        eventId: 1,
-        turnId: "turn-1",
       });
-      applySessionEvent(state, { type: "assistant_message", content: "hi", eventId: 2 });
-      applySessionEvent(state, {
-        type: "message_dequeued",
-        message: { id: "queued-1", role: "user", content: "hello" },
-        eventId: 3,
-        turnId: "turn-2",
+      state = applySessionEvent(state, {
+        type: "canvas_opened",
+        canvas: {
+          extensionId: "session:canvas-ontology",
+          extensionName: "canvas-ontology",
+          canvasId: "canvas-ontology",
+          instanceId: "session-canvas-ontology-canvas-ontology",
+          title: "Canvas surface ontology",
+          url: "http://127.0.0.1:58480/",
+        },
       });
 
-      expect(state.messages).toEqual([
-        { role: "user", content: "hello", attachments: undefined, timestamp: undefined },
-        { role: "assistant", content: "hi", toolCalls: undefined },
-        { role: "user", content: "hello" },
+      expect(state.canvases).toEqual([
+        {
+          key: JSON.stringify([
+            "session:canvas-ontology",
+            "canvas-ontology",
+            "canvas-ontology-main",
+          ]),
+          extensionId: "session:canvas-ontology",
+          extensionName: "canvas-ontology",
+          canvasId: "canvas-ontology",
+          instanceId: "canvas-ontology-main",
+          title: "Canvas surface ontology",
+          url: "http://127.0.0.1:52922/",
+          revision: 1,
+        },
+        {
+          key: JSON.stringify([
+            "session:canvas-ontology",
+            "canvas-ontology",
+            "session-canvas-ontology-canvas-ontology",
+          ]),
+          extensionId: "session:canvas-ontology",
+          extensionName: "canvas-ontology",
+          canvasId: "canvas-ontology",
+          instanceId: "session-canvas-ontology-canvas-ontology",
+          title: "Canvas surface ontology",
+          url: "http://127.0.0.1:58480/",
+          revision: 1,
+        },
       ]);
     });
   });
 
-  describe("lifecycle & status", () => {
-    test("prepareSessionForNextTurn preserves durable state while clearing turn-scoped state", () => {
-      const previousState = createInitialSession({
-        messages: [
-          { role: "user", content: "Open the ocean session" },
-          { role: "assistant", content: "Done." },
-        ],
-        queuedMessages: [{ id: "queued-1", role: "user", content: "Now summarize it" }],
-        todos: [{ id: "todo-1", title: "Inspect stream state", status: "in_progress" }],
-        linkedSessionIds: ["session-1", "session-2"],
-        status: "responding",
-        reasoningContent: "thinking...",
-        modelConfiguration: { model: "claude-sonnet-4.6" },
+  describe("identity", () => {
+    test("returns a new state while preserving unchanged branches", () => {
+      const state = createInitialSession({
+        messages: [{ role: "user", content: "hello" }],
+        queuedMessages: [{ id: "queued-1", role: "user", content: "next" }],
       });
-      previousState.pendingToolCalls.set("tool-1", {
-        id: "tool-1",
-        name: "open_session",
-        arguments: { sessionId: "session-1" },
-      });
+      const next = applySessionEvent(state, { type: "status", status: "thinking" });
 
-      const nextState = prepareSessionForNextTurn(previousState);
-
-      expect(nextState).toBe(previousState);
-      expect(nextState.messages).toEqual([
-        { role: "user", content: "Open the ocean session" },
-        { role: "assistant", content: "Done." },
-      ]);
-      expect(nextState.todos).toEqual([
-        { id: "todo-1", title: "Inspect stream state", status: "in_progress" },
-      ]);
-      expect(nextState.linkedSessionIds).toEqual(["session-1", "session-2"]);
-      expect(nextState.modelConfiguration).toEqual({ model: "claude-sonnet-4.6" });
-      expect(nextState.queuedMessages).toEqual([
-        { id: "queued-1", role: "user", content: "Now summarize it" },
-      ]);
-
-      expect(nextState.reasoningContent).toBe("");
-      expect(nextState.status).toBe("thinking");
-      expect(nextState.pendingToolCalls.size).toBe(0);
-      expect(nextState.pendingOptimisticUserMessage).toBeUndefined();
-    });
-
-    test("end/error replaces a partial assistant message with the error notice", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "status", status: "thinking" });
-      applySessionEvent(state, { type: "delta", content: "partial resp" });
-
-      applySessionEvent(state, { type: "end", reason: "error" });
-
-      expect(state.messages).toHaveLength(2);
-      expect(state.messages[1]).toMatchObject({
-        role: "assistant",
-        content: "An error occurred. Please try again.",
-      });
-      expect(state.status).toBe("idle");
-      expect(state.reasoningContent).toBe("");
-      expect(state.pendingToolCalls.size).toBe(0);
-    });
-
-    test("end/error appends an assistant message when none is trailing", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "user_message", content: "go" });
-
-      applySessionEvent(state, { type: "end", reason: "error" });
-
-      expect(state.messages).toHaveLength(2);
-      expect(state.messages[1]).toMatchObject({
-        role: "assistant",
-        content: "An error occurred. Please try again.",
-      });
+      expect(next).not.toBe(state);
+      expect(next.messages).toBe(state.messages);
+      expect(next.queuedMessages).toBe(state.queuedMessages);
+      expect(next.pendingToolCalls).toBe(state.pendingToolCalls);
+      expect(next.status).toBe("thinking");
       expect(state.status).toBe("idle");
     });
 
-    test("a synthesized end/idle does not clobber an earlier end/error", () => {
-      const state = createInitialSession();
-      applySessionEvent(state, { type: "user_message", content: "go" });
-      applySessionEvent(state, { type: "end", reason: "error" });
-
-      applySessionEvent(state, { type: "end", reason: "idle" });
-
-      expect(state.messages.at(-1)).toMatchObject({
-        role: "assistant",
-        content: "An error occurred. Please try again.",
-      });
-      expect(state.status).toBe("idle");
-    });
-
-    test("tracks compacting status and returns to thinking when done", () => {
+    test("changes only the active row across 50 sequential tool calls", () => {
       let state = createInitialSession();
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-      expect(state.status).toBe("thinking");
 
-      state = applySessionEvent(state, { type: "status", status: "compacting" });
-      expect(state.status).toBe("compacting");
+      for (let index = 1; index <= 50; index++) {
+        const beforeStart = state.messages;
+        state = applySessionEvent(state, {
+          type: "tool_start",
+          toolCallId: `bash-${index}`,
+          toolName: "bash",
+          arguments: { command: `echo ${index}` },
+        });
 
-      // Idempotent: duplicate status update is a no-op in practice.
-      state = applySessionEvent(state, { type: "status", status: "compacting" });
-      expect(state.status).toBe("compacting");
+        expectMessageIdentities(beforeStart, state.messages, Math.max(0, beforeStart.length - 1));
+        if (beforeStart.length > 0) {
+          expect(state.messages.at(-1)).not.toBe(beforeStart.at(-1));
+        }
 
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-      expect(state.status).toBe("thinking");
+        const beforeCompletion = state.messages;
+        state = applySessionEvent(state, {
+          type: "tool_end",
+          toolCallId: `bash-${index}`,
+          success: true,
+          result: String(index),
+        });
 
-      // Re-applying the current status preserves it.
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-      expect(state.status).toBe("thinking");
-    });
+        expectMessageIdentities(beforeCompletion, state.messages, beforeCompletion.length - 1);
+        expect(state.messages.at(-1)).not.toBe(beforeCompletion.at(-1));
 
-    test("unhandled events do not change status", () => {
-      let state = createInitialSession();
-      const initialStatus = state.status;
+        const beforeDelta = state.messages;
+        state = applySessionEvent(state, { type: "delta", content: `Finished ${index}.` });
 
-      state = applySessionEvent(state, { type: "skills", skills: [] });
-      expect(state.status).toEqual(initialStatus);
-
-      state = applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "tc-2",
-        toolName: "search",
-        arguments: { query: "tanstack" },
-      });
-      expect(state.status).toEqual(initialStatus);
-    });
-
-    test("mutates state in-place", () => {
-      const state = createInitialSession();
-      const sameRef = applySessionEvent(state, { type: "status", status: "thinking" });
-      expect(sameRef).toBe(state);
-      expect(state.status).toBe("thinking");
+        expectMessageIdentities(beforeDelta, state.messages);
+        expect(state.messages).toHaveLength(beforeDelta.length + 1);
+      }
     });
   });
 });
@@ -1174,7 +1266,7 @@ describe("toSessionSnapshot", () => {
       artifacts: ["report.md"],
       status: "responding",
       reasoningContent: "thinking...",
-      modelConfiguration: { model: "gpt-5.5" },
+      model: { name: "gpt-5.5" },
     });
     state.lastSeenEventId = 42;
 
@@ -1182,7 +1274,7 @@ describe("toSessionSnapshot", () => {
       id: "session-1",
       messages: state.messages,
       queuedMessages: state.queuedMessages,
-      modelConfiguration: { model: "gpt-5.5" },
+      model: { name: "gpt-5.5" },
       todos: state.todos,
       linkedSessionIds: ["linked-1"],
       artifacts: ["report.md"],
@@ -1200,11 +1292,11 @@ describe("toSessionSnapshot", () => {
       queuedMessages: [],
       status: "idle",
       reasoningContent: "",
-      modelConfiguration: { model: "claude-opus-4.8" },
+      model: { name: "claude-opus-4.8" },
     });
 
     expect(snapshot.id).toBe("session-existing");
-    expect(snapshot.modelConfiguration).toEqual({ model: "claude-opus-4.8" });
+    expect(snapshot.model).toEqual({ name: "claude-opus-4.8" });
     // Empty linked sessions collapse to undefined rather than [].
     expect(snapshot.linkedSessionIds).toBeUndefined();
   });
@@ -1234,15 +1326,11 @@ describe("sessionSeedFromSnapshot", () => {
         patches: [{ type: "upsert", path: "summary.md" }],
       },
       { type: "linked_session_added", sessionId: "toy-box-child" },
-      { type: "model_changed", modelConfiguration: { model: "gpt-5" } },
+      { type: "model_changed", model: { name: "gpt-5" } },
       { type: "end", reason: "idle" },
     ];
 
-    const state = createInitialSession();
-    for (const event of events) {
-      applySessionEvent(state, event);
-    }
-    return state;
+    return reduceEvents(events);
   }
 
   test("a seeded session round-trips to the same snapshot, minus per-stream fields", () => {

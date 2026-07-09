@@ -2,14 +2,15 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
+type InputProps = React.ComponentProps<"input"> & { "data-form-type"?: string };
+
 function Input({
   className,
   type,
   suppressHydrationWarning,
+  "data-form-type": dataFormType,
   ...props
-}: React.ComponentProps<"input">) {
-  const { ["data-form-type" as keyof typeof props]: dataFormType, ...rest } = props;
-
+}: InputProps) {
   return (
     <input
       type={type}
@@ -22,7 +23,7 @@ function Input({
         "aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
         className,
       )}
-      {...rest}
+      {...props}
     />
   );
 }

@@ -1,26 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import {
-  buildLayoutCookie,
-  DEFAULT_AUTOMATIONS_EXPANDED,
-  DEFAULT_HYPER_POSITION,
-  LAYOUT_COOKIE_MAX_AGE,
-  LAYOUT_PREFS,
-  parseLayoutPrefs,
-  resolveLayoutPrefs,
-  serializeLayoutCookie,
-  SIDEBAR_MAX_SIZE,
-} from "./layoutPrefs";
+import { parseLayoutPrefs, resolveLayoutPrefs, serializeLayoutCookie } from "./layoutPrefs";
 
 describe("layout prefs", () => {
   test("parses every layout cookie, including a single hyper position", () => {
     const cookieHeader = [
-      `${LAYOUT_PREFS.sidebarSize.cookie}=18`,
-      `${LAYOUT_PREFS.terminalSize.cookie}=42`,
-      `${LAYOUT_PREFS.sidebarOpen.cookie}=false`,
-      `${LAYOUT_PREFS.terminalOpen.cookie}=true`,
-      `${LAYOUT_PREFS.automationsExpanded.cookie}=false`,
-      `${LAYOUT_PREFS.hyperOpen.cookie}=true`,
-      `${LAYOUT_PREFS.hyperPosition.cookie}=120,80`,
+      "toybox_sidebar_size=18",
+      "toybox_terminal_size=42",
+      "toybox_sidebar_open=false",
+      "toybox_terminal_open=true",
+      "toybox_automations_expanded=false",
+      "toybox_hyper_open=true",
+      "toybox_hyper_pos=120,80",
+      "toybox_mobile_inbox_open=true",
     ].join("; ");
 
     expect(parseLayoutPrefs(cookieHeader)).toEqual({
@@ -31,14 +22,16 @@ describe("layout prefs", () => {
       automationsExpanded: false,
       hyperOpen: true,
       hyperPosition: { x: 120, y: 80 },
+      mobileInboxOpen: true,
     });
   });
 
   test("defaults layout preferences when cookies are missing", () => {
     const resolved = resolveLayoutPrefs({});
-    expect(resolved.automationsExpanded).toBe(DEFAULT_AUTOMATIONS_EXPANDED);
+    expect(resolved.automationsExpanded).toBe(true);
     expect(resolved.hyperOpen).toBe(false);
-    expect(resolved.hyperPosition).toEqual(DEFAULT_HYPER_POSITION);
+    expect(resolved.hyperPosition).toEqual({ x: 24, y: 24 });
+    expect(resolved.mobileInboxOpen).toBe(false);
   });
 
   test("preserves explicit automations expanded preference", () => {
@@ -47,28 +40,18 @@ describe("layout prefs", () => {
   });
 
   test("clamps out-of-range sizes on read", () => {
-    const cookieHeader = `${LAYOUT_PREFS.sidebarSize.cookie}=999`;
-    expect(parseLayoutPrefs(cookieHeader).sidebarSize).toBe(SIDEBAR_MAX_SIZE);
+    expect(parseLayoutPrefs("toybox_sidebar_size=999").sidebarSize).toBe(40);
   });
 
   test("ignores a malformed hyper position cookie", () => {
-    const cookieHeader = `${LAYOUT_PREFS.hyperPosition.cookie}=nope`;
-    expect(parseLayoutPrefs(cookieHeader).hyperPosition).toBeUndefined();
+    expect(parseLayoutPrefs("toybox_hyper_pos=nope").hyperPosition).toBeUndefined();
   });
 
   test("serializes a pref to its cookie via the registry codec", () => {
     const cookie = serializeLayoutCookie("hyperPosition", { x: 120, y: 80 });
-    expect(cookie).toContain(`${LAYOUT_PREFS.hyperPosition.cookie}=120,80`);
+    expect(cookie).toContain("toybox_hyper_pos=120,80");
     expect(cookie).toContain("Path=/");
-    expect(cookie).toContain(`Max-Age=${LAYOUT_COOKIE_MAX_AGE}`);
-    expect(cookie).toContain("SameSite=Lax");
-  });
-
-  test("builds a layout cookie string with standard attributes", () => {
-    const cookie = buildLayoutCookie(LAYOUT_PREFS.automationsExpanded.cookie, false);
-    expect(cookie).toContain(`${LAYOUT_PREFS.automationsExpanded.cookie}=false`);
-    expect(cookie).toContain("Path=/");
-    expect(cookie).toContain(`Max-Age=${LAYOUT_COOKIE_MAX_AGE}`);
+    expect(cookie).toContain("Max-Age=31536000");
     expect(cookie).toContain("SameSite=Lax");
   });
 });

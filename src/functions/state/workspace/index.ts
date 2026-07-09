@@ -1,153 +1,163 @@
-// Server workspace state.
-//
-// This module is the public boundary for process-local workspace coordination:
-// drafts, draft prompts, unread membership, hyper membership, and the disk-backed
-// custom artifact kinds. Subfiles in this folder are storage facets; callers import
-// the domain verbs from here.
+// Authoritative server boundary for workspace-wide facts outside transcripts.
 
-import type { CustomArtifactKind, DraftSession, WorkspaceAction } from "@/types";
+import type {
+  ArtifactCommentSession,
+  CustomArtifactKind,
+  InboxEntry,
+  WorkspaceAction,
+  WorkspaceEvent,
+} from "@/types";
 import { DRAFT_PROMPT_SERVER_ORIGIN } from "@/lib/session/constants";
-import type { WorkspaceState } from "@/lib/workspace/state";
-import {
-  emitDraftCreated,
-  emitDraftDiscarded,
-  emitDraftPromptChanged,
-  emitSessionHyper,
-  emitSessionPromoted,
-  emitSessionRead,
-  emitSessionUnread,
-} from "@/functions/runtime/broadcast";
-import {
-  createDraftRecord,
-  deleteDraftState,
-  getDraft,
-  getDrafts,
-  isDraft,
-  isDraftFresh,
-  sweepExpiredDrafts as sweepDraftRecords,
-  touchDraft,
-} from "./drafts";
-import {
-  deleteDraftPromptState,
-  getDraftPrompt,
-  getDraftPromptsBySessionId,
-  setDraftPromptRecord,
-} from "./draftPrompts";
+import type { WorkspaceEnvironment, WorkspaceState } from "@/lib/workspace/state";
+import { broadcast } from "@/functions/runtime/broadcast";
 import { addHyperSession, deleteHyperState, getHyperSessionIds } from "./hyperSessions";
-import { addUnreadSession, deleteUnreadState, getUnreadSessionIds } from "./unread";
+import {
+  completeInboxEntry,
+  createInboxEntry,
+  deleteInboxEntryState,
+  getInboxEntries,
+  hasInboxEntry,
+} from "./inbox";
+import {
+  applySessionState,
+  getSessionState,
+  getSessionStates,
+  isDraft,
+  setSessionPrompt,
+  sweepExpiredDrafts as sweepDraftSessionStates,
+} from "./sessions";
+import { writeCustomArtifact } from "./artifacts";
+import {
+  deleteArtifactCommentSession,
+  deleteArtifactCommentSessionsForSession,
+  getArtifactCommentSessions,
+  hasArtifactCommentSession,
+  setArtifactCommentSession,
+} from "./commentSessions";
 
-export { getDrafts, isDraft, isDraftFresh, touchDraft };
-export { deleteDraftState, deleteDraftPromptState, deleteHyperState, deleteUnreadState };
-export { getDraftPrompt, getHyperSessionIds, getUnreadSessionIds };
-export { loadCustomArtifacts, writeCustomArtifact, normalizeExtensions } from "./artifacts";
+export { loadCustomArtifacts, normalizeExtensions } from "./artifacts";
+export { getEnvironment } from "./environment";
 
-export function getWorkspaceState(options: {
-  runningSessionIds: string[];
+export async function getWorkspaceState(options: {
   customArtifacts: CustomArtifactKind[];
-}): WorkspaceState {
+  environment: WorkspaceEnvironment;
+}): Promise<WorkspaceState> {
   return {
-    drafts: getDrafts(),
-    draftPromptsBySessionId: getDraftPromptsBySessionId(),
-    unreadSessionIds: getUnreadSessionIds(),
+    sessionStates: getSessionStates(),
     hyperSessionIds: getHyperSessionIds(),
-    runningSessionIds: options.runningSessionIds,
+    inboxEntries: await getInboxEntries(),
+    artifactCommentSessions: getArtifactCommentSessions(),
     customArtifacts: options.customArtifacts,
+    environment: options.environment,
   };
 }
 
-export function createDraft(sessionId: string): DraftSession {
-  const existing = getDraft(sessionId);
-  if (existing) return existing;
-
-  const draft = createDraftRecord(sessionId);
-  emitDraftCreated(draft);
-  return draft;
-}
-
-export function discardDraft(sessionId: string): void {
-  if (!deleteDraftState(sessionId)) return;
-
-  deleteDraftPromptState(sessionId);
-  deleteHyperState(sessionId);
-  emitDraftDiscarded(sessionId);
-}
-
 export function sweepExpiredDrafts(now: number = Date.now()): string[] {
-  const expiredSessionIds = sweepDraftRecords(now);
-  for (const sessionId of expiredSessionIds) {
-    deleteDraftPromptState(sessionId);
-    deleteHyperState(sessionId);
-  }
+  const expiredSessionIds = sweepDraftSessionStates(now);
+  for (const sessionId of expiredSessionIds) deleteHyperState(sessionId);
   return expiredSessionIds;
 }
 
-export function deleteSessionWorkspaceState(sessionId: string): void {
-  deleteDraftState(sessionId);
-  deleteDraftPromptState(sessionId);
-  deleteHyperState(sessionId);
-  deleteUnreadState(sessionId);
+/** Complete the draft-to-session handoff before publishing the session upsert. */
+export function promoteDraftSession(sessionId: string): void {
+  applySessionState({ type: "session.upserted", session: { sessionId } });
 }
 
-export function setDraftPrompt(sessionId: string, text: string, origin: string): void {
-  const existing = getDraftPrompt(sessionId);
-  // Origin suppresses echoes for clients; text is the user-visible state.
-  if (existing?.text === text) return;
+export function deleteSessionWorkspaceState(sessionId: string): void {
+  applySessionState({ type: "session.deleted", sessionId });
+  deleteHyperState(sessionId);
+  for (const commentSessionId of deleteArtifactCommentSessionsForSession(sessionId)) {
+    broadcast({ type: "artifact.comment_session.unlinked", sessionId: commentSessionId });
+  }
+}
 
-  const prompt = setDraftPromptRecord(sessionId, text, origin);
-  emitDraftPromptChanged(sessionId, prompt);
+export function setSessionStatus(
+  sessionId: string,
+  status: "creating" | "running" | "idle" | "unread",
+): void {
+  const event = { type: `session.${status}`, sessionId } as const;
+  if (applySessionState(event)) broadcast(event);
 }
 
 export function clearDraftPrompt(sessionId: string): void {
-  const existing = getDraftPrompt(sessionId);
-  if (!existing?.text) return;
-  setDraftPrompt(sessionId, "", DRAFT_PROMPT_SERVER_ORIGIN);
+  if (!getSessionState(sessionId)?.prompt?.text) return;
+  const prompt = setSessionPrompt(sessionId, "", DRAFT_PROMPT_SERVER_ORIGIN);
+  if (prompt) broadcast({ type: "session.prompt.drafted", sessionId, prompt });
 }
 
-export function markSessionRead(sessionId: string): void {
-  if (!deleteUnreadState(sessionId)) return;
-  emitSessionRead(sessionId);
+export async function createPendingInboxEntry(sessionId: string): Promise<InboxEntry> {
+  const entry = await createInboxEntry(sessionId);
+  setSessionStatus(sessionId, "running");
+  broadcast({ type: "inbox.entry.upserted", entry });
+  return entry;
 }
 
-export function markSessionUnread(sessionId: string): void {
-  if (!addUnreadSession(sessionId)) return;
-  emitSessionUnread(sessionId);
+export async function sendToInbox(
+  sessionId: string,
+  message: string,
+  artifact?: { filename: string; content: string },
+): Promise<InboxEntry> {
+  const entry = await completeInboxEntry(sessionId, message, artifact);
+  broadcast({ type: "inbox.entry.upserted", entry });
+  return entry;
 }
 
-export function markSessionHyper(sessionId: string): void {
-  if (!addHyperSession(sessionId)) return;
-  emitSessionHyper(sessionId);
+export async function deleteInboxEntry(entryId: string): Promise<boolean> {
+  if (!(await hasInboxEntry(entryId))) return false;
+  const deleted = await deleteInboxEntryState(entryId);
+  if (deleted) broadcast({ type: "inbox.entry.deleted", entryId });
+  return deleted;
 }
 
-export function markSessionPromoted(sessionId: string): void {
-  if (!deleteHyperState(sessionId)) return;
-  emitSessionPromoted(sessionId);
+export function linkArtifactCommentSession(commentSession: ArtifactCommentSession): void {
+  setArtifactCommentSession(commentSession);
+  broadcast({ type: "artifact.comment_session.linked", commentSession });
 }
 
-// Client-issued actions are the write half of workspace coordination. Each handler
-// performs one action's durable mutation and nothing more: the mutators it calls
-// self-gate their own broadcasts, so a no-op stays silent without any bookkeeping
-// here. Handlers return nothing — a command either applies or (in the future)
-// throws; the client resyncs on a thrown error, never on a return value. The map
-// is keyed by `WorkspaceAction["type"]`, so adding an action is a compile error
-// until its handler exists.
-type WorkspaceActionHandlers = {
-  [Type in WorkspaceAction["type"]]: (action: Extract<WorkspaceAction, { type: Type }>) => void;
-};
+export function unlinkArtifactCommentSession(sessionId: string): void {
+  if (!deleteArtifactCommentSession(sessionId)) return;
+  broadcast({ type: "artifact.comment_session.unlinked", sessionId });
+}
 
-const workspaceActionHandlers: WorkspaceActionHandlers = {
-  "session.draft.created": ({ draft }) => {
-    createDraft(draft.sessionId);
-  },
-  "session.draft.discarded": ({ sessionId }) => discardDraft(sessionId),
-  "session.prompt.drafted": ({ sessionId, prompt }) => {
-    setDraftPrompt(sessionId, prompt.text, prompt.origin);
-    touchDraft(sessionId);
-  },
-  "session.hyper.created": ({ sessionId }) => markSessionHyper(sessionId),
-  "session.hyper.promoted": ({ sessionId }) => markSessionPromoted(sessionId),
-  "session.read": ({ sessionId }) => markSessionRead(sessionId),
-};
+export { hasArtifactCommentSession };
+
+export async function registerArtifactKind(kind: CustomArtifactKind): Promise<void> {
+  await writeCustomArtifact(kind);
+  broadcast({ type: "artifact.kind.registered", kind });
+}
 
 export function applyWorkspaceAction(action: WorkspaceAction): void {
-  (workspaceActionHandlers[action.type] as (action: WorkspaceAction) => void)(action);
+  let event: WorkspaceEvent | null = null;
+
+  switch (action.type) {
+    case "session.draft.created": {
+      if (isDraft(action.sessionId)) break;
+      event = { ...action, createdAt: Date.now() };
+      if (!applySessionState(event)) {
+        event = null;
+        break;
+      }
+      if (action.hyper) addHyperSession(action.sessionId);
+      break;
+    }
+    case "session.draft.discarded":
+      if (getSessionState(action.sessionId)?.status !== "draft") break;
+      applySessionState(action);
+      deleteHyperState(action.sessionId);
+      event = action;
+      break;
+    case "session.prompt.drafted": {
+      const prompt = setSessionPrompt(action.sessionId, action.prompt.text, action.prompt.origin);
+      if (prompt) event = { ...action, prompt };
+      break;
+    }
+    case "session.hyper.promoted":
+      if (deleteHyperState(action.sessionId)) event = action;
+      break;
+    case "session.read":
+      if (applySessionState(action)) event = action;
+      break;
+  }
+
+  broadcast(event);
 }

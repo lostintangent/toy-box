@@ -1,23 +1,15 @@
 import type { SessionMetadata } from "@/types";
 
-export type SessionTimeBucket = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
-type NonTodayBucket = Exclude<SessionTimeBucket, "today">;
+type SessionTimeGroup = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
+type LabeledSessionTimeGroup = Exclude<SessionTimeGroup, "today">;
 
-export type SessionListEntry =
-  | {
-      type: "heading";
-      key: string;
-      label: string;
-      bucket: NonTodayBucket;
-      count: number;
-    }
-  | {
-      type: "session";
-      key: string;
-      session: SessionMetadata;
-    };
+type SessionGroup = {
+  key: string;
+  label?: string;
+  sessions: SessionMetadata[];
+};
 
-const BUCKET_LABELS: Record<NonTodayBucket, string> = {
+const GROUP_LABELS: Record<LabeledSessionTimeGroup, string> = {
   yesterday: "Yesterday",
   thisWeek: "This Week",
   thisMonth: "This Month",
@@ -32,7 +24,7 @@ function startOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-export function getSessionTimeBucket(modifiedTime: Date, now: Date): SessionTimeBucket {
+function getSessionTimeGroup(modifiedTime: Date, now: Date): SessionTimeGroup {
   const todayStart = startOfDay(now);
   const yesterdayStart = new Date(todayStart);
   yesterdayStart.setDate(yesterdayStart.getDate() - 1);
@@ -48,42 +40,28 @@ export function getSessionTimeBucket(modifiedTime: Date, now: Date): SessionTime
   return "older";
 }
 
-export function buildSessionListEntries(
+export function groupSessionsByTime(
   sessions: SessionMetadata[],
   now: Date = new Date(),
-): SessionListEntry[] {
-  const entries: SessionListEntry[] = [];
-  let previousBucket: SessionTimeBucket | null = null;
-  let currentHeading: Extract<SessionListEntry, { type: "heading" }> | null = null;
+): SessionGroup[] {
+  const groups: SessionGroup[] = [];
+  let previousTimeGroup: SessionTimeGroup | null = null;
 
   for (const session of sessions) {
-    const bucket = getSessionTimeBucket(session.modifiedTime, now);
-
-    if (bucket !== "today" && bucket !== previousBucket) {
-      currentHeading = {
-        type: "heading",
-        key: `heading-${bucket}-${session.sessionId}`,
-        label: BUCKET_LABELS[bucket],
-        bucket,
-        count: 0,
-      };
-      entries.push(currentHeading);
-    } else if (bucket === "today") {
-      currentHeading = null;
+    const timeGroup = getSessionTimeGroup(session.modifiedTime, now);
+    const currentGroup = groups.at(-1);
+    if (timeGroup === previousTimeGroup && currentGroup) {
+      currentGroup.sessions.push(session);
+    } else {
+      groups.push({
+        key: `${timeGroup}-${session.sessionId}`,
+        ...(timeGroup === "today" ? {} : { label: GROUP_LABELS[timeGroup] }),
+        sessions: [session],
+      });
     }
 
-    if (bucket !== "today" && currentHeading) {
-      currentHeading.count += 1;
-    }
-
-    entries.push({
-      type: "session",
-      key: session.sessionId,
-      session,
-    });
-
-    previousBucket = bucket;
+    previousTimeGroup = timeGroup;
   }
 
-  return entries;
+  return groups;
 }

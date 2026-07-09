@@ -1,5 +1,13 @@
-import { describe, expect, test } from "bun:test";
-import { matchesSessionFeatureScope, normalizeSettings } from "./settings";
+import { describe, expect, onTestFinished, test } from "bun:test";
+import { createStore } from "jotai";
+import {
+  autoFocusArtifactsAtom,
+  matchesSessionFeatureScope,
+  normalizeSettings,
+  showExternalSessionsAtom,
+  terminalShellAtom,
+  worktreeAtom,
+} from "./settings";
 
 describe("settings normalization", () => {
   test("preserves valid settings", () => {
@@ -7,31 +15,46 @@ describe("settings normalization", () => {
       normalizeSettings({
         terminalShell: "/bin/zsh",
         useWorktree: true,
-        showSessionOverlay: "automations",
         autoFocusArtifacts: "sessions",
+        showExternalSessions: false,
       }),
     ).toEqual({
       terminalShell: "/bin/zsh",
       useWorktree: true,
-      showSessionOverlay: "automations",
       autoFocusArtifacts: "sessions",
+      showExternalSessions: false,
     });
   });
 
-  test("falls back for invalid persisted values", () => {
+  test("treats invalid persisted values like missing settings", () => {
+    const missingSettings = normalizeSettings({});
+
     expect(
       normalizeSettings({
         terminalShell: 42,
         useWorktree: "yes",
-        showSessionOverlay: "sometimes",
         autoFocusArtifacts: "occasionally",
+        showExternalSessions: "sometimes",
       }),
-    ).toEqual({
-      terminalShell: "",
-      useWorktree: false,
-      showSessionOverlay: "sessions",
-      autoFocusArtifacts: "automations",
-    });
+    ).toEqual(missingSettings);
+  });
+
+  test("setting atoms update one field without notifying the others", () => {
+    const store = createStore();
+    let worktreeUpdates = 0;
+    onTestFinished(store.sub(worktreeAtom, () => worktreeUpdates++));
+
+    store.set(terminalShellAtom, "/bin/zsh");
+    expect(store.get(terminalShellAtom)).toBe("/bin/zsh");
+    expect(worktreeUpdates).toBe(0);
+
+    store.set(worktreeAtom, true);
+    store.set(autoFocusArtifactsAtom, "sessions");
+    store.set(showExternalSessionsAtom, false);
+    expect(store.get(worktreeAtom)).toBe(true);
+    expect(store.get(autoFocusArtifactsAtom)).toBe("sessions");
+    expect(store.get(showExternalSessionsAtom)).toBe(false);
+    expect(worktreeUpdates).toBe(1);
   });
 });
 

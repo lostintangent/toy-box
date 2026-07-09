@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import type { AssistantMessage as AssistantMessageType, ToolCall } from "@/types";
@@ -80,7 +79,7 @@ function ToolCallsDisplay({
   toolCalls: ToolCall[];
   isStreaming: boolean;
 }) {
-  const deduplicated = useMemo(() => deduplicateIntents(toolCalls), [toolCalls]);
+  const deduplicated = deduplicateIntents(toolCalls);
 
   return (
     <div className="space-y-2">

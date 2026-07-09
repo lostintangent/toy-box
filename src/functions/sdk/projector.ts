@@ -4,7 +4,7 @@
 // projection in historyReplay.ts.
 //
 // The file reads top-down: policy tables (tool name aliases, argument-shape
-// adapters, stream-terminal dispositions, per-tool projection policies),
+// adapters, turn-end reasons, per-tool projection policies),
 // then types and public entry points, then event projection, policy factories,
 // and the small field adapters needed at tool-argument boundaries.
 
@@ -19,9 +19,9 @@ import {
   type ToolCall,
 } from "@/types";
 import { parsePatchTouchedFiles, type PatchTouchedFile } from "@/lib/diffs/fileDiffs";
-import { projectSessionArtifactPath } from "@/lib/server/sandbox";
+import { projectSessionArtifactPath } from "@/lib/server/artifactPaths";
 import { decodeSdkAgentNotification } from "@/functions/sdk/agentNotificationCodec";
-import { readAttachmentBlobs } from "./attachments";
+import { fromSdkAttachments } from "./attachments";
 import { parseTodoSql } from "./todoParser";
 
 // ============================================================================
@@ -53,7 +53,7 @@ const TOOL_ARGUMENT_ADAPTERS: Record<string, ((raw: unknown) => ToolArguments) |
 };
 
 // SDK events that terminate a streaming turn, and how.
-const SDK_STREAM_TERMINAL: Record<string, SdkStreamTerminalDisposition | undefined> = {
+const SDK_TURN_END_REASONS: Record<string, SessionEndReason | undefined> = {
   abort: "error",
   "session.error": "error",
   "session.idle": "idle",
@@ -68,13 +68,15 @@ const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
   read_agent: { kind: "omitted" },
   check_session_status: { kind: "omitted" },
   wait_for_sessions: { kind: "omitted" },
-  send_to_session: { kind: "omitted" },
+  deliver_message: { kind: "omitted" },
+  send_to_inbox: { kind: "omitted" },
   list_automations: { kind: "omitted" },
   create_automation: { kind: "omitted" },
-  edit_automation: { kind: "omitted" },
+  update_automation: { kind: "omitted" },
   run_automation: { kind: "omitted" },
   read: projectReadPolicy,
   create: projectCreatePolicy,
+  edit: projectEditPolicy,
   patch: projectPatchPolicy,
   create_session: { kind: "translated", projectOnComplete: projectCreatedSession },
   open_session: (args) => ({
@@ -97,10 +99,9 @@ const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
 // Types
 // ============================================================================
 
-export type SdkStreamTerminalDisposition = "idle" | "error";
-export type SessionMetadataPatch = { summary: string };
+type SessionEndReason = Extract<SessionEvent, { type: "end" }>["reason"];
 
-export type ProjectionState = {
+type ProjectionState = {
   sessionId: string;
   toolCallPolicies: Map<string, ToolCallProjectionPolicy>;
 };
@@ -124,10 +125,6 @@ type ToolCallProjectionPolicy =
     }
   | {
       kind: "deferred";
-      completionEvents: {
-        success: "subagent.completed";
-        failure: "subagent.failed";
-      };
     };
 
 type ToolArguments = ToolCall["arguments"];
@@ -141,12 +138,15 @@ type ToolCallPolicyEntry = ToolCallProjectionPolicy | ToolCallPolicyFactory;
 // Public API
 // ============================================================================
 
-export function createProjectionState(sessionId: string): ProjectionState {
-  return { sessionId, toolCallPolicies: new Map() };
+/** Create one stateful SDK → domain projector for a session. Tool lifecycle
+ *  correlation stays private to the returned function. */
+export function createSdkEventProjector(sessionId: string) {
+  const state: ProjectionState = { sessionId, toolCallPolicies: new Map() };
+  return (event: SdkSessionEvent): SessionEvent[] => projectSdkEvent(event, state);
 }
 
 /** Map a single SDK event to canonical SessionEvents. */
-export function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): SessionEvent[] {
+function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): SessionEvent[] {
   switch (event.type) {
     // Empty-content deltas are dropped at the source: they carry nothing, and
     // downstream consumers (reducer message fragmentation, stream buffering)
@@ -172,7 +172,7 @@ export function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState):
           type: "user_message",
           content: event.data.content,
           timestamp: event.timestamp,
-          attachments: readAttachmentBlobs(event.data.attachments),
+          attachments: fromSdkAttachments(event.data.attachments),
         },
       ];
     case "assistant.message":
@@ -207,8 +207,8 @@ export function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState):
       return [
         {
           type: "model_changed",
-          modelConfiguration: {
-            model: event.data.newModel,
+          model: {
+            name: event.data.newModel,
             ...(event.data.reasoningEffort ? { reasoningEffort: event.data.reasoningEffort } : {}),
           },
         },
@@ -246,9 +246,7 @@ export function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState):
     case "subagent.started": {
       const agentId = event.data.toolCallId ?? event.agentId;
       const model = event.data.model;
-      return agentId && model
-        ? [{ type: "model_changed", agentId, modelConfiguration: { model } }]
-        : [];
+      return agentId && model ? [{ type: "model_changed", agentId, model: { name: model } }] : [];
     }
     case "subagent.completed":
     case "subagent.failed": {
@@ -256,8 +254,7 @@ export function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState):
       const policy = state.toolCallPolicies.get(toolCallId);
       if (policy?.kind !== "deferred") return [];
 
-      const { completionEvents } = policy;
-      const success = event.type === completionEvents.success;
+      const success = event.type === "subagent.completed";
       state.toolCallPolicies.delete(toolCallId);
       return [{ type: "tool_end", toolCallId, success }];
     }
@@ -324,18 +321,16 @@ export function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState):
   }
 }
 
-export function getSdkStreamTerminalDisposition(
-  type: string,
-): SdkStreamTerminalDisposition | undefined {
-  return SDK_STREAM_TERMINAL[type];
+export function getSdkTurnEndReason(event: SdkSessionEvent): SessionEndReason | undefined {
+  return SDK_TURN_END_REASONS[event.type];
 }
 
-export function getSdkMetadataPatch(event: SdkSessionEvent): SessionMetadataPatch | undefined {
+export function getSdkSessionName(event: SdkSessionEvent): string | undefined {
   switch (event.type) {
     case "session.handoff":
-      return event.data.summary ? { summary: event.data.summary } : undefined;
+      return event.data.summary || undefined;
     case "session.title_changed":
-      return { summary: event.data.title };
+      return event.data.title;
     default:
       return undefined;
   }
@@ -368,8 +363,8 @@ function projectSessionStart(
     ? [
         {
           type: "model_changed",
-          modelConfiguration: {
-            model,
+          model: {
+            name: model,
             ...(reasoningEffort ? { reasoningEffort } : {}),
           },
         },
@@ -380,12 +375,11 @@ function projectSessionStart(
 function projectTodoSqlPolicy(args: ToolArguments): ToolCallProjectionPolicy | undefined {
   // Todo-list SQL calls are translated into todos_patch events; other SQL stays visible.
   const query = readStringArg(args, "query");
-  const parsed = query ? parseTodoSql(query) : undefined;
-  if (!parsed) return undefined;
+  const patches = query ? parseTodoSql(query) : undefined;
+  if (!patches) return undefined;
   return {
     kind: "translated",
-    projectOnStart:
-      parsed.patches.length > 0 ? [{ type: "todos_patch", patches: parsed.patches }] : [],
+    projectOnStart: patches.length > 0 ? [{ type: "todos_patch", patches }] : [],
   };
 }
 
@@ -393,13 +387,7 @@ function projectAgentPolicy(args: ToolArguments): ToolCallProjectionPolicy | und
   // Background agent calls stay visible, but their SDK tool completion is
   // not the real completion signal. subagent.completed/failed owns that.
   if (readStringArg(args, "mode") !== "background") return undefined;
-  return {
-    kind: "deferred",
-    completionEvents: {
-      success: "subagent.completed",
-      failure: "subagent.failed",
-    },
-  };
+  return { kind: "deferred" };
 }
 
 function projectCreatePolicy(
@@ -423,6 +411,20 @@ function projectReadPolicy(
   if (!artifactPath) return undefined;
 
   return { kind: "omitted" };
+}
+
+function projectEditPolicy(
+  args: ToolArguments,
+  state: ProjectionState,
+): ToolCallProjectionPolicy | undefined {
+  const artifactPath = projectSessionArtifactPath(state.sessionId, readPathArg(args));
+  if (!artifactPath) return undefined;
+
+  return {
+    kind: "translated",
+    projectOnComplete: (eventData: ToolExecutionCompleteData) =>
+      eventData.success ? projectArtifactUpsertEvents([artifactPath]) : [],
+  };
 }
 
 function projectPatchPolicy(
@@ -460,7 +462,7 @@ function projectArtifactPatchEvents(files: PatchTouchedFile[]): SessionEvent[] {
     Array.from(
       files.reduce<Map<string, SessionArtifactPatch["type"]>>((events, file) => {
         events.delete(file.path);
-        events.set(file.path, artifactPatchTypeFromStatus(file.status));
+        events.set(file.path, file.status === "deleted" ? "delete" : "upsert");
         return events;
       }, new Map()),
       ([path, type]) => ({ type, path }),
@@ -473,12 +475,6 @@ function projectArtifactPatchEvent(patches: SessionArtifactPatch[]): SessionEven
   return [{ type: "artifacts_patch", patches }];
 }
 
-function artifactPatchTypeFromStatus(
-  status: PatchTouchedFile["status"],
-): SessionArtifactPatch["type"] {
-  return status === "deleted" ? "delete" : "upsert";
-}
-
 function projectLinkedSessionEvent(
   args: Record<string, unknown> | undefined,
   type: "linked_session_added" | "linked_session_removed",
@@ -487,15 +483,6 @@ function projectLinkedSessionEvent(
   return sessionId ? [{ type, sessionId }] : [];
 }
 
-function readJsonToolResult<T>(eventData: ToolExecutionCompleteData): T | undefined {
-  const raw = eventData.result?.detailedContent ?? eventData.result?.content;
-  if (!raw) return undefined;
-
-  return JSON.parse(raw) as T;
-}
-
-type CreatedSessionResult = { sessionId: string };
-
 function projectCreatedSession(eventData: ToolExecutionCompleteData): SessionEvent[] {
   if (!eventData.success) return [];
   const sessionId = readCreatedSessionId(eventData);
@@ -503,7 +490,18 @@ function projectCreatedSession(eventData: ToolExecutionCompleteData): SessionEve
 }
 
 function readCreatedSessionId(eventData: ToolExecutionCompleteData): string | undefined {
-  return readJsonToolResult<CreatedSessionResult>(eventData)?.sessionId;
+  const raw = eventData.result?.detailedContent ?? eventData.result?.content;
+  if (!raw) return undefined;
+
+  try {
+    const result: unknown = JSON.parse(raw);
+    if (!result || typeof result !== "object" || Array.isArray(result)) return undefined;
+
+    const sessionId = (result as Record<string, unknown>).sessionId;
+    return typeof sessionId === "string" ? sessionId : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ============================================================================
@@ -512,10 +510,6 @@ function readCreatedSessionId(eventData: ToolExecutionCompleteData): string | un
 
 function normalizeToolName(name: string): string {
   return TOOL_NAME_ALIASES[name] ?? name;
-}
-
-function toToolArguments(value: Record<string, unknown> | undefined): ToolArguments {
-  return (value ?? {}) as ToolArguments;
 }
 
 function readStringArg(
@@ -541,7 +535,7 @@ function readCanvasInputTitle(input: JsonValue | undefined): string | undefined 
 
 function readToolArguments(rawToolName: string, rawArguments: unknown): ToolArguments {
   if (rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)) {
-    return toToolArguments(rawArguments as Record<string, unknown>);
+    return rawArguments as ToolArguments;
   }
   return TOOL_ARGUMENT_ADAPTERS[rawToolName]?.(rawArguments) ?? {};
 }

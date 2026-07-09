@@ -1,18 +1,15 @@
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import type {
-  DraftPrompt,
-  DraftSession,
-  SessionEvent,
-  SessionMetadataUpdate,
-  WorkspaceEvent,
-} from "@/types";
+import { afterAll, describe, expect, mock, test } from "bun:test";
+import type { SessionEvent, SessionMetadataUpdate, WorkspaceEvent } from "@/types";
 import {
   sessionSeedFromSnapshot,
   toSessionSnapshot,
   type Session,
 } from "@/lib/session/sessionReducer";
 import { loadSessionFixture } from "./helpers";
+import * as realSessionRegistry from "@/functions/state/session/registry";
+import * as realBroadcast from "@/functions/runtime/broadcast";
+import * as realWorkspaceState from "@/functions/state/workspace";
 
 // Golden replay of the full stream lifetime: real v1 CLI events from the
 // fixture drive a SessionStream through two turns — explicit start, fixture
@@ -24,12 +21,14 @@ import { loadSessionFixture } from "./helpers";
 // Nondeterministic ids (Date.now-seeded eventIds, timestamped turnIds) are
 // normalized to stable ordinals before asserting.
 //
-// NOTE: mock.module persists for the remainder of the bun test process, so
-// each mock covers the module's FULL export surface — partial mocks poison
-// later test files that import the missing exports.
+// Module mocks cover each module's full surface and are restored after this
+// suite so the golden harness cannot alter later integration tests.
 
 const sideEffects: string[] = [];
 const workspaceEventListeners = new Set<(event: WorkspaceEvent) => void>();
+const realSessionRegistryExports = { ...realSessionRegistry };
+const realBroadcastExports = { ...realBroadcast };
+const realWorkspaceStateExports = { ...realWorkspaceState };
 const unused = () => {
   throw new Error("not used in stream golden replay");
 };
@@ -44,24 +43,16 @@ function sdkEvent(event: unknown): SdkSessionEvent {
   return event as SdkSessionEvent;
 }
 
-mock.module("@/functions/state/sessionRegistry", () => ({
+mock.module("@/functions/state/session/registry", () => ({
   createSession: unused,
   getSession: unused,
   withSession: unused,
   evictCachedSession: () => {},
   evictCachedSessionIfStale: () => false,
-  hasCachedSession: () => false,
   deleteSession: unused,
+  deleteSessionIfExists: unused,
 }));
 mock.module("@/functions/runtime/broadcast", () => ({
-  emitSessionRunning: (sessionId: string) => {
-    sideEffects.push(`running:${sessionId}`);
-    emitMockWorkspaceEvent({ type: "session.running", sessionId });
-  },
-  emitSessionIdle: (sessionId: string) => {
-    sideEffects.push(`idle:${sessionId}`);
-    emitMockWorkspaceEvent({ type: "session.idle", sessionId });
-  },
   updateSessionName: (sessionId: string, name: string) => {
     sideEffects.push(`summary:${sessionId}:${name}`);
     emitMockWorkspaceEvent({
@@ -74,45 +65,43 @@ mock.module("@/functions/runtime/broadcast", () => ({
     });
   },
   emitWorkspaceEvent: emitMockWorkspaceEvent,
+  broadcast: (event: WorkspaceEvent | null) => {
+    if (event) emitMockWorkspaceEvent(event);
+  },
   emitSessionUpsert: (session: SessionMetadataUpdate) =>
     emitMockWorkspaceEvent({ type: "session.upserted", session }),
   emitSessionDelete: (sessionId: string) =>
     emitMockWorkspaceEvent({ type: "session.deleted", sessionId }),
-  emitSessionUnread: (sessionId: string) =>
-    emitMockWorkspaceEvent({ type: "session.unread", sessionId }),
-  emitSessionRead: (sessionId: string) =>
-    emitMockWorkspaceEvent({ type: "session.read", sessionId }),
-  emitDraftCreated: (draft: DraftSession) =>
-    emitMockWorkspaceEvent({ type: "session.draft.created", draft }),
-  emitDraftDiscarded: (sessionId: string) =>
-    emitMockWorkspaceEvent({ type: "session.draft.discarded", sessionId }),
-  emitSessionHyper: (sessionId: string) =>
-    emitMockWorkspaceEvent({ type: "session.hyper.created", sessionId }),
-  emitSessionPromoted: (sessionId: string) =>
-    emitMockWorkspaceEvent({ type: "session.hyper.promoted", sessionId }),
-  emitDraftPromptChanged: (sessionId: string, prompt: DraftPrompt) =>
-    emitMockWorkspaceEvent({ type: "session.prompt.drafted", sessionId, prompt }),
   subscribeWorkspaceEvents: (listener: (event: WorkspaceEvent) => void) => {
     workspaceEventListeners.add(listener);
     return () => {
       workspaceEventListeners.delete(listener);
     };
   },
-  emitAutomationsUpdate: () => {},
-  subscribeAutomationsUpdates: () => () => {},
+  emitAutomationEvent: () => {},
+  subscribeAutomationEvents: () => () => {},
+}));
+mock.module("@/functions/state/workspace", () => ({
+  ...realWorkspaceStateExports,
+  setSessionStatus: (sessionId: string, status: "creating" | "running" | "idle" | "unread") => {
+    sideEffects.push(`${status}:${sessionId}`);
+    emitMockWorkspaceEvent({ type: `session.${status}`, sessionId });
+  },
+  clearDraftPrompt: () => {},
 }));
 
+afterAll(() => {
+  mock.module("@/functions/state/session/registry", () => realSessionRegistryExports);
+  mock.module("@/functions/runtime/broadcast", () => realBroadcastExports);
+  mock.module("@/functions/state/workspace", () => realWorkspaceStateExports);
+});
+
 const { SessionStream } = await import("@/functions/runtime/stream");
-const { deleteUnreadState } = await import("@/functions/state/workspace");
 
 const SESSION_ID = "golden-stream";
 
 describe("stream golden replay", () => {
   test("two-turn lifetime: fixture replay, queue drain, and close", async () => {
-    onTestFinished(() => {
-      deleteUnreadState(SESSION_ID);
-    });
-
     // ── Normalization for nondeterministic ids ─────────────────────────
     let baseEventId: number | undefined;
     const turnIds = new Map<string, string>();
@@ -145,7 +134,7 @@ describe("stream golden replay", () => {
     } as unknown as CopilotSession;
 
     const stream = SessionStream.getOrCreate(SESSION_ID, fakeSession, {
-      modelConfiguration: { model: "gpt-5.5" },
+      model: { name: "gpt-5.5" },
     });
     const received: unknown[] = [];
     const events = stream.subscribe();
@@ -157,7 +146,7 @@ describe("stream golden replay", () => {
     })();
 
     // Turn 1: explicit start + full fixture replay through the SDK listener.
-    await stream.startTurn({ id: "client-1", role: "user", content: "kick off the reviews" });
+    await stream.deliver({ id: "client-1", role: "user", content: "kick off the reviews" });
     for (const event of await loadSessionFixture("subagents")) {
       sdkHandler!(event);
     }
@@ -166,7 +155,7 @@ describe("stream golden replay", () => {
     );
 
     // Queue a follow-up, then end turn 1 → drain dequeues and sends turn 2.
-    stream.addQueuedMessage({ id: "queued-1", role: "user", content: "now fix the findings" });
+    await stream.deliver({ id: "queued-1", role: "user", content: "now fix the findings" });
     sdkHandler!(sdkEvent({ type: "session.idle", data: {} }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -222,11 +211,6 @@ describe("stream golden replay", () => {
   });
 
   test("a snapshot-seeded stream converges with an uninterrupted stream across turns", async () => {
-    onTestFinished(() => {
-      deleteUnreadState("golden-uninterrupted");
-      deleteUnreadState("golden-interrupted");
-    });
-
     // The same two turns travel two roads: one stream that lives through
     // both, and a stream that closes cleanly after turn 1 (the snapshot capture
     // point) and is reborn seeded from its snapshot — the reply-to-idle-
@@ -256,7 +240,7 @@ describe("stream golden replay", () => {
     };
 
     const runTurnOne = async ({ stream, emit }: DrivenStream) => {
-      await stream.startTurn({ id: "client-1", role: "user", content: "kick off the reviews" });
+      await stream.deliver({ id: "client-1", role: "user", content: "kick off the reviews" });
       for (const event of fixture) {
         emit(event);
       }
@@ -264,7 +248,15 @@ describe("stream golden replay", () => {
     };
 
     const runTurnTwo = async ({ stream, emit }: DrivenStream) => {
-      await stream.startTurn({ id: "queued-1", role: "user", content: "now fix the findings" });
+      const disposition = await stream.deliver({
+        id: "queued-1",
+        role: "user",
+        content: "now fix the findings",
+      });
+      if (disposition === "queued") {
+        emit(sdkEvent({ type: "session.idle", data: {} }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
       emit(sdkEvent({ type: "assistant.turn_start", data: {} }));
       emit(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "On it." } }));
       emit(sdkEvent({ type: "session.idle", data: {} }));

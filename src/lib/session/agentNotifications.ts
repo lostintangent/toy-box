@@ -11,7 +11,7 @@ const REGISTRY: NotificationRegistry = {
   artifact_edited: {
     schema: z.object({ type: z.literal("artifact_edited"), path: z.string().min(1) }),
     instruction:
-      "The user edited the artifact at the given `path`, relative to this session's files folder. Review its latest contents and respond only if a follow-up would help.",
+      "The user edited the artifact at the given `path`. Review its latest contents and respond only if a follow-up would help.",
     label: (notification) => `Edited artifact (${getPathBasename(notification.path)})`,
     coalesceKey: (notification) => `artifact_edited:${notification.path}`,
   },
@@ -41,7 +41,7 @@ function descriptorFor<N extends AgentNotification>(notification: N): Notificati
 
 export function parseAgentNotification(value: unknown): AgentNotification | undefined {
   const type = (value as { type?: unknown } | null)?.type;
-  if (typeof type !== "string" || !(type in REGISTRY)) return undefined;
+  if (typeof type !== "string" || !Object.hasOwn(REGISTRY, type)) return undefined;
 
   const result = REGISTRY[type as NotificationType].schema.safeParse(value);
   return result.success ? result.data : undefined;
@@ -57,7 +57,7 @@ export function notificationCoalesceKey(notification: AgentNotification): string
   return descriptorFor(notification).coalesceKey(notification);
 }
 
-/** Validates a notification payload for the delivery server function. */
+/** Validates a notification payload at the notifyAgent boundary. */
 export const agentNotificationSchema = z.custom<AgentNotification>(
   (value) => parseAgentNotification(value) !== undefined,
 );

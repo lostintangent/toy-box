@@ -1,8 +1,8 @@
 // Server functions for filesystem access.
 //
-// General-purpose, unconfined filesystem access is limited to listing directories
-// (used by the directory picker). Reading and writing files is exposed only through
-// the sandboxed session-artifact functions in `./artifacts`.
+// General-purpose filesystem access is limited to listing directories (used by
+// the directory picker). File reads and writes go through artifact-relative
+// paths in `./artifacts`.
 
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";

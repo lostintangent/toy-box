@@ -1,11 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useAtomValue } from "jotai";
 import { Loader2, MessageCircle, X } from "lucide-react";
 import { Presence as PresencePrimitive } from "radix-ui/internal";
-import {
-  matchesSessionFeatureScope,
-  type SessionFeatureScope,
-  type SessionFeatureSubject,
-} from "@/lib/config/settings";
+import { sessionRunningAtom } from "@/hooks/workspace/atoms";
 import { cn } from "@/lib/utils";
 import { SessionPane, type SessionPaneProps } from "./SessionPane";
 import {
@@ -21,9 +18,7 @@ export type SessionOverlayProps = Omit<SessionPaneProps, "mode" | "onBack">;
 
 export function SessionOverlay(props: SessionOverlayProps) {
   const [isOpen, setIsOpen] = useState(false);
-
-  // Reset to closed whenever the pane rebinds to a different session.
-  useEffect(() => setIsOpen(false), [props.sessionId]);
+  const isSessionRunning = useAtomValue(sessionRunningAtom(props.sessionId));
 
   return (
     <>
@@ -39,7 +34,7 @@ export function SessionOverlay(props: SessionOverlayProps) {
         aria-hidden={isOpen || undefined}
         tabIndex={isOpen ? -1 : undefined}
       >
-        {props.isSessionRunning ? (
+        {isSessionRunning ? (
           <Loader2 className={cn(PANE_OVERLAY_ICON_CLASS, "animate-spin")} />
         ) : (
           <MessageCircle className={PANE_OVERLAY_ICON_CLASS} />
@@ -73,28 +68,9 @@ export function SessionOverlay(props: SessionOverlayProps) {
           >
             <X className={PANE_OVERLAY_ICON_CLASS} />
           </button>
-          <SessionPane {...props} mode="overlay" variant="compact" />
+          <SessionPane key={props.sessionId} {...props} mode="overlay" variant="compact" />
         </div>
       </PresencePrimitive.Presence>
     </>
   );
-}
-
-type ShouldShowSessionOverlayOptions = {
-  visibility: SessionFeatureScope;
-  sessionType: SessionFeatureSubject;
-  isDesktop: boolean;
-  isMaximized: boolean;
-  isSessionPane: boolean;
-};
-
-export function shouldShowSessionOverlay({
-  visibility,
-  sessionType,
-  isDesktop,
-  isMaximized,
-  isSessionPane,
-}: ShouldShowSessionOverlayOptions): boolean {
-  if (!isDesktop || !isMaximized || isSessionPane) return false;
-  return matchesSessionFeatureScope(visibility, sessionType);
 }

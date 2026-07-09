@@ -13,8 +13,8 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
     },
     {
       "eventId": 1,
-      "modelConfiguration": {
-        "model": "gpt-5.5",
+      "model": {
+        "name": "gpt-5.5",
         "reasoningEffort": "xhigh",
       },
       "turnId": "turn-0",
@@ -215,8 +215,8 @@ Evaluate the overall design decisions:
     {
       "agentId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
       "eventId": 17,
-      "modelConfiguration": {
-        "model": "gpt-5.5",
+      "model": {
+        "name": "gpt-5.5",
       },
       "turnId": "turn-1",
       "type": "model_changed",
@@ -233,8 +233,8 @@ Evaluate the overall design decisions:
     {
       "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "eventId": 19,
-      "modelConfiguration": {
-        "model": "claude-opus-4.8",
+      "model": {
+        "name": "claude-opus-4.8",
       },
       "turnId": "turn-1",
       "type": "model_changed",
@@ -242,8 +242,8 @@ Evaluate the overall design decisions:
     {
       "agentId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
       "eventId": 20,
-      "modelConfiguration": {
-        "model": "claude-haiku-4.5",
+      "model": {
+        "name": "claude-haiku-4.5",
       },
       "turnId": "turn-1",
       "type": "model_changed",
@@ -251,8 +251,8 @@ Evaluate the overall design decisions:
     {
       "agentId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
       "eventId": 21,
-      "modelConfiguration": {
-        "model": "claude-haiku-4.5",
+      "model": {
+        "name": "claude-haiku-4.5",
       },
       "turnId": "turn-1",
       "type": "model_changed",
@@ -260,8 +260,8 @@ Evaluate the overall design decisions:
     {
       "agentId": "call_7CE08h3s8nNulW1GHoiNsWeu",
       "eventId": 22,
-      "modelConfiguration": {
-        "model": "claude-haiku-4.5",
+      "model": {
+        "name": "claude-haiku-4.5",
       },
       "turnId": "turn-1",
       "type": "model_changed",
@@ -269,8 +269,8 @@ Evaluate the overall design decisions:
     {
       "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "eventId": 23,
-      "modelConfiguration": {
-        "model": "claude-haiku-4.5",
+      "model": {
+        "name": "claude-haiku-4.5",
       },
       "turnId": "turn-1",
       "type": "model_changed",
@@ -278,8 +278,8 @@ Evaluate the overall design decisions:
     {
       "agentId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
       "eventId": 24,
-      "modelConfiguration": {
-        "model": "claude-haiku-4.5",
+      "model": {
+        "name": "claude-haiku-4.5",
       },
       "turnId": "turn-1",
       "type": "model_changed",
@@ -697,8 +697,8 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
         },
         {
           "agent": {
-            "modelConfiguration": {
-              "model": "gpt-5.5",
+            "model": {
+              "name": "gpt-5.5",
             },
           },
           "arguments": {
@@ -718,8 +718,8 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
         },
         {
           "agent": {
-            "modelConfiguration": {
-              "model": "claude-haiku-4.5",
+            "model": {
+              "name": "claude-haiku-4.5",
             },
           },
           "arguments": {
@@ -744,8 +744,8 @@ Intended behavior:
         },
         {
           "agent": {
-            "modelConfiguration": {
-              "model": "claude-haiku-4.5",
+            "model": {
+              "name": "claude-haiku-4.5",
             },
           },
           "arguments": {
@@ -770,8 +770,8 @@ Intended behavior:
         },
         {
           "agent": {
-            "modelConfiguration": {
-              "model": "claude-haiku-4.5",
+            "model": {
+              "name": "claude-haiku-4.5",
             },
           },
           "arguments": {
@@ -796,8 +796,8 @@ Intended behavior:
         },
         {
           "agent": {
-            "modelConfiguration": {
-              "model": "claude-haiku-4.5",
+            "model": {
+              "name": "claude-haiku-4.5",
             },
           },
           "arguments": {
@@ -823,8 +823,8 @@ Focus areas:
         {
           "agent": {
             "content": "",
-            "modelConfiguration": {
-              "model": "claude-haiku-4.5",
+            "model": {
+              "name": "claude-haiku-4.5",
             },
             "toolCalls": [
               {
@@ -953,8 +953,8 @@ Context: Changes include SDK blob attachments, semantic Attachment type, semanti
         {
           "agent": {
             "content": "I'll start by examining the uncommitted changes to understand the design context.",
-            "modelConfiguration": {
-              "model": "claude-opus-4.8",
+            "model": {
+              "name": "claude-opus-4.8",
             },
             "toolCalls": [
               {
@@ -1065,8 +1065,8 @@ Evaluate the overall design decisions:
       "role": "assistant",
     },
   ],
-  "modelConfiguration": {
-    "model": "gpt-5.5",
+  "model": {
+    "name": "gpt-5.5",
     "reasoningEffort": "xhigh",
   },
   "pendingOptimisticUserMessage": undefined,

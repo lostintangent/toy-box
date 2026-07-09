@@ -1,8 +1,13 @@
 import { z } from "zod";
 import { validateAutomationCronDefinition } from "./cron";
+import { isAutomationId } from "./id";
 import { modelConfigurationSchema } from "@/lib/modelConfiguration";
 
-export const automationIdSchema = z.string().trim().min(1);
+export const automationIdSchema = z
+  .string()
+  .trim()
+  .refine(isAutomationId, "Invalid automation ID")
+  .describe("The automation ID");
 
 const nonEmptyTextSchema = z.string().trim().min(1);
 const optionalTextSchema = z.string().trim().optional();
@@ -21,17 +26,18 @@ const cronDefinitionSchema = z
     }
   });
 
-export const automationFieldsSchema = z.object({
+export const automationOptionsSchema = z.object({
   title: nonEmptyTextSchema,
   prompt: nonEmptyTextSchema,
-  modelConfiguration: modelConfigurationSchema.describe("Model configuration for automation runs"),
+  model: modelConfigurationSchema.describe("Model and reasoning configuration for automation runs"),
   cron: cronDefinitionSchema,
-  reuseSession: z.boolean().default(false),
   cwd: optionalTextSchema,
 });
 
-export const createAutomationInputSchema = automationFieldsSchema;
+export const automationIdInputSchema = z.object({
+  automationId: automationIdSchema,
+});
 
-export const updateAutomationInputSchema = automationFieldsSchema.extend({
+export const updateAutomationInputSchema = automationOptionsSchema.extend({
   automationId: automationIdSchema,
 });

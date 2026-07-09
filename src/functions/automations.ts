@@ -1,68 +1,45 @@
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
-import { z } from "zod";
 import {
-  createAutomationInputSchema,
+  automationIdInputSchema,
+  automationOptionsSchema,
   updateAutomationInputSchema,
-  automationIdSchema,
 } from "@/lib/automation/schema";
 import type { Automation } from "@/types";
-import { getAppDatabase } from "./database";
+import { getAppDatabase } from "./state/database";
+import { deleteSessionIfExists } from "./state/session/registry";
 import { AutomationDatabase } from "./automations/database";
-import { emitAutomationsUpdate } from "./runtime/broadcast";
-import { runAutomation } from "./automations/scheduler";
+import { emitAutomationEvent } from "./runtime/broadcast";
+import { startAutomationRun } from "./automations/scheduler";
 
-const deleteAutomationInputSchema = z.object({
-  automationId: automationIdSchema,
-});
-
-const runAutomationInputSchema = z.object({
-  automationId: automationIdSchema,
-});
-
-let database: AutomationDatabase | undefined;
-
-async function getDatabase(options?: {
-  createIfMissing?: boolean;
-}): Promise<AutomationDatabase | null> {
-  if (!database) {
-    const appDatabase = await getAppDatabase(options);
-    if (!appDatabase) return null;
-    database = new AutomationDatabase(appDatabase);
-  }
-  return database;
-}
-
-export const listServerAutomations = createServerFn({ method: "GET" }).handler(
+export const listAutomations = createServerFn({ method: "GET" }).handler(
   async (): Promise<Automation[]> => {
-    const db = await getDatabase({ createIfMissing: false });
-    if (!db) return [];
-    return await db.list();
+    const database = await getAppDatabase({ createIfMissing: false });
+    return database ? new AutomationDatabase(database).list() : [];
   },
 );
 
-export const createServerAutomation = createServerFn({ method: "POST" })
-  .validator(zodValidator(createAutomationInputSchema))
+export const createAutomation = createServerFn({ method: "POST" })
+  .validator(zodValidator(automationOptionsSchema))
   .handler(async ({ data }): Promise<Automation> => {
-    const db = await getDatabase();
-    if (!db) throw new Error("Failed to open automation database");
-    const automation = await db.create(data);
-    emitAutomationsUpdate({
+    const automation = await new AutomationDatabase(await getAppDatabase()).create(data);
+    emitAutomationEvent({
       type: "automation.added",
       automation,
     });
     return automation;
   });
 
-export const updateServerAutomation = createServerFn({ method: "POST" })
+export const updateAutomation = createServerFn({ method: "POST" })
   .validator(zodValidator(updateAutomationInputSchema))
   .handler(async ({ data }): Promise<Automation | null> => {
     const { automationId, ...options } = data;
-    const db = await getDatabase();
-    if (!db) throw new Error("Failed to open automation database");
-    const automation = await db.update(automationId, options);
+    const automation = await new AutomationDatabase(await getAppDatabase()).update(
+      automationId,
+      options,
+    );
     if (automation) {
-      emitAutomationsUpdate({
+      emitAutomationEvent({
         type: "automation.updated",
         automation,
       });
@@ -71,24 +48,27 @@ export const updateServerAutomation = createServerFn({ method: "POST" })
     return automation;
   });
 
-export const deleteServerAutomation = createServerFn({ method: "POST" })
-  .validator(zodValidator(deleteAutomationInputSchema))
+export const deleteAutomation = createServerFn({ method: "POST" })
+  .validator(zodValidator(automationIdInputSchema))
   .handler(async ({ data }): Promise<boolean> => {
-    const db = await getDatabase();
-    if (!db) throw new Error("Failed to open automation database");
-    const success = await db.remove(data.automationId);
+    const database = new AutomationDatabase(await getAppDatabase());
+    const automation = await database.get(data.automationId);
+    if (!automation) return false;
+
+    await deleteSessionIfExists(automation.id);
+    const success = await database.delete(automation.id);
     if (success) {
-      emitAutomationsUpdate({
+      emitAutomationEvent({
         type: "automation.deleted",
-        automationId: data.automationId,
+        automationId: automation.id,
       });
     }
 
     return success;
   });
 
-export const runServerAutomation = createServerFn({ method: "POST" })
-  .validator(zodValidator(runAutomationInputSchema))
+export const runAutomation = createServerFn({ method: "POST" })
+  .validator(zodValidator(automationIdInputSchema))
   .handler(async ({ data }) => {
-    return runAutomation(data.automationId);
+    return startAutomationRun(data.automationId);
   });

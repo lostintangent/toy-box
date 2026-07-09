@@ -1,4 +1,5 @@
 import { Circle, Clock3, Loader2, MoreHorizontal, Pencil, Play, Trash2 } from "lucide-react";
+import { useAtomValue } from "jotai";
 import { MetadataBadge } from "@/components/ui/metadata-badge";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Button } from "@/components/ui/button";
@@ -14,14 +15,12 @@ import {
   SidebarListItemShell,
 } from "@/components/sidebar/list/SidebarListItemShell";
 import { useSidebarScrollFade } from "@/components/sidebar/list/useSidebarScrollFade";
-import { cn } from "@/lib/utils";
 import type { Automation } from "@/types";
+import { sessionRunningAtom, sessionUnreadAtom } from "@/hooks/workspace/atoms";
 
 type AutomationListItemProps = {
   automation: Automation;
   isSelected: boolean;
-  isRunning: boolean;
-  isUnread: boolean;
   isDeleting: boolean;
   isUpdating: boolean;
   onOpenSession: (sessionId: string) => void;
@@ -33,8 +32,6 @@ type AutomationListItemProps = {
 export function AutomationListItem({
   automation,
   isSelected,
-  isRunning,
-  isUnread,
   isDeleting,
   isUpdating,
   onOpenSession,
@@ -42,8 +39,11 @@ export function AutomationListItem({
   onEdit,
   onDelete,
 }: AutomationListItemProps) {
+  const isRunning = useAtomValue(sessionRunningAtom(automation.id));
+  const hasUnreadActivity = useAtomValue(sessionUnreadAtom(automation.id));
+  const isUnread = !isSelected && hasUnreadActivity;
   const { headlineRef, updateScrollFades } = useSidebarScrollFade(automation.title);
-  const canOpenSession = Boolean(automation.lastRunSessionId);
+  const canOpenSession = Boolean(automation.lastRunAt) || isRunning;
 
   return (
     <SidebarListItemShell
@@ -103,17 +103,16 @@ export function AutomationListItem({
     >
       <SidebarListItemMainButton
         onClick={() => {
-          if (!automation.lastRunSessionId) return;
-          onOpenSession(automation.lastRunSessionId);
+          if (canOpenSession) onOpenSession(automation.id);
         }}
         aria-current={isSelected ? "page" : undefined}
-        aria-disabled={!canOpenSession}
+        disabled={!canOpenSession}
         headline={automation.title}
         headlineRef={headlineRef}
         onHeadlineScroll={updateScrollFades}
         onHeadlinePointerEnter={updateScrollFades}
         headlineClassName="text-sm font-medium"
-        className={cn(!canOpenSession && "cursor-default")}
+        className={canOpenSession ? undefined : "cursor-default disabled:opacity-100"}
         secondary={
           <>
             <div className="shrink-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-foreground/70">

@@ -1,36 +1,19 @@
-import type { SessionContext } from "@github/copilot-sdk";
 import { defineTool } from "@github/copilot-sdk";
-import { homedir } from "node:os";
 import { z } from "zod";
-import { SESSION_ID_PREFIX, readSessionContextFromEvents } from "@/functions/sdk/client";
+import { readSessionContext } from "@/functions/sdk/client";
+import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 import { modelConfigurationSchema } from "@/lib/modelConfiguration";
 
-function normalizeInheritedWorkspaceContext(context?: SessionContext): SessionContext | undefined {
-  const workingDirectory = context?.workingDirectory;
-  if (
-    !workingDirectory ||
-    (workingDirectory === homedir() && !context?.gitRoot && !context?.repository)
-  ) {
-    return undefined;
-  }
-  return {
-    workingDirectory,
-    gitRoot: context?.gitRoot,
-    repository: context?.repository,
-    branch: context?.branch,
-  };
-}
-
-const createSession = defineTool("create_session", {
+const createSessionTool = defineTool("create_session", {
   description:
-    "Creates a new companion session and opens it alongside the current one. " +
+    "Creates a new companion session for delegated or parallel work. " +
     "The new session inherits the current session's model and directory by default. " +
     "By default it does not create a worktree.",
   parameters: z.object({
     prompt: z.string().describe("The initial prompt to send to the new session"),
-    modelConfiguration: modelConfigurationSchema
+    model: modelConfigurationSchema
       .optional()
-      .describe("Optional model configuration override for the new session"),
+      .describe("Optional model and reasoning override for the new session"),
     directory: z
       .string()
       .optional()
@@ -42,34 +25,28 @@ const createSession = defineTool("create_session", {
   }),
   skipPermission: true,
   handler: async (args, invocation) => {
-    const { deliverSessionMessage, SessionStream } = await import("@/functions/runtime/stream");
+    const { createSession, SessionStream } = await import("@/functions/runtime/stream");
     const inheritedWorkspaceContext =
-      args.directory === undefined
-        ? normalizeInheritedWorkspaceContext(
-            await readSessionContextFromEvents(invocation.sessionId),
-          )
-        : undefined;
+      args.directory === undefined ? await readSessionContext(invocation.sessionId) : undefined;
     const inheritedExecutionDirectory =
       args.directory ?? inheritedWorkspaceContext?.workingDirectory;
-    const inheritedModelConfiguration =
-      args.modelConfiguration ??
-      SessionStream.get(invocation.sessionId)?.getSessionState().modelConfiguration;
+    const inheritedModel =
+      args.model ?? SessionStream.get(invocation.sessionId)?.getSessionState().model;
     const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
-    await deliverSessionMessage({
+    await createSession(
       sessionId,
-      message: {
-        id: crypto.randomUUID(),
-        role: "user",
+      {
         content: args.prompt,
-        modelConfiguration: inheritedModelConfiguration,
+        model: inheritedModel,
       },
-      create: {
+      {
         directory: inheritedExecutionDirectory,
         useWorktree: args.useWorktree ?? false,
         parentSessionId: invocation.sessionId,
         initialContext: inheritedWorkspaceContext,
+        sessionType: "child",
       },
-    });
+    );
 
     return JSON.stringify({ sessionId });
   },
@@ -107,11 +84,12 @@ const deleteSessionTool = defineTool("delete_session", {
   }),
   skipPermission: true,
   handler: async ({ sessionId }) => {
-    const { deleteSession } = await import("@/functions/state/sessionRegistry");
+    const { deleteSession } = await import("@/functions/state/session/registry");
 
     await deleteSession(sessionId);
     return JSON.stringify({ deleted: true });
   },
 });
 
-export const lifecycleTools = [createSession, openSession, closeSession, deleteSessionTool];
+export const lifecycleTools = [createSessionTool, deleteSessionTool];
+export const sessionLayoutTools = [openSession, closeSession];

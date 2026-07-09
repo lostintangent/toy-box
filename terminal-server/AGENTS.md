@@ -1,71 +1,48 @@
 # Toy Box Terminal Server
 
-Toy Box runs a dedicated terminal backend that manages PTY sessions over
-WebSockets. A separate server is needed because TanStack Start doesn't currently support WebSocket API routes. But once it does, we'll merge this capability into the main backend 👍
+The terminal server lets a shell survive refreshes and short disconnects, so users can run commands from desktop or phone without losing the PTY or corrupting its visible scrollback. It is a separate runtime because terminal traffic is bidirectional binary I/O with PTY-specific replay, not canonical session events. Production starts it beside Nitro in the same Toy Box binary; development runs it independently.
 
-## Server Protocol (WebSockets)
+## Protocol
 
-While the terminal server uses WebSockets as its wire protocol, Toy Box has a simple client<->server application protocol it uses for managing terminals. The protocol is split into control plane messages (which a JSON commands/events), and data plane messages (which are binary terminal I/O). This allows us to minimize overhead in the hot paths (stdin/stdout), while multi-plexing the terminal lifecycle within the same socket channel.
+One WebSocket multiplexes a JSON control plane with a binary data plane. Lifecycle commands stay explicit while stdin and stdout avoid a protocol envelope on the hot path.
 
-### Session identity
+Every browser tab creates a stable `clientId` in session storage. That ID owns zero or one PTY. Connecting with the same ID resumes the existing PTY; the newest socket replaces any older connection without temporarily orphaning the process.
 
-Every client generates a unique `clientId` which is used to assign them a terminal. Each client can have 0 or 1 terminals, and upon connect/resume, we create or attach to their respective PTY.
+### Client control
 
-### Client->Server (Control)
+| Message  | Meaning                                                              |
+| -------- | -------------------------------------------------------------------- |
+| `init`   | Create or resume the client's PTY with optional dimensions and shell |
+| `resize` | Resize the active PTY                                                |
+| `close`  | Explicitly terminate and release the PTY                             |
 
-| Message  | Purpose                                                                                                                                             |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init`   | Creates or resumes a PTY for the client, using an initial size (row/cols), and optionally, a user-specified shell (defined in settings).            |
-| `resize` | Resizes the cols/rows of the client's PTY. This happens whenever the end-user resizes the Toy Box integrated terminal panel.                        |
-| `close`  | Close the PTY for the client. This happens when the user clicks the `X` button in the integrated terminal, which explicitly terminates the session. |
+### Server control
 
-### Server->Client (Control)
+| Message | Meaning                                                                                      |
+| ------- | -------------------------------------------------------------------------------------------- |
+| `ready` | The PTY is available; `resumed` distinguishes creation from reconnection and precedes replay |
+| `exit`  | The shell process exited and the client should close its terminal surface                    |
 
-| Message | Purpose                                                                                                                                                                                                                                    |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ready` | Notifies the client that their PTY is ready. The message includes a `resumed` property which indicates whether it's a new or resumed PTY. Upon resume, the server will send the `ready` event directly before sending the replayed buffer. |
-| `exit`  | Notifies the client that their PTY has exited and should be closed. This happens when the user runs `exit` from the root shell.                                                                                                            |
+Binary client messages are written directly to PTY stdin. PTY output is stored for reconnect and written directly to the active socket. Backpressure protects the server by skipping a socket whose buffered output exceeds the configured limit.
 
-### Client<->Server (Data)
+## PTY lifecycle
 
-When the server encounters a binary message, it treats it as stdin content and directly writes it to the PTY. Additionally, when the PTY emits output, the server directly writes it to the client's socket as a binary message with no protocol envelope.
+Creation binds the configured shell, working directory, environment, dimensions, scrollback buffer, and socket to one `clientId`. Input, output, and resize mark the PTY active.
 
-## Terminal Lifecycle
+A socket disconnect is not an explicit close. The server keeps the PTY for a 30-second orphan window so a refresh can reconnect. A client `close`, an expired orphan window, 30 minutes of inactivity, or process exit releases it. The manager also caps concurrent PTYs to protect the single-user server process.
 
-### Creation and active use
+The terminal identity and reconnect contract deliberately differ from agent sessions: a terminal belongs to one tab-scoped client ID, accepts one current socket, and replays terminal display state rather than domain events.
 
-- Client sends an `init` message, along with their size and shell
-- Client input and resizes are forwarded to PTY
-- PTY output is streamed back to the active socket
+## Mode-aware scrollback
 
-### Disconnect/Reconnect
+Raw byte replay can corrupt full-screen applications, so the scrollback buffer interprets the ANSI state needed to reconstruct the terminal safely. It tracks private-mode changes, alternate-buffer entry and exit, scrollback clearing, and full reset.
 
-- Client socket disconnects (e.g. refreshing a browser tab)
-- Server detects disconnect and starts a `30s` orphan timer
-- Client connects within the orphan timer window, and the server resumes the existing PTY
-- Server replays the current scrollback buffer _(see below for details)_
+- In normal mode, reconnect replays private-mode state followed by normal scrollback output.
+- In alternate mode, reconnect replays only alternate and private-mode state. It never injects normal scrollback into the full-screen buffer and requests a redraw when needed.
 
-### Client Close
+## Invariants
 
-- Client-sent `close` message destroys PTY immediately
-- Orphan timeout destroys PTY if no client reconnects
-- Idle timeout destroys long-inactive PTYs
-
-### Buffer Replay
-
-- replay exists to preserve terminal continuity after reconnects without
-  corrupting display state
-- server parses key ANSI control sequences to track active buffer mode and
-  private mode state, so replay is mode-aware rather than raw byte dumping
-- tracked control classes include:
-  - private mode set/reset (`CSI ? ... h/l`), e.g. cursor hide/show modes
-  - alternate buffer enter/exit
-  - clear scrollback
-  - full terminal reset
-- on resume in normal mode:
-  - replay private mode state
-  - replay normal scrollback output
-- on resume in alternate mode:
-  - replay alternate/private mode state only
-  - avoid replaying normal scrollback into the alternate screen
-  - poke redraw when needed so full-screen apps repaint correctly
+- Send `ready` before any replay so the client can initialize its terminal surface first.
+- Install a replacement socket before closing the previous one so delayed close events cannot start an orphan timer.
+- Treat disconnect and explicit close as different lifecycle events.
+- Keep terminal replay and session-event replay as separate protocols with separate state machines.

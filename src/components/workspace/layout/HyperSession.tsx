@@ -1,28 +1,27 @@
 import {
-  useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
-  type Dispatch,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type SetStateAction,
 } from "react";
 import { Maximize2, Minus, X } from "lucide-react";
-import { SessionPager } from "./SessionPager";
-import type { SessionPaneProps } from "@/components/workspace/panes/session/SessionPane";
+import { WorkspacePager } from "./WorkspacePager";
 import {
   SESSION_OVERLAY_BASE_CLASS,
   VIEWPORT_OVERLAY_BOUNDS,
   clampViewportOverlayPosition,
   type OverlayPosition,
 } from "@/components/workspace/overlayWindow";
-import { useLinkedPanes } from "@/hooks/session/useLinkedPanes";
-import { useWorkspaceFocus } from "@/hooks/workspace/useWorkspaceFocus";
-import { WorkspaceKindProvider } from "@/hooks/workspace/context";
-import { deriveVisibleWorkspacePanes } from "@/lib/workspace/panes";
-import type { HyperSessionState } from "@/hooks/session/useHyperSessions";
+import { WorkspaceSurfaceProvider } from "@/hooks/workspace/layout/focus";
+import { useLinkedPanes } from "@/hooks/workspace/layout/useLinkedPanes";
+import { useWorkspaceFocus } from "@/hooks/workspace/layout/useWorkspaceFocus";
+import {
+  createSessionPaneId,
+  deriveVisibleWorkspacePanes,
+  deriveWorkspaceRootPanes,
+} from "@/lib/workspace/panes";
+import type { HyperSessionState } from "@/hooks/workspace/layout/useHyperSession";
 import { cn } from "@/lib/utils";
 
 // The hyper deck is a swipeable pager, not a fixed 2×2, so it can page through
@@ -38,15 +37,10 @@ type DragState = {
   position: OverlayPosition;
 };
 
-export interface HyperSessionProps extends Omit<
-  SessionPaneProps,
-  "sessionId" | "mode" | "onBack" | "isSessionRunning" | "isSessionUnread"
-> {
+export interface HyperSessionProps {
   state: HyperSessionState;
-  setHyperSession: Dispatch<SetStateAction<HyperSessionState | null>>;
-  streamingSessionIds: string[];
-  unreadSessionIds: string[];
-  onClose: (sessionId: string) => void;
+  onPositionChange: (sessionId: string, position: OverlayPosition) => void;
+  onDelete: (sessionId: string) => void;
   onMinimize: () => void;
   onPromote: (sessionId: string) => void;
 }
@@ -81,13 +75,10 @@ function TrafficLight({
 
 export function HyperSession({
   state,
-  setHyperSession,
-  streamingSessionIds,
-  unreadSessionIds,
-  onClose,
+  onPositionChange,
+  onDelete,
   onMinimize,
   onPromote,
-  ...sessionViewProps
 }: HyperSessionProps) {
   const dragRef = useRef<DragState | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -100,38 +91,31 @@ export function HyperSession({
     const handleResize = () => {
       // A live drag clamps every move itself; let it win until release.
       if (dragRef.current) return;
-      setHyperSession((current) =>
-        current
-          ? { ...current, position: clampViewportOverlayPosition(current.position) }
-          : current,
-      );
+      onPositionChange(state.sessionId, clampViewportOverlayPosition(state.position));
     };
 
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [setHyperSession]);
+  }, [onPositionChange, state.position, state.sessionId]);
 
-  const handlePointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
 
-      event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.setPointerCapture(event.pointerId);
 
-      dragRef.current = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        originX: state.position.x,
-        originY: state.position.y,
-        position: state.position,
-      };
-    },
-    [state.position],
-  );
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: state.position.x,
+      originY: state.position.y,
+      position: state.position,
+    };
+  }
 
-  const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     event.preventDefault();
@@ -147,43 +131,34 @@ export function HyperSession({
       surface.style.left = `${nextPosition.x}px`;
       surface.style.top = `${nextPosition.y}px`;
     }
-  }, []);
+  }
 
-  const handlePointerUp = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const drag = dragRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      dragRef.current = null;
+  function handlePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    dragRef.current = null;
 
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
 
-      setHyperSession((current) =>
-        current?.sessionId === state.sessionId ? { ...current, position: drag.position } : current,
-      );
-    },
-    [setHyperSession, state.sessionId],
-  );
+    onPositionChange(state.sessionId, drag.position);
+  }
 
   // The hyper session hosts its own mini-workspace: its interactive session
-  // publishes linked panes under its source id, which the pager pages through as
+  // publishes linked panes under its pane id, which the pager pages through as
   // a self-contained deck. Promote is what graduates it to the main grid.
-  const { linkedPanesBySource, setArtifactPaneMode } = useLinkedPanes();
-  const hyperPanes = useMemo(
-    () =>
-      deriveVisibleWorkspacePanes({
-        selectedSessionIds: [state.sessionId],
-        linkedPanesBySource,
-        maxVisible: HYPER_DECK_MAX_PANES,
-      }),
-    [linkedPanesBySource, state.sessionId],
-  );
-  // The deck owns the "hyper" workspace kind (see the WorkspaceKindProvider below).
+  const { linkedPanesByPublisher } = useLinkedPanes();
+  const rootPanes = deriveWorkspaceRootPanes([state.sessionId]);
+  const hyperPanes = deriveVisibleWorkspacePanes({
+    rootPanes,
+    linkedPanesByPublisher,
+    maxVisible: HYPER_DECK_MAX_PANES,
+  });
+  // The deck owns an independent pane-focus surface.
   useWorkspaceFocus(hyperPanes, "hyper");
 
-  const livePosition = dragRef.current?.position ?? state.position;
   return (
     <div
       ref={surfaceRef}
@@ -191,8 +166,8 @@ export function HyperSession({
       className={cn("fixed z-40 flex flex-col", SESSION_OVERLAY_BASE_CLASS)}
       style={{
         ...VIEWPORT_OVERLAY_BOUNDS,
-        left: livePosition.x,
-        top: livePosition.y,
+        left: state.position.x,
+        top: state.position.y,
       }}
     >
       <div
@@ -204,9 +179,9 @@ export function HyperSession({
       >
         <div className="flex shrink-0 items-center gap-1.5">
           <TrafficLight
-            label="Close hyper session"
+            label="Delete hyper session"
             className="bg-red-500"
-            onClick={() => onClose(state.sessionId)}
+            onClick={() => onDelete(state.sessionId)}
           >
             <X className="h-2 w-2 text-red-950" />
           </TrafficLight>
@@ -228,17 +203,13 @@ export function HyperSession({
         <div ref={setToolbarSlot} className="flex min-w-0 flex-1 items-center gap-2" />
       </div>
       <div className="min-h-0 flex-1">
-        <WorkspaceKindProvider kind="hyper">
-          <SessionPager
+        <WorkspaceSurfaceProvider surface="hyper">
+          <WorkspacePager
             panes={hyperPanes}
-            selectedSessionId={state.sessionId}
-            streamingSessionIds={streamingSessionIds}
-            unreadSessionIds={unreadSessionIds}
-            onSetArtifactPaneMode={setArtifactPaneMode}
+            primaryPaneId={createSessionPaneId(state.sessionId)}
             toolbarSlot={toolbarSlot}
-            {...sessionViewProps}
           />
-        </WorkspaceKindProvider>
+        </WorkspaceSurfaceProvider>
       </div>
     </div>
   );

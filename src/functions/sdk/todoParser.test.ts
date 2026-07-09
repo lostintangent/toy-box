@@ -9,22 +9,20 @@ describe("todo parser", () => {
           "('inspect-sql-events', 'inspect SQL events'), " +
           "('verify-todo-ui', 'verify todo UI');",
       ),
-    ).toEqual({
-      patches: [
-        {
-          type: "upsert",
-          id: "inspect-sql-events",
-          title: "inspect SQL events",
-          status: "pending",
-        },
-        {
-          type: "upsert",
-          id: "verify-todo-ui",
-          title: "verify todo UI",
-          status: "pending",
-        },
-      ],
-    });
+    ).toEqual([
+      {
+        type: "upsert",
+        id: "inspect-sql-events",
+        title: "inspect SQL events",
+        status: "pending",
+      },
+      {
+        type: "upsert",
+        id: "verify-todo-ui",
+        title: "verify todo UI",
+        status: "pending",
+      },
+    ]);
   });
 
   test("parses todo inserts with upsert clauses and escaped quotes", () => {
@@ -35,16 +33,14 @@ describe("todo parser", () => {
           "'Retrieve this week\\'s seinen manga releases and match against shared reading preferences.', " +
           "'in_progress') ON CONFLICT(id) DO UPDATE SET status='in_progress', updated_at=CURRENT_TIMESTAMP;",
       ),
-    ).toEqual({
-      patches: [
-        {
-          type: "upsert",
-          id: "seinen-weekly-releases",
-          title: "Find weekly seinen releases",
-          status: "in_progress",
-        },
-      ],
-    });
+    ).toEqual([
+      {
+        type: "upsert",
+        id: "seinen-weekly-releases",
+        title: "Find weekly seinen releases",
+        status: "in_progress",
+      },
+    ]);
   });
 
   test("parses todo updates for status and title changes", () => {
@@ -52,22 +48,20 @@ describe("todo parser", () => {
       parseTodoSql(
         "UPDATE todos SET status = 'done', title = 'inspect SQL events' WHERE id = 'inspect-sql-events';",
       ),
-    ).toEqual({
-      patches: [
-        {
-          type: "upsert",
-          id: "inspect-sql-events",
-          title: "inspect SQL events",
-          status: "done",
-        },
-      ],
-    });
+    ).toEqual([
+      {
+        type: "upsert",
+        id: "inspect-sql-events",
+        title: "inspect SQL events",
+        status: "done",
+      },
+    ]);
   });
 
   test("parses todo updates that change the status of every todo", () => {
-    expect(parseTodoSql("UPDATE todos SET status = 'done';")).toEqual({
-      patches: [{ type: "update_all", status: "done" }],
-    });
+    expect(parseTodoSql("UPDATE todos SET status = 'done';")).toEqual([
+      { type: "update_all", status: "done" },
+    ]);
   });
 
   test("parses todo updates that change the status of multiple explicit ids", () => {
@@ -77,25 +71,21 @@ describe("todo parser", () => {
           "WHERE id IN ('public-api-actions', 'selected-text-resolution', 'toolbar-dynamic-icons');" +
           "SELECT id, status FROM todos ORDER BY created_at;",
       ),
-    ).toEqual({
-      patches: [
-        { type: "upsert", id: "public-api-actions", status: "done" },
-        { type: "upsert", id: "selected-text-resolution", status: "done" },
-        { type: "upsert", id: "toolbar-dynamic-icons", status: "done" },
-      ],
-    });
+    ).toEqual([
+      { type: "upsert", id: "public-api-actions", status: "done" },
+      { type: "upsert", id: "selected-text-resolution", status: "done" },
+      { type: "upsert", id: "toolbar-dynamic-icons", status: "done" },
+    ]);
   });
 
   test("hides todo selects without emitting todo state changes", () => {
-    expect(parseTodoSql("SELECT id, title, status FROM todos;")).toEqual({
-      patches: [],
-    });
+    expect(parseTodoSql("SELECT id, title, status FROM todos;")).toEqual([]);
   });
 
   test("parses todo deletes into delete patches", () => {
-    expect(parseTodoSql("DELETE FROM todos WHERE id = 'inspect-sql-events';")).toEqual({
-      patches: [{ type: "delete", id: "inspect-sql-events" }],
-    });
+    expect(parseTodoSql("DELETE FROM todos WHERE id = 'inspect-sql-events';")).toEqual([
+      { type: "delete", id: "inspect-sql-events" },
+    ]);
   });
 
   test("parses INSERT OR IGNORE INTO todos into upsert patches", () => {
@@ -105,22 +95,20 @@ describe("todo parser", () => {
           "('parse-reading-list', 'Parse reading list', 'Load current reading-list gist.', 'in_progress'), " +
           "('generate-candidates', 'Generate candidate first vols', 'Find strong first-volume candidates.', 'pending');",
       ),
-    ).toEqual({
-      patches: [
-        {
-          type: "upsert",
-          id: "parse-reading-list",
-          title: "Parse reading list",
-          status: "in_progress",
-        },
-        {
-          type: "upsert",
-          id: "generate-candidates",
-          title: "Generate candidate first vols",
-          status: "pending",
-        },
-      ],
-    });
+    ).toEqual([
+      {
+        type: "upsert",
+        id: "parse-reading-list",
+        title: "Parse reading list",
+        status: "in_progress",
+      },
+      {
+        type: "upsert",
+        id: "generate-candidates",
+        title: "Generate candidate first vols",
+        status: "pending",
+      },
+    ]);
   });
 
   test("parses INSERT OR REPLACE INTO todos into upsert patches", () => {
@@ -128,9 +116,7 @@ describe("todo parser", () => {
       parseTodoSql(
         "INSERT OR REPLACE INTO todos (id, title, status) VALUES ('my-todo', 'My todo', 'done');",
       ),
-    ).toEqual({
-      patches: [{ type: "upsert", id: "my-todo", title: "My todo", status: "done" }],
-    });
+    ).toEqual([{ type: "upsert", id: "my-todo", title: "My todo", status: "done" }]);
   });
 
   test("hides todo_deps inserts without emitting patches", () => {
@@ -140,7 +126,7 @@ describe("todo parser", () => {
           "('generate-candidates', 'parse-reading-list'), " +
           "('rank-quick-picks', 'generate-candidates');",
       ),
-    ).toEqual({ patches: [] });
+    ).toEqual([]);
   });
 
   test("ignores sql that does not touch the todos table", () => {

@@ -1,88 +1,69 @@
-// Centralized application settings.
-//
-// Persisted as a single JSON blob in localStorage. Each setting saves
-// independently via updateSetting() - no save button needed.
+// Browser settings persist as one validated value. React consumers subscribe to
+// one setting at a time; imperative boundaries can read the same storage directly.
+
+import { atom } from "jotai";
+import { atomWithStorage, createJSONStorage } from "jotai/utils";
 
 export type Settings = {
   terminalShell: string;
   useWorktree: boolean;
-  showSessionOverlay: SessionFeatureScope;
   autoFocusArtifacts: SessionFeatureScope;
+  showExternalSessions: boolean;
 };
 
-export const SESSION_FEATURE_SCOPE_VALUES = ["always", "sessions", "automations", "never"] as const;
+const SESSION_FEATURE_SCOPE_VALUES = ["always", "sessions", "automations", "never"] as const;
 
 export type SessionFeatureScope = (typeof SESSION_FEATURE_SCOPE_VALUES)[number];
 
 export type SessionFeatureSubject = "session" | "automation";
 
 const STORAGE_KEY = "toybox_settings";
-const SETTINGS_CHANGE_EVENT = "toybox:settings-change";
 
-const DEFAULTS: Settings = {
+export const DEFAULT_SETTINGS: Settings = {
   terminalShell: "",
   useWorktree: false,
-  showSessionOverlay: "sessions",
   autoFocusArtifacts: "automations",
+  showExternalSessions: true,
 };
 
+const settingsStorage = createJSONStorage<unknown>();
+const storedSettingsAtom = atomWithStorage<unknown>(
+  STORAGE_KEY,
+  DEFAULT_SETTINGS,
+  settingsStorage,
+  { getOnInit: true },
+);
+const settingsAtom = atom(
+  (get) => normalizeSettings(get(storedSettingsAtom)),
+  (_get, set, settings: Settings) => set(storedSettingsAtom, settings),
+);
+
+export const terminalShellAtom = settingAtom("terminalShell");
+export const worktreeAtom = settingAtom("useWorktree");
+export const autoFocusArtifactsAtom = settingAtom("autoFocusArtifacts");
+export const showExternalSessionsAtom = settingAtom("showExternalSessions");
+
 export function getSettings(): Settings {
-  if (typeof window === "undefined") return DEFAULTS;
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULTS;
-    return normalizeSettings(JSON.parse(raw));
-  } catch {
-    return DEFAULTS;
-  }
-}
-
-export function updateSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
-  if (typeof window === "undefined") return;
-
-  try {
-    const current = getSettings();
-    const next = normalizeSettings({ ...current, [key]: value });
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    window.dispatchEvent(new Event(SETTINGS_CHANGE_EVENT));
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-export function subscribeSettings(listener: () => void): () => void {
-  if (typeof window === "undefined") return () => undefined;
-
-  const handleSettingsChange = () => listener();
-  const handleStorageChange = (event: StorageEvent) => {
-    if (event.key === STORAGE_KEY || event.key === null) {
-      listener();
-    }
-  };
-
-  window.addEventListener(SETTINGS_CHANGE_EVENT, handleSettingsChange);
-  window.addEventListener("storage", handleStorageChange);
-
-  return () => {
-    window.removeEventListener(SETTINGS_CHANGE_EVENT, handleSettingsChange);
-    window.removeEventListener("storage", handleStorageChange);
-  };
+  return normalizeSettings(settingsStorage.getItem(STORAGE_KEY, DEFAULT_SETTINGS));
 }
 
 export function normalizeSettings(value: unknown): Settings {
-  if (!isRecord(value)) return DEFAULTS;
+  if (!isRecord(value)) return DEFAULT_SETTINGS;
 
   return {
     terminalShell:
-      typeof value.terminalShell === "string" ? value.terminalShell : DEFAULTS.terminalShell,
-    useWorktree: typeof value.useWorktree === "boolean" ? value.useWorktree : DEFAULTS.useWorktree,
-    showSessionOverlay: isSessionFeatureScope(value.showSessionOverlay)
-      ? value.showSessionOverlay
-      : DEFAULTS.showSessionOverlay,
+      typeof value.terminalShell === "string"
+        ? value.terminalShell
+        : DEFAULT_SETTINGS.terminalShell,
+    useWorktree:
+      typeof value.useWorktree === "boolean" ? value.useWorktree : DEFAULT_SETTINGS.useWorktree,
     autoFocusArtifacts: isSessionFeatureScope(value.autoFocusArtifacts)
       ? value.autoFocusArtifacts
-      : DEFAULTS.autoFocusArtifacts,
+      : DEFAULT_SETTINGS.autoFocusArtifacts,
+    showExternalSessions:
+      typeof value.showExternalSessions === "boolean"
+        ? value.showExternalSessions
+        : DEFAULT_SETTINGS.showExternalSessions,
   };
 }
 
@@ -104,4 +85,15 @@ export function matchesSessionFeatureScope(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function settingAtom<Key extends keyof Settings>(key: Key) {
+  return atom(
+    (get) => get(settingsAtom)[key],
+    (get, set, value: Settings[Key]) => {
+      const settings = get(settingsAtom);
+      if (Object.is(settings[key], value)) return;
+      set(settingsAtom, { ...settings, [key]: value });
+    },
+  );
 }

@@ -1,6 +1,6 @@
 // Canonical session state reducer — the single transition function for
 // Session state. Three consumers feed it the same SessionEvents:
-//   - server live streaming (SessionStream#emit, runtime/stream/index.ts)
+//   - server live streaming (SessionStream#emit, runtime/stream/sessionStream.ts)
 //   - server history replay (sdk/historyReplay.ts)
 //   - the client, for live SSE events and the buffered-event replay a
 //     late-connecting client catches up on (useSession#applyEvent)
@@ -16,22 +16,17 @@
 //   - pending vs committed: the in-progress message group's tool calls live
 //     in pendingToolCalls, mirrored onto the last assistant message after
 //     every change. A boundary "commits" them — afterwards they are only
-//     reachable by searching messages (findCommittedToolCall).
+//     reachable by searching committed messages.
 //   - message group / boundary: an assistant turn renders as alternating
 //     text and tool-call groups. A boundary — the first text delta after
 //     tool calls (live), or a committed root assistant_message (replay) —
 //     finalizes the current group and starts a fresh assistant message.
 //
-// Mutation & identity contract: state is mutated IN PLACE. Callers re-read it
-// on a revision counter (see useSession) rather than relying on root object
-// identity. Identity still matters in the three places memoized React
-// subtrees compare:
-//   - message.revision is bumped when a committed message changes in place
-//     (findCommittedToolCall), so memoized message components re-render
-//   - updated tool calls are cloned back into pendingToolCalls so they get a
-//     fresh object identity when applied to the message
-//   - linkedSessionIds is replaced rather than mutated because consumers use
-//     it in hook dependency arrays
+// Identity contract: each event returns a new Session with structural sharing.
+// Every changed render-visible branch gets a new identity, while unchanged
+// messages and nested tool calls retain theirs. pendingToolCalls is internal
+// bookkeeping, also replaced only when it changes. This lets clients batch
+// when they publish state to React without obscuring what changed.
 
 import type {
   Message,
@@ -57,7 +52,7 @@ export type Session = {
   artifacts: string[];
   status: SessionStatus;
   reasoningContent: string;
-  modelConfiguration?: ModelConfiguration;
+  model?: ModelConfiguration;
   pendingToolCalls: Map<string, ToolCall>;
   pendingOptimisticUserMessage?: {
     clientMessageId: string;
@@ -71,8 +66,6 @@ export type Session = {
 // Public API
 // ============================================================================
 
-const STREAM_ERROR_MESSAGE = "An error occurred. Please try again.";
-
 export function createInitialSession(initial: Partial<Session> = {}): Session {
   return {
     messages: initial.messages ? [...initial.messages] : [],
@@ -84,7 +77,7 @@ export function createInitialSession(initial: Partial<Session> = {}): Session {
     artifacts: initial.artifacts ? [...initial.artifacts] : [],
     status: initial.status ?? "idle",
     reasoningContent: initial.reasoningContent ?? "",
-    modelConfiguration: initial.modelConfiguration,
+    model: initial.model,
     pendingToolCalls: new Map(),
   };
 }
@@ -102,7 +95,7 @@ export function toSessionSnapshot(
     id: previous?.id ?? sessionId,
     messages: state.messages,
     queuedMessages: state.queuedMessages,
-    modelConfiguration: state.modelConfiguration ?? previous?.modelConfiguration,
+    model: state.model ?? previous?.model,
     todos: state.todos,
     linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
     canvases: state.canvases && state.canvases.length > 0 ? state.canvases : undefined,
@@ -126,36 +119,25 @@ export function sessionSeedFromSnapshot(snapshot: SessionSnapshot): Partial<Sess
   return seed;
 }
 
-/** Mutates `state` in place and returns it (for chaining convenience).
- *  The switch lives in applySessionEventCore so handlers can use bare returns. */
+/** Reduce one canonical event into a new Session. The switch mutates only this
+ *  fresh shallow root; helpers replace every nested branch they change. */
 export function applySessionEvent(state: Session, event: SessionEvent): Session {
-  applySessionEventCore(state, event);
-  return state;
+  const next = { ...state };
+  applySessionEventCore(next, event);
+  return next;
 }
 
 /** Reset turn-scoped state ahead of a new turn, preserving durable session
  *  state. The turn-boundary sibling of the end handler below — the
  *  same transient fields, but transitioning into "thinking" instead of idle. */
 export function prepareSessionForNextTurn(state: Session): Session {
-  state.status = "thinking";
-  state.reasoningContent = "";
-  state.pendingToolCalls.clear();
-  state.pendingOptimisticUserMessage = undefined;
-  return state;
-}
-
-function applyErrorEnd(state: Session): void {
-  const last = state.messages[state.messages.length - 1];
-  if (last?.role === "assistant") {
-    state.messages[state.messages.length - 1] = { ...last, content: STREAM_ERROR_MESSAGE };
-  } else {
-    state.messages.push({ role: "assistant", content: STREAM_ERROR_MESSAGE });
-  }
-
-  state.status = "idle";
-  state.reasoningContent = "";
-  state.pendingToolCalls.clear();
-  state.pendingOptimisticUserMessage = undefined;
+  return {
+    ...state,
+    status: "thinking",
+    reasoningContent: "",
+    pendingToolCalls: new Map(),
+    pendingOptimisticUserMessage: undefined,
+  };
 }
 
 // ============================================================================
@@ -184,7 +166,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       if (reconcileOptimisticUserMessage(state, event)) return;
       if (isRedundantTurnStartEcho(state, event)) return;
 
-      state.messages.push({
+      appendMessage(state, {
         role: "user",
         content: event.content,
         attachments: event.attachments,
@@ -205,7 +187,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     case "agent_notification": {
       if (isRedundantTurnStartEcho(state, event)) return;
 
-      state.messages.push({
+      appendMessage(state, {
         role: "agent_notification",
         notification: event.notification,
         timestamp: event.timestamp,
@@ -215,12 +197,13 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     case "assistant_message": {
       if (event.agentId) {
-        updateAgentToolCall(state, event.agentId, (toolCall) => {
-          toolCall.agent = {
+        updateToolCall(state, event.agentId, (toolCall) => ({
+          ...toolCall,
+          agent: {
             ...toolCall.agent,
             content: appendCommittedAgentContent(toolCall.agent?.content ?? "", event.content),
-          };
-        });
+          },
+        }));
         return;
       }
 
@@ -232,7 +215,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
         state.status === "thinking" ||
         state.status === "reasoning" ||
         state.status === "responding";
-      state.pendingToolCalls.clear();
+      state.pendingToolCalls = new Map();
 
       upsertCommittedAssistantMessage(state, event.content, reconcileLiveMessage);
       if (reconcileLiveMessage && event.content) {
@@ -244,7 +227,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     case "message_queued": {
       if (state.queuedMessages.some((m) => m.id === event.message.id)) return;
-      state.queuedMessages.push(event.message);
+      state.queuedMessages = [...state.queuedMessages, event.message];
       return;
     }
 
@@ -283,15 +266,16 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     case "reasoning": {
       if (event.agentId) {
-        updateAgentToolCall(state, event.agentId, (toolCall) => {
-          toolCall.agent = {
+        updateToolCall(state, event.agentId, (toolCall) => ({
+          ...toolCall,
+          agent: {
             ...toolCall.agent,
             reasoningContent: mergeStreamingText(
               toolCall.agent?.reasoningContent ?? "",
               event.content,
             ),
-          };
-        });
+          },
+        }));
         return;
       }
 
@@ -312,16 +296,17 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
           name: event.toolName,
           arguments: event.arguments,
         };
-        updateAgentToolCall(state, event.agentId, (p) => {
-          p.agent = {
-            ...p.agent,
-            toolCalls: p.agent?.toolCalls ? [...p.agent.toolCalls, child] : [child],
-          };
-        });
+        updateToolCall(state, event.agentId, (parent) => ({
+          ...parent,
+          agent: {
+            ...parent.agent,
+            toolCalls: parent.agent?.toolCalls ? [...parent.agent.toolCalls, child] : [child],
+          },
+        }));
         return;
       }
 
-      state.pendingToolCalls.set(event.toolCallId, {
+      state.pendingToolCalls = new Map(state.pendingToolCalls).set(event.toolCallId, {
         id: event.toolCallId,
         name: event.toolName,
         arguments: event.arguments,
@@ -339,31 +324,28 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
       if (event.agentId) {
         // Complete a child tool call nested under its agent call.
-        updateAgentToolCall(state, event.agentId, (p) => {
-          const index = p.agent?.toolCalls?.findIndex((c) => c.id === event.toolCallId) ?? -1;
-          if (index !== -1) {
-            p.agent!.toolCalls![index] = { ...p.agent!.toolCalls![index], result };
-          }
+        updateToolCall(state, event.agentId, (parent) => {
+          const childToolCalls = parent.agent?.toolCalls;
+          const index = childToolCalls?.findIndex((child) => child.id === event.toolCallId) ?? -1;
+          if (!childToolCalls || index === -1) return parent;
+
+          return {
+            ...parent,
+            agent: {
+              ...parent.agent,
+              toolCalls: replaceAt(childToolCalls, index, {
+                ...childToolCalls[index],
+                result,
+              }),
+            },
+          };
         });
         return;
       }
 
-      const current = state.pendingToolCalls.get(event.toolCallId);
-      if (current) {
-        state.pendingToolCalls.set(event.toolCallId, { ...current, result });
-        applyPendingToolCallsToLastAssistant(state);
-        return;
-      }
-
-      // Late completion: deferred completions (e.g. a background agent's
-      // subagent.completed → tool_end) arrive after a message boundary has
-      // already committed the tool call and cleared it from pending. Resolve
-      // against committed messages — the same pending-then-committed fallback
-      // the agentId branch above gets via updateAgentToolCall.
-      const committed = findCommittedToolCall(state, event.toolCallId);
-      if (committed) {
-        committed.result = result;
-      }
+      // Deferred completions can arrive after a message boundary has moved the
+      // call out of pendingToolCalls. The shared updater resolves either form.
+      updateToolCall(state, event.toolCallId, (toolCall) => ({ ...toolCall, result }));
       return;
     }
 
@@ -412,16 +394,23 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     case "model_changed":
       if (event.agentId) {
-        updateAgentToolCall(state, event.agentId, (toolCall) => {
-          toolCall.agent = {
+        updateToolCall(state, event.agentId, (toolCall) => ({
+          ...toolCall,
+          agent: {
             ...toolCall.agent,
-            modelConfiguration: event.modelConfiguration,
-          };
-        });
+            model: event.model,
+          },
+        }));
         return;
       }
 
-      state.modelConfiguration = event.modelConfiguration;
+      state.model = event.model;
+      return;
+
+    // Skills are directory-scoped capabilities consumed by useSession, not
+    // session state. Keep this explicit so new event types cannot silently
+    // bypass the reducer.
+    case "skills":
       return;
 
     // ── Lifecycle ─────────────────────────────────────────────────────
@@ -431,7 +420,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       // event-less completions/transport failures, and replays can deliver one
       // after state is already final.
       if (event.reason === "error") {
-        applyErrorEnd(state);
+        finishWithError(state);
         return;
       }
 
@@ -445,19 +434,39 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       }
       state.status = "idle";
       state.reasoningContent = "";
-      state.pendingToolCalls.clear();
+      state.pendingToolCalls = new Map();
       state.pendingOptimisticUserMessage = undefined;
       return;
 
     default:
-      // Event types with no Session state effect (skills) are consumed by
-      // runtimes directly — useSession primes the skills query cache.
+      event satisfies never;
       return;
   }
 }
 
+function finishWithError(state: Session): void {
+  const message = state.messages[state.messages.length - 1];
+  const errorContent = "An error occurred. Please try again.";
+  if (message?.role === "assistant") {
+    replaceMessage(state, state.messages.length - 1, {
+      ...message,
+      content: errorContent,
+    });
+  } else {
+    appendMessage(state, {
+      role: "assistant",
+      content: errorContent,
+    });
+  }
+
+  state.status = "idle";
+  state.reasoningContent = "";
+  state.pendingToolCalls = new Map();
+  state.pendingOptimisticUserMessage = undefined;
+}
+
 // ============================================================================
-// Canvas helpers
+// Canvas and artifact helpers
 // ============================================================================
 
 function createCanvasKey(
@@ -531,14 +540,14 @@ function isRedundantTurnStartEcho(state: Session, event: { turnId?: string }): b
 
 function appendQueuedMessageToTranscript(state: Session, message: QueuedMessage): void {
   if (message.role === "agent_notification") {
-    state.messages.push({
+    appendMessage(state, {
       role: "agent_notification",
       notification: message.notification,
     });
     return;
   }
 
-  state.messages.push({
+  appendMessage(state, {
     role: "user",
     content: message.content,
     attachments: message.attachments,
@@ -569,12 +578,12 @@ function reconcileOptimisticUserMessage(
     existing.attachments !== nextAttachments ||
     existing.timestamp !== nextTimestamp
   ) {
-    state.messages[pending.index] = {
+    replaceMessage(state, pending.index, {
       role: "user",
       content: event.content,
       attachments: nextAttachments,
       timestamp: nextTimestamp,
-    };
+    });
   }
 
   if (event.eventId !== undefined) {
@@ -586,22 +595,20 @@ function reconcileOptimisticUserMessage(
 function ensureAssistantMessage(state: Session): void {
   const last = state.messages[state.messages.length - 1];
   if (last?.role === "assistant") return;
-  state.messages.push({ role: "assistant", content: "" });
+  appendMessage(state, { role: "assistant", content: "" });
 }
 
 // Like ensureAssistantMessage, but also starts a new message when the current
 // one already has tool calls — so that text after tool execution lands on a
 // fresh assistant message, preserving the interleaving of text and tool groups.
-// Returns true when a new message was inserted.
-function ensureCleanAssistantMessage(state: Session): boolean {
+function ensureCleanAssistantMessage(state: Session): void {
   const last = state.messages[state.messages.length - 1];
   if (last?.role === "assistant" && !last.toolCalls?.length && state.pendingToolCalls.size === 0) {
-    return false;
+    return;
   }
   // Finalize: pending tool calls have already been applied to the previous message.
-  state.pendingToolCalls.clear();
-  state.messages.push({ role: "assistant", content: "" });
-  return true;
+  state.pendingToolCalls = new Map();
+  appendMessage(state, { role: "assistant", content: "" });
 }
 
 function upsertCommittedAssistantMessage(
@@ -611,10 +618,13 @@ function upsertCommittedAssistantMessage(
 ): void {
   const last = state.messages[state.messages.length - 1];
   if (reconcileLiveMessage && last?.role === "assistant" && !last.toolCalls?.length) {
-    last.content = reconcileCommittedAssistantContent(last.content, content);
+    replaceMessage(state, state.messages.length - 1, {
+      ...last,
+      content: reconcileCommittedAssistantContent(last.content, content),
+    });
     return;
   }
-  state.messages.push({ role: "assistant", content });
+  appendMessage(state, { role: "assistant", content });
 }
 
 function reconcileCommittedAssistantContent(existing: string, incoming: string): string {
@@ -648,10 +658,12 @@ function appendCommittedAgentContent(existing: string, incoming: string): string
 }
 
 function appendAssistantDelta(state: Session, content: string): void {
-  if (!content.length) return;
   const last = state.messages[state.messages.length - 1];
   if (!last || last.role !== "assistant") return;
-  last.content = mergeStreamingText(last.content, content);
+  replaceMessage(state, state.messages.length - 1, {
+    ...last,
+    content: mergeStreamingText(last.content, content),
+  });
 }
 
 // ============================================================================
@@ -662,47 +674,45 @@ function applyPendingToolCallsToLastAssistant(state: Session): void {
   const last = state.messages[state.messages.length - 1];
   if (!last || last.role !== "assistant") return;
   const toolCalls = Array.from(state.pendingToolCalls.values());
-  last.toolCalls = toolCalls.length > 0 ? toolCalls : undefined;
+  replaceMessage(state, state.messages.length - 1, {
+    ...last,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+  });
 }
 
-/** Search committed messages (newest first) for a tool call by ID.
- *  When found, bumps the message's revision so React re-renders it. */
-function findCommittedToolCall(state: Session, toolCallId: string): ToolCall | undefined {
-  for (let i = state.messages.length - 1; i >= 0; i--) {
-    const msg = state.messages[i];
-    if (msg.role !== "assistant" || !msg.toolCalls) continue;
-    const tc = msg.toolCalls.find((t) => t.id === toolCallId);
-    if (tc) {
-      msg.revision = (msg.revision ?? 0) + 1;
-      return tc;
-    }
-  }
-  return undefined;
-}
-
-/** Apply a mutation to a parent tool call, resolving it from pendingToolCalls
- *  first and falling back to committed messages. Pending parents are cloned
- *  back into the map and re-applied to the last assistant message so
- *  memoized renderers see a fresh identity; committed parents get their
- *  message's revision bumped via findCommittedToolCall instead — re-applying
- *  a (possibly empty) pending map to a committed parent's message would wipe
- *  its committed tool calls. */
-function updateAgentToolCall(
+/** Replace a tool call wherever it currently lives. Active calls are mirrored
+ *  from pendingToolCalls onto the last message; committed calls can belong to
+ *  any earlier message, so replace that exact message branch. */
+function updateToolCall(
   state: Session,
-  agentId: string,
-  mutate: (agentToolCall: ToolCall) => void,
+  toolCallId: string,
+  update: (toolCall: ToolCall) => ToolCall,
 ): void {
-  const pending = state.pendingToolCalls.get(agentId);
+  const pending = state.pendingToolCalls.get(toolCallId);
   if (pending) {
-    mutate(pending);
-    state.pendingToolCalls.set(agentId, { ...pending });
+    const next = update(pending);
+    if (next === pending) return;
+    state.pendingToolCalls = new Map(state.pendingToolCalls).set(toolCallId, next);
     applyPendingToolCallsToLastAssistant(state);
     return;
   }
 
-  const committed = findCommittedToolCall(state, agentId);
-  if (committed) {
-    mutate(committed);
+  for (let messageIndex = state.messages.length - 1; messageIndex >= 0; messageIndex--) {
+    const message = state.messages[messageIndex];
+    if (message.role !== "assistant" || !message.toolCalls) continue;
+
+    const toolCallIndex = message.toolCalls.findIndex((toolCall) => toolCall.id === toolCallId);
+    if (toolCallIndex === -1) continue;
+
+    const current = message.toolCalls[toolCallIndex];
+    const next = update(current);
+    if (next === current) return;
+
+    replaceMessage(state, messageIndex, {
+      ...message,
+      toolCalls: replaceAt(message.toolCalls, toolCallIndex, next),
+    });
+    return;
   }
 }
 
@@ -710,17 +720,27 @@ function updateAgentToolCall(
 // Queue helpers
 // ============================================================================
 
-function removeQueuedMessage(state: Session, queuedMessageId?: string): void {
+function removeQueuedMessage(state: Session, queuedMessageId: string): void {
   if (state.queuedMessages.length === 0) return;
-
-  if (!queuedMessageId) {
-    state.queuedMessages.shift();
-    return;
-  }
 
   const index = state.queuedMessages.findIndex((message) => message.id === queuedMessageId);
   if (index === -1) return;
-  state.queuedMessages.splice(index, 1);
+  state.queuedMessages = [
+    ...state.queuedMessages.slice(0, index),
+    ...state.queuedMessages.slice(index + 1),
+  ];
+}
+
+function appendMessage(state: Session, message: Message): void {
+  state.messages = [...state.messages, message];
+}
+
+function replaceMessage(state: Session, index: number, message: Message): void {
+  state.messages = replaceAt(state.messages, index, message);
+}
+
+function replaceAt<T>(items: T[], index: number, item: T): T[] {
+  return [...items.slice(0, index), item, ...items.slice(index + 1)];
 }
 
 // ============================================================================
