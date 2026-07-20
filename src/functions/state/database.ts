@@ -89,19 +89,21 @@ async function initializeSchema(db: Database, path: string): Promise<void> {
   `);
 
   await db.exec(`
-    CREATE TABLE IF NOT EXISTS child_sessions (
+    CREATE TABLE IF NOT EXISTS workers (
       session_id        TEXT PRIMARY KEY,
-      parent_session_id TEXT NOT NULL
+      parent_session_id TEXT NOT NULL,
+      retained          INTEGER NOT NULL DEFAULT 0
+        CHECK (retained IN (0, 1))
     );
   `);
 
   await db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_child_sessions_parent_session_id
-      ON child_sessions(parent_session_id);
+    CREATE INDEX IF NOT EXISTS idx_workers_parent_session_id
+      ON workers(parent_session_id);
   `);
 
   await db.exec(`
-    CREATE TABLE IF NOT EXISTS inbox_entries (
+    CREATE TABLE IF NOT EXISTS inbox (
       id         TEXT PRIMARY KEY,
       message    TEXT,
       artifact   TEXT,

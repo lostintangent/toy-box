@@ -1,7 +1,8 @@
 // Authoritative server boundary for workspace-wide facts outside transcripts.
 
 import type {
-  ArtifactCommentSession,
+  Automation,
+  ArtifactWorker,
   CustomArtifactKind,
   InboxEntry,
   WorkspaceAction,
@@ -28,25 +29,28 @@ import {
 } from "./sessions";
 import { writeCustomArtifact } from "./artifacts";
 import {
-  deleteArtifactCommentSession,
-  deleteArtifactCommentSessionsForSession,
-  getArtifactCommentSessions,
-  hasArtifactCommentSession,
-  setArtifactCommentSession,
-} from "./commentSessions";
+  finishArtifactWorker as finishArtifactWorkerState,
+  finishArtifactWorkersForSession,
+  getArtifactWorker,
+  getArtifactWorkers,
+  hasArtifactWorker,
+  startArtifactWorker as startArtifactWorkerState,
+} from "./artifactWorkers";
 
 export { loadCustomArtifacts, normalizeExtensions } from "./artifacts";
 export { getEnvironment } from "./environment";
 
 export async function getWorkspaceState(options: {
+  automations: Automation[];
   customArtifacts: CustomArtifactKind[];
   environment: WorkspaceEnvironment;
 }): Promise<WorkspaceState> {
   return {
     sessionStates: getSessionStates(),
     hyperSessionIds: getHyperSessionIds(),
+    automations: options.automations,
     inboxEntries: await getInboxEntries(),
-    artifactCommentSessions: getArtifactCommentSessions(),
+    artifactWorkers: getArtifactWorkers(),
     customArtifacts: options.customArtifacts,
     environment: options.environment,
   };
@@ -54,7 +58,10 @@ export async function getWorkspaceState(options: {
 
 export function sweepExpiredDrafts(now: number = Date.now()): string[] {
   const expiredSessionIds = sweepDraftSessionStates(now);
-  for (const sessionId of expiredSessionIds) deleteHyperState(sessionId);
+  for (const sessionId of expiredSessionIds) {
+    deleteHyperState(sessionId);
+    broadcast({ type: "session.draft.discarded", sessionId });
+  }
   return expiredSessionIds;
 }
 
@@ -66,8 +73,8 @@ export function promoteDraftSession(sessionId: string): void {
 export function deleteSessionWorkspaceState(sessionId: string): void {
   applySessionState({ type: "session.deleted", sessionId });
   deleteHyperState(sessionId);
-  for (const commentSessionId of deleteArtifactCommentSessionsForSession(sessionId)) {
-    broadcast({ type: "artifact.comment_session.unlinked", sessionId: commentSessionId });
+  for (const workerSessionId of finishArtifactWorkersForSession(sessionId)) {
+    broadcast({ type: "artifact.worker.finished", sessionId: workerSessionId });
   }
 }
 
@@ -109,17 +116,17 @@ export async function deleteInboxEntry(entryId: string): Promise<boolean> {
   return deleted;
 }
 
-export function linkArtifactCommentSession(commentSession: ArtifactCommentSession): void {
-  setArtifactCommentSession(commentSession);
-  broadcast({ type: "artifact.comment_session.linked", commentSession });
+export function startArtifactWorker(worker: ArtifactWorker): void {
+  if (!startArtifactWorkerState(worker)) return;
+  broadcast({ type: "artifact.worker.started", worker });
 }
 
-export function unlinkArtifactCommentSession(sessionId: string): void {
-  if (!deleteArtifactCommentSession(sessionId)) return;
-  broadcast({ type: "artifact.comment_session.unlinked", sessionId });
+export function finishArtifactWorker(sessionId: string): void {
+  if (!finishArtifactWorkerState(sessionId)) return;
+  broadcast({ type: "artifact.worker.finished", sessionId });
 }
 
-export { hasArtifactCommentSession };
+export { getArtifactWorker, hasArtifactWorker };
 
 export async function registerArtifactKind(kind: CustomArtifactKind): Promise<void> {
   await writeCustomArtifact(kind);
@@ -127,14 +134,14 @@ export async function registerArtifactKind(kind: CustomArtifactKind): Promise<vo
 }
 
 export function applyWorkspaceAction(action: WorkspaceAction): void {
-  let event: WorkspaceEvent | null = null;
+  let event: WorkspaceEvent | undefined;
 
   switch (action.type) {
     case "session.draft.created": {
       if (isDraft(action.sessionId)) break;
       event = { ...action, createdAt: Date.now() };
       if (!applySessionState(event)) {
-        event = null;
+        event = undefined;
         break;
       }
       if (action.hyper) addHyperSession(action.sessionId);
@@ -159,5 +166,5 @@ export function applyWorkspaceAction(action: WorkspaceAction): void {
       break;
   }
 
-  broadcast(event);
+  if (event) broadcast(event);
 }

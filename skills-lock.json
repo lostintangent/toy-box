@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "skills": {
+    "deslop": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/deslop/SKILL.md",
+      "computedHash": "9764a64c05365175b61ea024add957b6dd871bef3331c9f4cd7b366fffa11b94"
+    },
+    "find-similar-functions": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/find-similar-functions/SKILL.md",
+      "computedHash": "daf77b178875201d309a3172004051eca5136951f6b3875cf2b28dcf251707c8"
+    },
+    "fuzz": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/fuzz/SKILL.md",
+      "computedHash": "4dc0902f51593c5bebc9d330f0e36437f82d4fd654ab1d5294a3432d83d6ba54"
+    },
+    "product-thinking": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/product-thinking/SKILL.md",
+      "computedHash": "6cc4fd3f6b820a0acb755fb341c07002e6bdc5850058aba2e475486ae50d6113"
+    },
+    "rde-eval": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/rde-eval/SKILL.md",
+      "computedHash": "169947cff409607626b3675bd943212b33fdc319fa6d5cbe166c3ba3dc6dbbf5"
+    },
+    "react-doctor": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": "skills/react-doctor/SKILL.md",
+      "computedHash": "209f6f7e46be4fa22317ab317c682989414630e707b3b1deace40e3cafc31879"
+    },
+    "rule-research": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/rule-research/SKILL.md",
+      "computedHash": "ba298048708f208f0232bd2f733019feba10f5decebeececc28cde7c2154dea0"
+    },
+    "rule-validate": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/rule-validate/SKILL.md",
+      "computedHash": "055f0151d55618e07ca4d96273017dc01e30f8f5b9eccc70e867dbc32e2ee4ec"
+    },
+    "rule-writing": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/rule-writing/SKILL.md",
+      "computedHash": "ed2ed6069ca8608fd40adb5ee13f7cd1984c6fe3e1e46cf6f48a6b245e1fe657"
+    },
+    "ship": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/ship/SKILL.md",
+      "computedHash": "1a02e5f847e9ab5bf2a865da3cbf8c8582aafe8b1b9a2314dc445d7f68d6f1d6"
+    },
+    "writing-guidelines": {
+      "source": "aidenybai/react-doctor",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/writing-guidelines/SKILL.md",
+      "computedHash": "b866897b5529c244f9a30e3dcfeea009a48ce400f1e1c4c8ce8a66adea4cb7d9"
+    }
+  }
+}

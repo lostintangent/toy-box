@@ -8,7 +8,6 @@ import type { AgentNotification, QueuedMessage, SessionEvent } from "@/types";
 import * as sessionRegistry from "@/functions/state/session/registry";
 import { loadSessionSnapshot } from "@/functions/state/session/snapshots";
 import { clearDraftPrompt, setSessionStatus } from "@/functions/state/workspace";
-import { emitSessionNameUpdate } from "../broadcast";
 import { sharedMap } from "../processState";
 import {
   SessionStream,
@@ -62,9 +61,7 @@ export async function* streamSession(request: StreamSessionRequest): AsyncGenera
 
 type MessageInput = SessionMessageInput | { id?: string; notification: AgentNotification };
 
-type SessionCreationOptions = Omit<sessionRegistry.CreateSessionOptions, "model"> & {
-  summary?: string;
-};
+type SessionCreationOptions = Omit<sessionRegistry.CreateSessionOptions, "model">;
 
 /** Create a session through its required first message without subscribing. */
 export function createSession(
@@ -142,15 +139,13 @@ async function createStreamForMessage(
   create?: SessionCreationOptions,
 ): Promise<SessionStream> {
   if (create) {
-    const { summary, ...options } = create;
     const model = message.role === "user" ? message.model : undefined;
     setSessionStatus(sessionId, "creating");
     try {
       const sdkSession = await sessionRegistry.createSession(sessionId, {
-        ...options,
+        ...create,
         model,
       });
-      if (summary) emitSessionNameUpdate(sessionId, summary);
       return SessionStream.getOrCreate(sessionId, sdkSession, { model });
     } catch (error) {
       setSessionStatus(sessionId, "idle");

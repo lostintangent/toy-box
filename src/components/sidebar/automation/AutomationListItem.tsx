@@ -1,5 +1,4 @@
 import { Circle, Clock3, Loader2, MoreHorizontal, Pencil, Play, Trash2 } from "lucide-react";
-import { useAtomValue } from "jotai";
 import { MetadataBadge } from "@/components/ui/metadata-badge";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Button } from "@/components/ui/button";
@@ -16,7 +15,7 @@ import {
 } from "@/components/sidebar/list/SidebarListItemShell";
 import { useSidebarScrollFade } from "@/components/sidebar/list/useSidebarScrollFade";
 import type { Automation } from "@/types";
-import { sessionRunningAtom, sessionUnreadAtom } from "@/hooks/workspace/atoms";
+import { useWorkspaceSessionActivity } from "@/hooks/workspace/state";
 
 type AutomationListItemProps = {
   automation: Automation;
@@ -39,11 +38,12 @@ export function AutomationListItem({
   onEdit,
   onDelete,
 }: AutomationListItemProps) {
-  const isRunning = useAtomValue(sessionRunningAtom(automation.id));
-  const hasUnreadActivity = useAtomValue(sessionUnreadAtom(automation.id));
+  const { running: isRunning, unread: hasUnreadActivity } = useWorkspaceSessionActivity(
+    automation.id,
+  );
   const isUnread = !isSelected && hasUnreadActivity;
   const { headlineRef, updateScrollFades } = useSidebarScrollFade(automation.title);
-  const canOpenSession = Boolean(automation.lastRunAt) || isRunning;
+  const canOpenSession = Boolean(automation.lastRunAt) || isRunning || hasUnreadActivity;
 
   return (
     <SidebarListItemShell

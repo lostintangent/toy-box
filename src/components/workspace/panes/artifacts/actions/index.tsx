@@ -6,11 +6,13 @@ import { ArtifactModeMenu } from "./ArtifactModeMenu";
 
 /** Saving state and mode controls shared by grid and pager hosts. */
 export function ArtifactActions({
+  editable,
   mode,
   isSaving,
   onModeChange,
   variant,
 }: {
+  editable: boolean;
   mode: ArtifactPaneMode;
   isSaving: boolean;
   onModeChange: (mode: ArtifactPaneMode) => void;
@@ -29,13 +31,15 @@ export function ArtifactActions({
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         </div>
       )}
-      <ArtifactModeMenu
-        mode={mode}
-        onModeChange={onModeChange}
-        showLabel={!isNormal}
-        className={isNormal ? PANE_OVERLAY_BUTTON_CLASS : undefined}
-        iconClassName={isNormal ? PANE_OVERLAY_ICON_CLASS : undefined}
-      />
+      {editable && (
+        <ArtifactModeMenu
+          mode={mode}
+          onModeChange={onModeChange}
+          showLabel={!isNormal}
+          className={isNormal ? PANE_OVERLAY_BUTTON_CLASS : undefined}
+          iconClassName={isNormal ? PANE_OVERLAY_ICON_CLASS : undefined}
+        />
+      )}
     </>
   );
 }

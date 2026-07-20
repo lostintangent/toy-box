@@ -5,6 +5,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import { useSelector } from "@tanstack/react-store";
 import { Maximize2, Minus, X } from "lucide-react";
 import { WorkspacePager } from "./WorkspacePager";
 import {
@@ -14,8 +15,7 @@ import {
   type OverlayPosition,
 } from "@/components/workspace/overlayWindow";
 import { WorkspaceSurfaceProvider } from "@/hooks/workspace/layout/focus";
-import { useLinkedPanes } from "@/hooks/workspace/layout/useLinkedPanes";
-import { useWorkspaceFocus } from "@/hooks/workspace/layout/useWorkspaceFocus";
+import { arePaneListsEqual, linkedPanesStore } from "@/hooks/workspace/layout/linkedPanes";
 import {
   createSessionPaneId,
   deriveVisibleWorkspacePanes,
@@ -149,16 +149,17 @@ export function HyperSession({
   // The hyper session hosts its own mini-workspace: its interactive session
   // publishes linked panes under its pane id, which the pager pages through as
   // a self-contained deck. Promote is what graduates it to the main grid.
-  const { linkedPanesByPublisher } = useLinkedPanes();
   const rootPanes = deriveWorkspaceRootPanes([state.sessionId]);
-  const hyperPanes = deriveVisibleWorkspacePanes({
-    rootPanes,
-    linkedPanesByPublisher,
-    maxVisible: HYPER_DECK_MAX_PANES,
-  });
-  // The deck owns an independent pane-focus surface.
-  useWorkspaceFocus(hyperPanes, "hyper");
-
+  const hyperPanes = useSelector(
+    linkedPanesStore,
+    (linkedPanesByPublisher) =>
+      deriveVisibleWorkspacePanes({
+        rootPanes,
+        linkedPanesByPublisher,
+        maxVisible: HYPER_DECK_MAX_PANES,
+      }),
+    { compare: arePaneListsEqual },
+  );
   return (
     <div
       ref={surfaceRef}
@@ -203,7 +204,7 @@ export function HyperSession({
         <div ref={setToolbarSlot} className="flex min-w-0 flex-1 items-center gap-2" />
       </div>
       <div className="min-h-0 flex-1">
-        <WorkspaceSurfaceProvider surface="hyper">
+        <WorkspaceSurfaceProvider surface="hyper" panes={hyperPanes}>
           <WorkspacePager
             panes={hyperPanes}
             primaryPaneId={createSessionPaneId(state.sessionId)}

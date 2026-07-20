@@ -15,7 +15,7 @@ mock.module("../database", () => ({
 const { AutomationDatabase } = await import("@/functions/automations/database");
 const { createInboxEntry } = await import("../workspace/inbox");
 const { addHyperSession, deleteHyperState } = await import("../workspace/hyperSessions");
-const { linkChildSession } = await import("./children");
+const { registerWorkerSession } = await import("./workers");
 const { resolveSessionType } = await import("./type");
 
 async function openSessionTypeTestDatabase(): Promise<void> {
@@ -42,16 +42,16 @@ describe("session type resolution", () => {
     });
     const inboxId = `toy-box-${crypto.randomUUID()}`;
     const hyperId = `toy-box-${crypto.randomUUID()}`;
-    const childId = `toy-box-${crypto.randomUUID()}`;
+    const workerId = `toy-box-${crypto.randomUUID()}`;
     await createInboxEntry(inboxId);
     addHyperSession(hyperId);
-    await linkChildSession(childId, "toy-box-parent");
+    await registerWorkerSession(workerId, "toy-box-parent");
     onTestFinished(() => deleteHyperState(hyperId));
 
     expect(await resolveSessionType(automation.id)).toBe("automation");
     expect(await resolveSessionType(inboxId)).toBe("inbox");
     expect(await resolveSessionType(hyperId)).toBe("hyper");
-    expect(await resolveSessionType(childId)).toBe("child");
+    expect(await resolveSessionType(workerId)).toBe("worker");
   });
 
   test("rejects conflicting managed records", async () => {

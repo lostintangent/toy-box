@@ -4,22 +4,27 @@ The session runtime lets agent work outlive the browser that started it while re
 
 ## Session operations
 
-The end-to-end session domain has four operation families. Create, deliver, and observe converge on the runtime; individual control commands retain their specific owners:
+The end-to-end session domain has five operation families. Create, deliver, spawn, and observe converge on the runtime; individual control commands retain their specific owners:
 
 1. **Create** a session through its required first message. Toy Box exposes no operation for creating an empty persisted session.
 2. **Deliver** a message to an existing session. The runtime decides whether it starts immediately or queues behind active execution.
-3. **Observe** through a live event stream, a reduced snapshot, or a completion result.
-4. **Control** by renaming, aborting, cancelling queued input, deleting, or applying worktree operations.
+3. **Spawn a worker** as a parent-owned session for delegated or focused work. The runtime inherits parent execution context, applies an optional friendly name before delivering the task, waits for that exact execution, and either retains or deletes the worker according to its declared policy.
+4. **Observe** through a live event stream, a reduced snapshot, or a completion result.
+5. **Control** by renaming, aborting, cancelling queued input, deleting, or applying worktree operations.
 
 Control is a category, not one runtime method. Abort and queue cancellation act on live execution; rename, deletion, and worktree commands delegate through the session API to the registry or resource owner described in the state guide.
 
 Resume is not a separate operation. Delivering to an idle session resumes its persisted SDK session; delivering to an active session queues. Likewise, callers never choose between send and queue.
 
-`streamSession` is the connected composite: it registers observation before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can create a session with its required first message, deliver to an existing session, or observe without delivering. Headless callers express their intent directly: `createSession` creates through the required first message, while `deliverSessionMessage` sends or queues a message for an existing session.
+`streamSession` is the connected composite: it registers observation before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can create a session with its required first message, deliver to an existing session, or observe without delivering. Headless callers express their intent directly: `createSession` creates through the required first message, `deliverSessionMessage` sends or queues a message for an existing session, `spawnWorker` supervises a parent-owned session through completion and conditional teardown, and `stopWorker` covers both its spawning and running phases.
 
 ## Live execution
 
 `SessionStream` names the live runtime for one session, not the event stream a client reads. It owns the SDK handle, canonical state, queued messages, completion waiters, and replayable event bus for that execution lifetime.
+
+A worker does not add another execution mode to `SessionStream`. Its durable worker record owns the parent relationship and a boolean retention policy. `spawnWorker` composes worker creation, inherited context, an exact completion receipt, a stop guard that closes the race before the stream exists, and registry-owned deletion when `retained` is false. `create_session` uses the same supervisor with `retained: true` because its session remains the asynchronous result and follow-up channel; artifact work accepts the disposable default. Startup sweeps only disposable workers abandoned by a previous process and does not resume their execution.
+
+Inbox dispatch, automation scheduling, and worker spawning each own a session supervisor because their terminal policies differ: Inbox preserves reported results, automations record run metadata, and the worker supervisor applies the worker's retention policy. The runtime centralizes their common mechanism by returning one exact completion receipt; manager-specific finalization stays with the manager rather than entering a generic policy abstraction.
 
 1. Acquisition is single-flight. A caller joins an existing stream, shares an in-progress creation, creates a new SDK session, or resumes an idle session from its reduced snapshot and SDK handle.
 2. Connected callers subscribe before delivery. `SessionStream.deliver` starts the message synchronously when idle or emits `message_queued`; repeated delivery of the same message ID returns the original disposition.
@@ -41,12 +46,12 @@ Subscriptions are either `active` or `passive`. Both receive the same live data.
 
 Toy Box keeps two event planes separate because they promise different things:
 
-| Plane                | Contract                                                                                                                              |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Session event stream | One session, ordered canonical events, cursor replay, multi-client fan-out, and terminal `end`                                        |
-| Shared update stream | Workspace and automation hints, at-most-once delivery, no replay, and repair through authoritative snapshots or React Query refetches |
+| Plane                | Contract                                                                                                                      |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Session event stream | One session, ordered canonical events, cursor replay, multi-client fan-out, and terminal `end`                                |
+| Shared update stream | `WorkspaceEvent` hints, at-most-once delivery, no replay, and repair through authoritative snapshots or React Query refetches |
 
-Transcript continuity belongs to the session event stream. Drafts, running and unread state, Inbox entries, session-list metadata, and automation changes belong to the shared update plane. The shared update stream is the `/api/events` SSE transport with workspace and automation topics; it carries `WorkspaceEvent` and `AutomationEvent` notifications, while client-issued `WorkspaceAction`s are commands sent through RPC. Broadcast is its internal fan-out mechanism, not another protocol. Do not add transcript replay semantics to broadcast or use broadcast as session truth.
+Transcript continuity belongs to the session event stream. Drafts, running and unread state, Inbox entries, session-list metadata, and automation changes belong to the shared update plane. The `/api/workspace` SSE transport carries one `WorkspaceEvent` algebra, while client-issued `WorkspaceAction`s are commands sent through RPC. Broadcast is its internal fan-out mechanism, not another protocol; one failed client listener cannot fail the producing operation or interrupt the other clients. Do not add transcript replay semantics to broadcast or use broadcast as session truth.
 
 ## Boundaries and invariants
 

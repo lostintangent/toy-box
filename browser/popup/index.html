@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Toy Box</title>
+    <link rel="stylesheet" href="../theme.css" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <section class="page-context panel" aria-label="Page context">
+        <div class="page-overview">
+          <div class="page-details">
+            <p id="page-title" class="page-title">Current page</p>
+            <p id="page-url" class="page-url">Loading…</p>
+          </div>
+          <figure id="viewport-container" class="viewport" hidden>
+            <img id="viewport-image" alt="Visible page screenshot" />
+            <button
+              id="remove-viewport"
+              class="remove-button"
+              type="button"
+              aria-label="Remove viewport screenshot"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="m4 4 8 8m0-8-8 8" />
+              </svg>
+            </button>
+          </figure>
+        </div>
+        <div id="selection-container" class="selection" hidden>
+          <blockquote id="selection-text"></blockquote>
+          <button
+            id="remove-selection"
+            class="remove-button"
+            type="button"
+            aria-label="Remove selected text"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="m4 4 8 8m0-8-8 8" />
+            </svg>
+          </button>
+        </div>
+      </section>
+
+      <form id="prompt-form" class="prompt-form">
+        <label for="prompt">What should Toy Box do?</label>
+        <textarea
+          id="prompt"
+          name="prompt"
+          rows="4"
+          placeholder="Summarize this, investigate the claim, compare it with…"
+          required
+          autofocus
+        ></textarea>
+        <output id="form-status" class="visually-hidden" for="prompt"></output>
+
+        <a class="settings-link" href="../options/index.html" target="_blank" rel="noopener">
+          Server settings
+        </a>
+        <button id="submit" class="primary-button submit-button" type="submit" disabled>
+          <span id="submit-spinner" class="spinner" aria-hidden="true" hidden></span>
+          <span id="submit-label">Send</span>
+        </button>
+      </form>
+    </main>
+
+    <script type="module" src="index.js"></script>
+  </body>
+</html>

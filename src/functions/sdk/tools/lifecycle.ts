@@ -1,52 +1,34 @@
 import { defineTool } from "@github/copilot-sdk";
 import { z } from "zod";
-import { readSessionContext } from "@/functions/sdk/client";
-import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 import { modelConfigurationSchema } from "@/lib/modelConfiguration";
 
 const createSessionTool = defineTool("create_session", {
   description:
-    "Creates a new companion session for delegated or parallel work. " +
-    "The new session inherits the current session's model and directory by default. " +
-    "By default it does not create a worktree.",
+    "Creates a retained worker session for delegated or parallel work. " +
+    "The worker inherits the current session's model and directory by default and remains available for waiting, inspection, or follow-up messages after it completes. " +
+    "Delete it when it is no longer needed. By default it does not create a worktree.",
   parameters: z.object({
-    prompt: z.string().describe("The initial prompt to send to the new session"),
+    task: z.string().describe("The task to delegate to the new worker"),
     model: modelConfigurationSchema
       .optional()
-      .describe("Optional model and reasoning override for the new session"),
-    directory: z
-      .string()
-      .optional()
-      .describe("Optional working directory override for the new session"),
+      .describe("Optional model and reasoning override for the worker"),
+    directory: z.string().optional().describe("Optional working directory override for the worker"),
     useWorktree: z
       .boolean()
       .optional()
-      .describe("Whether to create the new session in a git worktree. Defaults to false."),
+      .describe("Whether to create the worker in a git worktree. Defaults to false."),
   }),
   skipPermission: true,
   handler: async (args, invocation) => {
-    const { createSession, SessionStream } = await import("@/functions/runtime/stream");
-    const inheritedWorkspaceContext =
-      args.directory === undefined ? await readSessionContext(invocation.sessionId) : undefined;
-    const inheritedExecutionDirectory =
-      args.directory ?? inheritedWorkspaceContext?.workingDirectory;
-    const inheritedModel =
-      args.model ?? SessionStream.get(invocation.sessionId)?.getSessionState().model;
-    const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
-    await createSession(
-      sessionId,
-      {
-        content: args.prompt,
-        model: inheritedModel,
-      },
-      {
-        directory: inheritedExecutionDirectory,
-        useWorktree: args.useWorktree ?? false,
-        parentSessionId: invocation.sessionId,
-        initialContext: inheritedWorkspaceContext,
-        sessionType: "child",
-      },
-    );
+    const { spawnWorker } = await import("@/functions/runtime/workers");
+    const { sessionId } = await spawnWorker({
+      parentSessionId: invocation.sessionId,
+      task: args.task,
+      model: args.model,
+      directory: args.directory,
+      useWorktree: args.useWorktree,
+      retained: true,
+    });
 
     return JSON.stringify({ sessionId });
   },

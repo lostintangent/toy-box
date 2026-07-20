@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { SettingsDialog } from "@/components/config/SettingsDialog";
 import { cn } from "@/lib/utils";
-import type { Automation, AutomationOptions, SessionMetadata } from "@/types";
+import type { SessionMetadata } from "@/types";
 import { SidebarHeader } from "./shell/SidebarHeader";
 import { SidebarFooter } from "./shell/SidebarFooter";
 import { SessionList } from "./list/SessionList";
@@ -14,7 +14,7 @@ export type SidebarProps = {
   onShowExternalSessionsChange: (value: boolean) => void;
 
   sessions: SessionMetadata[];
-  isLoading: boolean;
+  isSessionsLoading: boolean;
   onSessionSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
   onSessionRename: (sessionId: string) => void;
   onSessionDelete: (sessionId: string) => void;
@@ -24,17 +24,8 @@ export type SidebarProps = {
   emptyMessage?: string;
   draftSessions: SessionMetadata[];
 
-  automations: Automation[];
-  isAutomationsLoading: boolean;
   isAutomationsExpanded: boolean;
   onAutomationsExpandedChange: (expanded: boolean) => void;
-  onCreateAutomation: (input: AutomationOptions) => Promise<void>;
-  onUpdateAutomation: (input: AutomationOptions & { automationId: string }) => Promise<void>;
-  onDeleteAutomation: (automationId: string) => Promise<void>;
-  onRunAutomation: (automationId: string) => Promise<void>;
-  creatingAutomation: boolean;
-  updatingAutomationId: string | null;
-  deletingAutomationId: string | null;
 
   onCreateSession: (addToWorkspace: boolean) => void;
   onToggleHyper: () => void;
@@ -57,7 +48,7 @@ export function Sidebar({
   onShowExternalSessionsChange,
 
   sessions,
-  isLoading,
+  isSessionsLoading,
   onSessionSelect,
   onSessionRename,
   onSessionDelete,
@@ -67,17 +58,8 @@ export function Sidebar({
   emptyMessage,
   draftSessions,
 
-  automations,
-  isAutomationsLoading,
   isAutomationsExpanded,
   onAutomationsExpandedChange,
-  onCreateAutomation,
-  onUpdateAutomation,
-  onDeleteAutomation,
-  onRunAutomation,
-  creatingAutomation,
-  updatingAutomationId,
-  deletingAutomationId,
 
   onCreateSession,
   onToggleHyper,
@@ -114,7 +96,7 @@ export function Sidebar({
           <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-3 py-2">
             <SessionList
               sessions={sessions}
-              isLoading={isLoading}
+              isLoading={isSessionsLoading}
               onSessionSelect={onSessionSelect}
               onSessionRename={onSessionRename}
               onSessionDelete={onSessionDelete}
@@ -126,19 +108,10 @@ export function Sidebar({
             />
           </div>
           <AutomationPanel
-            automations={automations}
-            isLoading={isAutomationsLoading}
             isExpanded={isAutomationsExpanded}
             onExpandedChange={onAutomationsExpandedChange}
             openSessionIds={openSessionIds}
-            onSessionSelect={onSessionSelect}
-            onCreateAutomation={onCreateAutomation}
-            onUpdateAutomation={onUpdateAutomation}
-            onDeleteAutomation={onDeleteAutomation}
-            onRunAutomation={onRunAutomation}
-            creatingAutomation={creatingAutomation}
-            updatingAutomationId={updatingAutomationId}
-            deletingAutomationId={deletingAutomationId}
+            onSessionOpen={(sessionId) => onSessionSelect(sessionId, false)}
           />
         </div>
 

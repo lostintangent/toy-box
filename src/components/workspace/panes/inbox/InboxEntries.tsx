@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useAtomValue } from "jotai";
 import { Circle, FileText, Inbox as InboxIcon, Info, Loader2, Trash2 } from "lucide-react";
 import { deleteInboxEntry } from "@/functions/workspace";
 import {
@@ -18,8 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useWorkspaceActions } from "@/hooks/workspace/WorkspaceActionsContext";
-import { sessionRunningAtom, sessionUnreadAtom } from "@/hooks/workspace/atoms";
+import { useDispatchWorkspaceAction, useWorkspaceSessionActivity } from "@/hooks/workspace/state";
 import { cn } from "@/lib/utils";
 import type { ArtifactWorkspacePane } from "@/lib/workspace/panes";
 import type { InboxEntry, SessionMetadata } from "@/types";
@@ -66,7 +64,7 @@ export function InboxEntries({
         </div>
         {entries.length === 0 ? (
           <p className="px-1 py-2 text-sm italic text-muted-foreground">
-            When you run background sessions above, their results will appear here.
+            When you run tasks above, their results will appear here.
           </p>
         ) : (
           <div className="overflow-hidden rounded-lg border bg-card">
@@ -116,9 +114,8 @@ function InboxEntryRow({
   onSelect: () => void;
   onDelete: () => void;
 }) {
-  const running = useAtomValue(sessionRunningAtom(entry.id));
-  const unread = useAtomValue(sessionUnreadAtom(entry.id));
-  const { dispatchWorkspaceAction } = useWorkspaceActions();
+  const { running, unread } = useWorkspaceSessionActivity(entry.id);
+  const dispatchWorkspaceAction = useDispatchWorkspaceAction();
   const pending = entry.message === undefined;
   const preview = useSessionPreview(!pending || !session);
   const label = entry.message || session?.summary;

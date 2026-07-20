@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Debouncer } from "@tanstack/pacer/debouncer";
 import type { FSWatcher } from "node:fs";
 import { createSseResponse } from "@/routes/api/-lib/sse";
 import { resolveArtifactRequest } from "@/routes/api/-lib/artifactRequest";
@@ -27,18 +28,13 @@ async function createWatchResponse(params: WatchRouteParams, request: Request): 
 
   return createSseResponse<FileWatchEvent>(request, async (send, close) => {
     let watcher: FSWatcher | undefined;
-    let changeTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const sendChangeEvent = () => {
-      if (changeTimer) clearTimeout(changeTimer);
-      changeTimer = setTimeout(async () => {
-        send(await statWatchedFile(absolutePath));
-      }, WATCH_DEBOUNCE_MS);
-    };
+    const changeEvents = new Debouncer(async () => send(await statWatchedFile(absolutePath)), {
+      wait: WATCH_DEBOUNCE_MS,
+    });
 
     try {
       const { watch } = await import("node:fs");
-      watcher = watch(absolutePath, sendChangeEvent);
+      watcher = watch(absolutePath, changeEvents.maybeExecute);
       watcher.on("error", close);
     } catch {
       close();
@@ -46,7 +42,7 @@ async function createWatchResponse(params: WatchRouteParams, request: Request): 
 
     return () => {
       watcher?.close();
-      if (changeTimer) clearTimeout(changeTimer);
+      changeEvents.cancel();
     };
   });
 }

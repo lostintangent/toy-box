@@ -48,7 +48,7 @@ export type TodoItemPatch =
 export type SessionStatus = "idle" | "thinking" | "compacting" | "reasoning" | "responding";
 
 /** A session's product role, derived from the domain record that manages it. */
-export type SessionType = "standard" | "automation" | "inbox" | "hyper" | "child";
+export type SessionType = "standard" | "automation" | "inbox" | "hyper" | "worker";
 
 export type SessionCanvas = {
   key: string;
@@ -193,12 +193,13 @@ export type InboxEntry = {
   artifact?: string;
 };
 
-/** Links a child session to one anchored comment on its source artifact. */
-export type ArtifactCommentSession = {
+/** Associates one pending worker with the artifact it is working on. */
+export type ArtifactWorker = {
   sessionId: string;
   sourceSessionId: string;
   path: string;
-  threadId: string;
+  name?: string;
+  metadata?: JsonValue;
 };
 
 /* Session types (server->client replay + streaming) */
@@ -261,10 +262,9 @@ export type SessionEvent = (
 
 /* SSE updates (server->client protocol) */
 
-// Every workspace state transition broadcast to clients. The first arm is the
-// client-issuable subset (WorkspaceAction, defined and validated in
-// @/lib/workspace/actions); the rest are server-authoritative events a client
-// only receives.
+// Shared updates broadcast to clients. The first arm is the client-issuable
+// subset (WorkspaceAction, defined and validated in @/lib/workspace/actions);
+// the rest are server-authoritative events a client only receives.
 export type WorkspaceEvent =
   | WorkspaceAction
   | {
@@ -285,12 +285,20 @@ export type WorkspaceEvent =
       kind: CustomArtifactKind;
     }
   | {
-      type: "artifact.comment_session.linked";
-      commentSession: ArtifactCommentSession;
+      type: "artifact.worker.started";
+      worker: ArtifactWorker;
     }
   | {
-      type: "artifact.comment_session.unlinked";
+      type: "artifact.worker.finished";
       sessionId: string;
+    }
+  | {
+      type: "automation.upserted";
+      automation: Automation;
+    }
+  | {
+      type: "automation.deleted";
+      automationId: string;
     };
 
 export type { WorkspaceAction };
@@ -301,24 +309,6 @@ type SimpleSessionUpdateEvents<EventName extends string> = EventName extends str
       sessionId: string;
     }
   : never;
-
-export type AutomationEvent =
-  | {
-      type: "automation.added";
-      automation: Automation;
-    }
-  | {
-      type: "automation.deleted";
-      automationId: string;
-    }
-  | {
-      type: "automation.updated";
-      automation: Automation;
-    };
-
-export type ServerUpdate =
-  | { topic: "workspace"; event: WorkspaceEvent }
-  | { topic: "automation"; event: AutomationEvent };
 
 export type SessionMetadataUpdate = {
   sessionId: string;

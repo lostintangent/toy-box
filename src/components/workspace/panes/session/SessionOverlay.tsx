@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { useAtomValue } from "jotai";
 import { Loader2, MessageCircle, X } from "lucide-react";
 import { Presence as PresencePrimitive } from "radix-ui/internal";
-import { sessionRunningAtom } from "@/hooks/workspace/atoms";
+import { useWorkspaceSessionRunning } from "@/hooks/workspace/state";
 import { cn } from "@/lib/utils";
-import { SessionPane, type SessionPaneProps } from "./SessionPane";
+import { SessionPane } from "./SessionPane";
 import {
   CONTAINER_OVERLAY_BOUNDS,
   SESSION_OVERLAY_BASE_CLASS,
@@ -13,33 +12,35 @@ import {
   PANE_OVERLAY_BUTTON_CLASS,
   PANE_OVERLAY_ICON_CLASS,
 } from "@/components/workspace/panes/paneControls";
+import { PaneStatus } from "@/components/workspace/panes/PaneSlots";
 
-export type SessionOverlayProps = Omit<SessionPaneProps, "mode" | "onBack">;
-
-export function SessionOverlay(props: SessionOverlayProps) {
+export function SessionOverlay({ sessionId }: { sessionId: string }) {
   const [isOpen, setIsOpen] = useState(false);
-  const isSessionRunning = useAtomValue(sessionRunningAtom(props.sessionId));
+  const isSessionRunning = useWorkspaceSessionRunning(sessionId);
+  const trigger = (
+    <button
+      type="button"
+      onClick={() => setIsOpen(true)}
+      className={cn("order-2", PANE_OVERLAY_BUTTON_CLASS)}
+      aria-label="Open session overlay"
+      title="Open session overlay"
+      aria-hidden={isOpen || undefined}
+      tabIndex={isOpen ? -1 : undefined}
+    >
+      {isSessionRunning ? (
+        <Loader2 className={cn(PANE_OVERLAY_ICON_CLASS, "animate-spin")} />
+      ) : (
+        <MessageCircle className={PANE_OVERLAY_ICON_CLASS} />
+      )}
+    </button>
+  );
 
   return (
     <>
       {/* The trigger stays mounted underneath the surface (lower z-index) so it
           is revealed the moment the surface fades and collapses on close,
           rather than popping in a frame later. It is inert while covered. */}
-      <button
-        type="button"
-        onClick={() => setIsOpen(true)}
-        className={cn("absolute right-3 bottom-3 z-20", PANE_OVERLAY_BUTTON_CLASS)}
-        aria-label="Open session overlay"
-        title="Open session overlay"
-        aria-hidden={isOpen || undefined}
-        tabIndex={isOpen ? -1 : undefined}
-      >
-        {isSessionRunning ? (
-          <Loader2 className={cn(PANE_OVERLAY_ICON_CLASS, "animate-spin")} />
-        ) : (
-          <MessageCircle className={PANE_OVERLAY_ICON_CLASS} />
-        )}
-      </button>
+      <PaneStatus>{trigger}</PaneStatus>
       {/* Presence keeps the surface mounted while its close animation plays and
           unmounts it on animationend — the data-[state] classes drive the
           enter/exit, so no manual mount/animation bookkeeping is needed here. */}
@@ -68,7 +69,7 @@ export function SessionOverlay(props: SessionOverlayProps) {
           >
             <X className={PANE_OVERLAY_ICON_CLASS} />
           </button>
-          <SessionPane key={props.sessionId} {...props} mode="overlay" variant="compact" />
+          <SessionPane key={sessionId} sessionId={sessionId} mode="overlay" />
         </div>
       </PresencePrimitive.Presence>
     </>

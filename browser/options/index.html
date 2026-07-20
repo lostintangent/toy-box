@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Toy Box server settings</title>
+    <link rel="stylesheet" href="../theme.css" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="settings">
+      <header>
+        <p class="eyebrow">Toy Box browser extension</p>
+        <h1>Server settings</h1>
+        <p class="introduction">
+          Choose the Toy Box server that receives browser tasks. This setting is local to this
+          browser profile.
+        </p>
+      </header>
+
+      <form id="server-form" class="server-form panel">
+        <label for="server-url">Server URL</label>
+        <input
+          id="server-url"
+          name="serverUrl"
+          type="url"
+          autocomplete="url"
+          spellcheck="false"
+          aria-describedby="server-help endpoint-preview form-status"
+          required
+        />
+        <p id="server-help" class="help">
+          Enter the server base only. Toy Box always appends <code>/api/inbox</code>.
+        </p>
+        <p id="endpoint-preview" class="endpoint-preview">
+          Inbox endpoint: <code id="inbox-endpoint">Loading…</code>
+        </p>
+
+        <output id="form-status" for="server-url"></output>
+        <button id="save" class="primary-button" type="submit" disabled>Save</button>
+      </form>
+    </main>
+
+    <script type="module" src="index.js"></script>
+  </body>
+</html>

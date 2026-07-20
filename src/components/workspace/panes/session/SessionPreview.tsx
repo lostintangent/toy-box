@@ -1,43 +1,31 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useViewport } from "@/hooks/browser/ViewportContext";
+import { useViewport } from "@/hooks/browser/useViewport";
 import { VIEWPORT_OVERLAY_BOUNDS } from "@/components/workspace/overlayWindow";
 import { SessionPane } from "./SessionPane";
 
 export function useSessionPreview(disabled = false) {
   const { isMobile } = useViewport();
   const [open, setOpen] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearTimer = () => {
-    if (!timerRef.current) return;
-    clearTimeout(timerRef.current);
-    timerRef.current = null;
-  };
+  const openTask = useDebouncer((nextOpen: boolean) => setOpen(nextOpen), {
+    wait: (debouncer) => (debouncer.store.state.lastArgs?.[0] ? 750 : 200),
+  });
 
   const onMouseEnter = (event: React.MouseEvent) => {
-    clearTimer();
+    openTask.cancel();
     if (open || disabled || isMobile || event.metaKey || event.ctrlKey) return;
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null;
-      setOpen(true);
-    }, 750);
+    openTask.maybeExecute(true);
   };
 
   const onMouseLeave = () => {
-    clearTimer();
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null;
-      setOpen(false);
-    }, 200);
+    openTask.maybeExecute(false);
   };
 
   const close = () => {
-    clearTimer();
+    openTask.cancel();
     setOpen(false);
   };
-
-  useEffect(() => () => clearTimer(), []);
 
   return { open, close, onMouseEnter, onMouseLeave };
 }

@@ -13,14 +13,14 @@ import type { InboxEntry } from "@/types";
 export async function getInboxEntries(): Promise<InboxEntry[]> {
   const db = await getAppDatabase({ createIfMissing: false });
   if (!db) return [];
-  const { rows } = await db.sql`SELECT * FROM inbox_entries ORDER BY created_at DESC`;
+  const { rows } = await db.sql`SELECT * FROM inbox ORDER BY created_at DESC`;
   return (rows as InboxEntryRow[]).map(inboxEntryFromRow);
 }
 
 export async function getInboxEntry(entryId: string): Promise<InboxEntry | null> {
   const db = await getAppDatabase({ createIfMissing: false });
   if (!db) return null;
-  const { rows } = await db.sql`SELECT * FROM inbox_entries WHERE id = ${entryId}`;
+  const { rows } = await db.sql`SELECT * FROM inbox WHERE id = ${entryId}`;
   const row = (rows as InboxEntryRow[])[0];
   return row ? inboxEntryFromRow(row) : null;
 }
@@ -28,7 +28,7 @@ export async function getInboxEntry(entryId: string): Promise<InboxEntry | null>
 export async function hasInboxEntry(entryId: string): Promise<boolean> {
   const db = await getAppDatabase({ createIfMissing: false });
   if (!db) return false;
-  const { rows } = await db.sql`SELECT 1 FROM inbox_entries WHERE id = ${entryId}`;
+  const { rows } = await db.sql`SELECT 1 FROM inbox WHERE id = ${entryId}`;
   return (rows?.length ?? 0) > 0;
 }
 
@@ -39,7 +39,7 @@ export async function createInboxEntry(id: string): Promise<InboxEntry> {
   };
   const db = await getAppDatabase();
   await db.sql`
-    INSERT INTO inbox_entries (id, message, artifact, created_at)
+    INSERT INTO inbox (id, message, artifact, created_at)
     VALUES (${entry.id}, ${null}, ${null}, ${entry.createdAt})
   `;
   return entry;
@@ -75,7 +75,7 @@ export async function completeInboxEntry(
   try {
     const db = await getAppDatabase();
     const result = await db.sql`
-      UPDATE inbox_entries
+      UPDATE inbox
       SET message = ${message}, artifact = ${artifactFilename ?? null}
       WHERE id = ${entryId} AND message IS NULL
     `;
@@ -96,7 +96,7 @@ export async function deleteInboxEntryState(entryId: string): Promise<boolean> {
   entryId = validateEntryId(entryId);
   const db = await getAppDatabase({ createIfMissing: false });
   if (!db) return false;
-  const result = await db.sql`DELETE FROM inbox_entries WHERE id = ${entryId}`;
+  const result = await db.sql`DELETE FROM inbox WHERE id = ${entryId}`;
   if ((result.changes ?? 0) === 0) return false;
   deleteInboxArtifact(entryId);
   return true;

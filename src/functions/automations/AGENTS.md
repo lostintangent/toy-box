@@ -12,7 +12,7 @@ Creation and update validate the cron expression and calculate the next occurren
 
 ## Scheduling
 
-One scheduler loop starts with the Nitro server and periodically claims due work. `claimDue` runs inside an immediate SQLite transaction: it selects due definitions and advances each claimed `nextRunAt` before dispatch. Advancing while the claim is held prevents another tick from selecting the same occurrence.
+One scheduler loop starts with the Nitro server and periodically claims due work. `claimDue` runs inside an immediate SQLite transaction: it selects due definitions and advances each claimed `nextRunAt` before dispatch. Advancing while the claim is held prevents another tick from selecting the same occurrence. Each committed claim is published before dispatch so clients observe its new schedule even if execution cannot start.
 
 Missed intervals collapse into one current run instead of producing a catch-up storm. Malformed definitions cannot prevent valid work from being claimed, and scheduler ticks never overlap within the process.
 
@@ -26,17 +26,17 @@ Each run follows one path:
 2. If that stable session ID already has a live runtime, the attempt returns `started: false`; automation prompts never queue behind an overlapping run.
 3. Otherwise, any idle persisted session with that ID is deleted so the new run begins with a clean transcript.
 4. `createSession` creates the fresh automation session through its first prompt with the configured model, working directory, and title.
-5. The caller returns after delivery starts. Background completion records `lastRunAt` and publishes the updated automation definition.
+5. The caller returns after delivery starts. The automation supervisor records `lastRunAt` on completion and publishes the updated definition.
 
-The session runtime owns every execution transition: creation publishes creating, the first turn publishes running, and stream closure publishes idle or unread. Automation events only synchronize durable definition and schedule metadata. A creation failure restores idle session status without changing `lastRunAt`; a metadata persistence failure leaves no changed automation row to publish.
+The session runtime owns every execution transition: the first turn publishes running, and stream closure publishes idle or unread. Automation events only synchronize durable definition and schedule metadata. A creation failure leaves the automation idle without changing `lastRunAt`; a metadata persistence failure leaves no changed automation row to publish.
 
 ## Client synchronization
 
-`useAutomations` owns the definition query, CRUD and run mutations, and durable `AutomationEvent` projection into React Query. Every connection or focus refetch repairs notifications missed from the at-most-once update stream.
+Automation definitions are part of the shared workspace query projection alongside Inbox entries and other managed-session state. `AutomationPanel` subscribes to that feature projection and composes `useAutomationActions`, which owns CRUD and run mutations plus their immediate client cache effects. `useWorkspaceSync` applies server events and refetches the complete workspace snapshot whenever the shared update stream opens.
 
-A user-triggered run optimistically marks the stable automation session ID as creating and opens it. A genuinely new run seeds an empty session detail so the prior transcript cannot flash while the reset stream connects. Automation list items derive running and unread directly from workspace session state rather than maintaining a second run-status model.
+A user-triggered run opens the stable automation session ID. A genuinely new run seeds an empty session detail so the prior transcript cannot flash while the reset stream connects; server runtime events remain the authority for its creating and running state. Automation list items derive running and unread directly from workspace session state rather than maintaining a second run-status model.
 
-Automation sessions are excluded from the standard session list because the automation panel is their managed presentation. They remain ordinary sessions to the runtime and can be opened, streamed, and inspected through the same session UI.
+Automation events synchronize durable definition and schedule metadata through the workspace event algebra. Automation sessions are excluded from the standard session list because the automation panel is their managed presentation. They remain ordinary sessions to the runtime and can be opened, streamed, and inspected through the same session UI.
 
 ## Boundaries and invariants
 

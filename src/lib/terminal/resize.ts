@@ -5,6 +5,7 @@
 
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
+import { Throttler } from "@tanstack/pacer/throttler";
 
 const FIT_THROTTLE_MS = 75;
 
@@ -18,10 +19,9 @@ export function isValidSize(cols: number, rows: number) {
 
 export class TerminalResize {
   readonly #callbacks: TerminalResizeCallbacks;
+  readonly #fitThrottler: Throttler<() => void>;
   #resizeObserver: ResizeObserver | null = null;
   #fitRaf: number | null = null;
-  #fitTimeout: ReturnType<typeof setTimeout> | null = null;
-  #lastFitAt = 0;
   #resizePaused = false;
   #pendingFit = false;
 
@@ -31,6 +31,21 @@ export class TerminalResize {
 
   constructor(callbacks: TerminalResizeCallbacks) {
     this.#callbacks = callbacks;
+    this.#fitThrottler = new Throttler(
+      () => {
+        if (this.#resizePaused) {
+          this.#pendingFit = true;
+          return;
+        }
+        if (this.#fitRaf !== null) return;
+
+        this.#fitRaf = requestAnimationFrame(() => {
+          this.#fitRaf = null;
+          this.#applyFit();
+        });
+      },
+      { wait: FIT_THROTTLE_MS },
+    );
   }
 
   install(container: HTMLDivElement, xterm: XTerm, fitAddon: FitAddon) {
@@ -40,6 +55,7 @@ export class TerminalResize {
     this.#xterm = xterm;
     this.#fitAddon = fitAddon;
     this.#pendingFit = false;
+    this.#fitThrottler.reset();
 
     this.#resizeObserver = new ResizeObserver(() => {
       if (this.#resizePaused) {
@@ -68,29 +84,17 @@ export class TerminalResize {
       return;
     }
 
-    const now = performance.now();
-    const elapsed = now - this.#lastFitAt;
-
-    if (elapsed >= FIT_THROTTLE_MS) {
-      if (this.#fitRaf !== null) return;
-      this.#fitRaf = requestAnimationFrame(() => {
-        this.#fitRaf = null;
-        this.#lastFitAt = performance.now();
-        this.#applyFit();
-      });
-      return;
-    }
-
-    if (this.#fitTimeout !== null) return;
-    const delay = Math.max(FIT_THROTTLE_MS - elapsed, 0);
-    this.#fitTimeout = setTimeout(() => {
-      this.#fitTimeout = null;
-      this.scheduleFit();
-    }, delay);
+    if (this.#fitRaf !== null) return;
+    this.#fitThrottler.maybeExecute();
   }
 
   setResizePaused(paused: boolean) {
     this.#resizePaused = paused;
+    if (paused && this.#fitThrottler.store.state.isPending) {
+      this.#fitThrottler.cancel();
+      this.#pendingFit = true;
+      return;
+    }
     if (!paused && this.#pendingFit) {
       this.#pendingFit = false;
       this.scheduleFit();
@@ -121,13 +125,10 @@ export class TerminalResize {
   }
 
   #cancelPendingFit() {
+    this.#fitThrottler.cancel();
     if (this.#fitRaf !== null) {
       cancelAnimationFrame(this.#fitRaf);
       this.#fitRaf = null;
-    }
-    if (this.#fitTimeout !== null) {
-      clearTimeout(this.#fitTimeout);
-      this.#fitTimeout = null;
     }
   }
 }

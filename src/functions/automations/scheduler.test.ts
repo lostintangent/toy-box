@@ -14,7 +14,7 @@ import * as databaseModule from "@/functions/state/database";
 import * as sessionRegistryModule from "@/functions/state/session/registry";
 import * as streamModule from "@/functions/runtime/stream";
 import * as broadcastModule from "@/functions/runtime/broadcast";
-import type { Automation, AutomationEvent, AutomationOptions } from "@/types";
+import type { Automation, AutomationOptions, WorkspaceEvent } from "@/types";
 import { AutomationDatabase } from "./database";
 
 const realDatabaseModule = { ...databaseModule };
@@ -34,7 +34,7 @@ const runningSessionIds = new Set<string>();
 
 const createSessionMock = mock((...args: CreationArguments) => create(...args));
 const deleteSessionIfExistsMock = mock((sessionId: string) => removeSession(sessionId));
-const emitAutomationEventMock = mock((_event: AutomationEvent) => {});
+const broadcastMock = mock((_event: WorkspaceEvent) => {});
 
 mock.module("@/functions/state/database", () => ({
   getAppDatabase: async () => appDatabase,
@@ -49,7 +49,7 @@ mock.module("@/functions/runtime/stream", () => ({
   },
 }));
 mock.module("@/functions/runtime/broadcast", () => ({
-  emitAutomationEvent: emitAutomationEventMock,
+  broadcast: broadcastMock,
 }));
 
 const { runSchedulerTick, startAutomationRun } = await import("./scheduler");
@@ -68,7 +68,7 @@ beforeEach(async () => {
   runningSessionIds.clear();
   deleteSessionIfExistsMock.mockClear();
   createSessionMock.mockClear();
-  emitAutomationEventMock.mockClear();
+  broadcastMock.mockClear();
   removeSession = async () => false;
   create = async () => ({
     disposition: "started",
@@ -97,7 +97,7 @@ describe.serial("automation scheduler", () => {
       },
       {
         directory: automation.cwd,
-        summary: automation.title,
+        name: automation.title,
         sessionType: "automation",
       },
     );
@@ -178,7 +178,7 @@ describe.serial("automation scheduler", () => {
     const updated = (await automationDatabase.get(automation.id))!;
     expect(updated?.lastRunAt).toEqual(expect.any(String));
     expect(updated?.id).toBe(sessionId);
-    expect(readAutomationEvents()).toEqual([{ type: "automation.updated", automation: updated }]);
+    expect(readAutomationEvents()).toEqual([{ type: "automation.upserted", automation: updated }]);
   });
 
   test("leaves automation metadata unchanged when creation cannot start", async () => {
@@ -208,7 +208,7 @@ describe.serial("automation scheduler", () => {
     expect(consoleError).toHaveBeenCalledTimes(1);
   });
 
-  test("claims every due automation once and continues after one cannot start", async () => {
+  test("publishes every due claim and continues after one cannot start", async () => {
     const consoleError = spyOn(console, "error").mockImplementation(() => {});
     onTestFinished(() => {
       consoleError.mockRestore();
@@ -234,9 +234,22 @@ describe.serial("automation scheduler", () => {
       succeeding.id,
     ]);
     expect(consoleError).toHaveBeenCalledTimes(1);
+    const claimEvents = readAutomationEvents();
+    expect(claimEvents).toHaveLength(2);
+    expect(
+      claimEvents.map((event) =>
+        event.type === "automation.upserted"
+          ? { id: event.automation.id, nextRunAt: event.automation.nextRunAt }
+          : event,
+      ),
+    ).toContainAllValues([
+      { id: failing.id, nextRunAt: "2026-02-14T10:02:00.000Z" },
+      { id: succeeding.id, nextRunAt: "2026-02-14T10:02:00.000Z" },
+    ]);
 
     await runSchedulerTick();
     expect(createSessionMock).toHaveBeenCalledTimes(2);
+    expect(readAutomationEvents()).toEqual(claimEvents);
   });
 });
 
@@ -273,8 +286,8 @@ function holdCompletion(): {
   return { resolve };
 }
 
-function readAutomationEvents(): AutomationEvent[] {
-  return emitAutomationEventMock.mock.calls.map(([event]) => event);
+function readAutomationEvents(): WorkspaceEvent[] {
+  return broadcastMock.mock.calls.map(([event]) => event);
 }
 
 async function waitForAutomationEvents(count: number): Promise<void> {

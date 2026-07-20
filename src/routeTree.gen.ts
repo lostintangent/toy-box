@@ -10,7 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ApiEventsRouteImport } from './routes/api/events'
+import { Route as ApiWorkspaceRouteImport } from './routes/api/workspace'
+import { Route as ApiInboxRouteImport } from './routes/api/inbox'
 import { Route as ApiWatchSessionIdSplatRouteImport } from './routes/api/watch/$sessionId/$'
 import { Route as ApiServeSessionIdSplatRouteImport } from './routes/api/serve/$sessionId/$'
 
@@ -19,9 +20,14 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiEventsRoute = ApiEventsRouteImport.update({
-  id: '/api/events',
-  path: '/api/events',
+const ApiWorkspaceRoute = ApiWorkspaceRouteImport.update({
+  id: '/api/workspace',
+  path: '/api/workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiInboxRoute = ApiInboxRouteImport.update({
+  id: '/api/inbox',
+  path: '/api/inbox',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiWatchSessionIdSplatRoute = ApiWatchSessionIdSplatRouteImport.update({
@@ -37,20 +43,23 @@ const ApiServeSessionIdSplatRoute = ApiServeSessionIdSplatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/api/events': typeof ApiEventsRoute
+  '/api/inbox': typeof ApiInboxRoute
+  '/api/workspace': typeof ApiWorkspaceRoute
   '/api/serve/$sessionId/$': typeof ApiServeSessionIdSplatRoute
   '/api/watch/$sessionId/$': typeof ApiWatchSessionIdSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/api/events': typeof ApiEventsRoute
+  '/api/inbox': typeof ApiInboxRoute
+  '/api/workspace': typeof ApiWorkspaceRoute
   '/api/serve/$sessionId/$': typeof ApiServeSessionIdSplatRoute
   '/api/watch/$sessionId/$': typeof ApiWatchSessionIdSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/api/events': typeof ApiEventsRoute
+  '/api/inbox': typeof ApiInboxRoute
+  '/api/workspace': typeof ApiWorkspaceRoute
   '/api/serve/$sessionId/$': typeof ApiServeSessionIdSplatRoute
   '/api/watch/$sessionId/$': typeof ApiWatchSessionIdSplatRoute
 }
@@ -58,26 +67,30 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/api/events'
+    | '/api/inbox'
+    | '/api/workspace'
     | '/api/serve/$sessionId/$'
     | '/api/watch/$sessionId/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/api/events'
+    | '/api/inbox'
+    | '/api/workspace'
     | '/api/serve/$sessionId/$'
     | '/api/watch/$sessionId/$'
   id:
     | '__root__'
     | '/'
-    | '/api/events'
+    | '/api/inbox'
+    | '/api/workspace'
     | '/api/serve/$sessionId/$'
     | '/api/watch/$sessionId/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ApiEventsRoute: typeof ApiEventsRoute
+  ApiInboxRoute: typeof ApiInboxRoute
+  ApiWorkspaceRoute: typeof ApiWorkspaceRoute
   ApiServeSessionIdSplatRoute: typeof ApiServeSessionIdSplatRoute
   ApiWatchSessionIdSplatRoute: typeof ApiWatchSessionIdSplatRoute
 }
@@ -91,11 +104,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/events': {
-      id: '/api/events'
-      path: '/api/events'
-      fullPath: '/api/events'
-      preLoaderRoute: typeof ApiEventsRouteImport
+    '/api/workspace': {
+      id: '/api/workspace'
+      path: '/api/workspace'
+      fullPath: '/api/workspace'
+      preLoaderRoute: typeof ApiWorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/inbox': {
+      id: '/api/inbox'
+      path: '/api/inbox'
+      fullPath: '/api/inbox'
+      preLoaderRoute: typeof ApiInboxRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/watch/$sessionId/$': {
@@ -117,7 +137,8 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ApiEventsRoute: ApiEventsRoute,
+  ApiInboxRoute: ApiInboxRoute,
+  ApiWorkspaceRoute: ApiWorkspaceRoute,
   ApiServeSessionIdSplatRoute: ApiServeSessionIdSplatRoute,
   ApiWatchSessionIdSplatRoute: ApiWatchSessionIdSplatRoute,
 }

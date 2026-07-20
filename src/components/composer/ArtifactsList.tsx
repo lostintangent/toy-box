@@ -1,4 +1,3 @@
-import { useSetAtom } from "jotai";
 import { useFocusedPaneAtom } from "@/hooks/workspace/layout/focus";
 import { useArtifactDisplay } from "@/components/workspace/panes/artifacts/kinds";
 import { createArtifactPaneId } from "@/lib/workspace/panes";
@@ -15,7 +14,7 @@ export function ArtifactsList({
   sourceSessionId: string;
   artifacts: string[];
 }) {
-  const setFocusedPaneId = useSetAtom(useFocusedPaneAtom());
+  const focusedPaneAtom = useFocusedPaneAtom();
   const occurrences = new Map<string, number>();
   const pills = artifacts.map((path) => {
     const occurrence = occurrences.get(path) ?? 0;
@@ -31,7 +30,7 @@ export function ArtifactsList({
         <ArtifactPill
           key={key}
           path={path}
-          onSelect={() => setFocusedPaneId(createArtifactPaneId(sourceSessionId, path))}
+          onSelect={() => focusedPaneAtom.set(createArtifactPaneId(sourceSessionId, path))}
         />
       ))}
     </div>

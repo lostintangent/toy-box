@@ -1,0 +1,93 @@
+body {
+  min-inline-size: 320px;
+}
+
+.settings {
+  display: grid;
+  max-inline-size: 620px;
+  margin-inline: auto;
+  gap: 24px;
+  padding: clamp(24px, 7vw, 64px);
+}
+
+header {
+  display: grid;
+  gap: 7px;
+}
+
+.eyebrow {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  font-size: clamp(24px, 5vw, 32px);
+  line-height: 1.15;
+}
+
+.introduction {
+  max-inline-size: 54ch;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.server-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px 12px;
+  padding: 20px;
+
+  & > :is(label, input, .help, .endpoint-preview) {
+    grid-column: 1 / -1;
+  }
+
+  & > label {
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  & > input {
+    inline-size: 100%;
+    min-block-size: 40px;
+    padding-inline: 11px;
+    font-size: 14px;
+
+    &:user-invalid {
+      border-color: var(--danger);
+    }
+  }
+}
+
+.help,
+.endpoint-preview,
+output {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.endpoint-preview {
+  overflow-wrap: anywhere;
+}
+
+code {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.95em;
+}
+
+output {
+  align-self: center;
+  min-block-size: 1.5em;
+
+  &[data-state="error"] {
+    color: var(--danger);
+  }
+
+  &[data-state="success"] {
+    color: var(--foreground);
+  }
+}

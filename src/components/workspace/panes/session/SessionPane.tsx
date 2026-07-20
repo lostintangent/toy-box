@@ -1,18 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useAtomValue } from "jotai";
-import { sessionStatusAtom } from "@/hooks/workspace/atoms";
+import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import type { Attachment, ModelConfiguration } from "@/types";
 import { sessionQueries, skillQueries } from "@/lib/queries";
 import { getRecentDirectories } from "@/lib/session/recentDirectories";
-import { Button } from "@/components/ui/button";
 import {
   SessionLocationPicker,
   type SessionLocationPickerProps,
 } from "./location/SessionLocationPicker";
 import { SessionMetadataBadges } from "./location/SessionMetadataBadges";
-import { useLinkedPaneActions } from "@/hooks/workspace/layout/useLinkedPanes";
+import { publishSessionPanes } from "@/hooks/workspace/layout/linkedPanes";
 import { useSession } from "@/hooks/session/useSession";
 import { useModels } from "@/hooks/workspace/useModels";
 import { useDraftPrompt } from "@/hooks/workspace/useDraftPrompt";
@@ -23,6 +20,7 @@ import { EditDiffsProvider } from "@/hooks/diffs/EditDiffsContext";
 import { SessionCwdProvider } from "@/hooks/session/SessionCwdContext";
 import { SessionComposer } from "@/components/composer/SessionComposer";
 import type { PaneProps } from "../types";
+import { PaneActions } from "../PaneSlots";
 import { SessionMessageList, SessionMessagesSkeleton } from "./transcript/MessageList";
 
 // Cap the transcript text handed to a voice call so context stays cheap to send.
@@ -30,28 +28,24 @@ const VOICE_CONTEXT_MAX_CHARS = 1000;
 
 export interface SessionPaneProps extends PaneProps {
   sessionId: string;
-  onBack?: () => void;
-  /** Active panes own linked panes and artifact shortcuts. Overlays stay
-   *  interactive but secondary; passive panes render live read-only state. */
+  /** Mode defaults to active. Active panes own linked panes and artifact shortcuts. Overlays stay
+   *  interactive but secondary; passive panes render live read-only state.
+   *  Secondary modes default to compact presentation. */
   mode?: "active" | "overlay" | "passive";
 }
 
-export function SessionPane({
-  sessionId,
-  onBack,
-  mode = "active",
-  variant = "normal",
-  actionsSlot,
-}: SessionPaneProps) {
+export function SessionPane({ sessionId, mode = "active", variant }: SessionPaneProps) {
   const isPassive = mode === "passive";
-  const workspaceSessionStatus = useAtomValue(sessionStatusAtom(sessionId));
+  const workspaceSession = useWorkspaceSelector((workspace) => workspace.sessionStates[sessionId]);
+  const workspaceSessionStatus = workspaceSession?.status ?? "idle";
   const isDraft = workspaceSessionStatus === "draft" || workspaceSessionStatus === "creating";
   const { defaultModel, setDefaultModel } = useModels();
   // In the "compact" variant (the pager) the session surfaces its location picker
   // + message badges in the host's title bar and hides them from the composer; in
   // "normal" (the grid) it keeps them inline. See PaneProps.
-  const isCompact = variant === "compact";
+  const isCompact = variant === "compact" || (variant === undefined && mode !== "active");
   const { prompt, setPrompt } = useDraftPrompt(sessionId, {
+    sharedPrompt: workspaceSession?.prompt ?? null,
     enabled: !isPassive,
   });
 
@@ -106,6 +100,7 @@ export function SessionPane({
     stop,
     cancelQueuedMessage,
   } = useSession(sessionId, {
+    workspaceSessionStatus,
     mode: isPassive ? "passive" : "active",
     defaultModel: defaultModel ?? undefined,
     directory: effectiveDirectory,
@@ -125,13 +120,10 @@ export function SessionPane({
 
   // Skills are directory-scoped — fetch once per CWD, shared across sessions.
   // The stream-based path (session.skills_loaded → useSession cache prime) populates
-  // this for live sessions; the query here covers cold sessions via RPC fallback.
   const { data: skills } = useQuery({
     ...skillQueries.list(sessionId, selectedDirectory!),
     enabled: !isDraft && !!selectedDirectory,
   });
-  const { publishSessionPanes } = useLinkedPaneActions();
-
   useEffect(() => {
     if (mode !== "active") return;
     if (!isDraft && !hasLoadedSessionState) return;
@@ -142,16 +134,7 @@ export function SessionPane({
       isDraft ? [] : (canvases ?? []),
       isDraft ? [] : artifacts,
     );
-  }, [
-    artifacts,
-    canvases,
-    hasLoadedSessionState,
-    isDraft,
-    mode,
-    linkedSessionIds,
-    sessionId,
-    publishSessionPanes,
-  ]);
+  }, [artifacts, canvases, hasLoadedSessionState, isDraft, mode, linkedSessionIds, sessionId]);
 
   // ---------------------------------------------------------------------------
   // Render state and handlers
@@ -238,32 +221,25 @@ export function SessionPane({
   return (
     <div className="flex flex-col h-full">
       {/* Compact panes declare location and message count into the host title bar. */}
-      {isCompact &&
-        actionsSlot &&
-        !isPassive &&
-        createPortal(
+      {isCompact && mode === "active" && (
+        <PaneActions>
           <div className="flex min-w-0 items-center gap-1.5">
             {locationPickerProps && (
               // Logical padding overrides the picker's padding-inline in the desktop deck.
               <SessionLocationPicker {...locationPickerProps} className="md:pe-0" />
             )}
             <SessionMetadataBadges messageCount={messages.length} />
-          </div>,
-          actionsSlot,
-        )}
+          </div>
+        </PaneActions>
+      )}
 
       <div className="flex-1 overflow-hidden">
         {isSessionNotFound ? (
           <div className="h-full flex flex-col items-center justify-center bg-muted/50 p-4 text-center">
             <p className="text-muted-foreground mb-2">Session not found</p>
-            <p className="text-sm text-muted-foreground/70 mb-4">
+            <p className="text-sm text-muted-foreground/70">
               This session may have been deleted or is no longer available.
             </p>
-            {onBack && (
-              <Button variant="outline" size="sm" onClick={onBack}>
-                Go back
-              </Button>
-            )}
           </div>
         ) : isLoadingSessionState ? (
           <SessionMessagesSkeleton />

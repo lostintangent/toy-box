@@ -8,9 +8,10 @@ import { normalizeExtensions, registerArtifactKind } from "@/functions/state/wor
 const TEMPLATE_CONTRACT = [
   "The `html` is a complete, standalone HTML document that renders the FILE CONTENT it is given.",
   "It runs sandboxed in an iframe and talks to Toy Box through a `window.Toybox` global (already injected — do not define it):",
-  "  • `Toybox.onRender((content, { editable }) => { ... })` — register a callback that draws `content` (the raw file text, e.g. the JSON string) into the DOM. It fires on first load and again whenever the file changes on disk, so make it idempotent (rebuild from `content`, don't append).",
+  "  • `Toybox.onRender((content, { editable, pendingWorkers }) => { ... })` — register a callback that draws `content` (the raw file text, e.g. the JSON string) and any pending background UI into the DOM. Each pending worker has `{ sessionId, name?, metadata? }`. It fires on first load and whenever content or pending workers change, so make it idempotent (rebuild from current inputs, don't append).",
   "  • `Toybox.emitChange(nextContent)` — call this to persist an in-view edit back to the file. Only wire this up when `editable` is true.",
-  "Guidelines: inline all CSS/JS (no local file references); handle malformed content gracefully; keep the whole viewer self-contained. Do not add a file watcher, fetch the file, or read query params — content always arrives via `onRender`.",
+  "  • `await Toybox.spawnWorker({ name?, prompt, metadata? })` — spawn a disposable worker for this artifact. The optional friendly name appears in Toy Box's worker UI; the prompt defines the artifact-specific work; JSON metadata is returned unchanged in `pendingWorkers`, allowing responsive spinners or placeholders.",
+  "Guidelines: call `Toybox.spawnWorker` only from a direct user action; derive pending UI from `pendingWorkers`; remember that a worker can update durable content before it finishes, so encode a target identity or baseline in metadata and suppress placeholders once content proves their result is visible; inline all CSS/JS (no local file references); handle malformed content gracefully; keep the whole viewer self-contained. Do not add a file watcher, fetch the file, or read query params — content and worker state always arrive via `onRender`.",
 ].join("\n");
 
 const registerArtifactKindTool = defineTool("register_artifact_kind", {

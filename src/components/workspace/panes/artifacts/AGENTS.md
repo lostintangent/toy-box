@@ -9,7 +9,7 @@ An artifact is a durable file addressed by its source session ID and relative pa
 - Ordinary session artifacts resolve beneath that session's durable files directory.
 - An Inbox entry and its managed session share one ID, so the server derives Inbox storage from the entry and keeps the relative path equal to its artifact filename.
 
-Clients never encode physical storage. Read, write, watch, serve, and comment work all carry the same `{ sessionId, path }` address, and one server resolver selects the owned root.
+Clients never encode physical storage. Read, write, watch, serve, and worker operations all carry the same `{ sessionId, path }` address, and one server resolver selects the owned root.
 
 The pane carries one of three modes: `read`, `edit`, or `shared`. Read keeps artifact content presentation-only while still allowing Markdown comments. Edit persists user changes without agent notification. Shared persists changes and notifies the owning session's agent. Inbox artifacts open in shared mode, and follow-up conversation uses the managed session overlay.
 
@@ -32,11 +32,17 @@ One resolver maps the source session and relative path to an allowed file for ev
 
 Shared edits schedule a debounced `artifact_edited` notification through the ordinary session delivery path. The file is written first; the notification is a side channel that tells the agent to reread durable state, not a second copy of the content.
 
-## Inline collaboration
+## Background collaboration
 
-Every new Markdown comment and reply starts a focused response without requiring a Copilot mention. `ArtifactPane` closes over the artifact address, flushes pending editor changes, and enqueues the response through a short RPC. Workspace state links the responding child session to the artifact address and stable Documint thread anchor, so connected and reloading clients project the same anchored presence without adding host-authored status text.
+`ArtifactPane` gives every renderer the same `{ pendingWorkers, spawnWorker }` contract. It closes over the artifact address, flushes pending editor changes, and sends a renderer-authored prompt plus an optional friendly name and opaque metadata through a short RPC. Workspace state projects pending workers back to connected clients by artifact address; renderers interpret their own metadata without teaching the host another workflow. This association remains process-local because it can exist while work is queued, before a worker session exists; it should become durable only if artifact admission itself gains restart recovery.
 
-Comment sessions for one resolved artifact run in order, while different artifacts can progress independently. Each child inherits the source session's model and working context, edits the same file, and either changes the body, replies in the thread, or does both according to the comment. This reuses child-session execution without introducing an artifact-job type. The child stays out of Inbox and the normal session list and is deleted when it finishes; its workspace link is removed at the same boundary. Source deletion removes outstanding links and catches created children through ordinary child-session teardown. The watched artifact and persisted comment thread remain the durable result.
+Workers for one resolved artifact execute in order, while different artifacts can progress independently. The artifact layer owns this admission policy and its started/finished projection. Removing a queued association makes its eventual queue slot a no-op; cancelling admitted work delegates to the runtime's race-safe `stopWorker` operation. The runtime's general worker supervisor owns parent model and context inheritance, exact completion, stopping, and retention-aware registry deletion. Artifact workers accept its disposable default, stay out of Inbox and the normal session list, and disappear after finishing; a startup sweep deletes disposable workers abandoned by a process restart. Source deletion finishes outstanding associations and recursively tears down its worker tree. The watched artifact remains the durable result.
+
+Markdown layers inline comments on this primitive. Comment additions, edits, and deletions persist without sending `artifact_edited` notifications; new comments and replies additionally spawn a worker. Its renderer authors the complete Documint response prompt, supplies a friendly worker name, and records only the stable thread ID as worker metadata. That metadata becomes anchored presence while the worker is pending; the worker changes the body, replies in the persisted thread, or does both according to the comment. Custom kinds use the same capability through `Toybox.spawnWorker({ name?, prompt, metadata? })` and receive their pending worker list in the idempotent `onRender` context.
+
+The pane, rather than an individual renderer, owns worker inspection and cancellation. While associations are pending, it declares a worker count through `PaneStatus`; the session overlay declares its trigger into that same host-owned slot, while save and artifact-mode controls use `PaneActions`. The desktop grid presents status as lower-right overlay controls, while pagers place it in their header. `WorkspacePaneView` scopes both slots around the leaf pane and overlay, so neither receives or positions DOM targets. The compact worker menu lists friendly names and status icons. A running worker can open the existing passive `SessionPreview`; queued entries remain visible before their SDK sessions exist. Each entry can stop running work or discard queued work through the pane-owned artifact address. This keeps session IDs, preview placement, cancellation, and read semantics out of custom iframe APIs.
+
+Pending describes worker lifecycle, not whether every intermediate file effect is still absent. A worker can persist its substantive result before its session finishes. Renderers that use placeholders for expected durable content must therefore encode a target identity or baseline in metadata and reconcile it against current content, while presence-style indicators may intentionally remain until the worker finishes.
 
 ## Rendering
 
@@ -46,7 +52,7 @@ Comment sessions for one resolved artifact run in order, while different artifac
 - HTML and SVG render in a sandboxed iframe. A generated serve base lets relative scripts, styles, images, and links resolve within the source session's artifact storage.
 - Custom artifact kinds provide a persisted HTML viewer template for claimed extensions. Built-in kinds keep priority, and unclaimed extensions fall back to Markdown.
 
-Custom kind definitions live under `~/.toy-box/artifacts/` and hydrate through shared workspace state. Registration publishes the new definition so connected clients can resolve the renderer immediately. The viewer receives file content through the Toy Box bridge and can emit replacement content only when the kind is editable.
+Custom kind definitions live under `~/.toy-box/artifacts/` and hydrate through shared workspace state. Registration publishes the new definition so connected clients can resolve the renderer immediately. The viewer receives file content and pending workers through the Toy Box bridge, can spawn artifact-scoped workers, and can emit replacement content only when the kind is editable.
 
 ## Workspace integration
 
@@ -58,7 +64,7 @@ Inbox entries store at most one artifact filename and own its directory. `InboxP
 
 - [`../../AGENTS.md`](../../AGENTS.md) owns the pane model and the layouts and workflows that compose artifact surfaces.
 - [`../../../../hooks/artifacts/useArtifact.ts`](../../../../hooks/artifacts/useArtifact.ts) owns client file lifecycle; `ArtifactPane` composes session-owned operations, and renderers own format-specific editing and interaction.
-- [`../../../../functions/artifacts.ts`](../../../../functions/artifacts.ts) owns validated text read, write, and inline-comment response. Watch and serve routes exist because browser-native streaming and relative-resource loading need HTTP transports.
+- [`../../../../functions/artifacts.ts`](../../../../functions/artifacts.ts) owns validated text read, write, and artifact-worker requests. Watch and serve routes exist because browser-native streaming and relative-resource loading need HTTP transports.
 - [`../../../../functions/state/AGENTS.md`](../../../../functions/state/AGENTS.md) owns Inbox rows, custom kind persistence, and artifact-file teardown.
 - [`../../../../functions/sdk/AGENTS.md`](../../../../functions/sdk/AGENTS.md) owns projecting agent file activity into artifact events and encoding edit notifications across SDK history.
 - Keep one file as the source of truth, one server path resolver for every operation, and one `useArtifact` lifecycle per mounted pane.

@@ -94,7 +94,7 @@ describe("session query cache", () => {
       summary: "Updated",
       modifiedTime: new Date("2026-02-14T02:00:00.000Z"),
     });
-    expect(state.childSessionIds).toEqual([sessionId]);
+    expect(state.workerSessionIds).toEqual([sessionId]);
     expect(state.worktrees[sessionId]).toMatchObject({ branch: "feature" });
   });
 
@@ -144,7 +144,7 @@ describe("session query cache", () => {
     const sessionId = "toy-box-delete";
     seedState(queryClient, {
       sessions: [createSession(sessionId)],
-      childSessionIds: [sessionId],
+      workerSessionIds: [sessionId],
       worktrees: {
         [sessionId]: {
           branch: "feature",
@@ -161,7 +161,7 @@ describe("session query cache", () => {
 
     const state = readState(queryClient);
     expect(state.sessions).toEqual([]);
-    expect(state.childSessionIds).toEqual([]);
+    expect(state.workerSessionIds).toEqual([]);
     expect(state.worktrees).toEqual({});
   });
 

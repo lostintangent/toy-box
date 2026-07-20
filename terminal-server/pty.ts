@@ -1,5 +1,6 @@
 import { ScrollbackBuffer } from "./scrollback";
 
+import { Debouncer } from "@tanstack/pacer/debouncer";
 import type { ServerWebSocket, Subprocess } from "bun";
 import type { TerminalServerMessage } from "../src/types";
 import type { WebSocketData } from "./";
@@ -15,7 +16,7 @@ interface PTYSession {
   proc: PTYProcess;
   connections: Map<number, ServerWebSocket<WebSocketData>>;
   lastActivity: number;
-  orphanTimeout?: ReturnType<typeof setTimeout>;
+  orphanClose: Debouncer<() => void>;
   scrollback: ScrollbackBuffer;
   cols: number;
   rows: number;
@@ -92,7 +93,7 @@ export class PTYManager {
       session.connections.clear();
       session.connections.set(wsId, ws);
 
-      this.clearOrphanTimeout(session);
+      session.orphanClose.cancel();
       this.markSessionActive(session);
 
       for (const existingWs of replacedConnections) {
@@ -157,11 +158,7 @@ export class PTYManager {
     // If this was the last connection, start the orphan timeout to
     // eventually close the PTY if no new connections are made.
     if (session.connections.size === 0) {
-      this.clearOrphanTimeout(session);
-
-      session.orphanTimeout = setTimeout(() => {
-        this.closePTY(clientId, "orphaned");
-      }, this.orphanTimeoutMs);
+      session.orphanClose.maybeExecute();
     }
   }
 
@@ -206,6 +203,9 @@ export class PTYManager {
       proc,
       connections: new Map([[wsId, ws]]),
       lastActivity: Date.now(),
+      orphanClose: new Debouncer(() => this.closePTY(clientId, "orphaned"), {
+        wait: this.orphanTimeoutMs,
+      }),
       scrollback,
       cols,
       rows,
@@ -220,6 +220,7 @@ export class PTYManager {
         // Notify connected clients of exit and clean up session.
         this.broadcastControl(clientId, { type: "exit" });
 
+        activeSession.orphanClose.cancel();
         activeSession.connections.clear();
         this.sessions.delete(clientId);
       })
@@ -263,13 +264,6 @@ export class PTYManager {
     }
   }
 
-  private clearOrphanTimeout(session: PTYSession) {
-    if (!session.orphanTimeout) return;
-
-    clearTimeout(session.orphanTimeout);
-    session.orphanTimeout = undefined;
-  }
-
   private markSessionActive(session: PTYSession) {
     session.lastActivity = Date.now();
   }
@@ -293,7 +287,7 @@ export class PTYManager {
     const session = this.sessions.get(clientId);
     if (!session) return;
 
-    this.clearOrphanTimeout(session);
+    session.orphanClose.cancel();
 
     // Notify connected clients when the server initiates the close
     if (reason === "idle") {

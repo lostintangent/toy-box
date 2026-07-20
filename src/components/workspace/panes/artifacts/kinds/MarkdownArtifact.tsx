@@ -1,4 +1,3 @@
-import { useAtomValue } from "jotai";
 import {
   Documint,
   type CommentChange,
@@ -6,12 +5,13 @@ import {
   type DocumentUser,
   type EditorTheme,
 } from "documint";
-import { artifactCommentSessionsAtom } from "@/hooks/workspace/atoms";
+import type { JsonValue } from "@/types";
 import type { ArtifactRendererProps } from "./index";
 import {
   usePreferredColorScheme,
   type PreferredColorScheme,
 } from "@/hooks/browser/usePreferredColorScheme";
+import { buildArtifactCommentPrompt } from "./markdownComments";
 
 const COPILOT_USER = {
   id: "copilot",
@@ -22,24 +22,28 @@ const DOCUMINT_USERS = [COPILOT_USER];
 
 /** Rich Markdown editing with live external diffs and inline Copilot responses. */
 export function MarkdownArtifact({
-  sessionId,
-  path,
   mode,
   artifact,
-  respondToComment,
+  pendingWorkers,
+  spawnWorker,
 }: ArtifactRendererProps) {
   const theme = useDocumintTheme();
-  const commentSessions = useAtomValue(artifactCommentSessionsAtom(sessionId, path));
-  const presence: DocumentPresence[] = commentSessions.map((commentSession) => ({
-    userId: COPILOT_USER.id,
-    cursor: { threadId: commentSession.threadId },
-    color: "#8b5cf6",
-  }));
+  const presence: DocumentPresence[] = pendingWorkers.flatMap((worker) => {
+    const threadId = artifactCommentThreadId(worker.metadata);
+    return threadId ? [{ userId: COPILOT_USER.id, cursor: { threadId }, color: "#8b5cf6" }] : [];
+  });
 
   async function handleCommentChanged(change: CommentChange) {
-    if (change.kind !== "added") return;
+    if (change.kind !== "added") {
+      await artifact.flush({ notifyAgent: false });
+      return;
+    }
 
-    await respondToComment(change.threadId, change.thread);
+    await spawnWorker({
+      name: "Respond to comment",
+      prompt: buildArtifactCommentPrompt(change.thread, new Date()),
+      metadata: { threadId: change.threadId },
+    });
   }
 
   return (
@@ -54,6 +58,11 @@ export function MarkdownArtifact({
       theme={theme}
     />
   );
+}
+
+function artifactCommentThreadId(metadata: JsonValue | undefined): string | undefined {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+  return typeof metadata.threadId === "string" ? metadata.threadId : undefined;
 }
 
 const DOCUMINT_THEME_FALLBACKS = {

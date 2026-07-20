@@ -22,7 +22,11 @@ import {
 } from "../../runtime/broadcast";
 import { deleteSessionWorkspaceState, promoteDraftSession } from "../workspace";
 import { createSessionWorktree, deleteSessionWorktree } from "./worktrees";
-import { getChildSessionIdsForParent, linkChildSession, unlinkChildSession } from "./children";
+import {
+  getWorkerSessionIdsForParent,
+  registerWorkerSession,
+  unregisterWorkerSession,
+} from "./workers";
 import { sharedMap } from "../../runtime/processState";
 import { hasHyperSession } from "../workspace/hyperSessions";
 import { resolveSessionType } from "./type";
@@ -34,11 +38,15 @@ const pendingResumes = sharedMap<Promise<CopilotSession>>("pending-session-resum
 
 export type CreateSessionOptions = {
   model?: ModelConfiguration;
+  name?: string;
   directory?: string;
   sessionType?: SessionType;
   useWorktree?: boolean;
   initialContext?: SessionContext;
-  parentSessionId?: string;
+  worker?: {
+    parentSessionId: string;
+    retained?: boolean;
+  };
 };
 
 // ── Creation ──────────────────────────────────────────────────────────
@@ -48,12 +56,12 @@ export async function createSession(
   sessionId: string,
   options?: CreateSessionOptions,
 ): Promise<CopilotSession> {
-  const { model, directory, useWorktree, initialContext, parentSessionId } = options ?? {};
+  const { model, name, directory, useWorktree, initialContext, worker } = options ?? {};
+  const parentSessionId = worker?.parentSessionId;
   const sessionType =
-    options?.sessionType ??
-    (parentSessionId ? "child" : hasHyperSession(sessionId) ? "hyper" : "standard");
-  if ((sessionType === "child") !== Boolean(parentSessionId)) {
-    throw new Error("Child session creation requires exactly one parent session.");
+    options?.sessionType ?? (worker ? "worker" : hasHyperSession(sessionId) ? "hyper" : "standard");
+  if ((sessionType === "worker") !== Boolean(worker)) {
+    throw new Error("Worker session creation requires exactly one worker owner.");
   }
   const { executionDirectory, displayContext, worktree } = await prepareSessionCreation(sessionId, {
     directory,
@@ -64,17 +72,21 @@ export async function createSession(
   // The SDK requires a working directory. When none was explicitly provided
   // (e.g. automations with no cwd), fall back to the user's home directory
   // so the SDK has a valid path without leaking the server's cwd.
-  let session: CopilotSession;
+  let session: CopilotSession | undefined;
   try {
-    if (parentSessionId) await linkChildSession(sessionId, parentSessionId);
+    if (worker) {
+      await registerWorkerSession(sessionId, worker.parentSessionId, worker.retained);
+    }
     session = await sdkCreateSession(sessionId, {
       model,
       directory: executionDirectory ?? homedir(),
       sessionType,
       tools: getSessionTools(sessionType),
     });
+    if (name) await session.rpc.name.setAuto({ summary: name });
   } catch (error) {
-    if (parentSessionId) await unlinkChildSession(sessionId).catch(console.error);
+    if (session) await sdkDeleteSession(sessionId).catch(console.error);
+    if (worker) await unregisterWorkerSession(sessionId).catch(console.error);
     if (worktree) await deleteSessionWorktree(sessionId).catch(console.error);
     throw error;
   }
@@ -90,7 +102,7 @@ export async function createSession(
     sessionId,
     startTime: now,
     modifiedTime: now,
-    summary: "",
+    summary: name ?? "",
     isRemote: false,
     context: displayContext,
     worktree,
@@ -189,11 +201,11 @@ export async function renameSession(sessionId: string, name: string): Promise<vo
 
 // ── Deletion ───────────────────────────────────────────────────────────
 
-/** Delete a session and its direct child sessions. */
+/** Delete a session and the complete tree of workers it owns. */
 export async function deleteSession(sessionId: string): Promise<void> {
-  const childSessionIds = await getChildSessionIdsForParent(sessionId);
-  for (const childSessionId of childSessionIds) {
-    await deleteSingleSession(childSessionId);
+  const workerSessionIds = await getWorkerSessionIdsForParent(sessionId);
+  for (const workerSessionId of workerSessionIds) {
+    await deleteSession(workerSessionId);
   }
 
   await deleteSingleSession(sessionId);
@@ -206,6 +218,7 @@ export async function deleteSessionIfExists(sessionId: string): Promise<boolean>
     return true;
   } catch (error) {
     if (!evictCachedSessionIfStale(sessionId, error)) throw error;
+    await removeDeletedSessionState(sessionId);
     return false;
   }
 }
@@ -214,6 +227,10 @@ export async function deleteSessionIfExists(sessionId: string): Promise<boolean>
 
 async function deleteSingleSession(sessionId: string): Promise<void> {
   await sdkDeleteSession(sessionId);
+  await removeDeletedSessionState(sessionId);
+}
+
+async function removeDeletedSessionState(sessionId: string): Promise<void> {
   await removeDeletedSessionStream(sessionId);
 
   const cached = cachedSessions.get(sessionId);
@@ -223,7 +240,7 @@ async function deleteSingleSession(sessionId: string): Promise<void> {
   }
 
   await deleteSessionWorktree(sessionId);
-  await unlinkChildSession(sessionId);
+  await unregisterWorkerSession(sessionId);
   deleteSessionWorkspaceState(sessionId);
   await evictDeletedSessionSnapshot(sessionId);
   emitSessionDelete(sessionId);

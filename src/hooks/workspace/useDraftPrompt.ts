@@ -1,39 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { useAtomValue } from "jotai";
+import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { getOrCreateClientId } from "@/lib/config/clientId";
 import type { DraftPrompt } from "@/types";
-import { sessionPromptAtom } from "./atoms";
-import { useWorkspaceActions } from "./WorkspaceActionsContext";
+import { useDispatchWorkspaceAction } from "./state";
 
 const DRAFT_PROMPT_SYNC_DELAY_MS = 1500;
 
 // One keyed session pane owns this local editing lifetime: composer text updates
 // locally, debounces into shared state, adopts remote edits, and flushes on unmount.
-export function useDraftPrompt(sessionId: string, options?: { enabled?: boolean }) {
-  const enabled = options?.enabled ?? true;
+export function useDraftPrompt(
+  sessionId: string,
+  { sharedPrompt, enabled = true }: { sharedPrompt: DraftPrompt | null; enabled?: boolean },
+) {
   const [origin] = useState(getOrCreateClientId);
-  const sharedPrompt = useAtomValue(sessionPromptAtom(sessionId)) ?? null;
-  const { dispatchWorkspaceAction } = useWorkspaceActions();
+  const dispatchWorkspaceAction = useDispatchWorkspaceAction();
   const [prompt, setPromptState] = useState("");
   const editedRef = useRef(false);
   const syncedTextRef = useRef<string | null>(null);
-  const pendingSyncRef = useRef<{
-    flush: () => void;
-    timer: ReturnType<typeof setTimeout>;
-  } | null>(null);
-
-  function setPrompt(text: string) {
-    if (!enabled) return;
-    editedRef.current = true;
-    setPromptState(text);
-
-    if (pendingSyncRef.current) clearTimeout(pendingSyncRef.current.timer);
-    const flush = () => {
-      const pending = pendingSyncRef.current;
-      if (pending?.flush !== flush) return;
-
-      clearTimeout(pending.timer);
-      pendingSyncRef.current = null;
+  const promptSync = useDebouncer(
+    (text: string) => {
       if (syncedTextRef.current === text) return;
       syncedTextRef.current = text;
 
@@ -46,11 +31,19 @@ export function useDraftPrompt(sessionId: string, options?: { enabled?: boolean 
           updatedAt: Date.now(),
         },
       });
-    };
-    pendingSyncRef.current = {
-      flush,
-      timer: setTimeout(flush, DRAFT_PROMPT_SYNC_DELAY_MS),
-    };
+    },
+    {
+      wait: DRAFT_PROMPT_SYNC_DELAY_MS,
+      onUnmount: (debouncer) => debouncer.flush(),
+    },
+  );
+
+  function setPrompt(text: string) {
+    if (!enabled) return;
+    editedRef.current = true;
+    setPromptState(text);
+
+    promptSync.maybeExecute(text);
   }
 
   useEffect(() => {
@@ -58,12 +51,9 @@ export function useDraftPrompt(sessionId: string, options?: { enabled?: boolean 
 
     const nextText = sharedPrompt?.text ?? "";
     setPromptState(nextText);
-    if (pendingSyncRef.current) clearTimeout(pendingSyncRef.current.timer);
-    pendingSyncRef.current = null;
+    promptSync.cancel();
     syncedTextRef.current = nextText;
-  }, [enabled, origin, sharedPrompt]);
-
-  useEffect(() => () => pendingSyncRef.current?.flush(), []);
+  }, [enabled, origin, promptSync, sharedPrompt]);
 
   return { prompt, setPrompt };
 }

@@ -14,19 +14,21 @@ export const renameSessionInputSchema = sessionInputSchema.extend({
   name: z.string().trim().min(1).max(100),
 });
 
-const attachmentsSchema = z.array(
-  z.object({
-    displayName: z.string(),
-    mimeType: z.string(),
-    base64: z.string(),
-  }),
-);
+export const sessionAttachmentsSchema = z
+  .array(
+    z.object({
+      displayName: z.string(),
+      mimeType: z.string(),
+      base64: z.string(),
+    }),
+  )
+  .optional();
 
 const sessionMessageInputSchema = z
   .object({
     id: z.string().optional(),
     content: z.string(),
-    attachments: attachmentsSchema.optional(),
+    attachments: sessionAttachmentsSchema,
     model: modelConfigurationSchema.optional(),
   })
   .refine(
@@ -61,10 +63,12 @@ export const streamSessionRequestSchema = streamSessionBaseSchema.and(
   ]),
 );
 
-export const createSessionInputSchema = sessionCreationSchema.extend({
+const sessionLaunchInputSchema = sessionCreationSchema.extend({
   message: sessionMessageInputSchema,
-  background: z.boolean().optional(),
 });
+
+export const createSessionInputSchema = sessionLaunchInputSchema;
+export const dispatchInboxTaskInputSchema = sessionLaunchInputSchema;
 
 export const deliverMessageInputSchema = sessionInputSchema.extend({
   message: sessionMessageInputSchema,

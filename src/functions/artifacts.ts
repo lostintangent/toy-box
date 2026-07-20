@@ -1,11 +1,15 @@
-// RPC boundary for reading, writing, and responding to artifact comments.
+// RPC boundary for reading, writing, and spawning background workers for artifacts.
 // Every artifact is addressed by its source session and relative path.
 
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { z } from "zod";
-import { respondToArtifactComment as respondToComment } from "@/functions/artifacts/comments";
+import {
+  cancelArtifactWorker as cancelArtifactWorkerExecution,
+  spawnArtifactWorker as executeArtifactWorker,
+} from "@/functions/artifacts/workers";
 import { resolveArtifactPath } from "@/functions/artifacts/paths";
+import type { JsonValue } from "@/types";
 
 const artifactInputSchema = z.object({
   sessionId: z.string().min(1),
@@ -16,24 +20,28 @@ const writeArtifactInputSchema = artifactInputSchema.extend({
   content: z.string(),
 });
 
-const artifactCommentInputSchema = artifactInputSchema.extend({
-  threadId: z.string().min(1),
-  thread: z.object({
-    quote: z.string(),
-    anchor: z.record(z.string(), z.unknown()),
-    comments: z
-      .array(
-        z.object({
-          body: z.string(),
-          updatedAt: z.string(),
-        }),
-      )
-      .min(1),
-    resolvedAt: z.string().optional(),
-  }),
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValueSchema),
+    z.record(z.string(), jsonValueSchema),
+  ]),
+);
+
+const artifactWorkerInputSchema = artifactInputSchema.extend({
+  name: z.string().trim().min(1).max(100).optional(),
+  prompt: z.string().trim().min(1).max(100_000),
+  metadata: jsonValueSchema.optional(),
 });
 
-export type ArtifactCommentInput = z.infer<typeof artifactCommentInputSchema>;
+const cancelArtifactWorkerInputSchema = artifactInputSchema.extend({
+  workerSessionId: z.string().min(1),
+});
+
+export type ArtifactWorkerInput = z.infer<typeof artifactWorkerInputSchema>;
 
 export const readArtifact = createServerFn({ method: "GET" })
   .validator(zodValidator(artifactInputSchema))
@@ -56,10 +64,15 @@ export const writeArtifact = createServerFn({ method: "POST" })
     return { timestamp: (await stat(absolutePath)).mtimeMs };
   });
 
-/** Respond to an inline Markdown comment using its source session's context. */
-export const respondToArtifactComment = createServerFn({ method: "POST" })
-  .validator(zodValidator(artifactCommentInputSchema))
-  .handler(({ data }): Promise<{ sessionId: string }> => respondToComment(data));
+/** Spawn a worker with renderer-authored instructions for this artifact. */
+export const spawnArtifactWorker = createServerFn({ method: "POST" })
+  .validator(zodValidator(artifactWorkerInputSchema))
+  .handler(({ data }): Promise<{ sessionId: string }> => executeArtifactWorker(data));
+
+/** Cancel a queued or running worker owned by this artifact. */
+export const cancelArtifactWorker = createServerFn({ method: "POST" })
+  .validator(zodValidator(cancelArtifactWorkerInputSchema))
+  .handler(({ data }): Promise<boolean> => cancelArtifactWorkerExecution(data));
 
 async function requireArtifactPath(sessionId: string, path: string): Promise<string> {
   const target = await resolveArtifactPath(sessionId, path);

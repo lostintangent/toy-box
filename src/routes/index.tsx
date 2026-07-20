@@ -4,25 +4,20 @@ import { createIsomorphicFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { useState, useRef, useEffect, useDeferredValue, lazy, Suspense } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAtom, useAtomValue } from "jotai";
+import { useSelector } from "@tanstack/react-store";
+import { useAtom } from "jotai";
 import { z } from "zod";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { PanelLeft } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { deleteSession, renameSession } from "@/functions/sessions";
 import { workspaceQueries } from "@/lib/queries";
-import { useAutomations } from "@/hooks/automations/useAutomations";
 import { useDrafts } from "@/hooks/workspace/useDrafts";
 import { useHyperSession, type HyperSessionState } from "@/hooks/workspace/layout/useHyperSession";
 import { useSessions } from "@/hooks/session/useSessions";
-import { useWorkspace } from "@/hooks/workspace/useWorkspace";
-import {
-  hyperSessionIdsAtom,
-  inboxEntriesAtom,
-  workspaceEnvironmentAtom,
-} from "@/hooks/workspace/atoms";
-import { WorkspaceActionsProvider } from "@/hooks/workspace/WorkspaceActionsContext";
-import { useViewport } from "@/hooks/browser/ViewportContext";
+import { useWorkspaceSync } from "@/hooks/workspace/useWorkspaceSync";
+import { useWorkspaceSelector } from "@/hooks/workspace/state";
+import { useViewport } from "@/hooks/browser/useViewport";
 import { usePanelTransition } from "@/hooks/browser/usePanelTransition";
 import { Sidebar, type SidebarProps } from "@/components/sidebar/Sidebar";
 import { RenameSessionDialog } from "@/components/sidebar/list/RenameSessionDialog";
@@ -30,8 +25,12 @@ import { WorkspaceGrid } from "@/components/workspace/layout/WorkspaceGrid";
 import { HyperSession } from "@/components/workspace/layout/HyperSession";
 import { WorkspacePager } from "@/components/workspace/layout/WorkspacePager";
 import { TerminalShell } from "@/components/terminal/TerminalShell";
-import { useLinkedPanes } from "@/hooks/workspace/layout/useLinkedPanes";
-import { useWorkspaceFocus } from "@/hooks/workspace/layout/useWorkspaceFocus";
+import { WorkspaceSurfaceProvider } from "@/hooks/workspace/layout/focus";
+import {
+  clearLinkedPanes,
+  linkedPanesStore,
+  prunePanePublishers,
+} from "@/hooks/workspace/layout/linkedPanes";
 import {
   deriveOpenSessionIds,
   deriveReachablePaneIds,
@@ -137,7 +136,7 @@ function WorkspacePage() {
   }
 
   const primarySelectedSessionId = selectedSessionIds[0];
-  const { linkedPanesByPublisher, publishLinkedPanes, prunePanePublishers } = useLinkedPanes();
+  const linkedPanesByPublisher = useSelector(linkedPanesStore);
   const rootPanes = deriveWorkspaceRootPanes(selectedSessionIds);
   const reachablePaneIds = deriveReachablePaneIds(rootPanes, linkedPanesByPublisher);
   const openPanes = deriveVisibleWorkspacePanes({
@@ -145,8 +144,6 @@ function WorkspacePage() {
     linkedPanesByPublisher,
   });
   const openSessionIds = deriveOpenSessionIds(openPanes);
-
-  useWorkspaceFocus(openPanes);
 
   const [storedShowExternalSessions, setShowExternalSessions] = useAtom(showExternalSessionsAtom);
   const showExternalSessions = hydrated
@@ -170,39 +167,26 @@ function WorkspacePage() {
     recentSessions,
     isLoading: isSessionsLoading,
     worktreeSessionIds,
-    childSessionIds,
+    workerSessionIds,
   } = useSessions();
-  const workspace = useWorkspace();
-  const environment = useAtomValue(workspaceEnvironmentAtom);
-  const hyperSessionIds = useAtomValue(hyperSessionIdsAtom);
-  const inboxEntries = useAtomValue(inboxEntriesAtom);
-  const isLoading = isSessionsLoading || workspace.isLoading;
+  const { automationSessionIds, environment, hyperSessionIds, inboxSessionIds } =
+    useWorkspaceSelector((workspace) => ({
+      automationSessionIds: workspace.automations.map((automation) => automation.id),
+      environment: workspace.environment,
+      hyperSessionIds: workspace.hyperSessionIds,
+      inboxSessionIds: workspace.inboxEntries.map((entry) => entry.id),
+    }));
+  useWorkspaceSync();
   const { listedDrafts, isDraft, createDraft, discardDraft } = useDrafts({
     sessions,
-    dispatchWorkspaceAction: workspace.actions.dispatchWorkspaceAction,
+    hyperSessionIds,
   });
 
-  const {
-    automations,
-    isLoading: isAutomationsLoading,
-    createAutomation,
-    updateAutomation,
-    deleteAutomation,
-    runAutomation,
-    isCreatingAutomation,
-    updatingAutomationId,
-    deletingAutomationId,
-  } = useAutomations({
-    onUserRunRequested: (sessionId) => {
-      updateSelectedSessionIds([sessionId]);
-    },
-    applyWorkspaceEvent: workspace.actions.applyWorkspaceEvent,
-  });
   const managedSessionIds = new Set([
-    ...automations.map((automation) => automation.id),
-    ...inboxEntries.map((entry) => entry.id),
+    ...automationSessionIds,
+    ...inboxSessionIds,
     ...hyperSessionIds,
-    ...childSessionIds,
+    ...workerSessionIds,
   ]);
   function handleCloseVisibleSession(sessionId: string) {
     if (!selectedSessionIds.includes(sessionId)) return;
@@ -247,13 +231,13 @@ function WorkspacePage() {
   // Keep URL session IDs aligned with available sessions.
   // This prevents stale open panes when another client deletes a session.
   useEffect(() => {
-    if (isLoading) return;
+    if (isSessionsLoading) return;
     if (selectedSessionIds.length === 0) return;
 
     const availableSessionIds = new Set(sessions.map((session) => session.sessionId));
     for (const draft of listedDrafts) availableSessionIds.add(draft.sessionId);
     for (const sessionId of hyperSessionIds) availableSessionIds.add(sessionId);
-    for (const automation of automations) availableSessionIds.add(automation.id);
+    for (const sessionId of automationSessionIds) availableSessionIds.add(sessionId);
 
     const validSessionIds = selectedSessionIds.filter((sessionId) =>
       availableSessionIds.has(sessionId),
@@ -267,17 +251,15 @@ function WorkspacePage() {
       replace: true,
     });
   }, [
-    automations,
+    automationSessionIds,
     hyperSessionIds,
-    isLoading,
+    isSessionsLoading,
     listedDrafts,
     navigate,
     selectedSessionIds,
     sessions,
   ]);
 
-  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
-  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [isSidebarDragging, setIsSidebarDragging] = useState(false);
@@ -381,9 +363,14 @@ function WorkspacePage() {
   }
 
   // Global keyboard shortcuts
-  useHotkey("Mod+B", toggleSidebar);
-  useHotkey({ key: "N", ctrl: true }, () => handleCreateSession());
-  useHotkey({ key: "`", ctrl: true }, toggleTerminal);
+  useHotkey("Mod+B", toggleSidebar, {
+    enabled: !isMobileLayout,
+    requireReset: true,
+  });
+  useHotkey("Control+N", () => handleCreateSession(), {
+    requireReset: true,
+  });
+  useHotkey("Control+`", toggleTerminal, { requireReset: true });
 
   function handleTerminalClose() {
     closeTerminal();
@@ -416,8 +403,6 @@ function WorkspacePage() {
   const deleteMutation = useMutation({
     mutationFn: (sessionId: string) => deleteSession({ data: { sessionId } }),
     onMutate: async (sessionId) => {
-      setDeletingSessionId(sessionId);
-
       // Cancel any outgoing refetches to avoid overwriting our optimistic update
       await cancelSessionsStateQuery(queryClient);
 
@@ -436,16 +421,12 @@ function WorkspacePage() {
         restoreSessionsState(queryClient, context.previousSessionsState);
       }
     },
-    onSettled: () => {
-      setDeletingSessionId(null);
-    },
   });
 
   const renameMutation = useMutation({
     mutationFn: ({ sessionId, name }: { sessionId: string; name: string }) =>
       renameSession({ data: { sessionId, name } }),
     onMutate: async ({ sessionId, name }) => {
-      setRenamingSessionId(sessionId);
       await cancelSessionsStateQuery(queryClient);
 
       const previousSessionsState = snapshotSessionsState(queryClient);
@@ -461,10 +442,11 @@ function WorkspacePage() {
         restoreSessionsState(queryClient, context.previousSessionsState);
       }
     },
-    onSettled: () => {
-      setRenamingSessionId(null);
-    },
   });
+  const deletingSessionId = deleteMutation.isPending ? (deleteMutation.variables ?? null) : null;
+  const renamingSessionId = renameMutation.isPending
+    ? (renameMutation.variables?.sessionId ?? null)
+    : null;
 
   function handleSessionDelete(sessionIdToDelete: string) {
     if (isDraft(sessionIdToDelete)) {
@@ -510,8 +492,8 @@ function WorkspacePage() {
 
   const hyper = useHyperSession({
     initialState: restoredHyperSession,
+    hyperSessionId,
     createDraft,
-    dispatchWorkspaceAction: workspace.actions.dispatchWorkspaceAction,
     deleteSession: handleSessionDelete,
     openSessionInWorkspace,
   });
@@ -550,7 +532,7 @@ function WorkspacePage() {
         )
       : [];
     prunePanePublishers(new Set([...reachablePaneIds, ...hyperReachablePaneIds]));
-  }, [hyperSession, linkedPanesByPublisher, prunePanePublishers, reachablePaneIds]);
+  }, [hyperSession, linkedPanesByPublisher, reachablePaneIds]);
 
   const hasSelectedSession = selectedSessionIds.length > 0;
   const isInboxOpen = !hasSelectedSession && (!isMobileLayout || isMobileInboxOpen);
@@ -561,7 +543,7 @@ function WorkspacePage() {
   }
 
   function handleMobileWorkspaceBack() {
-    publishLinkedPanes(INBOX_PANE.id, []);
+    clearLinkedPanes(INBOX_PANE.id);
     setIsMobileInboxOpen(false);
     if (hasSelectedSession) updateSelectedSessionIds([]);
   }
@@ -609,7 +591,7 @@ function WorkspacePage() {
     showExternalSessions,
     onShowExternalSessionsChange: setShowExternalSessions,
     sessions: filteredSessions,
-    isLoading,
+    isSessionsLoading,
     onSessionSelect: handleSessionSelect,
     onSessionRename: handleSessionRename,
     onSessionDelete: handleSessionDelete,
@@ -618,17 +600,8 @@ function WorkspacePage() {
     worktreeSessionIds,
     emptyMessage: deferredFilter ? "No sessions match your filter" : undefined,
     draftSessions: listedDrafts,
-    automations,
-    isAutomationsLoading,
     isAutomationsExpanded,
     onAutomationsExpandedChange: setIsAutomationsExpanded,
-    onCreateAutomation: createAutomation,
-    onUpdateAutomation: updateAutomation,
-    onDeleteAutomation: deleteAutomation,
-    onRunAutomation: runAutomation,
-    creatingAutomation: isCreatingAutomation,
-    updatingAutomationId,
-    deletingAutomationId,
     onCreateSession: handleCreateSession,
     onToggleHyper: toggleHyper,
     isHyperOpen,
@@ -774,19 +747,21 @@ function WorkspacePage() {
   );
 
   return (
-    <WorkspaceActionsProvider actions={workspace.actions}>
-      <div className="h-full overflow-hidden">
-        {!hydrated ? (
-          <>
-            {mobileLayout}
-            {desktopLayout}
-          </>
-        ) : isMobileLayout ? (
-          mobileLayout
-        ) : (
-          desktopLayout
-        )}
-      </div>
+    <>
+      <WorkspaceSurfaceProvider surface="main" panes={openPanes}>
+        <div className="h-full overflow-hidden">
+          {!hydrated ? (
+            <>
+              {mobileLayout}
+              {desktopLayout}
+            </>
+          ) : isMobileLayout ? (
+            mobileLayout
+          ) : (
+            desktopLayout
+          )}
+        </div>
+      </WorkspaceSurfaceProvider>
       <RenameSessionDialog
         open={renameTargetId !== null}
         session={renameTargetSession}
@@ -796,6 +771,6 @@ function WorkspacePage() {
           await renameMutation.mutateAsync(input);
         }}
       />
-    </WorkspaceActionsProvider>
+    </>
   );
 }

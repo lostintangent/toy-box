@@ -1,0 +1,235 @@
+body {
+  inline-size: 360px;
+}
+
+.popup {
+  display: grid;
+  gap: 17px;
+  padding: 18px;
+}
+
+.page-context {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+}
+
+.page-overview {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.page-details {
+  display: grid;
+  min-inline-size: 0;
+  flex: 1;
+  gap: 4px;
+  padding-block: 1px;
+
+  & > :is(.page-title, .page-url) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  & > .page-title {
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.35;
+  }
+
+  & > .page-url {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+}
+
+.remove-button {
+  position: absolute;
+  display: grid;
+  inline-size: 22px;
+  block-size: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: inherit;
+  place-items: center;
+
+  & > svg {
+    inline-size: 13px;
+    block-size: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-width: 1.75;
+  }
+
+  @media (forced-colors: active) {
+    border: 1px solid ButtonBorder;
+  }
+}
+
+.viewport {
+  position: relative;
+  inline-size: 94px;
+  block-size: 59px;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--hover);
+
+  & > img {
+    display: block;
+    inline-size: 100%;
+    block-size: 100%;
+    object-fit: cover;
+  }
+
+  & > .remove-button {
+    inset-block-start: 4px;
+    inset-inline-end: 4px;
+    border: 1px solid rgb(255 255 255 / 28%);
+    background: rgb(0 0 0 / 68%);
+    color: white;
+
+    &:hover {
+      background: rgb(0 0 0 / 82%);
+    }
+
+    &:focus-visible {
+      outline-offset: -3px;
+    }
+  }
+}
+
+.selection {
+  position: relative;
+  margin-block-start: 7px;
+  padding-block: 10px 0;
+  padding-inline: 1px 28px;
+  border-block-start: 1px solid var(--border);
+
+  & > blockquote {
+    max-block-size: 72px;
+    overflow: auto;
+    font-size: 12px;
+    font-style: italic;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+
+    &::before {
+      content: "“";
+    }
+
+    &::after {
+      content: "”";
+    }
+  }
+
+  & > .remove-button {
+    inset-block-start: 7px;
+    inset-inline-end: -3px;
+    background: transparent;
+    color: var(--muted);
+
+    &:hover {
+      background: var(--hover);
+      color: var(--foreground);
+    }
+  }
+}
+
+.prompt-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+
+  & > label {
+    grid-column: 1 / -1;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.35;
+  }
+
+  & > textarea {
+    grid-column: 1 / -1;
+    field-sizing: content;
+    inline-size: 100%;
+    min-block-size: 96px;
+    max-block-size: 180px;
+    padding-block: 10px;
+    padding-inline: 11px;
+    resize: none;
+    font-size: 13px;
+    line-height: 1.5;
+
+    &::placeholder {
+      color: var(--muted);
+      opacity: 0.82;
+    }
+  }
+}
+
+.settings-link {
+  align-self: center;
+  justify-self: start;
+  padding-block: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration-color: color-mix(in oklab, currentColor 55%, transparent);
+  text-underline-offset: 2px;
+  transition: color 120ms ease;
+
+  &:hover {
+    color: var(--foreground);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+}
+
+.submit-button {
+  margin-block-start: 1px;
+
+  & > .spinner {
+    inline-size: 13px;
+    block-size: 13px;
+    border: 2px solid currentColor;
+    border-inline-end-color: transparent;
+    border-radius: 50%;
+    animation: spin 700ms linear infinite;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+  }
+}
+
+:where(.viewport, .selection, .spinner)[hidden] {
+  display: none;
+}
+
+.visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes spin {
+  to {
+    rotate: 1turn;
+  }
+}

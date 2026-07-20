@@ -1,3 +1,5 @@
+// Validated automation operations shared by the UI and SDK tools.
+
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import {
@@ -9,7 +11,7 @@ import type { Automation } from "@/types";
 import { getAppDatabase } from "./state/database";
 import { deleteSessionIfExists } from "./state/session/registry";
 import { AutomationDatabase } from "./automations/database";
-import { emitAutomationEvent } from "./runtime/broadcast";
+import { broadcast } from "./runtime/broadcast";
 import { startAutomationRun } from "./automations/scheduler";
 
 export const listAutomations = createServerFn({ method: "GET" }).handler(
@@ -23,8 +25,8 @@ export const createAutomation = createServerFn({ method: "POST" })
   .validator(zodValidator(automationOptionsSchema))
   .handler(async ({ data }): Promise<Automation> => {
     const automation = await new AutomationDatabase(await getAppDatabase()).create(data);
-    emitAutomationEvent({
-      type: "automation.added",
+    broadcast({
+      type: "automation.upserted",
       automation,
     });
     return automation;
@@ -39,8 +41,8 @@ export const updateAutomation = createServerFn({ method: "POST" })
       options,
     );
     if (automation) {
-      emitAutomationEvent({
-        type: "automation.updated",
+      broadcast({
+        type: "automation.upserted",
         automation,
       });
     }
@@ -58,7 +60,7 @@ export const deleteAutomation = createServerFn({ method: "POST" })
     await deleteSessionIfExists(automation.id);
     const success = await database.delete(automation.id);
     if (success) {
-      emitAutomationEvent({
+      broadcast({
         type: "automation.deleted",
         automationId: automation.id,
       });

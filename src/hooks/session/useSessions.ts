@@ -1,6 +1,6 @@
 /**
  * Loads durable session-list data. Workspace coordination state is owned by
- * useWorkspace, not by this hook.
+ * the workspace Query cache, not by this hook.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -8,7 +8,7 @@ import { createEmptySessionsState, sessionQueries } from "@/lib/queries";
 
 export function useSessions() {
   const { data, isLoading } = useQuery(sessionQueries.state());
-  const { sessions, worktrees, childSessionIds } = data ?? createEmptySessionsState();
+  const { sessions, worktrees, workerSessionIds } = data ?? createEmptySessionsState();
 
   const recentSessions = [...sessions]
     .sort((a, b) => b.modifiedTime.getTime() - a.modifiedTime.getTime())
@@ -21,6 +21,6 @@ export function useSessions() {
     sessions,
     recentSessions,
     worktreeSessionIds,
-    childSessionIds,
+    workerSessionIds,
   };
 }

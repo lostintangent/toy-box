@@ -41,9 +41,11 @@ export type ArtifactWorkspacePane = {
   mode: ArtifactPaneMode;
 };
 
+export type LinkedPanesByPublisher = Readonly<Record<string, readonly WorkspacePane[]>>;
+
 type DeriveVisibleWorkspacePanesOptions = {
   rootPanes: WorkspacePane[];
-  linkedPanesByPublisher: Record<string, WorkspacePane[]>;
+  linkedPanesByPublisher: LinkedPanesByPublisher;
   maxVisible?: number;
 };
 
@@ -127,10 +129,10 @@ export function paneSourceSessionId(pane: WorkspacePane): string | undefined {
 
 export function createLinkedPanes(
   sourceSessionId: string,
-  linkedSessionIds: string[],
-  canvases: SessionCanvas[],
-  artifacts: string[] = [],
-  previousPanes: WorkspacePane[] = [],
+  linkedSessionIds: readonly string[],
+  canvases: readonly SessionCanvas[],
+  artifacts: readonly string[] = [],
+  previousPanes: readonly WorkspacePane[] = [],
 ): WorkspacePane[] {
   const previousArtifacts = new Map(
     previousPanes.filter(isArtifactPane).map((pane) => [pane.id, pane.mode] as const),
@@ -175,7 +177,7 @@ export function deriveVisibleWorkspacePanes({
 
 export function deriveReachablePaneIds(
   rootPanes: WorkspacePane[],
-  linkedPanesByPublisher: Record<string, WorkspacePane[]>,
+  linkedPanesByPublisher: LinkedPanesByPublisher,
 ): string[] {
   return deriveReachablePanes(rootPanes, linkedPanesByPublisher).map((pane) => pane.id);
 }
@@ -186,7 +188,7 @@ export function deriveOpenSessionIds(panes: WorkspacePane[]): string[] {
 
 function deriveReachablePanes(
   rootPanes: WorkspacePane[],
-  linkedPanesByPublisher: Record<string, WorkspacePane[]>,
+  linkedPanesByPublisher: LinkedPanesByPublisher,
 ): WorkspacePane[] {
   const reachablePanes: WorkspacePane[] = [];
   const seenPaneIds = new Set<string>();

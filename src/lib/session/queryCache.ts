@@ -1,8 +1,8 @@
 // React Query helpers for durable session-list state.
 //
-// Workspace coordination lives in the Jotai workspace store. This file only
-// mutates durable list-shaped data that still belongs in React Query: session
-// metadata, worktrees, and child-session membership.
+// Workspace coordination and this durable session list occupy separate Query
+// entries. Workspace lifecycle events update the list only when they carry
+// session metadata or deletion; worktrees and worker membership remain here.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { createEmptySessionsState, sessionQueries, type SessionsState } from "@/lib/queries";
@@ -47,7 +47,7 @@ export function removeSessionFromState(queryClient: QueryClient, sessionId: stri
   updateSessionsState(queryClient, (state) => {
     if (
       !state.sessions.some((session) => session.sessionId === sessionId) &&
-      !state.childSessionIds.includes(sessionId) &&
+      !state.workerSessionIds.includes(sessionId) &&
       !(sessionId in state.worktrees)
     ) {
       return state;
@@ -57,7 +57,7 @@ export function removeSessionFromState(queryClient: QueryClient, sessionId: stri
     return {
       ...state,
       sessions: state.sessions.filter((session) => session.sessionId !== sessionId),
-      childSessionIds: state.childSessionIds.filter((id) => id !== sessionId),
+      workerSessionIds: state.workerSessionIds.filter((id) => id !== sessionId),
       worktrees: remainingWorktrees,
     };
   });
@@ -80,16 +80,16 @@ export function upsertSessionInState(
     const worktrees = sessionUpdate.worktree
       ? { ...state.worktrees, [sessionUpdate.sessionId]: sessionUpdate.worktree }
       : state.worktrees;
-    const childSessionIds =
-      sessionUpdate.parentSessionId && !state.childSessionIds.includes(sessionUpdate.sessionId)
-        ? [...state.childSessionIds, sessionUpdate.sessionId]
-        : state.childSessionIds;
+    const workerSessionIds =
+      sessionUpdate.parentSessionId && !state.workerSessionIds.includes(sessionUpdate.sessionId)
+        ? [...state.workerSessionIds, sessionUpdate.sessionId]
+        : state.workerSessionIds;
 
     return {
       ...state,
       sessions,
       worktrees,
-      childSessionIds,
+      workerSessionIds,
     };
   });
 }
@@ -99,7 +99,10 @@ export async function cancelSessionsStateQuery(queryClient: QueryClient): Promis
 }
 
 export async function invalidateSessionsStateQuery(queryClient: QueryClient): Promise<void> {
-  await queryClient.invalidateQueries({ queryKey: sessionQueries.stateKey() });
+  await queryClient.invalidateQueries(
+    { queryKey: sessionQueries.stateKey() },
+    { throwOnError: true },
+  );
 }
 
 function updateSessionsState(

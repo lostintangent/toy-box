@@ -18,7 +18,7 @@ describe("SDK session system message", () => {
       "automation",
       "inbox",
       "hyper",
-      "child",
+      "worker",
     ] satisfies SessionType[]) {
       expect(instructions(sessionType)).toContain(
         `The user's current working directory is: ${DIRECTORY}`,
@@ -32,7 +32,7 @@ describe("SDK session system message", () => {
       "automation",
       "inbox",
       "hyper",
-      "child",
+      "worker",
     ] satisfies SessionType[]) {
       const content = instructions(sessionType);
       expect(content).toContain("<toybox-notification>");
@@ -45,7 +45,7 @@ describe("SDK session system message", () => {
       "standard",
       "automation",
       "hyper",
-      "child",
+      "worker",
     ] satisfies SessionType[]) {
       const content = instructions(sessionType);
       expect(content).toContain(`This session's ID is: ${sessionType}-session`);

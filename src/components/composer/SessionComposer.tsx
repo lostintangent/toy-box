@@ -2,7 +2,6 @@
 // presence is the complete host discriminator.
 
 import { useRef, useEffect, useState } from "react";
-import { useAtomValue } from "jotai";
 import { Image, ArrowUp, ChevronDown, Pencil, Play, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,7 +28,7 @@ import { SkillPicker } from "./SkillPicker";
 import { ArtifactsList } from "./ArtifactsList";
 import { VoiceButton } from "./VoiceButton";
 import type { VoiceComposerContext } from "./useVoiceComposer";
-import { workspaceEnvironmentAtom } from "@/hooks/workspace/atoms";
+import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import { useModels } from "@/hooks/workspace/useModels";
 import type {
   Attachment,
@@ -40,7 +39,7 @@ import type {
 } from "@/types";
 import { toDataUrl } from "@/types";
 import type { DiffStats, FileDiffSummary } from "@/hooks/diffs/useEditDiffs";
-import { useViewport } from "@/hooks/browser/ViewportContext";
+import { useViewport } from "@/hooks/browser/useViewport";
 import { notificationLabel } from "@/lib/session/agentNotifications";
 import { cn } from "@/lib/utils";
 
@@ -50,12 +49,12 @@ const TEXTAREA_BOUNDS = {
   create: { min: 80, max: 144, className: "min-h-20 max-h-36" },
 } as const;
 
-interface SessionComposerProps {
-  /** Present when composing into a session; absent when creating one from home. */
-  sessionId?: string;
+type SessionComposerSubmit = (text: string, attachments: Attachment[]) => void;
+
+type SessionComposerProps = {
   value: string;
   onValueChange: (value: string) => void;
-  onSubmit: (text: string, attachments: Attachment[], background?: boolean) => void;
+  onSubmit: SessionComposerSubmit;
   canSubmit?: boolean;
   isStreaming?: boolean;
   onStop?: () => void;
@@ -71,7 +70,18 @@ interface SessionComposerProps {
   /** Context that grounds a voice call in the current session. */
   sessionName?: string;
   lastMessage?: string;
-}
+} & (
+  | {
+      /** Identifies the existing session that receives onSubmit. */
+      sessionId: string;
+      onRun?: never;
+    }
+  | {
+      sessionId?: undefined;
+      /** Runs a newly composed task under Inbox ownership. */
+      onRun: SessionComposerSubmit;
+    }
+);
 
 function ModelConfigurationSkeleton() {
   return (
@@ -127,6 +137,7 @@ export function SessionComposer({
   value,
   onValueChange,
   onSubmit,
+  onRun,
   canSubmit = true,
   isStreaming = false,
   onStop,
@@ -145,7 +156,7 @@ export function SessionComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { isMobile } = useViewport();
-  const environment = useAtomValue(workspaceEnvironmentAtom);
+  const environment = useWorkspaceSelector((workspace) => workspace.environment);
   const { models, isLoading: areModelsLoading } = useModels();
   const createsSession = sessionId === undefined;
   const textareaBounds = TEXTAREA_BOUNDS[createsSession ? "create" : "session"];
@@ -223,14 +234,16 @@ export function SessionComposer({
 
   const isSubmitDisabled = !canSubmit || (!value.trim() && attachments.length === 0);
 
-  const submit = (background = createsSession) => {
-    if (isSubmitDisabled) return false;
-    onSubmit(value.trim(), attachments, background);
+  const submitWith = (submitter: SessionComposerSubmit | undefined) => {
+    if (isSubmitDisabled || !submitter) return false;
+    submitter(value.trim(), attachments);
     onValueChange("");
     setAttachments([]);
     textareaRef.current?.focus();
     return true;
   };
+
+  const submit = () => submitWith(createsSession ? onRun : onSubmit);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -444,7 +457,7 @@ export function SessionComposer({
                         // returning focus to the chevron trigger.
                         onCloseAutoFocus={(event) => event.preventDefault()}
                       >
-                        <DropdownMenuItem onSelect={() => submit(true)}>
+                        <DropdownMenuItem onSelect={() => submitWith(onRun)}>
                           <Play />
                           <div className="flex flex-col">
                             <span>Run</span>
@@ -453,7 +466,7 @@ export function SessionComposer({
                             </span>
                           </div>
                         </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => submit(false)}>
+                        <DropdownMenuItem onSelect={() => submitWith(onSubmit)}>
                           <ArrowUp />
                           <div className="flex flex-col">
                             <span>Send</span>

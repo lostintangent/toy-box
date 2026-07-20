@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useHydrated } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { AutomationDialog } from "./AutomationDialog";
 import {
@@ -13,45 +12,36 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useAutomationActions } from "@/hooks/automations/useAutomationActions";
+import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import { cn } from "@/lib/utils";
-import { type Automation, type AutomationOptions } from "@/types";
 import { AutomationListItem } from "./AutomationListItem";
 
 type AutomationPanelProps = {
-  automations: Automation[];
-  isLoading: boolean;
   isExpanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   openSessionIds: string[];
-  onSessionSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
-  onCreateAutomation: (input: AutomationOptions) => Promise<void>;
-  onUpdateAutomation: (input: AutomationOptions & { automationId: string }) => Promise<void>;
-  onDeleteAutomation: (automationId: string) => Promise<void>;
-  onRunAutomation: (automationId: string) => Promise<void>;
-  creatingAutomation: boolean;
-  updatingAutomationId: string | null;
-  deletingAutomationId: string | null;
+  onSessionOpen: (sessionId: string) => void;
 };
 
 type AutomationDialogState = { mode: "create" } | { mode: "edit"; automationId: string };
 
 export function AutomationPanel({
-  automations,
-  isLoading,
   isExpanded,
   onExpandedChange,
   openSessionIds,
-  onSessionSelect,
-  onCreateAutomation,
-  onUpdateAutomation,
-  onDeleteAutomation,
-  onRunAutomation,
-  creatingAutomation,
-  updatingAutomationId,
-  deletingAutomationId,
+  onSessionOpen,
 }: AutomationPanelProps) {
-  const hydrated = useHydrated();
+  const automations = useWorkspaceSelector((workspace) => workspace.automations);
+  const {
+    createAutomation,
+    updateAutomation,
+    deleteAutomation,
+    runAutomation,
+    isCreatingAutomation,
+    updatingAutomationId,
+    deletingAutomationId,
+  } = useAutomationActions();
   const [dialogState, setDialogState] = useState<AutomationDialogState | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
@@ -67,6 +57,22 @@ export function AutomationPanel({
     setDialogState({ mode: "edit", automationId });
   }
 
+  async function handleRunAutomation(automationId: string) {
+    try {
+      onSessionOpen(await runAutomation(automationId));
+    } catch (error) {
+      console.error("Failed to run automation:", error);
+    }
+  }
+
+  async function handleDeleteAutomation(automationId: string) {
+    try {
+      await deleteAutomation(automationId);
+    } catch (error) {
+      console.error("Failed to delete automation:", error);
+    }
+  }
+
   function toggleExpanded() {
     const nextExpanded = !isExpanded;
     if (!nextExpanded) closeDialog();
@@ -80,7 +86,7 @@ export function AutomationPanel({
   const isDialogOpen = dialogState?.mode === "create" || dialogTargetAutomation !== null;
   const isDialogSubmitting = isEditing
     ? updatingAutomationId === dialogAutomationId
-    : creatingAutomation;
+    : isCreatingAutomation;
   const deleteTargetAutomation =
     automations.find((automation) => automation.id === deleteTargetId) ?? null;
 
@@ -131,9 +137,7 @@ export function AutomationPanel({
               isExpanded ? "translate-y-0" : "-translate-y-1 pointer-events-none",
             )}
           >
-            {!hydrated || isLoading ? (
-              <AutomationPanelSkeleton />
-            ) : automations.length === 0 ? (
+            {automations.length === 0 ? (
               <p className="text-xs text-muted-foreground">No automations yet.</p>
             ) : (
               <ul className="max-h-52 min-w-0 space-y-2 overflow-y-auto pr-1">
@@ -146,9 +150,9 @@ export function AutomationPanel({
                         isSelected={isSelected}
                         isDeleting={deletingAutomationId === automation.id}
                         isUpdating={updatingAutomationId === automation.id}
-                        onOpenSession={(sessionId) => onSessionSelect(sessionId, false)}
+                        onOpenSession={onSessionOpen}
                         onRun={() => {
-                          void onRunAutomation(automation.id);
+                          void handleRunAutomation(automation.id);
                         }}
                         onEdit={() => {
                           openEditDialog(automation.id);
@@ -174,8 +178,8 @@ export function AutomationPanel({
         onOpenChange={(open) => {
           if (!open) closeDialog();
         }}
-        onCreateAutomation={onCreateAutomation}
-        onUpdateAutomation={onUpdateAutomation}
+        onCreateAutomation={createAutomation}
+        onUpdateAutomation={updateAutomation}
       />
 
       <AlertDialog
@@ -201,7 +205,7 @@ export function AutomationPanel({
               disabled={!deleteTargetAutomation}
               onClick={() => {
                 if (!deleteTargetAutomation) return;
-                void onDeleteAutomation(deleteTargetAutomation.id);
+                void handleDeleteAutomation(deleteTargetAutomation.id);
                 setDeleteTargetId(null);
               }}
             >
@@ -211,24 +215,5 @@ export function AutomationPanel({
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-function AutomationPanelSkeleton() {
-  return (
-    <ul className="min-w-0 space-y-3 px-2 py-1">
-      <li>
-        <div className="min-w-0 flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1 space-y-2">
-            <Skeleton className="h-4 w-2/3" />
-            <div className="flex items-center gap-2">
-              <Skeleton className="h-3 w-1/3" />
-              <Skeleton className="h-3 w-1/4" />
-            </div>
-          </div>
-          <Skeleton className="h-7 w-7 rounded-md" />
-        </div>
-      </li>
-    </ul>
   );
 }

@@ -1,50 +1,86 @@
 import { Component, Suspense, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import type { CommentThread } from "documint";
 import { Skeleton } from "@/components/ui/skeleton";
-import { respondToArtifactComment } from "@/functions/artifacts";
+import {
+  cancelArtifactWorker as requestArtifactWorkerCancellation,
+  spawnArtifactWorker as requestArtifactWorker,
+} from "@/functions/artifacts";
 import { useArtifact } from "@/hooks/artifacts/useArtifact";
-import { useLinkedPaneActions } from "@/hooks/workspace/layout/useLinkedPanes";
+import { setArtifactPaneMode } from "@/hooks/workspace/layout/linkedPanes";
+import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import type { ArtifactWorkspacePane } from "@/lib/workspace/panes";
 import { createArtifactBaseUri } from "@/lib/session/artifacts/html";
-import { useArtifactKind, type ArtifactRendererProps, type ArtifactKind } from "./kinds";
+import {
+  useArtifactKind,
+  type ArtifactRendererProps,
+  type ArtifactKind,
+  type ArtifactWorkerRequest,
+} from "./kinds";
 import type { PaneProps } from "../types";
+import { PaneActions, PaneStatus } from "../PaneSlots";
 import { ArtifactActions } from "./actions";
+import { ArtifactWorkersMenu } from "./actions/ArtifactWorkersMenu";
 
 type ArtifactPaneProps = PaneProps & {
   pane: ArtifactWorkspacePane;
 };
 
 /** Composes one session-owned artifact's file lifecycle, actions, and renderer. */
-export function ArtifactPane({ pane, variant = "normal", actionsSlot }: ArtifactPaneProps) {
+export function ArtifactPane({ pane, variant = "normal" }: ArtifactPaneProps) {
   const { sourceSessionId: sessionId, path, title, mode } = pane;
-  const { setArtifactPaneMode } = useLinkedPaneActions();
   const kind = useArtifactKind(path);
   const artifact = useArtifact({ sessionId, path, mode });
+  const pendingWorkers = useWorkspaceSelector((workspace) =>
+    workspace.artifactWorkers.filter(
+      (worker) => worker.sourceSessionId === sessionId && worker.path === path,
+    ),
+  );
   const baseUri =
     typeof window === "undefined"
       ? undefined
       : createArtifactBaseUri(sessionId, path, window.location.origin);
   const { error, isLoading, isSaving, isReady } = artifact;
 
-  async function respondToComment(threadId: string, thread: CommentThread) {
+  async function spawnWorker({ name, prompt, metadata }: ArtifactWorkerRequest) {
     await artifact.flush({ notifyAgent: false });
-    await respondToArtifactComment({ data: { sessionId, path, threadId, thread } });
+    return requestArtifactWorker({
+      data: {
+        sessionId,
+        path,
+        ...(name === undefined ? {} : { name }),
+        prompt,
+        ...(metadata === undefined ? {} : { metadata }),
+      },
+    });
+  }
+
+  async function cancelWorker(workerSessionId: string) {
+    await requestArtifactWorkerCancellation({
+      data: { sessionId, path, workerSessionId },
+    });
   }
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      {actionsSlot &&
-        kind.editable &&
-        createPortal(
+      {(kind.editable || isSaving) && (
+        <PaneActions>
           <ArtifactActions
+            editable={kind.editable}
             mode={mode}
             isSaving={isSaving}
             onModeChange={(nextMode) => setArtifactPaneMode(pane, nextMode)}
             variant={variant}
-          />,
-          actionsSlot,
-        )}
+          />
+        </PaneActions>
+      )}
+      {pendingWorkers.length > 0 && (
+        <PaneStatus>
+          <ArtifactWorkersMenu
+            workers={pendingWorkers}
+            onCancelWorker={cancelWorker}
+            variant={variant}
+          />
+        </PaneStatus>
+      )}
       {isReady && error && <ArtifactBanner>{error}</ArtifactBanner>}
       <div className="min-h-0 flex-1">
         {isLoading ? (
@@ -59,7 +95,8 @@ export function ArtifactPane({ pane, variant = "normal", actionsSlot }: Artifact
             baseUri={baseUri}
             definition={kind.definition}
             artifact={artifact}
-            respondToComment={respondToComment}
+            pendingWorkers={pendingWorkers}
+            spawnWorker={spawnWorker}
           />
         ) : (
           <ArtifactMessage>{error ?? "Unable to load this artifact."}</ArtifactMessage>

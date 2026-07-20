@@ -1,0 +1,118 @@
+:root {
+  color-scheme: light dark;
+  --background: light-dark(oklch(1 0 0), oklch(0.145 0 0));
+  --foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+  --surface: light-dark(oklch(0.985 0 0), oklch(0.205 0 0));
+  --muted: light-dark(oklch(0.556 0 0), oklch(0.708 0 0));
+  --border: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 10%));
+  --input: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 15%));
+  --hover: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
+  --primary: light-dark(oklch(0.205 0 0), oklch(0.922 0 0));
+  --primary-hover: color-mix(in oklab, var(--primary) 92%, var(--background));
+  --primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.205 0 0));
+  --ring: light-dark(oklch(0.708 0 0 / 45%), oklch(0.556 0 0 / 55%));
+  --danger: light-dark(oklch(0.577 0.245 27.325), oklch(0.704 0.191 22.216));
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+h1,
+p,
+blockquote,
+figure {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  appearance: none;
+  font: inherit;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+input,
+textarea {
+  border: 1px solid var(--input);
+  border-radius: 8px;
+  background: var(--background);
+  color: var(--foreground);
+
+  &:focus-visible {
+    border-color: var(--foreground);
+    outline: none;
+    box-shadow: 0 0 0 1px var(--ring);
+  }
+}
+
+:is(a, button):focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+}
+
+.primary-button {
+  display: inline-flex;
+  min-inline-size: 74px;
+  min-block-size: 36px;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  gap: 7px;
+  padding-block: 8px;
+  padding-inline: 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 13px;
+  font-weight: 700;
+  transition:
+    background-color 120ms ease,
+    opacity 120ms ease;
+
+  &:hover:not(:disabled) {
+    background: var(--primary-hover);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+
+  @media (forced-colors: active) {
+    border: 1px solid ButtonBorder;
+
+    &:disabled {
+      border-color: GrayText;
+      color: GrayText;
+      opacity: 1;
+    }
+  }
+}

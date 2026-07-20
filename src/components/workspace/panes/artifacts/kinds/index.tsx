@@ -1,6 +1,4 @@
 import { lazy, type ComponentType } from "react";
-import type { CommentThread } from "documint";
-import { useAtomValue } from "jotai";
 import {
   Braces,
   ChartBar,
@@ -17,10 +15,10 @@ import {
 } from "lucide-react";
 import type { Artifact } from "@/hooks/artifacts/useArtifact";
 import type { ArtifactPaneMode } from "@/lib/workspace/panes";
-import type { CustomArtifactKind } from "@/types";
+import type { ArtifactWorker, CustomArtifactKind, JsonValue } from "@/types";
 import { getPathBasename } from "@/lib/paths";
 import { artifactName } from "@/lib/session/artifacts/display";
-import { customArtifactKindsAtom } from "@/hooks/workspace/atoms";
+import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import { HtmlArtifact } from "./HtmlArtifact";
 import { CustomArtifact } from "./CustomArtifact";
 
@@ -35,7 +33,14 @@ export type ArtifactRendererProps = {
   baseUri?: string;
   definition?: CustomArtifactKind;
   artifact: Artifact;
-  respondToComment: (threadId: string, thread: CommentThread) => Promise<void>;
+  pendingWorkers: ArtifactWorker[];
+  spawnWorker: (request: ArtifactWorkerRequest) => Promise<{ sessionId: string }>;
+};
+
+export type ArtifactWorkerRequest = {
+  name?: string;
+  prompt: string;
+  metadata?: JsonValue;
 };
 
 export type ArtifactKind = {
@@ -113,7 +118,8 @@ export function resolveArtifactKind(path: string, customKinds: CustomArtifactKin
 }
 
 export function useArtifactKind(path: string): ArtifactKind {
-  return resolveArtifactKind(path, useAtomValue(customArtifactKindsAtom));
+  const customKinds = useWorkspaceSelector((workspace) => workspace.customArtifacts);
+  return resolveArtifactKind(path, customKinds);
 }
 
 export function useArtifactDisplay(path: string): { name: string; Icon: LucideIcon } {

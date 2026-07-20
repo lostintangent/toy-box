@@ -1,33 +1,53 @@
-import { createContext, useContext, type ReactNode } from "react";
-import { atom, type PrimitiveAtom } from "jotai";
+import { useEffect, useRef, type ReactNode } from "react";
+import { createAtom, createStoreContext, type Atom } from "@tanstack/react-store";
+import { useAtomValue } from "jotai";
+import { autoFocusArtifactsAtom } from "@/lib/config/settings";
+import { resolveArtifactAutoFocus, type WorkspacePane } from "@/lib/workspace/panes";
 
 export type WorkspaceSurface = "main" | "hyper";
 
-const focusedPaneAtoms: Record<WorkspaceSurface, PrimitiveAtom<string | null>> = {
-  main: atom<string | null>(null),
-  hyper: atom<string | null>(null),
+const focusedPaneAtoms: Record<WorkspaceSurface, Atom<string | null>> = {
+  main: createAtom<string | null>(null),
+  hyper: createAtom<string | null>(null),
 };
 
-const FocusedPaneContext = createContext(focusedPaneAtoms.main);
-
-export function focusedPaneAtomFor(surface: WorkspaceSurface): PrimitiveAtom<string | null> {
-  return focusedPaneAtoms[surface];
-}
-
-export function useFocusedPaneAtom(): PrimitiveAtom<string | null> {
-  return useContext(FocusedPaneContext);
-}
+const { StoreProvider: FocusedPaneProvider, useStoreContext: useFocusedPaneAtom } =
+  createStoreContext<Atom<string | null>>();
+export { useFocusedPaneAtom };
 
 export function WorkspaceSurfaceProvider({
   surface,
+  panes,
   children,
 }: {
   surface: WorkspaceSurface;
+  panes: WorkspacePane[];
   children: ReactNode;
 }) {
-  return (
-    <FocusedPaneContext.Provider value={focusedPaneAtomFor(surface)}>
-      {children}
-    </FocusedPaneContext.Provider>
-  );
+  const focusedPaneAtom = focusedPaneAtoms[surface];
+  const autoFocusArtifacts = useAtomValue(autoFocusArtifactsAtom);
+  const seenPaneIdsRef = useRef<ReadonlySet<string> | null>(null);
+
+  // Panes present when a surface mounts are not newly opened.
+  if (seenPaneIdsRef.current === null) {
+    seenPaneIdsRef.current = new Set(panes.map((pane) => pane.id));
+  }
+
+  // Keep this surface's focus valid and let newly opened artifacts claim it.
+  useEffect(() => {
+    const { focusPane, seenPaneIds } = resolveArtifactAutoFocus(
+      seenPaneIdsRef.current!,
+      panes,
+      autoFocusArtifacts,
+    );
+    seenPaneIdsRef.current = seenPaneIds;
+
+    focusedPaneAtom.set((current) => {
+      const currentIsVisible = current !== null && panes.some((pane) => pane.id === current);
+      if (currentIsVisible) return current;
+      return focusPane?.id ?? null;
+    });
+  }, [autoFocusArtifacts, focusedPaneAtom, panes]);
+
+  return <FocusedPaneProvider value={focusedPaneAtom}>{children}</FocusedPaneProvider>;
 }

@@ -1,21 +1,25 @@
-import { useAtomValue } from "jotai";
 import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 import { generateUUID } from "@/lib/utils";
 import type { WorkspaceSessionState } from "@/lib/workspace/state";
-import type { SessionMetadata, WorkspaceAction } from "@/types";
-import { draftSessionStatesAtom, hyperSessionIdsAtom } from "./atoms";
+import type { SessionMetadata } from "@/types";
+import { useDispatchWorkspaceAction, useWorkspaceSelector } from "./state";
 
 type DraftState = Extract<WorkspaceSessionState, { createdAt: number }>;
 
 export function useDrafts({
   sessions,
-  dispatchWorkspaceAction,
+  hyperSessionIds,
 }: {
   sessions: SessionMetadata[];
-  dispatchWorkspaceAction: (action: WorkspaceAction) => void;
+  hyperSessionIds: string[];
 }) {
-  const drafts = useAtomValue(draftSessionStatesAtom);
-  const hyperSessionIds = useAtomValue(hyperSessionIdsAtom);
+  const dispatchWorkspaceAction = useDispatchWorkspaceAction();
+  const drafts = useWorkspaceSelector((workspace) =>
+    Object.entries(workspace.sessionStates).filter(
+      (entry): entry is [string, DraftState] =>
+        entry[1].status === "draft" || entry[1].status === "creating",
+    ),
+  );
 
   const hyperSessionIdSet = new Set(hyperSessionIds);
   const sessionIdsInList = new Set(sessions.map((session) => session.sessionId));

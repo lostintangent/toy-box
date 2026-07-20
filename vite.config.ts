@@ -60,7 +60,7 @@ const config = defineConfig(({ mode }) => {
       tailwindcss(),
       nitro({
         preset: "bun",
-        plugins: ["./src/server/plugins/automationScheduler.ts"],
+        serverDir: "./src/server",
         features: {
           websocket: true,
         },

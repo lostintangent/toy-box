@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ZodType } from "zod";
 import { getSessionTools } from "./index";
 import type { SessionType } from "@/types";
 
@@ -30,12 +31,23 @@ describe("SDK tool catalog", () => {
     expect(getSessionTools("standard").every((tool) => tool.defer === "never")).toBe(true);
   });
 
+  test("create_session accepts a delegated task rather than a transport-shaped prompt", () => {
+    const tool = getSessionTools("standard").find(
+      (candidate) => candidate.name === "create_session",
+    );
+    const parameters = tool?.parameters as ZodType | undefined;
+
+    expect(parameters?.safeParse({ task: "Review the runtime" }).success).toBe(true);
+    expect(parameters?.safeParse({ prompt: "Review the runtime" }).success).toBe(false);
+    expect(tool?.description).toContain("retained worker session");
+  });
+
   test("hyper sessions add the global artifact-kind tool", () => {
     expect(toolNames("hyper")).toEqual([...toolNames("standard"), "register_artifact_kind"]);
   });
 
   test("managed headless session types omit layout tools", () => {
-    for (const sessionType of ["automation", "child"] satisfies SessionType[]) {
+    for (const sessionType of ["automation", "worker"] satisfies SessionType[]) {
       expect(toolNames(sessionType)).toEqual(BASE_TOOLS);
     }
   });

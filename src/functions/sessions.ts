@@ -7,21 +7,19 @@ import { zodValidator } from "@tanstack/zod-adapter";
 import { listModels as listSdkModels, listSessions as listSdkSessions } from "./sdk/client";
 import * as sessionRegistry from "./state/session/registry";
 import { loadSessionSnapshot } from "./state/session/snapshots";
-import { clearDraftPrompt, createPendingInboxEntry, deleteInboxEntry } from "./state/workspace";
-import { getInboxEntry } from "./state/workspace/inbox";
+import { clearDraftPrompt } from "./state/workspace";
 import {
   applySessionWorktree as applyWorktree,
   getAllSessionWorktrees,
   mergeSessionWorktree as mergeWorktree,
 } from "./state/session/worktrees";
-import { getChildSessionIds } from "./state/session/children";
+import { getWorkerSessionIds } from "./state/session/workers";
 import {
   createSession as createRuntimeSession,
   deliverSessionMessage,
   SessionStream,
   streamSession as streamSessionEvents,
 } from "./runtime/stream";
-import type { SessionStreamCompletion } from "./runtime/stream";
 import type {
   ModelInfo,
   SessionEvent,
@@ -59,22 +57,22 @@ const withSessionId = createMiddleware({ type: "function" }).validator(
 export type SessionsState = {
   sessions: SessionMetadata[];
   worktrees: Record<string, SessionWorktree>;
-  childSessionIds: string[];
+  workerSessionIds: string[];
 };
 
 /** Fetch durable session list metadata in a single round-trip. */
 export const getSessionsState = createServerFn({ method: "GET" }).handler(
   async (): Promise<SessionsState> => {
-    const [sessions, worktrees, childSessionIds] = await Promise.all([
+    const [sessions, worktrees, workerSessionIds] = await Promise.all([
       listSdkSessions(),
       getAllSessionWorktrees(),
-      getChildSessionIds(),
+      getWorkerSessionIds(),
     ]);
 
     return {
       sessions,
       worktrees,
-      childSessionIds,
+      workerSessionIds,
     };
   },
 );
@@ -150,46 +148,13 @@ export const createSession = createServerFn({ method: "POST" })
   .validator(zodValidator(createSessionInputSchema))
   .handler(async ({ data }): Promise<{ sessionId: string }> => {
     const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
-    if (data.background) await createPendingInboxEntry(sessionId);
-
-    let receipt;
-    try {
-      receipt = await createRuntimeSession(sessionId, data.message, {
-        directory: data.directory,
-        useWorktree: data.useWorktree,
-        sessionType: data.background ? "inbox" : "standard",
-      });
-    } catch (error) {
-      if (data.background) await deleteFailedInboxSession(sessionId);
-      throw error;
-    }
-
-    if (data.background) {
-      void finishInboxSession(sessionId, receipt.waitForCompletion).catch((error) => {
-        console.error(`Failed to finish inbox session ${sessionId}:`, error);
-      });
-    }
+    await createRuntimeSession(sessionId, data.message, {
+      directory: data.directory,
+      useWorktree: data.useWorktree,
+      sessionType: "standard",
+    });
     return { sessionId };
   });
-
-async function finishInboxSession(
-  sessionId: string,
-  waitForCompletion: () => Promise<SessionStreamCompletion>,
-): Promise<void> {
-  const completion = await waitForCompletion();
-  if (completion.status !== "completed") return;
-
-  const entry = await getInboxEntry(sessionId);
-  if (!entry || entry.message !== undefined) return;
-
-  await sessionRegistry.deleteSessionIfExists(sessionId);
-  await deleteInboxEntry(sessionId);
-}
-
-async function deleteFailedInboxSession(sessionId: string): Promise<void> {
-  await sessionRegistry.deleteSessionIfExists(sessionId).catch(console.error);
-  await deleteInboxEntry(sessionId).catch(console.error);
-}
 
 /** Deliver a follow-up message. The runtime decides whether it sends now or queues. */
 export const deliverMessage = createServerFn({ method: "POST" })

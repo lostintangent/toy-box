@@ -6,10 +6,9 @@ import {
   listSessionSkills,
 } from "@/functions/sessions";
 import type { SessionsState } from "@/functions/sessions";
-import { getWorkspaceState } from "@/functions/workspace";
-import { listAutomations } from "@/functions/automations";
 
 export type { SessionsState };
+export { workspaceQueries } from "@/lib/workspace/query";
 
 export const sessionQueries = {
   all: () => ["sessions"] as const,
@@ -23,8 +22,8 @@ export const sessionQueries = {
       queryKey: sessionQueries.stateKey(),
       queryFn: getSessionsState,
       staleTime: Infinity,
-      refetchOnWindowFocus: "always",
-      refetchOnReconnect: "always",
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
     }),
 
   details: () => [...sessionQueries.all(), "detail"] as const,
@@ -44,24 +43,9 @@ export function createEmptySessionsState(): SessionsState {
   return {
     sessions: [],
     worktrees: {},
-    childSessionIds: [],
+    workerSessionIds: [],
   };
 }
-
-export const workspaceQueries = {
-  all: () => ["workspace"] as const,
-
-  stateKey: () => [...workspaceQueries.all(), "state"] as const,
-
-  state: () =>
-    queryOptions({
-      queryKey: workspaceQueries.stateKey(),
-      queryFn: getWorkspaceState,
-      staleTime: Infinity,
-      refetchOnWindowFocus: "always",
-      refetchOnReconnect: "always",
-    }),
-};
 
 export const modelQueries = {
   all: () => ["models"] as const,
@@ -71,19 +55,6 @@ export const modelQueries = {
       queryKey: modelQueries.all(),
       queryFn: listModels,
       staleTime: 5 * 60_000,
-    }),
-};
-
-export const automationQueries = {
-  all: () => ["automations"] as const,
-
-  list: () =>
-    queryOptions({
-      queryKey: automationQueries.all(),
-      queryFn: listAutomations,
-      staleTime: 30_000,
-      refetchOnWindowFocus: "always",
-      refetchOnReconnect: "always",
     }),
 };
 

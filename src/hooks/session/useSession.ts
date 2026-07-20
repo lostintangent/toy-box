@@ -15,7 +15,6 @@
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAtomValue } from "jotai";
 import {
   streamSession,
   abortSession,
@@ -31,12 +30,13 @@ import {
 import { sessionQueries, skillQueries } from "@/lib/queries";
 import { consumeSessionEvents } from "@/lib/session/streamCodec";
 import type { SessionSubscriptionMode, StreamSessionRequest } from "@/lib/session/protocol";
-import { useWorkspaceActions } from "@/hooks/workspace/WorkspaceActionsContext";
-import { sessionStatusAtom } from "@/hooks/workspace/atoms";
 import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
 import { generateUUID } from "@/lib/utils";
+import type { WorkspaceSessionState } from "@/lib/workspace/state";
+import { applyWorkspaceEvent, dispatchWorkspaceAction } from "@/lib/workspace/queryCache";
 
 interface SessionConfig {
+  workspaceSessionStatus: WorkspaceSessionState["status"];
   mode?: SessionSubscriptionMode;
   /** Browser default, used when no model has been projected for the session.
    *  Once the session has its own model, that always wins over this default. */
@@ -49,15 +49,18 @@ interface SessionConfig {
   useWorktree?: boolean;
 }
 
-export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
+export function useSession(
+  sessionId: string,
+  {
+    workspaceSessionStatus,
+    mode: subscriptionMode = "active",
+    defaultModel,
+    directory: sessionDirectory,
+    useWorktree: sessionUseWorktree,
+  }: SessionConfig,
+) {
   const queryClient = useQueryClient();
-  const { applyWorkspaceEvent, dispatchWorkspaceAction } = useWorkspaceActions();
-  const workspaceSessionStatus = useAtomValue(sessionStatusAtom(sessionId));
   const sessionQuery = sessionQueries.detail(sessionId);
-  const subscriptionMode = sessionConfig?.mode ?? "active";
-  const defaultModel = sessionConfig?.defaultModel;
-  const sessionDirectory = sessionConfig?.directory;
-  const sessionUseWorktree = sessionConfig?.useWorktree;
   const isDraft = workspaceSessionStatus === "draft" || workspaceSessionStatus === "creating";
   const isSessionRunning = workspaceSessionStatus === "running";
   const isSessionUnread = workspaceSessionStatus === "unread";
@@ -242,7 +245,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     if (!abortControllerRef.current) return;
     detachFromStream();
 
-    applyWorkspaceEvent({ type: "session.idle", sessionId });
+    applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
     sessionRef.current = { ...sessionRef.current, queuedMessages: [] };
     publishState();
 
@@ -341,7 +344,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     if (model) {
       sessionRef.current = { ...sessionRef.current, model };
     }
-    applyWorkspaceEvent({
+    applyWorkspaceEvent(queryClient, {
       type: shouldCreateSession ? "session.creating" : "session.running",
       sessionId,
     });
@@ -359,7 +362,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     const promoteDraft = () => {
       if (!shouldCreateSession || draftPromotedRef.current) return;
       draftPromotedRef.current = true;
-      applyWorkspaceEvent({
+      applyWorkspaceEvent(queryClient, {
         type: "session.upserted",
         session: { sessionId },
       });
@@ -388,7 +391,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
       console.error("Streaming error:", error);
       applyEvent({ type: "end", reason: "error" });
       // A creation failure restores the draft; a normal send failure becomes idle.
-      applyWorkspaceEvent({ type: "session.idle", sessionId });
+      applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
       await invalidateSessionSnapshot();
     }
   };
@@ -497,7 +500,7 @@ export function useSession(sessionId: string, sessionConfig?: SessionConfig) {
     if (subscriptionMode === "passive" || !isSessionUnread) return;
 
     void invalidateSessionSnapshot();
-    dispatchWorkspaceAction({ type: "session.read", sessionId });
+    dispatchWorkspaceAction(queryClient, { type: "session.read", sessionId });
   });
 
   // Every visible pane observes live work. A passive subscriber never

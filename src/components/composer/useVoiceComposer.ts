@@ -15,7 +15,7 @@ import type { ModelConfiguration, ModelInfo } from "@/types";
 
 /** Current composer state and actions, read through a ref by the voice tools.
  *  Session presence determines whether sending ends the call or leaves it open
- *  to create another background session. */
+ *  to dispatch another Inbox task. */
 export type VoiceComposerContext = {
   prompt: string;
   models: ModelInfo[];
@@ -98,7 +98,7 @@ function buildTools(bridge: VoiceComposerBridge, attachedToSession: boolean): An
       name: "send_prompt",
       description: attachedToSession
         ? "Submit the current composer text to the session. Also ends the voice call."
-        : "Submit the current composer text to start a session. The call stays open so more prompts can follow.",
+        : "Run the current composer text as an Inbox task. The call stays open so more tasks can follow.",
       inputSchema: emptyInputSchema,
     }).client(async () => {
       const submitted = bridge.context.submitPrompt();
@@ -175,7 +175,7 @@ function buildInstructions(attachedToSession: boolean): string {
 
   const sendPromptBehavior = attachedToSession
     ? "In an attached session, send_prompt submits the current draft and ends the voice call."
-    : "On the workspace home, send_prompt starts a new session and the call stays open so the user can send several prompts in a row.";
+    : "On the workspace home, send_prompt runs the current draft as an Inbox task and the call stays open so the user can dispatch several tasks in a row.";
 
   return `
     You are a voice assistant inside a coding app's prompt composer.

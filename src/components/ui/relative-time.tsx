@@ -1,9 +1,6 @@
-import { useHydrated } from "@tanstack/react-router";
-
 export interface RelativeTimeProps {
   date: Date | string;
   className?: string;
-  placeholder?: string;
 }
 
 /**
@@ -31,13 +28,12 @@ function formatRelativeTime(date: Date): string {
   return "now";
 }
 
-export function RelativeTime({ date, className, placeholder = "—" }: RelativeTimeProps) {
-  const hydrated = useHydrated();
+export function RelativeTime({ date, className }: RelativeTimeProps) {
   const value = typeof date === "string" ? new Date(date) : date;
 
   return (
-    <span className={className} suppressHydrationWarning>
-      {hydrated ? formatRelativeTime(value) : placeholder}
-    </span>
+    <time className={className} dateTime={value.toISOString()} suppressHydrationWarning>
+      {formatRelativeTime(value)}
+    </time>
   );
 }

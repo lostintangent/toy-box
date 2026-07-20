@@ -23,7 +23,7 @@ Selected sessions come from the route. When none are selected, Inbox is the fall
 
 Active and overlay panes use active session subscriptions; passive panes use passive subscriptions. An overlay therefore acknowledges existing unread work and suppresses a future unread completion while it is open, whereas a preview does neither.
 
-Pane `variant` is a separate host concern. Normal panes keep their controls inline; compact panes declare controls into a host-provided action slot. This lets grid, pager, and Hyper chrome change without changing the underlying session or artifact lifecycle.
+Pane `variant` is a separate host concern. `WorkspacePaneView` defaults to normal presentation, so the desktop grid relies on that default and only the compact pager specifies a variant. Direct secondary session surfaces omit the variant as well: overlay and passive modes derive compact presentation, while mode itself defaults to active. Each grid cell and pager page positions action and status slots, then hands them to `WorkspacePaneView`, the single host-to-pane boundary. The grid floats actions above the upper-right content and status above the lower-right content; the pager composes both slots into its header. That view scopes the slots around the selected leaf implementation and any host adjuncts; descendants declare into them with `PaneActions` or `PaneStatus` without receiving DOM targets. The pager gives only its active page real slots because inactive pages remain mounted. Pane modes still decide whether a declaration is semantically appropriate: for example, only an active compact session contributes title-bar actions, so a nested overlay session cannot leak chrome into its host artifact. This lets grid, mobile pager, and the Hyper pager compose identical panes without changing their session or artifact lifecycles.
 
 ## Layouts and compositions
 
@@ -43,10 +43,10 @@ Pane `variant` is a separate host concern. Normal panes keep their controls inli
 
 - [`../../routes/index.tsx`](../../routes/index.tsx) is the main composition root. It turns selected sessions or fallback Inbox into root panes, always hosts them in the desktop grid, and uses a mobile-only layout cookie to choose between the sidebar and pager.
 - [`../../lib/workspace/panes.ts`](../../lib/workspace/panes.ts) owns pane identity, source relationships, reachability, ordering, and focus policy as pure functions.
-- [`../../hooks/workspace/layout/useLinkedPanes.ts`](../../hooks/workspace/layout/useLinkedPanes.ts) owns browser-local publication by publisher-pane ID and artifact display mode.
-- [`panes/WorkspacePaneView.tsx`](panes/WorkspacePaneView.tsx) is the single pane-kind-to-component mapping shared by the grid and pager.
+- [`../../hooks/workspace/layout/linkedPanes.ts`](../../hooks/workspace/layout/linkedPanes.ts) owns browser-local publication by publisher-pane ID and artifact display mode.
+- [`panes/WorkspacePaneView.tsx`](panes/WorkspacePaneView.tsx) is the single host-to-pane adapter shared by grid and pager: it scopes host slots, maps a pane value to its leaf component, and wraps host adjuncts without owning their policy.
 - Pane components own content lifecycle and presentation. Layout components own placement, resizing, paging, focus, and host chrome.
-- Main and Hyper surfaces have independent focus state. `useWorkspaceFocus` keeps each focus valid and applies artifact auto-focus policy without putting layout concerns into pane content.
+- Main and Hyper surfaces have independent focus state. `WorkspaceSurfaceProvider` owns each surface's focus namespace, keeps its focus valid, and applies artifact auto-focus policy without putting layout concerns into pane content.
 
 To add a pane kind, define its stable identity and whether it is session-backed, render it once in `WorkspacePaneView`, and extend pure ordering or focus policy only when the product behavior requires it. To add a workflow, compose existing panes and choose its host, focus surface, and session interaction mode. Do not duplicate session state, artifact state, or runtime behavior in layout state.
 

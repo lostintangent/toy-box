@@ -3,7 +3,6 @@ import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from "@tanst
 import { Provider as JotaiProvider } from "jotai";
 
 import appCss from "./styles.css?url";
-import { ViewportProvider } from "@/hooks/browser/ViewportContext";
 
 const APP_TITLE = import.meta.env.VITE_APP_TITLE;
 
@@ -50,9 +49,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 function RootComponent() {
   return (
     <JotaiProvider>
-      <ViewportProvider>
-        <Outlet />
-      </ViewportProvider>
+      <Outlet />
     </JotaiProvider>
   );
 }

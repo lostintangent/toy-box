@@ -83,7 +83,7 @@ export function SidebarHeader({
       <Button
         size="sm"
         onClick={(event) => onCreateSession(event.metaKey || event.ctrlKey)}
-        className="bg-green-600 text-white hover:bg-green-700"
+        className="bg-hyper-accent text-yellow-950 hover:bg-hyper-accent/90"
         suppressHydrationWarning
       >
         New

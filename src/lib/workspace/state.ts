@@ -1,5 +1,6 @@
 import type {
-  ArtifactCommentSession,
+  Automation,
+  ArtifactWorker,
   CustomArtifactKind,
   DraftPrompt,
   InboxEntry,
@@ -46,8 +47,9 @@ export type WorkspaceSessionEvent = Extract<
 export type WorkspaceState = {
   sessionStates: Record<string, WorkspaceSessionState>;
   hyperSessionIds: string[];
+  automations: Automation[];
   inboxEntries: InboxEntry[];
-  artifactCommentSessions: ArtifactCommentSession[];
+  artifactWorkers: ArtifactWorker[];
   customArtifacts: CustomArtifactKind[];
   environment: WorkspaceEnvironment;
 };
@@ -56,8 +58,9 @@ export function createEmptyWorkspaceState(): WorkspaceState {
   return {
     sessionStates: {},
     hyperSessionIds: [],
+    automations: [],
     inboxEntries: [],
-    artifactCommentSessions: [],
+    artifactWorkers: [],
     customArtifacts: [],
     environment: { terminalWsPort: DEFAULT_TERMINAL_WS_PORT, voiceEnabled: false },
   };
@@ -76,7 +79,7 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
     case "session.deleted": {
       const next = reduceSessionInWorkspace(state, event.sessionId, event);
       const withoutHyper = setHyperSessionMembership(next, event.sessionId, false);
-      return removeArtifactCommentSessionsForSession(withoutHyper, event.sessionId);
+      return removeArtifactWorkersForSession(withoutHyper, event.sessionId);
     }
     case "session.hyper.promoted":
       return setHyperSessionMembership(state, event.sessionId, false);
@@ -86,10 +89,14 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
       return deleteInboxEntry(state, event.entryId);
     case "artifact.kind.registered":
       return registerArtifactKind(state, event.kind);
-    case "artifact.comment_session.linked":
-      return linkArtifactCommentSession(state, event.commentSession);
-    case "artifact.comment_session.unlinked":
-      return unlinkArtifactCommentSession(state, event.sessionId);
+    case "artifact.worker.started":
+      return startArtifactWorker(state, event.worker);
+    case "artifact.worker.finished":
+      return finishArtifactWorker(state, event.sessionId);
+    case "automation.upserted":
+      return upsertAutomation(state, event.automation);
+    case "automation.deleted":
+      return deleteAutomation(state, event.automationId);
     case "session.prompt.drafted":
     case "session.creating":
     case "session.running":
@@ -184,7 +191,7 @@ function idleSessionState(prompt?: DraftPrompt): WorkspaceSessionState | undefin
 function upsertInboxEntry(state: WorkspaceState, entry: InboxEntry): WorkspaceState {
   const index = state.inboxEntries.findIndex((existing) => existing.id === entry.id);
   if (index === -1) return { ...state, inboxEntries: [entry, ...state.inboxEntries] };
-  if (areInboxEntriesEqual(state.inboxEntries[index], entry)) return state;
+  if (state.inboxEntries[index] === entry) return state;
 
   const inboxEntries = [...state.inboxEntries];
   inboxEntries[index] = entry;
@@ -196,49 +203,47 @@ function deleteInboxEntry(state: WorkspaceState, entryId: string): WorkspaceStat
   return inboxEntries.length === state.inboxEntries.length ? state : { ...state, inboxEntries };
 }
 
-function linkArtifactCommentSession(
-  state: WorkspaceState,
-  commentSession: ArtifactCommentSession,
-): WorkspaceState {
-  const existing = state.artifactCommentSessions.find(
-    (current) => current.sessionId === commentSession.sessionId,
-  );
-  if (existing && areArtifactCommentSessionsEqual(existing, commentSession)) return state;
+function upsertAutomation(state: WorkspaceState, automation: Automation): WorkspaceState {
+  const index = state.automations.findIndex((current) => current.id === automation.id);
+  if (index !== -1 && state.automations[index] === automation) return state;
 
-  const artifactCommentSessions = existing
-    ? state.artifactCommentSessions.map((current) =>
-        current.sessionId === commentSession.sessionId ? commentSession : current,
-      )
-    : [...state.artifactCommentSessions, commentSession];
-  return { ...state, artifactCommentSessions };
+  const automations = [...state.automations];
+  if (index === -1) automations.push(automation);
+  else automations[index] = automation;
+  automations.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return { ...state, automations };
 }
 
-function unlinkArtifactCommentSession(state: WorkspaceState, sessionId: string): WorkspaceState {
-  const artifactCommentSessions = state.artifactCommentSessions.filter(
-    (commentSession) => commentSession.sessionId !== sessionId,
-  );
-  return artifactCommentSessions.length === state.artifactCommentSessions.length
-    ? state
-    : { ...state, artifactCommentSessions };
+function deleteAutomation(state: WorkspaceState, automationId: string): WorkspaceState {
+  const automations = state.automations.filter((automation) => automation.id !== automationId);
+  return automations.length === state.automations.length ? state : { ...state, automations };
 }
 
-function removeArtifactCommentSessionsForSession(
-  state: WorkspaceState,
-  sessionId: string,
-): WorkspaceState {
-  const artifactCommentSessions = state.artifactCommentSessions.filter(
-    (commentSession) =>
-      commentSession.sourceSessionId !== sessionId && commentSession.sessionId !== sessionId,
-  );
-  return artifactCommentSessions.length === state.artifactCommentSessions.length
+function startArtifactWorker(state: WorkspaceState, worker: ArtifactWorker): WorkspaceState {
+  if (state.artifactWorkers.some((current) => current.sessionId === worker.sessionId)) return state;
+  return { ...state, artifactWorkers: [...state.artifactWorkers, worker] };
+}
+
+function finishArtifactWorker(state: WorkspaceState, sessionId: string): WorkspaceState {
+  const artifactWorkers = state.artifactWorkers.filter((worker) => worker.sessionId !== sessionId);
+  return artifactWorkers.length === state.artifactWorkers.length
     ? state
-    : { ...state, artifactCommentSessions };
+    : { ...state, artifactWorkers };
+}
+
+function removeArtifactWorkersForSession(state: WorkspaceState, sessionId: string): WorkspaceState {
+  const artifactWorkers = state.artifactWorkers.filter(
+    (worker) => worker.sourceSessionId !== sessionId && worker.sessionId !== sessionId,
+  );
+  return artifactWorkers.length === state.artifactWorkers.length
+    ? state
+    : { ...state, artifactWorkers };
 }
 
 function registerArtifactKind(state: WorkspaceState, kind: CustomArtifactKind): WorkspaceState {
   const index = state.customArtifacts.findIndex((current) => current.name === kind.name);
   if (index === -1) return { ...state, customArtifacts: [...state.customArtifacts, kind] };
-  if (areArtifactKindsEqual(state.customArtifacts[index], kind)) return state;
+  if (state.customArtifacts[index] === kind) return state;
 
   const customArtifacts = [...state.customArtifacts];
   customArtifacts[index] = kind;
@@ -259,38 +264,6 @@ function setHyperSessionMembership(
       ? [...state.hyperSessionIds, sessionId]
       : state.hyperSessionIds.filter((id) => id !== sessionId),
   };
-}
-
-function areArtifactKindsEqual(left: CustomArtifactKind, right: CustomArtifactKind): boolean {
-  return (
-    left.name === right.name &&
-    left.icon === right.icon &&
-    left.editable === right.editable &&
-    left.html === right.html &&
-    left.extensions.length === right.extensions.length &&
-    left.extensions.every((extension, index) => extension === right.extensions[index])
-  );
-}
-
-function areInboxEntriesEqual(left: InboxEntry, right: InboxEntry): boolean {
-  return (
-    left.id === right.id &&
-    left.message === right.message &&
-    left.artifact === right.artifact &&
-    left.createdAt === right.createdAt
-  );
-}
-
-function areArtifactCommentSessionsEqual(
-  left: ArtifactCommentSession,
-  right: ArtifactCommentSession,
-): boolean {
-  return (
-    left.sessionId === right.sessionId &&
-    left.sourceSessionId === right.sourceSessionId &&
-    left.path === right.path &&
-    left.threadId === right.threadId
-  );
 }
 
 function sameDraftPrompt(left: DraftPrompt, right: DraftPrompt): boolean {

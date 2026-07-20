@@ -5,7 +5,8 @@
 import { deleteSessionIfExists } from "@/functions/state/session/registry";
 import { createSession, SessionStream } from "@/functions/runtime/stream";
 import type { SessionStreamCompletion } from "@/functions/runtime/stream";
-import { emitAutomationEvent } from "@/functions/runtime/broadcast";
+import { broadcast } from "@/functions/runtime/broadcast";
+import { sharedMap } from "@/functions/runtime/processState";
 import { getAppDatabase } from "@/functions/state/database";
 import { AutomationDatabase } from "./database";
 
@@ -14,7 +15,8 @@ const AUTOMATION_SCHEDULER_POLL_MS = 30_000;
 let schedulerStarted = false;
 let schedulerTickInProgress = false;
 let schedulerTimer: ReturnType<typeof setTimeout> | undefined;
-const pendingAutomationRuns = new Map<string, ReturnType<typeof beginAutomationRun>>();
+const pendingAutomationRuns =
+  sharedMap<ReturnType<typeof beginAutomationRun>>("pending-automation-runs");
 
 export function ensureSchedulerStarted(): void {
   if (schedulerStarted) return;
@@ -32,6 +34,8 @@ export async function runSchedulerTick(): Promise<void> {
 
     const database = new AutomationDatabase(appDatabase);
     for (const automation of await database.claimDue()) {
+      // The claim durably advances nextRunAt, even when dispatch later fails.
+      broadcast({ type: "automation.upserted", automation });
       try {
         await startAutomationRun(automation.id);
       } catch (error) {
@@ -80,18 +84,18 @@ async function beginAutomationRun(automationId: string) {
     },
     {
       directory: automation.cwd,
-      summary: automation.title,
+      name: automation.title,
       sessionType: "automation",
     },
   );
 
-  void finishWhenComplete(database, automation.id, receipt.waitForCompletion).catch((error) => {
+  void superviseAutomationRun(database, automation.id, receipt.waitForCompletion).catch((error) => {
     console.error(`Failed to finalize automation run ${automation.id}:`, error);
   });
   return { sessionId: automation.id, started: true };
 }
 
-async function finishWhenComplete(
+async function superviseAutomationRun(
   database: AutomationDatabase,
   automationId: string,
   waitForCompletion: () => Promise<SessionStreamCompletion>,
@@ -106,7 +110,7 @@ async function finishWhenComplete(
     await database.recordRunFinish(automationId, new Date());
     const automation = await database.get(automationId);
     if (automation) {
-      emitAutomationEvent({ type: "automation.updated", automation });
+      broadcast({ type: "automation.upserted", automation });
     }
   } catch (error) {
     console.error(`Failed to persist automation run ${automationId}:`, error);

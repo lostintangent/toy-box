@@ -13,8 +13,8 @@ export async function resolveSessionType(sessionId: string): Promise<SessionType
         await database.sql`
           SELECT
             EXISTS(SELECT 1 FROM automations WHERE id = ${sessionId}) AS automation,
-            EXISTS(SELECT 1 FROM inbox_entries WHERE id = ${sessionId}) AS inbox,
-            EXISTS(SELECT 1 FROM child_sessions WHERE session_id = ${sessionId}) AS child
+            EXISTS(SELECT 1 FROM inbox WHERE id = ${sessionId}) AS inbox,
+            EXISTS(SELECT 1 FROM workers WHERE session_id = ${sessionId}) AS worker
         `
       ).rows?.[0] as SessionTypeClaims | undefined)
     : undefined;
@@ -23,7 +23,7 @@ export async function resolveSessionType(sessionId: string): Promise<SessionType
   if (row?.automation) types.push("automation");
   if (row?.inbox) types.push("inbox");
   if (hasHyperSession(sessionId)) types.push("hyper");
-  if (row?.child) types.push("child");
+  if (row?.worker) types.push("worker");
 
   if (types.length > 1) {
     throw new Error(`Session ${sessionId} has conflicting types: ${types.join(", ")}`);
@@ -34,5 +34,5 @@ export async function resolveSessionType(sessionId: string): Promise<SessionType
 type SessionTypeClaims = {
   automation: number;
   inbox: number;
-  child: number;
+  worker: number;
 };

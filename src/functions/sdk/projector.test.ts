@@ -987,7 +987,7 @@ describe("projector", () => {
       expect(
         projectSdkEvent(
           toolExecutionStart("create_session", "tool-create-session", {
-            prompt: "Review the auth flow",
+            task: "Review the auth flow",
           }),
           context,
         ),
@@ -1014,7 +1014,7 @@ describe("projector", () => {
       expectOmittedToolLifecycle(context, {
         toolName: "create_session",
         toolCallId: "tool-create-session-failed",
-        argumentsRecord: { prompt: "Review the auth flow" },
+        argumentsRecord: { task: "Review the auth flow" },
         completionSuccess: false,
         completionErrorMessage: "boom",
       });
@@ -1024,7 +1024,7 @@ describe("projector", () => {
       const context = createStreamingContext();
       projectSdkEvent(
         toolExecutionStart("create_session", "tool-create-session-malformed", {
-          prompt: "Review the auth flow",
+          task: "Review the auth flow",
         }),
         context,
       );

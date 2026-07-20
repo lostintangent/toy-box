@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useHotkey } from "@tanstack/react-hotkeys";
-import { useAtom } from "jotai";
+import { useAtom } from "@tanstack/react-store";
 import { X, Maximize2, Minimize2 } from "lucide-react";
 import { useFocusedPaneAtom } from "@/hooks/workspace/layout/focus";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
@@ -319,10 +319,9 @@ function WorkspaceGridCell({
   onFocusPane,
   onMinimize,
 }: WorkspaceGridCellProps) {
-  // The cell is a host: it hands its rendered pane the "normal" variant and this
-  // slot (the hover-overlay controls), and the pane declares its own actions into
-  // it — same contract as the pager, so the artifact's controls can't drift.
+  // The cell hosts pane-declared chrome in targets it owns and positions.
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
+  const [statusSlot, setStatusSlot] = useState<HTMLDivElement | null>(null);
   const btnClass = PANE_OVERLAY_BUTTON_CLASS;
   const iconClass = PANE_OVERLAY_ICON_CLASS;
   const showControlsPersistently = isMaximized;
@@ -385,11 +384,15 @@ function WorkspaceGridCell({
         </div>
       )}
 
-      <WorkspacePaneView pane={pane} variant="normal" actionsSlot={actionsSlot} />
-
-      {shouldRenderSessionOverlay && (
-        <SessionOverlay key={associatedSessionId} sessionId={associatedSessionId} />
-      )}
+      <WorkspacePaneView pane={pane} slots={{ actions: actionsSlot, status: statusSlot }}>
+        {shouldRenderSessionOverlay && (
+          <SessionOverlay key={associatedSessionId} sessionId={associatedSessionId} />
+        )}
+      </WorkspacePaneView>
+      <div
+        ref={setStatusSlot}
+        className="pointer-events-none absolute right-3 bottom-3 z-20 flex h-[30px] items-center gap-1.5 [&>*]:pointer-events-auto"
+      />
     </div>
   );
 }

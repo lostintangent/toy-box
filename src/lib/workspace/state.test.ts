@@ -6,7 +6,7 @@ import {
   type WorkspaceSessionEvent,
   type WorkspaceSessionState,
 } from "./state";
-import type { WorkspaceEvent } from "@/types";
+import type { Automation, WorkspaceEvent } from "@/types";
 
 const sessionId = "session-a";
 const prompt = { text: "hello", origin: "client-a", updatedAt: 3 };
@@ -123,12 +123,13 @@ describe("workspace state reducer", () => {
       hyper: true,
     });
     state = reduceWorkspaceState(state, {
-      type: "artifact.comment_session.linked",
-      commentSession: {
-        sessionId: "comment-session-a",
+      type: "artifact.worker.started",
+      worker: {
+        sessionId: "artifact-worker-a",
         sourceSessionId: sessionId,
         path: "plan.md",
-        threadId: "thread-a",
+        name: "Respond to comment",
+        metadata: { threadId: "thread-a" },
       },
     });
     state = reduceWorkspaceState(state, { type: "session.deleted", sessionId });
@@ -157,32 +158,62 @@ describe("workspace state reducer", () => {
     expect(state.inboxEntries).toEqual([]);
   });
 
-  test("tracks artifact comment session links idempotently", () => {
-    const commentSession = {
-      sessionId: "comment-session-a",
-      sourceSessionId: sessionId,
-      path: "plan.md",
-      threadId: "thread-a",
-    };
-    let state = reduceWorkspaceState(createEmptyWorkspaceState(), {
-      type: "artifact.comment_session.linked",
-      commentSession,
+  test("upserts, orders, and deletes automations idempotently", () => {
+    const older = createAutomation({
+      id: "automation-a",
+      updatedAt: "2026-02-14T08:00:00.000Z",
     });
+    const newer = createAutomation({
+      id: "automation-b",
+      updatedAt: "2026-02-14T09:00:00.000Z",
+    });
+    let state = createEmptyWorkspaceState();
+    state = reduceWorkspaceState(state, { type: "automation.upserted", automation: older });
+    state = reduceWorkspaceState(state, { type: "automation.upserted", automation: newer });
 
-    expect(state.artifactCommentSessions).toEqual([commentSession]);
-    expect(
-      reduceWorkspaceState(state, { type: "artifact.comment_session.linked", commentSession }),
-    ).toBe(state);
+    expect(state.automations.map(({ id }) => id)).toEqual(["automation-b", "automation-a"]);
+    expect(reduceWorkspaceState(state, { type: "automation.upserted", automation: newer })).toBe(
+      state,
+    );
 
     state = reduceWorkspaceState(state, {
-      type: "artifact.comment_session.unlinked",
-      sessionId: commentSession.sessionId,
+      type: "automation.deleted",
+      automationId: older.id,
     });
-    expect(state.artifactCommentSessions).toEqual([]);
+    expect(state.automations).toEqual([newer]);
     expect(
       reduceWorkspaceState(state, {
-        type: "artifact.comment_session.unlinked",
-        sessionId: commentSession.sessionId,
+        type: "automation.deleted",
+        automationId: "missing",
+      }),
+    ).toBe(state);
+  });
+
+  test("tracks artifact worker links idempotently", () => {
+    const worker = {
+      sessionId: "artifact-worker-a",
+      sourceSessionId: sessionId,
+      path: "plan.md",
+      name: "Respond to comment",
+      metadata: { threadId: "thread-a" },
+    };
+    let state = reduceWorkspaceState(createEmptyWorkspaceState(), {
+      type: "artifact.worker.started",
+      worker,
+    });
+
+    expect(state.artifactWorkers).toEqual([worker]);
+    expect(reduceWorkspaceState(state, { type: "artifact.worker.started", worker })).toBe(state);
+
+    state = reduceWorkspaceState(state, {
+      type: "artifact.worker.finished",
+      sessionId: worker.sessionId,
+    });
+    expect(state.artifactWorkers).toEqual([]);
+    expect(
+      reduceWorkspaceState(state, {
+        type: "artifact.worker.finished",
+        sessionId: worker.sessionId,
       }),
     ).toBe(state);
   });
@@ -214,4 +245,18 @@ function transition(
   event: WorkspaceSessionEvent,
 ): WorkspaceSessionState | undefined {
   return reduceWorkspaceSessionState(state, event);
+}
+
+function createAutomation(overrides: Partial<Automation> = {}): Automation {
+  return {
+    id: overrides.id ?? "automation-a",
+    title: overrides.title ?? "Daily summary",
+    prompt: overrides.prompt ?? "Summarize repo status.",
+    model: overrides.model ?? { name: "gpt-5" },
+    cron: overrides.cron ?? "0 9 * * *",
+    createdAt: overrides.createdAt ?? "2026-02-14T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-02-14T00:00:00.000Z",
+    nextRunAt: overrides.nextRunAt ?? "2026-02-14T09:00:00.000Z",
+    lastRunAt: overrides.lastRunAt,
+  };
 }

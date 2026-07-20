@@ -14,7 +14,7 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
 - **Multi-agent orchestration:** Delegate parallel work to child sessions and use the floating Hyper workspace for a dedicated orchestration thread.
 - **Cross-device sync:** Install Toy Box as a PWA and keep real-time session status—including running and unread—synchronized across every connected desktop and mobile client.
 - **Bidirectional artifacts:** Agent changes appear in editable Markdown, HTML, and SVG views, while your edits are saved to disk and notify the agent; custom viewers can support other formats.
-- **Focused Inbox:** Kick off asynchronous tasks and get notified when they complete, with concise results and editable artifacts collected in one place.
+- **Focused Inbox:** Dispatch asynchronous tasks from Toy Box or directly from any webpage with the browser extension, then get notified when concise results and editable artifacts are ready.
 - **Scheduled automations:** Configure recurring prompts that automate routine work and produce reviewable artifacts such as reports, analyses, and news digests.
 - **Integrated terminal:** Run shell commands from a configurable terminal that works on your desktop and phone and reconnects seamlessly without losing your scrollback.
 

@@ -1,11 +1,9 @@
 import { useState } from "react";
-import { useAtomValue } from "jotai";
 import {
   defaultViewportOverlayPosition,
   type OverlayPosition,
 } from "@/components/workspace/overlayWindow";
-import type { WorkspaceAction } from "@/types";
-import { hyperSessionIdAtom } from "../atoms";
+import { useDispatchWorkspaceAction } from "../state";
 
 /** Per-browser state for the floating hyper-session surface. */
 export type HyperSessionState = {
@@ -18,18 +16,18 @@ export type HyperSessionState = {
 // from SSR, while shared membership remains authoritative for its existence.
 export function useHyperSession({
   initialState,
+  hyperSessionId,
   createDraft,
-  dispatchWorkspaceAction,
   deleteSession,
   openSessionInWorkspace,
 }: {
   initialState: HyperSessionState | null;
+  hyperSessionId: string | undefined;
   createDraft: (options?: { hyper?: boolean }) => string;
-  dispatchWorkspaceAction: (action: WorkspaceAction) => void;
   deleteSession: (sessionId: string) => void;
   openSessionInWorkspace: (sessionId: string) => void;
 }) {
-  const hyperSessionId = useAtomValue(hyperSessionIdAtom);
+  const dispatchWorkspaceAction = useDispatchWorkspaceAction();
   const [surface, setSurface] = useState(initialState);
   const state = surface?.sessionId === hyperSessionId ? surface : null;
 

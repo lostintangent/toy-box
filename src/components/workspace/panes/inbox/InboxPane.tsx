@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useAtomValue } from "jotai";
+import { useSelector } from "@tanstack/react-store";
+import { dispatchInboxTask } from "@/functions/inbox";
 import { createSession } from "@/functions/sessions";
 import { getSettings } from "@/lib/config/settings";
 import { getRecentDirectories } from "@/lib/session/recentDirectories";
@@ -7,21 +8,25 @@ import { SessionComposer } from "@/components/composer/SessionComposer";
 import type { SessionLocationPickerProps } from "@/components/workspace/panes/session/location/SessionLocationPicker";
 import { useModels } from "@/hooks/workspace/useModels";
 import { useSessions } from "@/hooks/session/useSessions";
-import { inboxEntriesAtom } from "@/hooks/workspace/atoms";
-import { useLinkedPaneActions, usePublishedPanes } from "@/hooks/workspace/layout/useLinkedPanes";
+import { selectInboxEntries, useWorkspaceSelector } from "@/hooks/workspace/state";
+import {
+  clearLinkedPanes,
+  linkedPanesStore,
+  publishLinkedPanes,
+} from "@/hooks/workspace/layout/linkedPanes";
 import { createArtifactPane, INBOX_PANE, isArtifactPane } from "@/lib/workspace/panes";
 import type { Attachment, InboxEntry } from "@/types";
 import { InboxEntries } from "./InboxEntries";
 
-/** Creates sessions without opening a client stream. Run gives the background
- *  session to Inbox; Send leaves the new session in the normal list. */
+/** Starts work without opening a client stream. Run dispatches an Inbox task;
+ *  Send leaves an ordinary new session in the normal list. */
 export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => void }) {
   const { sessions } = useSessions();
-  const entries = useAtomValue(inboxEntriesAtom);
+  const entries = useWorkspaceSelector(selectInboxEntries);
   const { defaultModel, setDefaultModel } = useModels();
-  const publishedPanes = usePublishedPanes(INBOX_PANE.id);
-  const linkedArtifactPane = publishedPanes.find(isArtifactPane);
-  const { publishLinkedPanes } = useLinkedPaneActions();
+  const linkedArtifactPane = useSelector(linkedPanesStore, (linkedPanes) =>
+    linkedPanes[INBOX_PANE.id]?.find(isArtifactPane),
+  );
   const [prompt, setPrompt] = useState("");
   // An untouched selection follows the latest directory; null preserves an explicit clear.
   const [directorySelection, setDirectorySelection] = useState<string | null>();
@@ -49,8 +54,8 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
   // another client deletes or replaces the linked entry.
   useEffect(() => {
     if (linkedArtifactExists) return;
-    publishLinkedPanes(INBOX_PANE.id, []);
-  }, [linkedArtifactExists, publishLinkedPanes]);
+    clearLinkedPanes(INBOX_PANE.id);
+  }, [linkedArtifactExists]);
 
   function handleInboxArtifactSelect(entry: InboxEntry) {
     if (!entry.artifact) return;
@@ -58,35 +63,53 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
     const artifactPane = createArtifactPane(entry.id, entry.artifact);
     const pane = { ...artifactPane, title: entry.message ?? artifactPane.title };
     const isLinked = linkedArtifactPane?.id === pane.id;
-    publishLinkedPanes(INBOX_PANE.id, isLinked ? [] : [pane]);
+    if (isLinked) {
+      clearLinkedPanes(INBOX_PANE.id);
+    } else {
+      publishLinkedPanes(INBOX_PANE.id, [pane]);
+    }
 
     if (!isLinked) onFocusPane?.(pane.id);
   }
 
   function handleInboxArtifactRemoved(entryId: string) {
     if (linkedArtifactPane?.sourceSessionId === entryId) {
-      publishLinkedPanes(INBOX_PANE.id, []);
+      clearLinkedPanes(INBOX_PANE.id);
     }
   }
 
-  function handleSubmit(text: string, attachments: Attachment[], background = false) {
+  function handleRun(text: string, attachments: Attachment[]) {
+    dispatchInboxTask({ data: createLaunchInput(text, attachments) }).catch((error) => {
+      console.error("Failed to dispatch inbox task:", error);
+      restorePrompt(text);
+    });
+  }
+
+  function handleSend(text: string, attachments: Attachment[]) {
     createSession({
-      data: {
-        message: {
-          content: text,
-          attachments: attachments.length > 0 ? attachments : undefined,
-          model: defaultModel ?? undefined,
-        },
-        directory,
-        useWorktree,
-        background,
-      },
+      data: createLaunchInput(text, attachments),
     }).catch((error) => {
       console.error("Failed to create session:", error);
-      // The composer clears itself on submit; restore the prompt unless the
-      // user has already started composing the next task.
-      setPrompt((current) => (current.trim() ? current : text));
+      restorePrompt(text);
     });
+  }
+
+  function createLaunchInput(text: string, attachments: Attachment[]) {
+    return {
+      message: {
+        content: text,
+        attachments: attachments.length > 0 ? attachments : undefined,
+        model: defaultModel ?? undefined,
+      },
+      directory,
+      useWorktree,
+    };
+  }
+
+  function restorePrompt(text: string) {
+    // The composer clears itself on submit; restore the prompt unless the
+    // user has already started composing the next task.
+    setPrompt((current) => (current.trim() ? current : text));
   }
 
   return (
@@ -96,7 +119,8 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
           <SessionComposer
             value={prompt}
             onValueChange={setPrompt}
-            onSubmit={handleSubmit}
+            onSubmit={handleSend}
+            onRun={handleRun}
             model={defaultModel}
             onModelChange={setDefaultModel}
             locationPicker={locationPicker}

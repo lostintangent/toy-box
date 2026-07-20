@@ -1,13 +1,8 @@
-import { useAtomValue } from "jotai";
 import { Loader2, MessageCirclePlus, Settings, SquareTerminal } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/toggle";
-import {
-  hasUnreadInboxAtom,
-  hyperSessionIdAtom,
-  sessionRunningAtom,
-} from "@/hooks/workspace/atoms";
+import { useWorkspaceSelector, useWorkspaceSessionRunning } from "@/hooks/workspace/state";
 
 export function SidebarFooter({
   onOpenSettings,
@@ -27,8 +22,12 @@ export function SidebarFooter({
   isTerminalOpen: boolean;
 }) {
   const appTitle = import.meta.env.VITE_APP_TITLE;
-  const hyperSessionId = useAtomValue(hyperSessionIdAtom);
-  const hasUnreadInbox = useAtomValue(hasUnreadInboxAtom);
+  const { hyperSessionId, hasUnreadInbox } = useWorkspaceSelector((workspace) => ({
+    hyperSessionId: workspace.hyperSessionIds[0],
+    hasUnreadInbox: workspace.inboxEntries.some(
+      (entry) => workspace.sessionStates[entry.id]?.status === "unread",
+    ),
+  }));
   const showInboxUnreadIndicator = !isInboxOpen && hasUnreadInbox;
 
   return (
@@ -94,7 +93,7 @@ export function SidebarFooter({
 }
 
 function HyperSessionStatus({ sessionId, isOpen }: { sessionId: string; isOpen: boolean }) {
-  const isRunning = useAtomValue(sessionRunningAtom(sessionId));
+  const isRunning = useWorkspaceSessionRunning(sessionId);
 
   return (
     <>

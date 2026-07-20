@@ -4,7 +4,7 @@ import { subscribeWorkspaceEvents } from "@/functions/runtime/broadcast";
 import { createTestDatabase } from "../database";
 import { deleteHyperState } from "./hyperSessions";
 import { deleteSessionState, getSessionState } from "./sessions";
-import type { WorkspaceEvent } from "@/types";
+import type { Automation, WorkspaceEvent } from "@/types";
 import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -23,12 +23,12 @@ const {
   createPendingInboxEntry,
   deleteInboxEntry,
   deleteSessionWorkspaceState,
+  finishArtifactWorker,
   getWorkspaceState,
-  linkArtifactCommentSession,
   sendToInbox,
   setSessionStatus,
+  startArtifactWorker,
   sweepExpiredDrafts,
-  unlinkArtifactCommentSession,
 } = await import(".");
 const { deleteInboxEntryState } = await import("./inbox");
 
@@ -54,8 +54,9 @@ function cleanup(sessionId: string): void {
   deleteHyperState(sessionId);
 }
 
-function snapshot() {
+function snapshot(automations: Automation[] = []) {
   return getWorkspaceState({
+    automations,
     customArtifacts: [],
     environment: { terminalWsPort: DEFAULT_TERMINAL_WS_PORT, voiceEnabled: false },
   });
@@ -84,6 +85,21 @@ describe("workspace state", () => {
       prompt: { text: "hello", origin: "client-a" },
     });
     expect(state.hyperSessionIds).toContain(sessionId);
+  });
+
+  test("snapshot composes durable automation definitions", async () => {
+    const automation: Automation = {
+      id: "automation-a",
+      title: "Daily summary",
+      prompt: "Summarize repo status.",
+      model: { name: "gpt-5" },
+      cron: "0 9 * * *",
+      createdAt: "2026-02-14T00:00:00.000Z",
+      updatedAt: "2026-02-14T00:00:00.000Z",
+      nextRunAt: "2026-02-14T09:00:00.000Z",
+    };
+
+    expect((await snapshot([automation])).automations).toEqual([automation]);
   });
 
   test("discard removes the draft, prompt, and hyper membership in one transition", async () => {
@@ -117,6 +133,7 @@ describe("workspace state", () => {
   test("draft expiry uses prompt activity and cascades hyper cleanup", async () => {
     const sessionId = `workspace-expired-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));
+    const events = capture(sessionId);
 
     applyWorkspaceAction({
       type: "session.draft.created",
@@ -133,6 +150,11 @@ describe("workspace state", () => {
     expect(sweepExpiredDrafts(Date.now() + DAY_MS + 1)).toContain(sessionId);
     expect(getSessionState(sessionId)).toBeUndefined();
     expect((await snapshot()).hyperSessionIds).not.toContain(sessionId);
+    expect(events.map((event) => event.type)).toEqual([
+      "session.draft.created",
+      "session.prompt.drafted",
+      "session.draft.discarded",
+    ]);
   });
 
   test("creation and activity statuses broadcast only real transitions", () => {
@@ -173,38 +195,38 @@ describe("workspace state", () => {
     });
   });
 
-  test("snapshots and broadcasts artifact comment session links", async () => {
-    const commentSession = {
-      sessionId: `comment-session-${crypto.randomUUID()}`,
-      sourceSessionId: `comment-source-${crypto.randomUUID()}`,
+  test("snapshots and broadcasts artifact worker links", async () => {
+    const worker = {
+      sessionId: `artifact-worker-${crypto.randomUUID()}`,
+      sourceSessionId: `artifact-source-${crypto.randomUUID()}`,
       path: "plan.md",
-      threadId: "thread-a",
+      name: "Respond to comment",
+      metadata: { threadId: "thread-a" },
     };
-    onTestFinished(() => unlinkArtifactCommentSession(commentSession.sessionId));
+    onTestFinished(() => finishArtifactWorker(worker.sessionId));
     const events: WorkspaceEvent[] = [];
     const unsubscribe = subscribeWorkspaceEvents((event) => {
       if (
-        (event.type === "artifact.comment_session.linked" &&
-          event.commentSession.sessionId === commentSession.sessionId) ||
-        (event.type === "artifact.comment_session.unlinked" &&
-          event.sessionId === commentSession.sessionId)
+        (event.type === "artifact.worker.started" && event.worker.sessionId === worker.sessionId) ||
+        (event.type === "artifact.worker.finished" && event.sessionId === worker.sessionId)
       ) {
         events.push(event);
       }
     });
     onTestFinished(unsubscribe);
 
-    linkArtifactCommentSession(commentSession);
-    expect((await snapshot()).artifactCommentSessions).toEqual([commentSession]);
+    startArtifactWorker(worker);
+    startArtifactWorker({ ...worker, metadata: { ignored: true } });
+    expect((await snapshot()).artifactWorkers).toEqual([worker]);
 
-    unlinkArtifactCommentSession(commentSession.sessionId);
-    unlinkArtifactCommentSession(commentSession.sessionId);
-    expect((await snapshot()).artifactCommentSessions).toEqual([]);
+    finishArtifactWorker(worker.sessionId);
+    finishArtifactWorker(worker.sessionId);
+    expect((await snapshot()).artifactWorkers).toEqual([]);
     expect(events).toEqual([
-      { type: "artifact.comment_session.linked", commentSession },
+      { type: "artifact.worker.started", worker },
       {
-        type: "artifact.comment_session.unlinked",
-        sessionId: commentSession.sessionId,
+        type: "artifact.worker.finished",
+        sessionId: worker.sessionId,
       },
     ]);
   });

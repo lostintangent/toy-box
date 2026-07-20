@@ -53,7 +53,7 @@ mock.module("@/functions/state/session/registry", () => ({
   deleteSessionIfExists: unused,
 }));
 mock.module("@/functions/runtime/broadcast", () => ({
-  updateSessionName: (sessionId: string, name: string) => {
+  emitSessionNameUpdate: (sessionId: string, name: string) => {
     sideEffects.push(`summary:${sessionId}:${name}`);
     emitMockWorkspaceEvent({
       type: "session.upserted",
@@ -64,10 +64,7 @@ mock.module("@/functions/runtime/broadcast", () => ({
       },
     });
   },
-  emitWorkspaceEvent: emitMockWorkspaceEvent,
-  broadcast: (event: WorkspaceEvent | null) => {
-    if (event) emitMockWorkspaceEvent(event);
-  },
+  broadcast: emitMockWorkspaceEvent,
   emitSessionUpsert: (session: SessionMetadataUpdate) =>
     emitMockWorkspaceEvent({ type: "session.upserted", session }),
   emitSessionDelete: (sessionId: string) =>
@@ -78,8 +75,6 @@ mock.module("@/functions/runtime/broadcast", () => ({
       workspaceEventListeners.delete(listener);
     };
   },
-  emitAutomationEvent: () => {},
-  subscribeAutomationEvents: () => () => {},
 }));
 mock.module("@/functions/state/workspace", () => ({
   ...realWorkspaceStateExports,

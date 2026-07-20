@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { useAtomValue } from "jotai";
-import { useViewport } from "@/hooks/browser/ViewportContext";
+import { useViewport } from "@/hooks/browser/useViewport";
 import { Circle, Loader2, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,7 +26,7 @@ import {
 import { SessionMetadataBadges } from "@/components/workspace/panes/session/location/SessionMetadataBadges";
 import { RelativeTime } from "@/components/ui/relative-time";
 import type { SessionMetadata } from "@/types";
-import { sessionRunningAtom, sessionUnreadAtom } from "@/hooks/workspace/atoms";
+import { useWorkspaceSessionActivity } from "@/hooks/workspace/state";
 import { SidebarListItemMainButton, SidebarListItemShell } from "./SidebarListItemShell";
 import { useSidebarScrollFade } from "./useSidebarScrollFade";
 
@@ -53,8 +52,9 @@ export function SessionListItem({
   isDraft = false,
 }: SessionListItemProps) {
   const { hydrated, isMobile } = useViewport();
-  const isRunning = useAtomValue(sessionRunningAtom(session.sessionId));
-  const hasUnreadActivity = useAtomValue(sessionUnreadAtom(session.sessionId));
+  const { running: isRunning, unread: hasUnreadActivity } = useWorkspaceSessionActivity(
+    session.sessionId,
+  );
   const isUnread = !isActive && hasUnreadActivity;
   const allowScrollIntoView = hydrated && !isMobile;
   const sessionLabel = session.summary || (isDraft ? "Draft session" : "New session");

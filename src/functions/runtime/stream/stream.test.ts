@@ -169,8 +169,6 @@ function mockStreamRuntimeModules(
   mock.module("../broadcast", () => ({
     ...realBroadcastExports,
     emitSessionNameUpdate: () => {},
-    emitAutomationEvent: () => {},
-    subscribeAutomationEvents: () => () => {},
     ...broadcastOverrides,
   }));
   onTestFinished(() => {
@@ -1177,19 +1175,11 @@ describe("createSession", () => {
         return fakeSession;
       },
     );
-    const emitSessionNameUpdateMock = mock((_sessionId: string, _summary: string) => {
-      calls.push("name");
-    });
     const setSessionStatus = mock((_sessionId: string, status: string) => {
       calls.push(status);
     });
 
-    mockStreamRuntimeModules(
-      { createSession: createSessionMock },
-      {},
-      { emitSessionNameUpdate: emitSessionNameUpdateMock },
-      { setSessionStatus },
-    );
+    mockStreamRuntimeModules({ createSession: createSessionMock }, {}, {}, { setSessionStatus });
 
     const { createSession: importedCreate } = await import("./index");
     const receipt = await importedCreate(
@@ -1202,10 +1192,10 @@ describe("createSession", () => {
       {
         directory: "/repo",
         useWorktree: true,
-        parentSessionId: "parent-session",
+        worker: { parentSessionId: "parent-session", retained: false },
         initialContext: { workingDirectory: "/repo" },
-        sessionType: "child",
-        summary: "Background task",
+        sessionType: "worker",
+        name: "Background task",
       },
     );
 
@@ -1214,19 +1204,16 @@ describe("createSession", () => {
       model: { name: "gpt-5.5", reasoningEffort: "high" },
       directory: "/repo",
       useWorktree: true,
-      parentSessionId: "parent-session",
+      worker: { parentSessionId: "parent-session", retained: false },
       initialContext: { workingDirectory: "/repo" },
-      sessionType: "child",
+      sessionType: "worker",
+      name: "Background task",
     });
-    expect(emitSessionNameUpdateMock).toHaveBeenCalledWith(
-      "session-headless-create",
-      "Background task",
-    );
     expect(sendMock).toHaveBeenCalledWith({
       prompt: "Start in the background",
       attachments: undefined,
     });
-    expect(calls).toEqual(["creating", "create", "name", "running", "send"]);
+    expect(calls).toEqual(["creating", "create", "running", "send"]);
   });
 
   test("restores the pre-session state when creation fails", async () => {

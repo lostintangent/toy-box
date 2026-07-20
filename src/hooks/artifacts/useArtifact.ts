@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { readArtifact, writeArtifact } from "@/functions/artifacts";
 import { notifyAgent } from "@/functions/sessions";
 import type { ArtifactPaneMode } from "@/lib/workspace/panes";
@@ -9,7 +10,7 @@ const SAVE_DEBOUNCE_MS = 2_000;
 const SAVE_SETTLE_MS = 1_000;
 const ARTIFACT_EDIT_NOTIFICATION_DEBOUNCE_MS = 8_000;
 
-type Timer = ReturnType<typeof setTimeout>;
+type ArtifactFlushOptions = { notifyAgent?: boolean };
 
 export type Artifact = {
   /** Last known on-disk content; the renderer owns its editing buffer. */
@@ -21,7 +22,7 @@ export type Artifact = {
   isSaving: boolean;
   error: string | null;
   save: (content: string) => void;
-  flush: (options?: { notifyAgent?: boolean }) => Promise<void>;
+  flush: (options?: ArtifactFlushOptions) => Promise<void>;
 };
 
 export function useArtifact({
@@ -47,31 +48,19 @@ export function useArtifact({
 
   // Discard reads that finish after a newer load or unmount.
   const loadIdRef = useRef(0);
-  const pendingSaveRef = useRef<{
-    flush: (options?: { notifyAgent?: boolean }) => Promise<void>;
-    timer: Timer;
-  } | null>(null);
+  const pendingContentRef = useRef("");
+  const flushOptionsRef = useRef<ArtifactFlushOptions | undefined>(undefined);
   // Writes are serialized so rapid edits cannot land out of order.
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const lastWrittenTimestampRef = useRef<number | null>(null);
-  const settleTimerRef = useRef<Timer | undefined>(undefined);
+  const settleTask = useDebouncer(() => setIsSaving(false), { wait: SAVE_SETTLE_MS });
 
-  function clearSettle() {
-    if (settleTimerRef.current === undefined) return;
-    clearTimeout(settleTimerRef.current);
-    settleTimerRef.current = undefined;
-  }
-
-  function save(nextContent: string) {
-    if (pendingSaveRef.current) clearTimeout(pendingSaveRef.current.timer);
-
-    function flush({ notifyAgent = true }: { notifyAgent?: boolean } = {}): Promise<void> {
-      const pending = pendingSaveRef.current;
-      if (pending?.flush !== flush) return saveQueueRef.current;
-      clearTimeout(pending.timer);
-      pendingSaveRef.current = null;
+  const saveTask = useDebouncer(
+    () => {
+      const { notifyAgent = true } = flushOptionsRef.current ?? {};
+      const nextContent = pendingContentRef.current;
       setIsSaving(true);
-      clearSettle();
+      settleTask.cancel();
       saveQueueRef.current = saveQueueRef.current.then(async () => {
         const result = await writeArtifact({
           data: { sessionId, path, content: nextContent },
@@ -79,23 +68,25 @@ export function useArtifact({
         lastWrittenTimestampRef.current = result.timestamp;
         setError(null);
         if (notifyAgent) scheduleAgentNotification();
-        clearSettle();
-        settleTimerRef.current = setTimeout(() => {
-          settleTimerRef.current = undefined;
-          setIsSaving(false);
-        }, SAVE_SETTLE_MS);
+        settleTask.maybeExecute();
       });
-      return saveQueueRef.current;
-    }
+    },
+    {
+      wait: SAVE_DEBOUNCE_MS,
+      onUnmount: (debouncer) => debouncer.flush(),
+    },
+  );
 
-    pendingSaveRef.current = {
-      flush,
-      timer: setTimeout(flush, SAVE_DEBOUNCE_MS),
-    };
+  function save(nextContent: string) {
+    pendingContentRef.current = nextContent;
+    saveTask.maybeExecute();
   }
 
-  function flush(options?: { notifyAgent?: boolean }): Promise<void> {
-    return pendingSaveRef.current?.flush(options) ?? saveQueueRef.current;
+  function flush(options?: ArtifactFlushOptions): Promise<void> {
+    flushOptionsRef.current = options;
+    saveTask.flush();
+    flushOptionsRef.current = undefined;
+    return saveQueueRef.current;
   }
 
   // The pane is keyed by session and path, so this effect owns one artifact's
@@ -138,15 +129,16 @@ export function useArtifact({
     };
   }, [path, sessionId]);
 
-  // Do not lose the renderer's final debounced edit on unmount.
-  useEffect(
-    () => () => {
-      void pendingSaveRef.current?.flush();
-    },
-    [],
-  );
-
-  return { content, revision, isReady: content !== null, isLoading, isSaving, error, save, flush };
+  return {
+    content,
+    revision,
+    isReady: content !== null,
+    isLoading,
+    isSaving,
+    error,
+    save,
+    flush,
+  };
 }
 
 /** Debounced side-channel that nudges the agent after the user edits a shared artifact. */
@@ -159,48 +151,20 @@ function useArtifactEditNotification({
   path: string;
   sessionId: string;
 }): () => void {
-  const enabledRef = useRef(enabled);
-  const pendingNotificationRef = useRef<{ flush: () => void; timer: Timer } | null>(null);
-  useLayoutEffect(() => {
-    enabledRef.current = enabled;
-  }, [enabled]);
-
-  function schedule() {
-    const pending = pendingNotificationRef.current;
-    if (pending) clearTimeout(pending.timer);
-    pendingNotificationRef.current = null;
-    if (!enabledRef.current) return;
-
-    function flush() {
-      const pending = pendingNotificationRef.current;
-      if (pending?.flush !== flush) return;
-      clearTimeout(pending.timer);
-      pendingNotificationRef.current = null;
-      if (!enabledRef.current) return;
-
+  const notificationTask = useDebouncer(
+    () => {
       void notifyAgent({
         data: { sessionId, notification: { type: "artifact_edited", path } },
       }).catch((error) => {
         console.error("Failed to notify agent about artifact edit:", error);
       });
-    }
+    },
+    {
+      enabled,
+      wait: ARTIFACT_EDIT_NOTIFICATION_DEBOUNCE_MS,
+      onUnmount: (debouncer) => debouncer.flush(),
+    },
+  );
 
-    pendingNotificationRef.current = {
-      flush,
-      timer: setTimeout(flush, ARTIFACT_EDIT_NOTIFICATION_DEBOUNCE_MS),
-    };
-  }
-
-  useEffect(() => {
-    if (enabled) return;
-    const pending = pendingNotificationRef.current;
-    if (!pending) return;
-    clearTimeout(pending.timer);
-    pendingNotificationRef.current = null;
-  }, [enabled]);
-
-  // Deliver a settled edit before its notification target changes or disappears.
-  useEffect(() => () => pendingNotificationRef.current?.flush(), [path, sessionId]);
-
-  return schedule;
+  return notificationTask.maybeExecute;
 }

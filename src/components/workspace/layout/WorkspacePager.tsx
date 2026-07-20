@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom } from "@tanstack/react-store";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { sessionRunningAtom, sessionUnreadAtom } from "@/hooks/workspace/atoms";
+import { useWorkspaceSessionActivity } from "@/hooks/workspace/state";
 import { useFocusedPaneAtom } from "@/hooks/workspace/layout/focus";
 import { cn } from "@/lib/utils";
 import { isArtifactPane, paneSourceSessionId, type WorkspacePane } from "@/lib/workspace/panes";
@@ -26,22 +26,24 @@ type WorkspacePagerProps = {
 export function WorkspacePager({ panes, primaryPaneId, onBack, toolbarSlot }: WorkspacePagerProps) {
   const [focusedPaneId, setFocusedPaneId] = useAtom(useFocusedPaneAtom());
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
+  const [statusSlot, setStatusSlot] = useState<HTMLDivElement | null>(null);
   const paneIds = panes.map((pane) => pane.id);
   const fallbackPaneId = panes[0]?.id ?? primaryPaneId;
   const resolvedPrimaryPaneId = paneIds.includes(primaryPaneId) ? primaryPaneId : fallbackPaneId;
 
   // The focused pane is the active page when it's one of ours; otherwise fall
   // back to the primary root pane. Focus clears centrally when its pane departs
-  // (see useWorkspaceFocus), so a fresh selection lands on its own pane.
+  // (see WorkspaceSurfaceProvider), so a fresh selection lands on its own pane.
   const effectiveActivePaneId =
     focusedPaneId !== null && paneIds.includes(focusedPaneId)
       ? focusedPaneId
       : resolvedPrimaryPaneId;
   const appearingPaneIds = useAppearingPanes(paneIds);
 
-  // The pager's toolbar: an optional mobile back button, the dot strip, and a
-  // slot the active pane fills with its own actions. Interactive groups stop
-  // pointer-down so a host title-bar drag (the hyper window) can't start on them.
+  // The pager's toolbar: an optional mobile back button, the dot strip, and
+  // slots the active pane fills with transient status and persistent actions.
+  // Interactive groups stop pointer-down so a host title-bar drag (the hyper
+  // window) can't start on them.
   function stopDrag(event: ReactPointerEvent) {
     event.stopPropagation();
   }
@@ -70,11 +72,10 @@ export function WorkspacePager({ panes, primaryPaneId, onBack, toolbarSlot }: Wo
           />
         </div>
       )}
-      <div
-        ref={setActionsSlot}
-        className="ml-auto flex min-w-0 items-center gap-1.5"
-        onPointerDown={stopDrag}
-      />
+      <div className="ml-auto flex min-w-0 items-center gap-1.5" onPointerDown={stopDrag}>
+        <div ref={setStatusSlot} className="flex shrink-0 items-center gap-1.5" />
+        <div ref={setActionsSlot} className="flex min-w-0 items-center gap-1.5" />
+      </div>
     </>
   );
   const renderedToolbar =
@@ -111,10 +112,14 @@ export function WorkspacePager({ panes, primaryPaneId, onBack, toolbarSlot }: Wo
               <WorkspacePaneView
                 pane={pane}
                 variant="compact"
-                actionsSlot={isActive ? actionsSlot : null}
+                slots={{
+                  actions: isActive ? actionsSlot : null,
+                  status: isActive ? statusSlot : null,
+                }}
                 onFocusPane={setFocusedPaneId}
-              />
-              {shouldRenderSessionOverlay && <SessionOverlay sessionId={associatedSessionId} />}
+              >
+                {shouldRenderSessionOverlay && <SessionOverlay sessionId={associatedSessionId} />}
+              </WorkspacePaneView>
             </div>
           );
         })}
@@ -183,8 +188,7 @@ function SessionPagerDot({
 }: Omit<PagerDotProps, "pane"> & {
   pane: Extract<WorkspacePane, { kind: "session" }>;
 }) {
-  const isRunning = useAtomValue(sessionRunningAtom(pane.sessionId));
-  const isUnread = useAtomValue(sessionUnreadAtom(pane.sessionId));
+  const { running: isRunning, unread: isUnread } = useWorkspaceSessionActivity(pane.sessionId);
 
   return <PagerDotButton pane={pane} {...props} isRunning={isRunning} isUnread={isUnread} />;
 }

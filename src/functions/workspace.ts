@@ -11,6 +11,8 @@ import {
   loadCustomArtifacts,
   sweepExpiredDrafts,
 } from "./state/workspace";
+import { AutomationDatabase } from "./automations/database";
+import { getAppDatabase } from "./state/database";
 import { deleteSessionIfExists } from "./state/session/registry";
 import { hasInboxEntry } from "./state/workspace/inbox";
 import { workspaceActionSchema } from "@/lib/workspace/actions";
@@ -19,8 +21,13 @@ import type { WorkspaceState } from "@/lib/workspace/state";
 export const getWorkspaceState = createServerFn({ method: "GET" }).handler(
   async (): Promise<WorkspaceState> => {
     sweepExpiredDrafts();
-    const customArtifacts = await loadCustomArtifacts();
-    return await readWorkspaceState({
+    const [customArtifacts, database] = await Promise.all([
+      loadCustomArtifacts(),
+      getAppDatabase({ createIfMissing: false }),
+    ]);
+    const automations = database ? await new AutomationDatabase(database).list() : [];
+    return readWorkspaceState({
+      automations,
       customArtifacts,
       environment: getEnvironment(),
     });

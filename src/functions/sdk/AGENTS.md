@@ -43,14 +43,14 @@ Keep these codecs narrow. Callers should not learn SDK wire shapes, and the proj
 
 ## Session roles, instructions, and tools
 
-`SessionType` configures the agent's product role: `standard`, `automation`, `inbox`, `hyper`, or `child`. It is not persisted on the SDK session. Creation resolves the type from context already in hand; cold resume derives it from the automation, Inbox, child, or in-memory Hyper record that manages the session. No managing record means standard, and conflicting records are an invariant violation.
+`SessionType` configures the agent's product role: `standard`, `automation`, `inbox`, `hyper`, or `worker`. It is not persisted on the SDK session. Creation resolves the type from context already in hand; cold resume derives it from the automation, Inbox, worker, or in-memory Hyper record that manages the session. No managing record means standard, and conflicting records are an invariant violation.
 
-All roles receive lifecycle, coordination, and automation tools. Standard and Hyper sessions also receive interactive layout tools because they are directly presented in the workspace. Hyper receives artifact-kind registration, and Inbox receives `send_to_inbox`; automation, Inbox, and child sessions do not receive UI-only open/close tools.
+All roles receive lifecycle, coordination, and automation tools. Standard and Hyper sessions also receive interactive layout tools because they are directly presented in the workspace. Hyper receives artifact-kind registration, and Inbox receives `send_to_inbox`; automation, Inbox, and worker sessions do not receive UI-only open/close tools.
 
 System instructions follow the same role model:
 
 - Every session receives its meaningful working directory when one exists.
-- Standard, Hyper, child, and automation sessions learn their durable session files location and can receive artifact-edit notifications.
+- Standard, Hyper, worker, and automation sessions learn their durable session files location and can receive artifact-edit notifications.
 - Automation sessions learn that their stable session ID is also their automation ID and can treat artifact edits as feedback on the automation prompt.
 - Inbox sessions learn that their session ID is also the Inbox entry ID. They call `send_to_inbox` only when the initial task did not already produce a durable visible outcome, using one concise message and at most one artifact for results that cannot fit naturally in that message.
 

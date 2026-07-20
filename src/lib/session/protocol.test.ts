@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   deliverMessageInputSchema,
   createSessionInputSchema,
+  dispatchInboxTaskInputSchema,
   streamSessionRequestSchema,
 } from "./protocol";
 
@@ -59,14 +60,15 @@ describe("session protocol", () => {
         message,
         directory: "/repo",
         useWorktree: true,
-        background: true,
       }),
     ).toMatchObject({
       message,
       directory: "/repo",
       useWorktree: true,
-      background: true,
     });
+    expect(
+      dispatchInboxTaskInputSchema.parse({ message, directory: "/repo", useWorktree: true }),
+    ).toMatchObject({ message, directory: "/repo", useWorktree: true });
     expect(deliverMessageInputSchema.parse({ sessionId: "session", message })).toMatchObject({
       sessionId: "session",
       message,
