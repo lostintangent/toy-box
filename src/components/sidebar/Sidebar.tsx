@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { SettingsDialog } from "@/components/config/SettingsDialog";
+import { ScrollableFade } from "@/components/ui/scrollable-fade";
 import { cn } from "@/lib/utils";
 import type { SessionMetadata } from "@/types";
+import { AutomationPanel } from "./automations/AutomationPanel";
+import { SettingsDialog } from "./shell/SettingsDialog";
 import { SidebarHeader } from "./shell/SidebarHeader";
 import { SidebarFooter } from "./shell/SidebarFooter";
 import { SessionList } from "./list/SessionList";
-import { AutomationPanel } from "./automation/AutomationPanel";
 
 export type SidebarProps = {
   filter: string;
@@ -93,7 +94,7 @@ export function Sidebar({
         />
 
         <div className="min-h-0 min-w-0 flex flex-col bg-muted/50">
-          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-3 py-2">
+          <ScrollableFade axis="vertical" className="min-h-0 min-w-0 flex-1 px-3 py-2">
             <SessionList
               sessions={sessions}
               isLoading={isSessionsLoading}
@@ -106,7 +107,7 @@ export function Sidebar({
               emptyMessage={emptyMessage}
               draftSessions={draftSessions}
             />
-          </div>
+          </ScrollableFade>
           <AutomationPanel
             isExpanded={isAutomationsExpanded}
             onExpandedChange={onAutomationsExpandedChange}

@@ -4,9 +4,23 @@ import type {
   CustomArtifactKind,
   DraftPrompt,
   InboxEntry,
+  Settings,
   WorkspaceEvent,
 } from "@/types";
 import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
+import { areSettingsEqual, DEFAULT_SETTINGS } from "@/lib/workspace/config/settings";
+
+/** The complete shared workspace projection assembled by the server and reduced by clients. */
+export type WorkspaceState = {
+  settings: Settings;
+  sessionStates: Record<string, WorkspaceSessionState>;
+  hyperSessionIds: string[];
+  automations: Automation[];
+  inboxEntries: InboxEntry[];
+  artifactWorkers: ArtifactWorker[];
+  customArtifacts: CustomArtifactKind[];
+  environment: WorkspaceEnvironment;
+};
 
 /** Passive capabilities configured by the server process. */
 export type WorkspaceEnvironment = {
@@ -23,8 +37,64 @@ export type WorkspaceSessionState =
   | { status: "running" | "unread"; prompt?: DraftPrompt }
   | { status: "idle"; prompt: DraftPrompt };
 
-export function isWorkspaceSessionRunning(state: WorkspaceSessionState | undefined): boolean {
-  return state?.status === "creating" || state?.status === "running";
+export function createEmptyWorkspaceState(): WorkspaceState {
+  return {
+    settings: DEFAULT_SETTINGS,
+    sessionStates: {},
+    hyperSessionIds: [],
+    automations: [],
+    inboxEntries: [],
+    artifactWorkers: [],
+    customArtifacts: [],
+    environment: { terminalWsPort: DEFAULT_TERMINAL_WS_PORT, voiceEnabled: false },
+  };
+}
+
+export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEvent): WorkspaceState {
+  switch (event.type) {
+    case "settings.changed":
+      return areSettingsEqual(state.settings, event.settings)
+        ? state
+        : { ...state, settings: event.settings };
+    case "session.draft.created": {
+      const next = reduceSessionInWorkspace(state, event.sessionId, event);
+      return event.hyper ? setHyperSessionMembership(next, event.sessionId, true) : next;
+    }
+    case "session.draft.discarded": {
+      const next = reduceSessionInWorkspace(state, event.sessionId, event);
+      return setHyperSessionMembership(next, event.sessionId, false);
+    }
+    case "session.deleted": {
+      const next = reduceSessionInWorkspace(state, event.sessionId, event);
+      const withoutHyper = setHyperSessionMembership(next, event.sessionId, false);
+      return removeArtifactWorkersForSession(withoutHyper, event.sessionId);
+    }
+    case "session.hyper.promoted":
+      return setHyperSessionMembership(state, event.sessionId, false);
+    case "session.prompt.drafted":
+    case "session.creating":
+    case "session.running":
+    case "session.idle":
+    case "session.unread":
+    case "session.read":
+      return reduceSessionInWorkspace(state, event.sessionId, event);
+    case "session.upserted":
+      return reduceSessionInWorkspace(state, event.session.sessionId, event);
+    case "inbox.entry.upserted":
+      return upsertInboxEntry(state, event.entry);
+    case "inbox.entry.deleted":
+      return deleteInboxEntry(state, event.entryId);
+    case "artifact.kind.registered":
+      return registerArtifactKind(state, event.kind);
+    case "artifact.worker.started":
+      return startArtifactWorker(state, event.worker);
+    case "artifact.worker.finished":
+      return finishArtifactWorker(state, event.sessionId);
+    case "automation.upserted":
+      return upsertAutomation(state, event.automation);
+    case "automation.deleted":
+      return deleteAutomation(state, event.automationId);
+  }
 }
 
 export type WorkspaceSessionEvent = Extract<
@@ -43,71 +113,6 @@ export type WorkspaceSessionEvent = Extract<
       | "session.deleted";
   }
 >;
-
-export type WorkspaceState = {
-  sessionStates: Record<string, WorkspaceSessionState>;
-  hyperSessionIds: string[];
-  automations: Automation[];
-  inboxEntries: InboxEntry[];
-  artifactWorkers: ArtifactWorker[];
-  customArtifacts: CustomArtifactKind[];
-  environment: WorkspaceEnvironment;
-};
-
-export function createEmptyWorkspaceState(): WorkspaceState {
-  return {
-    sessionStates: {},
-    hyperSessionIds: [],
-    automations: [],
-    inboxEntries: [],
-    artifactWorkers: [],
-    customArtifacts: [],
-    environment: { terminalWsPort: DEFAULT_TERMINAL_WS_PORT, voiceEnabled: false },
-  };
-}
-
-export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEvent): WorkspaceState {
-  switch (event.type) {
-    case "session.draft.created": {
-      const next = reduceSessionInWorkspace(state, event.sessionId, event);
-      return event.hyper ? setHyperSessionMembership(next, event.sessionId, true) : next;
-    }
-    case "session.draft.discarded": {
-      const next = reduceSessionInWorkspace(state, event.sessionId, event);
-      return setHyperSessionMembership(next, event.sessionId, false);
-    }
-    case "session.deleted": {
-      const next = reduceSessionInWorkspace(state, event.sessionId, event);
-      const withoutHyper = setHyperSessionMembership(next, event.sessionId, false);
-      return removeArtifactWorkersForSession(withoutHyper, event.sessionId);
-    }
-    case "session.hyper.promoted":
-      return setHyperSessionMembership(state, event.sessionId, false);
-    case "inbox.entry.upserted":
-      return upsertInboxEntry(state, event.entry);
-    case "inbox.entry.deleted":
-      return deleteInboxEntry(state, event.entryId);
-    case "artifact.kind.registered":
-      return registerArtifactKind(state, event.kind);
-    case "artifact.worker.started":
-      return startArtifactWorker(state, event.worker);
-    case "artifact.worker.finished":
-      return finishArtifactWorker(state, event.sessionId);
-    case "automation.upserted":
-      return upsertAutomation(state, event.automation);
-    case "automation.deleted":
-      return deleteAutomation(state, event.automationId);
-    case "session.prompt.drafted":
-    case "session.creating":
-    case "session.running":
-    case "session.idle":
-    case "session.unread":
-    case "session.read":
-      return reduceSessionInWorkspace(state, event.sessionId, event);
-    case "session.upserted":
-      return reduceSessionInWorkspace(state, event.session.sessionId, event);
-  }
-}
 
 /** The canonical transition function shared by the server store and client projection. */
 export function reduceWorkspaceSessionState(
@@ -163,6 +168,10 @@ export function reduceWorkspaceSessionState(
   }
 }
 
+export function isWorkspaceSessionRunning(state: WorkspaceSessionState | undefined): boolean {
+  return state?.status === "creating" || state?.status === "running";
+}
+
 function reduceSessionInWorkspace(
   workspace: WorkspaceState,
   sessionId: string,
@@ -188,6 +197,28 @@ function idleSessionState(prompt?: DraftPrompt): WorkspaceSessionState | undefin
   return prompt ? { status: "idle", prompt } : undefined;
 }
 
+function sameDraftPrompt(left: DraftPrompt, right: DraftPrompt): boolean {
+  return (
+    left.text === right.text && left.origin === right.origin && left.updatedAt === right.updatedAt
+  );
+}
+
+function setHyperSessionMembership(
+  state: WorkspaceState,
+  sessionId: string,
+  present: boolean,
+): WorkspaceState {
+  const hasSessionId = state.hyperSessionIds.includes(sessionId);
+  if (present === hasSessionId) return state;
+
+  return {
+    ...state,
+    hyperSessionIds: present
+      ? [...state.hyperSessionIds, sessionId]
+      : state.hyperSessionIds.filter((id) => id !== sessionId),
+  };
+}
+
 function upsertInboxEntry(state: WorkspaceState, entry: InboxEntry): WorkspaceState {
   const index = state.inboxEntries.findIndex((existing) => existing.id === entry.id);
   if (index === -1) return { ...state, inboxEntries: [entry, ...state.inboxEntries] };
@@ -203,20 +234,14 @@ function deleteInboxEntry(state: WorkspaceState, entryId: string): WorkspaceStat
   return inboxEntries.length === state.inboxEntries.length ? state : { ...state, inboxEntries };
 }
 
-function upsertAutomation(state: WorkspaceState, automation: Automation): WorkspaceState {
-  const index = state.automations.findIndex((current) => current.id === automation.id);
-  if (index !== -1 && state.automations[index] === automation) return state;
+function registerArtifactKind(state: WorkspaceState, kind: CustomArtifactKind): WorkspaceState {
+  const index = state.customArtifacts.findIndex((current) => current.name === kind.name);
+  if (index === -1) return { ...state, customArtifacts: [...state.customArtifacts, kind] };
+  if (state.customArtifacts[index] === kind) return state;
 
-  const automations = [...state.automations];
-  if (index === -1) automations.push(automation);
-  else automations[index] = automation;
-  automations.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  return { ...state, automations };
-}
-
-function deleteAutomation(state: WorkspaceState, automationId: string): WorkspaceState {
-  const automations = state.automations.filter((automation) => automation.id !== automationId);
-  return automations.length === state.automations.length ? state : { ...state, automations };
+  const customArtifacts = [...state.customArtifacts];
+  customArtifacts[index] = kind;
+  return { ...state, customArtifacts };
 }
 
 function startArtifactWorker(state: WorkspaceState, worker: ArtifactWorker): WorkspaceState {
@@ -240,34 +265,18 @@ function removeArtifactWorkersForSession(state: WorkspaceState, sessionId: strin
     : { ...state, artifactWorkers };
 }
 
-function registerArtifactKind(state: WorkspaceState, kind: CustomArtifactKind): WorkspaceState {
-  const index = state.customArtifacts.findIndex((current) => current.name === kind.name);
-  if (index === -1) return { ...state, customArtifacts: [...state.customArtifacts, kind] };
-  if (state.customArtifacts[index] === kind) return state;
+function upsertAutomation(state: WorkspaceState, automation: Automation): WorkspaceState {
+  const index = state.automations.findIndex((current) => current.id === automation.id);
+  if (index !== -1 && state.automations[index] === automation) return state;
 
-  const customArtifacts = [...state.customArtifacts];
-  customArtifacts[index] = kind;
-  return { ...state, customArtifacts };
+  const automations = [...state.automations];
+  if (index === -1) automations.push(automation);
+  else automations[index] = automation;
+  automations.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return { ...state, automations };
 }
 
-function setHyperSessionMembership(
-  state: WorkspaceState,
-  sessionId: string,
-  present: boolean,
-): WorkspaceState {
-  const hasSessionId = state.hyperSessionIds.includes(sessionId);
-  if (present === hasSessionId) return state;
-
-  return {
-    ...state,
-    hyperSessionIds: present
-      ? [...state.hyperSessionIds, sessionId]
-      : state.hyperSessionIds.filter((id) => id !== sessionId),
-  };
-}
-
-function sameDraftPrompt(left: DraftPrompt, right: DraftPrompt): boolean {
-  return (
-    left.text === right.text && left.origin === right.origin && left.updatedAt === right.updatedAt
-  );
+function deleteAutomation(state: WorkspaceState, automationId: string): WorkspaceState {
+  const automations = state.automations.filter((automation) => automation.id !== automationId);
+  return automations.length === state.automations.length ? state : { ...state, automations };
 }

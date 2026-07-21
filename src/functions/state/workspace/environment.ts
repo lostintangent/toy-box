@@ -3,7 +3,7 @@
 // variables fixed for the life of the process, so they are passive snapshot
 // data — never mutated by workspace events, only refreshed by rehydration.
 
-import type { WorkspaceEnvironment } from "@/lib/workspace/state";
+import type { WorkspaceEnvironment } from "@/lib/workspace/state/reducer";
 import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 
 export function getEnvironment(): WorkspaceEnvironment {

@@ -7,11 +7,12 @@ import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { ModelConfiguration, SessionType } from "@/types";
+import type { ModelConfiguration, SessionSkill, SessionType } from "@/types";
 import { toSdkSessionModelOptions } from "@/lib/modelConfiguration";
 import { SESSION_STATE_PATH } from "@/lib/paths";
 import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 import { SDK_AGENT_NOTIFICATION_INSTRUCTIONS } from "@/functions/sdk/agentNotificationCodec";
+import { toSessionSkills } from "@/functions/sdk/skills";
 
 // ── Public API ────────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ export async function createSession(
     requestCanvasRenderer: true,
     ...toSdkSessionModelOptions(options.model),
     workingDirectory: options.directory,
+    enableConfigDiscovery: true,
     systemMessage: buildSessionSystemMessage(sessionId, options),
     onPermissionRequest: approveAll,
     tools: options.tools,
@@ -47,6 +49,7 @@ export async function resumeSession(
     streaming: true,
     requestCanvasRenderer: true,
     workingDirectory: options.directory,
+    enableConfigDiscovery: true,
     systemMessage: buildSessionSystemMessage(sessionId, options),
     onPermissionRequest: approveAll,
     tools: options.tools,
@@ -123,15 +126,26 @@ export async function listModels() {
   return client.listModels();
 }
 
+/** Discover user-invocable skills for a working directory, or host-level skills without one. */
+export async function listSkills(cwd?: string): Promise<SessionSkill[]> {
+  const client = await getCopilotClient();
+  const result = await client.rpc.skills.discover(cwd ? { projectPaths: [cwd] } : {});
+  return toSessionSkills(result.skills);
+}
+
 // ── Session configuration ─────────────────────────────────────────────
 
 export function buildSessionSystemMessage(
   sessionId: string,
-  options: { directory?: string; sessionType: SessionType },
+  options: { directory?: string; model?: ModelConfiguration; sessionType: SessionType },
 ) {
-  const { directory, sessionType } = options;
+  const { directory, model, sessionType } = options;
 
   const parts: string[] = [];
+
+  if (model) {
+    parts.push(`This session was created with model configuration: ${JSON.stringify(model)}.`);
+  }
 
   if (directory) {
     parts.push(

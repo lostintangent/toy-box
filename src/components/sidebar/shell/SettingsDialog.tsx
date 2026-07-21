@@ -1,4 +1,3 @@
-import { useAtom } from "jotai";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -9,12 +8,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  autoFocusArtifactsAtom,
-  isSessionFeatureScope,
-  terminalShellAtom,
-  worktreeAtom,
-} from "@/lib/config/settings";
+import { isAccentColor, isSessionFeatureScope } from "@/lib/workspace/config/settings";
+import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@/hooks/workspace/state";
 
 export function SettingsDialog({
   open,
@@ -23,9 +18,9 @@ export function SettingsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [terminalShell, setTerminalShell] = useAtom(terminalShellAtom);
-  const [useWorktree, setUseWorktree] = useAtom(worktreeAtom);
-  const [autoFocusArtifacts, setAutoFocusArtifacts] = useAtom(autoFocusArtifactsAtom);
+  const settings = useWorkspaceSelector((workspace) => workspace.settings);
+  const updateSetting = useUpdateWorkspaceSetting();
+  const { accentColor, terminalShell, useWorktree, autoFocusArtifacts } = settings;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -34,14 +29,19 @@ export function SettingsDialog({
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4">
-          <div className="grid gap-2">
+          <div className="grid grid-cols-[minmax(0,1fr)_8rem] gap-x-4 gap-y-2">
             <label htmlFor="auto-focus-artifacts" className="text-sm font-medium text-foreground">
               Auto-focus artifacts
+            </label>
+            <label htmlFor="accent-color" className="text-sm font-medium text-foreground">
+              Accent color
             </label>
             <Select
               value={autoFocusArtifacts}
               onValueChange={(value) => {
-                if (isSessionFeatureScope(value)) setAutoFocusArtifacts(value);
+                if (isSessionFeatureScope(value)) {
+                  updateSetting("autoFocusArtifacts", value);
+                }
               }}
             >
               <SelectTrigger id="auto-focus-artifacts" className="w-full">
@@ -54,6 +54,23 @@ export function SettingsDialog({
                 <SelectItem value="never">Never</SelectItem>
               </SelectContent>
             </Select>
+            <div className="relative flex h-9 items-center gap-2 rounded-md border border-input bg-transparent px-3 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+              <span
+                aria-hidden="true"
+                className="size-4 shrink-0 rounded-full border border-black/10 bg-user-accent"
+              />
+              <code className="text-xs text-muted-foreground uppercase">{accentColor}</code>
+              <input
+                id="accent-color"
+                type="color"
+                value={accentColor}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  if (isAccentColor(value)) updateSetting("accentColor", value);
+                }}
+                className="absolute inset-0 size-full cursor-pointer opacity-0"
+              />
+            </div>
           </div>
           <div className="grid gap-2">
             <label htmlFor="terminal-shell" className="text-sm font-medium text-foreground">
@@ -66,7 +83,7 @@ export function SettingsDialog({
               onBlur={(event) => {
                 const value = event.currentTarget.value.trim();
                 event.currentTarget.value = value;
-                setTerminalShell(value);
+                updateSetting("terminalShell", value);
               }}
               placeholder="/bin/zsh or zsh"
               spellCheck={false}
@@ -80,7 +97,7 @@ export function SettingsDialog({
               id="use-worktree"
               checked={useWorktree}
               onCheckedChange={(checked) => {
-                setUseWorktree(checked === true);
+                updateSetting("useWorktree", checked === true);
               }}
             />
             <label htmlFor="use-worktree" className="text-sm font-medium text-foreground">

@@ -4,7 +4,7 @@ import {
   reduceWorkspaceSessionState,
   type WorkspaceSessionEvent,
   type WorkspaceSessionState,
-} from "@/lib/workspace/state";
+} from "@/lib/workspace/state/reducer";
 import type { DraftPrompt } from "@/types";
 import { sharedMap } from "../../runtime/processState";
 

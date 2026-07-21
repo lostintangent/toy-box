@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { readArtifact, writeArtifact } from "@/functions/artifacts";
 import { notifyAgent } from "@/functions/sessions";
+import { SerialTaskQueue } from "@/lib/serialTaskQueue";
 import type { ArtifactPaneMode } from "@/lib/workspace/panes";
 import { createArtifactRouteUrl } from "@/lib/session/artifacts/paths";
 import type { FileWatchEvent } from "@/types";
@@ -45,13 +46,12 @@ export function useArtifact({
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveQueue] = useState(() => new SerialTaskQueue());
 
   // Discard reads that finish after a newer load or unmount.
   const loadIdRef = useRef(0);
   const pendingContentRef = useRef("");
   const flushOptionsRef = useRef<ArtifactFlushOptions | undefined>(undefined);
-  // Writes are serialized so rapid edits cannot land out of order.
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const lastWrittenTimestampRef = useRef<number | null>(null);
   const settleTask = useDebouncer(() => setIsSaving(false), { wait: SAVE_SETTLE_MS });
 
@@ -61,15 +61,21 @@ export function useArtifact({
       const nextContent = pendingContentRef.current;
       setIsSaving(true);
       settleTask.cancel();
-      saveQueueRef.current = saveQueueRef.current.then(async () => {
+      const save = saveQueue.enqueue(async () => {
         const result = await writeArtifact({
           data: { sessionId, path, content: nextContent },
         });
         lastWrittenTimestampRef.current = result.timestamp;
         setError(null);
         if (notifyAgent) scheduleAgentNotification();
-        settleTask.maybeExecute();
       });
+      void save.then(
+        () => settleTask.maybeExecute(),
+        () => {
+          setError("Unable to save this artifact.");
+          settleTask.maybeExecute();
+        },
+      );
     },
     {
       wait: SAVE_DEBOUNCE_MS,
@@ -86,7 +92,7 @@ export function useArtifact({
     flushOptionsRef.current = options;
     saveTask.flush();
     flushOptionsRef.current = undefined;
-    return saveQueueRef.current;
+    return saveQueue.waitForPending();
   }
 
   // The pane is keyed by session and path, so this effect owns one artifact's

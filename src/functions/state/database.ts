@@ -1,8 +1,8 @@
 // Shared server-state database.
 //
 // Opens a single SQLite connection at ~/.toy-box/toy-box.sqlite and creates
-// all tables on startup. Automations and persisted session state share the
-// same connection.
+// all tables on startup. Automations, settings, and persisted session state
+// share the same connection.
 
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -108,6 +108,13 @@ async function initializeSchema(db: Database, path: string): Promise<void> {
       message    TEXT,
       artifact   TEXT,
       created_at TEXT NOT NULL
+    );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      id    INTEGER PRIMARY KEY CHECK (id = 1),
+      value TEXT NOT NULL CHECK (json_valid(value))
     );
   `);
 }

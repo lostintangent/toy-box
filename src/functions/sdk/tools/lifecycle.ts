@@ -1,22 +1,27 @@
 import { defineTool } from "@github/copilot-sdk";
 import { z } from "zod";
 import { modelConfigurationSchema } from "@/lib/modelConfiguration";
+import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 
-const createSessionTool = defineTool("create_session", {
+const sessionExecutionParameters = {
+  model: modelConfigurationSchema
+    .optional()
+    .describe("Optional model and reasoning configuration for the new session."),
+  directory: z.string().optional().describe("Optional working directory for the new session."),
+  useWorktree: z
+    .boolean()
+    .optional()
+    .describe("Whether to create the session in a git worktree. Defaults to false."),
+};
+
+const createWorkerSessionTool = defineTool("create_worker_session", {
   description:
-    "Creates a retained worker session for delegated or parallel work. " +
-    "The worker inherits the current session's model and directory by default and remains available for waiting, inspection, or follow-up messages after it completes. " +
-    "Delete it when it is no longer needed. By default it does not create a worktree.",
+    "Creates a retained child worker session owned by the current session for delegated or parallel work. " +
+    "The worker automatically opens as a linked pane, inherits the current model and directory by default, and remains available for waiting, inspection, or follow-up messages after it completes. " +
+    "It is deleted with the current session; delete it sooner when it is no longer needed.",
   parameters: z.object({
     task: z.string().describe("The task to delegate to the new worker"),
-    model: modelConfigurationSchema
-      .optional()
-      .describe("Optional model and reasoning override for the worker"),
-    directory: z.string().optional().describe("Optional working directory override for the worker"),
-    useWorktree: z
-      .boolean()
-      .optional()
-      .describe("Whether to create the worker in a git worktree. Defaults to false."),
+    ...sessionExecutionParameters,
   }),
   skipPermission: true,
   handler: async (args, invocation) => {
@@ -30,7 +35,39 @@ const createSessionTool = defineTool("create_session", {
       retained: true,
     });
 
-    return JSON.stringify({ sessionId });
+    return JSON.stringify({ sessionId, opened: true });
+  },
+});
+
+const createSessionTool = defineTool("create_session", {
+  description:
+    "Creates an independent top-level session for work that should remain available outside this Hyper session. " +
+    "The session appears in the normal session list and is not deleted with this Hyper session. Model and directory are used only when explicitly supplied; omitted values use normal new-session defaults. " +
+    "It does not open by default: `open` defaults to false. Set it to true to open the session immediately, or call `open_session` later with the returned session ID.",
+  parameters: z.object({
+    prompt: z.string().describe("The initial prompt to send to the new session"),
+    ...sessionExecutionParameters,
+    open: z
+      .boolean()
+      .optional()
+      .describe("Whether to open the new session as a linked pane. Defaults to false."),
+  }),
+  skipPermission: true,
+  handler: async (args) => {
+    const { createSession } = await import("@/functions/runtime/stream");
+    const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
+
+    await createSession(
+      sessionId,
+      { content: args.prompt, model: args.model },
+      {
+        directory: args.directory,
+        sessionType: "standard",
+        useWorktree: args.useWorktree ?? false,
+      },
+    );
+
+    return JSON.stringify({ sessionId, opened: args.open ?? false });
   },
 });
 
@@ -73,5 +110,6 @@ const deleteSessionTool = defineTool("delete_session", {
   },
 });
 
-export const lifecycleTools = [createSessionTool, deleteSessionTool];
+export const hyperLifecycleTools = [createSessionTool];
+export const lifecycleTools = [createWorkerSessionTool, deleteSessionTool];
 export const sessionLayoutTools = [openSession, closeSession];

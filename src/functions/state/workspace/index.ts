@@ -5,11 +5,13 @@ import type {
   ArtifactWorker,
   CustomArtifactKind,
   InboxEntry,
+  Settings,
   WorkspaceAction,
   WorkspaceEvent,
 } from "@/types";
 import { DRAFT_PROMPT_SERVER_ORIGIN } from "@/lib/session/constants";
-import type { WorkspaceEnvironment, WorkspaceState } from "@/lib/workspace/state";
+import type { WorkspaceEnvironment, WorkspaceState } from "@/lib/workspace/state/reducer";
+import { SerialTaskQueue } from "@/lib/serialTaskQueue";
 import { broadcast } from "@/functions/runtime/broadcast";
 import { addHyperSession, deleteHyperState, getHyperSessionIds } from "./hyperSessions";
 import {
@@ -28,6 +30,7 @@ import {
   sweepExpiredDrafts as sweepDraftSessionStates,
 } from "./sessions";
 import { writeCustomArtifact } from "./artifacts";
+import { getSettings, persistSettings } from "./settings";
 import {
   finishArtifactWorker as finishArtifactWorkerState,
   finishArtifactWorkersForSession,
@@ -45,15 +48,32 @@ export async function getWorkspaceState(options: {
   customArtifacts: CustomArtifactKind[];
   environment: WorkspaceEnvironment;
 }): Promise<WorkspaceState> {
+  const [inboxEntries, settings] = await Promise.all([getInboxEntries(), getSettings()]);
   return {
+    settings,
     sessionStates: getSessionStates(),
     hyperSessionIds: getHyperSessionIds(),
     automations: options.automations,
-    inboxEntries: await getInboxEntries(),
+    inboxEntries,
     artifactWorkers: getArtifactWorkers(),
     customArtifacts: options.customArtifacts,
     environment: options.environment,
   };
+}
+
+// The settings aggregate is persisted with a read-merge-write operation, so patches must not race.
+const settingsChangeQueue = new SerialTaskQueue();
+
+export function changeSettings(update: Partial<Settings>): Promise<Settings> {
+  return settingsChangeQueue.enqueue(() => commitSettingsChange(update));
+}
+
+async function commitSettingsChange(update: Partial<Settings>): Promise<Settings> {
+  const settings = { ...(await getSettings()), ...update };
+  if (await persistSettings(settings)) {
+    broadcast({ type: "settings.changed", settings });
+  }
+  return settings;
 }
 
 export function sweepExpiredDrafts(now: number = Date.now()): string[] {

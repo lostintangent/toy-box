@@ -5,6 +5,7 @@ import { zodValidator } from "@tanstack/zod-adapter";
 import { z } from "zod";
 import {
   applyWorkspaceAction,
+  changeSettings,
   deleteInboxEntry as deleteInboxEntryState,
   getEnvironment,
   getWorkspaceState as readWorkspaceState,
@@ -15,8 +16,10 @@ import { AutomationDatabase } from "./automations/database";
 import { getAppDatabase } from "./state/database";
 import { deleteSessionIfExists } from "./state/session/registry";
 import { hasInboxEntry } from "./state/workspace/inbox";
-import { workspaceActionSchema } from "@/lib/workspace/actions";
-import type { WorkspaceState } from "@/lib/workspace/state";
+import { workspaceActionSchema } from "@/lib/workspace/state/actions";
+import { settingsUpdateSchema } from "@/lib/workspace/config/settings";
+import type { WorkspaceState } from "@/lib/workspace/state/reducer";
+import type { Settings } from "@/types";
 
 export const getWorkspaceState = createServerFn({ method: "GET" }).handler(
   async (): Promise<WorkspaceState> => {
@@ -38,6 +41,12 @@ export const dispatchWorkspaceAction = createServerFn({ method: "POST" })
   .validator(zodValidator(workspaceActionSchema))
   .handler(async ({ data }): Promise<void> => {
     applyWorkspaceAction(data);
+  });
+
+export const updateSettings = createServerFn({ method: "POST" })
+  .validator(zodValidator(settingsUpdateSchema))
+  .handler(async ({ data }): Promise<Settings> => {
+    return changeSettings(data);
   });
 
 export const deleteInboxEntry = createServerFn({ method: "POST" })

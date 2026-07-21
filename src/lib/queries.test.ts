@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { sessionQueries, workspaceQueries } from "./queries";
+import { workspaceQueries } from "@/lib/workspace/state/query";
+import { sessionQueries, skillQueries } from "./queries";
 
 describe("live query refresh policies", () => {
   test("shared-state queries leave visibility and reconnect repair to SSE", () => {
@@ -14,5 +15,14 @@ describe("live query refresh policies", () => {
 
     expect(query.refetchOnWindowFocus).toBe("always");
     expect(query.refetchOnReconnect).toBe("always");
+  });
+});
+
+describe("skill query identity", () => {
+  test("shares discovery by working directory and distinguishes host-level discovery", () => {
+    expect(skillQueries.byCwd("/repo")).toEqual(["skills", "/repo"]);
+    expect(skillQueries.byCwd("/repo")).toEqual(skillQueries.byCwd("/repo"));
+    expect(skillQueries.byCwd("/other")).not.toEqual(skillQueries.byCwd("/repo"));
+    expect(skillQueries.byCwd()).toEqual(["skills", null]);
   });
 });

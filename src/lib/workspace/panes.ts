@@ -1,11 +1,7 @@
-import type { SessionCanvas } from "@/types";
+import type { SessionCanvas, SessionFeatureScope, SessionFeatureSubject } from "@/types";
 import { isAutomationId } from "@/lib/automation/id";
 import { artifactName } from "@/lib/session/artifacts/display";
-import {
-  matchesSessionFeatureScope,
-  type SessionFeatureScope,
-  type SessionFeatureSubject,
-} from "@/lib/config/settings";
+import { matchesSessionFeatureScope } from "@/lib/workspace/config/settings";
 
 export type ArtifactPaneMode = "read" | "edit" | "shared";
 
@@ -16,6 +12,7 @@ export const INBOX_PANE = {
 
 type InboxWorkspacePane = typeof INBOX_PANE;
 
+/** Browser-local content identity shared by grid, pager, and Hyper hosts. */
 export type WorkspacePane =
   | InboxWorkspacePane
   | {
@@ -24,13 +21,13 @@ export type WorkspacePane =
       sessionId: string;
       isLinkedOnly: boolean;
     }
+  | ArtifactWorkspacePane
   | {
       kind: "canvas";
       id: string;
       sourceSessionId: string;
       canvas: SessionCanvas;
-    }
-  | ArtifactWorkspacePane;
+    };
 
 export type ArtifactWorkspacePane = {
   kind: "artifact";
@@ -41,13 +38,8 @@ export type ArtifactWorkspacePane = {
   mode: ArtifactPaneMode;
 };
 
+/** The browser-local pane graph, keyed by the pane that published each edge. */
 export type LinkedPanesByPublisher = Readonly<Record<string, readonly WorkspacePane[]>>;
-
-type DeriveVisibleWorkspacePanesOptions = {
-  rootPanes: WorkspacePane[];
-  linkedPanesByPublisher: LinkedPanesByPublisher;
-  maxVisible?: number;
-};
 
 // Session-backed pane ids are `type:sourceSessionId:naturalKey`, while the one
 // Inbox pane uses `inbox`. Artifact identity includes its path; canvas identity
@@ -99,10 +91,6 @@ export function createArtifactPane(
   };
 }
 
-function getDefaultArtifactPaneMode(sourceSessionId: string): ArtifactPaneMode {
-  return isAutomationId(sourceSessionId) ? "read" : "shared";
-}
-
 export function createLinkedCanvasPane(
   sourceSessionId: string,
   canvas: SessionCanvas,
@@ -125,6 +113,12 @@ export function isArtifactPane(pane: WorkspacePane): pane is ArtifactWorkspacePa
 export function paneSourceSessionId(pane: WorkspacePane): string | undefined {
   if (pane.kind === "inbox") return undefined;
   return pane.kind === "session" ? pane.sessionId : pane.sourceSessionId;
+}
+
+export function deriveWorkspaceRootPanes(selectedSessionIds: string[]): WorkspacePane[] {
+  return selectedSessionIds.length > 0
+    ? selectedSessionIds.map((sessionId) => createSessionPane(sessionId, false))
+    : [INBOX_PANE];
 }
 
 export function createLinkedPanes(
@@ -151,11 +145,11 @@ export function createLinkedPanes(
   ];
 }
 
-export function deriveWorkspaceRootPanes(selectedSessionIds: string[]): WorkspacePane[] {
-  return selectedSessionIds.length > 0
-    ? selectedSessionIds.map((sessionId) => createSessionPane(sessionId, false))
-    : [INBOX_PANE];
-}
+type DeriveVisibleWorkspacePanesOptions = {
+  rootPanes: WorkspacePane[];
+  linkedPanesByPublisher: LinkedPanesByPublisher;
+  maxVisible?: number;
+};
 
 export function deriveVisibleWorkspacePanes({
   rootPanes,
@@ -260,4 +254,8 @@ function shouldAutoFocusArtifactPane(
 
 function getArtifactSessionType(sourceSessionId: string): SessionFeatureSubject {
   return isAutomationId(sourceSessionId) ? "automation" : "session";
+}
+
+function getDefaultArtifactPaneMode(sourceSessionId: string): ArtifactPaneMode {
+  return isAutomationId(sourceSessionId) ? "read" : "shared";
 }

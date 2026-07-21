@@ -600,28 +600,32 @@ index 375b1b8..9db9a3a 100644
     },
     {
       "eventId": 50,
-      "message": {
-        "content": "now fix the findings",
-        "id": "queued-1",
-        "role": "user",
-      },
+      "queuedMessageId": "queued-1",
       "turnId": "turn-2",
       "type": "message_dequeued",
     },
     {
+      "attachments": undefined,
+      "content": "now fix the findings",
       "eventId": 51,
+      "timestamp": undefined,
+      "turnId": "turn-2",
+      "type": "user_message",
+    },
+    {
+      "eventId": 52,
       "status": "thinking",
       "turnId": "turn-3",
       "type": "status",
     },
     {
       "content": "On it.",
-      "eventId": 52,
+      "eventId": 53,
       "turnId": "turn-3",
       "type": "delta",
     },
     {
-      "eventId": 53,
+      "eventId": 54,
       "reason": "idle",
       "turnId": "turn-3",
       "type": "end",
@@ -642,7 +646,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
 {
   "activeTurnId": "turn-3",
   "artifacts": [],
-  "lastSeenEventId": 53,
+  "lastSeenEventId": 54,
   "linkedSessionIds": [],
   "messages": [
     {
@@ -1059,6 +1063,7 @@ Evaluate the overall design decisions:
       "attachments": undefined,
       "content": "now fix the findings",
       "role": "user",
+      "timestamp": undefined,
     },
     {
       "content": "On it.",

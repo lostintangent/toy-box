@@ -12,6 +12,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { ScrollableFade } from "@/components/ui/scrollable-fade";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAutomationActions } from "@/hooks/automations/useAutomationActions";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import { cn } from "@/lib/utils";
@@ -111,15 +113,20 @@ export function AutomationPanel({
         </button>
 
         {isExpanded && (
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-6 w-6"
-            aria-label="Add automation"
-            onClick={openCreateDialog}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6"
+                aria-label="Add automation"
+                onClick={openCreateDialog}
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={6}>Add automation</TooltipContent>
+          </Tooltip>
         )}
       </div>
 
@@ -133,39 +140,41 @@ export function AutomationPanel({
         <div className="min-h-0 overflow-hidden">
           <div
             className={cn(
-              "space-y-3 p-3 transition-transform duration-200 ease-out motion-reduce:transition-none",
+              "transition-transform duration-200 ease-out motion-reduce:transition-none",
               isExpanded ? "translate-y-0" : "-translate-y-1 pointer-events-none",
             )}
           >
-            {automations.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No automations yet.</p>
-            ) : (
-              <ul className="max-h-52 min-w-0 space-y-2 overflow-y-auto pr-1">
-                {automations.map((automation) => {
-                  const isSelected = openSessionIds.includes(automation.id);
-                  return (
-                    <li key={automation.id}>
-                      <AutomationListItem
-                        automation={automation}
-                        isSelected={isSelected}
-                        isDeleting={deletingAutomationId === automation.id}
-                        isUpdating={updatingAutomationId === automation.id}
-                        onOpenSession={onSessionOpen}
-                        onRun={() => {
-                          void handleRunAutomation(automation.id);
-                        }}
-                        onEdit={() => {
-                          openEditDialog(automation.id);
-                        }}
-                        onDelete={() => {
-                          setDeleteTargetId(automation.id);
-                        }}
-                      />
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+            <ScrollableFade axis="vertical" className="max-h-58 min-w-0 p-3">
+              {automations.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No automations yet.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {automations.map((automation) => {
+                    const isSelected = openSessionIds.includes(automation.id);
+                    return (
+                      <li key={automation.id}>
+                        <AutomationListItem
+                          automation={automation}
+                          isSelected={isSelected}
+                          isDeleting={deletingAutomationId === automation.id}
+                          isUpdating={updatingAutomationId === automation.id}
+                          onOpenSession={onSessionOpen}
+                          onRun={() => {
+                            void handleRunAutomation(automation.id);
+                          }}
+                          onEdit={() => {
+                            openEditDialog(automation.id);
+                          }}
+                          onDelete={() => {
+                            setDeleteTargetId(automation.id);
+                          }}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </ScrollableFade>
           </div>
         </div>
       </div>

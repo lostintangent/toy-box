@@ -79,6 +79,7 @@ const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
   edit: projectEditPolicy,
   patch: projectPatchPolicy,
   create_session: { kind: "translated", projectOnComplete: projectCreatedSession },
+  create_worker_session: { kind: "translated", projectOnComplete: projectCreatedSession },
   open_session: (args) => ({
     kind: "translated",
     projectOnStart: projectLinkedSessionEvent(args, "linked_session_added"),
@@ -156,6 +157,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       // the agent tool call's arguments.
       if (event.agentId) return [];
 
+      const isSteered = event.data.delivery === "steering" || event.data.delivery === "queued";
       const notification = decodeSdkAgentNotification(event.data.content);
       if (notification) {
         return [
@@ -173,6 +175,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
           content: event.data.content,
           timestamp: event.timestamp,
           attachments: fromSdkAttachments(event.data.attachments),
+          ...(isSteered ? { isSteered: true } : {}),
         },
       ];
     case "assistant.message":
@@ -213,12 +216,6 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
           },
         },
       ];
-    case "session.skills_loaded": {
-      const skills = event.data.skills
-        .filter((skill) => skill.userInvocable && skill.enabled)
-        .map((skill) => ({ name: skill.name, description: skill.description }));
-      return skills.length > 0 ? [{ type: "skills", skills }] : [];
-    }
     case "session.title_changed":
       return [{ type: "session_title_changed", title: event.data.title }];
     case "session.canvas.opened": {
@@ -485,20 +482,31 @@ function projectLinkedSessionEvent(
 
 function projectCreatedSession(eventData: ToolExecutionCompleteData): SessionEvent[] {
   if (!eventData.success) return [];
-  const sessionId = readCreatedSessionId(eventData);
-  return sessionId ? [{ type: "linked_session_added", sessionId }] : [];
+  const result = readCreatedSessionResult(eventData);
+  return result && result.opened !== false
+    ? [{ type: "linked_session_added", sessionId: result.sessionId }]
+    : [];
 }
 
-function readCreatedSessionId(eventData: ToolExecutionCompleteData): string | undefined {
+function readCreatedSessionResult(
+  eventData: ToolExecutionCompleteData,
+): { sessionId: string; opened?: boolean } | undefined {
   const raw = eventData.result?.detailedContent ?? eventData.result?.content;
   if (!raw) return undefined;
 
   try {
-    const result: unknown = JSON.parse(raw);
-    if (!result || typeof result !== "object" || Array.isArray(result)) return undefined;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
 
-    const sessionId = (result as Record<string, unknown>).sessionId;
-    return typeof sessionId === "string" ? sessionId : undefined;
+    const result = parsed as Record<string, unknown>;
+    const sessionId = result.sessionId;
+    if (typeof sessionId !== "string") return undefined;
+    if ("opened" in result && typeof result.opened !== "boolean") return undefined;
+
+    return {
+      sessionId,
+      ...(typeof result.opened === "boolean" ? { opened: result.opened } : {}),
+    };
   } catch {
     return undefined;
   }

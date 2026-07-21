@@ -2,7 +2,7 @@
 // presence is the complete host discriminator.
 
 import { useRef, useEffect, useState } from "react";
-import { Image, ArrowUp, ChevronDown, Pencil, Play, Square, X } from "lucide-react";
+import { Image, ArrowUp, ChevronDown, Play, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   InputGroup,
   InputGroupAddon,
@@ -27,12 +28,13 @@ import { DiffPopup } from "./DiffPopup";
 import { SkillPicker } from "./SkillPicker";
 import { ArtifactsList } from "./ArtifactsList";
 import { VoiceButton } from "./VoiceButton";
+import { QueuedMessageRow } from "./QueuedMessageRow";
 import type { VoiceComposerContext } from "./useVoiceComposer";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
-import { useModels } from "@/hooks/workspace/useModels";
 import type {
   Attachment,
   ModelConfiguration,
+  ModelInfo,
   QueuedMessage,
   SessionSkill,
   TodoItem,
@@ -40,7 +42,6 @@ import type {
 import { toDataUrl } from "@/types";
 import type { DiffStats, FileDiffSummary } from "@/hooks/diffs/useEditDiffs";
 import { useViewport } from "@/hooks/browser/useViewport";
-import { notificationLabel } from "@/lib/session/agentNotifications";
 import { cn } from "@/lib/utils";
 
 // Pixel bounds mirror the Tailwind min/max height classes on the textarea.
@@ -58,15 +59,18 @@ type SessionComposerProps = {
   canSubmit?: boolean;
   isStreaming?: boolean;
   onStop?: () => void;
+  models: ModelInfo[];
   model?: ModelConfiguration | null;
   onModelChange?: (model: ModelConfiguration) => void;
   locationPicker?: SessionLocationPickerProps;
   todos?: TodoItem[];
   skills?: SessionSkill[];
+  showGlobalSkillBadges?: boolean;
   sessionDiff?: { total: DiffStats; byFile: FileDiffSummary[] };
   artifacts?: string[];
   queuedMessages?: QueuedMessage[];
-  onCancelQueuedMessage?: (queuedMessageId: string) => void;
+  onCancelQueuedMessage?: (queuedMessageId: string) => Promise<boolean>;
+  onSteerQueuedMessage?: (queuedMessageId: string) => Promise<boolean>;
   /** Context that grounds a voice call in the current session. */
   sessionName?: string;
   lastMessage?: string;
@@ -141,15 +145,18 @@ export function SessionComposer({
   canSubmit = true,
   isStreaming = false,
   onStop,
+  models,
   model,
   onModelChange,
   locationPicker,
   todos,
   skills,
+  showGlobalSkillBadges = false,
   sessionDiff,
   artifacts = [],
   queuedMessages = [],
   onCancelQueuedMessage,
+  onSteerQueuedMessage,
   sessionName,
   lastMessage,
 }: SessionComposerProps) {
@@ -157,7 +164,6 @@ export function SessionComposer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { isMobile } = useViewport();
   const environment = useWorkspaceSelector((workspace) => workspace.environment);
-  const { models, isLoading: areModelsLoading } = useModels();
   const createsSession = sessionId === undefined;
   const textareaBounds = TEXTAREA_BOUNDS[createsSession ? "create" : "session"];
 
@@ -186,11 +192,12 @@ export function SessionComposer({
     textareaRef.current?.focus();
   };
 
-  const handleEditQueuedMessage = (queuedMessageId: string) => {
+  const handleEditQueuedMessage = async (queuedMessageId: string) => {
     const message = queuedMessages.find((candidate) => candidate.id === queuedMessageId);
     if (!message || message.role !== "user") return;
-    onCancelQueuedMessage?.(queuedMessageId);
+    if (!(await onCancelQueuedMessage?.(queuedMessageId))) return;
     onValueChange(message.content);
+    setAttachments(message.attachments ?? []);
     textareaRef.current?.focus();
   };
 
@@ -233,6 +240,7 @@ export function SessionComposer({
   };
 
   const isSubmitDisabled = !canSubmit || (!value.trim() && attachments.length === 0);
+  const submitButtonVariant = isSubmitDisabled ? "ghost" : "accent";
 
   const submitWith = (submitter: SessionComposerSubmit | undefined) => {
     if (isSubmitDisabled || !submitter) return false;
@@ -309,40 +317,15 @@ export function SessionComposer({
 
       {queuedMessages.length > 0 && (
         <div className="mb-3 space-y-2">
-          {queuedMessages.map((message) => {
-            const isNotification = message.role === "agent_notification";
-            return (
-              <div
-                key={message.id}
-                className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm text-muted-foreground group"
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Edit queued message"
-                  disabled={isNotification}
-                  className="h-5 w-5 shrink-0 rounded-full md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-                  onClick={() => handleEditQueuedMessage(message.id)}
-                >
-                  <Pencil className="h-3 w-3" />
-                </Button>
-                <span className={cn("truncate flex-1", isNotification && "italic")}>
-                  {isNotification ? notificationLabel(message.notification) : message.content}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Cancel queued message"
-                  className="h-5 w-5 shrink-0 rounded-full md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-                  onClick={() => onCancelQueuedMessage?.(message.id)}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              </div>
-            );
-          })}
+          {queuedMessages.map((message) => (
+            <QueuedMessageRow
+              key={message.id}
+              message={message}
+              onEdit={handleEditQueuedMessage}
+              onCancel={onCancelQueuedMessage}
+              onSteer={onSteerQueuedMessage}
+            />
+          ))}
         </div>
       )}
 
@@ -356,7 +339,12 @@ export function SessionComposer({
           <div className="absolute inset-0 z-10 rounded-lg bg-blue-500/20 pointer-events-none" />
         )}
 
-        <SkillPicker input={value} skills={skills} onSelect={handleSkillSelect}>
+        <SkillPicker
+          input={value}
+          skills={skills}
+          showGlobalSkillBadges={showGlobalSkillBadges}
+          onSelect={handleSkillSelect}
+        >
           <InputGroup>
             <InputGroupTextarea
               ref={textareaRef}
@@ -371,20 +359,25 @@ export function SessionComposer({
 
             <InputGroupAddon align="block-end" className="justify-between pt-0 pb-2">
               <div className="flex items-center gap-1">
-                <InputGroupButton
-                  size="icon-xs"
-                  aria-label="Attach image"
-                  onClick={() => fileInputRef.current?.click()}
-                  suppressHydrationWarning
-                >
-                  <Image className="h-4 w-4" />
-                </InputGroupButton>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <InputGroupButton
+                      size="icon-xs"
+                      aria-label="Attach image"
+                      onClick={() => fileInputRef.current?.click()}
+                      suppressHydrationWarning
+                    >
+                      <Image className="h-4 w-4" />
+                    </InputGroupButton>
+                  </TooltipTrigger>
+                  <TooltipContent sideOffset={6}>Attach image</TooltipContent>
+                </Tooltip>
 
                 {locationPicker && <SessionLocationPicker {...locationPicker} />}
 
-                {(areModelsLoading || !model) && <ModelConfigurationSkeleton />}
+                {(models.length === 0 || !model) && <ModelConfigurationSkeleton />}
 
-                {!areModelsLoading && model && onModelChange && (
+                {models.length > 0 && model && onModelChange && (
                   <ModelConfigurationPicker
                     models={models}
                     value={model}
@@ -401,39 +394,45 @@ export function SessionComposer({
                 {/* Stream start unmounts and disconnects session voice; home stays mounted. */}
                 {environment.voiceEnabled && !isStreaming && <VoiceButton context={voiceContext} />}
                 {isStreaming && onStop && (
-                  <InputGroupButton
-                    size="icon-xs"
-                    aria-label="Stop"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                    onClick={onStop}
-                    suppressHydrationWarning
-                  >
-                    <Square className="h-4 w-4" />
-                  </InputGroupButton>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <InputGroupButton
+                        size="icon-xs"
+                        aria-label="Stop turn"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={onStop}
+                        suppressHydrationWarning
+                      >
+                        <Square className="h-4 w-4" />
+                      </InputGroupButton>
+                    </TooltipTrigger>
+                    <TooltipContent sideOffset={6}>Stop turn</TooltipContent>
+                  </Tooltip>
                 )}
                 {!createsSession ? (
-                  <InputGroupButton
-                    type="submit"
-                    size="icon-xs"
-                    aria-label="Send"
-                    disabled={isSubmitDisabled}
-                    suppressHydrationWarning
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </InputGroupButton>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <InputGroupButton
+                        type="submit"
+                        size="icon-xs"
+                        aria-label="Send message"
+                        disabled={isSubmitDisabled}
+                        variant={submitButtonVariant}
+                        suppressHydrationWarning
+                      >
+                        <ArrowUp className="h-4 w-4" />
+                      </InputGroupButton>
+                    </TooltipTrigger>
+                    <TooltipContent sideOffset={6}>Send message</TooltipContent>
+                  </Tooltip>
                 ) : (
-                  /* Shared tint keeps the split controls reading as one button. */
-                  <div
-                    className={cn(
-                      "flex items-center rounded-[calc(var(--radius)-5px)]",
-                      !isSubmitDisabled && "hover:bg-accent/50 dark:hover:bg-accent/25",
-                    )}
-                  >
+                  <div className="flex items-center rounded-[calc(var(--radius)-5px)]">
                     <InputGroupButton
                       type="submit"
                       size="icon-xs"
                       aria-label="Run"
                       disabled={isSubmitDisabled}
+                      variant={submitButtonVariant}
                       suppressHydrationWarning
                       className="rounded-e-none"
                     >
@@ -445,8 +444,9 @@ export function SessionComposer({
                           size="icon-xs"
                           aria-label="Run options"
                           disabled={isSubmitDisabled}
+                          variant={submitButtonVariant}
                           suppressHydrationWarning
-                          className="w-4 rounded-s-none data-[state=open]:bg-accent data-[state=open]:text-accent-foreground dark:data-[state=open]:bg-accent/50"
+                          className="w-4 rounded-s-none data-[state=open]:bg-user-accent/90"
                         >
                           <ChevronDown className="h-3 w-3" />
                         </InputGroupButton>

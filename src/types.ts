@@ -2,7 +2,22 @@
 
 import type { SessionContext } from "@github/copilot-sdk";
 export type { SessionMetadata, SessionContext, ModelInfo } from "@github/copilot-sdk";
-import type { WorkspaceAction } from "@/lib/workspace/actions";
+import type { WorkspaceAction } from "@/lib/workspace/state/actions";
+
+/* Workspace settings */
+
+export type AccentColor = `#${string}`;
+export type SessionFeatureScope = "always" | "sessions" | "automations" | "never";
+export type SessionFeatureSubject = "session" | "automation";
+
+export type Settings = {
+  accentColor: AccentColor;
+  defaultModel: ModelConfiguration | null;
+  terminalShell: string;
+  useWorktree: boolean;
+  autoFocusArtifacts: SessionFeatureScope;
+  showExternalSessions: boolean;
+};
 
 /** Open-ended on purpose: the SDK's public union can lag the wire protocol
  *  and model catalog values such as "none" and "max". */
@@ -13,11 +28,12 @@ export type ModelConfiguration = {
   reasoningEffort?: ReasoningEffort;
 };
 
-/* Skills (directory-scoped — resolved from .claude/ dirs, plugins, etc.) */
+/* Skills (resolved for a CWD, or from host-level sources without one) */
 
 export type SessionSkill = {
   name: string;
   description: string;
+  type: "project" | "global";
 };
 
 export type SessionWorktree = {
@@ -163,6 +179,9 @@ export function toDataUrl(attachment: Attachment): string | undefined {
 export type QueuedUserMessage = Omit<UserMessage, "timestamp"> & {
   id: string;
   model?: ModelConfiguration;
+  /** Immediate delivery has been requested, but the canonical SDK user
+   *  message has not arrived yet. */
+  isSteering?: true;
 };
 
 export type QueuedAgentNotificationMessage = Omit<AgentNotificationMessage, "timestamp"> & {
@@ -211,6 +230,8 @@ export type SessionEvent = (
       attachments?: Attachment[];
       timestamp?: string;
       clientMessageId?: string;
+      /** This is the canonical SDK event for a queued message that was steered. */
+      isSteered?: true;
     }
   | {
       type: "agent_notification";
@@ -247,9 +268,8 @@ export type SessionEvent = (
       message: QueuedMessage;
     }
   | { type: "message_cancelled"; queuedMessageId: string }
-  | { type: "message_dequeued"; message: QueuedMessage }
+  | { type: "message_dequeued"; queuedMessageId: string }
   | { type: "model_changed"; model: ModelConfiguration; agentId?: string }
-  | { type: "skills"; skills: SessionSkill[] }
   | { type: "linked_session_added"; sessionId: string }
   | { type: "linked_session_removed"; sessionId: string }
   | { type: "canvas_opened"; canvas: SessionCanvasOpen }
@@ -263,10 +283,14 @@ export type SessionEvent = (
 /* SSE updates (server->client protocol) */
 
 // Shared updates broadcast to clients. The first arm is the client-issuable
-// subset (WorkspaceAction, defined and validated in @/lib/workspace/actions);
+// subset (WorkspaceAction, defined and validated in @/lib/workspace/state/actions);
 // the rest are server-authoritative events a client only receives.
 export type WorkspaceEvent =
   | WorkspaceAction
+  | {
+      type: "settings.changed";
+      settings: Settings;
+    }
   | {
       type: "session.upserted";
       session: SessionMetadataUpdate;

@@ -1,10 +1,8 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import { workspaceQueries } from "@/lib/queries";
 import type { Automation } from "@/types";
-import { createEmptyWorkspaceState, type WorkspaceState } from "./state";
-import { createWorkspaceQuerySource } from "./query";
-import { applyWorkspaceEvent } from "./queryCache";
+import { applyWorkspaceEvent, createWorkspaceQuerySource, workspaceQueries } from "./query";
+import { createEmptyWorkspaceState, type WorkspaceState } from "./reducer";
 
 const automation = {
   id: "automation-a",
@@ -27,6 +25,19 @@ describe("workspace query cache", () => {
     expect(readWorkspaceState(queryClient).sessionStates["session-a"]).toEqual({
       status: "running",
     });
+  });
+
+  test("applies a complete settings event without disturbing other workspace state", () => {
+    const queryClient = createQueryClient();
+    const initial = createEmptyWorkspaceState();
+    queryClient.setQueryData(workspaceQueries.stateKey(), initial);
+    const settings = { ...initial.settings, accentColor: "#123abc" as const };
+
+    applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
+
+    const state = readWorkspaceState(queryClient);
+    expect(state.settings).toEqual(settings);
+    expect(state.sessionStates).toBe(initial.sessionStates);
   });
 
   test("isolates live projections between QueryClient instances", () => {

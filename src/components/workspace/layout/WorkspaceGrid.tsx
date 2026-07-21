@@ -341,7 +341,7 @@ function WorkspaceGridCell({
       {pane.kind === "session" && pane.isLinkedOnly && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-10 ring-2 ring-inset ring-sky-500/80"
+          className="pointer-events-none absolute inset-0 z-10 ring-2 ring-inset ring-user-accent/80"
         />
       )}
 

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { dispatchInboxTask } from "@/functions/inbox";
 import { createSession } from "@/functions/sessions";
-import { getSettings } from "@/lib/config/settings";
 import { getRecentDirectories } from "@/lib/session/recentDirectories";
 import { SessionComposer } from "@/components/composer/SessionComposer";
 import type { SessionLocationPickerProps } from "@/components/workspace/panes/session/location/SessionLocationPicker";
@@ -23,14 +22,15 @@ import { InboxEntries } from "./InboxEntries";
 export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => void }) {
   const { sessions } = useSessions();
   const entries = useWorkspaceSelector(selectInboxEntries);
-  const { defaultModel, setDefaultModel } = useModels();
+  const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);
+  const { models, defaultModel, setDefaultModel } = useModels();
   const linkedArtifactPane = useSelector(linkedPanesStore, (linkedPanes) =>
     linkedPanes[INBOX_PANE.id]?.find(isArtifactPane),
   );
   const [prompt, setPrompt] = useState("");
   // An untouched selection follows the latest directory; null preserves an explicit clear.
   const [directorySelection, setDirectorySelection] = useState<string | null>();
-  const [useWorktree, setUseWorktree] = useState(() => getSettings().useWorktree);
+  const [useWorktree, setUseWorktree] = useState(defaultUseWorktree);
   const recentDirectory = getRecentDirectories(sessions)[0]?.cwd;
   const directory =
     directorySelection === undefined ? recentDirectory : (directorySelection ?? undefined);
@@ -121,6 +121,7 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
             onValueChange={setPrompt}
             onSubmit={handleSend}
             onRun={handleRun}
+            models={models}
             model={defaultModel}
             onModelChange={setDefaultModel}
             locationPicker={locationPicker}

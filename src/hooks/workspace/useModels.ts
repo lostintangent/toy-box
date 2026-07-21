@@ -1,51 +1,22 @@
-import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useHydrated } from "@tanstack/react-router";
-import { useAtom } from "jotai";
-import { atomWithStorage, createJSONStorage, unstable_withStorageValidator } from "jotai/utils";
-import {
-  areModelConfigurationsEqual,
-  modelConfigurationSchema,
-  normalizeModelConfiguration,
-} from "@/lib/modelConfiguration";
+import { normalizeModelConfiguration } from "@/lib/modelConfiguration";
 import { modelQueries } from "@/lib/queries";
+import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "./state";
 import type { ModelConfiguration, ModelInfo } from "@/types";
 
-const DEFAULT_MODEL_KEY = "selected-model-configuration";
 const NO_MODELS: ModelInfo[] = [];
 
-const defaultModelStorage = unstable_withStorageValidator(
-  (value): value is ModelConfiguration | null =>
-    value === null || modelConfigurationSchema.safeParse(value).success,
-)(createJSONStorage<unknown>());
-
-// Keep raw storage private so every consumer gets a catalog-normalized model.
-// Read eagerly; `useHydrated` keeps the client value out of the server render.
-const defaultModelAtom = atomWithStorage<ModelConfiguration | null>(
-  DEFAULT_MODEL_KEY,
-  null,
-  defaultModelStorage,
-  { getOnInit: true },
-);
-
-/** The available models and browser-wide default used to seed new work. */
+/** The available models and workspace-wide default used to seed new work. */
 export function useModels() {
-  const hydrated = useHydrated();
   const { data: models = NO_MODELS } = useQuery(modelQueries.list());
-  const [storedDefaultModel, setDefaultModel] = useAtom(defaultModelAtom);
-
+  const storedDefaultModel = useWorkspaceSelector((workspace) => workspace.settings.defaultModel);
+  const updateSetting = useUpdateWorkspaceSetting();
   const defaultModel =
-    hydrated && models.length > 0 ? normalizeModelConfiguration(models, storedDefaultModel) : null;
+    models.length > 0 ? normalizeModelConfiguration(models, storedDefaultModel) : null;
 
-  useEffect(() => {
-    if (!defaultModel || areModelConfigurationsEqual(storedDefaultModel, defaultModel)) return;
-    setDefaultModel(defaultModel);
-  }, [defaultModel, setDefaultModel, storedDefaultModel]);
+  function setDefaultModel(model: ModelConfiguration): void {
+    updateSetting("defaultModel", model);
+  }
 
-  return {
-    models,
-    defaultModel,
-    setDefaultModel,
-    isLoading: defaultModel === null,
-  };
+  return { models, defaultModel, setDefaultModel };
 }

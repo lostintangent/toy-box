@@ -10,7 +10,7 @@ Server state gives every session fact and resource one trustworthy owner, making
 | Session artifact files                                               | Files under Copilot SDK session state           | Durable                              |
 | Active reduced session, queue, replay, completion                    | `SessionStream`                                 | Process-local                        |
 | SDK handles and idle reduced snapshots                               | Session registry and snapshot cache             | Process-local cache over SDK history |
-| Automations, Inbox, worktrees, worker ownership and retention        | Shared SQLite database                          | Durable                              |
+| Automations, Inbox, settings, worktrees, worker ownership/retention  | Shared SQLite database                          | Durable                              |
 | Drafts, prompts, running, unread, Hyper membership, artifact workers | Workspace state                                 | Process-local                        |
 | Custom artifact kinds and Inbox artifact files                       | `~/.toy-box/artifacts/` and `~/.toy-box/inbox/` | Durable files                        |
 
@@ -32,7 +32,7 @@ The session registry coordinates the server-side lifecycle and resources of a se
 
 ## Workspace state machine
 
-The workspace snapshot composes shared facts needed across the client but keeps their server authorities intact. Its process-local core is a sparse `sessionStates` map whose rows carry one session's lifecycle and optional draft prompt. Ordinary read-idle is represented by no row; the explicit `idle` status exists only while a draft prompt must remain. Durable automation definitions and Inbox entries remain owned by SQLite but join that client projection. Artifact worker associations represent process-local queue admission and presentation before a worker session necessarily exists; they carry one source artifact, an optional friendly name, and opaque renderer metadata without duplicating durable worker ownership.
+The workspace snapshot composes shared facts needed across the client but keeps their server authorities intact. Its process-local core is a sparse `sessionStates` map whose rows carry one session's lifecycle and optional draft prompt. Ordinary read-idle is represented by no row; the explicit `idle` status exists only while a draft prompt must remain. Durable settings, automation definitions, and Inbox entries remain owned by SQLite but join that client projection. Settings form one typed aggregate persisted as a singleton JSON document; a complete replacement is committed before a `settings.changed` event publishes it. Artifact worker associations represent process-local queue admission and presentation before a worker session necessarily exists; they carry one source artifact, an optional friendly name, and opaque renderer metadata without duplicating durable worker ownership.
 
 The valid statuses are:
 
@@ -44,9 +44,9 @@ The valid statuses are:
 
 This sparse representation keeps mutually exclusive activity in one state machine instead of separate draft, running, and unread collections.
 
-`reduceWorkspaceSessionState` is the canonical transition function shared by the process-local server store and browser projection. Draft creation and promotion, prompt edits, send failure, stream start and completion, read clearing, expiry, and deletion therefore mean the same thing on both sides. Server transition functions apply that reducer and publish only accepted changes to the shared update stream; draft expiry publishes the same discard transition as an explicit discard.
+`reduceWorkspaceSessionState` is the canonical transition function shared by the process-local server store and browser projection. Draft creation and promotion, prompt edits, send failure, stream start and completion, read clearing, expiry, and deletion therefore mean the same thing on both sides. Server transition functions apply that reducer and publish only accepted changes to the shared update stream; draft expiry publishes the same discard transition as an explicit discard. Precise settings updates merge into the latest durable aggregate at this boundary, then publish the complete settings value so every client replaces it atomically.
 
-Client-issued `WorkspaceAction`s are optimistically reduced into the hydrated workspace Query cache and sent through the validated workspace RPC. `useWorkspaceSync` owns the single shared-event sink and invalidates both the workspace snapshot and durable session-list query when its SSE connection opens. The QueryClient-scoped query source journals events that race any authoritative workspace snapshot, including initial hydration, reconnect repair, and rejected-action repair. Query selectors project automations, Inbox entries, or one session's status, activity, and prompt so consumers rerender only for the state they render. Browser-local pane topology, focus, and persisted settings are separate authorities.
+Client-issued `WorkspaceAction`s and settings changes are optimistically reduced into the hydrated workspace Query cache and sent through validated workspace RPCs. `useWorkspaceSync` owns the single shared-event sink and invalidates both the workspace snapshot and durable session-list query when its SSE connection opens. The QueryClient-scoped query source journals events that race any authoritative workspace snapshot, including initial hydration, reconnect repair, and rejected-action repair. Query selectors project settings, automations, Inbox entries, or one session's status, activity, and prompt so consumers rerender only for the state they render. Browser-local pane topology, focus, layout preferences, and client identity remain separate authorities.
 
 ## Managed sessions and Inbox
 

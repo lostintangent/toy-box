@@ -1,6 +1,6 @@
 import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 import { generateUUID } from "@/lib/utils";
-import type { WorkspaceSessionState } from "@/lib/workspace/state";
+import type { WorkspaceSessionState } from "@/lib/workspace/state/reducer";
 import type { SessionMetadata } from "@/types";
 import { useDispatchWorkspaceAction, useWorkspaceSelector } from "./state";
 

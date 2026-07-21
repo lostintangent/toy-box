@@ -1,7 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createAtom, createStoreContext, type Atom } from "@tanstack/react-store";
-import { useAtomValue } from "jotai";
-import { autoFocusArtifactsAtom } from "@/lib/config/settings";
+import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import { resolveArtifactAutoFocus, type WorkspacePane } from "@/lib/workspace/panes";
 
 export type WorkspaceSurface = "main" | "hyper";
@@ -25,7 +24,9 @@ export function WorkspaceSurfaceProvider({
   children: ReactNode;
 }) {
   const focusedPaneAtom = focusedPaneAtoms[surface];
-  const autoFocusArtifacts = useAtomValue(autoFocusArtifactsAtom);
+  const autoFocusArtifacts = useWorkspaceSelector(
+    (workspace) => workspace.settings.autoFocusArtifacts,
+  );
   const seenPaneIdsRef = useRef<ReadonlySet<string> | null>(null);
 
   // Panes present when a surface mounts are not newly opened.

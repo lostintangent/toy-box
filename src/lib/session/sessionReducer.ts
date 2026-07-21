@@ -28,6 +28,7 @@
 // bookkeeping, also replaced only when it changes. This lets clients batch
 // when they publish state to React without obscuring what changed.
 
+import { notificationCoalesceKey } from "@/lib/session/agentNotifications";
 import type {
   Message,
   ModelConfiguration,
@@ -163,6 +164,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     case "user_message": {
       if (event.clientMessageId) removeQueuedMessage(state, event.clientMessageId);
+      if (event.isSteered) removeMatchingSteeringMessage(state, event);
       if (reconcileOptimisticUserMessage(state, event)) return;
       if (isRedundantTurnStartEcho(state, event)) return;
 
@@ -226,19 +228,13 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     }
 
     case "message_queued": {
-      if (state.queuedMessages.some((m) => m.id === event.message.id)) return;
-      state.queuedMessages = [...state.queuedMessages, event.message];
+      upsertQueuedMessage(state, event.message);
       return;
     }
 
-    case "message_cancelled": {
-      removeQueuedMessage(state, event.queuedMessageId);
-      return;
-    }
-
+    case "message_cancelled":
     case "message_dequeued": {
-      removeQueuedMessage(state, event.message.id);
-      appendQueuedMessageToTranscript(state, event.message);
+      removeQueuedMessage(state, event.queuedMessageId);
       return;
     }
 
@@ -407,12 +403,6 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       state.model = event.model;
       return;
 
-    // Skills are directory-scoped capabilities consumed by useSession, not
-    // session state. Keep this explicit so new event types cannot silently
-    // bypass the reducer.
-    case "skills":
-      return;
-
     // ── Lifecycle ─────────────────────────────────────────────────────
 
     case "end":
@@ -521,37 +511,41 @@ function applyArtifactPatches(state: Session, patches: SessionArtifactPatch[]): 
 // Message helpers
 // ============================================================================
 
-function isRedundantTurnStartEcho(state: Session, event: { turnId?: string }): boolean {
-  if (!event.turnId || event.turnId !== state.activeTurnId) return false;
+function isRedundantTurnStartEcho(
+  state: Session,
+  event: Extract<SessionEvent, { type: "user_message" | "agent_notification" }>,
+): boolean {
+  // A steered user message is a new user action even when its content and turn
+  // segment match the opening message.
+  if (
+    (event.type === "user_message" && event.isSteered) ||
+    !event.turnId ||
+    event.turnId !== state.activeTurnId
+  ) {
+    return false;
+  }
 
   // This is not optimistic reconciliation. The runtime already emitted the
-  // canonical event that starts this turn; this only drops a later SDK
-  // transport echo of that same user prompt or agent notification while the
-  // turn is still in its opening segment.
-  for (let i = state.messages.length - 1; i >= 0; i--) {
-    const message = state.messages[i];
-    if (message.role === "user" || message.role === "agent_notification") return true;
-    if (message.role === "assistant" && (message.content || message.toolCalls?.length)) {
+  // canonical event that starts this turn; this only drops the later SDK echo
+  // when it matches that opening message.
+  for (let index = state.messages.length - 1; index >= 0; index--) {
+    const message = state.messages[index];
+    if (message.role === "assistant" && (message.content || message.toolCalls?.length))
       return false;
-    }
+    if (message.role !== "assistant") return matchesInputEvent(message, event);
   }
   return false;
 }
 
-function appendQueuedMessageToTranscript(state: Session, message: QueuedMessage): void {
-  if (message.role === "agent_notification") {
-    appendMessage(state, {
-      role: "agent_notification",
-      notification: message.notification,
-    });
-    return;
-  }
-
-  appendMessage(state, {
-    role: "user",
-    content: message.content,
-    attachments: message.attachments,
-  });
+function matchesInputEvent(
+  message: Extract<Message, { role: "user" | "agent_notification" }>,
+  event: Extract<SessionEvent, { type: "user_message" | "agent_notification" }>,
+): boolean {
+  return message.role === "user"
+    ? event.type === "user_message" && message.content === event.content
+    : event.type === "agent_notification" &&
+        notificationCoalesceKey(message.notification) ===
+          notificationCoalesceKey(event.notification);
 }
 
 /** Reconcile an incoming user_message with a previously optimistic one.
@@ -719,6 +713,25 @@ function updateToolCall(
 // ============================================================================
 // Queue helpers
 // ============================================================================
+
+function upsertQueuedMessage(state: Session, message: QueuedMessage): void {
+  const index = state.queuedMessages.findIndex((candidate) => candidate.id === message.id);
+  state.queuedMessages =
+    index === -1
+      ? [...state.queuedMessages, message]
+      : replaceAt(state.queuedMessages, index, message);
+}
+
+function removeMatchingSteeringMessage(
+  state: Session,
+  event: Extract<SessionEvent, { type: "user_message" }>,
+): void {
+  const message = state.queuedMessages.find(
+    (candidate) =>
+      candidate.role === "user" && candidate.isSteering && matchesInputEvent(candidate, event),
+  );
+  if (message) removeQueuedMessage(state, message.id);
+}
 
 function removeQueuedMessage(state: Session, queuedMessageId: string): void {
   if (state.queuedMessages.length === 0) return;

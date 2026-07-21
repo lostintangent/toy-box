@@ -16,6 +16,7 @@ import {
 } from "@/components/workspace/overlayWindow";
 import { WorkspaceSurfaceProvider } from "@/hooks/workspace/layout/focus";
 import { arePaneListsEqual, linkedPanesStore } from "@/hooks/workspace/layout/linkedPanes";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   createSessionPaneId,
   deriveVisibleWorkspacePanes,
@@ -57,19 +58,25 @@ function TrafficLight({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      onPointerDown={(event) => event.stopPropagation()}
-      className={cn(
-        "group/light flex h-3 w-3 items-center justify-center rounded-full border border-black/10",
-        className,
-      )}
-    >
-      <span className="opacity-0 transition-opacity group-hover/light:opacity-80">{children}</span>
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          onClick={onClick}
+          onPointerDown={(event) => event.stopPropagation()}
+          className={cn(
+            "group/light flex h-3 w-3 items-center justify-center rounded-full border border-black/10",
+            className,
+          )}
+        >
+          <span className="opacity-0 transition-opacity group-hover/light:opacity-80">
+            {children}
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent sideOffset={6}>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -188,7 +195,7 @@ export function HyperSession({
           </TrafficLight>
           <TrafficLight
             label="Minimize hyper session"
-            className="bg-hyper-accent"
+            className="bg-yellow-400"
             onClick={onMinimize}
           >
             <Minus className="h-2 w-2 text-yellow-950" />

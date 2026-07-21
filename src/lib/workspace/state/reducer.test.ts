@@ -5,7 +5,7 @@ import {
   reduceWorkspaceState,
   type WorkspaceSessionEvent,
   type WorkspaceSessionState,
-} from "./state";
+} from "./reducer";
 import type { Automation, WorkspaceEvent } from "@/types";
 
 const sessionId = "session-a";
@@ -98,6 +98,24 @@ describe("workspace session state", () => {
 });
 
 describe("workspace state reducer", () => {
+  test("replaces settings atomically and ignores an equal echo", () => {
+    const initial = createEmptyWorkspaceState();
+    const settings = {
+      ...initial.settings,
+      accentColor: "#123abc" as const,
+      defaultModel: { name: "gpt-5", reasoningEffort: "high" },
+    };
+    const state = reduceWorkspaceState(initial, { type: "settings.changed", settings });
+
+    expect(state.settings).toBe(settings);
+    expect(
+      reduceWorkspaceState(state, {
+        type: "settings.changed",
+        settings: { ...settings, defaultModel: { ...settings.defaultModel } },
+      }),
+    ).toBe(state);
+  });
+
   test("updates session and hyper state atomically and idempotently", () => {
     let state = createEmptyWorkspaceState();
     const event: WorkspaceEvent = {

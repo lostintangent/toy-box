@@ -44,27 +44,43 @@
 }
 
 @layer utilities {
-  .sidebar-scroll-fade {
-    --fade-size: 2rem;
-    --left-fade-size: 0;
-    --right-fade-size: 0;
+  .scrollable-fade {
+    --scroll-fade-size: 2rem;
+    --scroll-fade-start-size: 0px;
+    --scroll-fade-end-size: 0px;
 
     scrollbar-width: none;
-    mask: linear-gradient(
+    mask-mode: alpha;
+    mask-position: 0 0;
+    mask-repeat: no-repeat;
+    mask-size: 100% 100%;
+
+    &[data-scrollable-fade="horizontal"] {
+      mask-image: linear-gradient(
         to right,
         transparent 0,
-        #fff var(--left-fade-size),
-        #fff calc(100% - var(--right-fade-size)),
+        #fff var(--scroll-fade-start-size),
+        #fff calc(100% - var(--scroll-fade-end-size)),
         transparent 100%
-      )
-      no-repeat 0 0 / 100% 100%;
-
-    &[data-left-fade] {
-      --left-fade-size: var(--fade-size);
+      );
     }
 
-    &[data-right-fade] {
-      --right-fade-size: var(--fade-size);
+    &[data-scrollable-fade="vertical"] {
+      mask-image: linear-gradient(
+        to bottom,
+        transparent 0,
+        #fff var(--scroll-fade-start-size),
+        #fff calc(100% - var(--scroll-fade-end-size)),
+        transparent 100%
+      );
+    }
+
+    &[data-scroll-fade-start] {
+      --scroll-fade-start-size: var(--scroll-fade-size);
+    }
+
+    &[data-scroll-fade-end] {
+      --scroll-fade-end-size: var(--scroll-fade-size);
     }
   }
 }
@@ -137,7 +153,8 @@ code {
   --color-diff-modified-old-bg: var(--diff-modified-old-bg);
   --color-diff-modified-new-bg: var(--diff-modified-new-bg);
   --color-terminal-bg: var(--terminal-bg);
-  --color-hyper-accent: var(--hyper-accent);
+  --color-user-accent: var(--user-accent);
+  --color-user-accent-foreground: contrast-color(var(--user-accent));
   --color-unread: var(--unread);
 }
 
@@ -172,10 +189,6 @@ code {
   --diff-modified-new-bg: oklch(0.527 0.194 149.214 / 10%);
 
   --terminal-bg: #ffffff;
-
-  /* Amber shared by the hyper deck's minimize traffic light and the sidebar's
-     minimized-hyper indicator dot (yellow-400; reads well in both modes). */
-  --hyper-accent: oklch(85.2% 0.199 91.936);
 
   /* Unread-activity indicator (session + automation list dots). blue-500. */
   --unread: oklch(0.623 0.214 259.815);

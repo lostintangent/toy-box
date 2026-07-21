@@ -62,6 +62,8 @@ function makeFakeSession(overrides: Record<string, unknown> = {}): CopilotSessio
   return {
     on: () => () => {},
     send: async () => {},
+    abort: async () => {},
+    rpc: { queue: { clear: async () => {} } },
     ...overrides,
   } as unknown as CopilotSession;
 }
@@ -78,6 +80,8 @@ function makeControllableSession(overrides: Record<string, unknown> = {}) {
       return () => {};
     },
     send: async () => {},
+    abort: async () => {},
+    rpc: { queue: { clear: async () => {} } },
     ...overrides,
   } as unknown as CopilotSession;
 
@@ -334,13 +338,16 @@ describe("SessionStream lifecycle", () => {
     expect(stream.getQueuedMessages()).toEqual([]);
   });
 
-  test("abort closes and deregisters even when the SDK abort fails", async () => {
+  test("abort clears pending SDK input first and still closes when abort fails", async () => {
     onTestFinished(() => {
       closeStream("session-abort-failure");
     });
 
+    const calls: string[] = [];
     const fakeSession = makeFakeSession({
+      rpc: { queue: { clear: async () => void calls.push("clear") } },
       abort: async () => {
+        calls.push("abort");
         throw new Error("abort exploded");
       },
     });
@@ -351,11 +358,37 @@ describe("SessionStream lifecycle", () => {
 
     await expect(stream.abort()).rejects.toThrow("abort exploded");
 
+    expect(calls).toEqual(["clear", "abort"]);
     expect((await collectStreamEvents(events)).map((event) => event.type)).toEqual([
       "user_message",
       "end",
     ]);
     expect(SessionStream.isRunning("session-abort-failure")).toBe(false);
+  });
+
+  test("steering yields to a stop already in progress", async () => {
+    let releaseClear!: () => void;
+    const clearGate = new Promise<void>((resolve) => {
+      releaseClear = resolve;
+    });
+    const sendMock = mock(async () => "sent");
+    const stream = SessionStream.getOrCreate(
+      "session-abort-steering-race",
+      makeFakeSession({
+        send: sendMock,
+        rpc: { queue: { clear: () => clearGate } },
+      }),
+    );
+    await stream.deliver(userMessage("first turn"));
+    await stream.deliver(userMessage("queued", "q1"));
+
+    const stopping = stream.abort();
+    expect(await stream.steerQueuedMessage("q1")).toBe(false);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+
+    releaseClear();
+    await stopping;
+    expect(SessionStream.isRunning("session-abort-steering-race")).toBe(false);
   });
 
   test("an explicit abort finishes idle after its client disconnects", async () => {
@@ -388,7 +421,7 @@ describe("SessionStream lifecycle", () => {
     expect(statuses).toEqual(["running", "idle"]);
   });
 
-  test("drains the queue on idle: dequeues, sends, then closes when empty", async () => {
+  test("drains the queue on idle: sends, accepts, then closes when empty", async () => {
     onTestFinished(() => {
       closeStream("session-drain");
     });
@@ -397,9 +430,9 @@ describe("SessionStream lifecycle", () => {
     const { session, emitSdkEvent } = makeControllableSession({ send: sendMock });
 
     const stream = SessionStream.getOrCreate("session-drain", session);
-    const events = stream.subscribe();
     await stream.deliver(userMessage("first turn"));
     await stream.deliver(userMessage("second turn", "q1"));
+    emitSdkEvent("assistant.message", { content: "first response" });
 
     // First idle: drains the queue into turn 2.
     emitSdkEvent("session.idle");
@@ -407,17 +440,121 @@ describe("SessionStream lifecycle", () => {
 
     expect(sendMock).toHaveBeenCalledWith({ prompt: "second turn", attachments: undefined });
     expect(stream.getQueuedMessages()).toEqual([]);
-    expect(stream.getReplayEventsSince().map((event) => event.type)).toContain("message_dequeued");
+    expect(
+      stream.getSessionState().messages.filter((message) => message.role === "user"),
+    ).toHaveLength(1);
     expect(SessionStream.isRunning("session-drain")).toBe(true);
+
+    emitSdkEvent("user.message", { content: "second turn", delivery: "idle" });
+    const userMessages = stream
+      .getSessionState()
+      .messages.filter((message) => message.role === "user");
+    expect(userMessages).toHaveLength(2);
+    expect(userMessages.at(-1)).toMatchObject({ content: "second turn" });
 
     // Second idle with an empty queue: closes the stream.
     emitSdkEvent("session.idle");
     await settle();
 
-    expect((await collectStreamEvents(events)).map((event) => event.type)).toContain(
-      "message_dequeued",
-    );
     expect(SessionStream.isRunning("session-drain")).toBe(false);
+  });
+
+  test("steering stays queued until the SDK emits its user message", async () => {
+    const sessionId = "session-steering";
+    onTestFinished(() => closeStream(sessionId));
+
+    let acknowledgeImmediate: (() => void) | undefined;
+    const sendMock = mock((options: { mode?: "enqueue" | "immediate" }): Promise<string> => {
+      if (options.mode === "immediate") {
+        return new Promise((resolve) => {
+          acknowledgeImmediate = () => resolve("steered");
+        });
+      }
+      return Promise.resolve("initial");
+    });
+    const { session, emitSdkEvent } = makeControllableSession({ send: sendMock });
+    const stream = SessionStream.getOrCreate(sessionId, session);
+
+    await stream.deliver(userMessage("same prompt"));
+    await stream.deliver(userMessage("same prompt", "q1"));
+
+    const steering = stream.steerQueuedMessage("q1");
+    expect(stream.getQueuedMessages()).toEqual([
+      { id: "q1", role: "user", content: "same prompt", isSteering: true },
+    ]);
+    expect(stream.cancelQueuedMessage("q1")).toBe(false);
+
+    // The original prompt's SDK echo must not consume the pending steer.
+    emitSdkEvent("user.message", { content: "same prompt", delivery: "idle" });
+    emitSdkEvent("assistant.message", { content: "first response" });
+    emitSdkEvent("session.idle");
+    await settle();
+    expect(sendMock).toHaveBeenCalledTimes(2);
+
+    acknowledgeImmediate?.();
+    expect(await steering).toBe(true);
+
+    expect(sendMock).toHaveBeenLastCalledWith({
+      prompt: "same prompt",
+      attachments: undefined,
+      mode: "immediate",
+    });
+    expect(stream.getQueuedMessages()).toEqual([
+      { id: "q1", role: "user", content: "same prompt", isSteering: true },
+    ]);
+    expect(
+      stream.getSessionState().messages.filter((message) => message.role === "user"),
+    ).toHaveLength(1);
+
+    emitSdkEvent("user.message", { content: "same prompt", delivery: "queued" });
+    expect(stream.getQueuedMessages()).toEqual([]);
+    expect(stream.getReplayEventsSince().at(-1)).toMatchObject({
+      type: "user_message",
+      content: "same prompt",
+      isSteered: true,
+    });
+    expect(stream.getSessionState().messages.at(-1)).toMatchObject({
+      role: "user",
+      content: "same prompt",
+    });
+  });
+
+  test("steering rejects queued agent notifications", async () => {
+    const sessionId = "session-notification-steering";
+    onTestFinished(() => closeStream(sessionId));
+
+    const sendMock = mock(async () => "sent");
+    const stream = SessionStream.getOrCreate(sessionId, makeFakeSession({ send: sendMock }));
+    await stream.deliver(userMessage("first turn"));
+    await stream.deliver(artifactEdit("plan.md", "notification-1"));
+
+    expect(await stream.steerQueuedMessage("notification-1")).toBe(false);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(stream.getQueuedMessages()).toEqual([
+      {
+        id: "notification-1",
+        role: "agent_notification",
+        notification: { type: "artifact_edited", path: "plan.md" },
+      },
+    ]);
+  });
+
+  test("keeps the message queued when SDK steering acknowledgement fails", async () => {
+    const sessionId = "session-steering-failure";
+    onTestFinished(() => closeStream(sessionId));
+
+    const sendMock = mock(async (options: { mode?: "enqueue" | "immediate" }): Promise<string> => {
+      if (options.mode === "immediate") throw new Error("immediate send failed");
+      return "initial-message";
+    });
+    const stream = SessionStream.getOrCreate(sessionId, makeFakeSession({ send: sendMock }));
+    await stream.deliver(userMessage("first turn"));
+    await stream.deliver(userMessage("send now", "q1"));
+
+    await expect(stream.steerQueuedMessage("q1")).rejects.toThrow("immediate send failed");
+
+    expect(stream.getQueuedMessages()).toEqual([{ id: "q1", role: "user", content: "send now" }]);
+    expect(SessionStream.isRunning(sessionId)).toBe(true);
   });
 
   test("closes the stream when draining fails to send", async () => {
@@ -438,12 +575,7 @@ describe("SessionStream lifecycle", () => {
     await settle();
 
     const drained = await collectStreamEvents(events);
-    expect(drained.map((event) => event.type)).toEqual([
-      "user_message",
-      "message_queued",
-      "message_dequeued",
-      "end",
-    ]);
+    expect(drained.map((event) => event.type)).toEqual(["user_message", "message_queued", "end"]);
     expect(drained.at(-1)).toMatchObject({ type: "end", reason: "error" });
     expect(stream.getSessionState().messages.at(-1)).toMatchObject({
       role: "assistant",

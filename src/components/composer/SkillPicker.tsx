@@ -1,6 +1,7 @@
 import type { SessionSkill } from "@/types";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
+import { MetadataBadge } from "@/components/ui/metadata-badge";
 
 function getSlashQuery(input: string): string | undefined {
   if (!input.startsWith("/")) return undefined;
@@ -12,11 +13,13 @@ function getSlashQuery(input: string): string | undefined {
 export function SkillPicker({
   input,
   skills,
+  showGlobalSkillBadges,
   onSelect,
   children,
 }: {
   input: string;
   skills: SessionSkill[] | undefined;
+  showGlobalSkillBadges: boolean;
   onSelect: (skill: SessionSkill) => void;
   children: React.ReactNode;
 }) {
@@ -54,7 +57,7 @@ export function SkillPicker({
                     onMouseDown={(e) => e.preventDefault()}
                     onSelect={() => onSelect(skill)}
                   >
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="font-medium text-sm">/{skill.name}</div>
                       {skill.description && (
                         <div className="text-xs text-muted-foreground truncate">
@@ -62,6 +65,9 @@ export function SkillPicker({
                         </div>
                       )}
                     </div>
+                    {showGlobalSkillBadges && skill.type === "global" && (
+                      <MetadataBadge>Global</MetadataBadge>
+                    )}
                   </CommandItem>
                 ))}
               </CommandGroup>

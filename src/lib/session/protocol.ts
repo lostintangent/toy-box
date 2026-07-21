@@ -10,6 +10,10 @@ export const sessionInputSchema = z.object({
   sessionId: z.string(),
 });
 
+export const listSkillsInputSchema = z.object({
+  cwd: z.string().min(1).optional(),
+});
+
 export const renameSessionInputSchema = sessionInputSchema.extend({
   name: z.string().trim().min(1).max(100),
 });
@@ -78,7 +82,7 @@ export const notifyAgentInputSchema = sessionInputSchema.extend({
   notification: agentNotificationSchema,
 });
 
-export const cancelQueuedInputSchema = sessionInputSchema.extend({
+export const queuedMessageInputSchema = sessionInputSchema.extend({
   queuedMessageId: z.string(),
 });
 

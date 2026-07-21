@@ -155,6 +155,12 @@ describe("stream golden replay", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // Turn 2 streams, then idles with an empty queue → close.
+    sdkHandler!(
+      sdkEvent({
+        type: "user.message",
+        data: { content: "now fix the findings", delivery: "idle" },
+      }),
+    );
     sdkHandler!(sdkEvent({ type: "assistant.turn_start", data: {} }));
     sdkHandler!(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "On it." } }));
     sideEffects.push("--- pre-close ---");
@@ -252,6 +258,12 @@ describe("stream golden replay", () => {
         emit(sdkEvent({ type: "session.idle", data: {} }));
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
+      emit(
+        sdkEvent({
+          type: "user.message",
+          data: { content: "now fix the findings", delivery: "idle" },
+        }),
+      );
       emit(sdkEvent({ type: "assistant.turn_start", data: {} }));
       emit(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "On it." } }));
       emit(sdkEvent({ type: "session.idle", data: {} }));

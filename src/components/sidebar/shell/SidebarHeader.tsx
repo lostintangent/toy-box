@@ -1,6 +1,7 @@
-import { ChevronDown, X, PanelLeftClose, Filter } from "lucide-react";
+import { ChevronDown, X, PanelLeftClose, Filter, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -32,15 +33,20 @@ export function SidebarHeader({
       suppressHydrationWarning
     >
       {onCollapse && (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onCollapse}
-          aria-label="Collapse sidebar"
-          suppressHydrationWarning
-        >
-          <PanelLeftClose className="size-5" />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onCollapse}
+              aria-label="Collapse sidebar"
+              suppressHydrationWarning
+            >
+              <PanelLeftClose className="size-5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={6}>Collapse sidebar</TooltipContent>
+        </Tooltip>
       )}
       <div className="relative flex-1">
         <DropdownMenu>
@@ -80,14 +86,20 @@ export function SidebarHeader({
           </button>
         )}
       </div>
-      <Button
-        size="sm"
-        onClick={(event) => onCreateSession(event.metaKey || event.ctrlKey)}
-        className="bg-hyper-accent text-yellow-950 hover:bg-hyper-accent/90"
-        suppressHydrationWarning
-      >
-        New
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            size="icon-sm"
+            variant="accent"
+            onClick={(event) => onCreateSession(event.metaKey || event.ctrlKey)}
+            aria-label="New session"
+            suppressHydrationWarning
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent sideOffset={6}>New session</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

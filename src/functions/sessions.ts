@@ -4,7 +4,11 @@
 import { createMiddleware, createServerFn } from "@tanstack/react-start";
 import { RawStream } from "@tanstack/router-core";
 import { zodValidator } from "@tanstack/zod-adapter";
-import { listModels as listSdkModels, listSessions as listSdkSessions } from "./sdk/client";
+import {
+  listModels as listSdkModels,
+  listSessions as listSdkSessions,
+  listSkills as listSdkSkills,
+} from "./sdk/client";
 import * as sessionRegistry from "./state/session/registry";
 import { loadSessionSnapshot } from "./state/session/snapshots";
 import { clearDraftPrompt } from "./state/workspace";
@@ -32,10 +36,11 @@ import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 import { toSessionSnapshot } from "@/lib/session/sessionReducer";
 import { encodeSessionEvent } from "@/lib/session/streamCodec";
 import {
-  cancelQueuedInputSchema,
   createSessionInputSchema,
   deliverMessageInputSchema,
+  listSkillsInputSchema,
   notifyAgentInputSchema,
+  queuedMessageInputSchema,
   renameSessionInputSchema,
   sessionInputSchema,
   streamSessionRequestSchema,
@@ -84,16 +89,11 @@ export const listModels = createServerFn({ method: "GET" }).handler(
   },
 );
 
-/** List user-invocable skills for a session (directory-scoped, cached on client by CWD) */
-export const listSessionSkills = createServerFn({ method: "POST" })
-  .middleware([withSessionId])
+/** List user-invocable skills for a CWD, or host-level skills when it is omitted. */
+export const listSkills = createServerFn({ method: "POST" })
+  .validator(zodValidator(listSkillsInputSchema))
   .handler(async ({ data }): Promise<SessionSkill[]> => {
-    const result = await sessionRegistry.withSession(data.sessionId, (session) =>
-      session.rpc.skills.list(),
-    );
-    return result.skills
-      .filter((s) => s.userInvocable && s.enabled)
-      .map((s) => ({ name: s.name, description: s.description }));
+    return listSdkSkills(data.cwd);
   });
 
 /** A session's reduced transcript snapshot, served from the cheapest source
@@ -177,10 +177,18 @@ export const notifyAgent = createServerFn({ method: "POST" })
 
 /** Cancel a queued message by ID (before it's been sent to the SDK) */
 export const cancelQueuedMessage = createServerFn({ method: "POST" })
-  .validator(zodValidator(cancelQueuedInputSchema))
+  .validator(zodValidator(queuedMessageInputSchema))
   .handler(async ({ data }): Promise<boolean> => {
     const stream = SessionStream.get(data.sessionId);
     return stream?.cancelQueuedMessage(data.queuedMessageId) ?? false;
+  });
+
+/** Steer a queued message into the active SDK turn and await acceptance. */
+export const steerQueuedMessage = createServerFn({ method: "POST" })
+  .validator(zodValidator(queuedMessageInputSchema))
+  .handler(async ({ data }): Promise<boolean> => {
+    const stream = SessionStream.get(data.sessionId);
+    return stream?.steerQueuedMessage(data.queuedMessageId) ?? false;
   });
 
 /** Abort the currently processing message in a session.

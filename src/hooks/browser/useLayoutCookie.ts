@@ -3,7 +3,7 @@ import {
   serializeLayoutCookie,
   type LayoutPrefKey,
   type LayoutPrefs,
-} from "@/lib/config/layoutPrefs";
+} from "@/lib/workspace/config/layoutPrefs";
 
 /**
  * Persist one layout pref to its cookie whenever it changes, so the next SSR can

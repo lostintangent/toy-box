@@ -14,7 +14,6 @@ import { useSession } from "@/hooks/session/useSession";
 import { useModels } from "@/hooks/workspace/useModels";
 import { useDraftPrompt } from "@/hooks/workspace/useDraftPrompt";
 import { mergeSessionWorktree, applySessionWorktree } from "@/functions/sessions";
-import { getSettings } from "@/lib/config/settings";
 import { useEditDiffs } from "@/hooks/diffs/useEditDiffs";
 import { EditDiffsProvider } from "@/hooks/diffs/EditDiffsContext";
 import { SessionCwdProvider } from "@/hooks/session/SessionCwdContext";
@@ -37,9 +36,10 @@ export interface SessionPaneProps extends PaneProps {
 export function SessionPane({ sessionId, mode = "active", variant }: SessionPaneProps) {
   const isPassive = mode === "passive";
   const workspaceSession = useWorkspaceSelector((workspace) => workspace.sessionStates[sessionId]);
+  const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);
   const workspaceSessionStatus = workspaceSession?.status ?? "idle";
   const isDraft = workspaceSessionStatus === "draft" || workspaceSessionStatus === "creating";
-  const { defaultModel, setDefaultModel } = useModels();
+  const { models, defaultModel, setDefaultModel } = useModels();
   // In the "compact" variant (the pager) the session surfaces its location picker
   // + message badges in the host's title bar and hides them from the composer; in
   // "normal" (the grid) it keeps them inline. See PaneProps.
@@ -76,12 +76,10 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
   const effectiveDirectory = isDraft ? draftDirectory : selectedDirectory;
 
   // Worktree choice is creation-time state local to a draft.
-  const [useWorktree, setUseWorktree] = useState(() =>
-    isDraft ? getSettings().useWorktree : false,
-  );
+  const [useWorktree, setUseWorktree] = useState(isDraft ? defaultUseWorktree : false);
 
   // The hook owns reduced session state. The default model and creation options
-  // seed a draft's first turn; directory also scopes streamed skills.
+  // seed a draft's first turn; directory also scopes skill discovery.
   const {
     messages,
     queuedMessages,
@@ -99,6 +97,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
     setModel: setSessionModel,
     stop,
     cancelQueuedMessage,
+    steerQueuedMessage,
   } = useSession(sessionId, {
     workspaceSessionStatus,
     mode: isPassive ? "passive" : "active",
@@ -107,22 +106,21 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
     useWorktree: workspaceSessionStatus === "draft" ? useWorktree : undefined,
   });
 
-  // Drafts start with the browser default. Existing sessions reveal their
+  // Drafts start with the workspace default. Existing sessions reveal their
   // model only after hydration; if history has none, the default then becomes
   // the next-message fallback instead of flashing before session state loads.
   const displayedModel = isDraft || hasLoadedSessionState ? (sessionModel ?? defaultModel) : null;
 
-  // Update both this session and the browser-wide default.
+  // Update both this session and the workspace-wide default.
   function handleModelChange(nextModel: ModelConfiguration) {
     setSessionModel(nextModel);
     setDefaultModel(nextModel);
   }
 
-  // Skills are directory-scoped — fetch once per CWD, shared across sessions.
-  // The stream-based path (session.skills_loaded → useSession cache prime) populates
+  // Skills follow the effective directory, with no directory resolving host-level skills.
   const { data: skills } = useQuery({
-    ...skillQueries.list(sessionId, selectedDirectory!),
-    enabled: !isDraft && !!selectedDirectory,
+    ...skillQueries.list(effectiveDirectory),
+    enabled: !isPassive && !isSessionRecordLoading,
   });
   useEffect(() => {
     if (mode !== "active") return;
@@ -265,6 +263,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
             value={prompt}
             onValueChange={setPrompt}
             onSubmit={handleSubmit}
+            models={models}
             canSubmit={workspaceSessionStatus !== "creating"}
             isStreaming={isStreaming}
             onStop={stop}
@@ -273,10 +272,12 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
             locationPicker={isCompact ? undefined : locationPickerProps}
             todos={todos}
             skills={skills}
+            showGlobalSkillBadges={Boolean(effectiveDirectory)}
             sessionDiff={editDiffs}
             artifacts={mode === "active" ? artifacts : []}
             queuedMessages={queuedMessages}
             onCancelQueuedMessage={cancelQueuedMessage}
+            onSteerQueuedMessage={steerQueuedMessage}
             sessionName={sessionMetadata?.summary}
             lastMessage={lastVoiceMessage}
           />

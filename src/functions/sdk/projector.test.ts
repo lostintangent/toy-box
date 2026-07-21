@@ -981,12 +981,12 @@ describe("projector", () => {
       ]);
     });
 
-    test("create_session projects a linked session only after successful completion", () => {
+    test("create_worker_session projects a linked session only after successful completion", () => {
       const context = createStreamingContext();
 
       expect(
         projectSdkEvent(
-          toolExecutionStart("create_session", "tool-create-session", {
+          toolExecutionStart("create_worker_session", "tool-create-session", {
             task: "Review the auth flow",
           }),
           context,
@@ -996,6 +996,67 @@ describe("projector", () => {
       expect(
         projectSdkEvent(toolExecutionProgress("tool-create-session", "Creating"), context),
       ).toEqual([]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-create-session", {
+            success: true,
+            resultContent: JSON.stringify({ sessionId: "toy-box-created-1", opened: true }),
+          }),
+          context,
+        ),
+      ).toEqual([{ type: "linked_session_added", sessionId: "toy-box-created-1" }]);
+    });
+
+    test("create_session does not project a linked pane for a new top-level session", () => {
+      const context = createStreamingContext();
+      projectSdkEvent(
+        toolExecutionStart("create_session", "tool-create-session", {
+          prompt: "Start a durable investigation",
+        }),
+        context,
+      );
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-create-session", {
+            success: true,
+            resultContent: JSON.stringify({ sessionId: "toy-box-created-1", opened: false }),
+          }),
+          context,
+        ),
+      ).toEqual([]);
+    });
+
+    test("create_session projects a linked pane when opening is explicitly requested", () => {
+      const context = createStreamingContext();
+      projectSdkEvent(
+        toolExecutionStart("create_session", "tool-create-session", {
+          prompt: "Start a visible investigation",
+          open: true,
+        }),
+        context,
+      );
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-create-session", {
+            success: true,
+            resultContent: JSON.stringify({ sessionId: "toy-box-created-1", opened: true }),
+          }),
+          context,
+        ),
+      ).toEqual([{ type: "linked_session_added", sessionId: "toy-box-created-1" }]);
+    });
+
+    test("legacy create_session results preserve their historical linked pane", () => {
+      const context = createStreamingContext();
+      projectSdkEvent(
+        toolExecutionStart("create_session", "tool-create-session", {
+          task: "Review the auth flow",
+        }),
+        context,
+      );
 
       expect(
         projectSdkEvent(
@@ -1211,6 +1272,23 @@ describe("projector", () => {
       ).toEqual([]);
     });
 
+    test("marks only non-idle user deliveries as steered", () => {
+      const project = createStreamingContext();
+      const deliveries = (["idle", "steering", "queued"] as const).map(
+        (delivery) =>
+          projectSdkEvent(
+            sdkEvent({ type: "user.message", data: { content: delivery, delivery } }),
+            project,
+          )[0],
+      );
+
+      expect(deliveries).toEqual([
+        expect.not.objectContaining({ isSteered: true }),
+        expect.objectContaining({ isSteered: true }),
+        expect.objectContaining({ isSteered: true }),
+      ]);
+    });
+
     test("decodes notification user message prompts at the SDK boundary", () => {
       const content = encodeSdkAgentNotification({
         type: "artifact_edited",
@@ -1224,6 +1302,7 @@ describe("projector", () => {
             timestamp: "2026-01-01T00:00:00.000Z",
             data: {
               content,
+              delivery: "steering",
             },
           }),
           createStreamingContext(),
@@ -1416,6 +1495,28 @@ describe("projector", () => {
     test("returns no events for unknown SDK event types", () => {
       expect(
         projectSdkEvent(sdkEvent({ type: "unknown.event", data: {} }), createStreamingContext()),
+      ).toEqual([]);
+    });
+
+    test("keeps transient skill discovery out of canonical session events", () => {
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "session.skills_loaded",
+            data: {
+              skills: [
+                {
+                  name: "react-review",
+                  description: "Review React code.",
+                  source: "project",
+                  userInvocable: true,
+                  enabled: true,
+                },
+              ],
+            },
+          }),
+          createStreamingContext(),
+        ),
       ).toEqual([]);
     });
   });

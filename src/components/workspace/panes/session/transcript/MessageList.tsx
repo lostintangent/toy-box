@@ -10,6 +10,7 @@ import { ArrowDown, Bot } from "lucide-react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import type { Message, SessionStatus } from "@/types";
 import { Button } from "@/components/ui/button";
+import { ScrollableFade } from "@/components/ui/scrollable-fade";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Message as SessionMessage } from "./messages/Message";
 import { ReasoningDisplay, StatusIndicator } from "./SessionStatus";
@@ -126,7 +127,13 @@ function VirtualizedMessageList({
   reasoningContent: string;
   scrollToBottomRef: MutableRefObject<(() => void) | null>;
 }) {
-  const { isAtBottom, scrollRef, scrollToBottom, stopScroll } = useStickToBottomContext();
+  const {
+    contentRef: stickToBottomContentRef,
+    isAtBottom,
+    scrollRef,
+    scrollToBottom,
+    stopScroll,
+  } = useStickToBottomContext();
   const contentRef = useRef<HTMLDivElement>(null);
   const historySentinelRef = useRef<HTMLDivElement>(null);
   const pendingAnchorRef = useRef<PendingMessageAnchor | null>(null);
@@ -230,35 +237,41 @@ function VirtualizedMessageList({
   }, [isAtBottom, scrollRef, scrollToBottom, startIndex]);
 
   return (
-    <StickToBottom.Content className="@container space-y-4 p-4 overflow-x-hidden">
-      <div
-        ref={contentRef}
-        className="space-y-3"
-        data-message-window-start-index={startIndex}
-        style={{ opacity: 0 }}
-      >
-        {hasEarlierMessages && <div ref={historySentinelRef} className="h-px" aria-hidden="true" />}
+    <ScrollableFade asChild axis="vertical" className="h-full w-full">
+      <div ref={scrollRef} style={{ scrollbarGutter: "stable both-edges" }}>
+        <div ref={stickToBottomContentRef} className="@container space-y-4 overflow-x-hidden p-4">
+          <div
+            ref={contentRef}
+            className="space-y-3"
+            data-message-window-start-index={startIndex}
+            style={{ opacity: 0 }}
+          >
+            {hasEarlierMessages && (
+              <div ref={historySentinelRef} className="h-px" aria-hidden="true" />
+            )}
 
-        {messages.slice(startIndex).map((message, index) => {
-          const absoluteIndex = startIndex + index;
-          if (!isRenderableMessage(message)) return null;
+            {messages.slice(startIndex).map((message, index) => {
+              const absoluteIndex = startIndex + index;
+              if (!isRenderableMessage(message)) return null;
 
-          const isLast = absoluteIndex === messages.length - 1;
-          return (
-            <div
-              // eslint-disable-next-line react/no-array-index-key -- messages append in order and streaming updates replace content in place
-              key={`${message.role}-${absoluteIndex}`}
-              data-message-index={absoluteIndex}
-            >
-              <SessionMessage message={message} isStreaming={isStreaming} isLast={isLast} />
-            </div>
-          );
-        })}
+              const isLast = absoluteIndex === messages.length - 1;
+              return (
+                <div
+                  // eslint-disable-next-line react/no-array-index-key -- messages append in order and streaming updates replace content in place
+                  key={`${message.role}-${absoluteIndex}`}
+                  data-message-index={absoluteIndex}
+                >
+                  <SessionMessage message={message} isStreaming={isStreaming} isLast={isLast} />
+                </div>
+              );
+            })}
 
-        {isStreaming && reasoningContent && <ReasoningDisplay content={reasoningContent} />}
-        {isStreaming && status !== "idle" && <StatusIndicator status={status} />}
+            {isStreaming && reasoningContent && <ReasoningDisplay content={reasoningContent} />}
+            {isStreaming && status !== "idle" && <StatusIndicator status={status} />}
+          </div>
+        </div>
       </div>
-    </StickToBottom.Content>
+    </ScrollableFade>
   );
 }
 

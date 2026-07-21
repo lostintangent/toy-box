@@ -1,6 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
-import { Provider as JotaiProvider } from "jotai";
+import type { CSSProperties, ReactNode } from "react";
+import { useWorkspaceSelector } from "@/hooks/workspace/state";
+import { workspaceQueries } from "@/lib/workspace/state/query";
 
 import appCss from "./styles.css?url";
 
@@ -20,6 +22,9 @@ function RouteLoadingIndicator() {
 }
 
 export const Route = createRootRouteWithContext<RouterContext>()({
+  loader: async ({ context }) => {
+    await context.queryClient.ensureQueryData(workspaceQueries.state());
+  },
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -41,22 +46,19 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     ],
   }),
 
-  component: RootComponent,
+  component: Outlet,
   pendingComponent: RouteLoadingIndicator,
   shellComponent: RootDocument,
 });
 
-function RootComponent() {
-  return (
-    <JotaiProvider>
-      <Outlet />
-    </JotaiProvider>
-  );
-}
+function RootDocument({ children }: { children: ReactNode }) {
+  const accentColor = useWorkspaceSelector((workspace) => workspace.settings.accentColor);
+  const style: CSSProperties & { "--user-accent": string } = {
+    "--user-accent": accentColor,
+  };
 
-function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" style={style}>
       <head>
         <HeadContent />
       </head>

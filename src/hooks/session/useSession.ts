@@ -3,8 +3,8 @@
  *
  * The hook owns one pane's session lifecycle: hydrate cold state, observe live
  * work while visible, reduce stream events, and expose user commands. Server
- * functions keep the domain register underneath: observe, deliver, abort, and
- * cancel queue entries.
+ * functions keep the domain register underneath: observe, deliver, steer or
+ * cancel queued input, and abort.
  *
  * Session creation: a draft session (see useDrafts) stays a draft until its
  * first send, which asks the server to create the session, with
@@ -20,6 +20,7 @@ import {
   abortSession,
   deliverMessage,
   cancelQueuedMessage as serverCancelQueuedMessage,
+  steerQueuedMessage as serverSteerQueuedMessage,
 } from "@/functions/sessions";
 import type { Attachment, ModelConfiguration, SessionEvent, SessionSnapshot } from "@/types";
 import {
@@ -27,13 +28,13 @@ import {
   createInitialSession,
   toSessionSnapshot,
 } from "@/lib/session/sessionReducer";
-import { sessionQueries, skillQueries } from "@/lib/queries";
+import { sessionQueries } from "@/lib/queries";
 import { consumeSessionEvents } from "@/lib/session/streamCodec";
 import type { SessionSubscriptionMode, StreamSessionRequest } from "@/lib/session/protocol";
 import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
 import { generateUUID } from "@/lib/utils";
-import type { WorkspaceSessionState } from "@/lib/workspace/state";
-import { applyWorkspaceEvent, dispatchWorkspaceAction } from "@/lib/workspace/queryCache";
+import { applyWorkspaceEvent, dispatchWorkspaceAction } from "@/lib/workspace/state/query";
+import type { WorkspaceSessionState } from "@/lib/workspace/state/reducer";
 
 interface SessionConfig {
   workspaceSessionStatus: WorkspaceSessionState["status"];
@@ -122,18 +123,6 @@ export function useSession(
   // Event application
   // ---------------------------------------------------------------------------
   const applyEvent = (event: SessionEvent) => {
-    // Skills are directory-scoped — prime the React Query cache so all
-    // sessions in the same CWD share the data without an extra RPC call.
-    if (event.type === "skills") {
-      if (sessionDirectory) {
-        queryClient.setQueryData(skillQueries.byCwd(sessionDirectory), event.skills);
-      }
-      // Keep the stream cursor current without publishing a render; skills
-      // live in their directory-scoped query cache, not Session state.
-      sessionRef.current = applySessionEvent(sessionRef.current, event);
-      return;
-    }
-
     sessionRef.current = applySessionEvent(sessionRef.current, event);
 
     if (event.type === "delta" || event.type === "reasoning") {
@@ -396,40 +385,30 @@ export function useSession(
     }
   };
 
-  const cancelQueuedMessage = async (queuedMessageId: string) => {
-    const queue = sessionRef.current.queuedMessages;
-    const index = queue.findIndex((message) => message.id === queuedMessageId);
-    if (index === -1) return;
-    const removedMessage = queue[index];
-    sessionRef.current = {
-      ...sessionRef.current,
-      queuedMessages: [...queue.slice(0, index), ...queue.slice(index + 1)],
-    };
-    publishState();
-
+  const runQueueMutation = async (request: () => Promise<boolean>) => {
     try {
-      const serverRemoved = await serverCancelQueuedMessage({
-        data: { sessionId, queuedMessageId },
-      });
-      if (!serverRemoved) {
-        await invalidateSessionSnapshot();
-      }
+      const changed = await request();
+      if (!changed) await invalidateSessionSnapshot();
+      return changed;
     } catch {
-      // Roll the optimistic removal back at (or near) its original position.
-      const safeIndex = Math.max(0, Math.min(index, sessionRef.current.queuedMessages.length));
-      const currentQueue = sessionRef.current.queuedMessages;
-      sessionRef.current = {
-        ...sessionRef.current,
-        queuedMessages: [
-          ...currentQueue.slice(0, safeIndex),
-          removedMessage,
-          ...currentQueue.slice(safeIndex),
-        ],
-      };
-      publishState();
       await invalidateSessionSnapshot();
+      return false;
     }
   };
+
+  const cancelQueuedMessage = (queuedMessageId: string) =>
+    runQueueMutation(() =>
+      serverCancelQueuedMessage({
+        data: { sessionId, queuedMessageId },
+      }),
+    );
+
+  const steerQueuedMessage = (queuedMessageId: string) =>
+    runQueueMutation(() =>
+      serverSteerQueuedMessage({
+        data: { sessionId, queuedMessageId },
+      }),
+    );
 
   // ---------------------------------------------------------------------------
   // Pane lifecycle
@@ -537,5 +516,6 @@ export function useSession(
     stop,
     sendMessage,
     cancelQueuedMessage,
+    steerQueuedMessage,
   };
 }

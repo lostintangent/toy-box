@@ -1,22 +1,15 @@
 import { queryOptions } from "@tanstack/react-query";
-import {
-  querySession,
-  getSessionsState,
-  listModels,
-  listSessionSkills,
-} from "@/functions/sessions";
+import { querySession, getSessionsState, listModels, listSkills } from "@/functions/sessions";
 import type { SessionsState } from "@/functions/sessions";
 
 export type { SessionsState };
-export { workspaceQueries } from "@/lib/workspace/query";
-
 export const sessionQueries = {
   all: () => ["sessions"] as const,
 
   stateKey: () => [...sessionQueries.all(), "state"] as const,
 
   // Durable sidebar/list snapshot. Shared lifecycle and composer state lives
-  // in workspaceQueries.state().
+  // in the workspace state query.
   state: () =>
     queryOptions({
       queryKey: sessionQueries.stateKey(),
@@ -61,24 +54,19 @@ export const modelQueries = {
 /**
  * Query factory for skill-related queries.
  *
- * Skills are directory-scoped (resolved from .claude/ dirs, plugins, etc.),
- * so queries are keyed by CWD rather than session ID. Multiple sessions in
- * the same directory share a single cache entry. The stream-based
- * `session.skills_loaded` event primes this cache for free on live sessions;
- * the RPC fallback here covers cold sessions that haven't streamed yet.
+ * Skills are resolved for a CWD, with null representing host-level discovery
+ * when no meaningful directory is selected. Multiple sessions in the same
+ * scope share a single cache entry.
  */
 export const skillQueries = {
   all: () => ["skills"] as const,
 
-  byCwd: (cwd: string) => [...skillQueries.all(), cwd] as const,
+  byCwd: (cwd?: string) => [...skillQueries.all(), cwd ?? null] as const,
 
-  /** Fetch skills via RPC. Requires a sessionId for the SDK handle but caches by CWD. */
-  list: (sessionId: string, cwd: string) =>
-    // The session ID is only the transport handle; the directory is the cached resource identity.
-    // oxlint-disable-next-line @tanstack/query/exhaustive-deps
+  list: (cwd?: string) =>
     queryOptions({
       queryKey: skillQueries.byCwd(cwd),
-      queryFn: () => listSessionSkills({ data: { sessionId } }),
+      queryFn: () => listSkills({ data: { cwd } }),
       staleTime: Infinity,
     }),
 };

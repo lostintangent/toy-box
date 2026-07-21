@@ -5,18 +5,16 @@ import { zodValidator } from "@tanstack/zod-adapter";
 import { useState, useRef, useEffect, useDeferredValue, lazy, Suspense } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
-import { useAtom } from "jotai";
 import { z } from "zod";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { PanelLeft } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { deleteSession, renameSession } from "@/functions/sessions";
-import { workspaceQueries } from "@/lib/queries";
 import { useDrafts } from "@/hooks/workspace/useDrafts";
 import { useHyperSession, type HyperSessionState } from "@/hooks/workspace/layout/useHyperSession";
 import { useSessions } from "@/hooks/session/useSessions";
 import { useWorkspaceSync } from "@/hooks/workspace/useWorkspaceSync";
-import { useWorkspaceSelector } from "@/hooks/workspace/state";
+import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@/hooks/workspace/state";
 import { useViewport } from "@/hooks/browser/useViewport";
 import { usePanelTransition } from "@/hooks/browser/usePanelTransition";
 import { Sidebar, type SidebarProps } from "@/components/sidebar/Sidebar";
@@ -38,8 +36,7 @@ import {
   deriveWorkspaceRootPanes,
   INBOX_PANE,
 } from "@/lib/workspace/panes";
-import { parseLayoutPrefs, resolveLayoutPrefs } from "@/lib/config/layoutPrefs";
-import { DEFAULT_SETTINGS, showExternalSessionsAtom } from "@/lib/config/settings";
+import { parseLayoutPrefs, resolveLayoutPrefs } from "@/lib/workspace/config/layoutPrefs";
 import { useLayoutCookie } from "@/hooks/browser/useLayoutCookie";
 import {
   cancelSessionsStateQuery,
@@ -59,13 +56,7 @@ const searchSchema = z.object({
 
 export const Route = createFileRoute("/")({
   validateSearch: zodValidator(searchSchema),
-  loader: async ({ context }) => {
-    const [layoutPrefs] = await Promise.all([
-      loadLayoutPrefs(),
-      context.queryClient.ensureQueryData(workspaceQueries.state()),
-    ]);
-    return layoutPrefs;
-  },
+  loader: () => loadLayoutPrefs(),
   component: WorkspacePage,
 });
 
@@ -145,10 +136,10 @@ function WorkspacePage() {
   });
   const openSessionIds = deriveOpenSessionIds(openPanes);
 
-  const [storedShowExternalSessions, setShowExternalSessions] = useAtom(showExternalSessionsAtom);
-  const showExternalSessions = hydrated
-    ? storedShowExternalSessions
-    : DEFAULT_SETTINGS.showExternalSessions;
+  const showExternalSessions = useWorkspaceSelector(
+    (workspace) => workspace.settings.showExternalSessions,
+  );
+  const updateSetting = useUpdateWorkspaceSetting();
 
   const [sidebarSize, setSidebarSize] = useState(initialSidebarSize);
   const [terminalSize, setTerminalSize] = useState(initialTerminalSize);
@@ -589,7 +580,7 @@ function WorkspacePage() {
     filter,
     onFilterChange: setFilter,
     showExternalSessions,
-    onShowExternalSessionsChange: setShowExternalSessions,
+    onShowExternalSessionsChange: (value) => updateSetting("showExternalSessions", value),
     sessions: filteredSessions,
     isSessionsLoading,
     onSessionSelect: handleSessionSelect,

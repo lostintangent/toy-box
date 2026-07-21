@@ -5,10 +5,10 @@ import {
   runAutomation as runAutomationOnServer,
   updateAutomation as updateAutomationOnServer,
 } from "@/functions/automations";
-import { sessionQueries, workspaceQueries } from "@/lib/queries";
+import { sessionQueries } from "@/lib/queries";
 import { addSessionIfMissing } from "@/lib/session/queryCache";
-import { applyWorkspaceEvent } from "@/lib/workspace/queryCache";
-import type { WorkspaceState } from "@/lib/workspace/state";
+import { applyWorkspaceEvent, workspaceQueries } from "@/lib/workspace/state/query";
+import type { WorkspaceState } from "@/lib/workspace/state/reducer";
 import type { Automation, AutomationOptions, SessionSnapshot } from "@/types";
 
 /** Automation commands and their client-side cache effects. */

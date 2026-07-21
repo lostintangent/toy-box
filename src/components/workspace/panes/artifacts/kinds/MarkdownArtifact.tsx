@@ -5,12 +5,13 @@ import {
   type DocumentUser,
   type EditorTheme,
 } from "documint";
-import type { JsonValue } from "@/types";
+import type { AccentColor, JsonValue } from "@/types";
 import type { ArtifactRendererProps } from "./index";
 import {
   usePreferredColorScheme,
   type PreferredColorScheme,
 } from "@/hooks/browser/usePreferredColorScheme";
+import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import { buildArtifactCommentPrompt } from "./markdownComments";
 
 const COPILOT_USER = {
@@ -87,15 +88,19 @@ const DOCUMINT_FONT_SIZE = 14;
 
 function useDocumintTheme(): EditorTheme {
   const colorScheme = usePreferredColorScheme();
+  const accentColor = useWorkspaceSelector((workspace) => workspace.settings.accentColor);
 
-  return createDocumintTheme(colorScheme);
+  return createDocumintTheme(colorScheme, accentColor);
 }
 
-function createDocumintTheme(colorScheme: PreferredColorScheme): EditorTheme {
+function createDocumintTheme(
+  colorScheme: PreferredColorScheme,
+  accentColor: AccentColor,
+): EditorTheme {
   const fallback = DOCUMINT_THEME_FALLBACKS[colorScheme];
 
   return {
-    accent: readThemeColor("--ring", fallback.accent),
+    accent: accentColor,
     background: readThemeColor("--background", fallback.background),
     externalChangeAdditionBackground: fallback.externalChangeAdditionBackground,
     externalChangeModificationBackground: fallback.externalChangeModificationBackground,

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { terminalManager } from "@/lib/terminal/terminalManager";
 import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
+import { useWorkspaceSelector } from "@/hooks/workspace/state";
 
 import "@xterm/xterm/css/xterm.css";
 
@@ -16,22 +17,27 @@ export function Terminal({
   wsPort = DEFAULT_TERMINAL_WS_PORT,
 }: TerminalProps) {
   const [isPtyReady, setIsPtyReady] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const terminalShell = useWorkspaceSelector((workspace) => workspace.settings.terminalShell);
+  const handleClose = useEffectEvent(() => onClose?.());
 
-  function terminalRefCallback(node: HTMLDivElement | null) {
-    if (!node) {
-      terminalManager.detach();
-      return;
-    }
+  useLayoutEffect(() => {
+    terminalManager.setShell(terminalShell);
+  }, [terminalShell]);
 
-    terminalManager.attach(
-      node,
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    return terminalManager.attach(
+      container,
       {
         onReady: setIsPtyReady,
-        onClose,
+        onClose: () => handleClose(),
       },
       wsPort,
     );
-  }
+  }, [wsPort]);
 
   // Debounce PTY resizing while the user is actively resizing the panel
   useEffect(() => {
@@ -43,7 +49,7 @@ export function Terminal({
 
   return (
     <div className="relative h-full min-h-0 p-2 pb-0">
-      <div ref={terminalRefCallback} className="h-full w-full" />
+      <div ref={containerRef} className="h-full w-full" />
 
       {/* Loading skeleton (fades in after delay so quick reconnects don't flash) */}
       {!isPtyReady && (

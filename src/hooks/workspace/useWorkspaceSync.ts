@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
 import { invalidateSessionsStateQuery } from "@/lib/session/queryCache";
-import { applyWorkspaceEvent, invalidateWorkspaceStateQuery } from "@/lib/workspace/queryCache";
+import { applyWorkspaceEvent, invalidateWorkspaceStateQuery } from "@/lib/workspace/state/query";
 import type { WorkspaceEvent } from "@/types";
 
 /** Keeps shared Query projections aligned with the workspace update stream. */

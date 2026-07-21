@@ -7,17 +7,21 @@ import { artifactKindTools } from "./artifacts";
 import { automationTools } from "./automations";
 import { coordinationTools } from "./coordination";
 import { inboxTools } from "./inbox";
-import { lifecycleTools, sessionLayoutTools } from "./lifecycle";
+import { hyperLifecycleTools, lifecycleTools, sessionLayoutTools } from "./lifecycle";
+import { settingsTools } from "./settings";
 import type { SessionType } from "@/types";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getSessionTools(sessionType: SessionType): Tool<any>[] {
   const interactive = sessionType === "standard" || sessionType === "hyper";
+  const canUpdateSettings = sessionType === "automation" || sessionType === "hyper";
   return [
+    ...(sessionType === "hyper" ? hyperLifecycleTools : []),
     ...lifecycleTools,
     ...(interactive ? sessionLayoutTools : []),
     ...coordinationTools,
     ...automationTools,
+    ...(canUpdateSettings ? settingsTools : []),
     ...(sessionType === "hyper" ? artifactKindTools : []),
     ...(sessionType === "inbox" ? inboxTools : []),
   ].map((tool) => ({

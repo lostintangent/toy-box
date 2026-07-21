@@ -3,6 +3,7 @@ import {
   deliverMessageInputSchema,
   createSessionInputSchema,
   dispatchInboxTaskInputSchema,
+  listSkillsInputSchema,
   streamSessionRequestSchema,
 } from "./protocol";
 
@@ -73,5 +74,11 @@ describe("session protocol", () => {
       sessionId: "session",
       message,
     });
+  });
+
+  test("accepts a working directory or host-level skill discovery", () => {
+    expect(listSkillsInputSchema.parse({ cwd: "/repo" })).toEqual({ cwd: "/repo" });
+    expect(listSkillsInputSchema.parse({})).toEqual({});
+    expect(listSkillsInputSchema.safeParse({ cwd: "" }).success).toBe(false);
   });
 });

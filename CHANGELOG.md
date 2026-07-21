@@ -1,3 +1,10 @@
+## 📅 v0.1.14 (07/21/26)
+
+- Introduce support for "hyper sessions"
+- Draft prompt values are no synced with the server
+- Added inbox + chrome extension to send async tasks to it
+- Allow sending queued mesages immediately by long-pressing them
+
 ## 📅 v0.1.13 (07/02/26)
 
 - Add initial support for artifact panes (markdown and HTML)

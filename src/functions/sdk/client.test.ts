@@ -3,10 +3,12 @@ import { buildSessionSystemMessage } from "./client";
 import type { SessionType } from "@/types";
 
 const DIRECTORY = "/workspace";
+const MODEL = { name: "gpt-5", reasoningEffort: "high" as const };
 
 function instructions(sessionType: SessionType): string {
   return buildSessionSystemMessage(`${sessionType}-session`, {
     directory: DIRECTORY,
+    model: MODEL,
     sessionType,
   }).content;
 }
@@ -24,6 +26,29 @@ describe("SDK session system message", () => {
         `The user's current working directory is: ${DIRECTORY}`,
       );
     }
+  });
+
+  test("gives every session type its creation model configuration", () => {
+    for (const sessionType of [
+      "standard",
+      "automation",
+      "inbox",
+      "hyper",
+      "worker",
+    ] satisfies SessionType[]) {
+      expect(instructions(sessionType)).toContain(
+        `This session was created with model configuration: ${JSON.stringify(MODEL)}.`,
+      );
+    }
+  });
+
+  test("omits model context when creation did not select one", () => {
+    const content = buildSessionSystemMessage("standard-session", {
+      directory: DIRECTORY,
+      sessionType: "standard",
+    }).content;
+
+    expect(content).not.toContain("model configuration");
   });
 
   test("gives every session type the notification protocol", () => {

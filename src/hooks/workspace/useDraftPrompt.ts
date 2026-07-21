@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
-import { getOrCreateClientId } from "@/lib/config/clientId";
+import { getOrCreateClientId } from "@/lib/workspace/config/clientId";
 import type { DraftPrompt } from "@/types";
 import { useDispatchWorkspaceAction } from "./state";
 

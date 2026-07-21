@@ -1,6 +1,6 @@
 # Session Runtime
 
-The session runtime lets agent work outlive the browser that started it while remaining observable from every connected client. It supports immediate streaming, late joins, cursor reconnects, queued follow-ups, and headless execution without changing the underlying session model. To provide that continuity, it owns each live execution lifetime, reduced session state, queue, completion, and event fan-out. Connected UI, headless RPCs, automations, and model-facing tools all converge here.
+The session runtime lets agent work outlive the browser that started it while remaining observable from every connected client. It supports immediate streaming, late joins, cursor reconnects, queued follow-ups, steering queued input into an active turn, and headless execution without changing the underlying session model. To provide that continuity, it owns each live execution lifetime, reduced session state, queue, completion, and event fan-out. Connected UI, headless RPCs, automations, and model-facing tools all converge here.
 
 ## Session operations
 
@@ -10,9 +10,9 @@ The end-to-end session domain has five operation families. Create, deliver, spaw
 2. **Deliver** a message to an existing session. The runtime decides whether it starts immediately or queues behind active execution.
 3. **Spawn a worker** as a parent-owned session for delegated or focused work. The runtime inherits parent execution context, applies an optional friendly name before delivering the task, waits for that exact execution, and either retains or deletes the worker according to its declared policy.
 4. **Observe** through a live event stream, a reduced snapshot, or a completion result.
-5. **Control** by renaming, aborting, cancelling queued input, deleting, or applying worktree operations.
+5. **Control** by renaming, steering or cancelling queued input, aborting, deleting, or applying worktree operations.
 
-Control is a category, not one runtime method. Abort and queue cancellation act on live execution; rename, deletion, and worktree commands delegate through the session API to the registry or resource owner described in the state guide.
+Control is a category, not one runtime method. Abort, queue steering, and queue cancellation act on live execution; rename, deletion, and worktree commands delegate through the session API to the registry or resource owner described in the state guide. Normal draining and steering share one private queue claim; steering sends its claim through the SDK's immediate mode without opening another turn boundary.
 
 Resume is not a separate operation. Delivering to an idle session resumes its persisted SDK session; delivering to an active session queues. Likewise, callers never choose between send and queue.
 
@@ -22,12 +22,12 @@ Resume is not a separate operation. Delivering to an idle session resumes its pe
 
 `SessionStream` names the live runtime for one session, not the event stream a client reads. It owns the SDK handle, canonical state, queued messages, completion waiters, and replayable event bus for that execution lifetime.
 
-A worker does not add another execution mode to `SessionStream`. Its durable worker record owns the parent relationship and a boolean retention policy. `spawnWorker` composes worker creation, inherited context, an exact completion receipt, a stop guard that closes the race before the stream exists, and registry-owned deletion when `retained` is false. `create_session` uses the same supervisor with `retained: true` because its session remains the asynchronous result and follow-up channel; artifact work accepts the disposable default. Startup sweeps only disposable workers abandoned by a previous process and does not resume their execution.
+A worker does not add another execution mode to `SessionStream`. Its durable worker record owns the parent relationship and a boolean retention policy. `spawnWorker` composes worker creation, inherited context, an exact completion receipt, a stop guard that closes the race before the stream exists, and registry-owned deletion when `retained` is false. `create_worker_session` uses that supervisor with `retained: true` because its child remains an asynchronous result and follow-up channel; artifact work accepts the disposable default. Hyper's `create_session` instead passes its declared inputs to ordinary standard-session creation with no worker owner or caller-state lookup. Startup sweeps only disposable workers abandoned by a previous process and does not resume their execution.
 
 Inbox dispatch, automation scheduling, and worker spawning each own a session supervisor because their terminal policies differ: Inbox preserves reported results, automations record run metadata, and the worker supervisor applies the worker's retention policy. The runtime centralizes their common mechanism by returning one exact completion receipt; manager-specific finalization stays with the manager rather than entering a generic policy abstraction.
 
 1. Acquisition is single-flight. A caller joins an existing stream, shares an in-progress creation, creates a new SDK session, or resumes an idle session from its reduced snapshot and SDK handle.
-2. Connected callers subscribe before delivery. `SessionStream.deliver` starts the message synchronously when idle or emits `message_queued`; repeated delivery of the same message ID returns the original disposition.
+2. Connected callers subscribe before delivery. `SessionStream.deliver` starts the message synchronously when idle or emits `message_queued`; repeated delivery of the same message ID returns the original disposition. Normal draining emits `message_dequeued` when an idle send starts. Only queued user messages can be steered. Steering marks that same queue entry while awaiting delivery; when the SDK eventually publishes it with `steering` or `queued` delivery, the projector marks the canonical user message as steered and the reducer removes the matching queue entry. The SDK event is the sole queued-message transcript fact, so live state preserves its actual delivery order without echo reconciliation.
 3. The SDK projector translates raw events into canonical `SessionEvent`s. The event bus stamps a process-monotonic `eventId`; the runtime stamps each SDK agent-loop segment with a `turnId`, distinct from the delivered message ID; and the shared reducer returns the next immutable `Session`.
 4. When the SDK session reports idle, the runtime drains the next queued message through the same path. `assistant.turn_end` closes only an agent-loop segment and does not drain the queue. With no queued work, the runtime caches its clean final snapshot and closes.
 5. Every real close publishes a terminal `end` event before releasing listeners, replay, queue state, and the live registry. Transport close means only that no more bytes are available; consumers reason about the domain event.

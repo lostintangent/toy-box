@@ -8,10 +8,8 @@ import { type ITheme, Terminal as XTerm, type IDisposable } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { getOrCreateClientId } from "@/lib/config/clientId";
-import { getSettings } from "@/lib/config/settings";
-import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
-import type { TerminalServerMessage } from "@/types";
+import { getOrCreateClientId } from "@/lib/workspace/config/clientId";
+import { DEFAULT_TERMINAL_WS_PORT, type TerminalServerMessage } from "@/types";
 import { TerminalConnection } from "./connection";
 import { TerminalResize, isValidSize } from "./resize";
 import { TerminalBuffer } from "./buffer";
@@ -95,6 +93,7 @@ class TerminalManager {
   #isReady = false;
   #onReady: ((isReady: boolean) => void) | null = null;
   #onClose: (() => void) | null = null;
+  #shell: string | undefined;
 
   readonly #connection: TerminalConnection;
   readonly #resize: TerminalResize;
@@ -176,6 +175,10 @@ class TerminalManager {
     if (!data) return;
     this.#buffer.bufferInput(data);
     this.#xterm?.focus();
+  }
+
+  setShell(shell: string) {
+    this.#shell = shell.trim() || undefined;
   }
 
   setResizePaused(paused: boolean) {
@@ -282,13 +285,12 @@ class TerminalManager {
     if (!this.#connection.isOpen) return;
 
     if (!this.#connection.initSent) {
-      const shell = getSettings().terminalShell;
       this.#connection.sendMessage({
         type: "init",
         clientId: getOrCreateClientId(),
         cols,
         rows,
-        shell: shell || undefined,
+        shell: this.#shell,
       });
       this.#connection.initSent = true;
       this.#connection.lastSentSize = { cols, rows };

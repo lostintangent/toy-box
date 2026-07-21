@@ -543,73 +543,50 @@ describe("sessionReducer", () => {
   });
 
   describe("queued messages", () => {
-    test("promotes queued message to main messages list", () => {
-      const withQueue = createInitialSession({
-        queuedMessages: [
-          { id: "q1", role: "user", content: "first queued" },
-          { id: "q2", role: "user", content: "second queued" },
-        ],
-        messages: [{ role: "assistant", content: "ready" }],
-      });
+    test("message_dequeued removes exactly one queue item without changing the transcript", () => {
+      const state = applySessionEvent(
+        createInitialSession({
+          queuedMessages: [
+            { id: "q1", role: "user", content: "first queued" },
+            { id: "q2", role: "user", content: "second queued" },
+          ],
+          messages: [{ role: "assistant", content: "ready" }],
+        }),
+        {
+          type: "message_dequeued",
+          queuedMessageId: "q2",
+        },
+      );
 
-      const state = applySessionEvent(withQueue, {
-        type: "message_dequeued",
-        message: { id: "q1", role: "user", content: "first queued" },
-      });
-
-      expect(state.queuedMessages).toHaveLength(1);
-      expect(state.queuedMessages[0]).toMatchObject({
-        id: "q2",
-        content: "second queued",
-      });
-      expect(state.messages[state.messages.length - 1]).toMatchObject({
-        role: "user",
-        content: "first queued",
-      });
+      expect(state.queuedMessages).toEqual([{ id: "q1", role: "user", content: "first queued" }]);
+      expect(state.messages).toEqual([{ role: "assistant", content: "ready" }]);
     });
 
-    test("dequeues notification messages as visible agent notifications", () => {
-      const notification = { type: "artifact_edited", path: "plan.md" } as const;
-      const withQueue = createInitialSession({
-        queuedMessages: [{ id: "q1", role: "agent_notification", notification }],
-        messages: [{ role: "assistant", content: "ready" }],
+    test("keeps an identical delivered steer distinct from the opening message", () => {
+      let state = createInitialSession({
+        messages: [{ role: "user", content: "same prompt" }],
+        queuedMessages: [{ id: "q1", role: "user", content: "same prompt", isSteering: true }],
+        activeTurnId: "turn-1",
+      });
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "same prompt",
+        isSteered: true,
+        turnId: "turn-1",
+      });
+      state = applySessionEvent(state, { type: "status", status: "thinking" });
+      state = applySessionEvent(state, { type: "delta", content: "Steering response." });
+      state = applySessionEvent(state, {
+        type: "assistant_message",
+        content: "Steering response.",
       });
 
-      const state = applySessionEvent(withQueue, {
-        type: "message_dequeued",
-        message: { id: "q1", role: "agent_notification", notification },
-      });
-
-      expect(state.messages).toEqual([
-        { role: "assistant", content: "ready" },
-        { role: "agent_notification", notification },
-      ]);
       expect(state.queuedMessages).toEqual([]);
-    });
-
-    test("removes queued message by id when queue order diverges", () => {
-      const withQueue = createInitialSession({
-        queuedMessages: [
-          { id: "q1", role: "user", content: "first queued" },
-          { id: "q2", role: "user", content: "second queued" },
-        ],
-        messages: [{ role: "assistant", content: "ready" }],
-      });
-
-      const state = applySessionEvent(withQueue, {
-        type: "message_dequeued",
-        message: { id: "q2", role: "user", content: "second queued" },
-      });
-
-      expect(state.queuedMessages).toHaveLength(1);
-      expect(state.queuedMessages[0]).toMatchObject({
-        id: "q1",
-        content: "first queued",
-      });
-      expect(state.messages[state.messages.length - 1]).toMatchObject({
-        role: "user",
-        content: "second queued",
-      });
+      expect(state.messages).toEqual([
+        { role: "user", content: "same prompt" },
+        { role: "user", content: "same prompt", attachments: undefined, timestamp: undefined },
+        { role: "assistant", content: "Steering response." },
+      ]);
     });
 
     test("adds queued message from cross-client queue update", () => {
@@ -624,33 +601,19 @@ describe("sessionReducer", () => {
       expect(state.queuedMessages[0]).toMatchObject({ id: "q1", content: "follow up" });
     });
 
-    test("deduplicates message_queued when already present optimistically", () => {
+    test("updates an existing queue entry when steering begins", () => {
       let state = createInitialSession({
         queuedMessages: [{ id: "q1", role: "user", content: "follow up" }],
       });
 
       state = applySessionEvent(state, {
         type: "message_queued",
-        message: { id: "q1", role: "user", content: "follow up" },
+        message: { id: "q1", role: "user", content: "follow up", isSteering: true },
       });
 
-      expect(state.queuedMessages).toHaveLength(1);
-    });
-
-    test("removes an optimistic queued message when delivery starts it immediately", () => {
-      let state = createInitialSession({
-        queuedMessages: [{ id: "q1", role: "user", content: "follow up" }],
-      });
-
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "follow up",
-        clientMessageId: "q1",
-        eventId: 1,
-      });
-
-      expect(state.queuedMessages).toEqual([]);
-      expect(state.messages.at(-1)).toMatchObject({ role: "user", content: "follow up" });
+      expect(state.queuedMessages).toEqual([
+        { id: "q1", role: "user", content: "follow up", isSteering: true },
+      ]);
     });
 
     test("removes queued message on message_cancelled", () => {
@@ -783,12 +746,9 @@ describe("sessionReducer", () => {
       expect(state.status).toBe("thinking");
     });
 
-    test("events without a status transition preserve the current status", () => {
+    test("tool events without a status transition preserve the current status", () => {
       let state = createInitialSession();
       const initialStatus = state.status;
-
-      state = applySessionEvent(state, { type: "skills", skills: [] });
-      expect(state.status).toEqual(initialStatus);
 
       state = applySessionEvent(state, {
         type: "tool_start",
@@ -864,67 +824,13 @@ describe("sessionReducer", () => {
       expect(state.lastSeenEventId).toBe(21);
     });
 
-    test("deduplicates replayed user messages by clientMessageId", () => {
+    test("reconciles an optimistic opening message with its canonical server event", () => {
       let state = createInitialSession();
-
       state = applySessionEvent(state, {
         type: "user_message",
         content: "hello",
         clientMessageId: "msg-1",
       });
-      expect(state.pendingOptimisticUserMessage).toEqual({ clientMessageId: "msg-1", index: 0 });
-
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-        timestamp: "2026-02-09T00:00:00.000Z",
-        eventId: 10,
-      });
-
-      expect(state.messages).toHaveLength(1);
-      expect(state.messages[0]).toMatchObject({
-        role: "user",
-        content: "hello",
-        timestamp: "2026-02-09T00:00:00.000Z",
-      });
-      expect(state.pendingOptimisticUserMessage).toBeUndefined();
-    });
-
-    test("drops id-less SDK user echoes with the turn-start echo guard", () => {
-      let state = createInitialSession();
-
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-      });
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        timestamp: "2026-02-09T00:00:00.000Z",
-        eventId: 10,
-        turnId: "turn-1",
-      });
-
-      expect(state.messages).toEqual([{ role: "user", content: "hello" }]);
-      expect(state.status).toBe("thinking");
-      expect(state.pendingOptimisticUserMessage).toEqual({ clientMessageId: "msg-1", index: 0 });
-      expect(state.lastSeenEventId).toBe(10);
-    });
-
-    test("reconciles decorated server user echoes after local thinking starts", () => {
-      let state = createInitialSession();
-
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-      });
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-
       state = applySessionEvent(state, {
         type: "user_message",
         content: "hello",
@@ -933,39 +839,9 @@ describe("sessionReducer", () => {
         eventId: 10,
         turnId: "turn-1",
       });
-
-      expect(state.messages).toEqual([
-        {
-          role: "user",
-          content: "hello",
-          timestamp: "2026-02-09T00:00:00.000Z",
-          attachments: undefined,
-        },
-      ]);
-      expect(state.status).toBe("thinking");
-      expect(state.pendingOptimisticUserMessage).toBeUndefined();
-    });
-
-    test("drops SDK user echo after the decorated server echo already reconciled", () => {
-      let state = createInitialSession();
-
       state = applySessionEvent(state, {
         type: "user_message",
         content: "hello",
-        clientMessageId: "msg-1",
-      });
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
-        eventId: 10,
-        turnId: "turn-1",
-      });
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        timestamp: "2026-02-09T00:00:00.000Z",
         eventId: 11,
         turnId: "turn-1",
       });
@@ -974,34 +850,28 @@ describe("sessionReducer", () => {
         {
           role: "user",
           content: "hello",
-          timestamp: undefined,
           attachments: undefined,
+          timestamp: "2026-02-09T00:00:00.000Z",
         },
       ]);
-      expect(state.status).toBe("thinking");
       expect(state.pendingOptimisticUserMessage).toBeUndefined();
     });
 
-    test("does not dedupe a dequeued message for a new active turn", () => {
+    test("does not reconcile an unrelated id-less user message as the opening echo", () => {
       let state = createInitialSession();
       state = applySessionEvent(state, {
         type: "user_message",
-        content: "hello",
-        eventId: 1,
-        turnId: "turn-1",
+        content: "opening prompt",
+        clientMessageId: "msg-1",
       });
-      state = applySessionEvent(state, { type: "assistant_message", content: "hi", eventId: 2 });
       state = applySessionEvent(state, {
-        type: "message_dequeued",
-        message: { id: "queued-1", role: "user", content: "hello" },
-        eventId: 3,
-        turnId: "turn-2",
+        type: "user_message",
+        content: "different message",
       });
 
-      expect(state.messages).toEqual([
-        { role: "user", content: "hello", attachments: undefined, timestamp: undefined },
-        { role: "assistant", content: "hi", toolCalls: undefined },
-        { role: "user", content: "hello" },
+      expect(state.messages.map((message) => message.role === "user" && message.content)).toEqual([
+        "opening prompt",
+        "different message",
       ]);
     });
   });

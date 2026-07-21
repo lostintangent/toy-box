@@ -20,6 +20,7 @@ mock.module("../database", () => ({
 
 const {
   applyWorkspaceAction,
+  changeSettings,
   createPendingInboxEntry,
   deleteInboxEntry,
   deleteSessionWorkspaceState,
@@ -63,6 +64,46 @@ function snapshot(automations: Automation[] = []) {
 }
 
 describe("workspace state", () => {
+  test("merges precise settings updates before broadcasting their complete value", async () => {
+    await openWorkspaceTestDatabase();
+    const initial = {
+      ...(await snapshot()).settings,
+      defaultModel: { name: "gpt-5", reasoningEffort: "high" },
+      terminalShell: "/bin/zsh",
+    };
+    await changeSettings(initial);
+
+    const events: WorkspaceEvent[] = [];
+    const unsubscribe = subscribeWorkspaceEvents((event) => {
+      if (event.type === "settings.changed") events.push(event);
+    });
+    onTestFinished(unsubscribe);
+    const settings = {
+      ...initial,
+      accentColor: "#123abc" as const,
+    };
+
+    expect(await changeSettings({ accentColor: settings.accentColor })).toEqual(settings);
+    expect(await changeSettings({ accentColor: settings.accentColor })).toEqual(settings);
+
+    expect((await snapshot()).settings).toEqual(settings);
+    expect(events).toEqual([{ type: "settings.changed", settings }]);
+  });
+
+  test("serializes concurrent settings updates", async () => {
+    await openWorkspaceTestDatabase();
+
+    await Promise.all([
+      changeSettings({ accentColor: "#123abc" }),
+      changeSettings({ terminalShell: "/bin/fish" }),
+    ]);
+
+    expect((await snapshot()).settings).toMatchObject({
+      accentColor: "#123abc",
+      terminalShell: "/bin/fish",
+    });
+  });
+
   test("snapshot exposes one canonical session-state map", async () => {
     const sessionId = `workspace-snapshot-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));

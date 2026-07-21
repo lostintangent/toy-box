@@ -129,7 +129,7 @@ export class SessionStream {
   #currentTurnId: string | undefined;
   readonly #turnSeed = crypto.randomUUID();
   #nextTurnIndex = 0;
-  #isDrainingQueue = false;
+  #isSendingQueuedMessage = false;
   // Claimed synchronously before #startTurn awaits so concurrent deliveries
   // cannot both open the stream's first turn.
   #hasOpenedTurn = false;
@@ -167,7 +167,9 @@ export class SessionStream {
   deliver(message: QueuedMessage): Promise<MessageDisposition> {
     const existing = this.#dispositions.get(message.id);
     if (existing) return existing;
-    if (this.#closed) return Promise.reject(new SessionStreamClosedError());
+    if (this.#closed || this.#abortRequested) {
+      return Promise.reject(new SessionStreamClosedError());
+    }
 
     if (!this.#hasOpenedTurn) {
       this.#hasOpenedTurn = true;
@@ -197,11 +199,43 @@ export class SessionStream {
     return disposition;
   }
 
+  async steerQueuedMessage(queuedMessageId: string): Promise<boolean> {
+    if (this.#abortRequested || this.#isSendingQueuedMessage) {
+      return false;
+    }
+
+    const message = this.#sessionState.queuedMessages.find(
+      (candidate) => candidate.id === queuedMessageId,
+    );
+    if (message?.role !== "user" || message.isSteering) return false;
+
+    this.#isSendingQueuedMessage = true;
+    this.#emit({
+      type: "message_queued",
+      message: { ...message, isSteering: true },
+    });
+
+    try {
+      await this.#sendToSdk(message, "immediate");
+      return true;
+    } catch (error) {
+      if (
+        !this.#abortRequested &&
+        this.#sessionState.queuedMessages.some(({ id }) => id === message.id)
+      ) {
+        this.#emit({ type: "message_queued", message });
+      }
+      throw error;
+    } finally {
+      this.#isSendingQueuedMessage = false;
+    }
+  }
+
   cancelQueuedMessage(queuedMessageId: string): boolean {
     if (this.#closed) return false;
 
-    const index = this.#sessionState.queuedMessages.findIndex((m) => m.id === queuedMessageId);
-    if (index === -1) return false;
+    const message = this.#sessionState.queuedMessages.find(({ id }) => id === queuedMessageId);
+    if (!message || (message.role === "user" && message.isSteering)) return false;
 
     this.#emit({
       type: "message_cancelled",
@@ -283,7 +317,11 @@ export class SessionStream {
   async abort(): Promise<void> {
     this.#abortRequested = true;
     try {
-      await this.sdkSession.abort();
+      try {
+        await this.sdkSession.rpc.queue.clear();
+      } finally {
+        await this.sdkSession.abort();
+      }
     } catch (error) {
       evictCachedSessionIfStale(this.sessionId, error);
       throw error;
@@ -301,9 +339,9 @@ export class SessionStream {
 
   // ── Turn execution ───────────────────────────────────────────────────
 
-  async #startTurn(message: QueuedMessage, openingEvent: SessionEvent): Promise<void> {
+  async #startTurn(message: QueuedMessage, openingEvent?: SessionEvent): Promise<void> {
     this.#prepareForNewTurn();
-    this.#emit(openingEvent);
+    if (openingEvent) this.#emit(openingEvent);
 
     try {
       const model = message.role === "user" ? message.model : undefined;
@@ -311,13 +349,7 @@ export class SessionStream {
         await this.#setModel(model);
       }
 
-      await this.sdkSession.send({
-        prompt:
-          message.role === "agent_notification"
-            ? encodeSdkAgentNotification(message.notification)
-            : message.content,
-        attachments: toSdkAttachments(message.role === "user" ? message.attachments : undefined),
-      });
+      await this.#sendToSdk(message);
     } catch (error) {
       evictCachedSessionIfStale(this.sessionId, error);
       this.close("error");
@@ -359,6 +391,7 @@ export class SessionStream {
     const turnEndReason = getSdkTurnEndReason(sdkEvent);
     if (turnEndReason) {
       if (turnEndReason === "error") {
+        if (this.#abortRequested) return;
         this.close("error");
         return;
       }
@@ -373,25 +406,27 @@ export class SessionStream {
   }
 
   async #drainMessageQueue(): Promise<void> {
-    if (this.#isDrainingQueue) return;
-    this.#isDrainingQueue = true;
+    if (this.#abortRequested || this.#isSendingQueuedMessage) return;
+
+    const queuedMessage = this.#sessionState.queuedMessages[0];
+    if (!queuedMessage) {
+      this.#cacheFinalSnapshot();
+      this.close();
+      return;
+    }
+    if (queuedMessage.role === "user" && queuedMessage.isSteering) return;
+
+    this.#isSendingQueuedMessage = true;
 
     try {
-      const queuedMessage = this.#sessionState.queuedMessages[0];
-      if (!queuedMessage) {
-        this.#cacheFinalSnapshot();
-        this.close();
-        return;
+      await this.#startTurn(queuedMessage);
+      if (!this.#closed && !this.#abortRequested) {
+        this.#emit({ type: "message_dequeued", queuedMessageId: queuedMessage.id });
       }
-
-      await this.#startTurn(queuedMessage, {
-        type: "message_dequeued",
-        message: queuedMessage,
-      });
     } catch {
       // #startTurn already closed the stream; this runs from a floating SDK handler.
     } finally {
-      this.#isDrainingQueue = false;
+      this.#isSendingQueuedMessage = false;
     }
   }
 
@@ -420,6 +455,17 @@ export class SessionStream {
   }
 
   // ── Internal helpers ─────────────────────────────────────────────────
+
+  #sendToSdk(message: QueuedMessage, mode?: "immediate"): Promise<string> {
+    return this.sdkSession.send({
+      prompt:
+        message.role === "agent_notification"
+          ? encodeSdkAgentNotification(message.notification)
+          : message.content,
+      attachments: toSdkAttachments(message.role === "user" ? message.attachments : undefined),
+      ...(mode ? { mode } : {}),
+    });
+  }
 
   /** Cache the clean-close snapshot; abort/error closes may hold unpersisted content. */
   #cacheFinalSnapshot(): void {
@@ -456,7 +502,6 @@ export class SessionStream {
   #canDetach(): boolean {
     return (
       !this.#bus.hasSubscribers &&
-      !this.#isDrainingQueue &&
       this.#sessionState.queuedMessages.length === 0 &&
       !this.#bus.hasReplayEvents
     );
@@ -477,7 +522,10 @@ function coalesceKeyForMessage(message: QueuedMessage): string | undefined {
 
 function turnOpeningEvent(message: QueuedMessage): SessionEvent {
   if (message.role === "agent_notification") {
-    return { type: "agent_notification", notification: message.notification };
+    return {
+      type: "agent_notification",
+      notification: message.notification,
+    };
   }
 
   return {
