@@ -3,10 +3,9 @@ import {
   HTML_BASE_ATTRIBUTE,
   HTML_BRIDGE_ATTRIBUTE,
   HTML_EDITABLE_MESSAGE_TYPE,
-  HTML_SOURCE_ATTRIBUTE,
   createArtifactBaseUri,
   injectBaseHref,
-  wrapArtifactDocument,
+  injectHtmlBridge,
 } from "./html";
 
 describe("HTML artifact documents", () => {
@@ -19,7 +18,7 @@ describe("HTML artifact documents", () => {
     expect(new URL("nested/chart.html", baseUri).href).toBe(`${baseUri}nested/chart.html`);
   });
 
-  test("points a wrapped document's relative embeds at the artifact directory via <base>", () => {
+  test("points a document's relative embeds at the artifact directory via <base>", () => {
     const withHead = injectBaseHref(
       "<html><head></head><body></body></html>",
       "https://host/api/serve/s/dir/",
@@ -37,8 +36,7 @@ describe("HTML artifact documents", () => {
   });
 
   test("marks the injected base so saving strips it with the bridge", () => {
-    const injected = wrapArtifactDocument(
-      "index.html",
+    const injected = injectHtmlBridge(
       "<!doctype html><html><body><main>Hello</main></body></html>",
     );
 
@@ -46,9 +44,8 @@ describe("HTML artifact documents", () => {
     expect(injected).toContain('"],[" + baseAttribute + "]"');
   });
 
-  test("wrapping an HTML file injects the editable bridge before body close", () => {
-    const injected = wrapArtifactDocument(
-      "index.html",
+  test("injects the editable bridge before the body closes", () => {
+    const injected = injectHtmlBridge(
       "<!doctype html><html><body><main>Hello</main></body></html>",
     );
 
@@ -57,8 +54,7 @@ describe("HTML artifact documents", () => {
   });
 
   test("suppresses saves until the loaded content is snapshotted, then only on a real change", () => {
-    const injected = wrapArtifactDocument(
-      "index.html",
+    const injected = injectHtmlBridge(
       "<!doctype html><html><body><main>Hello</main></body></html>",
     );
 
@@ -70,8 +66,7 @@ describe("HTML artifact documents", () => {
   });
 
   test("toggles editability through a bridge message", () => {
-    const injected = wrapArtifactDocument(
-      "index.html",
+    const injected = injectHtmlBridge(
       "<!doctype html><html><body><main>Hello</main></body></html>",
     );
 
@@ -80,46 +75,14 @@ describe("HTML artifact documents", () => {
     expect(injected).toContain("setEditable(false)");
   });
 
-  test("replaces an existing bridge when re-wrapping", () => {
+  test("replaces an existing bridge when reinjected", () => {
     const stale = `<html><body><script ${HTML_BRIDGE_ATTRIBUTE}>old()</script><main>Hello</main></body></html>`;
 
-    const injected = wrapArtifactDocument("index.html", stale);
+    const injected = injectHtmlBridge(stale);
 
     expect(injected).not.toContain("old()");
     expect(
       injected.match(new RegExp(`<script\\b(?=[^>]*\\b${HTML_BRIDGE_ATTRIBUTE}\\b)`, "g")),
     ).toHaveLength(1);
-  });
-
-  test("wrapping an SVG embeds it in an editable, scrollable HTML document", () => {
-    const svg = `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200"><text>Hello</text></svg>`;
-
-    const document = wrapArtifactDocument("diagram.svg", svg);
-
-    expect(document).toContain(
-      '<meta name="viewport" content="width=device-width, initial-scale=1" />',
-    );
-    expect(document).toContain("-webkit-overflow-scrolling: touch");
-    expect(document).toContain(`<main ${HTML_SOURCE_ATTRIBUTE}`);
-    expect(document).toContain(
-      '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200">',
-    );
-    // The XML preamble is dropped so the SVG can live inline in the HTML body.
-    expect(document).not.toContain("<?xml");
-    expect(document).toContain(`<script ${HTML_BRIDGE_ATTRIBUTE}>`);
-  });
-
-  test("marks the SVG source so the bridge serializes it — not the wrapper — back to disk", () => {
-    const document = wrapArtifactDocument("diagram.svg", `<svg><text>Hello</text></svg>`);
-
-    expect(document).toContain(`const sourceAttribute = "${HTML_SOURCE_ATTRIBUTE}"`);
-    expect(document).toContain('source.getAttribute(serializeAttribute) === "children"');
-    expect(document).toContain("clone.innerHTML.trim()");
-  });
-
-  test("edits the inline SVG as plaintext so rich HTML can't leak into the saved file", () => {
-    const injected = wrapArtifactDocument("diagram.svg", `<svg><text>Hello</text></svg>`);
-
-    expect(injected).toContain('"plaintext-only"');
   });
 });

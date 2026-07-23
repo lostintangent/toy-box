@@ -171,7 +171,7 @@ describe("workspace pane derivation", () => {
       sourceSessionId: "A",
       path: "preview.html",
       title: "preview.html",
-      mode: "shared",
+      mode: "edit",
     });
   });
 

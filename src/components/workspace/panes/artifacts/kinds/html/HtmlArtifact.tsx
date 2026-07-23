@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
-import type { ArtifactRendererProps } from "./index";
+import type { ArtifactRendererProps } from "../index";
 import {
   injectBaseHref,
-  wrapArtifactDocument,
+  injectHtmlBridge,
   HTML_CHANGE_MESSAGE_TYPE,
   HTML_EDITABLE_MESSAGE_TYPE,
 } from "@/lib/session/artifacts/html";
@@ -12,17 +12,15 @@ type HtmlChangeMessage = {
   content: string;
 };
 
-/** Sandboxed HTML/SVG document with bridged editing and relative resource serving. */
-export function HtmlArtifact({ path, title, mode, baseUri, artifact }: ArtifactRendererProps) {
+/** Sandboxed HTML document with bridged editing and relative resource serving. */
+export function HtmlArtifact({ title, mode, baseUri, artifact }: ArtifactRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canEdit = mode !== "read";
   const { content, save } = artifact;
 
   // Own saves do not update the external baseline, preserving iframe state while editing.
   const srcDoc =
-    content === null || !baseUri
-      ? ""
-      : injectBaseHref(wrapArtifactDocument(path, content), baseUri);
+    content === null || !baseUri ? "" : injectBaseHref(injectHtmlBridge(content), baseUri);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {

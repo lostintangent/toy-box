@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CommentThread } from "documint";
-import { buildArtifactCommentPrompt } from "./markdownComments";
+import { buildArtifactCommentPrompt } from "./comments";
 
 const thread: CommentThread = {
   id: "thread-a",

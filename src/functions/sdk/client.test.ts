@@ -65,6 +65,23 @@ describe("SDK session system message", () => {
     }
   });
 
+  test("teaches every session type the editable SVG drawing contract", () => {
+    for (const sessionType of [
+      "standard",
+      "automation",
+      "inbox",
+      "hyper",
+      "worker",
+    ] satisfies SessionType[]) {
+      const content = instructions(sessionType);
+      expect(content).toContain("`.svg`");
+      expect(content).toContain("standard static SVG");
+      expect(content).toContain('<g id="...">');
+      expect(content).toContain("theme-derived background and dot grid");
+      expect(content).toContain("must not contain doctypes");
+    }
+  });
+
   test("gives session-file-backed types their artifact context", () => {
     for (const sessionType of [
       "standard",

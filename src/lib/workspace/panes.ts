@@ -257,5 +257,5 @@ function getArtifactSessionType(sourceSessionId: string): SessionFeatureSubject 
 }
 
 function getDefaultArtifactPaneMode(sourceSessionId: string): ArtifactPaneMode {
-  return isAutomationId(sourceSessionId) ? "read" : "shared";
+  return isAutomationId(sourceSessionId) ? "read" : "edit";
 }

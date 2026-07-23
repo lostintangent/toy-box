@@ -699,7 +699,11 @@ function WorkspacePage() {
             </ResizablePanel>
 
             {/* Terminal drawer (collapsible from bottom) */}
-            <ResizableHandle onDragging={handleTerminalDragging} />
+            <ResizableHandle
+              disabled={!isTerminalOpen}
+              onDragging={handleTerminalDragging}
+              className={!isTerminalOpen ? "hidden" : ""}
+            />
             <ResizablePanel
               ref={terminalPanelRef}
               id="terminal"

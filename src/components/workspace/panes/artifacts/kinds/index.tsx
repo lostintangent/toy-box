@@ -10,16 +10,18 @@ import {
   Image,
   List,
   ListTodo,
+  PenTool,
   Table,
   type LucideIcon,
 } from "lucide-react";
 import type { Artifact } from "@/hooks/artifacts/useArtifact";
 import type { ArtifactPaneMode } from "@/lib/workspace/panes";
+import type { PaneVariant } from "../../types";
 import type { ArtifactWorker, CustomArtifactKind, JsonValue } from "@/types";
 import { getPathBasename } from "@/lib/paths";
 import { artifactName } from "@/lib/session/artifacts/display";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
-import { HtmlArtifact } from "./HtmlArtifact";
+import { HtmlArtifact } from "./html/HtmlArtifact";
 import { CustomArtifact } from "./CustomArtifact";
 
 // Rendering registry for built-in and user-registered file kinds. Pane state
@@ -30,6 +32,7 @@ export type ArtifactRendererProps = {
   path: string;
   title: string;
   mode: ArtifactPaneMode;
+  variant: PaneVariant;
   baseUri?: string;
   definition?: CustomArtifactKind;
   artifact: Artifact;
@@ -47,13 +50,17 @@ export type ArtifactKind = {
   extensions: string[];
   Renderer: ComponentType<ArtifactRendererProps>;
   icon: LucideIcon;
-  editable: boolean;
+  editable?: boolean;
   fileIcons?: Record<string, LucideIcon>;
   definition?: CustomArtifactKind;
 };
 
 const MarkdownArtifact = lazy(() =>
-  import("./MarkdownArtifact").then((module) => ({ default: module.MarkdownArtifact })),
+  import("./markdown/MarkdownArtifact").then((module) => ({ default: module.MarkdownArtifact })),
+);
+
+const SvgArtifact = lazy(() =>
+  import("./svg/SvgArtifact").then((module) => ({ default: module.SvgArtifact })),
 );
 
 const BUILTIN_ARTIFACT_KINDS: Record<string, ArtifactKind> = {
@@ -61,20 +68,17 @@ const BUILTIN_ARTIFACT_KINDS: Record<string, ArtifactKind> = {
     extensions: ["md", "markdown"],
     Renderer: MarkdownArtifact,
     icon: FileText,
-    editable: true,
     fileIcons: { "plan.md": ListTodo },
   },
   html: {
     extensions: ["html", "htm"],
     Renderer: HtmlArtifact,
     icon: Code2,
-    editable: true,
   },
   svg: {
     extensions: ["svg"],
-    Renderer: HtmlArtifact,
-    icon: Image,
-    editable: true,
+    Renderer: SvgArtifact,
+    icon: PenTool,
   },
 };
 

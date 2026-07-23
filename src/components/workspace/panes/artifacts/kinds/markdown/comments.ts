@@ -1,4 +1,4 @@
-// Markdown comment threads are stored inside the artifact, so the renderer
+// Markdown comment threads are stored inside the artifact, so this kind
 // owns the complete protocol that tells an artifact worker how to respond.
 
 import type { CommentThread } from "documint";

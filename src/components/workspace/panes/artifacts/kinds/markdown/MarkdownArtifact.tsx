@@ -6,13 +6,13 @@ import {
   type EditorTheme,
 } from "documint";
 import type { AccentColor, JsonValue } from "@/types";
-import type { ArtifactRendererProps } from "./index";
+import type { ArtifactRendererProps } from "../index";
 import {
   usePreferredColorScheme,
   type PreferredColorScheme,
 } from "@/hooks/browser/usePreferredColorScheme";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
-import { buildArtifactCommentPrompt } from "./markdownComments";
+import { buildArtifactCommentPrompt } from "./comments";
 
 const COPILOT_USER = {
   id: "copilot",

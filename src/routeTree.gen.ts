@@ -10,19 +10,14 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ApiWorkspaceRouteImport } from './routes/api/workspace'
 import { Route as ApiInboxRouteImport } from './routes/api/inbox'
-import { Route as ApiWatchSessionIdSplatRouteImport } from './routes/api/watch/$sessionId/$'
+import { Route as ApiWorkspaceRouteImport } from './routes/api/workspace'
 import { Route as ApiServeSessionIdSplatRouteImport } from './routes/api/serve/$sessionId/$'
+import { Route as ApiWatchSessionIdSplatRouteImport } from './routes/api/watch/$sessionId/$'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiWorkspaceRoute = ApiWorkspaceRouteImport.update({
-  id: '/api/workspace',
-  path: '/api/workspace',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiInboxRoute = ApiInboxRouteImport.update({
@@ -30,14 +25,19 @@ const ApiInboxRoute = ApiInboxRouteImport.update({
   path: '/api/inbox',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiWatchSessionIdSplatRoute = ApiWatchSessionIdSplatRouteImport.update({
-  id: '/api/watch/$sessionId/$',
-  path: '/api/watch/$sessionId/$',
+const ApiWorkspaceRoute = ApiWorkspaceRouteImport.update({
+  id: '/api/workspace',
+  path: '/api/workspace',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiServeSessionIdSplatRoute = ApiServeSessionIdSplatRouteImport.update({
   id: '/api/serve/$sessionId/$',
   path: '/api/serve/$sessionId/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWatchSessionIdSplatRoute = ApiWatchSessionIdSplatRouteImport.update({
+  id: '/api/watch/$sessionId/$',
+  path: '/api/watch/$sessionId/$',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -104,13 +104,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/workspace': {
-      id: '/api/workspace'
-      path: '/api/workspace'
-      fullPath: '/api/workspace'
-      preLoaderRoute: typeof ApiWorkspaceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/inbox': {
       id: '/api/inbox'
       path: '/api/inbox'
@@ -118,11 +111,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInboxRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/watch/$sessionId/$': {
-      id: '/api/watch/$sessionId/$'
-      path: '/api/watch/$sessionId/$'
-      fullPath: '/api/watch/$sessionId/$'
-      preLoaderRoute: typeof ApiWatchSessionIdSplatRouteImport
+    '/api/workspace': {
+      id: '/api/workspace'
+      path: '/api/workspace'
+      fullPath: '/api/workspace'
+      preLoaderRoute: typeof ApiWorkspaceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/serve/$sessionId/$': {
@@ -130,6 +123,13 @@ declare module '@tanstack/react-router' {
       path: '/api/serve/$sessionId/$'
       fullPath: '/api/serve/$sessionId/$'
       preLoaderRoute: typeof ApiServeSessionIdSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/watch/$sessionId/$': {
+      id: '/api/watch/$sessionId/$'
+      path: '/api/watch/$sessionId/$'
+      fullPath: '/api/watch/$sessionId/$'
+      preLoaderRoute: typeof ApiWatchSessionIdSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
   }

@@ -28,6 +28,7 @@ type ArtifactPaneProps = PaneProps & {
 export function ArtifactPane({ pane, variant = "normal" }: ArtifactPaneProps) {
   const { sourceSessionId: sessionId, path, title, mode } = pane;
   const kind = useArtifactKind(path);
+  const { editable = true } = kind;
   const artifact = useArtifact({ sessionId, path, mode });
   const pendingWorkers = useWorkspaceSelector((workspace) =>
     workspace.artifactWorkers.filter(
@@ -61,17 +62,6 @@ export function ArtifactPane({ pane, variant = "normal" }: ArtifactPaneProps) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      {(kind.editable || isSaving) && (
-        <PaneActions>
-          <ArtifactActions
-            editable={kind.editable}
-            mode={mode}
-            isSaving={isSaving}
-            onModeChange={(nextMode) => setArtifactPaneMode(pane, nextMode)}
-            variant={variant}
-          />
-        </PaneActions>
-      )}
       {pendingWorkers.length > 0 && (
         <PaneStatus>
           <ArtifactWorkersMenu
@@ -80,6 +70,17 @@ export function ArtifactPane({ pane, variant = "normal" }: ArtifactPaneProps) {
             variant={variant}
           />
         </PaneStatus>
+      )}
+      {(editable || isSaving) && (
+        <PaneActions>
+          <ArtifactActions
+            editable={editable}
+            mode={mode}
+            isSaving={isSaving}
+            onModeChange={(nextMode) => setArtifactPaneMode(pane, nextMode)}
+            variant={variant}
+          />
+        </PaneActions>
       )}
       {isReady && error && <ArtifactBanner>{error}</ArtifactBanner>}
       <div className="min-h-0 flex-1">
@@ -92,6 +93,7 @@ export function ArtifactPane({ pane, variant = "normal" }: ArtifactPaneProps) {
             path={path}
             title={title}
             mode={mode}
+            variant={variant}
             baseUri={baseUri}
             definition={kind.definition}
             artifact={artifact}

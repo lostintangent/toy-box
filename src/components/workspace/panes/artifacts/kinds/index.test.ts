@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CustomArtifactKind } from "@/types";
 import { resolveArtifactKind } from "./index";
-import { HtmlArtifact } from "./HtmlArtifact";
+import { HtmlArtifact } from "./html/HtmlArtifact";
 import { CustomArtifact } from "./CustomArtifact";
 
 // The core contract of the whole feature: a registered custom kind resolves for the files
@@ -35,11 +35,16 @@ describe("resolveArtifactKind", () => {
     expect(resolveArtifactKind("readme.md", [rival]).definition).toBeUndefined();
   });
 
-  test("resolves SVG artifacts to the built-in HTML pane, not a rival custom kind", () => {
+  test("resolves SVG artifacts to the drawing pane, not HTML or a rival custom kind", () => {
     const rival = { ...jsonTree, name: "not-svg", extensions: ["svg"] };
-    // Both the HTML and SVG built-ins render with the HTML pane; a custom kind can't claim `.svg`.
-    expect(resolveArtifactKind("diagram.svg", []).Renderer).toBe(HtmlArtifact);
-    expect(resolveArtifactKind("DIAGRAM.SVG", [rival]).Renderer).toBe(HtmlArtifact);
+    const kind = resolveArtifactKind("diagram.svg", []);
+
+    expect(kind).toMatchObject({
+      extensions: ["svg"],
+    });
+    expect(kind.Renderer).not.toBe(HtmlArtifact);
+    expect(kind.definition).toBeUndefined();
+    expect(resolveArtifactKind("DIAGRAM.SVG", [rival]).Renderer).toBe(kind.Renderer);
   });
 
   test("an unclaimed extension falls back to a built-in, not a registered kind", () => {
