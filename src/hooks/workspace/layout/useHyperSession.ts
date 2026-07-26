@@ -23,7 +23,7 @@ export function useHyperSession({
 }: {
   initialState: HyperSessionState | null;
   hyperSessionId: string | undefined;
-  createDraft: (options?: { hyper?: boolean }) => string;
+  createDraft: (options?: { hyper?: true }) => string;
   deleteSession: (sessionId: string) => void;
   openSessionInWorkspace: (sessionId: string) => void;
 }) {

@@ -23,6 +23,7 @@ export async function createSession(
     directory?: string;
     tools?: Tool<any>[];
     sessionType: SessionType;
+    artifactPath?: string;
   },
 ): Promise<CopilotSession> {
   const client = await getCopilotClient();
@@ -38,6 +39,22 @@ export async function createSession(
     onPermissionRequest: approveAll,
     tools: options.tools,
   });
+}
+
+export async function createDraftSession(
+  sessionId: string,
+  artifact?: { path: string; content: string },
+): Promise<void> {
+  const client = await getCopilotClient();
+
+  const session = await client.createSession({
+    sessionId,
+    workingDirectory: homedir(),
+  });
+
+  if (artifact) await session.rpc.workspaces.createFile(artifact);
+
+  await session.disconnect();
 }
 
 export async function resumeSession(
@@ -137,9 +154,14 @@ export async function listSkills(cwd?: string): Promise<SessionSkill[]> {
 
 export function buildSessionSystemMessage(
   sessionId: string,
-  options: { directory?: string; model?: ModelConfiguration; sessionType: SessionType },
+  options: {
+    directory?: string;
+    model?: ModelConfiguration;
+    sessionType: SessionType;
+    artifactPath?: string;
+  },
 ) {
-  const { directory, model, sessionType } = options;
+  const { artifactPath, directory, model, sessionType } = options;
 
   const parts: string[] = [];
 
@@ -166,6 +188,12 @@ export function buildSessionSystemMessage(
       `This session's ID is: ${sessionId}.`,
       `This session's state folder is: ${sessionStateDirectory}. This session's files folder is: ${sessionFilesDirectory}. Unless otherwise specified, when the user asks you to create an artifact, spec, plan, or session document, write it under the files folder. Artifact paths in Toy Box notifications are relative to this files folder. If this session does not have a working directory, use this files folder as the default location for new files.`,
     );
+
+    if (artifactPath) {
+      parts.push(
+        `The draft began with the artifact \`${artifactPath}\`, which is the center of the user's initial discussion. Read and update that file when the user's request refers to the document, diagram, or artifact without naming a path.`,
+      );
+    }
 
     if (sessionType === "automation") {
       parts.push(

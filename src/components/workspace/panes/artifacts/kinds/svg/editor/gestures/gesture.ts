@@ -23,13 +23,11 @@ export type GestureSource<Event> = {
 export function activeToolForGesture({
   activeTool,
   spacePressed,
-  readOnly,
 }: {
   activeTool: Tool;
   spacePressed: boolean;
-  readOnly: boolean;
 }): Tool {
-  if (readOnly || !spacePressed) return activeTool;
+  if (!spacePressed) return activeTool;
   return activeTool === "hand" ? "select" : "hand";
 }
 

@@ -7,7 +7,6 @@ import { deleteSessionState, getSessionState } from "./sessions";
 import type { Automation, WorkspaceEvent } from "@/types";
 import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 let currentDb: Database | undefined;
 
 mock.module("../database", () => ({
@@ -19,6 +18,7 @@ mock.module("../database", () => ({
 }));
 
 const {
+  addDraftSession,
   applyWorkspaceAction,
   changeSettings,
   createPendingInboxEntry,
@@ -29,8 +29,9 @@ const {
   sendToInbox,
   setSessionStatus,
   startArtifactWorker,
-  sweepExpiredDrafts,
+  unpinSession,
 } = await import(".");
+const { persistDraftSession } = await import("../session/drafts");
 const { deleteInboxEntryState } = await import("./inbox");
 
 async function openWorkspaceTestDatabase(): Promise<void> {
@@ -70,6 +71,7 @@ describe("workspace state", () => {
       ...(await snapshot()).settings,
       defaultModel: { name: "gpt-5", reasoningEffort: "high" },
       terminalShell: "/bin/zsh",
+      pinnedSessionIds: ["session-a"],
     };
     await changeSettings(initial);
 
@@ -104,16 +106,29 @@ describe("workspace state", () => {
     });
   });
 
+  test("deleting a session drops only its own pin", async () => {
+    await openWorkspaceTestDatabase();
+    await changeSettings({ pinnedSessionIds: ["kept", "deleted"] });
+
+    const events: WorkspaceEvent[] = [];
+    const unsubscribe = subscribeWorkspaceEvents((event) => {
+      if (event.type === "settings.changed") events.push(event);
+    });
+    onTestFinished(unsubscribe);
+
+    await unpinSession("deleted");
+    expect((await snapshot()).settings.pinnedSessionIds).toEqual(["kept"]);
+
+    // Deleting a session that was never pinned commits and broadcasts nothing.
+    await unpinSession("never-pinned");
+    expect(events).toHaveLength(1);
+  });
+
   test("snapshot exposes one canonical session-state map", async () => {
     const sessionId = `workspace-snapshot-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));
 
-    applyWorkspaceAction({
-      type: "session.draft.created",
-      sessionId,
-      createdAt: 0,
-      hyper: true,
-    });
+    addDraftSession({ sessionId, createdAt: 0 }, true);
     applyWorkspaceAction({
       type: "session.prompt.drafted",
       sessionId,
@@ -126,6 +141,25 @@ describe("workspace state", () => {
       prompt: { text: "hello", origin: "client-a" },
     });
     expect(state.hyperSessionIds).toContain(sessionId);
+  });
+
+  test("projects durable artifact drafts into snapshots without caching them", async () => {
+    await openWorkspaceTestDatabase();
+    const draft = {
+      sessionId: `workspace-draft-${crypto.randomUUID()}`,
+      artifactPath: "document.md",
+      createdAt: 42,
+    };
+    onTestFinished(() => cleanup(draft.sessionId));
+    await persistDraftSession(draft);
+
+    expect(getSessionState(draft.sessionId)).toBeUndefined();
+    expect((await snapshot()).sessionStates[draft.sessionId]).toEqual({
+      status: "draft",
+      artifactPath: draft.artifactPath,
+      createdAt: draft.createdAt,
+    });
+    expect(getSessionState(draft.sessionId)).toBeUndefined();
   });
 
   test("snapshot composes durable automation definitions", async () => {
@@ -143,69 +177,12 @@ describe("workspace state", () => {
     expect((await snapshot([automation])).automations).toEqual([automation]);
   });
 
-  test("discard removes the draft, prompt, and hyper membership in one transition", async () => {
-    const sessionId = `workspace-discard-${crypto.randomUUID()}`;
-    onTestFinished(() => cleanup(sessionId));
-    const events = capture(sessionId);
-
-    applyWorkspaceAction({
-      type: "session.draft.created",
-      sessionId,
-      createdAt: 0,
-      hyper: true,
-    });
-    applyWorkspaceAction({
-      type: "session.prompt.drafted",
-      sessionId,
-      prompt: { text: "discard me", origin: "client-a", updatedAt: 0 },
-    });
-    applyWorkspaceAction({ type: "session.draft.discarded", sessionId });
-    applyWorkspaceAction({ type: "session.draft.discarded", sessionId });
-
-    expect(getSessionState(sessionId)).toBeUndefined();
-    expect((await snapshot()).hyperSessionIds).not.toContain(sessionId);
-    expect(events.map((event) => event.type)).toEqual([
-      "session.draft.created",
-      "session.prompt.drafted",
-      "session.draft.discarded",
-    ]);
-  });
-
-  test("draft expiry uses prompt activity and cascades hyper cleanup", async () => {
-    const sessionId = `workspace-expired-${crypto.randomUUID()}`;
-    onTestFinished(() => cleanup(sessionId));
-    const events = capture(sessionId);
-
-    applyWorkspaceAction({
-      type: "session.draft.created",
-      sessionId,
-      createdAt: 0,
-      hyper: true,
-    });
-    applyWorkspaceAction({
-      type: "session.prompt.drafted",
-      sessionId,
-      prompt: { text: "expire me", origin: "client-a", updatedAt: 0 },
-    });
-
-    expect(sweepExpiredDrafts(Date.now() + DAY_MS + 1)).toContain(sessionId);
-    expect(getSessionState(sessionId)).toBeUndefined();
-    expect((await snapshot()).hyperSessionIds).not.toContain(sessionId);
-    expect(events.map((event) => event.type)).toEqual([
-      "session.draft.created",
-      "session.prompt.drafted",
-      "session.draft.discarded",
-    ]);
-  });
-
-  test("creation and activity statuses broadcast only real transitions", () => {
+  test("activity statuses broadcast only real transitions", () => {
     const sessionId = `workspace-status-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));
     const events = capture(sessionId);
 
-    applyWorkspaceAction({ type: "session.draft.created", sessionId, createdAt: 0 });
-    setSessionStatus(sessionId, "creating");
-    setSessionStatus(sessionId, "creating");
+    setSessionStatus(sessionId, "running");
     setSessionStatus(sessionId, "running");
     setSessionStatus(sessionId, "unread");
     setSessionStatus(sessionId, "unread");
@@ -213,27 +190,11 @@ describe("workspace state", () => {
     applyWorkspaceAction({ type: "session.read", sessionId });
 
     expect(events.map((event) => event.type)).toEqual([
-      "session.draft.created",
-      "session.creating",
       "session.running",
       "session.unread",
       "session.read",
     ]);
     expect(getSessionState(sessionId)).toBeUndefined();
-  });
-
-  test("idle restores a draft when creation fails", () => {
-    const sessionId = `workspace-creation-failure-${crypto.randomUUID()}`;
-    onTestFinished(() => cleanup(sessionId));
-
-    applyWorkspaceAction({ type: "session.draft.created", sessionId, createdAt: 0 });
-    setSessionStatus(sessionId, "creating");
-    setSessionStatus(sessionId, "idle");
-
-    expect(getSessionState(sessionId)).toEqual({
-      status: "draft",
-      createdAt: expect.any(Number),
-    });
   });
 
   test("snapshots and broadcasts artifact worker links", async () => {

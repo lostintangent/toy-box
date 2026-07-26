@@ -1,7 +1,6 @@
 import type { SessionMetadata } from "@/types";
 
 type SessionTimeGroup = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
-type LabeledSessionTimeGroup = Exclude<SessionTimeGroup, "today">;
 
 type SessionGroup = {
   key: string;
@@ -9,12 +8,42 @@ type SessionGroup = {
   sessions: SessionMetadata[];
 };
 
-const GROUP_LABELS: Record<LabeledSessionTimeGroup, string> = {
+const GROUP_LABELS: Record<SessionTimeGroup, string> = {
+  today: "Today",
   yesterday: "Yesterday",
   thisWeek: "This Week",
   thisMonth: "This Month",
   older: "Older",
 };
+
+export function groupSessions(
+  sessions: SessionMetadata[],
+  pinnedSessionIds: string[],
+  now?: Date,
+): SessionGroup[] {
+  const sortedSessions = [...sessions].sort(
+    (left, right) => right.modifiedTime.getTime() - left.modifiedTime.getTime(),
+  );
+  const pinnedSessionIdSet = new Set(pinnedSessionIds);
+  const pinnedSessions = sortedSessions.filter((session) =>
+    pinnedSessionIdSet.has(session.sessionId),
+  );
+  const unpinnedSessions = sortedSessions.filter(
+    (session) => !pinnedSessionIdSet.has(session.sessionId),
+  );
+  const hasPinnedGroup = pinnedSessions.length > 0;
+  const groups: SessionGroup[] = hasPinnedGroup
+    ? [{ key: "pinned", label: "Pinned", sessions: pinnedSessions }]
+    : [];
+
+  if (now) {
+    groups.push(...groupSessionsByTime(unpinnedSessions, now, hasPinnedGroup));
+  } else if (unpinnedSessions.length > 0) {
+    groups.push({ key: "sessions", sessions: unpinnedSessions });
+  }
+
+  return groups;
+}
 
 function startOfDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -43,6 +72,7 @@ function getSessionTimeGroup(modifiedTime: Date, now: Date): SessionTimeGroup {
 export function groupSessionsByTime(
   sessions: SessionMetadata[],
   now: Date = new Date(),
+  labelToday = false,
 ): SessionGroup[] {
   const groups: SessionGroup[] = [];
   let previousTimeGroup: SessionTimeGroup | null = null;
@@ -55,7 +85,7 @@ export function groupSessionsByTime(
     } else {
       groups.push({
         key: `${timeGroup}-${session.sessionId}`,
-        ...(timeGroup === "today" ? {} : { label: GROUP_LABELS[timeGroup] }),
+        ...(timeGroup === "today" && !labelToday ? {} : { label: GROUP_LABELS[timeGroup] }),
         sessions: [session],
       });
     }

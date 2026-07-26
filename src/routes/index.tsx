@@ -13,6 +13,7 @@ import { deleteSession, renameSession } from "@/functions/sessions";
 import { useDrafts } from "@/hooks/workspace/useDrafts";
 import { useHyperSession, type HyperSessionState } from "@/hooks/workspace/layout/useHyperSession";
 import { useSessions } from "@/hooks/session/useSessions";
+import { useWarmSessionSnapshots } from "@/hooks/session/useWarmSessionSnapshots";
 import { useWorkspaceSync } from "@/hooks/workspace/useWorkspaceSync";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@/hooks/workspace/state";
 import { useViewport } from "@/hooks/browser/useViewport";
@@ -45,6 +46,7 @@ import {
   snapshotSessionsState,
   upsertSessionInState,
 } from "@/lib/session/queryCache";
+import { applyWorkspaceEvent } from "@/lib/workspace/state/query";
 import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 const Terminal = lazy(() =>
   import("@/components/terminal/Terminal").then((m) => ({ default: m.Terminal })),
@@ -155,7 +157,6 @@ function WorkspacePage() {
 
   const {
     sessions,
-    recentSessions,
     isLoading: isSessionsLoading,
     worktreeSessionIds,
     workerSessionIds,
@@ -168,10 +169,7 @@ function WorkspacePage() {
       inboxSessionIds: workspace.inboxEntries.map((entry) => entry.id),
     }));
   useWorkspaceSync();
-  const { listedDrafts, isDraft, createDraft, discardDraft } = useDrafts({
-    sessions,
-    hyperSessionIds,
-  });
+  const { listedDrafts, isDraft, createDraft } = useDrafts({ hyperSessionIds });
 
   const managedSessionIds = new Set([
     ...automationSessionIds,
@@ -205,19 +203,19 @@ function WorkspacePage() {
     updateSelectedSessionIds([...selectedSessionIds, sessionId]);
   }
 
-  // Create a client-side draft, optionally alongside the current workspace.
-  function handleCreateSession(addToWorkspace = false) {
-    const id = createDraft();
+  // Create a durable draft, optionally with an initial artifact or alongside the workspace.
+  const handleCreateSession: SidebarProps["onCreateSession"] = (options = {}) => {
+    const id = createDraft(options.artifact ? { artifact: options.artifact } : undefined);
     if (isMobileLayout) setIsMobileInboxOpen(false);
 
-    if (addToWorkspace && openSessionIds.length > 0 && openSessionIds.length < 4) {
+    if (options.addToWorkspace && openSessionIds.length > 0 && openSessionIds.length < 4) {
       // Add to the workspace.
       updateSelectedSessionIds([...selectedSessionIds, id]);
     } else {
       // Replace current view
       updateSelectedSessionIds([id]);
     }
-  }
+  };
 
   // Keep URL session IDs aligned with available sessions.
   // This prevents stale open panes when another client deletes a session.
@@ -373,9 +371,16 @@ function WorkspacePage() {
   const deferredFilter = useDeferredValue(filter);
 
   // Managed sessions are presented by their automation, inbox, hyper, or parent surface.
-  let filteredSessions = recentSessions.filter(
-    (session) => !managedSessionIds.has(session.sessionId),
-  );
+  const listedSessions = sessions
+    .filter((session) => !managedSessionIds.has(session.sessionId) && !isDraft(session.sessionId))
+    .sort((left, right) => right.modifiedTime.getTime() - left.modifiedTime.getTime())
+    .slice(0, 50);
+
+  // Warm from the recency order rather than the filtered view, so the working
+  // set stays stable while the user narrows the list.
+  useWarmSessionSnapshots(listedSessions);
+
+  let filteredSessions = listedSessions;
 
   if (!showExternalSessions) {
     filteredSessions = filteredSessions.filter((session) =>
@@ -412,6 +417,9 @@ function WorkspacePage() {
         restoreSessionsState(queryClient, context.previousSessionsState);
       }
     },
+    onSuccess: (_result, sessionId) => {
+      applyWorkspaceEvent(queryClient, { type: "session.deleted", sessionId });
+    },
   });
 
   const renameMutation = useMutation({
@@ -440,11 +448,7 @@ function WorkspacePage() {
     : null;
 
   function handleSessionDelete(sessionIdToDelete: string) {
-    if (isDraft(sessionIdToDelete)) {
-      discardDraft(sessionIdToDelete);
-    } else {
-      deleteMutation.mutate(sessionIdToDelete);
-    }
+    deleteMutation.mutate(sessionIdToDelete);
 
     if (selectedSessionIds.includes(sessionIdToDelete)) {
       if (isMobileLayout) setIsMobileInboxOpen(false);

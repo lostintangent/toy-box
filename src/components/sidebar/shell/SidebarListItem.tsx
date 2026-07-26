@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 type SidebarListItemProps = Omit<ComponentProps<"button">, "children" | "className" | "title"> & {
   sessionId: string;
   title: string;
+  titlePrefix?: ReactNode;
   time?: ReactNode;
   badges?: ReactNode;
   menuItems: ReactNode;
@@ -33,6 +34,7 @@ type SidebarListItemProps = Omit<ComponentProps<"button">, "children" | "classNa
 export function SidebarListItem({
   sessionId,
   title,
+  titlePrefix,
   time,
   badges,
   menuItems,
@@ -101,8 +103,14 @@ export function SidebarListItem({
           onMouseLeave={handleMouseLeave}
           className={cn("mr-2 min-w-0 flex-1 text-left", buttonClassName)}
         >
-          <ScrollableFade asChild className={cn("block whitespace-nowrap", titleClassName)}>
-            <span>{title}</span>
+          <ScrollableFade
+            asChild
+            className={cn("flex items-center gap-1.5 whitespace-nowrap", titleClassName)}
+          >
+            <span>
+              {titlePrefix}
+              <span className="shrink-0">{title}</span>
+            </span>
           </ScrollableFade>
           {(time || badges) && (
             <span className="mt-1 flex min-w-0 items-center gap-1.5">

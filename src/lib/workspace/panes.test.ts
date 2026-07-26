@@ -307,6 +307,17 @@ describe("artifact auto-focus", () => {
     ).toBeUndefined();
   });
 
+  test("an artifact-first draft focuses its artifact independently of the preference", () => {
+    expect(
+      resolveArtifactAutoFocus(
+        new Set([regularChatPane.id]),
+        [regularChatPane, regularArtifactPane],
+        "never",
+        new Set([regularArtifactPane.id]),
+      ).focusPane,
+    ).toEqual(regularArtifactPane);
+  });
+
   test("focuses a pane at most once per appearance", () => {
     const first = resolveArtifactAutoFocus(
       new Set([chatPane.id]),

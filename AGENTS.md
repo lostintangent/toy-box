@@ -4,7 +4,7 @@ Toy Box is a full stack binary built on the Bun runtime. It uses the GitHub Copi
 
 Toy Box's central unit of work is a session that runs on the server and outlives any browser connection. A client can create one with its first prompt, attach to work already running, reconnect from a cursor, or reopen an idle session from history. Multiple clients can observe and control the same session; disconnecting ends only that client's observation.
 
-A session ID ties together durable SDK history, at most one live runtime, Toy Box metadata and owned resources, and shared client status. Shared workspace state may reserve that ID and its prompt as a draft; turning it into an SDK session requires the create-with-first-message operation because Toy Box exposes no empty-session creation operation.
+A session ID ties together durable SDK history, at most one live runtime, Toy Box metadata and owned resources, and shared client status. A durable draft claim reserves that ID, and the SDK's experimental empty-session surface creates its workspace and optional artifact without creating resumable event history. The first message starts the turn-bearing SDK session over that same workspace. An artifact-first draft treats its file as both the preferred pane and the initial conversational subject supplied to the agent.
 
 Raw Copilot SDK activity is translated into canonical `SessionEvent`s. One pure reducer builds the same session state for the live server runtime, persisted-history replay, and browser clients, so a transcript agrees whether it is watched live, reconnected, or opened after completion. Active sessions take their truth from the in-memory runtime; idle sessions are reconstructed from durable SDK history, with snapshots serving only as a cache.
 

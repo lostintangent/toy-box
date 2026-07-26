@@ -6,11 +6,11 @@
  * functions keep the domain register underneath: observe, deliver, steer or
  * cancel queued input, and abort.
  *
- * Session creation: a draft session (see useDrafts) stays a draft until its
- * first send, which asks the server to create the session, with
- * `create` carrying creation-time options like directory and worktree. Once
- * the server confirms creation, this hook hands the draft off to session-list
- * state.
+ * Draft start: a draft (see useDrafts) already owns a durable SDK
+ * workspace, but its first send creates the turn-bearing SDK history with
+ * `location` carrying its directory and worktree choice. Once
+ * delivery begins, the ordinary runtime `running` transition replaces its
+ * draft status.
  */
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -42,12 +42,12 @@ interface SessionConfig {
   /** Browser default, used when no model has been projected for the session.
    *  Once the session has its own model, that always wins over this default. */
   defaultModel?: ModelConfiguration;
-  /** Working directory for the session. Only sent with a draft's first message
-   *  (the server fixes it at creation). */
+  /** Working directory for the session. Only sent as a draft's initial location. */
   directory?: string;
-  /** Run the session in an isolated git worktree. Creation-time only, like
-   *  `directory`. */
+  /** Run the session in an isolated git worktree. Initial-location only. */
   useWorktree?: boolean;
+  /** Optional artifact already owned by this draft. */
+  draftArtifactPath?: string;
 }
 
 export function useSession(
@@ -58,11 +58,12 @@ export function useSession(
     defaultModel,
     directory: sessionDirectory,
     useWorktree: sessionUseWorktree,
+    draftArtifactPath,
   }: SessionConfig,
 ) {
   const queryClient = useQueryClient();
   const sessionQuery = sessionQueries.detail(sessionId);
-  const isDraft = workspaceSessionStatus === "draft" || workspaceSessionStatus === "creating";
+  const isDraft = workspaceSessionStatus === "draft";
   const isSessionRunning = workspaceSessionStatus === "running";
   const isSessionUnread = workspaceSessionStatus === "unread";
   const isVisible = usePageVisibility();
@@ -73,10 +74,10 @@ export function useSession(
   // Events reduce into immutable states in this ref. The latest state is
   // published to React immediately for discrete events or once per frame for
   // rapid text deltas.
-  const [publishedSession, setPublishedSession] = useState(createInitialSession);
+  const [publishedSession, setPublishedSession] = useState(() =>
+    createInitialSession(draftArtifactPath ? { artifacts: [draftArtifactPath] } : {}),
+  );
   const sessionRef = useRef(publishedSession);
-  // Closes the draft-to-session handoff window after the first server event.
-  const draftPromotedRef = useRef(false);
   const rafIdRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const wasVisibleRef = useRef(isVisible);
@@ -145,7 +146,7 @@ export function useSession(
   const invalidateSessionSnapshot = () =>
     queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
 
-  const streamEvents = async (request: StreamSessionRequest, onFirstEvent?: () => void) => {
+  const streamEvents = async (request: StreamSessionRequest) => {
     const controller = new AbortController();
     abortControllerRef.current = controller;
     setIsStreaming(true);
@@ -162,7 +163,6 @@ export function useSession(
         {
           signal: controller.signal,
           onEvent: applyEvent,
-          onFirstEvent,
         },
       );
 
@@ -311,7 +311,6 @@ export function useSession(
     if (!prompt.trim() && attachments.length === 0) return;
     const clientMessageId = generateUUID();
     const messageAttachments = attachments.length > 0 ? attachments : undefined;
-    const shouldCreateSession = workspaceSessionStatus === "draft" && !draftPromotedRef.current;
 
     // The session's own model always wins; otherwise this message makes the
     // browser selection the session's effective model.
@@ -329,14 +328,13 @@ export function useSession(
     // with what we're about to send — this mirrors the server, which seeds its
     // stream state the same way and therefore never re-announces the initial
     // model via a model_changed event. Without this, a draft's picker would
-    // blank out when the draft is promoted mid-stream.
+    // blank out when the draft starts running.
     if (model) {
       sessionRef.current = { ...sessionRef.current, model };
     }
-    applyWorkspaceEvent(queryClient, {
-      type: shouldCreateSession ? "session.creating" : "session.running",
-      sessionId,
-    });
+    if (!isDraft) {
+      applyWorkspaceEvent(queryClient, { type: "session.running", sessionId });
+    }
     applyEvent({
       type: "user_message",
       content: prompt,
@@ -345,17 +343,6 @@ export function useSession(
       timestamp: new Date().toISOString(),
     });
     applyEvent({ type: "status", status: "thinking" });
-
-    // A message-bearing stream always emits after subscribing; its first
-    // server event is therefore the single proof that the session was created.
-    const promoteDraft = () => {
-      if (!shouldCreateSession || draftPromotedRef.current) return;
-      draftPromotedRef.current = true;
-      applyWorkspaceEvent(queryClient, {
-        type: "session.upserted",
-        session: { sessionId },
-      });
-    };
 
     const request: StreamSessionRequest = {
       sessionId,
@@ -366,7 +353,7 @@ export function useSession(
         attachments: messageAttachments,
         model,
       },
-      create: shouldCreateSession
+      location: isDraft
         ? {
             directory: sessionDirectory,
             useWorktree: sessionUseWorktree,
@@ -375,11 +362,11 @@ export function useSession(
     };
 
     try {
-      await streamEvents(request, promoteDraft);
+      await streamEvents(request);
     } catch (error) {
       console.error("Streaming error:", error);
       applyEvent({ type: "end", reason: "error" });
-      // A creation failure restores the draft; a normal send failure becomes idle.
+      // Reconcile the optimistic running state; an unstarted draft ignores idle.
       applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
       await invalidateSessionSnapshot();
     }
@@ -429,8 +416,8 @@ export function useSession(
     [],
   );
 
-  // Drafts have no persisted snapshot. Live state wins while connected; an
-  // idle session adopts the latest authoritative snapshot.
+  // A draft workspace has no SDK-history snapshot until its first turn. Live state
+  // wins while connected; an idle started session adopts the latest snapshot.
   useEffect(() => {
     if (isDraft) return;
 

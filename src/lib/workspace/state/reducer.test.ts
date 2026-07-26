@@ -12,36 +12,41 @@ const sessionId = "session-a";
 const prompt = { text: "hello", origin: "client-a", updatedAt: 3 };
 
 describe("workspace session state", () => {
-  test("models the complete draft promotion lifecycle", () => {
+  test("starts an artifact draft's first turn without retaining draft metadata", () => {
     let state: WorkspaceSessionState | undefined;
 
     state = transition(state, {
-      type: "session.draft.created",
+      type: "session.drafted",
       sessionId,
       createdAt: 1,
+      artifactPath: "document.md",
     });
-    expect(state).toEqual({ status: "draft", createdAt: 1 });
+    expect(state).toEqual({
+      status: "draft",
+      createdAt: 1,
+      artifactPath: "document.md",
+    });
 
     state = transition(state, { type: "session.prompt.drafted", sessionId, prompt });
-    expect(state).toEqual({ status: "draft", createdAt: 1, prompt });
-
-    state = transition(state, { type: "session.creating", sessionId });
-    expect(state).toEqual({ status: "creating", createdAt: 1, prompt });
-
-    state = transition(state, {
-      type: "session.upserted",
-      session: { sessionId },
+    expect(state).toEqual({
+      status: "draft",
+      createdAt: 1,
+      artifactPath: "document.md",
+      prompt,
     });
+
+    state = transition(state, { type: "session.running", sessionId });
     expect(state).toEqual({ status: "running", prompt });
   });
 
-  test("restores a draft when creation fails", () => {
-    const creating: WorkspaceSessionState = { status: "creating", createdAt: 1, prompt };
-    expect(transition(creating, { type: "session.idle", sessionId })).toEqual({
+  test("leaves a draft unchanged when its first turn fails to start", () => {
+    const draft: WorkspaceSessionState = {
       status: "draft",
       createdAt: 1,
+      artifactPath: "document.md",
       prompt,
-    });
+    };
+    expect(transition(draft, { type: "session.idle", sessionId })).toBe(draft);
   });
 
   test("makes running, unread, and idle mutually exclusive", () => {
@@ -74,26 +79,15 @@ describe("workspace session state", () => {
     expect(transition({ status: "running" }, { type: "session.idle", sessionId })).toBeUndefined();
   });
 
-  test("ignores stale draft lifecycle events after promotion", () => {
+  test("ignores stale draft events after a session starts running", () => {
     const running: WorkspaceSessionState = { status: "running" };
     expect(
       transition(running, {
-        type: "session.draft.created",
+        type: "session.drafted",
         sessionId,
         createdAt: 1,
       }),
     ).toBe(running);
-    expect(transition(running, { type: "session.draft.discarded", sessionId })).toBe(running);
-    expect(transition(running, { type: "session.creating", sessionId })).toBe(running);
-
-    const creating: WorkspaceSessionState = { status: "creating", createdAt: 1 };
-    expect(
-      transition(creating, {
-        type: "session.draft.created",
-        sessionId,
-        createdAt: 2,
-      }),
-    ).toBe(creating);
   });
 });
 
@@ -104,6 +98,7 @@ describe("workspace state reducer", () => {
       ...initial.settings,
       accentColor: "#123abc" as const,
       defaultModel: { name: "gpt-5", reasoningEffort: "high" },
+      pinnedSessionIds: ["session-a"],
     };
     const state = reduceWorkspaceState(initial, { type: "settings.changed", settings });
 
@@ -111,7 +106,11 @@ describe("workspace state reducer", () => {
     expect(
       reduceWorkspaceState(state, {
         type: "settings.changed",
-        settings: { ...settings, defaultModel: { ...settings.defaultModel } },
+        settings: {
+          ...settings,
+          defaultModel: { ...settings.defaultModel },
+          pinnedSessionIds: [...settings.pinnedSessionIds],
+        },
       }),
     ).toBe(state);
   });
@@ -119,7 +118,7 @@ describe("workspace state reducer", () => {
   test("updates session and hyper state atomically and idempotently", () => {
     let state = createEmptyWorkspaceState();
     const event: WorkspaceEvent = {
-      type: "session.draft.created",
+      type: "session.drafted",
       sessionId,
       createdAt: 1,
       hyper: true,
@@ -135,7 +134,7 @@ describe("workspace state reducer", () => {
 
   test("delete clears every workspace fact for a session", () => {
     let state = reduceWorkspaceState(createEmptyWorkspaceState(), {
-      type: "session.draft.created",
+      type: "session.drafted",
       sessionId,
       createdAt: 1,
       hyper: true,

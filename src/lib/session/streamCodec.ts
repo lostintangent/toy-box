@@ -60,21 +60,16 @@ export async function consumeSessionEvents(
   {
     signal,
     onEvent,
-    onFirstEvent,
   }: {
     signal: AbortSignal;
     onEvent: (event: SessionEvent) => void;
-    onFirstEvent?: () => void;
   },
 ): Promise<boolean> {
   let receivedEvent = false;
 
   for await (const event of decodeSessionEvents(stream)) {
     if (signal.aborted) break;
-    if (!receivedEvent) {
-      receivedEvent = true;
-      onFirstEvent?.();
-    }
+    receivedEvent = true;
     onEvent(event);
   }
 

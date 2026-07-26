@@ -218,6 +218,8 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       ];
     case "session.title_changed":
       return [{ type: "session_title_changed", title: event.data.title }];
+    case "session.workspace_file_changed":
+      return projectArtifactUpsertEvents([event.data.path]);
     case "session.canvas.opened": {
       if (!event.data.url) return [];
 

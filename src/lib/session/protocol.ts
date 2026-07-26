@@ -18,6 +18,16 @@ export const renameSessionInputSchema = sessionInputSchema.extend({
   name: z.string().trim().min(1).max(100),
 });
 
+export const createDraftSessionInputSchema = sessionInputSchema.extend({
+  artifact: z
+    .object({
+      path: z.string(),
+      content: z.string(),
+    })
+    .optional(),
+  hyper: z.literal(true).optional(),
+});
+
 export const sessionAttachmentsSchema = z
   .array(
     z.object({
@@ -40,7 +50,7 @@ const sessionMessageInputSchema = z
     { message: "A prompt or attachment is required" },
   );
 
-const sessionCreationSchema = z.object({
+const sessionLocationSchema = z.object({
   directory: z.string().optional(),
   useWorktree: z.boolean().optional(),
 });
@@ -52,22 +62,22 @@ const streamSessionBaseSchema = sessionInputSchema.extend({
 const sessionSubscriptionModeSchema = z.enum(["active", "passive"]);
 
 // Every request identifies the observed session/cursor. A message optionally
-// mutates that same stream; creation is only valid alongside its first message.
+// mutates that same stream; location is only established with its first message.
 export const streamSessionRequestSchema = streamSessionBaseSchema.and(
   z.union([
     z.object({
       message: sessionMessageInputSchema,
-      create: sessionCreationSchema.optional(),
+      location: sessionLocationSchema.optional(),
     }),
     z.object({
       message: z.never().optional(),
-      create: z.never().optional(),
+      location: z.never().optional(),
       mode: sessionSubscriptionModeSchema.optional(),
     }),
   ]),
 );
 
-const sessionLaunchInputSchema = sessionCreationSchema.extend({
+const sessionLaunchInputSchema = sessionLocationSchema.extend({
   message: sessionMessageInputSchema,
 });
 

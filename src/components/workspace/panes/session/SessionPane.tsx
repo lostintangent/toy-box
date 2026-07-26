@@ -38,7 +38,9 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
   const workspaceSession = useWorkspaceSelector((workspace) => workspace.sessionStates[sessionId]);
   const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);
   const workspaceSessionStatus = workspaceSession?.status ?? "idle";
-  const isDraft = workspaceSessionStatus === "draft" || workspaceSessionStatus === "creating";
+  const draftSession = workspaceSession?.status === "draft" ? workspaceSession : undefined;
+  const isDraft = draftSession !== undefined;
+  const draftArtifactPath = draftSession?.artifactPath;
   const { models, defaultModel, setDefaultModel } = useModels();
   // In the "compact" variant (the pager) the session surfaces its location picker
   // + message badges in the host's title bar and hides them from the composer; in
@@ -50,7 +52,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
   });
 
   // ---------------------------------------------------------------------------
-  // Session location and creation options
+  // Session location
   // ---------------------------------------------------------------------------
   // An untouched draft follows the latest directory; null preserves an explicit clear.
   const [draftDirectorySelection, setDraftDirectorySelection] = useState<string | null>();
@@ -75,11 +77,11 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
       : (draftDirectorySelection ?? undefined);
   const effectiveDirectory = isDraft ? draftDirectory : selectedDirectory;
 
-  // Worktree choice is creation-time state local to a draft.
+  // Worktree choice belongs to a draft's initial location.
   const [useWorktree, setUseWorktree] = useState(isDraft ? defaultUseWorktree : false);
 
-  // The hook owns reduced session state. The default model and creation options
-  // seed a draft's first turn; directory also scopes skill discovery.
+  // The hook owns reduced session state. The default model and location seed a
+  // draft's first turn; directory also scopes skill discovery.
   const {
     messages,
     queuedMessages,
@@ -103,7 +105,8 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
     mode: isPassive ? "passive" : "active",
     defaultModel: defaultModel ?? undefined,
     directory: effectiveDirectory,
-    useWorktree: workspaceSessionStatus === "draft" ? useWorktree : undefined,
+    useWorktree: isDraft ? useWorktree : undefined,
+    draftArtifactPath,
   });
 
   // Drafts start with the workspace default. Existing sessions reveal their
@@ -130,7 +133,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
       sessionId,
       isDraft ? [] : linkedSessionIds,
       isDraft ? [] : (canvases ?? []),
-      isDraft ? [] : artifacts,
+      artifacts,
     );
   }, [artifacts, canvases, hasLoadedSessionState, isDraft, mode, linkedSessionIds, sessionId]);
 
@@ -264,7 +267,6 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
             onValueChange={setPrompt}
             onSubmit={handleSubmit}
             models={models}
-            canSubmit={workspaceSessionStatus !== "creating"}
             isStreaming={isStreaming}
             onStop={stop}
             model={displayedModel}

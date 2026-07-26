@@ -3,6 +3,9 @@
 //
 // Freshness is guarded by the SDK event log mtime so out-of-process writes
 // force a replay, with a small grace window for the SDK's trailing flush.
+//
+// Retained sessions keep their slot through rotation, so a session the
+// workspace has declared interest in survives ordinary churn.
 
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -11,7 +14,7 @@ import { withSession } from "./registry";
 import { replaySdkHistory } from "@/functions/sdk/historyReplay";
 import { toSessionSnapshot } from "@/lib/session/sessionReducer";
 import { SESSION_STATE_PATH } from "@/lib/paths";
-import { sharedMap } from "../../runtime/processState";
+import { sharedMap, sharedSet } from "../../runtime/processState";
 import type { SessionSnapshot } from "@/types";
 
 const SNAPSHOT_CACHE_MAX_ENTRIES = 10;
@@ -26,6 +29,7 @@ export type CachedSnapshotEntry = {
 };
 
 const snapshotCache = sharedMap<CachedSnapshotEntry>("session-snapshot-cache");
+const retainedSessionIds = sharedSet<string>("retained-session-snapshots");
 
 /** Load an idle session snapshot from cache, or replay SDK history and cache it. */
 export async function loadSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
@@ -39,15 +43,38 @@ export async function loadSessionSnapshot(sessionId: string): Promise<SessionSna
   return snapshot;
 }
 
+/**
+ * Declare the sessions whose snapshots must stay warm, replacing any previous
+ * declaration. Cold sessions are loaded and every retained session keeps its
+ * cache slot. Resolves once warming settles and never rejects, so callers can
+ * declare interest without waiting on SDK history replay.
+ */
+export async function retainSessionSnapshots(sessionIds: readonly string[]): Promise<void> {
+  retainedSessionIds.clear();
+  for (const sessionId of sessionIds) retainedSessionIds.add(sessionId);
+
+  // Retention is declared before loading so warming a set larger than the cap
+  // cannot rotate out the very snapshots it is warming.
+  await Promise.all(
+    sessionIds.map((sessionId) =>
+      loadSessionSnapshot(sessionId).catch((error) => {
+        console.error(`Unable to warm the snapshot for session ${sessionId}:`, error);
+      }),
+    ),
+  );
+}
+
 /** Cache a private copy of a reduced session snapshot. */
 export function cacheSnapshot(sessionId: string, snapshot: SessionSnapshot): void {
   snapshotCache.delete(sessionId);
   snapshotCache.set(sessionId, { snapshot: structuredClone(snapshot), capturedAt: Date.now() });
 
-  while (snapshotCache.size > SNAPSHOT_CACHE_MAX_ENTRIES) {
-    const oldest = snapshotCache.keys().next().value;
-    if (oldest === undefined) return;
-    snapshotCache.delete(oldest);
+  // Rotate out the least recently used entries until the cache fits, skipping
+  // retained sessions. The cap therefore governs the transient tail.
+  for (const cachedSessionId of snapshotCache.keys()) {
+    if (snapshotCache.size <= SNAPSHOT_CACHE_MAX_ENTRIES) return;
+    if (retainedSessionIds.has(cachedSessionId)) continue;
+    snapshotCache.delete(cachedSessionId);
   }
 }
 
@@ -67,8 +94,10 @@ export async function getCachedSnapshot(sessionId: string): Promise<SessionSnaps
   return structuredClone(entry.snapshot);
 }
 
+/** Forget a session's snapshot entirely, including any retention it was granted. */
 export function evictCachedSnapshot(sessionId: string): void {
   snapshotCache.delete(sessionId);
+  retainedSessionIds.delete(sessionId);
 }
 
 /** Whether a session currently occupies a cache slot (fresh or not). */

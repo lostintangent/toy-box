@@ -37,6 +37,7 @@ import { toSessionSnapshot } from "@/lib/session/sessionReducer";
 import { encodeSessionEvent } from "@/lib/session/streamCodec";
 import {
   createSessionInputSchema,
+  createDraftSessionInputSchema,
   deliverMessageInputSchema,
   listSkillsInputSchema,
   notifyAgentInputSchema,
@@ -155,6 +156,13 @@ export const createSession = createServerFn({ method: "POST" })
     });
     return { sessionId };
   });
+
+/** Create a durable zero-turn SDK workspace while retaining draft UX semantics. */
+export const createDraftSession = createServerFn({ method: "POST" })
+  .validator(zodValidator(createDraftSessionInputSchema))
+  .handler(({ data: { sessionId, ...options } }) =>
+    sessionRegistry.createDraftSession(sessionId, options),
+  );
 
 /** Deliver a follow-up message. The runtime decides whether it sends now or queues. */
 export const deliverMessage = createServerFn({ method: "POST" })

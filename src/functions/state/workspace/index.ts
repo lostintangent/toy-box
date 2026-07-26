@@ -4,13 +4,19 @@ import type {
   Automation,
   ArtifactWorker,
   CustomArtifactKind,
+  DraftSession,
   InboxEntry,
   Settings,
   WorkspaceAction,
-  WorkspaceEvent,
 } from "@/types";
 import { DRAFT_PROMPT_SERVER_ORIGIN } from "@/lib/session/constants";
-import type { WorkspaceEnvironment, WorkspaceState } from "@/lib/workspace/state/reducer";
+import { normalizeSettings } from "@/lib/workspace/config/settings";
+import {
+  reduceWorkspaceSessionState,
+  type WorkspaceEnvironment,
+  type WorkspaceSessionEvent,
+  type WorkspaceState,
+} from "@/lib/workspace/state/reducer";
 import { SerialTaskQueue } from "@/lib/serialTaskQueue";
 import { broadcast } from "@/functions/runtime/broadcast";
 import { addHyperSession, deleteHyperState, getHyperSessionIds } from "./hyperSessions";
@@ -21,14 +27,8 @@ import {
   getInboxEntries,
   hasInboxEntry,
 } from "./inbox";
-import {
-  applySessionState,
-  getSessionState,
-  getSessionStates,
-  isDraft,
-  setSessionPrompt,
-  sweepExpiredDrafts as sweepDraftSessionStates,
-} from "./sessions";
+import { applySessionState, getSessionState, getSessionStates, setSessionPrompt } from "./sessions";
+import { getDraftSessions } from "../session/drafts";
 import { writeCustomArtifact } from "./artifacts";
 import { getSettings, persistSettings } from "./settings";
 import {
@@ -48,10 +48,22 @@ export async function getWorkspaceState(options: {
   customArtifacts: CustomArtifactKind[];
   environment: WorkspaceEnvironment;
 }): Promise<WorkspaceState> {
-  const [inboxEntries, settings] = await Promise.all([getInboxEntries(), getSettings()]);
+  const [drafts, inboxEntries, settings] = await Promise.all([
+    getDraftSessions(),
+    getInboxEntries(),
+    getSettings(),
+  ]);
+  const sessionStates = getSessionStates();
+  for (const draft of drafts) {
+    const state = reduceWorkspaceSessionState(sessionStates[draft.sessionId], {
+      type: "session.drafted",
+      ...draft,
+    });
+    if (state) sessionStates[draft.sessionId] = state;
+  }
   return {
     settings,
-    sessionStates: getSessionStates(),
+    sessionStates,
     hyperSessionIds: getHyperSessionIds(),
     automations: options.automations,
     inboxEntries,
@@ -68,26 +80,36 @@ export function changeSettings(update: Partial<Settings>): Promise<Settings> {
   return settingsChangeQueue.enqueue(() => commitSettingsChange(update));
 }
 
+/** Drops a deleted session from the settings that reference it. */
+export function unpinSession(sessionId: string): Promise<void> {
+  // Reading inside the queue keeps this read-filter-write from racing a pin toggle.
+  return settingsChangeQueue.enqueue(async () => {
+    const { pinnedSessionIds } = await getSettings();
+    if (!pinnedSessionIds.includes(sessionId)) return;
+
+    await commitSettingsChange({
+      pinnedSessionIds: pinnedSessionIds.filter((pinnedId) => pinnedId !== sessionId),
+    });
+  });
+}
+
 async function commitSettingsChange(update: Partial<Settings>): Promise<Settings> {
-  const settings = { ...(await getSettings()), ...update };
+  const settings = normalizeSettings({ ...(await getSettings()), ...update });
   if (await persistSettings(settings)) {
     broadcast({ type: "settings.changed", settings });
   }
   return settings;
 }
 
-export function sweepExpiredDrafts(now: number = Date.now()): string[] {
-  const expiredSessionIds = sweepDraftSessionStates(now);
-  for (const sessionId of expiredSessionIds) {
-    deleteHyperState(sessionId);
-    broadcast({ type: "session.draft.discarded", sessionId });
-  }
-  return expiredSessionIds;
-}
-
-/** Complete the draft-to-session handoff before publishing the session upsert. */
-export function promoteDraftSession(sessionId: string): void {
-  applySessionState({ type: "session.upserted", session: { sessionId } });
+export function addDraftSession(draft: DraftSession, hyper?: true): void {
+  const event = {
+    type: "session.drafted",
+    ...draft,
+    ...(hyper ? { hyper } : {}),
+  } as const;
+  const changed = applySessionState(event);
+  const hyperChanged = hyper ? addHyperSession(draft.sessionId) : false;
+  if (changed || hyperChanged) broadcast(event);
 }
 
 export function deleteSessionWorkspaceState(sessionId: string): void {
@@ -98,18 +120,30 @@ export function deleteSessionWorkspaceState(sessionId: string): void {
   }
 }
 
-export function setSessionStatus(
-  sessionId: string,
-  status: "creating" | "running" | "idle" | "unread",
-): void {
-  const event = { type: `session.${status}`, sessionId } as const;
-  if (applySessionState(event)) broadcast(event);
+/**
+ * Server twin of the client's applyWorkspaceEvent for the process-local
+ * sessionStates map: reduce the transition in, then broadcast it only if the
+ * reducer accepted it.
+ */
+function commitSessionEvent(event: WorkspaceSessionEvent): boolean {
+  if (!applySessionState(event)) return false;
+  broadcast(event);
+  return true;
+}
+
+/** Derive the canonical prompt (server timestamp, text dedupe), then broadcast iff it changed. */
+function commitSessionPrompt(sessionId: string, text: string, origin: string): void {
+  const prompt = setSessionPrompt(sessionId, text, origin);
+  if (prompt) broadcast({ type: "session.prompt.drafted", sessionId, prompt });
+}
+
+export function setSessionStatus(sessionId: string, status: "running" | "idle" | "unread"): void {
+  commitSessionEvent({ type: `session.${status}`, sessionId } as const);
 }
 
 export function clearDraftPrompt(sessionId: string): void {
   if (!getSessionState(sessionId)?.prompt?.text) return;
-  const prompt = setSessionPrompt(sessionId, "", DRAFT_PROMPT_SERVER_ORIGIN);
-  if (prompt) broadcast({ type: "session.prompt.drafted", sessionId, prompt });
+  commitSessionPrompt(sessionId, "", DRAFT_PROMPT_SERVER_ORIGIN);
 }
 
 export async function createPendingInboxEntry(sessionId: string): Promise<InboxEntry> {
@@ -154,37 +188,17 @@ export async function registerArtifactKind(kind: CustomArtifactKind): Promise<vo
 }
 
 export function applyWorkspaceAction(action: WorkspaceAction): void {
-  let event: WorkspaceEvent | undefined;
-
   switch (action.type) {
-    case "session.draft.created": {
-      if (isDraft(action.sessionId)) break;
-      event = { ...action, createdAt: Date.now() };
-      if (!applySessionState(event)) {
-        event = undefined;
-        break;
-      }
-      if (action.hyper) addHyperSession(action.sessionId);
-      break;
-    }
-    case "session.draft.discarded":
-      if (getSessionState(action.sessionId)?.status !== "draft") break;
-      applySessionState(action);
-      deleteHyperState(action.sessionId);
-      event = action;
-      break;
-    case "session.prompt.drafted": {
-      const prompt = setSessionPrompt(action.sessionId, action.prompt.text, action.prompt.origin);
-      if (prompt) event = { ...action, prompt };
-      break;
-    }
+    case "session.prompt.drafted":
+      commitSessionPrompt(action.sessionId, action.prompt.text, action.prompt.origin);
+      return;
     case "session.hyper.promoted":
-      if (deleteHyperState(action.sessionId)) event = action;
-      break;
+      if (deleteHyperState(action.sessionId)) broadcast(action);
+      return;
     case "session.read":
-      if (applySessionState(action)) event = action;
-      break;
+      commitSessionEvent(action);
+      return;
+    default:
+      action satisfies never;
   }
-
-  if (event) broadcast(event);
 }

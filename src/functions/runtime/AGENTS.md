@@ -6,7 +6,7 @@ The session runtime lets agent work outlive the browser that started it while re
 
 The end-to-end session domain has five operation families. Create, deliver, spawn, and observe converge on the runtime; individual control commands retain their specific owners:
 
-1. **Create** a session through its required first message. Toy Box exposes no operation for creating an empty persisted session.
+1. **Create** turn-bearing SDK history through its required first message. A draft may already own a durable workspace, but the SDK's experimental empty-session surface does not make that workspace resumable.
 2. **Deliver** a message to an existing session. The runtime decides whether it starts immediately or queues behind active execution.
 3. **Spawn a worker** as a parent-owned session for delegated or focused work. The runtime inherits parent execution context, applies an optional friendly name before delivering the task, waits for that exact execution, and either retains or deletes the worker according to its declared policy.
 4. **Observe** through a live event stream, a reduced snapshot, or a completion result.
@@ -14,9 +14,9 @@ The end-to-end session domain has five operation families. Create, deliver, spaw
 
 Control is a category, not one runtime method. Abort, queue steering, and queue cancellation act on live execution; rename, deletion, and worktree commands delegate through the session API to the registry or resource owner described in the state guide. Normal draining and steering share one private queue claim; steering sends its claim through the SDK's immediate mode without opening another turn boundary.
 
-Resume is not a separate operation. Delivering to an idle session resumes its persisted SDK session; delivering to an active session queues. Likewise, callers never choose between send and queue.
+Once a session has turn-bearing history, resume is not a separate operation. Delivering to an idle session resumes its persisted SDK session; delivering to an active session queues. Likewise, callers never choose between send and queue.
 
-`streamSession` is the connected composite: it registers observation before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can create a session with its required first message, deliver to an existing session, or observe without delivering. Headless callers express their intent directly: `createSession` creates through the required first message, `deliverSessionMessage` sends or queues a message for an existing session, `spawnWorker` supervises a parent-owned session through completion and conditional teardown, and `stopWorker` covers both its spawning and running phases.
+`streamSession` is the connected composite: it registers observation before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can start a draft's first turn or create a session with its required first message, deliver to an existing session, or observe without delivering. Headless callers express their intent directly: `createSession` creates through the required first message, `deliverSessionMessage` sends or queues a message for an existing session, `spawnWorker` supervises a parent-owned session through completion and conditional teardown, and `stopWorker` covers both its spawning and running phases.
 
 ## Live execution
 

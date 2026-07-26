@@ -131,7 +131,7 @@ function discardBufferedWorkspaceQueryEvents(queryClient: QueryClient): void {
   getWorkspaceQuerySource(queryClient).discardBufferedEvents();
 }
 
-function repairWorkspaceStateQuery(queryClient: QueryClient): Promise<void> {
+export function repairWorkspaceStateQuery(queryClient: QueryClient): Promise<void> {
   discardBufferedWorkspaceQueryEvents(queryClient);
   return invalidateWorkspaceStateQuery(queryClient);
 }

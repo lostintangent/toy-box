@@ -7,7 +7,7 @@ import type { SessionMessageInput, StreamSessionRequest } from "@/lib/session/pr
 import type { AgentNotification, QueuedMessage, SessionEvent } from "@/types";
 import * as sessionRegistry from "@/functions/state/session/registry";
 import { loadSessionSnapshot } from "@/functions/state/session/snapshots";
-import { clearDraftPrompt, setSessionStatus } from "@/functions/state/workspace";
+import { clearDraftPrompt } from "@/functions/state/workspace";
 import { sharedMap } from "../processState";
 import {
   SessionStream,
@@ -33,7 +33,7 @@ export async function* streamSession(request: StreamSessionRequest): AsyncGenera
   let retriedClosedStream = false;
 
   for (;;) {
-    const stream = await acquireSessionStream(request.sessionId, message, request.create);
+    const stream = await acquireSessionStream(request.sessionId, message, request.location);
     // Subscribe eagerly before delivery. If another caller already opened the
     // turn, deliver() queues this message and this same subscription follows the
     // active stream through the queued turn instead of returning event-less.
@@ -140,17 +140,14 @@ async function createStreamForMessage(
 ): Promise<SessionStream> {
   if (create) {
     const model = message.role === "user" ? message.model : undefined;
-    setSessionStatus(sessionId, "creating");
-    try {
-      const sdkSession = await sessionRegistry.createSession(sessionId, {
-        ...create,
-        model,
-      });
-      return SessionStream.getOrCreate(sessionId, sdkSession, { model });
-    } catch (error) {
-      setSessionStatus(sessionId, "idle");
-      throw error;
-    }
+    const created = await sessionRegistry.createSession(sessionId, {
+      ...create,
+      model,
+    });
+    return SessionStream.getOrCreate(sessionId, created.session, {
+      ...(created.artifactPath ? { artifacts: [created.artifactPath] } : {}),
+      ...(model ? { model } : {}),
+    });
   }
 
   const snapshot = await loadSessionSnapshot(sessionId);

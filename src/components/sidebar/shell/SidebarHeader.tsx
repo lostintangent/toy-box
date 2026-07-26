@@ -1,4 +1,4 @@
-import { ChevronDown, X, PanelLeftClose, Filter, Plus } from "lucide-react";
+import { ChevronDown, FileText, Filter, PanelLeftClose, Plus, Shapes, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -7,8 +7,14 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+
+export type SidebarCreateOptions = {
+  addToWorkspace?: boolean;
+  artifact?: { path: string; content: string };
+};
 
 export function SidebarHeader({
   filter,
@@ -24,9 +30,13 @@ export function SidebarHeader({
   showExternalSessions: boolean;
   onShowExternalSessionsChange: (value: boolean) => void;
   sessionCount: number;
-  onCreateSession: (addToWorkspace: boolean) => void;
+  onCreateSession: (options?: SidebarCreateOptions) => void;
   onCollapse?: () => void;
 }) {
+  function createArtifactDraft(path: string, content = "") {
+    onCreateSession({ artifact: { path, content } });
+  }
+
   return (
     <div
       className="px-3 pt-0 md:pt-3 pb-3 border-b flex items-center gap-2"
@@ -86,20 +96,55 @@ export function SidebarHeader({
           </button>
         )}
       </div>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            size="icon-sm"
-            variant="accent"
-            onClick={(event) => onCreateSession(event.metaKey || event.ctrlKey)}
-            aria-label="New session"
-            suppressHydrationWarning
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent sideOffset={6}>New session</TooltipContent>
-      </Tooltip>
+      <div className="flex">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon-sm"
+              variant="accent"
+              className="rounded-r-none"
+              onClick={(event) =>
+                onCreateSession({ addToWorkspace: event.metaKey || event.ctrlKey })
+              }
+              aria-label="New session"
+              suppressHydrationWarning
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={6}>New session</TooltipContent>
+        </Tooltip>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="icon-sm"
+              variant="accent"
+              className="w-6 rounded-l-none border-l border-accent-foreground/15"
+              aria-label="New session options"
+              suppressHydrationWarning
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => createArtifactDraft("document.md")}>
+              <FileText />
+              New document
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() =>
+                createArtifactDraft(
+                  "diagram.svg",
+                  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"></svg>\n',
+                )
+              }
+            >
+              <Shapes />
+              New diagram
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 }

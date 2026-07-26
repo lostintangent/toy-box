@@ -17,6 +17,7 @@ export type Settings = {
   useWorktree: boolean;
   autoFocusArtifacts: SessionFeatureScope;
   showExternalSessions: boolean;
+  pinnedSessionIds: string[];
 };
 
 /** Open-ended on purpose: the SDK's public union can lag the wire protocol
@@ -204,6 +205,13 @@ export type DraftPrompt = {
   origin: string;
 };
 
+/** Durable claim that gives a zero-turn SDK session draft UX semantics. */
+export type DraftSession = {
+  sessionId: string;
+  createdAt: number;
+  artifactPath?: string;
+};
+
 export type InboxEntry = {
   id: string;
   message?: string;
@@ -288,6 +296,13 @@ export type SessionEvent = (
 export type WorkspaceEvent =
   | WorkspaceAction
   | {
+      type: "session.drafted";
+      sessionId: string;
+      createdAt: number;
+      artifactPath?: string;
+      hyper?: true;
+    }
+  | {
       type: "settings.changed";
       settings: Settings;
     }
@@ -295,7 +310,7 @@ export type WorkspaceEvent =
       type: "session.upserted";
       session: SessionMetadataUpdate;
     }
-  | SimpleSessionUpdateEvents<"deleted" | "creating" | "running" | "idle" | "unread">
+  | SimpleSessionUpdateEvents<"deleted" | "running" | "idle" | "unread">
   | {
       type: "inbox.entry.upserted";
       entry: InboxEntry;

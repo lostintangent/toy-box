@@ -64,26 +64,25 @@ describe("workspace query selectors", () => {
 
     updateWorkspace(queryClient, (workspace) => ({
       ...workspace,
-      sessionStates: { "session-a": { status: "creating", createdAt: 1, prompt: changedPrompt } },
+      sessionStates: { "session-a": { status: "running", prompt: changedPrompt } },
     }));
     expect(status.updates()).toBe(1);
     expect(selectedPrompt.data()).toBe(promptAfterEdit);
     expect(selectedPrompt.updates()).toBe(1);
   });
 
-  test("activity consumers ignore the creating-to-running handoff", () => {
+  test("activity begins when a draft starts running", () => {
     const queryClient = createQueryClient();
-    seedWorkspace(queryClient, createEmptyWorkspaceState());
+    seedWorkspace(queryClient, {
+      ...createEmptyWorkspaceState(),
+      sessionStates: { "session-a": { status: "draft", createdAt: 1 } },
+    });
     const activity = observe(queryClient, (workspace) =>
       selectWorkspaceSessionActivity(workspace, "session-a"),
     );
 
-    updateWorkspace(queryClient, (workspace) => ({
-      ...workspace,
-      sessionStates: { "session-a": { status: "creating", createdAt: 1 } },
-    }));
-    expect(activity.data()).toEqual({ running: true, unread: false, hasDraftPrompt: false });
-    expect(activity.updates()).toBe(1);
+    expect(activity.data()).toEqual({ running: false, unread: false, hasDraftPrompt: false });
+    expect(activity.updates()).toBe(0);
 
     updateWorkspace(queryClient, (workspace) => ({
       ...workspace,
@@ -168,9 +167,7 @@ describe("workspace query selectors", () => {
       sessionStates: { "session-a": { status: "running" } },
     });
     const drafts = observe(queryClient, (workspace) =>
-      Object.entries(workspace.sessionStates).filter(
-        ([, state]) => state.status === "draft" || state.status === "creating",
-      ),
+      Object.entries(workspace.sessionStates).filter(([, state]) => state.status === "draft"),
     );
     const inbox = observe(queryClient, selectInboxEntries);
     const hasUnread = observe(queryClient, (workspace) =>

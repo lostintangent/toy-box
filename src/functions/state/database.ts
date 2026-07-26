@@ -103,6 +103,14 @@ async function initializeSchema(db: Database, path: string): Promise<void> {
   `);
 
   await db.exec(`
+    CREATE TABLE IF NOT EXISTS drafts (
+      session_id    TEXT PRIMARY KEY,
+      artifact_path TEXT,
+      created_at    INTEGER NOT NULL
+    );
+  `);
+
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS inbox (
       id         TEXT PRIMARY KEY,
       message    TEXT,

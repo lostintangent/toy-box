@@ -8,11 +8,12 @@
 import { homedir } from "node:os";
 import type { CopilotSession, SessionContext } from "@github/copilot-sdk";
 import {
+  createDraftSession as sdkCreateDraftSession,
   createSession as sdkCreateSession,
-  resumeSession as sdkResumeSession,
   deleteSession as sdkDeleteSession,
-  readSessionContext,
   getSessionDirectory,
+  readSessionContext,
+  resumeSession as sdkResumeSession,
 } from "../../sdk/client";
 import { getSessionTools } from "../../sdk/tools";
 import {
@@ -20,8 +21,9 @@ import {
   emitSessionNameUpdate,
   emitSessionUpsert,
 } from "../../runtime/broadcast";
-import { deleteSessionWorkspaceState, promoteDraftSession } from "../workspace";
+import { addDraftSession, deleteSessionWorkspaceState, unpinSession } from "../workspace";
 import { createSessionWorktree, deleteSessionWorktree } from "./worktrees";
+import { deleteDraftSession, getDraftSession, persistDraftSession } from "./drafts";
 import {
   getWorkerSessionIdsForParent,
   registerWorkerSession,
@@ -51,11 +53,28 @@ export type CreateSessionOptions = {
 
 // ── Creation ──────────────────────────────────────────────────────────
 
+/** Create the SDK workspace now while retaining draft UX until the first message. */
+export async function createDraftSession(
+  sessionId: string,
+  options: { artifact?: { path: string; content: string }; hyper?: true },
+): Promise<void> {
+  const artifact = options.artifact;
+
+  await sdkCreateDraftSession(sessionId, artifact);
+  const draft = {
+    sessionId,
+    createdAt: Date.now(),
+    ...(artifact ? { artifactPath: artifact.path } : {}),
+  };
+  await persistDraftSession(draft);
+  addDraftSession(draft, options.hyper);
+}
+
 /** Create and publish a new SDK session with a caller-provided ID. */
 export async function createSession(
   sessionId: string,
   options?: CreateSessionOptions,
-): Promise<CopilotSession> {
+): Promise<{ session: CopilotSession; artifactPath?: string }> {
   const { model, name, directory, useWorktree, initialContext, worker } = options ?? {};
   const parentSessionId = worker?.parentSessionId;
   const sessionType =
@@ -63,6 +82,7 @@ export async function createSession(
   if ((sessionType === "worker") !== Boolean(worker)) {
     throw new Error("Worker session creation requires exactly one worker owner.");
   }
+  const draft = worker ? null : await getDraftSession(sessionId);
   const { executionDirectory, displayContext, worktree } = await prepareSessionCreation(sessionId, {
     directory,
     useWorktree,
@@ -77,22 +97,36 @@ export async function createSession(
     if (worker) {
       await registerWorkerSession(sessionId, worker.parentSessionId, worker.retained);
     }
+    // Drafts temporarily use this same-ID create path. TODO: Resume the draft
+    // directly when the Copilot SDK can resume a zero-turn session; today it
+    // persists the workspace but no event history, so resume reports not found.
     session = await sdkCreateSession(sessionId, {
       model,
       directory: executionDirectory ?? homedir(),
       sessionType,
       tools: getSessionTools(sessionType),
+      artifactPath: draft?.artifactPath,
     });
+    if (draft?.artifactPath) {
+      // Empty draft sessions persist their workspace but have no resumable
+      // event log. Re-record the existing file after the first turn starts so
+      // ordinary history projection owns artifact discovery from here on.
+      const file = await session.rpc.workspaces.readFile({ path: draft.artifactPath });
+      await session.rpc.workspaces.createFile({ path: draft.artifactPath, content: file.content });
+    }
     if (name) await session.rpc.name.setAuto({ summary: name });
+    if (draft) await deleteDraftSession(sessionId);
   } catch (error) {
-    if (session) await sdkDeleteSession(sessionId).catch(console.error);
+    if (session) {
+      if (draft) await session.disconnect().catch(console.error);
+      else await sdkDeleteSession(sessionId).catch(console.error);
+    }
     if (worker) await unregisterWorkerSession(sessionId).catch(console.error);
     if (worktree) await deleteSessionWorktree(sessionId).catch(console.error);
     throw error;
   }
   const now = new Date().toISOString();
   cachedSessions.set(sessionId, session);
-  promoteDraftSession(sessionId);
 
   // Emit immediately so the session appears in the list right away.
   // This display context can come from an inherited workspace or a
@@ -120,7 +154,10 @@ export async function createSession(
       }
     });
   }
-  return session;
+  return {
+    session,
+    ...(draft?.artifactPath ? { artifactPath: draft.artifactPath } : {}),
+  };
 }
 
 // ── SDK Sessions ───────────────────────────────────────────────────────
@@ -240,7 +277,9 @@ async function removeDeletedSessionState(sessionId: string): Promise<void> {
   }
 
   await deleteSessionWorktree(sessionId);
+  await deleteDraftSession(sessionId);
   await unregisterWorkerSession(sessionId);
+  await unpinSession(sessionId);
   deleteSessionWorkspaceState(sessionId);
   await evictDeletedSessionSnapshot(sessionId);
   emitSessionDelete(sessionId);

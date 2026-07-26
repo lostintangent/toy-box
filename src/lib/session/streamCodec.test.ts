@@ -44,7 +44,7 @@ describe("session stream codec", () => {
     expect(await collectEvents(stream)).toEqual(events);
   });
 
-  test("consumes decoded events and announces the first one once", async () => {
+  test("consumes decoded events and reports receiving them", async () => {
     const events: SessionEvent[] = [
       { type: "delta", content: "Hello" },
       { type: "end", reason: "idle" },
@@ -56,17 +56,14 @@ describe("session stream codec", () => {
       },
     });
     const consumed: SessionEvent[] = [];
-    let firstEventCount = 0;
 
     const receivedEvent = await consumeSessionEvents(stream, {
       signal: new AbortController().signal,
       onEvent: (event) => consumed.push(event),
-      onFirstEvent: () => firstEventCount++,
     });
 
     expect(receivedEvent).toBe(true);
     expect(consumed).toEqual(events);
-    expect(firstEventCount).toBe(1);
   });
 
   test("stops delivering events when the subscriber aborts", async () => {

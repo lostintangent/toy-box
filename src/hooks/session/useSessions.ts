@@ -10,16 +10,11 @@ export function useSessions() {
   const { data, isLoading } = useQuery(sessionQueries.state());
   const { sessions, worktrees, workerSessionIds } = data ?? createEmptySessionsState();
 
-  const recentSessions = [...sessions]
-    .sort((a, b) => b.modifiedTime.getTime() - a.modifiedTime.getTime())
-    .slice(0, 50);
-
   const worktreeSessionIds = Object.keys(worktrees);
 
   return {
     isLoading,
     sessions,
-    recentSessions,
     worktreeSessionIds,
     workerSessionIds,
   };

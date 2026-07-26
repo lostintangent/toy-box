@@ -33,9 +33,9 @@ function readState(queryClient: QueryClient): SessionsState {
 }
 
 describe("session query cache", () => {
-  test("draft upsert prepends durable session metadata once", () => {
+  test("upsert inserts new session metadata once", () => {
     const queryClient = new QueryClient();
-    const sessionId = "toy-box-created-draft";
+    const sessionId = "toy-box-upserted-session";
 
     applyWorkspaceEventToSessionQueries(queryClient, {
       type: "session.upserted",

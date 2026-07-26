@@ -4,9 +4,7 @@ import {
   deleteSessionState,
   getSessionState,
   getSessionStates,
-  isDraft,
   setSessionPrompt,
-  sweepExpiredDrafts,
 } from "./sessions";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -22,21 +20,20 @@ describe("workspace session storage", () => {
     onTestFinished(() => clean(sessionId));
 
     applySessionState({
-      type: "session.draft.created",
+      type: "session.drafted",
       sessionId,
       createdAt: now,
     });
     const prompt = setSessionPrompt(sessionId, "hello", "client-a", now);
-    applySessionState({ type: "session.creating", sessionId });
 
     expect(prompt).toEqual({ text: "hello", origin: "client-a", updatedAt: now });
     expect(getSessionState(sessionId)).toEqual({
-      status: "creating",
+      status: "draft",
       createdAt: now,
       prompt: { text: "hello", origin: "client-a", updatedAt: now },
     });
     expect(getSessionStates()[sessionId]).toEqual({
-      status: "creating",
+      status: "draft",
       createdAt: now,
       prompt: { text: "hello", origin: "client-a", updatedAt: now },
     });
@@ -54,20 +51,23 @@ describe("workspace session storage", () => {
     });
   });
 
-  test("expires draft freshness from the prompt timestamp", () => {
-    const sessionId = `workspace-expiring-draft-${crypto.randomUUID()}`;
+  test("expires old prompts without dropping an artifact-backed draft", () => {
+    const sessionId = `workspace-artifact-draft-${crypto.randomUUID()}`;
     onTestFinished(() => clean(sessionId));
 
     applySessionState({
-      type: "session.draft.created",
+      type: "session.drafted",
       sessionId,
       createdAt: 1,
+      artifactPath: "document.md",
     });
-    setSessionPrompt(sessionId, "keep alive", "client-a", DAY_MS);
+    setSessionPrompt(sessionId, "old", "client-a", 1);
 
-    expect(sweepExpiredDrafts(DAY_MS + 1)).not.toContain(sessionId);
-    expect(sweepExpiredDrafts(DAY_MS * 2 + 1)).toContain(sessionId);
-    expect(isDraft(sessionId)).toBe(false);
+    expect(getSessionState(sessionId, DAY_MS + 2)).toEqual({
+      status: "draft",
+      createdAt: 1,
+      artifactPath: "document.md",
+    });
   });
 
   test("expires old prompts without dropping active status", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionMetadata } from "@/types";
-import { groupSessionsByTime } from "./sessionGrouping";
+import { groupSessions, groupSessionsByTime } from "./sessionGrouping";
 
 function createSession(sessionId: string, modifiedTime: Date): SessionMetadata {
   return {
@@ -116,5 +116,72 @@ describe("session time groups", () => {
         ),
       ).map((group) => group.label),
     ).toEqual(["This Week", "Older"]);
+  });
+});
+
+describe("pinned session group", () => {
+  test("places pinned sessions first in chronological order without duplicating them", () => {
+    const now = localDate(2026, 2, 20, 14);
+    const sessions = [
+      createSession("older", localDate(2026, 1, 28, 12)),
+      createSession("yesterday", localDate(2026, 2, 19, 18)),
+      createSession("today", localDate(2026, 2, 20, 10)),
+    ];
+
+    expect(summarizeGroups(groupSessions(sessions, ["older", "today"], now))).toEqual([
+      { label: "Pinned", sessions: ["today", "older"] },
+      { label: "Yesterday", sessions: ["yesterday"] },
+    ]);
+  });
+
+  test("keeps the pinned partition stable before time-based hydration", () => {
+    const sessions = [
+      createSession("today", localDate(2026, 2, 20, 10)),
+      createSession("older", localDate(2026, 1, 28, 12)),
+    ];
+
+    expect(summarizeGroups(groupSessions(sessions, ["older"]))).toEqual([
+      { label: "Pinned", sessions: ["older"] },
+      { label: undefined, sessions: ["today"] },
+    ]);
+  });
+
+  test("labels today's unpinned sessions only when a pinned group is present", () => {
+    const now = localDate(2026, 2, 20, 14);
+    const sessions = [
+      createSession("today", localDate(2026, 2, 20, 10)),
+      createSession("older", localDate(2026, 1, 28, 12)),
+    ];
+
+    expect(summarizeGroups(groupSessions(sessions, ["older"], now))).toEqual([
+      { label: "Pinned", sessions: ["older"] },
+      { label: "Today", sessions: ["today"] },
+    ]);
+    expect(summarizeGroups(groupSessions(sessions, [], now))).toEqual([
+      { label: undefined, sessions: ["today"] },
+      { label: "Older", sessions: ["older"] },
+    ]);
+  });
+
+  test("ignores pinned IDs that are absent from the supplied sessions", () => {
+    const sessions = [createSession("today", localDate(2026, 2, 20, 10))];
+
+    expect(
+      summarizeGroups(groupSessions(sessions, ["missing"], localDate(2026, 2, 20, 14))),
+    ).toEqual([{ label: undefined, sessions: ["today"] }]);
+  });
+
+  test("sorts unpinned sessions chronologically before grouping them", () => {
+    const now = localDate(2026, 2, 20, 14);
+    const sessions = [
+      createSession("yesterday", localDate(2026, 2, 19, 18)),
+      createSession("today-earlier", localDate(2026, 2, 20, 9)),
+      createSession("today-later", localDate(2026, 2, 20, 13)),
+    ];
+
+    expect(summarizeGroups(groupSessions(sessions, [], now))).toEqual([
+      { label: undefined, sessions: ["today-later", "today-earlier"] },
+      { label: "Yesterday", sessions: ["yesterday"] },
+    ]);
   });
 });

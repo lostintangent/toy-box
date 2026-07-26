@@ -858,7 +858,7 @@ describe("streamSession", () => {
     const iterator = importedStreamSession({
       sessionId: "session-draft-race",
       message: userMessage("Original draft prompt", "client-1"),
-      create: {},
+      location: {},
     });
     const first = await iterator.next();
     await iterator.return?.(undefined);
@@ -921,10 +921,10 @@ describe("streamSession", () => {
     ]);
   });
 
-  test("queues a distinct message even when it carries creation options", async () => {
+  test("queues a distinct message even when it carries a location", async () => {
     onTestFinished(() => {
       mock.restore();
-      closeStream("session-distinct-create-message");
+      closeStream("session-distinct-location-message");
     });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
@@ -936,15 +936,15 @@ describe("streamSession", () => {
       await import("./index");
 
     const stream = ImportedSessionStream.getOrCreate(
-      "session-distinct-create-message",
+      "session-distinct-location-message",
       fakeSession,
     );
     await stream.deliver(userMessage("Original message", "original-message"));
 
     const iterator = importedStreamSession({
-      sessionId: "session-distinct-create-message",
+      sessionId: "session-distinct-location-message",
       message: userMessage("Distinct follow-up", "distinct-message"),
-      create: {},
+      location: {},
     });
     await iterator.next();
     await iterator.next();
@@ -968,7 +968,7 @@ describe("streamSession", () => {
 
     mockStreamRuntimeModules(
       {
-        createSession: async () => fakeSession,
+        createSession: async () => ({ session: fakeSession }),
       },
       {},
       {},
@@ -980,7 +980,7 @@ describe("streamSession", () => {
     const iterator = importedStreamSession({
       sessionId: "session-client-delivered-start",
       message: userMessage("Start this client prompt"),
-      create: {},
+      location: {},
     });
     const first = await iterator.next();
     await settle();
@@ -1010,7 +1010,7 @@ describe("streamSession", () => {
     };
 
     mockStreamRuntimeModules({
-      createSession: async () => fakeSession,
+      createSession: async () => ({ session: fakeSession }),
     });
 
     const { streamSession: importedStreamSession } = await import("./index");
@@ -1022,7 +1022,7 @@ describe("streamSession", () => {
         content: "",
         attachments: [attachment],
       },
-      create: {},
+      location: {},
     });
     const first = await iterator.next();
     await iterator.return?.(undefined);
@@ -1304,7 +1304,7 @@ describe("createSession", () => {
     const createSessionMock = mock(
       async (_sessionId: string, _options: Record<string, unknown>) => {
         calls.push("create");
-        return fakeSession;
+        return { session: fakeSession };
       },
     );
     const setSessionStatus = mock((_sessionId: string, status: string) => {
@@ -1345,37 +1345,28 @@ describe("createSession", () => {
       prompt: "Start in the background",
       attachments: undefined,
     });
-    expect(calls).toEqual(["creating", "create", "running", "send"]);
+    expect(calls).toEqual(["create", "running", "send"]);
   });
 
-  test("restores the pre-session state when creation fails", async () => {
+  test("seeds an artifact-backed draft into the live session", async () => {
+    const sessionId = "session-artifact-draft";
     onTestFinished(() => {
       mock.restore();
-      closeStream("session-create-failure");
+      closeStream(sessionId);
+    });
+    const fakeSession = makeFakeSession();
+
+    mockStreamRuntimeModules({
+      createSession: async () => ({ session: fakeSession, artifactPath: "document.md" }),
     });
 
-    const statuses: string[] = [];
-    mockStreamRuntimeModules(
-      {
-        createSession: async () => {
-          throw new Error("create exploded");
-        },
-      },
-      {},
-      {},
-      {
-        setSessionStatus: (_sessionId: string, status: string) => statuses.push(status),
-      },
-    );
+    const { createSession: importedCreate, SessionStream: ImportedSessionStream } =
+      await import("./index");
+    await importedCreate(sessionId, userMessage("Update the document"), {});
 
-    const { createSession: importedCreate } = await import("./index");
-    await expect(
-      importedCreate("session-create-failure", userMessage("first message"), {
-        directory: "/repo",
-      }),
-    ).rejects.toThrow("create exploded");
-
-    expect(statuses).toEqual(["creating", "idle"]);
+    expect(ImportedSessionStream.get(sessionId)?.getSessionState().artifacts).toEqual([
+      "document.md",
+    ]);
   });
 });
 

@@ -33,21 +33,10 @@ describe("SVG editor gesture ownership", () => {
   });
 
   test("temporarily toggles editable gestures between selection and navigation", () => {
-    expect(activeToolForGesture({ activeTool: "hand", spacePressed: true, readOnly: false })).toBe(
-      "select",
-    );
-    expect(
-      activeToolForGesture({ activeTool: "select", spacePressed: true, readOnly: false }),
-    ).toBe("hand");
-    expect(activeToolForGesture({ activeTool: "pen", spacePressed: true, readOnly: false })).toBe(
-      "hand",
-    );
-    expect(activeToolForGesture({ activeTool: "hand", spacePressed: true, readOnly: true })).toBe(
-      "hand",
-    );
-    expect(
-      activeToolForGesture({ activeTool: "select", spacePressed: false, readOnly: false }),
-    ).toBe("select");
+    expect(activeToolForGesture({ activeTool: "hand", spacePressed: true })).toBe("select");
+    expect(activeToolForGesture({ activeTool: "select", spacePressed: true })).toBe("hand");
+    expect(activeToolForGesture({ activeTool: "pen", spacePressed: true })).toBe("hand");
+    expect(activeToolForGesture({ activeTool: "select", spacePressed: false })).toBe("select");
   });
 
   test("locks navigation gestures to the viewport without stealing other buttons", () => {

@@ -201,9 +201,9 @@ describe("workspace query cache", () => {
 
     const firstRead = source.readSnapshot(() => snapshots.shift()!);
     source.recordEvent({
-      type: "session.draft.created",
+      type: "session.prompt.drafted",
       sessionId: "session-a",
-      createdAt: 1,
+      prompt: { text: "Unsaved prompt", origin: "client-a", updatedAt: 1 },
     });
     source.discardBufferedEvents();
     const replacementRead = source.readSnapshot(() => snapshots.shift()!);

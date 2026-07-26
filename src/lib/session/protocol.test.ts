@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createDraftSessionInputSchema,
   deliverMessageInputSchema,
   createSessionInputSchema,
   dispatchInboxTaskInputSchema,
@@ -14,7 +15,21 @@ const attachment = {
 };
 
 describe("session protocol", () => {
-  test("streams observation-only, message, and create-with-message requests", () => {
+  test("accepts a draft with an optional artifact", () => {
+    const sessionId = "toy-box-01234567-89ab-4def-8abc-0123456789ab";
+    expect(createDraftSessionInputSchema.parse({ sessionId })).toEqual({ sessionId });
+    expect(
+      createDraftSessionInputSchema.parse({
+        sessionId,
+        artifact: { path: "document.md", content: "" },
+      }),
+    ).toEqual({
+      sessionId,
+      artifact: { path: "document.md", content: "" },
+    });
+  });
+
+  test("streams observation-only and message requests with an optional location", () => {
     expect(streamSessionRequestSchema.parse({ sessionId: "session", afterEventId: 42 })).toEqual({
       sessionId: "session",
       afterEventId: 42,
@@ -35,18 +50,18 @@ describe("session protocol", () => {
       streamSessionRequestSchema.parse({
         sessionId: "session",
         message: { content: "", attachments: [attachment] },
-        create: { directory: "/repo", useWorktree: true },
+        location: { directory: "/repo", useWorktree: true },
       }),
     ).toMatchObject({
       message: { content: "", attachments: [attachment] },
-      create: { directory: "/repo", useWorktree: true },
+      location: { directory: "/repo", useWorktree: true },
     });
   });
 
-  test("rejects creation without a message and empty messages without attachments", () => {
-    expect(streamSessionRequestSchema.safeParse({ sessionId: "session", create: {} }).success).toBe(
-      false,
-    );
+  test("rejects location without a message and empty messages without attachments", () => {
+    expect(
+      streamSessionRequestSchema.safeParse({ sessionId: "session", location: {} }).success,
+    ).toBe(false);
     expect(
       streamSessionRequestSchema.safeParse({ sessionId: "session", message: { content: " " } })
         .success,

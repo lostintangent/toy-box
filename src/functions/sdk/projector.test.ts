@@ -1465,6 +1465,25 @@ describe("projector", () => {
       ]);
     });
 
+    test("projects SDK workspace-file events into canonical artifacts", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "session.workspace_file_changed",
+            data: { operation: "update", path: "document.md" },
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "artifacts_patch",
+          patches: [{ type: "upsert", path: "document.md" }],
+        },
+      ]);
+    });
+
     test("projects subagent start model as a scoped model change", () => {
       const context = createStreamingContext();
 

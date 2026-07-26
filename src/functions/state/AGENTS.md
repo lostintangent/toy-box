@@ -4,15 +4,16 @@ Server state gives every session fact and resource one trustworthy owner, making
 
 ## State authority
 
-| State                                                                | Authority                                       | Durability                           |
-| -------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------ |
-| Session transcript and SDK metadata                                  | Copilot SDK history                             | Durable                              |
-| Session artifact files                                               | Files under Copilot SDK session state           | Durable                              |
-| Active reduced session, queue, replay, completion                    | `SessionStream`                                 | Process-local                        |
-| SDK handles and idle reduced snapshots                               | Session registry and snapshot cache             | Process-local cache over SDK history |
-| Automations, Inbox, settings, worktrees, worker ownership/retention  | Shared SQLite database                          | Durable                              |
-| Drafts, prompts, running, unread, Hyper membership, artifact workers | Workspace state                                 | Process-local                        |
-| Custom artifact kinds and Inbox artifact files                       | `~/.toy-box/artifacts/` and `~/.toy-box/inbox/` | Durable files                        |
+| State                                                               | Authority                                       | Durability                           |
+| ------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------ |
+| Session transcript and SDK metadata                                 | Copilot SDK history                             | Durable                              |
+| Session artifact files                                              | Files under Copilot SDK session state           | Durable                              |
+| Active reduced session, queue, replay, completion                   | `SessionStream`                                 | Process-local                        |
+| SDK handles and idle reduced snapshots                              | Session registry and snapshot cache             | Process-local cache over SDK history |
+| Automations, Inbox, settings, worktrees, worker ownership/retention | Shared SQLite database                          | Durable                              |
+| Draft claims                                                        | Shared SQLite database                          | Durable                              |
+| Draft prompts, running, unread, Hyper membership, artifact workers  | Workspace state                                 | Process-local                        |
+| Custom artifact kinds and Inbox artifact files                      | `~/.toy-box/artifacts/` and `~/.toy-box/inbox/` | Durable files                        |
 
 The central session invariant is simple: an active session takes its truth from the in-memory runtime; an idle session is reconstructed from persisted SDK history. A snapshot can avoid replay work, but it is never a second source of truth.
 
@@ -23,30 +24,31 @@ SQLite lives at `~/.toy-box/toy-box.sqlite`. It stores Toy Box metadata, not tra
 The session registry coordinates the server-side lifecycle and resources of a session:
 
 - SDK handles are cached and resumed single-flight. Short operations use one stale-handle retry; a `SessionStream` keeps one long-lived handle.
-- Creation determines the session role, prepares its working directory or worktree, configures SDK tools and instructions, applies an optional SDK-managed friendly name before first-message delivery, promotes any draft, and publishes session-list metadata. Creation names remain eligible for later automatic title updates; only the explicit rename operation marks a name as user-owned.
+- Draft creation persists a claim and uses the SDK's experimental empty-session surface to create the workspace and optional artifact. Because that workspace has no resumable event history, the first message starts the turn-bearing session over it and records any existing artifact into ordinary SDK history before deleting the claim.
+- Creation determines the session role, prepares its working directory or worktree, configures SDK tools and instructions, applies an optional SDK-managed friendly name before first-message delivery, consumes any durable draft claim, and publishes session-list metadata. Creation names remain eligible for later automatic title updates; only the explicit rename operation marks a name as user-owned.
 - Idle snapshots replay SDK history through the canonical projector and reducer, then cache the result. Clean runtime completion refreshes that cache; abort and error paths do not cache potentially unpersisted state.
+- Retained sessions are warmed on declaration and keep their cache slot through rotation, so the cap governs only the transient tail. Retention is a cache policy rather than a second authority: the snapshot cache knows which sessions are retained, and the workspace boundary decides that pinned sessions are the ones worth retaining.
 - Worker ownership and worktrees are session-owned resources. A worktree is an optional isolated Git checkout whose checkout and SQLite row move together through creation, merge or apply, and deletion.
-- Deletion recursively removes the complete worker tree, then the SDK session and its artifact files, live stream, cached handles, worktree and worker records, workspace and snapshot state, before publishing the list deletion. A not-found SDK session still receives this local teardown so partially created and crash-abandoned workers cannot retain stale ownership records.
+- Deletion recursively removes the complete worker tree, then the SDK session and its artifact files, live stream, cached handles, worktree and worker records, any pin naming it, workspace and snapshot state, before publishing the list deletion. A not-found SDK session still receives this local teardown so partially created and crash-abandoned workers cannot retain stale ownership records.
 
 `SessionType` is derived from the record or relationship that manages a session, not stored as another session field. Automation, Inbox, worker, and Hyper managers are mutually exclusive; no manager means standard. The SDK guide owns how that role changes instructions and tools.
 
-## Workspace state machine
+## Workspace state
 
-The workspace snapshot composes shared facts needed across the client but keeps their server authorities intact. Its process-local core is a sparse `sessionStates` map whose rows carry one session's lifecycle and optional draft prompt. Ordinary read-idle is represented by no row; the explicit `idle` status exists only while a draft prompt must remain. Durable settings, automation definitions, and Inbox entries remain owned by SQLite but join that client projection. Settings form one typed aggregate persisted as a singleton JSON document; a complete replacement is committed before a `settings.changed` event publishes it. Artifact worker associations represent process-local queue admission and presentation before a worker session necessarily exists; they carry one source artifact, an optional friendly name, and opaque renderer metadata without duplicating durable worker ownership.
+`WorkspaceState` is the shared, client-facing projection of every workspace-wide fact that lives outside a session transcript. One pure reducer, `reduceWorkspaceState` (over the per-session `reduceWorkspaceSessionState`), builds it on both sides of the wire: the server reduces authoritative events into a process-local copy and broadcasts each accepted event over the shared update stream; every client reduces the same events into its hydrated Query cache. An event therefore means the same thing everywhere. The stream is at-most-once with no replay, so clients heal any gap by refetching the server's snapshot rather than replaying history.
 
-The valid statuses are:
+The projection composes facts from several authorities without moving them: the process-local `sessionStates` map, hyper-session membership, and artifact-worker associations; the durable settings document, automation definitions, and Inbox entries owned by SQLite; the custom-artifact catalog on disk; and the passive server capabilities in `environment` (such as the terminal port). Each authority keeps its own durability and lifecycle — the snapshot only assembles a read-time view.
 
-- `draft`: a pre-persisted session identity that has not sent its first message
-- `creating`: the atomic draft-to-persisted handoff; still draft-backed if creation fails, but treated as running by activity UI
+Its heart is the sparse `sessionStates` map, whose rows carry one session's lifecycle and optional draft prompt. Ordinary read-idle is represented by no row; a status exists only while there is something to remember:
+
+- `draft`: a durably claimed session identity and SDK workspace that has not sent its first message
 - `running`: server work is active
 - `unread`: work finished without an active observer
 - `idle`: no activity, but a draft prompt remains
 
-This sparse representation keeps mutually exclusive activity in one state machine instead of separate draft, running, and unread collections.
+Keeping these mutually exclusive in one state machine — instead of separate draft, running, and unread collections — is what lets one reducer serve the live server store and the browser identically. Server transitions publish only accepted changes. A client issues the subset it is allowed to: validated `WorkspaceAction`s, plus settings patches the server merges into the singleton document and re-publishes whole. It reduces its own action optimistically and repairs from a fresh snapshot if the RPC is rejected.
 
-`reduceWorkspaceSessionState` is the canonical transition function shared by the process-local server store and browser projection. Draft creation and promotion, prompt edits, send failure, stream start and completion, read clearing, expiry, and deletion therefore mean the same thing on both sides. Server transition functions apply that reducer and publish only accepted changes to the shared update stream; draft expiry publishes the same discard transition as an explicit discard. Precise settings updates merge into the latest durable aggregate at this boundary, then publish the complete settings value so every client replaces it atomically.
-
-Client-issued `WorkspaceAction`s and settings changes are optimistically reduced into the hydrated workspace Query cache and sent through validated workspace RPCs. `useWorkspaceSync` owns the single shared-event sink and invalidates both the workspace snapshot and durable session-list query when its SSE connection opens. The QueryClient-scoped query source journals events that race any authoritative workspace snapshot, including initial hydration, reconnect repair, and rejected-action repair. Query selectors project settings, automations, Inbox entries, or one session's status, activity, and prompt so consumers rerender only for the state they render. Browser-local pane topology, focus, layout preferences, and client identity remain separate authorities.
+Two client caches consume the one stream. `useWorkspaceSync` is the single event sink; on connect it invalidates both the workspace snapshot and the durable session-list query, then feeds every event to both projections, each reducing the events it owns — nearly all belong to the workspace cache, while `session.upserted` and `session.deleted` drive the session list. A per-QueryClient journal reconciles the timing: it buffers events that arrive while a snapshot read is in flight — initial hydration, reconnect repair, rejected-action repair — so no transition is lost or replayed. Selectors then project a single slice — settings, automations, Inbox, or one session's status — so a component re-renders only for what it shows. Browser-local pane topology, focus, layout, and client identity remain separate authorities.
 
 ## Managed sessions and Inbox
 

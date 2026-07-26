@@ -7,6 +7,7 @@ import {
   getCachedSnapshot,
   hasCachedSnapshot,
   isCachedSnapshotFresh,
+  retainSessionSnapshots,
 } from "@/functions/state/session/snapshots";
 
 function snapshot(sessionId: string): SessionSnapshot {
@@ -68,8 +69,8 @@ describe("cached snapshot freshness", () => {
 });
 
 describe.serial("snapshot cache", () => {
-  beforeEach(() => {
-    clearSnapshotCache();
+  beforeEach(async () => {
+    await clearSnapshotCache();
   });
 
   test("stores and serves snapshots as private copies", async () => {
@@ -145,9 +146,57 @@ describe.serial("snapshot cache", () => {
     expect(await getCachedSnapshot(sessionId)).toBeUndefined();
     expect(hasCachedSnapshot(sessionId)).toBe(false);
   });
+
+  test("retaining warms a cold session and keeps its slot through rotation", async () => {
+    await withEmptySdkHistory(async () => {
+      await retainSessionSnapshots(["retained-0"]);
+      expect(hasCachedSnapshot("retained-0")).toBe(true);
+
+      for (let index = 0; index <= 10; index++) {
+        cacheSnapshot(`transient-${index}`, snapshot(`transient-${index}`));
+      }
+
+      expect(hasCachedSnapshot("retained-0")).toBe(true);
+      // The cap still governs the transient tail around it.
+      expect(hasCachedSnapshot("transient-0")).toBe(false);
+      expect(hasCachedSnapshot("transient-10")).toBe(true);
+    });
+  });
+
+  test("replacing the retained set returns the previous sessions to rotation", async () => {
+    await withEmptySdkHistory(async () => {
+      await retainSessionSnapshots(["released-0"]);
+      await retainSessionSnapshots([]);
+
+      for (let index = 0; index <= 10; index++) {
+        cacheSnapshot(`churn-${index}`, snapshot(`churn-${index}`));
+      }
+
+      expect(hasCachedSnapshot("released-0")).toBe(false);
+    });
+  });
 });
 
-function clearSnapshotCache(): void {
+/** Replays warmed sessions from an empty SDK history so warming stays local. */
+async function withEmptySdkHistory(run: () => Promise<void>): Promise<void> {
+  const realRegistry = { ...(await import("./registry")) };
+  mock.module("./registry", () => ({
+    ...realRegistry,
+    withSession: (_sessionId: string, operation: (session: unknown) => Promise<unknown>) =>
+      operation({ getEvents: async () => [] }),
+  }));
+
+  try {
+    await run();
+  } finally {
+    mock.module("./registry", () => realRegistry);
+  }
+}
+
+async function clearSnapshotCache(): Promise<void> {
+  // Retained entries are exempt from rotation, so release them before flushing.
+  await retainSessionSnapshots([]);
+
   const resetSessionIds = Array.from(
     { length: 10 },
     (_, index) => `snapshot-cache-test-reset-${index}`,

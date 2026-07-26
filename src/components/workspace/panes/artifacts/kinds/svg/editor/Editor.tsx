@@ -75,7 +75,6 @@ export function Editor({
   const effectiveTool = activeToolForGesture({
     activeTool,
     spacePressed,
-    readOnly,
   });
 
   const gesture = useGesture({

@@ -13,6 +13,7 @@ test("persists one complete settings document", async () => {
     defaultModel: { name: "gpt-5", reasoningEffort: "high" },
     terminalShell: "/bin/zsh",
     useWorktree: true,
+    pinnedSessionIds: ["session-a"],
   };
 
   expect(await settingsDatabase.get()).toEqual(DEFAULT_SETTINGS);
@@ -21,6 +22,7 @@ test("persists one complete settings document", async () => {
     await settingsDatabase.set({
       ...settings,
       defaultModel: { ...settings.defaultModel },
+      pinnedSessionIds: [...settings.pinnedSessionIds],
     }),
   ).toBe(false);
   expect(await settingsDatabase.get()).toEqual(settings);

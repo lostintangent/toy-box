@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
+import type { Settings } from "@/types";
 import {
   areSettingsEqual,
   isAccentColor,
@@ -11,17 +12,26 @@ import {
 
 describe("settings", () => {
   test("preserves valid settings", () => {
-    const settings = {
+    const settings: Settings = {
       accentColor: "#123abc",
       defaultModel: { name: "gpt-5", reasoningEffort: "high" },
       terminalShell: "/bin/zsh",
       useWorktree: true,
       autoFocusArtifacts: "sessions",
       showExternalSessions: false,
-    } as const;
+      pinnedSessionIds: ["session-a", "session-b"],
+    };
 
     expect(normalizeSettings(settings)).toEqual(settings);
     expect(settingsSchema.safeParse(settings).success).toBe(true);
+  });
+
+  test("canonicalizes pinned session IDs as a set", () => {
+    expect(
+      normalizeSettings({ pinnedSessionIds: ["session-b", "session-a", "session-b"] }),
+    ).toMatchObject({
+      pinnedSessionIds: ["session-a", "session-b"],
+    });
   });
 
   test("defaults invalid persisted fields independently", () => {
@@ -35,6 +45,7 @@ describe("settings", () => {
         useWorktree: "yes",
         autoFocusArtifacts: "occasionally",
         showExternalSessions: "sometimes",
+        pinnedSessionIds: [42],
       }),
     ).toEqual(defaults);
   });
@@ -54,15 +65,21 @@ describe("settings", () => {
       settingsUpdateSchema.safeParse({
         accentColor: "#FACC15",
         terminalShell: "/bin/fish",
+        pinnedSessionIds: ["session-a"],
       }).success,
     ).toBe(true);
     expect(settingsUpdateSchema.safeParse({ accentColor: "#fff" }).success).toBe(false);
+    expect(settingsUpdateSchema.safeParse({ pinnedSessionIds: [42] }).success).toBe(false);
     const jsonSchema = z.toJSONSchema(settingsUpdateSchema);
     expect(jsonSchema).toMatchObject({
       properties: {
         accentColor: {
           type: "string",
           pattern: "^#[0-9a-fA-F]{6}$",
+        },
+        pinnedSessionIds: {
+          type: "array",
+          items: { type: "string" },
         },
       },
     });
@@ -80,14 +97,22 @@ describe("settings", () => {
     const settings = {
       ...normalizeSettings({}),
       defaultModel: { name: "gpt-5", reasoningEffort: "high" },
+      pinnedSessionIds: ["session-a"],
     };
     expect(
       areSettingsEqual(settings, {
         ...settings,
         defaultModel: { ...settings.defaultModel },
+        pinnedSessionIds: ["session-a", "session-a"],
       }),
     ).toBe(true);
     expect(areSettingsEqual(settings, { ...settings, useWorktree: true })).toBe(false);
+    expect(
+      areSettingsEqual(settings, {
+        ...settings,
+        pinnedSessionIds: ["session-b"],
+      }),
+    ).toBe(false);
     expect(
       areSettingsEqual(settings, {
         ...settings,

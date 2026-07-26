@@ -226,11 +226,14 @@ export function resolveArtifactAutoFocus(
   seenPaneIds: ReadonlySet<string>,
   panes: WorkspacePane[],
   autoFocusArtifacts: SessionFeatureScope,
+  forceFocusPaneIds?: ReadonlySet<string>,
 ): ArtifactAutoFocusResolution {
   return {
     focusPane: isSingleSessionLayout(panes)
       ? panes
-          .filter((pane) => shouldAutoFocusArtifactPane(pane, autoFocusArtifacts))
+          .filter((pane) =>
+            shouldAutoFocusArtifactPane(pane, autoFocusArtifacts, forceFocusPaneIds),
+          )
           .find((pane) => !seenPaneIds.has(pane.id))
       : undefined,
     seenPaneIds: new Set(panes.map((pane) => pane.id)),
@@ -244,8 +247,11 @@ function isSingleSessionLayout(panes: WorkspacePane[]): boolean {
 function shouldAutoFocusArtifactPane(
   pane: WorkspacePane,
   autoFocusArtifacts: SessionFeatureScope,
+  forceFocusPaneIds?: ReadonlySet<string>,
 ): pane is ArtifactWorkspacePane {
   if (!isArtifactPane(pane)) return false;
+  // Force-focus overrides the setting — e.g. an artifact-first draft's own file.
+  if (forceFocusPaneIds?.has(pane.id)) return true;
   return matchesSessionFeatureScope(
     autoFocusArtifacts,
     getArtifactSessionType(pane.sourceSessionId),

@@ -97,6 +97,19 @@ describe("SDK session system message", () => {
     }
   });
 
+  test("makes an artifact-first draft's file the subject of its initial discussion", () => {
+    const content = buildSessionSystemMessage("standard-session", {
+      directory: DIRECTORY,
+      sessionType: "standard",
+      artifactPath: "diagram.svg",
+    }).content;
+
+    expect(content).toContain(
+      "The draft began with the artifact `diagram.svg`, which is the center of the user's initial discussion.",
+    );
+    expect(instructions("standard")).not.toContain("The draft began with the artifact");
+  });
+
   test("adds automation purpose and feedback policy only to automation sessions", () => {
     const content = instructions("automation");
 

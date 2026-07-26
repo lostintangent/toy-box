@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { readArtifact, writeArtifact } from "@/functions/artifacts";
 import { notifyAgent } from "@/functions/sessions";
@@ -10,8 +11,15 @@ import type { FileWatchEvent } from "@/types";
 const SAVE_DEBOUNCE_MS = 2_000;
 const SAVE_SETTLE_MS = 1_000;
 const ARTIFACT_EDIT_NOTIFICATION_DEBOUNCE_MS = 8_000;
+// While an artifact-first draft's workspace materializes, poll at a short fixed
+// interval rather than backing off — we are waiting for a resource to exist.
+const READ_RETRY_COUNT = 20;
+const READ_RETRY_DELAY_MS = 150;
 
 type ArtifactFlushOptions = { notifyAgent?: boolean };
+type ArtifactRead = Awaited<ReturnType<typeof readArtifact>>;
+
+const artifactKey = (sessionId: string, path: string) => ["artifact", sessionId, path] as const;
 
 export type Artifact = {
   /** Last known on-disk content; the renderer owns its editing buffer. */
@@ -35,25 +43,34 @@ export function useArtifact({
   path: string;
   mode: ArtifactPaneMode;
 }): Artifact {
+  const queryClient = useQueryClient();
   const scheduleAgentNotification = useArtifactEditNotification({
     enabled: mode === "shared",
     path,
     sessionId,
   });
 
-  const [content, setContent] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveQueue] = useState(() => new SerialTaskQueue());
 
-  // Discard reads that finish after a newer load or unmount.
-  const loadIdRef = useRef(0);
   const pendingContentRef = useRef("");
   const flushOptionsRef = useRef<ArtifactFlushOptions | undefined>(undefined);
   const lastWrittenTimestampRef = useRef<number | null>(null);
   const settleTask = useDebouncer(() => setIsSaving(false), { wait: SAVE_SETTLE_MS });
+
+  // The external on-disk read. Retries bridge the brief window where an
+  // artifact-first draft's pane is visible before its SDK workspace exists.
+  const read = useQuery({
+    queryKey: artifactKey(sessionId, path),
+    queryFn: (): Promise<ArtifactRead | null> => readArtifact({ data: { sessionId, path } }),
+    retry: READ_RETRY_COUNT,
+    retryDelay: READ_RETRY_DELAY_MS,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const content = read.data?.content ?? null;
 
   const saveTask = useDebouncer(
     () => {
@@ -95,53 +112,33 @@ export function useArtifact({
     return saveQueue.waitForPending();
   }
 
-  // The pane is keyed by session and path, so this effect owns one artifact's
-  // complete read/watch lifetime while mode and content updates preserve it.
+  // Watch the file once it exists, invalidating the read on external change.
+  // Own writes are suppressed by timestamp so a save never re-baselines the renderer.
   useEffect(() => {
-    let cancelled = false;
-    async function reload() {
-      const readId = ++loadIdRef.current;
-      const result = await readArtifact({ data: { sessionId, path } }).catch(() => null);
-      if (cancelled || loadIdRef.current !== readId) return;
-      if (!result) {
-        setContent(null);
-        setError("Unable to load this artifact.");
-        return;
-      }
-      setContent(result.content);
-      setRevision(result.timestamp);
-      setError(null);
-    }
-
-    void reload().finally(() => {
-      if (!cancelled) setIsLoading(false);
-    });
+    if (!read.isSuccess) return;
     const source = new EventSource(createArtifactRouteUrl("/api/watch", sessionId, path));
     source.onmessage = ({ data }) => {
       const event = JSON.parse(data) as FileWatchEvent;
       if (event.type === "deleted") {
-        setContent(null);
+        queryClient.setQueryData(artifactKey(sessionId, path), null);
         setError("This artifact was deleted.");
         return;
       }
-      // A watch event may beat its write response; one harmless reload is acceptable.
       if (event.timestamp === lastWrittenTimestampRef.current) return;
-      void reload();
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: artifactKey(sessionId, path) });
     };
     source.onerror = () => setError("Unable to watch this artifact.");
-    return () => {
-      cancelled = true;
-      source.close();
-    };
-  }, [path, sessionId]);
+    return () => source.close();
+  }, [sessionId, path, read.isSuccess, queryClient]);
 
   return {
     content,
-    revision,
+    revision: read.data?.timestamp ?? 0,
     isReady: content !== null,
-    isLoading,
+    isLoading: read.isPending,
     isSaving,
-    error,
+    error: error ?? (read.isError ? "Unable to load this artifact." : null),
     save,
     flush,
   };

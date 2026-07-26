@@ -63,6 +63,10 @@ const SvgArtifact = lazy(() =>
   import("./svg/SvgArtifact").then((module) => ({ default: module.SvgArtifact })),
 );
 
+const JsonArtifact = lazy(() =>
+  import("./json/JsonArtifact").then((module) => ({ default: module.JsonArtifact })),
+);
+
 const BUILTIN_ARTIFACT_KINDS: Record<string, ArtifactKind> = {
   markdown: {
     extensions: ["md", "markdown"],
@@ -79,6 +83,11 @@ const BUILTIN_ARTIFACT_KINDS: Record<string, ArtifactKind> = {
     extensions: ["svg"],
     Renderer: SvgArtifact,
     icon: PenTool,
+  },
+  json: {
+    extensions: ["json"],
+    Renderer: JsonArtifact,
+    icon: Braces,
   },
 };
 

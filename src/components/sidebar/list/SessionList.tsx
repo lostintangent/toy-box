@@ -1,8 +1,9 @@
 import { Fragment } from "react";
 import { useHydrated } from "@tanstack/react-router";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@/hooks/workspace/state";
 import { SessionListItem } from "./SessionListItem";
-import { groupSessionsByTime } from "./sessionGrouping";
+import { groupSessions } from "./sessionGrouping";
 import type { SessionMetadata } from "@/types";
 
 type SessionListProps = {
@@ -31,9 +32,24 @@ export function SessionList({
   draftSessions,
 }: SessionListProps) {
   const hydrated = useHydrated();
-  const sessionGroups = hydrated
-    ? groupSessionsByTime(sessions, new Date())
-    : [{ key: "sessions", sessions }];
+  const pinnedSessionIds = useWorkspaceSelector((workspace) => workspace.settings.pinnedSessionIds);
+  const updateSetting = useUpdateWorkspaceSetting();
+  const pinnedSessionIdSet = new Set(pinnedSessionIds);
+  const draftSessionIdSet = new Set(draftSessions.map((draft) => draft.sessionId));
+  const sessionGroups = groupSessions(
+    [...sessions, ...draftSessions],
+    pinnedSessionIds,
+    hydrated ? new Date() : undefined,
+  );
+
+  function handleSessionPinToggle(sessionId: string) {
+    updateSetting(
+      "pinnedSessionIds",
+      pinnedSessionIdSet.has(sessionId)
+        ? pinnedSessionIds.filter((pinnedSessionId) => pinnedSessionId !== sessionId)
+        : [...pinnedSessionIds, sessionId],
+    );
+  }
 
   if (isLoading) {
     return <SessionListSkeleton />;
@@ -49,18 +65,6 @@ export function SessionList({
 
   return (
     <ul className="flex flex-col gap-2">
-      {draftSessions.map((draftSession) => (
-        <li key={draftSession.sessionId}>
-          <SessionListItem
-            session={draftSession}
-            onSelect={onSessionSelect}
-            onDelete={() => onSessionDelete(draftSession.sessionId)}
-            isDeleting={deletingSessionId === draftSession.sessionId}
-            isActive={openSessionIds.includes(draftSession.sessionId)}
-            isDraft={true}
-          />
-        </li>
-      ))}
       {sessionGroups.map((group) => (
         <Fragment key={group.key}>
           {group.label && (
@@ -75,17 +79,23 @@ export function SessionList({
             </li>
           )}
           {group.sessions.map((session) => {
+            const isDraft = draftSessionIdSet.has(session.sessionId);
             const isActive = openSessionIds.includes(session.sessionId);
             return (
               <li key={session.sessionId}>
                 <SessionListItem
                   session={session}
                   onSelect={onSessionSelect}
-                  onRename={() => onSessionRename(session.sessionId)}
+                  onPinToggle={
+                    isDraft ? undefined : () => handleSessionPinToggle(session.sessionId)
+                  }
+                  onRename={isDraft ? undefined : () => onSessionRename(session.sessionId)}
                   onDelete={() => onSessionDelete(session.sessionId)}
                   isDeleting={deletingSessionId === session.sessionId}
                   isActive={isActive}
+                  isPinned={!isDraft && pinnedSessionIdSet.has(session.sessionId)}
                   isWorktree={worktreeSessionIds.includes(session.sessionId)}
+                  isDraft={isDraft}
                 />
               </li>
             );

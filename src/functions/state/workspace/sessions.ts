@@ -8,7 +8,7 @@ import {
 import type { DraftPrompt } from "@/types";
 import { sharedMap } from "../../runtime/processState";
 
-const SESSION_STATE_TTL_MS = 24 * 60 * 60 * 1000;
+const DRAFT_PROMPT_TTL_MS = 24 * 60 * 60 * 1000;
 const sessionStates = sharedMap<WorkspaceSessionState>("workspace-session-states");
 
 export function getSessionStates(now: number = Date.now()): Record<string, WorkspaceSessionState> {
@@ -37,13 +37,12 @@ export function getSessionState(
 }
 
 export function applySessionState(event: WorkspaceSessionEvent, now: number = Date.now()): boolean {
-  const sessionId = event.type === "session.upserted" ? event.session.sessionId : event.sessionId;
-  const current = getSessionState(sessionId, now);
+  const current = getSessionState(event.sessionId, now);
   const next = reduceWorkspaceSessionState(current, event);
   if (next === current) return false;
 
-  if (next) sessionStates.set(sessionId, next);
-  else sessionStates.delete(sessionId);
+  if (next) sessionStates.set(event.sessionId, next);
+  else sessionStates.delete(event.sessionId);
   return true;
 }
 
@@ -64,32 +63,15 @@ export function setSessionPrompt(
   return changed ? prompt : null;
 }
 
-export function isDraft(sessionId: string): boolean {
-  const status = getSessionState(sessionId)?.status;
-  return status === "draft" || status === "creating";
-}
-
 export function deleteSessionState(sessionId: string): boolean {
   return sessionStates.delete(sessionId);
-}
-
-export function sweepExpiredDrafts(now: number = Date.now()): string[] {
-  const expired: string[] = [];
-  for (const [sessionId, state] of sessionStates) {
-    if (state.status !== "draft") continue;
-    const updatedAt = state.prompt?.updatedAt ?? state.createdAt;
-    if (now - updatedAt < SESSION_STATE_TTL_MS) continue;
-    sessionStates.delete(sessionId);
-    expired.push(sessionId);
-  }
-  return expired;
 }
 
 function removeExpiredPrompt(
   state: WorkspaceSessionState,
   now: number,
 ): WorkspaceSessionState | undefined {
-  if (!state.prompt || now - state.prompt.updatedAt < SESSION_STATE_TTL_MS) return state;
+  if (!state.prompt || now - state.prompt.updatedAt < DRAFT_PROMPT_TTL_MS) return state;
   if (state.status === "idle") return undefined;
 
   const { prompt: _, ...withoutPrompt } = state;

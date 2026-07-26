@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import type { SessionMetadata } from "@/types";
 import { AutomationPanel } from "./automations/AutomationPanel";
 import { SettingsDialog } from "./shell/SettingsDialog";
-import { SidebarHeader } from "./shell/SidebarHeader";
+import { SidebarHeader, type SidebarCreateOptions } from "./shell/SidebarHeader";
 import { SidebarFooter } from "./shell/SidebarFooter";
 import { SessionList } from "./list/SessionList";
 
@@ -28,7 +28,7 @@ export type SidebarProps = {
   isAutomationsExpanded: boolean;
   onAutomationsExpandedChange: (expanded: boolean) => void;
 
-  onCreateSession: (addToWorkspace: boolean) => void;
+  onCreateSession: (options?: SidebarCreateOptions) => void;
   onToggleHyper: () => void;
   isHyperOpen: boolean;
   onOpenInbox: () => void;

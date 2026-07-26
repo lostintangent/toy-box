@@ -78,7 +78,7 @@ mock.module("@/functions/runtime/broadcast", () => ({
 }));
 mock.module("@/functions/state/workspace", () => ({
   ...realWorkspaceStateExports,
-  setSessionStatus: (sessionId: string, status: "creating" | "running" | "idle" | "unread") => {
+  setSessionStatus: (sessionId: string, status: "running" | "idle" | "unread") => {
     sideEffects.push(`${status}:${sessionId}`);
     emitMockWorkspaceEvent({ type: `session.${status}`, sessionId });
   },

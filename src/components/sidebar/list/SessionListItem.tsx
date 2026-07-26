@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Pin, PinOff, Trash2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,10 +19,12 @@ import { SidebarListItem } from "../shell/SidebarListItem";
 type SessionListItemProps = {
   session: SessionMetadata;
   onSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
+  onPinToggle?: () => void;
   onRename?: () => void;
   onDelete: () => void;
   isDeleting: boolean;
   isActive?: boolean;
+  isPinned?: boolean;
   isWorktree?: boolean;
   isDraft?: boolean;
 };
@@ -30,10 +32,12 @@ type SessionListItemProps = {
 export function SessionListItem({
   session,
   onSelect,
+  onPinToggle,
   onRename,
   onDelete,
   isDeleting,
   isActive = false,
+  isPinned = false,
   isWorktree = false,
   isDraft = false,
 }: SessionListItemProps) {
@@ -53,6 +57,9 @@ export function SessionListItem({
       <SidebarListItem
         sessionId={session.sessionId}
         title={sessionLabel}
+        titlePrefix={
+          isPinned ? <Pin className="size-3.5 shrink-0 text-user-accent" aria-hidden /> : undefined
+        }
         time={!isDraft && <RelativeTime date={session.modifiedTime} />}
         badges={
           showBadges && (
@@ -66,6 +73,12 @@ export function SessionListItem({
         }
         menuItems={
           <>
+            {onPinToggle && (
+              <DropdownMenuItem onSelect={onPinToggle}>
+                {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                {isPinned ? "Unpin session" : "Pin session"}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem disabled={!onRename} onSelect={onRename}>
               <Pencil className="h-3.5 w-3.5" />
               Rename session
@@ -88,7 +101,9 @@ export function SessionListItem({
         isActive={isActive}
         previewDisabled={isDraft}
         onClick={handleClick}
-        titleClassName={session.summary ? "font-medium" : "italic text-muted-foreground"}
+        titleClassName={
+          isDraft || !session.summary ? "italic text-muted-foreground" : "font-medium"
+        }
       />
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

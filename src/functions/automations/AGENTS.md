@@ -34,7 +34,7 @@ The session runtime owns every execution transition: the first turn publishes ru
 
 Automation definitions are part of the shared workspace query projection alongside Inbox entries and other managed-session state. `AutomationPanel` subscribes to that feature projection and composes `useAutomationActions`, which owns CRUD and run mutations plus their immediate client cache effects. `useWorkspaceSync` applies server events and refetches the complete workspace snapshot whenever the shared update stream opens.
 
-A user-triggered run opens the stable automation session ID. A genuinely new run seeds an empty session detail so the prior transcript cannot flash while the reset stream connects; server runtime events remain the authority for its creating and running state. Automation list items derive running and unread directly from workspace session state rather than maintaining a second run-status model.
+A user-triggered run opens the stable automation session ID. A genuinely new run seeds an empty session detail so the prior transcript cannot flash while the reset stream connects; server runtime events remain the authority for its running state. Automation list items derive running and unread directly from workspace session state rather than maintaining a second run-status model.
 
 Automation events synchronize durable definition and schedule metadata through the workspace event algebra. Automation sessions are excluded from the standard session list because the automation panel is their managed presentation. They remain ordinary sessions to the runtime and can be opened, streamed, and inspected through the same session UI.
 

@@ -56,7 +56,6 @@ type SessionComposerProps = {
   value: string;
   onValueChange: (value: string) => void;
   onSubmit: SessionComposerSubmit;
-  canSubmit?: boolean;
   isStreaming?: boolean;
   onStop?: () => void;
   models: ModelInfo[];
@@ -142,7 +141,6 @@ export function SessionComposer({
   onValueChange,
   onSubmit,
   onRun,
-  canSubmit = true,
   isStreaming = false,
   onStop,
   models,
@@ -239,7 +237,7 @@ export function SessionComposer({
     }
   };
 
-  const isSubmitDisabled = !canSubmit || (!value.trim() && attachments.length === 0);
+  const isSubmitDisabled = !value.trim() && attachments.length === 0;
   const submitButtonVariant = isSubmitDisabled ? "ghost" : "accent";
 
   const submitWith = (submitter: SessionComposerSubmit | undefined) => {
