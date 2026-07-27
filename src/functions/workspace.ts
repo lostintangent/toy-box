@@ -9,7 +9,7 @@ import {
   deleteInboxEntry as deleteInboxEntryState,
   getEnvironment,
   getWorkspaceState as readWorkspaceState,
-  loadCustomArtifacts,
+  loadCustomEditors,
 } from "./state/workspace";
 import { AutomationDatabase } from "./automations/database";
 import { getAppDatabase } from "./state/database";
@@ -23,14 +23,14 @@ import type { Settings } from "@/types";
 
 export const getWorkspaceState = createServerFn({ method: "GET" }).handler(
   async (): Promise<WorkspaceState> => {
-    const [customArtifacts, database] = await Promise.all([
-      loadCustomArtifacts(),
+    const [customEditors, database] = await Promise.all([
+      loadCustomEditors(),
       getAppDatabase({ createIfMissing: false }),
     ]);
     const automations = database ? await new AutomationDatabase(database).list() : [];
     return readWorkspaceState({
       automations,
-      customArtifacts,
+      customEditors,
       environment: getEnvironment(),
     });
   },

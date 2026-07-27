@@ -1074,6 +1074,7 @@ Evaluate the overall design decisions:
     "name": "gpt-5.5",
     "reasoningEffort": "xhigh",
   },
+  "openedFiles": [],
   "pendingOptimisticUserMessage": undefined,
   "pendingToolCalls": [],
   "queuedMessages": [],

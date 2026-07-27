@@ -1289,10 +1289,39 @@ describe("projector", () => {
       ]);
     });
 
+    test("open_file and close_file project durable file visibility events", () => {
+      const context = createStreamingContext();
+      const file = { type: "machine", path: "/repo/src/foo.ts" } as const;
+
+      expect(
+        projectSdkEvent(toolExecutionStart("open_file", "call-open", { path: file.path }), context),
+      ).toEqual([]);
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("call-open", {
+            success: true,
+            resultContent: JSON.stringify(file),
+          }),
+          context,
+        ),
+      ).toEqual([{ type: "file_opened", file }]);
+
+      projectSdkEvent(toolExecutionStart("close_file", "call-close", { path: file.path }), context);
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("call-close", {
+            success: true,
+            resultContent: JSON.stringify(file),
+          }),
+          context,
+        ),
+      ).toEqual([{ type: "file_closed", file }]);
+    });
+
     test("decodes notification user message prompts at the SDK boundary", () => {
       const content = encodeSdkAgentNotification({
-        type: "artifact_edited",
-        path: "plan.md",
+        type: "file_edited",
+        file: { type: "session", sessionId: "session-1", path: "plan.md" },
       });
 
       expect(
@@ -1310,7 +1339,10 @@ describe("projector", () => {
       ).toEqual([
         {
           type: "agent_notification",
-          notification: { type: "artifact_edited", path: "plan.md" },
+          notification: {
+            type: "file_edited",
+            file: { type: "session", sessionId: "session-1", path: "plan.md" },
+          },
           timestamp: "2026-01-01T00:00:00.000Z",
         },
       ]);

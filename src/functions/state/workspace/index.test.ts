@@ -6,6 +6,7 @@ import { deleteHyperState } from "./hyperSessions";
 import { deleteSessionState, getSessionState } from "./sessions";
 import type { Automation, WorkspaceEvent } from "@/types";
 import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
+import { sessionFile } from "@/lib/files/workspaceFile";
 
 let currentDb: Database | undefined;
 
@@ -24,11 +25,11 @@ const {
   createPendingInboxEntry,
   deleteInboxEntry,
   deleteSessionWorkspaceState,
-  finishArtifactWorker,
+  finishWorker,
   getWorkspaceState,
   sendToInbox,
   setSessionStatus,
-  startArtifactWorker,
+  startWorker,
   unpinSession,
 } = await import(".");
 const { persistDraftSession } = await import("../session/drafts");
@@ -59,7 +60,7 @@ function cleanup(sessionId: string): void {
 function snapshot(automations: Automation[] = []) {
   return getWorkspaceState({
     automations,
-    customArtifacts: [],
+    customEditors: [],
     environment: { terminalWsPort: DEFAULT_TERMINAL_WS_PORT, voiceEnabled: false },
   });
 }
@@ -197,37 +198,36 @@ describe("workspace state", () => {
     expect(getSessionState(sessionId)).toBeUndefined();
   });
 
-  test("snapshots and broadcasts artifact worker links", async () => {
+  test("snapshots and broadcasts worker links", async () => {
     const worker = {
       sessionId: `artifact-worker-${crypto.randomUUID()}`,
-      sourceSessionId: `artifact-source-${crypto.randomUUID()}`,
-      path: "plan.md",
+      file: sessionFile(`artifact-source-${crypto.randomUUID()}`, "plan.md"),
       name: "Respond to comment",
       metadata: { threadId: "thread-a" },
     };
-    onTestFinished(() => finishArtifactWorker(worker.sessionId));
+    onTestFinished(() => finishWorker(worker.sessionId));
     const events: WorkspaceEvent[] = [];
     const unsubscribe = subscribeWorkspaceEvents((event) => {
       if (
-        (event.type === "artifact.worker.started" && event.worker.sessionId === worker.sessionId) ||
-        (event.type === "artifact.worker.finished" && event.sessionId === worker.sessionId)
+        (event.type === "worker.started" && event.worker.sessionId === worker.sessionId) ||
+        (event.type === "worker.finished" && event.sessionId === worker.sessionId)
       ) {
         events.push(event);
       }
     });
     onTestFinished(unsubscribe);
 
-    startArtifactWorker(worker);
-    startArtifactWorker({ ...worker, metadata: { ignored: true } });
-    expect((await snapshot()).artifactWorkers).toEqual([worker]);
+    startWorker(worker);
+    startWorker({ ...worker, metadata: { ignored: true } });
+    expect((await snapshot()).workers).toEqual([worker]);
 
-    finishArtifactWorker(worker.sessionId);
-    finishArtifactWorker(worker.sessionId);
-    expect((await snapshot()).artifactWorkers).toEqual([]);
+    finishWorker(worker.sessionId);
+    finishWorker(worker.sessionId);
+    expect((await snapshot()).workers).toEqual([]);
     expect(events).toEqual([
-      { type: "artifact.worker.started", worker },
+      { type: "worker.started", worker },
       {
-        type: "artifact.worker.finished",
+        type: "worker.finished",
         sessionId: worker.sessionId,
       },
     ]);
@@ -246,10 +246,7 @@ describe("workspace state", () => {
     onTestFinished(unsubscribe);
 
     const pending = await createPendingInboxEntry(sessionId);
-    const entry = await sendToInbox(sessionId, message, {
-      filename: "report.md",
-      content: "# Report",
-    });
+    const entry = await sendToInbox(sessionId, message, "report.md");
     onTestFinished(() => deleteInboxEntryState(entry.id));
     await deleteInboxEntry(entry.id);
     await deleteInboxEntry(entry.id);
@@ -267,10 +264,7 @@ describe("workspace state", () => {
     await openWorkspaceTestDatabase();
     const sessionId = `toy-box-${crypto.randomUUID()}`;
     await createPendingInboxEntry(sessionId);
-    const entry = await sendToInbox(sessionId, "Report ready", {
-      filename: "report.md",
-      content: "# Report",
-    });
+    const entry = await sendToInbox(sessionId, "Report ready", "report.md");
     onTestFinished(() => deleteInboxEntryState(entry.id));
 
     deleteSessionWorkspaceState(sessionId);

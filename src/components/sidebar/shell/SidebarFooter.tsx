@@ -1,4 +1,4 @@
-import { Loader2, MessageCirclePlus, Settings, SquareTerminal } from "lucide-react";
+import { FolderOpen, Loader2, MessageCirclePlus, Settings, SquareTerminal } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/toggle";
@@ -7,6 +7,7 @@ import { useWorkspaceSelector, useWorkspaceSessionRunning } from "@/hooks/worksp
 
 export function SidebarFooter({
   onOpenSettings,
+  onBrowseFiles,
   onToggleHyper,
   isHyperOpen,
   onOpenInbox,
@@ -15,6 +16,7 @@ export function SidebarFooter({
   isTerminalOpen,
 }: {
   onOpenSettings: () => void;
+  onBrowseFiles: () => void;
   onToggleHyper: () => void;
   isHyperOpen: boolean;
   onOpenInbox: () => void;
@@ -93,6 +95,20 @@ export function SidebarFooter({
             </Button>
           </TooltipTrigger>
           <TooltipContent sideOffset={6}>Toggle hyper session</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              aria-label="Browse files"
+              onClick={onBrowseFiles}
+            >
+              <FolderOpen className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={6}>Browse files</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>

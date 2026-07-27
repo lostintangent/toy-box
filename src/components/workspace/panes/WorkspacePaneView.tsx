@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { WorkspacePane } from "@/lib/workspace/panes";
 import { InboxPane } from "./inbox/InboxPane";
 import { CanvasPane } from "./CanvasPane";
-import { ArtifactPane } from "./artifacts/ArtifactPane";
+import { EditorPane } from "./editor/EditorPane";
 import { SessionPane } from "./session/SessionPane";
 import type { PaneProps } from "./types";
 import { PaneSlotsProvider, type PaneSlots } from "./PaneSlots";
@@ -31,7 +31,7 @@ export function WorkspacePaneView({
   } else if (pane.kind === "canvas") {
     content = <CanvasPane canvas={pane.canvas} />;
   } else {
-    content = <ArtifactPane pane={pane} variant={variant} />;
+    content = <EditorPane pane={pane} variant={variant} />;
   }
 
   return (

@@ -61,7 +61,7 @@ describe("SDK session system message", () => {
     ] satisfies SessionType[]) {
       const content = instructions(sessionType);
       expect(content).toContain("<toybox-notification>");
-      expect(content).toContain("artifact_edited");
+      expect(content).toContain("file_edited");
     }
   });
 
@@ -128,12 +128,13 @@ describe("SDK session system message", () => {
     expect(content).toContain("Only include an artifact when the request requires it");
     expect(content).toContain("do not call `send_to_inbox` again");
     expect(content).toContain("do not duplicate it with an inbox result");
-    expect(content).toContain("This session's ID is: inbox-session");
     expect(content).toContain("its session ID is also its inbox entry ID");
-    expect(content).toContain("~/.toy-box/inbox/inbox-session/<filename>");
-    expect(content).toContain("notifications are relative to this inbox folder");
-    expect(content).not.toContain("state folder");
-    expect(content).not.toContain("files folder");
-    expect(content).toContain("artifact_edited");
+    // Inbox artifacts are ordinary session files now, so inbox sessions get the common files instruction.
+    expect(content).toContain(
+      "This session's files folder is: ~/.copilot/session-state/inbox-session/files",
+    );
+    expect(content).toContain("write it under the files folder");
+    expect(content).not.toContain("~/.toy-box/inbox");
+    expect(content).toContain("file_edited");
   });
 });

@@ -2,14 +2,15 @@ import { describe, expect, onTestFinished, test } from "bun:test";
 import { useSelector } from "@tanstack/react-store";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
-import { INBOX_PANE, createArtifactPane } from "@/lib/workspace/panes";
-import { createLinkedPanesStore, updateArtifactPaneMode } from "./linkedPanes";
+import { INBOX_PANE, createEditorPane } from "@/lib/workspace/panes";
+import { sessionFile } from "@/lib/files/workspaceFile";
+import { createLinkedPanesStore, updateEditorPaneMode } from "./linkedPanes";
 
 describe("linked pane store", () => {
   test("preserves one publisher's selection when another publisher changes", () => {
     const store = createLinkedPanesStore();
-    const firstPane = createArtifactPane("session-a", "first.md", "edit");
-    const secondPane = createArtifactPane("session-b", "second.md", "edit");
+    const firstPane = createEditorPane(sessionFile("session-a", "first.md"), "edit");
+    const secondPane = createEditorPane(sessionFile("session-b", "second.md"), "edit");
 
     store.actions.publishLinkedPanes("publisher-a", [firstPane]);
     const firstSelection = store.get()["publisher-a"];
@@ -22,7 +23,7 @@ describe("linked pane store", () => {
 
   test("does not notify for a semantically unchanged publication", () => {
     const store = createLinkedPanesStore();
-    const pane = createArtifactPane("session-a", "result.md", "edit");
+    const pane = createEditorPane(sessionFile("session-a", "result.md"), "edit");
     store.actions.publishLinkedPanes("publisher-a", [pane]);
     const state = store.get();
     let updates = 0;
@@ -51,7 +52,7 @@ describe("linked pane store", () => {
 
   test("removes an explicitly cleared publisher", () => {
     const store = createLinkedPanesStore();
-    const pane = createArtifactPane("session-a", "result.md", "edit");
+    const pane = createEditorPane(sessionFile("session-a", "result.md"), "edit");
     store.actions.publishLinkedPanes("publisher-a", [pane]);
 
     store.actions.clearLinkedPanes("publisher-a");
@@ -62,18 +63,18 @@ describe("linked pane store", () => {
 
 describe("linked pane layout", () => {
   test("updates an artifact published by a pane other than its source session", () => {
-    const artifactPane = createArtifactPane("inbox-1", "result.md", "edit");
+    const artifactPane = createEditorPane(sessionFile("inbox-1", "result.md"), "edit");
     const current = { [INBOX_PANE.id]: [artifactPane] };
 
-    expect(updateArtifactPaneMode(current, artifactPane, "shared")).toEqual({
+    expect(updateEditorPaneMode(current, artifactPane, "shared")).toEqual({
       [INBOX_PANE.id]: [{ ...artifactPane, mode: "shared" }],
     });
   });
 
   test("preserves identity when the requested mode is already active", () => {
-    const artifactPane = createArtifactPane("inbox-1", "result.md", "edit");
+    const artifactPane = createEditorPane(sessionFile("inbox-1", "result.md"), "edit");
     const current = { [INBOX_PANE.id]: [artifactPane] };
 
-    expect(updateArtifactPaneMode(current, artifactPane, "edit")).toBe(current);
+    expect(updateEditorPaneMode(current, artifactPane, "edit")).toBe(current);
   });
 });

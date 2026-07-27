@@ -1,9 +1,20 @@
-import type { SessionCanvas, SessionFeatureScope, SessionFeatureSubject } from "@/types";
+import type {
+  SessionCanvas,
+  SessionFeatureScope,
+  SessionFeatureSubject,
+  WorkspaceFile,
+} from "@/types";
 import { isAutomationId } from "@/lib/automation/id";
-import { artifactName } from "@/lib/session/artifacts/display";
+import {
+  machineFile,
+  ownerSessionId,
+  sessionFile,
+  workspaceFileId,
+} from "@/lib/files/workspaceFile";
+import { fileName } from "@/lib/files/display";
 import { matchesSessionFeatureScope } from "@/lib/workspace/config/settings";
 
-export type ArtifactPaneMode = "read" | "edit" | "shared";
+export type EditorPaneMode = "read" | "edit" | "shared";
 
 export const INBOX_PANE = {
   kind: "inbox",
@@ -21,7 +32,7 @@ export type WorkspacePane =
       sessionId: string;
       isLinkedOnly: boolean;
     }
-  | ArtifactWorkspacePane
+  | EditorWorkspacePane
   | {
       kind: "canvas";
       id: string;
@@ -29,20 +40,19 @@ export type WorkspacePane =
       canvas: SessionCanvas;
     };
 
-export type ArtifactWorkspacePane = {
-  kind: "artifact";
+export type EditorWorkspacePane = {
+  kind: "editor";
   id: string;
-  sourceSessionId: string;
-  path: string;
+  file: WorkspaceFile;
   title: string;
-  mode: ArtifactPaneMode;
+  mode: EditorPaneMode;
 };
 
 /** The browser-local pane graph, keyed by the pane that published each edge. */
 export type LinkedPanesByPublisher = Readonly<Record<string, readonly WorkspacePane[]>>;
 
 // Session-backed pane ids are `type:sourceSessionId:naturalKey`, while the one
-// Inbox pane uses `inbox`. Artifact identity includes its path; canvas identity
+// Inbox pane uses `inbox`. Editor pane identity includes its file; canvas identity
 // includes its revision so revision bumps remount the surface. These ids are
 // also publisher keys for the browser-local pane graph.
 
@@ -50,8 +60,8 @@ export function createSessionPaneId(sessionId: string): string {
   return `session:${sessionId}`;
 }
 
-export function createArtifactPaneId(sourceSessionId: string, path: string): string {
-  return `artifact:${sourceSessionId}:${path}`;
+export function createEditorPaneId(file: WorkspaceFile): string {
+  return `editor:${workspaceFileId(file)}`;
 }
 
 export function createCanvasPaneId(sourceSessionId: string, canvas: SessionCanvas): string {
@@ -76,17 +86,15 @@ export function createLinkedSessionPane(
   return createSessionPane(sessionId, true);
 }
 
-export function createArtifactPane(
-  sourceSessionId: string,
-  path: string,
-  mode = getDefaultArtifactPaneMode(sourceSessionId),
-): ArtifactWorkspacePane {
+export function createEditorPane(
+  file: WorkspaceFile,
+  mode = getDefaultEditorPaneMode(file),
+): EditorWorkspacePane {
   return {
-    kind: "artifact",
-    id: createArtifactPaneId(sourceSessionId, path),
-    sourceSessionId,
-    path,
-    title: artifactName(path),
+    kind: "editor",
+    id: createEditorPaneId(file),
+    file,
+    title: fileName(file.path),
     mode,
   };
 }
@@ -103,22 +111,35 @@ export function createLinkedCanvasPane(
   };
 }
 
-export function isArtifactPane(pane: WorkspacePane): pane is ArtifactWorkspacePane {
-  return pane.kind === "artifact";
+export function isEditorPane(pane: WorkspacePane): pane is EditorWorkspacePane {
+  return pane.kind === "editor";
 }
 
 /** The session a pane belongs to — a session pane is its own source; canvas and
- *  artifact panes carry the id of the session that produced them, while Inbox
+ *  editor panes carry the id of the session that produced them, while Inbox
  *  has no source session. */
 export function paneSourceSessionId(pane: WorkspacePane): string | undefined {
-  if (pane.kind === "inbox") return undefined;
-  return pane.kind === "session" ? pane.sessionId : pane.sourceSessionId;
+  switch (pane.kind) {
+    case "inbox":
+      return undefined;
+    case "session":
+      return pane.sessionId;
+    case "editor":
+      return ownerSessionId(pane.file);
+    case "canvas":
+      return pane.sourceSessionId;
+  }
 }
 
-export function deriveWorkspaceRootPanes(selectedSessionIds: string[]): WorkspacePane[] {
-  return selectedSessionIds.length > 0
-    ? selectedSessionIds.map((sessionId) => createSessionPane(sessionId, false))
-    : [INBOX_PANE];
+export function deriveWorkspaceRootPanes(
+  selectedSessionIds: string[],
+  openFilePaths: readonly string[] = [],
+): WorkspacePane[] {
+  const roots: WorkspacePane[] = [
+    ...selectedSessionIds.map((sessionId) => createSessionPane(sessionId, false)),
+    ...openFilePaths.map((path) => createEditorPane(machineFile(path))),
+  ];
+  return roots.length > 0 ? roots : [INBOX_PANE];
 }
 
 export function createLinkedPanes(
@@ -126,21 +147,21 @@ export function createLinkedPanes(
   linkedSessionIds: readonly string[],
   canvases: readonly SessionCanvas[],
   artifacts: readonly string[] = [],
+  openedFiles: readonly WorkspaceFile[] = [],
   previousPanes: readonly WorkspacePane[] = [],
 ): WorkspacePane[] {
-  const previousArtifacts = new Map(
-    previousPanes.filter(isArtifactPane).map((pane) => [pane.id, pane.mode] as const),
+  const previousModes = new Map(
+    previousPanes.filter(isEditorPane).map((pane) => [pane.id, pane.mode] as const),
   );
+  const linkFile = (file: WorkspaceFile) => {
+    const pane = createEditorPane(file);
+    return { ...pane, mode: previousModes.get(pane.id) ?? pane.mode };
+  };
 
   return [
     ...linkedSessionIds.map(createLinkedSessionPane),
-    ...artifacts.map((path) => {
-      const pane = createArtifactPane(sourceSessionId, path);
-      return {
-        ...pane,
-        mode: previousArtifacts.get(pane.id) ?? pane.mode,
-      };
-    }),
+    ...artifacts.map((path) => linkFile(sessionFile(sourceSessionId, path))),
+    ...openedFiles.map(linkFile),
     ...canvases.map((canvas) => createLinkedCanvasPane(sourceSessionId, canvas)),
   ];
 }
@@ -163,7 +184,7 @@ export function deriveVisibleWorkspacePanes({
 
   return [
     ...rootPanes,
-    ...linkedPanes.filter((pane) => pane.kind === "artifact"),
+    ...linkedPanes.filter((pane) => pane.kind === "editor"),
     ...linkedPanes.filter((pane) => pane.kind === "canvas"),
     ...linkedPanes.filter((pane) => pane.kind === "session"),
   ].slice(0, maxVisible);
@@ -203,14 +224,14 @@ function deriveReachablePanes(
   return reachablePanes;
 }
 
-type ArtifactAutoFocusResolution = {
-  focusPane: ArtifactWorkspacePane | undefined;
+type EditorAutoFocusResolution = {
+  focusPane: EditorWorkspacePane | undefined;
   seenPaneIds: ReadonlySet<string>;
 };
 
 /**
  * Eligible artifacts are artifact-first: their artifact is the primary surface
- * and the transcript is secondary, so an eligible artifact pane should take
+ * and the transcript is secondary, so an eligible editor pane should take
  * focus when it appears (maximized on desktop, paged-to on mobile). Focus is
  * only claimed in single-session layouts, so an artifact never takes over a
  * multi-session workspace.
@@ -222,18 +243,16 @@ type ArtifactAutoFocusResolution = {
  * layout gate suppresses focus, so a later layout change never retroactively
  * focuses an old pane.
  */
-export function resolveArtifactAutoFocus(
+export function resolveEditorAutoFocus(
   seenPaneIds: ReadonlySet<string>,
   panes: WorkspacePane[],
   autoFocusArtifacts: SessionFeatureScope,
   forceFocusPaneIds?: ReadonlySet<string>,
-): ArtifactAutoFocusResolution {
+): EditorAutoFocusResolution {
   return {
     focusPane: isSingleSessionLayout(panes)
       ? panes
-          .filter((pane) =>
-            shouldAutoFocusArtifactPane(pane, autoFocusArtifacts, forceFocusPaneIds),
-          )
+          .filter((pane) => shouldAutoFocusEditorPane(pane, autoFocusArtifacts, forceFocusPaneIds))
           .find((pane) => !seenPaneIds.has(pane.id))
       : undefined,
     seenPaneIds: new Set(panes.map((pane) => pane.id)),
@@ -244,17 +263,18 @@ function isSingleSessionLayout(panes: WorkspacePane[]): boolean {
   return panes.filter((pane) => pane.kind === "session" && !pane.isLinkedOnly).length === 1;
 }
 
-function shouldAutoFocusArtifactPane(
+function shouldAutoFocusEditorPane(
   pane: WorkspacePane,
   autoFocusArtifacts: SessionFeatureScope,
   forceFocusPaneIds?: ReadonlySet<string>,
-): pane is ArtifactWorkspacePane {
-  if (!isArtifactPane(pane)) return false;
+): pane is EditorWorkspacePane {
+  if (!isEditorPane(pane)) return false;
   // Force-focus overrides the setting — e.g. an artifact-first draft's own file.
   if (forceFocusPaneIds?.has(pane.id)) return true;
-  return matchesSessionFeatureScope(
-    autoFocusArtifacts,
-    getArtifactSessionType(pane.sourceSessionId),
+  const owner = ownerSessionId(pane.file);
+  return (
+    owner !== undefined &&
+    matchesSessionFeatureScope(autoFocusArtifacts, getArtifactSessionType(owner))
   );
 }
 
@@ -262,6 +282,7 @@ function getArtifactSessionType(sourceSessionId: string): SessionFeatureSubject 
   return isAutomationId(sourceSessionId) ? "automation" : "session";
 }
 
-function getDefaultArtifactPaneMode(sourceSessionId: string): ArtifactPaneMode {
-  return isAutomationId(sourceSessionId) ? "read" : "edit";
+function getDefaultEditorPaneMode(file: WorkspaceFile): EditorPaneMode {
+  const owner = ownerSessionId(file);
+  return owner !== undefined && isAutomationId(owner) ? "read" : "edit";
 }

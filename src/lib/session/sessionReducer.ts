@@ -29,6 +29,7 @@
 // when they publish state to React without obscuring what changed.
 
 import { notificationCoalesceKey } from "@/lib/session/agentNotifications";
+import { workspaceFileId } from "@/lib/files/workspaceFile";
 import type {
   Message,
   ModelConfiguration,
@@ -41,6 +42,7 @@ import type {
   TodoItem,
   TodoItemPatch,
   ToolCall,
+  WorkspaceFile,
 } from "@/types";
 
 export type Session = {
@@ -51,6 +53,7 @@ export type Session = {
   linkedSessionIds: string[];
   canvases?: SessionCanvas[];
   artifacts: string[];
+  openedFiles: WorkspaceFile[];
   status: SessionStatus;
   reasoningContent: string;
   model?: ModelConfiguration;
@@ -76,6 +79,7 @@ export function createInitialSession(initial: Partial<Session> = {}): Session {
     linkedSessionIds: initial.linkedSessionIds ? [...initial.linkedSessionIds] : [],
     ...(initial.canvases ? { canvases: initial.canvases.map((canvas) => ({ ...canvas })) } : {}),
     artifacts: initial.artifacts ? [...initial.artifacts] : [],
+    openedFiles: initial.openedFiles ? [...initial.openedFiles] : [],
     status: initial.status ?? "idle",
     reasoningContent: initial.reasoningContent ?? "",
     model: initial.model,
@@ -101,6 +105,7 @@ export function toSessionSnapshot(
     linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
     canvases: state.canvases && state.canvases.length > 0 ? state.canvases : undefined,
     artifacts: state.artifacts.length > 0 ? state.artifacts : undefined,
+    openedFiles: state.openedFiles.length > 0 ? state.openedFiles : undefined,
     lastSeenEventId: state.lastSeenEventId,
     status: state.status,
     reasoningContent: state.reasoningContent,
@@ -386,6 +391,16 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       return;
     }
 
+    case "file_opened": {
+      openFile(state, event.file);
+      return;
+    }
+
+    case "file_closed": {
+      closeFile(state, event.file);
+      return;
+    }
+
     // ── Model ─────────────────────────────────────────────────────────
 
     case "model_changed":
@@ -505,6 +520,19 @@ function applyArtifactPatches(state: Session, patches: SessionArtifactPatch[]): 
 
     upsertArtifact(state, patch.path);
   }
+}
+
+function openFile(state: Session, file: WorkspaceFile): void {
+  const id = workspaceFileId(file);
+  if (state.openedFiles.some((opened) => workspaceFileId(opened) === id)) return;
+  state.openedFiles = [...state.openedFiles, file];
+}
+
+function closeFile(state: Session, file: WorkspaceFile): void {
+  const id = workspaceFileId(file);
+  const openedFiles = state.openedFiles.filter((opened) => workspaceFileId(opened) !== id);
+  if (openedFiles.length === state.openedFiles.length) return;
+  state.openedFiles = openedFiles;
 }
 
 // ============================================================================

@@ -5,15 +5,16 @@
 
 import { z } from "zod";
 import { getPathBasename } from "@/lib/paths";
+import { workspaceFileId, workspaceFileSchema } from "@/lib/files/workspaceFile";
 import type { AgentNotification } from "@/types";
 
 const REGISTRY: NotificationRegistry = {
-  artifact_edited: {
-    schema: z.object({ type: z.literal("artifact_edited"), path: z.string().min(1) }),
+  file_edited: {
+    schema: z.object({ type: z.literal("file_edited"), file: workspaceFileSchema }),
     instruction:
-      "The user edited the artifact at the given `path`. Review its latest contents and respond only if a follow-up would help.",
-    label: (notification) => `Edited artifact (${getPathBasename(notification.path)})`,
-    coalesceKey: (notification) => `artifact_edited:${notification.path}`,
+      "The user edited a file open in Toy Box. A `session` file's `path` is relative to that session's files folder (usually your own); a `machine` file's `path` is an absolute host path. Review its latest contents and respond only if a follow-up would help.",
+    label: (notification) => `Edited ${getPathBasename(notification.file.path)}`,
+    coalesceKey: (notification) => `file_edited:${workspaceFileId(notification.file)}`,
   },
 };
 

@@ -1,7 +1,7 @@
 import type {
   Automation,
-  ArtifactWorker,
-  CustomArtifactKind,
+  Worker,
+  CustomEditorKind,
   DraftPrompt,
   InboxEntry,
   Settings,
@@ -9,6 +9,7 @@ import type {
 } from "@/types";
 import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 import { areSettingsEqual, DEFAULT_SETTINGS } from "@/lib/workspace/config/settings";
+import { isWorkerOwnedBySession } from "@/lib/files/workspaceFile";
 
 /** The complete shared workspace projection assembled by the server and reduced by clients. */
 export type WorkspaceState = {
@@ -17,8 +18,8 @@ export type WorkspaceState = {
   hyperSessionIds: string[];
   automations: Automation[];
   inboxEntries: InboxEntry[];
-  artifactWorkers: ArtifactWorker[];
-  customArtifacts: CustomArtifactKind[];
+  workers: Worker[];
+  customEditors: CustomEditorKind[];
   environment: WorkspaceEnvironment;
 };
 
@@ -43,8 +44,8 @@ export function createEmptyWorkspaceState(): WorkspaceState {
     hyperSessionIds: [],
     automations: [],
     inboxEntries: [],
-    artifactWorkers: [],
-    customArtifacts: [],
+    workers: [],
+    customEditors: [],
     environment: { terminalWsPort: DEFAULT_TERMINAL_WS_PORT, voiceEnabled: false },
   };
 }
@@ -62,7 +63,7 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
     case "session.deleted": {
       const next = reduceSessionInWorkspace(state, event.sessionId, event);
       const withoutHyper = setHyperSessionMembership(next, event.sessionId, false);
-      return removeArtifactWorkersForSession(withoutHyper, event.sessionId);
+      return removeWorkersForSession(withoutHyper, event.sessionId);
     }
     case "session.hyper.promoted":
       return setHyperSessionMembership(state, event.sessionId, false);
@@ -78,12 +79,12 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
       return upsertInboxEntry(state, event.entry);
     case "inbox.entry.deleted":
       return deleteInboxEntry(state, event.entryId);
-    case "artifact.kind.registered":
-      return registerArtifactKind(state, event.kind);
-    case "artifact.worker.started":
-      return startArtifactWorker(state, event.worker);
-    case "artifact.worker.finished":
-      return finishArtifactWorker(state, event.sessionId);
+    case "editor.registered":
+      return registerEditorKind(state, event.kind);
+    case "worker.started":
+      return startWorker(state, event.worker);
+    case "worker.finished":
+      return finishWorker(state, event.sessionId);
     case "automation.upserted":
       return upsertAutomation(state, event.automation);
     case "automation.deleted":
@@ -216,35 +217,29 @@ function deleteInboxEntry(state: WorkspaceState, entryId: string): WorkspaceStat
   return inboxEntries.length === state.inboxEntries.length ? state : { ...state, inboxEntries };
 }
 
-function registerArtifactKind(state: WorkspaceState, kind: CustomArtifactKind): WorkspaceState {
-  const index = state.customArtifacts.findIndex((current) => current.name === kind.name);
-  if (index === -1) return { ...state, customArtifacts: [...state.customArtifacts, kind] };
-  if (state.customArtifacts[index] === kind) return state;
+function registerEditorKind(state: WorkspaceState, kind: CustomEditorKind): WorkspaceState {
+  const index = state.customEditors.findIndex((current) => current.name === kind.name);
+  if (index === -1) return { ...state, customEditors: [...state.customEditors, kind] };
+  if (state.customEditors[index] === kind) return state;
 
-  const customArtifacts = [...state.customArtifacts];
-  customArtifacts[index] = kind;
-  return { ...state, customArtifacts };
+  const customEditors = [...state.customEditors];
+  customEditors[index] = kind;
+  return { ...state, customEditors };
 }
 
-function startArtifactWorker(state: WorkspaceState, worker: ArtifactWorker): WorkspaceState {
-  if (state.artifactWorkers.some((current) => current.sessionId === worker.sessionId)) return state;
-  return { ...state, artifactWorkers: [...state.artifactWorkers, worker] };
+function startWorker(state: WorkspaceState, worker: Worker): WorkspaceState {
+  if (state.workers.some((current) => current.sessionId === worker.sessionId)) return state;
+  return { ...state, workers: [...state.workers, worker] };
 }
 
-function finishArtifactWorker(state: WorkspaceState, sessionId: string): WorkspaceState {
-  const artifactWorkers = state.artifactWorkers.filter((worker) => worker.sessionId !== sessionId);
-  return artifactWorkers.length === state.artifactWorkers.length
-    ? state
-    : { ...state, artifactWorkers };
+function finishWorker(state: WorkspaceState, sessionId: string): WorkspaceState {
+  const workers = state.workers.filter((worker) => worker.sessionId !== sessionId);
+  return workers.length === state.workers.length ? state : { ...state, workers };
 }
 
-function removeArtifactWorkersForSession(state: WorkspaceState, sessionId: string): WorkspaceState {
-  const artifactWorkers = state.artifactWorkers.filter(
-    (worker) => worker.sourceSessionId !== sessionId && worker.sessionId !== sessionId,
-  );
-  return artifactWorkers.length === state.artifactWorkers.length
-    ? state
-    : { ...state, artifactWorkers };
+function removeWorkersForSession(state: WorkspaceState, sessionId: string): WorkspaceState {
+  const workers = state.workers.filter((worker) => !isWorkerOwnedBySession(worker, sessionId));
+  return workers.length === state.workers.length ? state : { ...state, workers };
 }
 
 function upsertAutomation(state: WorkspaceState, automation: Automation): WorkspaceState {

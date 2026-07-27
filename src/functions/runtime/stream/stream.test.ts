@@ -23,8 +23,15 @@ function userMessage(content: string, id: string = crypto.randomUUID()): QueuedU
   return { id, role: "user", content };
 }
 
-function artifactEdit(path: string, id: string = crypto.randomUUID()): QueuedMessage {
-  return { id, role: "agent_notification", notification: { type: "artifact_edited", path } };
+function fileEdit(path: string, id: string = crypto.randomUUID()): QueuedMessage {
+  return {
+    id,
+    role: "agent_notification",
+    notification: {
+      type: "file_edited",
+      file: { type: "session", sessionId: "notify-session", path },
+    },
+  };
 }
 
 function closeStream(sessionId: string): void {
@@ -526,7 +533,7 @@ describe("SessionStream lifecycle", () => {
     const sendMock = mock(async () => "sent");
     const stream = SessionStream.getOrCreate(sessionId, makeFakeSession({ send: sendMock }));
     await stream.deliver(userMessage("first turn"));
-    await stream.deliver(artifactEdit("plan.md", "notification-1"));
+    await stream.deliver(fileEdit("plan.md", "notification-1"));
 
     expect(await stream.steerQueuedMessage("notification-1")).toBe(false);
     expect(sendMock).toHaveBeenCalledTimes(1);
@@ -534,7 +541,10 @@ describe("SessionStream lifecycle", () => {
       {
         id: "notification-1",
         role: "agent_notification",
-        notification: { type: "artifact_edited", path: "plan.md" },
+        notification: {
+          type: "file_edited",
+          file: { type: "session", sessionId: "notify-session", path: "plan.md" },
+        },
       },
     ]);
   });
@@ -638,18 +648,27 @@ describe("queued-message coalescing", () => {
     // Editing the same artifact twice collapses to a single nudge.
     await deliverSessionMessage("session-coalesce", {
       id: "plan-edit-1",
-      notification: { type: "artifact_edited", path: "plan.md" },
+      notification: {
+        type: "file_edited",
+        file: { type: "session", sessionId: "session-coalesce", path: "plan.md" },
+      },
     });
     await deliverSessionMessage("session-coalesce", {
       id: "plan-edit-2",
-      notification: { type: "artifact_edited", path: "plan.md" },
+      notification: {
+        type: "file_edited",
+        file: { type: "session", sessionId: "session-coalesce", path: "plan.md" },
+      },
     });
     expect(stream.getQueuedMessages()).toHaveLength(1);
 
     // A different artifact is its own notification.
     await deliverSessionMessage("session-coalesce", {
       id: "other-edit",
-      notification: { type: "artifact_edited", path: "other.md" },
+      notification: {
+        type: "file_edited",
+        file: { type: "session", sessionId: "session-coalesce", path: "other.md" },
+      },
     });
     expect(stream.getQueuedMessages()).toHaveLength(2);
 
@@ -668,8 +687,8 @@ describe("queued-message coalescing", () => {
     const stream = SessionStream.getOrCreate("session-coalesce-direct", fakeSession);
     await stream.deliver(userMessage("Already running", "active-turn"));
 
-    await stream.deliver(artifactEdit("plan.md", "edit-1"));
-    await stream.deliver(artifactEdit("plan.md", "edit-2"));
+    await stream.deliver(fileEdit("plan.md", "edit-1"));
+    await stream.deliver(fileEdit("plan.md", "edit-2"));
     await stream.deliver(userMessage("hello", "u1"));
     await stream.deliver(userMessage("hello", "u2"));
 

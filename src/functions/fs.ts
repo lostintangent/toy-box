@@ -1,8 +1,6 @@
-// Server functions for filesystem access.
-//
-// General-purpose filesystem access is limited to listing directories (used by
-// the directory picker). File reads and writes go through artifact-relative
-// paths in `./artifacts`.
+// Server functions for host filesystem navigation, backing the file browser and
+// directory picker. File reads and writes go through the WorkspaceFile RPCs in
+// `@/functions/files`.
 
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
@@ -13,27 +11,23 @@ export type DirectoryEntry = {
   path: string;
 };
 
-export type ListDirectoryResult =
-  | {
-      status: "ok";
-      currentPath: string;
-      parentPath: string | null;
-      directories: DirectoryEntry[];
-    }
-  | {
-      status: "error";
-      message: string;
-    };
+/** A directory's immediate subdirectories and files. */
+export type DirectoryListing = {
+  currentPath: string;
+  parentPath: string | null;
+  directories: DirectoryEntry[];
+  files: DirectoryEntry[];
+};
 
 const listDirectoryInputSchema = z.object({
   path: z.string().optional(),
   showHidden: z.boolean().optional(),
 });
 
-/** List child directories at a given path (defaults to CWD). */
+/** List a directory's immediate subdirectories and files (defaults to CWD); throws if unreadable. */
 export const listDirectory = createServerFn({ method: "GET" })
   .validator(zodValidator(listDirectoryInputSchema))
-  .handler(async ({ data }): Promise<ListDirectoryResult> => {
+  .handler(async ({ data }): Promise<DirectoryListing> => {
     const [{ readdir, stat }, { homedir }, { dirname, resolve }] = await Promise.all([
       import("node:fs/promises"),
       import("node:os"),
@@ -48,26 +42,43 @@ export const listDirectory = createServerFn({ method: "GET" })
           ? resolve(homedir(), requested.slice(2))
           : resolve(requested);
 
-    try {
-      const info = await stat(targetPath);
-      if (!info.isDirectory()) {
-        return { status: "error", message: "Path is not a directory." };
-      }
-
-      const entries = await readdir(targetPath, { withFileTypes: true });
-      const directories: DirectoryEntry[] = entries
-        .filter((entry) => entry.isDirectory() && (data.showHidden || !entry.name.startsWith(".")))
-        .map((entry) => ({ name: entry.name, path: resolve(targetPath, entry.name) }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-
-      const parentPath = dirname(targetPath);
-      return {
-        status: "ok",
-        currentPath: targetPath,
-        parentPath: parentPath !== targetPath ? parentPath : null,
-        directories,
-      };
-    } catch {
-      return { status: "error", message: "Unable to read directory." };
+    if (!(await stat(targetPath)).isDirectory()) {
+      throw new Error("Path is not a directory.");
     }
+
+    const entries = await readdir(targetPath, { withFileTypes: true });
+    const visible = (name: string) => data.showHidden || !name.startsWith(".");
+
+    // Follow symlinks so a linked directory or file is classified by its target —
+    // a symlink's own Dirent reports neither. Unresolved entries get a null kind
+    // and are skipped when partitioning below.
+    const classified = await Promise.all(
+      entries
+        .filter((entry) => visible(entry.name))
+        .map(async (entry) => {
+          const path = resolve(targetPath, entry.name);
+          const target = entry.isSymbolicLink() ? await stat(path).catch(() => null) : entry;
+          const kind = target?.isDirectory() ? "directory" : target?.isFile() ? "file" : null;
+          return { name: entry.name, path, kind };
+        }),
+    );
+
+    const directories: DirectoryEntry[] = [];
+    const files: DirectoryEntry[] = [];
+    for (const { name, path, kind } of classified) {
+      if (kind === "directory") directories.push({ name, path });
+      else if (kind === "file") files.push({ name, path });
+    }
+
+    const byName = (a: DirectoryEntry, b: DirectoryEntry) => a.name.localeCompare(b.name);
+    directories.sort(byName);
+    files.sort(byName);
+
+    const parentPath = dirname(targetPath);
+    return {
+      currentPath: targetPath,
+      parentPath: parentPath !== targetPath ? parentPath : null,
+      directories,
+      files,
+    };
   });

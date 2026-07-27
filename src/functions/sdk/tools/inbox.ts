@@ -30,8 +30,18 @@ const sendToInbox = defineTool("send_to_inbox", {
   }),
   skipPermission: true,
   handler: async ({ message, artifact }, invocation) => {
+    const { sessionId } = invocation;
+    if (artifact) {
+      const { SessionStream } = await import("@/functions/runtime/stream");
+      const stream = SessionStream.get(sessionId);
+      if (!stream) throw new Error("Cannot attach an inbox artifact without a running session.");
+      await stream.sdkSession.rpc.workspaces.createFile({
+        path: artifact.filename,
+        content: artifact.content,
+      });
+    }
     const { sendToInbox } = await import("@/functions/state/workspace");
-    const entry = await sendToInbox(invocation.sessionId, message, artifact);
+    const entry = await sendToInbox(sessionId, message, artifact?.filename);
     return JSON.stringify({ entryId: entry.id });
   },
 });

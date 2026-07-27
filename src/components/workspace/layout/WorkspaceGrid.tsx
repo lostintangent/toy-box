@@ -17,6 +17,7 @@ import { paneSourceSessionId, type WorkspacePane } from "@/lib/workspace/panes";
 export interface WorkspaceGridProps {
   panes: WorkspacePane[];
   onCloseSession: (sessionId: string) => void;
+  resolveFileClose: (pane: WorkspacePane) => (() => void) | undefined;
 }
 
 type WorkspaceGridLayout = {
@@ -117,7 +118,7 @@ function applyWorkspaceGridLayout(
   rowGroupRef.current?.setLayout(layout.rows);
 }
 
-export function WorkspaceGrid({ panes, onCloseSession }: WorkspaceGridProps) {
+export function WorkspaceGrid({ panes, onCloseSession, resolveFileClose }: WorkspaceGridProps) {
   const count = panes.length;
   const [isDragging, setIsDragging] = useState(false);
   const [focusedPaneId, setFocusedPaneId] = useAtom(useFocusedPaneAtom());
@@ -235,11 +236,14 @@ export function WorkspaceGrid({ panes, onCloseSession }: WorkspaceGridProps) {
         (candidate) => candidate.kind === "session" && candidate.sessionId === sourceSessionId,
       );
 
+    const onClosePane = resolveFileClose(pane);
+
     return (
       <WorkspaceGridCell
         key={pane.id}
         pane={pane}
         onCloseSession={onCloseSession}
+        onClosePane={onClosePane}
         showControls={showControls}
         isMaximized={focusedPaneId === pane.id}
         onFocusPane={setFocusedPaneId}
@@ -303,6 +307,7 @@ export function WorkspaceGrid({ panes, onCloseSession }: WorkspaceGridProps) {
 interface WorkspaceGridCellProps {
   pane: WorkspacePane;
   onCloseSession: (sessionId: string) => void;
+  onClosePane?: () => void;
   hasSourceSessionPane: boolean;
   showControls: boolean;
   isMaximized: boolean;
@@ -313,6 +318,7 @@ interface WorkspaceGridCellProps {
 function WorkspaceGridCell({
   pane,
   onCloseSession,
+  onClosePane,
   hasSourceSessionPane,
   showControls,
   isMaximized,
@@ -376,6 +382,11 @@ function WorkspaceGridCell({
                   className={btnClass}
                   aria-label="Remove"
                 >
+                  <X className={iconClass} />
+                </button>
+              )}
+              {onClosePane && (
+                <button onClick={onClosePane} className={btnClass} aria-label="Close">
                   <X className={iconClass} />
                 </button>
               )}

@@ -1,12 +1,7 @@
-// Durable workspace inbox entries and their optional editable files.
-//
-// An entry's ID is its managed session ID. Its row owns an optional file at
-// `~/.toy-box/inbox/<id>/<filename>`; deleting the entry releases both.
+// Durable workspace inbox entries. An entry's ID is its managed session ID, and
+// its optional artifact is an ordinary file in that session's workspace, recorded
+// here only by filename.
 
-import { rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { getAppDatabase } from "../database";
 import type { InboxEntry } from "@/types";
 
@@ -48,47 +43,27 @@ export async function createInboxEntry(id: string): Promise<InboxEntry> {
 export async function completeInboxEntry(
   id: string,
   message: string,
-  artifact?: { filename: string; content: string },
+  artifactFilename?: string,
 ): Promise<InboxEntry> {
   const entryId = validateEntryId(id);
   const existing = await getInboxEntry(entryId);
   if (!existing) throw new Error("Inbox entry not found.");
   if (existing.message !== undefined) throw new Error("Inbox entry already completed.");
 
-  const artifactFilename = artifact ? validateFilename(artifact.filename) : undefined;
-  const directory = join(inboxRoot(), entryId);
+  const filename = artifactFilename ? validateFilename(artifactFilename) : undefined;
 
-  if (artifact && artifactFilename) {
-    await mkdir(inboxRoot(), { recursive: true });
-    await mkdir(directory);
-    try {
-      await writeFile(join(directory, artifactFilename), artifact.content, {
-        encoding: "utf-8",
-        flag: "wx",
-      });
-    } catch (error) {
-      rmSync(directory, { recursive: true, force: true });
-      throw error;
-    }
-  }
-
-  try {
-    const db = await getAppDatabase();
-    const result = await db.sql`
-      UPDATE inbox
-      SET message = ${message}, artifact = ${artifactFilename ?? null}
-      WHERE id = ${entryId} AND message IS NULL
-    `;
-    if ((result.changes ?? 0) === 0) throw new Error("Inbox entry already completed.");
-  } catch (error) {
-    if (artifactFilename) rmSync(directory, { recursive: true, force: true });
-    throw error;
-  }
+  const db = await getAppDatabase();
+  const result = await db.sql`
+    UPDATE inbox
+    SET message = ${message}, artifact = ${filename ?? null}
+    WHERE id = ${entryId} AND message IS NULL
+  `;
+  if ((result.changes ?? 0) === 0) throw new Error("Inbox entry already completed.");
 
   return {
     ...existing,
     message,
-    ...(artifactFilename ? { artifact: artifactFilename } : {}),
+    ...(filename ? { artifact: filename } : {}),
   };
 }
 
@@ -97,22 +72,7 @@ export async function deleteInboxEntryState(entryId: string): Promise<boolean> {
   const db = await getAppDatabase({ createIfMissing: false });
   if (!db) return false;
   const result = await db.sql`DELETE FROM inbox WHERE id = ${entryId}`;
-  if ((result.changes ?? 0) === 0) return false;
-  deleteInboxArtifact(entryId);
-  return true;
-}
-
-export function deleteInboxArtifact(entryId: string): void {
-  entryId = validateEntryId(entryId);
-  rmSync(join(inboxRoot(), entryId), { recursive: true, force: true });
-}
-
-export function resolveInboxArtifactPath(entryId: string, filename: string): string | null {
-  entryId = entryId.trim();
-  filename = filename.trim();
-  return isSafePathSegment(entryId) && isSafeFilename(filename)
-    ? join(inboxRoot(), entryId, filename)
-    : null;
+  return (result.changes ?? 0) > 0;
 }
 
 type InboxEntryRow = {
@@ -157,8 +117,4 @@ function isSafePathSegment(value: string): boolean {
     !value.includes("\\") &&
     !value.includes("\0"),
   );
-}
-
-function inboxRoot(): string {
-  return join(homedir(), ".toy-box", "inbox");
 }

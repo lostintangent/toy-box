@@ -12,8 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiInboxRouteImport } from './routes/api/inbox'
 import { Route as ApiWorkspaceRouteImport } from './routes/api/workspace'
-import { Route as ApiServeSessionIdSplatRouteImport } from './routes/api/serve/$sessionId/$'
-import { Route as ApiWatchSessionIdSplatRouteImport } from './routes/api/watch/$sessionId/$'
+import { Route as ApiServeScopeSplatRouteImport } from './routes/api/serve/$scope/$'
+import { Route as ApiWatchScopeSplatRouteImport } from './routes/api/watch/$scope/$'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -30,14 +30,14 @@ const ApiWorkspaceRoute = ApiWorkspaceRouteImport.update({
   path: '/api/workspace',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiServeSessionIdSplatRoute = ApiServeSessionIdSplatRouteImport.update({
-  id: '/api/serve/$sessionId/$',
-  path: '/api/serve/$sessionId/$',
+const ApiServeScopeSplatRoute = ApiServeScopeSplatRouteImport.update({
+  id: '/api/serve/$scope/$',
+  path: '/api/serve/$scope/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiWatchSessionIdSplatRoute = ApiWatchSessionIdSplatRouteImport.update({
-  id: '/api/watch/$sessionId/$',
-  path: '/api/watch/$sessionId/$',
+const ApiWatchScopeSplatRoute = ApiWatchScopeSplatRouteImport.update({
+  id: '/api/watch/$scope/$',
+  path: '/api/watch/$scope/$',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -45,23 +45,23 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/inbox': typeof ApiInboxRoute
   '/api/workspace': typeof ApiWorkspaceRoute
-  '/api/serve/$sessionId/$': typeof ApiServeSessionIdSplatRoute
-  '/api/watch/$sessionId/$': typeof ApiWatchSessionIdSplatRoute
+  '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
+  '/api/watch/$scope/$': typeof ApiWatchScopeSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/inbox': typeof ApiInboxRoute
   '/api/workspace': typeof ApiWorkspaceRoute
-  '/api/serve/$sessionId/$': typeof ApiServeSessionIdSplatRoute
-  '/api/watch/$sessionId/$': typeof ApiWatchSessionIdSplatRoute
+  '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
+  '/api/watch/$scope/$': typeof ApiWatchScopeSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/inbox': typeof ApiInboxRoute
   '/api/workspace': typeof ApiWorkspaceRoute
-  '/api/serve/$sessionId/$': typeof ApiServeSessionIdSplatRoute
-  '/api/watch/$sessionId/$': typeof ApiWatchSessionIdSplatRoute
+  '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
+  '/api/watch/$scope/$': typeof ApiWatchScopeSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -69,30 +69,30 @@ export interface FileRouteTypes {
     | '/'
     | '/api/inbox'
     | '/api/workspace'
-    | '/api/serve/$sessionId/$'
-    | '/api/watch/$sessionId/$'
+    | '/api/serve/$scope/$'
+    | '/api/watch/$scope/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/api/inbox'
     | '/api/workspace'
-    | '/api/serve/$sessionId/$'
-    | '/api/watch/$sessionId/$'
+    | '/api/serve/$scope/$'
+    | '/api/watch/$scope/$'
   id:
     | '__root__'
     | '/'
     | '/api/inbox'
     | '/api/workspace'
-    | '/api/serve/$sessionId/$'
-    | '/api/watch/$sessionId/$'
+    | '/api/serve/$scope/$'
+    | '/api/watch/$scope/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiInboxRoute: typeof ApiInboxRoute
   ApiWorkspaceRoute: typeof ApiWorkspaceRoute
-  ApiServeSessionIdSplatRoute: typeof ApiServeSessionIdSplatRoute
-  ApiWatchSessionIdSplatRoute: typeof ApiWatchSessionIdSplatRoute
+  ApiServeScopeSplatRoute: typeof ApiServeScopeSplatRoute
+  ApiWatchScopeSplatRoute: typeof ApiWatchScopeSplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -118,18 +118,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWorkspaceRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/serve/$sessionId/$': {
-      id: '/api/serve/$sessionId/$'
-      path: '/api/serve/$sessionId/$'
-      fullPath: '/api/serve/$sessionId/$'
-      preLoaderRoute: typeof ApiServeSessionIdSplatRouteImport
+    '/api/serve/$scope/$': {
+      id: '/api/serve/$scope/$'
+      path: '/api/serve/$scope/$'
+      fullPath: '/api/serve/$scope/$'
+      preLoaderRoute: typeof ApiServeScopeSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/watch/$sessionId/$': {
-      id: '/api/watch/$sessionId/$'
-      path: '/api/watch/$sessionId/$'
-      fullPath: '/api/watch/$sessionId/$'
-      preLoaderRoute: typeof ApiWatchSessionIdSplatRouteImport
+    '/api/watch/$scope/$': {
+      id: '/api/watch/$scope/$'
+      path: '/api/watch/$scope/$'
+      fullPath: '/api/watch/$scope/$'
+      preLoaderRoute: typeof ApiWatchScopeSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -139,8 +139,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiInboxRoute: ApiInboxRoute,
   ApiWorkspaceRoute: ApiWorkspaceRoute,
-  ApiServeSessionIdSplatRoute: ApiServeSessionIdSplatRoute,
-  ApiWatchSessionIdSplatRoute: ApiWatchSessionIdSplatRoute,
+  ApiServeScopeSplatRoute: ApiServeScopeSplatRoute,
+  ApiWatchScopeSplatRoute: ApiWatchScopeSplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

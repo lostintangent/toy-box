@@ -106,7 +106,8 @@ export class SessionStream {
   // ── Instance fields ──────────────────────────────────────────────────
 
   readonly sessionId: string;
-  private readonly sdkSession: CopilotSession;
+  /** Underlying SDK session handle, exposed for SDK-layer operations such as workspace file writes. */
+  readonly sdkSession: CopilotSession;
 
   #bus = createSessionEventBus({
     capacity: MAX_REPLAY_EVENTS,

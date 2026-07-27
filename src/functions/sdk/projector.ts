@@ -17,9 +17,11 @@ import {
   type SessionArtifactPatch,
   type SessionEvent,
   type ToolCall,
+  type WorkspaceFile,
 } from "@/types";
 import { parsePatchTouchedFiles, type PatchTouchedFile } from "@/lib/diffs/fileDiffs";
-import { projectSessionArtifactPath } from "@/lib/server/artifactPaths";
+import { projectSessionArtifactPath } from "@/lib/server/filePaths";
+import { workspaceFileSchema } from "@/lib/files/workspaceFile";
 import { decodeSdkAgentNotification } from "@/functions/sdk/agentNotificationCodec";
 import { fromSdkAttachments } from "./attachments";
 import { parseTodoSql } from "./todoParser";
@@ -78,6 +80,16 @@ const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
   create: projectCreatePolicy,
   edit: projectEditPolicy,
   patch: projectPatchPolicy,
+  open_file: {
+    kind: "translated",
+    projectOnComplete: (data) =>
+      projectFileVisibility(data, (file) => ({ type: "file_opened", file })),
+  },
+  close_file: {
+    kind: "translated",
+    projectOnComplete: (data) =>
+      projectFileVisibility(data, (file) => ({ type: "file_closed", file })),
+  },
   create_session: { kind: "translated", projectOnComplete: projectCreatedSession },
   create_worker_session: { kind: "translated", projectOnComplete: projectCreatedSession },
   open_session: (args) => ({
@@ -387,6 +399,21 @@ function projectAgentPolicy(args: ToolArguments): ToolCallProjectionPolicy | und
   // not the real completion signal. subagent.completed/failed owns that.
   if (readStringArg(args, "mode") !== "background") return undefined;
   return { kind: "deferred" };
+}
+
+/** Project an open_file / close_file result (a JSON WorkspaceFile) into a visibility event. */
+function projectFileVisibility(
+  data: ToolExecutionCompleteData,
+  toEvent: (file: WorkspaceFile) => SessionEvent,
+): SessionEvent[] {
+  if (!data.success) return [];
+  const result = readToolResultText(data);
+  if (!result) return [];
+  try {
+    return [toEvent(workspaceFileSchema.parse(JSON.parse(result)))];
+  } catch {
+    return [];
+  }
 }
 
 function projectCreatePolicy(

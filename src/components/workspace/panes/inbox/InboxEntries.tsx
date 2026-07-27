@@ -19,19 +19,20 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useDispatchWorkspaceAction, useWorkspaceSessionActivity } from "@/hooks/workspace/state";
 import { cn } from "@/lib/utils";
-import type { ArtifactWorkspacePane } from "@/lib/workspace/panes";
+import { createEditorPaneId, type EditorWorkspacePane } from "@/lib/workspace/panes";
+import { sessionFile } from "@/lib/files/workspaceFile";
 import type { InboxEntry, SessionMetadata } from "@/types";
 
 export function InboxEntries({
   entries,
   sessions,
-  linkedArtifactPane,
+  linkedEditorPane,
   onArtifactSelect,
   onArtifactRemoved,
 }: {
   entries: InboxEntry[];
   sessions: SessionMetadata[];
-  linkedArtifactPane?: ArtifactWorkspacePane;
+  linkedEditorPane?: EditorWorkspacePane;
   onArtifactSelect: (entry: InboxEntry) => void;
   onArtifactRemoved: (entryId: string) => void;
 }) {
@@ -74,8 +75,8 @@ export function InboxEntries({
                 entry={entry}
                 session={sessionsById.get(entry.id)}
                 linked={
-                  linkedArtifactPane?.sourceSessionId === entry.id &&
-                  linkedArtifactPane.path === entry.artifact
+                  entry.artifact !== undefined &&
+                  linkedEditorPane?.id === createEditorPaneId(sessionFile(entry.id, entry.artifact))
                 }
                 deleting={deletingEntryId === entry.id}
                 onSelect={() => onArtifactSelect(entry)}

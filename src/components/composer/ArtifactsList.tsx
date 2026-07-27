@@ -1,6 +1,7 @@
 import { useFocusedPaneAtom } from "@/hooks/workspace/layout/focus";
-import { useArtifactDisplay } from "@/components/workspace/panes/artifacts/kinds";
-import { createArtifactPaneId } from "@/lib/workspace/panes";
+import { useEditorDisplay } from "@/components/workspace/panes/editor/kinds";
+import { createEditorPaneId } from "@/lib/workspace/panes";
+import { sessionFile } from "@/lib/files/workspaceFile";
 import { cn } from "@/lib/utils";
 
 // Pills for a session's artifacts. Clicking one focuses the artifact's pane
@@ -30,7 +31,9 @@ export function ArtifactsList({
         <ArtifactPill
           key={key}
           path={path}
-          onSelect={() => focusedPaneAtom.set(createArtifactPaneId(sourceSessionId, path))}
+          onSelect={() =>
+            focusedPaneAtom.set(createEditorPaneId(sessionFile(sourceSessionId, path)))
+          }
         />
       ))}
     </div>
@@ -38,7 +41,7 @@ export function ArtifactsList({
 }
 
 function ArtifactPill({ path, onSelect }: { path: string; onSelect: () => void }) {
-  const { name, Icon } = useArtifactDisplay(path);
+  const { name, Icon } = useEditorDisplay(path);
   return (
     <button
       type="button"

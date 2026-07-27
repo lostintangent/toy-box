@@ -2,10 +2,11 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { createAtom, createStoreContext, type Atom } from "@tanstack/react-store";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import {
-  createArtifactPaneId,
-  resolveArtifactAutoFocus,
+  createEditorPaneId,
+  resolveEditorAutoFocus,
   type WorkspacePane,
 } from "@/lib/workspace/panes";
+import { sessionFile } from "@/lib/files/workspaceFile";
 
 export type WorkspaceSurface = "main" | "hyper";
 
@@ -17,6 +18,14 @@ const focusedPaneAtoms: Record<WorkspaceSurface, Atom<string | null>> = {
 const { StoreProvider: FocusedPaneProvider, useStoreContext: useFocusedPaneAtom } =
   createStoreContext<Atom<string | null>>();
 export { useFocusedPaneAtom };
+
+/**
+ * Focus a pane on the main surface from outside its subtree — the mobile pager
+ * reads this as its active page; the desktop grid reads it as a maximize.
+ */
+export function focusMainSurfacePane(paneId: string): void {
+  focusedPaneAtoms.main.set(paneId);
+}
 
 export function WorkspaceSurfaceProvider({
   surface,
@@ -31,10 +40,10 @@ export function WorkspaceSurfaceProvider({
   const autoFocusArtifacts = useWorkspaceSelector(
     (workspace) => workspace.settings.autoFocusArtifacts,
   );
-  const draftArtifactPaneIds = useWorkspaceSelector((workspace) =>
+  const draftEditorPaneIds = useWorkspaceSelector((workspace) =>
     Object.entries(workspace.sessionStates).flatMap(([sessionId, state]) =>
       state.status === "draft" && state.artifactPath
-        ? [createArtifactPaneId(sessionId, state.artifactPath)]
+        ? [createEditorPaneId(sessionFile(sessionId, state.artifactPath))]
         : [],
     ),
   );
@@ -43,20 +52,20 @@ export function WorkspaceSurfaceProvider({
   // Panes present when a surface mounts are not newly opened, except for an
   // artifact-first draft whose artifact is the surface's initial destination.
   if (seenPaneIdsRef.current === null) {
-    const draftArtifactPaneIdSet = new Set(draftArtifactPaneIds);
+    const draftEditorPaneIdSet = new Set(draftEditorPaneIds);
     seenPaneIdsRef.current = new Set(
-      panes.filter((pane) => !draftArtifactPaneIdSet.has(pane.id)).map((pane) => pane.id),
+      panes.filter((pane) => !draftEditorPaneIdSet.has(pane.id)).map((pane) => pane.id),
     );
   }
 
   // Keep this surface's focus valid and let newly opened artifacts claim it.
   useEffect(() => {
-    const draftArtifactPaneIdSet = new Set(draftArtifactPaneIds);
-    const { focusPane, seenPaneIds } = resolveArtifactAutoFocus(
+    const draftEditorPaneIdSet = new Set(draftEditorPaneIds);
+    const { focusPane, seenPaneIds } = resolveEditorAutoFocus(
       seenPaneIdsRef.current!,
       panes,
       autoFocusArtifacts,
-      draftArtifactPaneIdSet,
+      draftEditorPaneIdSet,
     );
     seenPaneIdsRef.current = seenPaneIds;
 
@@ -65,7 +74,7 @@ export function WorkspaceSurfaceProvider({
       if (currentIsVisible) return current;
       return focusPane?.id ?? null;
     });
-  }, [autoFocusArtifacts, draftArtifactPaneIds, focusedPaneAtom, panes]);
+  }, [autoFocusArtifacts, draftEditorPaneIds, focusedPaneAtom, panes]);
 
   return <FocusedPaneProvider value={focusedPaneAtom}>{children}</FocusedPaneProvider>;
 }

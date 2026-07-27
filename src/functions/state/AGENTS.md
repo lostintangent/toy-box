@@ -4,16 +4,16 @@ Server state gives every session fact and resource one trustworthy owner, making
 
 ## State authority
 
-| State                                                               | Authority                                       | Durability                           |
-| ------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------ |
-| Session transcript and SDK metadata                                 | Copilot SDK history                             | Durable                              |
-| Session artifact files                                              | Files under Copilot SDK session state           | Durable                              |
-| Active reduced session, queue, replay, completion                   | `SessionStream`                                 | Process-local                        |
-| SDK handles and idle reduced snapshots                              | Session registry and snapshot cache             | Process-local cache over SDK history |
-| Automations, Inbox, settings, worktrees, worker ownership/retention | Shared SQLite database                          | Durable                              |
-| Draft claims                                                        | Shared SQLite database                          | Durable                              |
-| Draft prompts, running, unread, Hyper membership, artifact workers  | Workspace state                                 | Process-local                        |
-| Custom artifact kinds and Inbox artifact files                      | `~/.toy-box/artifacts/` and `~/.toy-box/inbox/` | Durable files                        |
+| State                                                               | Authority                             | Durability                           |
+| ------------------------------------------------------------------- | ------------------------------------- | ------------------------------------ |
+| Session transcript and SDK metadata                                 | Copilot SDK history                   | Durable                              |
+| Session artifact files                                              | Files under Copilot SDK session state | Durable                              |
+| Active reduced session, queue, replay, completion                   | `SessionStream`                       | Process-local                        |
+| SDK handles and idle reduced snapshots                              | Session registry and snapshot cache   | Process-local cache over SDK history |
+| Automations, Inbox, settings, worktrees, worker ownership/retention | Shared SQLite database                | Durable                              |
+| Draft claims                                                        | Shared SQLite database                | Durable                              |
+| Draft prompts, running, unread, Hyper membership, workers           | Workspace state                       | Process-local                        |
+| Custom editors                                                      | `~/.toy-box/editors/`                 | Durable files                        |
 
 The central session invariant is simple: an active session takes its truth from the in-memory runtime; an idle session is reconstructed from persisted SDK history. A snapshot can avoid replay work, but it is never a second source of truth.
 
@@ -37,7 +37,7 @@ The session registry coordinates the server-side lifecycle and resources of a se
 
 `WorkspaceState` is the shared, client-facing projection of every workspace-wide fact that lives outside a session transcript. One pure reducer, `reduceWorkspaceState` (over the per-session `reduceWorkspaceSessionState`), builds it on both sides of the wire: the server reduces authoritative events into a process-local copy and broadcasts each accepted event over the shared update stream; every client reduces the same events into its hydrated Query cache. An event therefore means the same thing everywhere. The stream is at-most-once with no replay, so clients heal any gap by refetching the server's snapshot rather than replaying history.
 
-The projection composes facts from several authorities without moving them: the process-local `sessionStates` map, hyper-session membership, and artifact-worker associations; the durable settings document, automation definitions, and Inbox entries owned by SQLite; the custom-artifact catalog on disk; and the passive server capabilities in `environment` (such as the terminal port). Each authority keeps its own durability and lifecycle — the snapshot only assembles a read-time view.
+The projection composes facts from several authorities without moving them: the process-local `sessionStates` map, hyper-session membership, and file-worker associations; the durable settings document, automation definitions, and Inbox entries owned by SQLite; the custom-editor catalog on disk; and the passive server capabilities in `environment` (such as the terminal port). Each authority keeps its own durability and lifecycle — the snapshot only assembles a read-time view.
 
 Its heart is the sparse `sessionStates` map, whose rows carry one session's lifecycle and optional draft prompt. Ordinary read-idle is represented by no row; a status exists only while there is something to remember:
 
@@ -54,7 +54,7 @@ Two client caches consume the one stream. `useWorkspaceSync` is the single event
 
 A managed session is an ordinary runtime session whose lifecycle is governed by a product workflow rather than direct session-list interaction. Exactly one managing record or relationship—an automation definition, Inbox entry, Hyper membership, or worker record—identifies that policy without becoming another field on the session. The manager determines the session's `SessionType`, creation or reset behavior, retention, dedicated presentation, ownership transfer, and teardown. Its UI is an expression of that lifecycle: managed sessions stay out of the standard list and are opened, promoted, inspected, or deleted through their owning workflow.
 
-An Inbox entry's ID is also its managed session ID. Inbox dispatch writes a pending row before delivery so every client can see the running task immediately. `send_to_inbox` completes that same row once with a concise message and optionally one artifact file at `~/.toy-box/inbox/<sessionId>/<filename>`. If the initial task finishes cleanly without completing the pending entry, it produced no Inbox result and the entry and session are removed together. Failed work retains its entry and session for inspection. Deleting a completed entry deletes its managed session and artifact directory as one lifecycle.
+An Inbox entry's ID is also its managed session ID. Inbox dispatch writes a pending row before delivery so every client can see the running task immediately. `send_to_inbox` completes that same row once with a concise message and optionally one artifact file, written to its managed session's files directory through the SDK. If the initial task finishes cleanly without completing the pending entry, it produced no Inbox result and the entry and session are removed together. Failed work retains its entry and session for inspection. Deleting a completed entry deletes its managed session, and with it that artifact file, as one lifecycle.
 
 Hyper membership is process-local because it describes the current workspace presentation. Worker ownership is durable because parent deletion, session-role recovery, and restart cleanup depend on it. Automation and Inbox rows are durable and use the session ID as their own stable identity.
 

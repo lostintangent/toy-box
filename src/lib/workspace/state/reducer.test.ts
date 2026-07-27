@@ -7,6 +7,7 @@ import {
   type WorkspaceSessionState,
 } from "./reducer";
 import type { Automation, WorkspaceEvent } from "@/types";
+import { sessionFile } from "@/lib/files/workspaceFile";
 
 const sessionId = "session-a";
 const prompt = { text: "hello", origin: "client-a", updatedAt: 3 };
@@ -140,11 +141,10 @@ describe("workspace state reducer", () => {
       hyper: true,
     });
     state = reduceWorkspaceState(state, {
-      type: "artifact.worker.started",
+      type: "worker.started",
       worker: {
         sessionId: "artifact-worker-a",
-        sourceSessionId: sessionId,
-        path: "plan.md",
+        file: sessionFile(sessionId, "plan.md"),
         name: "Respond to comment",
         metadata: { threadId: "thread-a" },
       },
@@ -206,36 +206,35 @@ describe("workspace state reducer", () => {
     ).toBe(state);
   });
 
-  test("tracks artifact worker links idempotently", () => {
+  test("tracks worker links idempotently", () => {
     const worker = {
       sessionId: "artifact-worker-a",
-      sourceSessionId: sessionId,
-      path: "plan.md",
+      file: sessionFile(sessionId, "plan.md"),
       name: "Respond to comment",
       metadata: { threadId: "thread-a" },
     };
     let state = reduceWorkspaceState(createEmptyWorkspaceState(), {
-      type: "artifact.worker.started",
+      type: "worker.started",
       worker,
     });
 
-    expect(state.artifactWorkers).toEqual([worker]);
-    expect(reduceWorkspaceState(state, { type: "artifact.worker.started", worker })).toBe(state);
+    expect(state.workers).toEqual([worker]);
+    expect(reduceWorkspaceState(state, { type: "worker.started", worker })).toBe(state);
 
     state = reduceWorkspaceState(state, {
-      type: "artifact.worker.finished",
+      type: "worker.finished",
       sessionId: worker.sessionId,
     });
-    expect(state.artifactWorkers).toEqual([]);
+    expect(state.workers).toEqual([]);
     expect(
       reduceWorkspaceState(state, {
-        type: "artifact.worker.finished",
+        type: "worker.finished",
         sessionId: worker.sessionId,
       }),
     ).toBe(state);
   });
 
-  test("registers and updates custom artifact kinds idempotently", () => {
+  test("registers and updates custom editors idempotently", () => {
     const kind = {
       name: "json-tree",
       extensions: ["json"],
@@ -244,16 +243,16 @@ describe("workspace state reducer", () => {
       html: "<html>first</html>",
     };
     let state = reduceWorkspaceState(createEmptyWorkspaceState(), {
-      type: "artifact.kind.registered",
+      type: "editor.registered",
       kind,
     });
 
-    expect(state.customArtifacts).toEqual([kind]);
-    expect(reduceWorkspaceState(state, { type: "artifact.kind.registered", kind })).toBe(state);
+    expect(state.customEditors).toEqual([kind]);
+    expect(reduceWorkspaceState(state, { type: "editor.registered", kind })).toBe(state);
 
     const updated = { ...kind, editable: true, html: "<html>updated</html>" };
-    state = reduceWorkspaceState(state, { type: "artifact.kind.registered", kind: updated });
-    expect(state.customArtifacts).toEqual([updated]);
+    state = reduceWorkspaceState(state, { type: "editor.registered", kind: updated });
+    expect(state.customEditors).toEqual([updated]);
   });
 });
 

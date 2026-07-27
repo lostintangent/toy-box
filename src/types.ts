@@ -88,14 +88,14 @@ export type SessionArtifactPatch = {
 };
 
 /**
- * A user-registered artifact viewer. Each one teaches Toy Box how to render (and
+ * A user-registered editor. Each one teaches Toy Box how to render (and
  * optionally edit) files with a given extension using a self-contained HTML/JS
- * template. Definitions live on disk under `~/.toy-box/artifacts/<name>/`
- * (`artifact.json` + `index.html`) and are surfaced to the client through
+ * template. Definitions live on disk under `~/.toy-box/editors/<name>/`
+ * (`editor.json` + `index.html`) and are surfaced to the client through
  * workspace state, so a session that produces a matching file opens straight into
  * the custom view.
  */
-export type CustomArtifactKind = {
+export type CustomEditorKind = {
   /** Unique id and on-disk folder name, e.g. `json-tree`. */
   name: string;
   /** File extensions (without the dot) this kind claims, e.g. `["json"]`. */
@@ -117,6 +117,7 @@ export type SessionSnapshot = {
   linkedSessionIds?: string[];
   canvases?: SessionCanvas[];
   artifacts?: string[];
+  openedFiles?: WorkspaceFile[];
   lastSeenEventId?: number;
   status: SessionStatus;
   reasoningContent: string;
@@ -129,7 +130,12 @@ export type UserMessage = {
   timestamp?: string;
 };
 
-export type AgentNotification = { type: "artifact_edited"; path: string };
+/** One address for a file surfaced in the workspace: a session's file (an artifact) or a real host file. */
+export type WorkspaceFile =
+  | { type: "session"; sessionId: string; path: string }
+  | { type: "machine"; path: string };
+
+export type AgentNotification = { type: "file_edited"; file: WorkspaceFile };
 
 export type AgentNotificationMessage = {
   role: "agent_notification";
@@ -216,15 +222,14 @@ export type InboxEntry = {
   id: string;
   message?: string;
   createdAt: string;
-  /** File name of the entry-owned file under `~/.toy-box/inbox/<id>/`. */
+  /** File name of the entry's artifact in its managed session's files directory. */
   artifact?: string;
 };
 
-/** Associates one pending worker with the artifact it is working on. */
-export type ArtifactWorker = {
+/** A pending worker, optionally associated with a workspace file that scopes it to an editor. */
+export type Worker = {
   sessionId: string;
-  sourceSessionId: string;
-  path: string;
+  file?: WorkspaceFile;
   name?: string;
   metadata?: JsonValue;
 };
@@ -282,6 +287,8 @@ export type SessionEvent = (
   | { type: "linked_session_removed"; sessionId: string }
   | { type: "canvas_opened"; canvas: SessionCanvasOpen }
   | { type: "artifacts_patch"; patches: SessionArtifactPatch[] }
+  | { type: "file_opened"; file: WorkspaceFile }
+  | { type: "file_closed"; file: WorkspaceFile }
   | { type: "end"; reason: "idle" | "error" }
 ) & {
   eventId?: number;
@@ -320,15 +327,15 @@ export type WorkspaceEvent =
       entryId: string;
     }
   | {
-      type: "artifact.kind.registered";
-      kind: CustomArtifactKind;
+      type: "editor.registered";
+      kind: CustomEditorKind;
     }
   | {
-      type: "artifact.worker.started";
-      worker: ArtifactWorker;
+      type: "worker.started";
+      worker: Worker;
     }
   | {
-      type: "artifact.worker.finished";
+      type: "worker.finished";
       sessionId: string;
     }
   | {

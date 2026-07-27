@@ -115,7 +115,10 @@ describe("sessionReducer", () => {
     });
 
     test("agent notifications create visible turn boundaries", () => {
-      const notification = { type: "artifact_edited", path: "plan.md" } as const;
+      const notification = {
+        type: "file_edited",
+        file: { type: "session", sessionId: "s1", path: "plan.md" },
+      } as const;
       const state = reduceEvents([
         { type: "agent_notification", notification },
         { type: "status", status: "thinking" },
@@ -132,6 +135,22 @@ describe("sessionReducer", () => {
         { role: "assistant", content: "I reviewed the update." },
       ]);
       expect(state.status).toBe("responding");
+    });
+
+    test("opened files track the machine files the agent opens and closes", () => {
+      const file = { type: "machine", path: "/repo/src/foo.ts" } as const;
+
+      const opened = reduceEvents([
+        { type: "file_opened", file },
+        { type: "file_opened", file },
+      ]);
+      expect(opened.openedFiles).toEqual([file]);
+
+      const closed = reduceEvents([
+        { type: "file_opened", file },
+        { type: "file_closed", file },
+      ]);
+      expect(closed.openedFiles).toEqual([]);
     });
 
     test("committed assistant messages reconcile streamed assistant text", () => {

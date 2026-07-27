@@ -1,11 +1,11 @@
 import { createStore } from "@tanstack/react-store";
-import type { SessionCanvas } from "@/types";
+import type { SessionCanvas, WorkspaceFile } from "@/types";
 import {
   createSessionPaneId,
   createLinkedPanes,
-  isArtifactPane,
-  type ArtifactPaneMode,
-  type ArtifactWorkspacePane,
+  isEditorPane,
+  type EditorPaneMode,
+  type EditorWorkspacePane,
   type LinkedPanesByPublisher,
   type WorkspacePane,
 } from "@/lib/workspace/panes";
@@ -18,7 +18,7 @@ export const {
   publishLinkedPanes,
   clearLinkedPanes,
   prunePanePublishers,
-  setArtifactPaneMode,
+  setEditorPaneMode,
 } = linkedPanesStore.actions;
 
 export function createLinkedPanesStore() {
@@ -30,6 +30,7 @@ export function createLinkedPanesStore() {
       linkedSessionIds: readonly string[],
       canvases: readonly SessionCanvas[],
       artifacts: readonly string[],
+      openedFiles: readonly WorkspaceFile[],
     ) {
       setState((current) => {
         const publisherPaneId = createSessionPaneId(sourceSessionId);
@@ -38,6 +39,7 @@ export function createLinkedPanesStore() {
           linkedSessionIds,
           canvases,
           artifacts,
+          openedFiles,
           current[publisherPaneId],
         );
 
@@ -65,23 +67,23 @@ export function createLinkedPanesStore() {
       });
     },
 
-    setArtifactPaneMode(pane: ArtifactWorkspacePane, mode: ArtifactPaneMode) {
-      setState((current) => updateArtifactPaneMode(current, pane, mode));
+    setEditorPaneMode(pane: EditorWorkspacePane, mode: EditorPaneMode) {
+      setState((current) => updateEditorPaneMode(current, pane, mode));
     },
   }));
 }
 
-export function updateArtifactPaneMode(
+export function updateEditorPaneMode(
   current: LinkedPanesByPublisher,
-  pane: ArtifactWorkspacePane,
-  mode: ArtifactPaneMode,
+  pane: EditorWorkspacePane,
+  mode: EditorPaneMode,
 ): LinkedPanesByPublisher {
   let next: Record<string, readonly WorkspacePane[]> | undefined;
 
   for (const [publisherPaneId, publishedPanes] of Object.entries(current)) {
     const paneIndex = publishedPanes.findIndex((publishedPane) => publishedPane.id === pane.id);
     const publishedPane = publishedPanes[paneIndex];
-    if (!publishedPane || !isArtifactPane(publishedPane) || publishedPane.mode === mode) continue;
+    if (!publishedPane || !isEditorPane(publishedPane) || publishedPane.mode === mode) continue;
 
     const nextPublishedPanes = [...publishedPanes];
     nextPublishedPanes[paneIndex] = { ...publishedPane, mode };
@@ -124,7 +126,7 @@ export function arePaneListsEqual(
       const nextPane = right[index];
       if (pane.id !== nextPane?.id || pane.kind !== nextPane.kind) return false;
 
-      if (isArtifactPane(pane) && isArtifactPane(nextPane)) {
+      if (isEditorPane(pane) && isEditorPane(nextPane)) {
         return pane.mode === nextPane.mode && pane.title === nextPane.title;
       }
 

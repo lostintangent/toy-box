@@ -13,7 +13,13 @@ import {
   linkedPanesStore,
   publishLinkedPanes,
 } from "@/hooks/workspace/layout/linkedPanes";
-import { createArtifactPane, INBOX_PANE, isArtifactPane } from "@/lib/workspace/panes";
+import {
+  createEditorPane,
+  createEditorPaneId,
+  INBOX_PANE,
+  isEditorPane,
+} from "@/lib/workspace/panes";
+import { ownerSessionId, sessionFile } from "@/lib/files/workspaceFile";
 import type { Attachment, InboxEntry } from "@/types";
 import { InboxEntries } from "./InboxEntries";
 
@@ -24,8 +30,8 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
   const entries = useWorkspaceSelector(selectInboxEntries);
   const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);
   const { models, defaultModel, setDefaultModel } = useModels();
-  const linkedArtifactPane = useSelector(linkedPanesStore, (linkedPanes) =>
-    linkedPanes[INBOX_PANE.id]?.find(isArtifactPane),
+  const linkedEditorPane = useSelector(linkedPanesStore, (linkedPanes) =>
+    linkedPanes[INBOX_PANE.id]?.find(isEditorPane),
   );
   const [prompt, setPrompt] = useState("");
   // An untouched selection follows the latest directory; null preserves an explicit clear.
@@ -43,11 +49,11 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
   };
 
   const linkedArtifactExists =
-    linkedArtifactPane === undefined ||
+    linkedEditorPane === undefined ||
     entries.some(
       (entry) =>
-        entry.id === linkedArtifactPane.sourceSessionId &&
-        entry.artifact === linkedArtifactPane.path,
+        entry.artifact !== undefined &&
+        linkedEditorPane.id === createEditorPaneId(sessionFile(entry.id, entry.artifact)),
     );
 
   // Inbox rows are server-authoritative. Remove browser-local composition when
@@ -60,9 +66,9 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
   function handleInboxArtifactSelect(entry: InboxEntry) {
     if (!entry.artifact) return;
 
-    const artifactPane = createArtifactPane(entry.id, entry.artifact);
+    const artifactPane = createEditorPane(sessionFile(entry.id, entry.artifact));
     const pane = { ...artifactPane, title: entry.message ?? artifactPane.title };
-    const isLinked = linkedArtifactPane?.id === pane.id;
+    const isLinked = linkedEditorPane?.id === pane.id;
     if (isLinked) {
       clearLinkedPanes(INBOX_PANE.id);
     } else {
@@ -73,7 +79,7 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
   }
 
   function handleInboxArtifactRemoved(entryId: string) {
-    if (linkedArtifactPane?.sourceSessionId === entryId) {
+    if (linkedEditorPane !== undefined && ownerSessionId(linkedEditorPane.file) === entryId) {
       clearLinkedPanes(INBOX_PANE.id);
     }
   }
@@ -129,7 +135,7 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
           <InboxEntries
             entries={entries}
             sessions={sessions}
-            linkedArtifactPane={linkedArtifactPane}
+            linkedEditorPane={linkedEditorPane}
             onArtifactSelect={handleInboxArtifactSelect}
             onArtifactRemoved={handleInboxArtifactRemoved}
           />

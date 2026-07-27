@@ -3,9 +3,10 @@
 // registry initialization does not form a module cycle through this catalog.
 
 import type { Tool } from "@github/copilot-sdk";
-import { artifactKindTools } from "./artifacts";
+import { editorTools } from "./editors";
 import { automationTools } from "./automations";
 import { coordinationTools } from "./coordination";
+import { fileTools } from "./files";
 import { inboxTools } from "./inbox";
 import { hyperLifecycleTools, lifecycleTools, sessionLayoutTools } from "./lifecycle";
 import { settingsTools } from "./settings";
@@ -19,10 +20,11 @@ export function getSessionTools(sessionType: SessionType): Tool<any>[] {
     ...(sessionType === "hyper" ? hyperLifecycleTools : []),
     ...lifecycleTools,
     ...(interactive ? sessionLayoutTools : []),
+    ...(interactive ? fileTools : []),
     ...coordinationTools,
     ...automationTools,
     ...(canUpdateSettings ? settingsTools : []),
-    ...(sessionType === "hyper" ? artifactKindTools : []),
+    ...(sessionType === "hyper" ? editorTools : []),
     ...(sessionType === "inbox" ? inboxTools : []),
   ].map((tool) => ({
     ...tool,

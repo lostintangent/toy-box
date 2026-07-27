@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { useAtom } from "@tanstack/react-store";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceSessionActivity } from "@/hooks/workspace/state";
 import { useFocusedPaneAtom } from "@/hooks/workspace/layout/focus";
 import { cn } from "@/lib/utils";
-import { isArtifactPane, paneSourceSessionId, type WorkspacePane } from "@/lib/workspace/panes";
+import { isEditorPane, paneSourceSessionId, type WorkspacePane } from "@/lib/workspace/panes";
 import { WorkspacePaneView } from "../panes/WorkspacePaneView";
 import { SessionOverlay } from "../panes/session/SessionOverlay";
 
@@ -14,6 +14,7 @@ type WorkspacePagerProps = {
   panes: WorkspacePane[];
   primaryPaneId: string;
   onBack?: () => void;
+  resolveFileClose?: (pane: WorkspacePane) => (() => void) | undefined;
   /**
    * When set (the hyper deck), the pager's toolbar — the dots + the active
    * pane's declared actions — is portaled into this element (the window's title
@@ -23,7 +24,13 @@ type WorkspacePagerProps = {
   toolbarSlot?: HTMLElement | null;
 };
 
-export function WorkspacePager({ panes, primaryPaneId, onBack, toolbarSlot }: WorkspacePagerProps) {
+export function WorkspacePager({
+  panes,
+  primaryPaneId,
+  onBack,
+  resolveFileClose,
+  toolbarSlot,
+}: WorkspacePagerProps) {
   const [focusedPaneId, setFocusedPaneId] = useAtom(useFocusedPaneAtom());
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const [statusSlot, setStatusSlot] = useState<HTMLDivElement | null>(null);
@@ -39,6 +46,9 @@ export function WorkspacePager({ panes, primaryPaneId, onBack, toolbarSlot }: Wo
       ? focusedPaneId
       : resolvedPrimaryPaneId;
   const appearingPaneIds = useAppearingPanes(paneIds);
+
+  const activePane = panes.find((pane) => pane.id === effectiveActivePaneId);
+  const closeActivePane = activePane ? resolveFileClose?.(activePane) : undefined;
 
   // The pager's toolbar: an optional mobile back button, the dot strip, and
   // slots the active pane fills with transient status and persistent actions.
@@ -75,6 +85,17 @@ export function WorkspacePager({ panes, primaryPaneId, onBack, toolbarSlot }: Wo
       <div className="ml-auto flex min-w-0 items-center gap-1.5" onPointerDown={stopDrag}>
         <div ref={setStatusSlot} className="flex shrink-0 items-center gap-1.5" />
         <div ref={setActionsSlot} className="flex min-w-0 items-center gap-1.5" />
+        {closeActivePane && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0"
+            aria-label="Close"
+            onClick={closeActivePane}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </>
   );
@@ -210,7 +231,7 @@ function PagerDotButton({
         ? "bg-unread h-2.5 w-2.5"
         : pane.kind === "canvas"
           ? "bg-violet-500 h-2.5 w-2.5"
-          : pane.kind === "artifact"
+          : pane.kind === "editor"
             ? "bg-emerald-500 h-2.5 w-2.5"
             : "bg-muted-foreground/40 h-2.5 w-2.5";
   const label =
@@ -218,7 +239,7 @@ function PagerDotButton({
       ? "Inbox"
       : pane.kind === "canvas"
         ? `Canvas ${pane.canvas.title || pane.canvas.canvasId}`
-        : isArtifactPane(pane)
+        : isEditorPane(pane)
           ? pane.title
           : "Session";
 

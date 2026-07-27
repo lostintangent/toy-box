@@ -7,6 +7,7 @@ import { SettingsDialog } from "./shell/SettingsDialog";
 import { SidebarHeader, type SidebarCreateOptions } from "./shell/SidebarHeader";
 import { SidebarFooter } from "./shell/SidebarFooter";
 import { SessionList } from "./list/SessionList";
+import { FileBrowserDialog } from "@/components/workspace/fs/FileBrowserDialog";
 
 export type SidebarProps = {
   filter: string;
@@ -38,6 +39,8 @@ export type SidebarProps = {
 
   onToggleTerminal: () => void;
   isTerminalOpen: boolean;
+
+  onOpenFile: (path: string) => void;
 
   className?: string;
 };
@@ -71,9 +74,11 @@ export function Sidebar({
   onCollapse,
   onToggleTerminal,
   isTerminalOpen,
+  onOpenFile,
   className,
 }: SidebarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [browseOpen, setBrowseOpen] = useState(false);
 
   return (
     <>
@@ -118,6 +123,7 @@ export function Sidebar({
 
         <SidebarFooter
           onOpenSettings={() => setSettingsOpen(true)}
+          onBrowseFiles={() => setBrowseOpen(true)}
           onToggleHyper={onToggleHyper}
           isHyperOpen={isHyperOpen}
           onOpenInbox={onOpenInbox}
@@ -127,6 +133,12 @@ export function Sidebar({
         />
       </div>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <FileBrowserDialog
+        open={browseOpen}
+        onOpenChange={setBrowseOpen}
+        title="Open a file"
+        onOpenFile={onOpenFile}
+      />
     </>
   );
 }

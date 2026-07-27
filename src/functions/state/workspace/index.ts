@@ -2,8 +2,8 @@
 
 import type {
   Automation,
-  ArtifactWorker,
-  CustomArtifactKind,
+  Worker,
+  CustomEditorKind,
   DraftSession,
   InboxEntry,
   Settings,
@@ -29,23 +29,23 @@ import {
 } from "./inbox";
 import { applySessionState, getSessionState, getSessionStates, setSessionPrompt } from "./sessions";
 import { getDraftSessions } from "../session/drafts";
-import { writeCustomArtifact } from "./artifacts";
+import { writeCustomEditor } from "./editors";
 import { getSettings, persistSettings } from "./settings";
 import {
-  finishArtifactWorker as finishArtifactWorkerState,
-  finishArtifactWorkersForSession,
-  getArtifactWorker,
-  getArtifactWorkers,
-  hasArtifactWorker,
-  startArtifactWorker as startArtifactWorkerState,
-} from "./artifactWorkers";
+  finishWorker as finishWorkerState,
+  finishWorkersForSession,
+  getWorker,
+  getWorkers,
+  hasWorker,
+  startWorker as startWorkerState,
+} from "./workers";
 
-export { loadCustomArtifacts, normalizeExtensions } from "./artifacts";
+export { loadCustomEditors, normalizeExtensions } from "./editors";
 export { getEnvironment } from "./environment";
 
 export async function getWorkspaceState(options: {
   automations: Automation[];
-  customArtifacts: CustomArtifactKind[];
+  customEditors: CustomEditorKind[];
   environment: WorkspaceEnvironment;
 }): Promise<WorkspaceState> {
   const [drafts, inboxEntries, settings] = await Promise.all([
@@ -67,8 +67,8 @@ export async function getWorkspaceState(options: {
     hyperSessionIds: getHyperSessionIds(),
     automations: options.automations,
     inboxEntries,
-    artifactWorkers: getArtifactWorkers(),
-    customArtifacts: options.customArtifacts,
+    workers: getWorkers(),
+    customEditors: options.customEditors,
     environment: options.environment,
   };
 }
@@ -115,8 +115,8 @@ export function addDraftSession(draft: DraftSession, hyper?: true): void {
 export function deleteSessionWorkspaceState(sessionId: string): void {
   applySessionState({ type: "session.deleted", sessionId });
   deleteHyperState(sessionId);
-  for (const workerSessionId of finishArtifactWorkersForSession(sessionId)) {
-    broadcast({ type: "artifact.worker.finished", sessionId: workerSessionId });
+  for (const workerSessionId of finishWorkersForSession(sessionId)) {
+    broadcast({ type: "worker.finished", sessionId: workerSessionId });
   }
 }
 
@@ -156,9 +156,9 @@ export async function createPendingInboxEntry(sessionId: string): Promise<InboxE
 export async function sendToInbox(
   sessionId: string,
   message: string,
-  artifact?: { filename: string; content: string },
+  artifactFilename?: string,
 ): Promise<InboxEntry> {
-  const entry = await completeInboxEntry(sessionId, message, artifact);
+  const entry = await completeInboxEntry(sessionId, message, artifactFilename);
   broadcast({ type: "inbox.entry.upserted", entry });
   return entry;
 }
@@ -170,21 +170,21 @@ export async function deleteInboxEntry(entryId: string): Promise<boolean> {
   return deleted;
 }
 
-export function startArtifactWorker(worker: ArtifactWorker): void {
-  if (!startArtifactWorkerState(worker)) return;
-  broadcast({ type: "artifact.worker.started", worker });
+export function startWorker(worker: Worker): void {
+  if (!startWorkerState(worker)) return;
+  broadcast({ type: "worker.started", worker });
 }
 
-export function finishArtifactWorker(sessionId: string): void {
-  if (!finishArtifactWorkerState(sessionId)) return;
-  broadcast({ type: "artifact.worker.finished", sessionId });
+export function finishWorker(sessionId: string): void {
+  if (!finishWorkerState(sessionId)) return;
+  broadcast({ type: "worker.finished", sessionId });
 }
 
-export { getArtifactWorker, hasArtifactWorker };
+export { getWorker, hasWorker };
 
-export async function registerArtifactKind(kind: CustomArtifactKind): Promise<void> {
-  await writeCustomArtifact(kind);
-  broadcast({ type: "artifact.kind.registered", kind });
+export async function registerEditorKind(kind: CustomEditorKind): Promise<void> {
+  await writeCustomEditor(kind);
+  broadcast({ type: "editor.registered", kind });
 }
 
 export function applyWorkspaceAction(action: WorkspaceAction): void {

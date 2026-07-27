@@ -7,7 +7,7 @@ import type {
 import { notificationLabel } from "@/lib/session/agentNotifications";
 
 const NOTIFICATION_ICONS: Record<AgentNotification["type"], LucideIcon> = {
-  artifact_edited: Pencil,
+  file_edited: Pencil,
 };
 
 export function AgentNotificationMessage({ message }: { message: AgentNotificationMessageType }) {

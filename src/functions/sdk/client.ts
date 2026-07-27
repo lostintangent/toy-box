@@ -175,32 +175,31 @@ export function buildSessionSystemMessage(
     );
   }
 
+  const sessionStateDirectory = `~/${SESSION_STATE_PATH}/${sessionId}`;
+  const sessionFilesDirectory = `${sessionStateDirectory}/files`;
+  parts.push(
+    `This session's ID is: ${sessionId}.`,
+    `This session's state folder is: ${sessionStateDirectory}. This session's files folder is: ${sessionFilesDirectory}. Unless otherwise specified, when the user asks you to create an artifact, spec, plan, or session document, write it under the files folder. Artifact paths in Toy Box notifications are relative to this files folder. If this session does not have a working directory, use this files folder as the default location for new files.`,
+  );
+
   if (sessionType === "inbox") {
     parts.push(
-      `This session's ID is: ${sessionId}. It is running a background task managed by the Toy Box inbox, and its session ID is also its inbox entry ID. Before finishing its initial task, ensure useful work leaves a durable, user-visible outcome. If the task naturally created or changed something durable outside this session—such as files in the user's working directory or an automation—do not duplicate it with an inbox result.`,
+      `This session is running a background task managed by the Toy Box inbox, and its session ID is also its inbox entry ID. Before finishing its initial task, ensure useful work leaves a durable, user-visible outcome. If the task naturally created or changed something durable outside this session—such as files in the user's working directory or an automation—do not duplicate it with an inbox result.`,
       "If the initial task did not otherwise produce a durable outcome, you MUST call `send_to_inbox` exactly once. Keep its message to 1 sentence that concisely summarizes the useful result (e.g. either an answer to a question or a recognizable title for a generated artifact). If satisfying the user's request requires a longer result—such as a research report, a spec/plan, or other generated content that is more than a simple answer—include an `artifact` with its filename and complete contents in that same call. Only include an artifact when the request requires it: if the complete useful result fits in the message, omit it. Never use the inbox for routine progress updates. After the initial inbox result has been delivered, respond to follow-up turns normally and do not call `send_to_inbox` again.",
-      `When \`send_to_inbox\` includes an artifact, Toy Box stores it at ~/.toy-box/inbox/${sessionId}/<filename>. Artifact paths in Toy Box notifications are relative to this inbox folder. Use that file for any later follow-up work on the artifact.`,
     );
-  } else {
-    const sessionStateDirectory = `~/${SESSION_STATE_PATH}/${sessionId}`;
-    const sessionFilesDirectory = `${sessionStateDirectory}/files`;
+  }
+
+  if (artifactPath) {
     parts.push(
-      `This session's ID is: ${sessionId}.`,
-      `This session's state folder is: ${sessionStateDirectory}. This session's files folder is: ${sessionFilesDirectory}. Unless otherwise specified, when the user asks you to create an artifact, spec, plan, or session document, write it under the files folder. Artifact paths in Toy Box notifications are relative to this files folder. If this session does not have a working directory, use this files folder as the default location for new files.`,
+      `The draft began with the artifact \`${artifactPath}\`, which is the center of the user's initial discussion. Read and update that file when the user's request refers to the document, diagram, or artifact without naming a path.`,
     );
+  }
 
-    if (artifactPath) {
-      parts.push(
-        `The draft began with the artifact \`${artifactPath}\`, which is the center of the user's initial discussion. Read and update that file when the user's request refers to the document, diagram, or artifact without naming a path.`,
-      );
-    }
-
-    if (sessionType === "automation") {
-      parts.push(
-        "This is an automation session: its session ID is also its automation ID. Use the automation tools when the task requires inspecting or changing that automation.",
-        "Treat user edits to this run's artifacts as feedback on the automation prompt. When the intent is clear, update the automation accordingly.",
-      );
-    }
+  if (sessionType === "automation") {
+    parts.push(
+      "This is an automation session: its session ID is also its automation ID. Use the automation tools when the task requires inspecting or changing that automation.",
+      "Treat user edits to this run's artifacts as feedback on the automation prompt. When the intent is clear, update the automation accordingly.",
+    );
   }
 
   parts.push(

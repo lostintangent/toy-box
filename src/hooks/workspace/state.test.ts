@@ -3,6 +3,7 @@ import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { workspaceQueries } from "@/lib/workspace/state/query";
 import { createEmptyWorkspaceState, type WorkspaceState } from "@/lib/workspace/state/reducer";
 import { selectInboxEntries, selectWorkspaceSessionActivity } from "./state";
+import { sessionFile, workspaceFileId } from "@/lib/files/workspaceFile";
 
 describe("workspace query selectors", () => {
   test("projects one session without notifying it about another", () => {
@@ -243,26 +244,26 @@ describe("workspace query selectors", () => {
     const queryClient = createQueryClient();
     const worker = {
       sessionId: "artifact-worker-a",
-      sourceSessionId: "session-a",
-      path: "plan.md",
+      file: sessionFile("session-a", "plan.md"),
       name: "Respond to comment",
       metadata: { threadId: "thread-a" },
     };
     seedWorkspace(queryClient, {
       ...createEmptyWorkspaceState(),
-      artifactWorkers: [
+      workers: [
         worker,
         {
           sessionId: "artifact-worker-b",
-          sourceSessionId: "session-a",
-          path: "other.md",
+          file: sessionFile("session-a", "other.md"),
           metadata: { threadId: "thread-b" },
         },
       ],
     });
     const workers = observe(queryClient, (workspace) =>
-      workspace.artifactWorkers.filter(
-        (candidate) => candidate.sourceSessionId === "session-a" && candidate.path === "plan.md",
+      workspace.workers.filter(
+        (candidate) =>
+          candidate.file !== undefined &&
+          workspaceFileId(candidate.file) === workspaceFileId(sessionFile("session-a", "plan.md")),
       ),
     );
     expect(workers.data()).toEqual([worker]);

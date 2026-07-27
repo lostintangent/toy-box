@@ -112,6 +112,7 @@ export function useSession(
     linkedSessionIds,
     canvases,
     artifacts,
+    openedFiles,
     status: baseStatus,
     reasoningContent,
     model,
@@ -430,6 +431,7 @@ export function useSession(
           linkedSessionIds: sessionSnapshot.linkedSessionIds,
           canvases: sessionSnapshot.canvases,
           artifacts: sessionSnapshot.artifacts,
+          openedFiles: sessionSnapshot.openedFiles,
           status: sessionSnapshot.status ?? "idle",
           reasoningContent: sessionSnapshot.reasoningContent ?? "",
           // Keep the locally picked model when older history has none.
@@ -495,6 +497,7 @@ export function useSession(
     linkedSessionIds,
     canvases,
     artifacts,
+    openedFiles,
     hasLoadedSessionState,
     error,
 

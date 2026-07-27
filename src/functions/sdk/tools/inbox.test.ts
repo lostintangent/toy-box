@@ -1,8 +1,8 @@
 import { expect, mock, onTestFinished, test } from "bun:test";
-import type { ToolInvocation } from "@github/copilot-sdk";
+import type { CopilotSession, ToolInvocation } from "@github/copilot-sdk";
 import type { Database } from "db0";
-import { readFile } from "node:fs/promises";
 import { createTestDatabase } from "@/functions/state/database";
+import { SessionStream } from "@/functions/runtime/stream";
 
 let currentDb: Database | undefined;
 
@@ -14,8 +14,7 @@ mock.module("@/functions/state/database", () => ({
   },
 }));
 
-const { createInboxEntry, deleteInboxArtifact, getInboxEntries, resolveInboxArtifactPath } =
-  await import("@/functions/state/workspace/inbox");
+const { createInboxEntry, getInboxEntries } = await import("@/functions/state/workspace/inbox");
 const { inboxTools } = await import("./inbox");
 
 async function openInboxToolTestDatabase(): Promise<void> {
@@ -53,13 +52,30 @@ test("send_to_inbox completes its session's pending entry", async () => {
   expect(entryId).toBe(sessionId);
 });
 
-test("send_to_inbox writes and attaches its optional artifact", async () => {
+test("send_to_inbox writes its artifact to the session workspace and attaches the filename", async () => {
   await openInboxToolTestDatabase();
-  const [sendToInbox] = inboxTools;
   const sessionId = `toy-box-${crypto.randomUUID()}`;
   await createInboxEntry(sessionId);
-  onTestFinished(() => deleteInboxArtifact(sessionId));
 
+  // Drive a real stream with a fake SDK session so the tool's workspace write is observable.
+  const createdFiles: Array<{ path: string; content: string }> = [];
+  const fakeSession = {
+    on: () => () => {},
+    send: async () => {},
+    abort: async () => {},
+    rpc: {
+      queue: { clear: async () => {} },
+      workspaces: {
+        createFile: async (params: { path: string; content: string }) => {
+          createdFiles.push(params);
+        },
+      },
+    },
+  } as unknown as CopilotSession;
+  const stream = SessionStream.getOrCreate(sessionId, fakeSession);
+  onTestFinished(() => stream.close());
+
+  const [sendToInbox] = inboxTools;
   const sendResult = await sendToInbox?.handler?.(
     {
       message: "Research is ready",
@@ -69,8 +85,7 @@ test("send_to_inbox writes and attaches its optional artifact", async () => {
   );
   const { entryId } = JSON.parse(String(sendResult)) as { entryId: string };
 
-  const artifactPath = resolveInboxArtifactPath(entryId, "research.md")!;
-  expect(await readFile(artifactPath, "utf-8")).toBe("# Research");
+  expect(createdFiles).toEqual([{ path: "research.md", content: "# Research" }]);
   expect(await getInboxEntries()).toContainEqual({
     id: entryId,
     message: "Research is ready",

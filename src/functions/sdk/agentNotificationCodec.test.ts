@@ -7,7 +7,10 @@ import {
 
 describe("SDK agent notification codec", () => {
   test("round-trips notification markers", () => {
-    const notification = { type: "artifact_edited", path: "plan.md" } as const;
+    const notification = {
+      type: "file_edited",
+      file: { type: "session", sessionId: "s1", path: "plan.md" },
+    } as const;
 
     expect(decodeSdkAgentNotification(encodeSdkAgentNotification(notification))).toEqual(
       notification,
@@ -21,13 +24,13 @@ describe("SDK agent notification codec", () => {
     ).toBeUndefined();
     expect(
       decodeSdkAgentNotification(
-        '<toybox-notification>{"type":"artifact_edited","path":""}</toybox-notification>',
+        '<toybox-notification>{"type":"file_edited","file":{"type":"session","sessionId":"s1","path":""}}</toybox-notification>',
       ),
     ).toBeUndefined();
   });
 
   test("keeps marker instructions at the SDK transport boundary", () => {
     expect(SDK_AGENT_NOTIFICATION_INSTRUCTIONS).toContain("<toybox-notification>");
-    expect(SDK_AGENT_NOTIFICATION_INSTRUCTIONS).toContain("- artifact_edited:");
+    expect(SDK_AGENT_NOTIFICATION_INSTRUCTIONS).toContain("- file_edited:");
   });
 });

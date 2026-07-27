@@ -93,6 +93,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
     linkedSessionIds,
     canvases,
     artifacts,
+    openedFiles,
     hasLoadedSessionState,
     error,
     sendMessage,
@@ -134,8 +135,18 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
       isDraft ? [] : linkedSessionIds,
       isDraft ? [] : (canvases ?? []),
       artifacts,
+      isDraft ? [] : openedFiles,
     );
-  }, [artifacts, canvases, hasLoadedSessionState, isDraft, mode, linkedSessionIds, sessionId]);
+  }, [
+    artifacts,
+    openedFiles,
+    canvases,
+    hasLoadedSessionState,
+    isDraft,
+    mode,
+    linkedSessionIds,
+    sessionId,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Render state and handlers

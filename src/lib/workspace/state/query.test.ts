@@ -69,7 +69,7 @@ describe("workspace query cache", () => {
       ...createEmptyWorkspaceState(),
       automations: [automation],
       inboxEntries: [entry],
-      customArtifacts: [kind],
+      customEditors: [kind],
     };
     queryClient.setQueryData(workspaceQueries.stateKey(), state);
 
@@ -91,7 +91,7 @@ describe("workspace query cache", () => {
       entry: { ...entry },
     });
     applyWorkspaceEvent(queryClient, {
-      type: "artifact.kind.registered",
+      type: "editor.registered",
       kind: { ...kind, extensions: [...kind.extensions] },
     });
 

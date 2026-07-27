@@ -8,7 +8,7 @@ The workspace pane system turns Inbox, conversations, and their outputs into reu
 
 - The Inbox pane is the stable fallback workspace when no session is selected.
 - A session pane is sourced by its own session ID.
-- An artifact pane is a durable file associated with the session that produced it.
+- An editor pane presents a durable file: a session artifact, or a machine file the agent opened.
 - A canvas pane is an SDK-provided URL surface associated with its source session.
 
 Each pane has a stable ID that represents its mounted identity. Inbox uses the singleton ID `inbox`; artifact identity includes its source session and relative path, while canvas identity includes its revision so a new revision remounts the surface. `paneSourceSessionId` resolves the session behind every session-backed pane without pretending Inbox is a session.
@@ -37,7 +37,7 @@ Pane `variant` is a separate host concern. `WorkspacePaneView` defaults to norma
 
 [`layout/HyperSession.tsx`](layout/HyperSession.tsx) is an independent mini-workspace around a managed session. It derives that session's linked panes, gives them a separate focus surface, and hosts them in `WorkspacePager` inside a movable window. Promotion preserves the transcript and any live runtime while transferring lifecycle management into the normal workspace; a future cold resume resolves the session's standard role.
 
-`InboxPane` links at most one artifact pane. Clicking the linked row again removes it; clicking another row replaces it. The artifact keeps the Inbox entry's managed session ID as its source, so hosts can supply `SessionOverlay` whenever that source session is not already another visible pane. This keeps asynchronous artifact generation and follow-up in the normal pane model without introducing a special artifact-session implementation. See [`panes/artifacts/AGENTS.md`](panes/artifacts/AGENTS.md) for file ownership, watch, edit, serve, and renderer behavior.
+`InboxPane` links at most one editor pane. Clicking the linked row again removes it; clicking another row replaces it. The artifact keeps the Inbox entry's managed session ID as its source, so hosts can supply `SessionOverlay` whenever that source session is not already another visible pane. This keeps asynchronous artifact generation and follow-up in the normal pane model without introducing a special artifact-session implementation. See [`panes/editor/AGENTS.md`](panes/editor/AGENTS.md) for file ownership, watch, edit, serve, and renderer behavior.
 
 ## Ownership and extension
 

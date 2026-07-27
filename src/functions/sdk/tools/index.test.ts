@@ -25,6 +25,8 @@ describe("SDK tool catalog", () => {
       ...BASE_TOOLS.slice(0, 2),
       "open_session",
       "close_session",
+      "open_file",
+      "close_file",
       ...BASE_TOOLS.slice(2),
     ]);
     expect(getSessionTools("standard").every((tool) => tool.defer === "never")).toBe(true);
@@ -75,7 +77,7 @@ describe("SDK tool catalog", () => {
       "create_session",
       ...toolNames("standard"),
       "update_settings",
-      "register_artifact_kind",
+      "register_editor",
     ]);
   });
 

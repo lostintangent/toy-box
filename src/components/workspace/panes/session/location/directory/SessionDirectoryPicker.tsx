@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, FolderOpen, GitFork } from "lucide-react";
-import { DirectoryBrowserDialog } from "./DirectoryBrowserDialog";
+import { FileBrowserDialog } from "@/components/workspace/fs/FileBrowserDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -206,11 +206,12 @@ function EditableSessionDirectoryPicker({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <DirectoryBrowserDialog
+      <FileBrowserDialog
         open={browserOpen}
         onOpenChange={setBrowserOpen}
-        onSelect={handleBrowserSelect}
+        title="Select a folder"
         initialPath={effectiveValue}
+        onSelectDirectory={handleBrowserSelect}
       />
     </>
   );

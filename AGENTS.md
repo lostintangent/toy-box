@@ -8,7 +8,7 @@ A session ID ties together durable SDK history, at most one live runtime, Toy Bo
 
 Raw Copilot SDK activity is translated into canonical `SessionEvent`s. One pure reducer builds the same session state for the live server runtime, persisted-history replay, and browser clients, so a transcript agrees whether it is watched live, reconnected, or opened after completion. Active sessions take their truth from the in-memory runtime; idle sessions are reconstructed from durable SDK history, with snapshots serving only as a cache.
 
-Automations, Inbox, Hyper, and parent sessions govern managed-session lifecycles while reusing that same runtime rather than defining alternate execution models. Artifacts expose durable files as live, editable surfaces that can notify their owning agent. High-frequency transcript activity travels through ordered, replayable per-session streams. Lower-frequency shared workspace changes use a separate at-most-once update stream and recover missed events from authoritative snapshots or query refetches.
+Automations, Inbox, Hyper, and parent sessions govern managed-session lifecycles while reusing that same runtime rather than defining alternate execution models. Files open as live, editable editor surfaces that can notify their owning agent. High-frequency transcript activity travels through ordered, replayable per-session streams. Lower-frequency shared workspace changes use a separate at-most-once update stream and recover missed events from authoritative snapshots or query refetches.
 
 ```mermaid
 flowchart LR
@@ -38,7 +38,7 @@ Each guide explains one capability end to end, including adjacent callers and co
 - [`src/functions/state/AGENTS.md`](src/functions/state/AGENTS.md): authoritative state and lifecycle across session resources, workspace coordination, and managed sessions
 - [`src/functions/automations/AGENTS.md`](src/functions/automations/AGENTS.md): dependable recurring work by scheduling ordinary managed sessions
 - [`src/components/workspace/AGENTS.md`](src/components/workspace/AGENTS.md): one pane model composed into desktop, mobile, preview, overlay, Hyper, and Inbox workflows
-- [`src/components/workspace/panes/artifacts/AGENTS.md`](src/components/workspace/panes/artifacts/AGENTS.md): durable files presented as live, bidirectionally editable surfaces
+- [`src/components/workspace/panes/editor/AGENTS.md`](src/components/workspace/panes/editor/AGENTS.md): durable files presented as live, bidirectionally editable surfaces
 - [`terminal-server/AGENTS.md`](terminal-server/AGENTS.md): reconnectable PTYs with mode-aware scrollback that preserves the visible terminal
 - [`cli/AGENTS.md`](cli/AGENTS.md): one installable binary that assembles the web application and its independent runtimes
 - [`tests/AGENTS.md`](tests/AGENTS.md): live runtime and historical replay behavior locked against real SDK fixtures
