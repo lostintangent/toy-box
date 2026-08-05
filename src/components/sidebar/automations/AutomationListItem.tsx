@@ -2,7 +2,7 @@ import { Clock3, Pencil, Play, Trash2 } from "lucide-react";
 import { MetadataBadge } from "@/components/ui/metadata-badge";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { SidebarListItem } from "@/components/sidebar/shell/SidebarListItem";
+import { SidebarSessionItem } from "@/components/sidebar/shell/SidebarListItem";
 import type { Automation } from "@/types";
 import { useWorkspaceSessionActivity } from "@/hooks/workspace/state";
 
@@ -33,7 +33,7 @@ export function AutomationListItem({
   const canOpenSession = Boolean(automation.lastRunAt) || isRunning || hasUnreadActivity;
 
   return (
-    <SidebarListItem
+    <SidebarSessionItem
       sessionId={automation.id}
       title={automation.title}
       time={
@@ -45,7 +45,7 @@ export function AutomationListItem({
           <span className="italic">Never run</span>
         )
       }
-      badges={
+      badge={
         <MetadataBadge>
           <Clock3 className="h-3 w-3 shrink-0" />
           <RelativeTime date={automation.nextRunAt} />

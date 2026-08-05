@@ -1,7 +1,7 @@
 // Markdown comment threads are stored inside the artifact, so this kind
 // owns the complete protocol that tells a worker how to respond.
 
-import type { CommentThread } from "documint";
+import type { CommentThread } from "@lostintangent/documint";
 
 export function buildArtifactCommentPrompt(thread: CommentThread, now: Date): string {
   const latestComment = thread.comments.at(-1)!.body;

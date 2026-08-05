@@ -3,11 +3,8 @@
  * reconnection with exponential backoff and protocol message framing.
  */
 
-import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 import type { TerminalClientMessage, TerminalServerMessage } from "@/types";
 
-const MIN_PORT = 1;
-const MAX_PORT = 65_535;
 const WS_CLOSE_CODE_REPLACED = 4000;
 const TEXT_ENCODER = new TextEncoder();
 
@@ -18,12 +15,6 @@ export type TerminalConnectionCallbacks = {
   onMessage: (message: TerminalServerMessage) => void;
   onClose: (code: number) => void;
 };
-
-function normalizePort(port: number): number {
-  return Number.isInteger(port) && port >= MIN_PORT && port <= MAX_PORT
-    ? port
-    : DEFAULT_TERMINAL_WS_PORT;
-}
 
 function detachHandlers(ws: WebSocket) {
   ws.onclose = null;
@@ -37,7 +28,6 @@ export class TerminalConnection {
   #ws: WebSocket | null = null;
   #reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   #reconnectAttempts = 0;
-  #wsPort = DEFAULT_TERMINAL_WS_PORT;
 
   public initSent = false;
   public lastSentSize: { cols: number; rows: number } | null = null;
@@ -50,17 +40,6 @@ export class TerminalConnection {
     return this.#ws?.readyState === WebSocket.OPEN;
   }
 
-  get port(): number {
-    return this.#wsPort;
-  }
-
-  setPort(port: number): boolean {
-    const nextPort = normalizePort(port);
-    if (this.#wsPort === nextPort) return false;
-    this.#wsPort = nextPort;
-    return true;
-  }
-
   connect() {
     if (typeof window === "undefined") return;
     if (!this.#callbacks.isAttached()) return;
@@ -70,9 +49,8 @@ export class TerminalConnection {
       detachHandlers(this.#ws);
     }
 
-    const wsUrl = new URL(window.location.origin);
+    const wsUrl = new URL("/terminal", window.location.origin);
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
-    wsUrl.port = String(this.#wsPort);
 
     const ws = new WebSocket(wsUrl);
     ws.binaryType = "arraybuffer";
@@ -142,12 +120,6 @@ export class TerminalConnection {
   sendData(data: string) {
     if (!this.isOpen) return;
     this.#ws!.send(TEXT_ENCODER.encode(data));
-  }
-
-  closeIfOpen() {
-    if (this.#ws && this.#ws.readyState !== WebSocket.CLOSED) {
-      this.close();
-    }
   }
 
   dispose() {

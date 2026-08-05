@@ -3,10 +3,11 @@ import { ScrollableFade } from "@/components/ui/scrollable-fade";
 import { cn } from "@/lib/utils";
 import type { SessionMetadata } from "@/types";
 import { AutomationPanel } from "./automations/AutomationPanel";
+import { AppsPanel } from "./apps/AppsPanel";
 import { SettingsDialog } from "./shell/SettingsDialog";
 import { SidebarHeader, type SidebarCreateOptions } from "./shell/SidebarHeader";
 import { SidebarFooter } from "./shell/SidebarFooter";
-import { SessionList } from "./list/SessionList";
+import { SessionList } from "./sessions/SessionList";
 import { FileBrowserDialog } from "@/components/workspace/fs/FileBrowserDialog";
 
 export type SidebarProps = {
@@ -28,8 +29,13 @@ export type SidebarProps = {
 
   isAutomationsExpanded: boolean;
   onAutomationsExpandedChange: (expanded: boolean) => void;
+  isAppsExpanded: boolean;
+  onAppsExpandedChange: (expanded: boolean) => void;
 
   onCreateSession: (options?: SidebarCreateOptions) => void;
+  openAppIds: string[];
+  onAppOpen: (appId: string, toggleInWorkspace: boolean) => void;
+  onAppOpenInHyper: (appId: string) => void;
   onToggleHyper: () => void;
   isHyperOpen: boolean;
   onOpenInbox: () => void;
@@ -64,8 +70,13 @@ export function Sidebar({
 
   isAutomationsExpanded,
   onAutomationsExpandedChange,
+  isAppsExpanded,
+  onAppsExpandedChange,
 
   onCreateSession,
+  openAppIds,
+  onAppOpen,
+  onAppOpenInHyper,
   onToggleHyper,
   isHyperOpen,
   onOpenInbox,
@@ -113,6 +124,15 @@ export function Sidebar({
               draftSessions={draftSessions}
             />
           </ScrollableFade>
+
+          <AppsPanel
+            isExpanded={isAppsExpanded}
+            onExpandedChange={onAppsExpandedChange}
+            openAppIds={openAppIds}
+            onAppOpen={onAppOpen}
+            onAppOpenInHyper={onAppOpenInHyper}
+          />
+
           <AutomationPanel
             isExpanded={isAutomationsExpanded}
             onExpandedChange={onAutomationsExpandedChange}
@@ -132,7 +152,9 @@ export function Sidebar({
           isTerminalOpen={isTerminalOpen}
         />
       </div>
+
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+
       <FileBrowserDialog
         open={browseOpen}
         onOpenChange={setBrowseOpen}

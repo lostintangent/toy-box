@@ -3,7 +3,7 @@ import type { ToolCallProps } from "./types";
 import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";
 import { useSessionCwd } from "@/hooks/session/SessionCwdContext";
-import { toRelativePath } from "@/lib/paths";
+import { toRelativePath } from "@/lib/files/paths";
 
 export function GlobToolCall({ toolCall, ...props }: ToolCallProps) {
   const cwd = useSessionCwd();

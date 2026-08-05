@@ -4,10 +4,10 @@
 
 import { deleteSessionIfExists } from "@/functions/state/session/registry";
 import { createSession, SessionStream } from "@/functions/runtime/stream";
-import type { SessionStreamCompletion } from "@/functions/runtime/stream";
 import { broadcast } from "@/functions/runtime/broadcast";
 import { sharedMap } from "@/functions/runtime/processState";
-import { getAppDatabase } from "@/functions/state/database";
+import { getStateDatabase } from "@/functions/state/database";
+import type { SessionCompletion } from "@/types";
 import { AutomationDatabase } from "./database";
 
 const AUTOMATION_SCHEDULER_POLL_MS = 30_000;
@@ -29,7 +29,7 @@ export async function runSchedulerTick(): Promise<void> {
   schedulerTickInProgress = true;
 
   try {
-    const appDatabase = await getAppDatabase({ createIfMissing: false });
+    const appDatabase = await getStateDatabase({ createIfMissing: false });
     if (!appDatabase) return;
 
     const database = new AutomationDatabase(appDatabase);
@@ -67,7 +67,7 @@ export async function startAutomationRun(automationId: string) {
 }
 
 async function beginAutomationRun(automationId: string) {
-  const database = new AutomationDatabase(await getAppDatabase());
+  const database = new AutomationDatabase(await getStateDatabase());
   const automation = await database.get(automationId);
   if (!automation) throw new Error("Automation not found");
 
@@ -98,7 +98,7 @@ async function beginAutomationRun(automationId: string) {
 async function superviseAutomationRun(
   database: AutomationDatabase,
   automationId: string,
-  waitForCompletion: () => Promise<SessionStreamCompletion>,
+  waitForCompletion: () => Promise<SessionCompletion>,
 ): Promise<void> {
   try {
     await waitForCompletion();

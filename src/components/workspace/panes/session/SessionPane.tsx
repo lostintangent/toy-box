@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import type { Attachment, ModelConfiguration } from "@/types";
@@ -9,7 +9,7 @@ import {
   type SessionLocationPickerProps,
 } from "./location/SessionLocationPicker";
 import { SessionMetadataBadges } from "./location/SessionMetadataBadges";
-import { publishSessionPanes } from "@/hooks/workspace/layout/linkedPanes";
+import { useWorkspaceSurface } from "@/hooks/workspace/layout/surface";
 import { useSession } from "@/hooks/session/useSession";
 import { useModels } from "@/hooks/workspace/useModels";
 import { useDraftPrompt } from "@/hooks/workspace/useDraftPrompt";
@@ -18,15 +18,22 @@ import { useEditDiffs } from "@/hooks/diffs/useEditDiffs";
 import { EditDiffsProvider } from "@/hooks/diffs/EditDiffsContext";
 import { SessionCwdProvider } from "@/hooks/session/SessionCwdContext";
 import { SessionComposer } from "@/components/composer/SessionComposer";
-import type { PaneProps } from "../types";
-import { PaneActions } from "../PaneSlots";
-import { SessionMessageList, SessionMessagesSkeleton } from "./transcript/MessageList";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { PaneVariant } from "../WorkspacePaneView";
+import { PaneActions } from "../shell/PaneSlots";
+
+const SessionMessageList = lazy(() =>
+  import("./transcript/MessageList").then((module) => ({
+    default: module.SessionMessageList,
+  })),
+);
 
 // Cap the transcript text handed to a voice call so context stays cheap to send.
 const VOICE_CONTEXT_MAX_CHARS = 1000;
 
-export interface SessionPaneProps extends PaneProps {
+export interface SessionPaneProps {
   sessionId: string;
+  variant?: PaneVariant;
   /** Mode defaults to active. Active panes own linked panes and artifact shortcuts. Overlays stay
    *  interactive but secondary; passive panes render live read-only state.
    *  Secondary modes default to compact presentation. */
@@ -34,9 +41,13 @@ export interface SessionPaneProps extends PaneProps {
 }
 
 export function SessionPane({ sessionId, mode = "active", variant }: SessionPaneProps) {
+  const { panePublications } = useWorkspaceSurface();
   const isPassive = mode === "passive";
   const workspaceSession = useWorkspaceSelector((workspace) => workspace.sessionStates[sessionId]);
   const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);
+  const isHyper = useWorkspaceSelector((workspace) =>
+    workspace.hyperSessionIds.includes(sessionId),
+  );
   const workspaceSessionStatus = workspaceSession?.status ?? "idle";
   const draftSession = workspaceSession?.status === "draft" ? workspaceSession : undefined;
   const isDraft = draftSession !== undefined;
@@ -44,7 +55,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
   const { models, defaultModel, setDefaultModel } = useModels();
   // In the "compact" variant (the pager) the session surfaces its location picker
   // + message badges in the host's title bar and hides them from the composer; in
-  // "normal" (the grid) it keeps them inline. See PaneProps.
+  // "normal" (the grid) it keeps them inline. See WorkspacePaneView.
   const isCompact = variant === "compact" || (variant === undefined && mode !== "active");
   const { prompt, setPrompt } = useDraftPrompt(sessionId, {
     sharedPrompt: workspaceSession?.prompt ?? null,
@@ -55,7 +66,9 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
   // Session location
   // ---------------------------------------------------------------------------
   // An untouched draft follows the latest directory; null preserves an explicit clear.
-  const [draftDirectorySelection, setDraftDirectorySelection] = useState<string | null>();
+  const [draftDirectorySelection, setDraftDirectorySelection] = useState<string | null | undefined>(
+    undefined,
+  );
   // Subscribe only to this session's durable metadata and worktree.
   const { data: sessionRecord, isLoading: isSessionRecordLoading } = useQuery({
     ...sessionQueries.state(),
@@ -123,14 +136,14 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
 
   // Skills follow the effective directory, with no directory resolving host-level skills.
   const { data: skills } = useQuery({
-    ...skillQueries.list(effectiveDirectory),
+    ...skillQueries.list(effectiveDirectory, isHyper ? "hyper" : undefined),
     enabled: !isPassive && !isSessionRecordLoading,
   });
   useEffect(() => {
     if (mode !== "active") return;
     if (!isDraft && !hasLoadedSessionState) return;
 
-    publishSessionPanes(
+    panePublications.actions.publishSessionPanes(
       sessionId,
       isDraft ? [] : linkedSessionIds,
       isDraft ? [] : (canvases ?? []),
@@ -144,6 +157,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
     hasLoadedSessionState,
     isDraft,
     mode,
+    panePublications,
     linkedSessionIds,
     sessionId,
   ]);
@@ -256,17 +270,19 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
         ) : isLoadingSessionState ? (
           <SessionMessagesSkeleton />
         ) : (
-          <SessionCwdProvider value={effectiveDirectory}>
-            <EditDiffsProvider value={editDiffs.byToolCallId}>
-              <SessionMessageList
-                messages={messages}
-                isStreaming={isStreaming}
-                status={status}
-                reasoningContent={reasoningContent}
-                scrollToBottomRef={scrollToBottomRef}
-              />
-            </EditDiffsProvider>
-          </SessionCwdProvider>
+          <Suspense fallback={<SessionMessagesSkeleton />}>
+            <SessionCwdProvider value={effectiveDirectory}>
+              <EditDiffsProvider value={editDiffs.byToolCallId}>
+                <SessionMessageList
+                  messages={messages}
+                  isStreaming={isStreaming}
+                  status={status}
+                  reasoningContent={reasoningContent}
+                  scrollToBottomRef={scrollToBottomRef}
+                />
+              </EditDiffsProvider>
+            </SessionCwdProvider>
+          </Suspense>
         )}
       </div>
 
@@ -296,6 +312,42 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
           />
         </div>
       )}
+    </div>
+  );
+}
+
+function SessionMessagesSkeleton() {
+  return (
+    <div className="h-full space-y-4 p-4 bg-muted/50">
+      <div className="flex justify-end">
+        <Skeleton className="h-10 w-48 rounded-lg" />
+      </div>
+      <div className="flex justify-start">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-64" />
+          <Skeleton className="h-4 w-56" />
+          <Skeleton className="h-4 w-48" />
+        </div>
+      </div>
+      <div className="flex justify-end">
+        <Skeleton className="h-10 w-36 rounded-lg" />
+      </div>
+      <div className="flex justify-start">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-72" />
+          <Skeleton className="h-4 w-64" />
+        </div>
+      </div>
+      <div className="flex justify-end">
+        <Skeleton className="h-10 w-52 rounded-lg" />
+      </div>
+      <div className="flex justify-start">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-60" />
+          <Skeleton className="h-4 w-52" />
+          <Skeleton className="h-4 w-44" />
+        </div>
+      </div>
     </div>
   );
 }

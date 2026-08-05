@@ -1,11 +1,10 @@
 import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import type { Database } from "db0";
 import { createTestDatabase } from "../database";
 
-let currentDb: Database | undefined;
+let currentDb: Bun.SQL | undefined;
 
 mock.module("../database", () => ({
-  getAppDatabase: async (options?: { createIfMissing?: boolean }) => {
+  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
     if (!currentDb && options?.createIfMissing === false) return null;
     if (!currentDb) throw new Error("Test database has not been opened");
     return currentDb;
@@ -13,8 +12,10 @@ mock.module("../database", () => ({
 }));
 
 const {
-  getDisposableWorkerSessionIds,
-  getWorkerSessionIds,
+  getEphemeralWorkerSessionIds,
+  getWorkerAppId,
+  getWorkerSessionParents,
+  getWorkerSessionIdsForApp,
   getWorkerSessionIdsForParent,
   registerWorkerSession,
   unregisterWorkerSession,
@@ -23,27 +24,55 @@ const {
 async function openWorkersTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
   onTestFinished(async () => {
-    await currentDb?.dispose();
+    await currentDb?.close();
     currentDb = undefined;
   });
 }
 
 describe("worker ownership", () => {
-  test("lists worker session ids", async () => {
+  test("maps worker sessions to their parent sessions", async () => {
     await openWorkersTestDatabase();
 
-    await registerWorkerSession("toy-box-worker-a", "toy-box-parent");
-    await registerWorkerSession("toy-box-worker-b", "toy-box-parent");
+    await registerWorkerSession({
+      type: "session",
+      sessionId: "toy-box-worker-a",
+      parentSessionId: "toy-box-parent",
+      ephemeral: false,
+    });
+    await registerWorkerSession({
+      type: "app",
+      sessionId: "toy-box-worker-b",
+      appId: "app-a",
+      ephemeral: true,
+    });
 
-    expect(await getWorkerSessionIds()).toEqual(["toy-box-worker-a", "toy-box-worker-b"]);
+    expect(await getWorkerSessionParents()).toEqual({
+      "toy-box-worker-a": "toy-box-parent",
+      "toy-box-worker-b": null,
+    });
   });
 
   test("lists worker session ids for a specific parent", async () => {
     await openWorkersTestDatabase();
 
-    await registerWorkerSession("toy-box-worker-a", "toy-box-parent-a");
-    await registerWorkerSession("toy-box-worker-b", "toy-box-parent-b");
-    await registerWorkerSession("toy-box-worker-c", "toy-box-parent-a");
+    await registerWorkerSession({
+      type: "session",
+      sessionId: "toy-box-worker-a",
+      parentSessionId: "toy-box-parent-a",
+      ephemeral: false,
+    });
+    await registerWorkerSession({
+      type: "session",
+      sessionId: "toy-box-worker-b",
+      parentSessionId: "toy-box-parent-b",
+      ephemeral: true,
+    });
+    await registerWorkerSession({
+      type: "file",
+      sessionId: "toy-box-worker-c",
+      ephemeral: true,
+      file: { type: "session", sessionId: "toy-box-parent-a", path: "notes.md" },
+    });
 
     expect(await getWorkerSessionIdsForParent("toy-box-parent-a")).toEqual([
       "toy-box-worker-a",
@@ -54,41 +83,90 @@ describe("worker ownership", () => {
   test("keeps the first owner when a worker is registered twice", async () => {
     await openWorkersTestDatabase();
 
-    await registerWorkerSession("toy-box-worker", "toy-box-parent-a");
-    await registerWorkerSession("toy-box-worker", "toy-box-parent-b");
+    await registerWorkerSession({
+      type: "session",
+      sessionId: "toy-box-worker",
+      parentSessionId: "toy-box-parent-a",
+      ephemeral: false,
+    });
+    await registerWorkerSession({
+      type: "app",
+      sessionId: "toy-box-worker",
+      appId: "app-b",
+      ephemeral: true,
+    });
 
-    expect(await getWorkerSessionIds()).toEqual(["toy-box-worker"]);
-    const { rows } = await currentDb!.sql`
-      SELECT parent_session_id FROM workers WHERE session_id = ${"toy-box-worker"}
+    expect(await getWorkerSessionParents()).toEqual({
+      "toy-box-worker": "toy-box-parent-a",
+    });
+    const rows = await currentDb!<
+      {
+        worker_type: string;
+        parent_session_id: string | null;
+        app_id: string | null;
+        ephemeral: number;
+      }[]
+    >`
+      SELECT worker_type, parent_session_id, app_id, ephemeral
+      FROM workers WHERE session_id = ${"toy-box-worker"}
     `;
-    expect((rows as { parent_session_id: string }[])[0]?.parent_session_id).toBe(
-      "toy-box-parent-a",
-    );
+    expect(rows[0]).toEqual({
+      worker_type: "session",
+      parent_session_id: "toy-box-parent-a",
+      app_id: null,
+      ephemeral: 0,
+    });
   });
 
-  test("makes workers disposable by default and retains them only when requested", async () => {
+  test("selects ephemeral workers independently of their owner", async () => {
     await openWorkersTestDatabase();
 
-    await registerWorkerSession("toy-box-disposable", "toy-box-parent");
-    await registerWorkerSession("toy-box-retained", "toy-box-parent", true);
-
-    expect(await getWorkerSessionIds()).toEqual(["toy-box-disposable", "toy-box-retained"]);
-    expect(await getDisposableWorkerSessionIds()).toEqual(["toy-box-disposable"]);
+    await registerWorkerSession({
+      type: "file",
+      sessionId: "toy-box-file-worker",
+      ephemeral: true,
+      file: { type: "session", sessionId: "toy-box-parent", path: "notes.md" },
+    });
+    await registerWorkerSession({
+      type: "app",
+      sessionId: "toy-box-app-worker",
+      appId: "app-a",
+      ephemeral: false,
+    });
+    await registerWorkerSession({
+      type: "session",
+      sessionId: "toy-box-session-worker",
+      parentSessionId: "toy-box-parent",
+      ephemeral: true,
+    });
+    expect(await getEphemeralWorkerSessionIds()).toEqual([
+      "toy-box-file-worker",
+      "toy-box-session-worker",
+    ]);
+    expect(await getWorkerSessionIdsForApp("app-a")).toEqual(["toy-box-app-worker"]);
+    expect(await getWorkerAppId("toy-box-app-worker")).toBe("app-a");
   });
 
   test("unregisters workers and treats missing records as a no-op", async () => {
     await openWorkersTestDatabase();
 
-    await registerWorkerSession("toy-box-worker", "toy-box-parent");
+    await registerWorkerSession({
+      type: "session",
+      sessionId: "toy-box-worker",
+      parentSessionId: "toy-box-parent",
+      ephemeral: false,
+    });
     await unregisterWorkerSession("toy-box-worker");
     await unregisterWorkerSession("toy-box-worker");
 
-    expect(await getWorkerSessionIds()).toEqual([]);
+    expect(await getWorkerSessionParents()).toEqual({});
   });
 
   test("read paths no-op when the server-state database does not exist", async () => {
-    expect(await getWorkerSessionIds()).toEqual([]);
+    expect(await getWorkerSessionParents()).toEqual({});
     expect(await getWorkerSessionIdsForParent("toy-box-parent")).toEqual([]);
-    expect(await getDisposableWorkerSessionIds()).toEqual([]);
+    expect(await getWorkerSessionIdsForApp("app-a")).toEqual([]);
+    expect(await getEphemeralWorkerSessionIds()).toEqual([]);
+    expect(await getWorkerAppId("missing-worker")).toBeUndefined();
   });
 });

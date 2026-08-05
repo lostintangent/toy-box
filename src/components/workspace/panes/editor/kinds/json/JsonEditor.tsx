@@ -1,59 +1,119 @@
-import { useEffectEvent, useLayoutEffect, useState } from "react";
-import type { EditorProps } from "../index";
-import { createJsonEditorStore } from "./store";
-import { JsonThemeProvider } from "./theme";
+import { useState } from "react";
+import { Leafnode, type LeafnodeAgentRequest, type LeafnodeTheme } from "@lostintangent/leafnode";
 import {
-  AgentProvider,
-  activePointersOf,
-  buildAgentPrompt,
-  targetMetadata,
-  type AskAgentInput,
-} from "./agent";
-import { JsonPaneActions } from "./JsonPaneActions";
-import { JsonTree } from "./editor/JsonTree";
+  Braces,
+  Check,
+  ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Copy,
+  Redo2,
+  Undo2,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+import { PaneActions, usePaneActionsAvailable } from "../../../shell/PaneSlots";
+import { PANE_OVERLAY_BUTTON_CLASS } from "../../../shell/paneControls";
+import type { EditorProps } from "../index";
+import { AgentPrompt } from "./agent/AgentPrompt";
+import { activePointersOf } from "./agent/bridge";
 
-// Binds one file lifecycle to a JSON editor store, mirroring the SVG
-// composition root: the store is created once for the mount, external revisions
-// re-baseline it, and user edits publish serialized source back through `save`.
-// Own saves never advance the revision, so editing state survives a save while an
-// agent's external edit flows in as a fresh parse — highlighted as a diff.
-//
-// It also connects the two agent capabilities the pane hands every renderer:
-// pending workers become presence in the store, and `spawnWorker` becomes the
-// per-node "ask agent" action provided to the tree.
+const LEAFNODE_THEME = {
+  accent: "var(--user-accent)",
+  background: "var(--background)",
+  muted: "var(--muted-foreground)",
+  text: "var(--foreground)",
+} satisfies LeafnodeTheme;
 
 export function JsonEditor({ mode, variant, file, pendingWorkers, spawnWorker }: EditorProps) {
-  const source = file.content ?? "";
-  const revision = file.revision;
-  const readOnly = mode === "read";
-
-  const [editor] = useState(() => createJsonEditorStore(readOnly));
-  const saveSource = useEffectEvent(file.save);
-
-  useLayoutEffect(() => editor.subscribeToSource(saveSource), [editor]);
-  useLayoutEffect(() => {
-    editor.actions.loadSource(source);
-  }, [revision, source, editor]);
-  useLayoutEffect(() => editor.actions.setReadOnly(readOnly), [readOnly, editor]);
-  useLayoutEffect(
-    () => editor.actions.setActivePointers(activePointersOf(pendingWorkers)),
-    [pendingWorkers, editor],
-  );
-
-  async function askAgent({ pointer, valueJson, instruction, intent }: AskAgentInput) {
-    await spawnWorker({
-      name: `${intent === "add" ? "Add to" : "Edit"} ${pointer || "root"}`,
-      prompt: buildAgentPrompt({ pointer, valueJson, instruction, intent }),
-      metadata: targetMetadata(pointer),
-    });
-  }
+  const [agentRequest, setAgentRequest] = useState<LeafnodeAgentRequest | null>(null);
+  const paneActionsAvailable = usePaneActionsAvailable();
 
   return (
-    <JsonThemeProvider>
-      <AgentProvider askAgent={askAgent}>
-        <JsonPaneActions editor={editor} variant={variant} />
-        <JsonTree editor={editor} />
-      </AgentProvider>
-    </JsonThemeProvider>
+    <>
+      <Leafnode
+        content={file.content ?? ""}
+        onContentChanged={mode === "read" ? undefined : file.save}
+        theme={LEAFNODE_THEME}
+        agent={
+          spawnWorker
+            ? {
+                activePointers: activePointersOf(pendingWorkers),
+                onRequest: setAgentRequest,
+              }
+            : undefined
+        }
+        renderToolbar={
+          paneActionsAvailable
+            ? (actions) => (
+                <PaneActions>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="JSON view options"
+                        title="View options"
+                        className={cn(
+                          "flex shrink-0 items-center gap-1 text-xs transition-colors",
+                          variant === "normal"
+                            ? PANE_OVERLAY_BUTTON_CLASS
+                            : "rounded-md px-2 py-1.5 hover:bg-muted",
+                        )}
+                      >
+                        <Braces className="size-3.5" />
+                        {actions.copied ? (
+                          <Check className="size-3 text-green-500" />
+                        ) : (
+                          <ChevronDown className="size-3 opacity-60" />
+                        )}
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="end"
+                      onCloseAutoFocus={(event) => event.preventDefault()}
+                    >
+                      <DropdownMenuItem disabled={!actions.canUndo} onSelect={actions.undo}>
+                        <Undo2 />
+                        Undo
+                      </DropdownMenuItem>
+                      <DropdownMenuItem disabled={!actions.canRedo} onSelect={actions.redo}>
+                        <Redo2 />
+                        Redo
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={actions.expandAll}>
+                        <ChevronsUpDown />
+                        Expand all
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={actions.collapseAll}>
+                        <ChevronsDownUp />
+                        Collapse all
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => void actions.copyJson()}>
+                        <Copy />
+                        Copy JSON
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </PaneActions>
+              )
+            : undefined
+        }
+      />
+      {agentRequest && spawnWorker && (
+        <AgentPrompt
+          request={agentRequest}
+          spawnWorker={spawnWorker}
+          onDismiss={() => setAgentRequest(null)}
+        />
+      )}
+    </>
   );
 }

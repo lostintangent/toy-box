@@ -3,20 +3,96 @@
 // optionally doing either. Every mutation acquires the same live runtime.
 
 import { sessionSeedFromSnapshot } from "@/lib/session/sessionReducer";
-import type { SessionMessageInput, StreamSessionRequest } from "@/lib/session/protocol";
-import type { AgentNotification, QueuedMessage, SessionEvent } from "@/types";
+import type { StreamSessionRequest } from "@/lib/session/protocol";
+import type {
+  AgentNotification,
+  QueuedMessage,
+  SessionCompletion,
+  SessionEvent,
+  SessionMessage,
+} from "@/types";
 import * as sessionRegistry from "@/functions/state/session/registry";
 import { loadSessionSnapshot } from "@/functions/state/session/snapshots";
 import { clearDraftPrompt } from "@/functions/state/workspace";
 import { sharedMap } from "../processState";
-import {
-  SessionStream,
-  SessionStreamClosedError,
-  type SessionStreamCompletion,
-} from "./sessionStream";
+import { SessionStream, SessionStreamClosedError } from "./sessionStream";
 
 export { SessionStream };
-export type { SessionStreamCompletion };
+
+type PendingSessionCompletion = {
+  promise: Promise<SessionCompletion>;
+  resolve: (completion: SessionCompletion) => void;
+  reject: (error: unknown) => void;
+};
+
+// Sessions announced before their live stream exists remain waitable by ID.
+const pendingSessionCompletions = sharedMap<PendingSessionCompletion>(
+  "pending-session-completions",
+);
+
+/** Register a session that callers may observe before its live stream exists. */
+export function registerPendingSessionCompletion(sessionId: string): PendingSessionCompletion {
+  if (pendingSessionCompletions.has(sessionId)) {
+    throw new Error(`Session ${sessionId} already has a pending completion.`);
+  }
+
+  let complete!: (completion: SessionCompletion) => void;
+  let fail!: (error: unknown) => void;
+  const promise = new Promise<SessionCompletion>((resolve, reject) => {
+    complete = resolve;
+    fail = reject;
+  });
+  let receipt!: PendingSessionCompletion;
+  const settle = (finish: () => void) => {
+    if (pendingSessionCompletions.get(sessionId) === receipt) {
+      pendingSessionCompletions.delete(sessionId);
+    }
+    finish();
+  };
+  receipt = {
+    promise,
+    resolve: (completion) => settle(() => complete(completion)),
+    reject: (error) => settle(() => fail(error)),
+  };
+  pendingSessionCompletions.set(sessionId, receipt);
+  void promise.catch(() => {});
+  return receipt;
+}
+
+/** Reject an announced session that was canceled before completion. */
+export function rejectPendingSessionCompletion(sessionId: string, error: unknown): boolean {
+  const receipt = pendingSessionCompletions.get(sessionId);
+  if (!receipt) return false;
+  receipt.reject(error);
+  return true;
+}
+
+/** Monitor the announced, live, or latest persisted execution for one session ID. */
+export function waitForSession(sessionId: string, timeoutMs?: number): Promise<SessionCompletion> {
+  const pending = pendingSessionCompletions.get(sessionId);
+  if (!pending) return SessionStream.waitForCompletion(sessionId, timeoutMs);
+  if (timeoutMs === undefined) return pending.promise;
+  return waitForPendingSession(pending.promise, timeoutMs);
+}
+
+function waitForPendingSession(
+  completion: Promise<SessionCompletion>,
+  timeoutMs: number,
+): Promise<SessionCompletion> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve({ status: "timed_out" }), Math.max(0, timeoutMs));
+    completion.then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 /**
  * Observe a session stream, optionally creating it and delivering a message.
@@ -59,14 +135,14 @@ export async function* streamSession(request: StreamSessionRequest): AsyncGenera
   }
 }
 
-type MessageInput = SessionMessageInput | { id?: string; notification: AgentNotification };
+type MessageInput = SessionMessage | { id?: string; notification: AgentNotification };
 
 type SessionCreationOptions = Omit<sessionRegistry.CreateSessionOptions, "model">;
 
 /** Create a session through its required first message without subscribing. */
 export function createSession(
   sessionId: string,
-  message: SessionMessageInput,
+  message: SessionMessage,
   options: SessionCreationOptions,
 ) {
   return deliver(sessionId, message, options);

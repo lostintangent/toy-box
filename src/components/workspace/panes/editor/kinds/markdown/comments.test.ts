@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { CommentThread } from "documint";
+import type { CommentThread } from "@lostintangent/documint";
 import { buildArtifactCommentPrompt } from "./comments";
 
 const thread: CommentThread = {

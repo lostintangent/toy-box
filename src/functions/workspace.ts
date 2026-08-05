@@ -12,7 +12,9 @@ import {
   loadCustomEditors,
 } from "./state/workspace";
 import { AutomationDatabase } from "./automations/database";
-import { getAppDatabase } from "./state/database";
+import { AppDatabase } from "./apps/state/database";
+import { appDefinitionRegistry } from "./apps/state/definitions";
+import { getStateDatabase } from "./state/database";
 import { deleteSessionIfExists } from "./state/session/registry";
 import { retainSessionSnapshots } from "./state/session/snapshots";
 import { hasInboxEntry } from "./state/workspace/inbox";
@@ -23,14 +25,23 @@ import type { Settings } from "@/types";
 
 export const getWorkspaceState = createServerFn({ method: "GET" }).handler(
   async (): Promise<WorkspaceState> => {
-    const [customEditors, database] = await Promise.all([
+    const [customEditors, appDefinitions, database] = await Promise.all([
       loadCustomEditors(),
-      getAppDatabase({ createIfMissing: false }),
+      appDefinitionRegistry.list(),
+      getStateDatabase({ createIfMissing: false }),
     ]);
-    const automations = database ? await new AutomationDatabase(database).list() : [];
+    const stores = database
+      ? { automations: new AutomationDatabase(database), apps: new AppDatabase(database) }
+      : null;
+    const [automations, apps, appShares] = stores
+      ? await Promise.all([stores.automations.list(), stores.apps.list(), stores.apps.listShares()])
+      : [[], [], []];
     return readWorkspaceState({
       automations,
       customEditors,
+      appDefinitions,
+      apps,
+      appShares,
       environment: getEnvironment(),
     });
   },

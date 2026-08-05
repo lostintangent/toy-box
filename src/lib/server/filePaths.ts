@@ -4,7 +4,7 @@
 
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { SESSION_STATE_PATH } from "@/lib/paths";
+import { SESSION_STATE_PATH } from "@/lib/session/constants";
 import type { WorkspaceFile } from "@/types";
 
 const SESSION_FILES_DIRECTORY = "files";

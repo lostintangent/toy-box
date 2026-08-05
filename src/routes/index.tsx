@@ -19,18 +19,18 @@ import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@/hooks/workspa
 import { useViewport } from "@/hooks/browser/useViewport";
 import { usePanelTransition } from "@/hooks/browser/usePanelTransition";
 import { Sidebar, type SidebarProps } from "@/components/sidebar/Sidebar";
-import { RenameSessionDialog } from "@/components/sidebar/list/RenameSessionDialog";
+import { NameDialog } from "@/components/sidebar/shell/NameDialog";
 import { WorkspaceGrid } from "@/components/workspace/layout/WorkspaceGrid";
 import { HyperSession } from "@/components/workspace/layout/HyperSession";
 import { WorkspacePager } from "@/components/workspace/layout/WorkspacePager";
 import { TerminalShell } from "@/components/terminal/TerminalShell";
-import { focusMainSurfacePane, WorkspaceSurfaceProvider } from "@/hooks/workspace/layout/focus";
 import {
-  clearLinkedPanes,
-  linkedPanesStore,
-  prunePanePublishers,
-} from "@/hooks/workspace/layout/linkedPanes";
+  focusWorkspaceSurfacePane,
+  workspaceSurfaces,
+  WorkspaceSurfaceProvider,
+} from "@/hooks/workspace/layout/surface";
 import {
+  createAppPane,
   createEditorPaneId,
   deriveOpenSessionIds,
   deriveReachablePaneIds,
@@ -38,6 +38,7 @@ import {
   deriveWorkspaceRootPanes,
   INBOX_PANE,
   isEditorPane,
+  MAX_WORKSPACE_PANES,
   type WorkspacePane,
 } from "@/lib/workspace/panes";
 import { machineFile } from "@/lib/files/workspaceFile";
@@ -52,18 +53,39 @@ import {
 } from "@/lib/session/queryCache";
 import { applyWorkspaceEvent } from "@/lib/workspace/state/query";
 import { SESSION_ID_PREFIX } from "@/lib/session/constants";
+import { sessionQueries } from "@/lib/queries";
 const Terminal = lazy(() =>
   import("@/components/terminal/Terminal").then((m) => ({ default: m.Terminal })),
 );
 
-const searchSchema = z.object({
-  sessions: z.array(z.string()).max(4).optional(),
-  files: z.array(z.string()).max(4).optional(),
-});
+const searchSchema = z
+  .object({
+    sessions: z.array(z.string()).optional(),
+    files: z.array(z.string()).optional(),
+    apps: z.array(z.string()).optional(),
+  })
+  .transform(({ sessions = [], files = [], apps = [] }) => {
+    const roots = deriveWorkspaceRootPanes(sessions, files, apps);
+    const normalizedSessions = roots.flatMap((pane) =>
+      pane.kind === "session" ? [pane.sessionId] : [],
+    );
+    const normalizedFiles = roots.flatMap((pane) =>
+      pane.kind === "editor" ? [pane.file.path] : [],
+    );
+    const normalizedApps = roots.flatMap((pane) => (pane.kind === "app" ? [pane.appId] : []));
+    return {
+      sessions: normalizedSessions.length > 0 ? normalizedSessions : undefined,
+      files: normalizedFiles.length > 0 ? normalizedFiles : undefined,
+      apps: normalizedApps.length > 0 ? normalizedApps : undefined,
+    };
+  });
 
 export const Route = createFileRoute("/")({
   validateSearch: zodValidator(searchSchema),
-  loader: () => loadLayoutPrefs(),
+  loader: async ({ context }) => {
+    await context.queryClient.ensureQueryData(sessionQueries.state());
+    return loadLayoutPrefs();
+  },
   component: WorkspacePage,
 });
 
@@ -99,7 +121,7 @@ function restoreHyperSessionState(
   sessionId: string | undefined,
   layout: HyperLayoutState,
 ): HyperSessionState | null {
-  return sessionId ? { sessionId, ...layout } : null;
+  return sessionId ? { sessionId, appIds: [], ...layout } : null;
 }
 
 function WorkspacePage() {
@@ -109,11 +131,16 @@ function WorkspacePage() {
     select: (search) => search.sessions ?? [],
     structuralSharing: true,
   });
+  const selectedAppIds = Route.useSearch({
+    select: (search) => search.apps ?? [],
+    structuralSharing: true,
+  });
   const {
     sidebarSize: initialSidebarSize,
     terminalSize: initialTerminalSize,
     sidebarOpen: initialSidebarOpen,
     terminalOpen: initialTerminalOpen,
+    appsExpanded: initialAppsExpanded,
     automationsExpanded: initialAutomationsExpanded,
     hyperOpen: initialHyperOpen,
     hyperPosition: initialHyperPosition,
@@ -124,7 +151,7 @@ function WorkspacePage() {
 
   function updateSelectedSessionIds(
     nextSelectedSessionIds: string[],
-    options?: { resetFiles?: boolean },
+    options?: { replaceWorkspace?: boolean },
   ) {
     navigate({
       to: "/",
@@ -132,8 +159,9 @@ function WorkspacePage() {
         ...prev,
         sessions: nextSelectedSessionIds.length > 0 ? nextSelectedSessionIds : undefined,
         // A focus reset (single-click select, plain new, inbox) replaces the whole
-        // workspace, so it drops open files too; an augment leaves them untouched.
-        files: options?.resetFiles ? undefined : prev.files,
+        // workspace, so it drops open files and apps too; an augment preserves them.
+        files: options?.replaceWorkspace ? undefined : prev.files,
+        apps: options?.replaceWorkspace ? undefined : prev.apps,
       }),
     });
   }
@@ -145,7 +173,7 @@ function WorkspacePage() {
     // Opening a file augments the workspace, so — like a modifier-click on a
     // session — it's ignored when the four-pane surface is full (which keeps the
     // URL within its cap); re-opening an already-open file just re-focuses it.
-    if (!openFilePaths.includes(path) && openPanes.length >= 4) return;
+    if (!openFilePaths.includes(path) && openPanes.length >= MAX_WORKSPACE_PANES) return;
     navigate({
       to: "/",
       search: (prev) => {
@@ -158,7 +186,7 @@ function WorkspacePage() {
     // slid over to the workspace track and paged to it.
     if (isMobileLayout) {
       setIsMobileInboxOpen(true);
-      focusMainSurfacePane(createEditorPaneId(machineFile(path)));
+      focusWorkspaceSurfacePane("main", createEditorPaneId(machineFile(path)));
     }
   }
 
@@ -173,22 +201,37 @@ function WorkspacePage() {
     });
   }
 
+  function closeApp(appId: string) {
+    navigate({
+      to: "/",
+      search: (prev) => {
+        const apps = (prev.apps ?? []).filter((open) => open !== appId);
+        return { ...prev, apps: apps.length > 0 ? apps : undefined };
+      },
+      replace: true,
+    });
+  }
+
   const primarySelectedSessionId = selectedSessionIds[0];
-  const linkedPanesByPublisher = useSelector(linkedPanesStore);
+  const panePublications = useSelector(workspaceSurfaces.main.panePublications);
+  const hyperPanePublications = useSelector(workspaceSurfaces.hyper.panePublications);
   const openFilePaths = Route.useSearch({
     select: (search) => search.files ?? [],
     structuralSharing: true,
   });
-  const rootPanes = deriveWorkspaceRootPanes(selectedSessionIds, openFilePaths);
+  const rootPanes = deriveWorkspaceRootPanes(selectedSessionIds, openFilePaths, selectedAppIds);
   const rootEditorPaneIds = new Set(rootPanes.filter(isEditorPane).map((pane) => pane.id));
-  const resolveFileClose = (pane: WorkspacePane): (() => void) | undefined =>
-    isEditorPane(pane) && rootEditorPaneIds.has(pane.id)
-      ? () => closeFile(pane.file.path)
-      : undefined;
-  const reachablePaneIds = deriveReachablePaneIds(rootPanes, linkedPanesByPublisher);
+  const resolvePaneClose = (pane: WorkspacePane): (() => void) | undefined => {
+    if (isEditorPane(pane) && rootEditorPaneIds.has(pane.id)) {
+      return () => closeFile(pane.file.path);
+    }
+    if (pane.kind === "app") return () => closeApp(pane.appId);
+    return undefined;
+  };
+  const reachablePaneIds = deriveReachablePaneIds(rootPanes, panePublications);
   const openPanes = deriveVisibleWorkspacePanes({
     rootPanes,
-    linkedPanesByPublisher,
+    panePublications,
   });
   const openSessionIds = deriveOpenSessionIds(openPanes);
 
@@ -203,33 +246,31 @@ function WorkspacePage() {
 
   // Terminal state - synced with cookie (SSR-safe)
   const [isTerminalOpen, setIsTerminalOpen] = useState(initialTerminalOpen);
+  const [isAppsExpanded, setIsAppsExpanded] = useState(initialAppsExpanded);
   const [isAutomationsExpanded, setIsAutomationsExpanded] = useState(initialAutomationsExpanded);
   const terminalPanelRef = useRef<ImperativePanelHandle>(null);
   const shouldRenderMobileTerminalShell = import.meta.env.SSR
     ? initialTerminalOpen
     : isTerminalOpen;
 
-  const {
-    sessions,
-    isLoading: isSessionsLoading,
-    worktreeSessionIds,
-    workerSessionIds,
-  } = useSessions();
-  const { automationSessionIds, environment, hyperSessionIds, inboxSessionIds } =
-    useWorkspaceSelector((workspace) => ({
+  const { sessions, isLoading: isSessionsLoading, worktreeSessionIds } = useSessions();
+  const { apps, automationSessionIds, hyperSessionIds, inboxSessionIds } = useWorkspaceSelector(
+    (workspace) => ({
+      apps: workspace.apps,
       automationSessionIds: workspace.automations.map((automation) => automation.id),
-      environment: workspace.environment,
       hyperSessionIds: workspace.hyperSessionIds,
       inboxSessionIds: workspace.inboxEntries.map((entry) => entry.id),
-    }));
+    }),
+  );
   useWorkspaceSync();
-  const { listedDrafts, isDraft, createDraft } = useDrafts({ hyperSessionIds });
+  const { listedDrafts, isDraft, createDraft } = useDrafts({
+    hiddenSessionIds: hyperSessionIds,
+  });
 
   const managedSessionIds = new Set([
     ...automationSessionIds,
     ...inboxSessionIds,
     ...hyperSessionIds,
-    ...workerSessionIds,
   ]);
   function handleCloseVisibleSession(sessionId: string) {
     if (!selectedSessionIds.includes(sessionId)) return;
@@ -239,7 +280,7 @@ function WorkspacePage() {
   function handleSessionSelect(sessionId: string, toggleInWorkspace = false) {
     if (!toggleInWorkspace || isMobileLayout) {
       if (isMobileLayout) setIsMobileInboxOpen(false);
-      updateSelectedSessionIds([sessionId], { resetFiles: true });
+      updateSelectedSessionIds([sessionId], { replaceWorkspace: true });
       return;
     }
 
@@ -248,13 +289,37 @@ function WorkspacePage() {
       return;
     }
 
-    if (
-      selectedSessionIds.length > 0 &&
-      openPanes.length >= 4 &&
-      !openSessionIds.includes(sessionId)
-    )
-      return;
+    if (openPanes.length >= MAX_WORKSPACE_PANES && !openSessionIds.includes(sessionId)) return;
     updateSelectedSessionIds([...selectedSessionIds, sessionId]);
+  }
+
+  function handleAppOpen(appId: string, toggleInWorkspace = false) {
+    if (!toggleInWorkspace || isMobileLayout) {
+      if (isMobileLayout) setIsMobileInboxOpen(false);
+      navigate({
+        to: "/",
+        search: (prev) => ({
+          ...prev,
+          sessions: undefined,
+          files: undefined,
+          apps: [appId],
+        }),
+      });
+      return;
+    }
+
+    if (selectedAppIds.includes(appId)) {
+      closeApp(appId);
+      return;
+    }
+    if (openPanes.length >= MAX_WORKSPACE_PANES) return;
+    navigate({
+      to: "/",
+      search: (prev) => ({
+        ...prev,
+        apps: [...(prev.apps ?? []), appId],
+      }),
+    });
   }
 
   // Create a durable draft, optionally with an initial artifact or alongside the workspace.
@@ -262,12 +327,12 @@ function WorkspacePage() {
     const id = createDraft(options.artifact ? { artifact: options.artifact } : undefined);
     if (isMobileLayout) setIsMobileInboxOpen(false);
 
-    if (options.addToWorkspace && openSessionIds.length > 0 && openSessionIds.length < 4) {
+    if (options.addToWorkspace && openPanes.length > 0 && openPanes.length < MAX_WORKSPACE_PANES) {
       // Add to the workspace.
       updateSelectedSessionIds([...selectedSessionIds, id]);
     } else {
       // Replace current view
-      updateSelectedSessionIds([id], { resetFiles: true });
+      updateSelectedSessionIds([id], { replaceWorkspace: true });
     }
   };
 
@@ -305,6 +370,24 @@ function WorkspacePage() {
     selectedSessionIds,
     sessions,
   ]);
+
+  // Saved apps are durable URL roots, so a deletion from another client must
+  // remove only the stale app root without disturbing adjacent panes.
+  useEffect(() => {
+    if (selectedAppIds.length === 0) return;
+    const availableAppIds = new Set(apps.map((app) => app.id));
+    const validAppIds = selectedAppIds.filter((appId) => availableAppIds.has(appId));
+    if (validAppIds.length === selectedAppIds.length) return;
+
+    navigate({
+      to: "/",
+      search: (prev) => ({
+        ...prev,
+        apps: validAppIds.length > 0 ? validAppIds : undefined,
+      }),
+      replace: true,
+    });
+  }, [apps, navigate, selectedAppIds]);
 
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
@@ -344,6 +427,7 @@ function WorkspacePage() {
   useLayoutCookie("sidebarSize", sidebarSize);
   useLayoutCookie("terminalOpen", isTerminalOpen);
   useLayoutCookie("terminalSize", terminalSize);
+  useLayoutCookie("appsExpanded", isAppsExpanded);
   useLayoutCookie("automationsExpanded", isAutomationsExpanded);
   useLayoutCookie("mobileInboxOpen", hydrated && isMobileLayout ? isMobileInboxOpen : undefined);
 
@@ -433,9 +517,7 @@ function WorkspacePage() {
     .sort((left, right) => right.modifiedTime.getTime() - left.modifiedTime.getTime())
     .slice(0, 50);
 
-  // Warm from the recency order rather than the filtered view, so the working
-  // set stays stable while the user narrows the list.
-  useWarmSessionSnapshots(listedSessions);
+  useWarmSessionSnapshots();
 
   let filteredSessions = listedSessions;
 
@@ -529,7 +611,7 @@ function WorkspacePage() {
   function openSessionInWorkspace(sessionId: string) {
     if (!selectedSessionIds.includes(sessionId)) {
       const nextSelectedSessionIds =
-        openPanes.length >= 4 && !openSessionIds.includes(sessionId)
+        openPanes.length >= MAX_WORKSPACE_PANES && !openSessionIds.includes(sessionId)
           ? [sessionId]
           : [...selectedSessionIds, sessionId];
       updateSelectedSessionIds(nextSelectedSessionIds);
@@ -564,7 +646,7 @@ function WorkspacePage() {
       return;
     }
     setIsMobileInboxOpen(false);
-    updateSelectedSessionIds([getOrCreateHyperSessionId()], { resetFiles: true });
+    updateSelectedSessionIds([getOrCreateHyperSessionId()], { replaceWorkspace: true });
   }
 
   // "Open" is viewport-relative: the deck is open on desktop; on mobile the hyper
@@ -573,39 +655,64 @@ function WorkspacePage() {
     ? hyperSessionId !== undefined && primarySelectedSessionId === hyperSessionId
     : hyper.isOpen;
 
-  // The hyper deck publishes linked panes under its session pane id, which the
-  // "selected" reachable set doesn't include — union it in so those panes survive
-  // pruning. Pane reachability also follows any linked sub-sessions.
+  function handleAppOpenInHyper(appId: string) {
+    if (isMobileLayout) {
+      handleAppOpen(appId);
+      return;
+    }
+    hyper.openApp(appId);
+  }
+
+  function openAppInMainSurface(appId: string) {
+    if (!selectedAppIds.includes(appId)) {
+      navigate({
+        to: "/",
+        search: (prev) =>
+          openPanes.length >= MAX_WORKSPACE_PANES
+            ? { ...prev, sessions: undefined, files: undefined, apps: [appId] }
+            : { ...prev, apps: [...(prev.apps ?? []), appId] },
+      });
+    }
+    focusWorkspaceSurfacePane("main", createAppPane(appId).id);
+  }
+
+  // Each surface prunes its own browser-local pane graph from its own roots.
+  useEffect(() => {
+    workspaceSurfaces.main.panePublications.actions.prunePanePublishers(new Set(reachablePaneIds));
+  }, [panePublications, reachablePaneIds]);
+
   useEffect(() => {
     const hyperReachablePaneIds = hyperSession
       ? deriveReachablePaneIds(
-          deriveWorkspaceRootPanes([hyperSession.sessionId]),
-          linkedPanesByPublisher,
+          deriveWorkspaceRootPanes([hyperSession.sessionId], [], hyperSession.appIds),
+          hyperPanePublications,
         )
       : [];
-    prunePanePublishers(new Set([...reachablePaneIds, ...hyperReachablePaneIds]));
-  }, [hyperSession, linkedPanesByPublisher, reachablePaneIds]);
+    workspaceSurfaces.hyper.panePublications.actions.prunePanePublishers(
+      new Set(hyperReachablePaneIds),
+    );
+  }, [hyperPanePublications, hyperSession]);
 
-  const hasSelectedSession = selectedSessionIds.length > 0;
-  const isInboxOpen =
-    !hasSelectedSession && openFilePaths.length === 0 && (!isMobileLayout || isMobileInboxOpen);
+  const hasWorkspaceRoot =
+    selectedSessionIds.length > 0 || selectedAppIds.length > 0 || openFilePaths.length > 0;
+  const isInboxOpen = !hasWorkspaceRoot && (!isMobileLayout || isMobileInboxOpen);
 
   function handleOpenInbox() {
     if (isMobileLayout) setIsMobileInboxOpen(true);
-    if (hasSelectedSession || openFilePaths.length > 0) {
-      updateSelectedSessionIds([], { resetFiles: true });
+    if (hasWorkspaceRoot) {
+      updateSelectedSessionIds([], { replaceWorkspace: true });
     }
   }
 
   function handleMobileWorkspaceBack() {
-    clearLinkedPanes(INBOX_PANE.id);
+    workspaceSurfaces.main.panePublications.actions.clearLinkedPanes(INBOX_PANE.id);
     setIsMobileInboxOpen(false);
-    if (hasSelectedSession || openFilePaths.length > 0) {
-      updateSelectedSessionIds([], { resetFiles: true });
+    if (hasWorkspaceRoot) {
+      updateSelectedSessionIds([], { replaceWorkspace: true });
     }
   }
 
-  const baseMobileView = hasSelectedSession
+  const baseMobileView = hasWorkspaceRoot
     ? "workspace"
     : isMobileInboxOpen
       ? "workspace"
@@ -632,11 +739,7 @@ function WorkspacePage() {
   const terminalBody = (
     <ClientOnly fallback={terminalBodySkeleton}>
       <Suspense fallback={terminalBodySkeleton}>
-        <Terminal
-          onClose={handleTerminalClose}
-          isResizing={isPanelTransitioning}
-          wsPort={environment.terminalWsPort}
-        />
+        <Terminal onClose={handleTerminalClose} isResizing={isPanelTransitioning} />
       </Suspense>
     </ClientOnly>
   );
@@ -657,9 +760,14 @@ function WorkspacePage() {
     worktreeSessionIds,
     emptyMessage: deferredFilter ? "No sessions match your filter" : undefined,
     draftSessions: listedDrafts,
+    isAppsExpanded,
+    onAppsExpandedChange: setIsAppsExpanded,
     isAutomationsExpanded,
     onAutomationsExpandedChange: setIsAutomationsExpanded,
     onCreateSession: handleCreateSession,
+    openAppIds: selectedAppIds,
+    onAppOpen: handleAppOpen,
+    onAppOpenInHyper: handleAppOpenInHyper,
     onToggleHyper: toggleHyper,
     isHyperOpen,
     onOpenInbox: handleOpenInbox,
@@ -689,7 +797,7 @@ function WorkspacePage() {
               panes={openPanes}
               primaryPaneId={rootPanes[0].id}
               onBack={handleMobileWorkspaceBack}
-              resolveFileClose={resolveFileClose}
+              resolvePaneClose={resolvePaneClose}
             />
           )}
         </div>
@@ -765,7 +873,7 @@ function WorkspacePage() {
                 <WorkspaceGrid
                   panes={openPanes}
                   onCloseSession={handleCloseVisibleSession}
-                  resolveFileClose={resolveFileClose}
+                  resolvePaneClose={resolvePaneClose}
                 />
               </div>
             </ResizablePanel>
@@ -808,6 +916,8 @@ function WorkspacePage() {
           onDelete={hyper.deleteSession}
           onMinimize={hyper.toggle}
           onPromote={hyper.promote}
+          onOpenApp={hyper.openApp}
+          onCloseApp={hyper.closeApp}
         />
       )}
     </div>
@@ -815,7 +925,7 @@ function WorkspacePage() {
 
   return (
     <>
-      <WorkspaceSurfaceProvider surface="main" panes={openPanes}>
+      <WorkspaceSurfaceProvider surface="main" panes={openPanes} onOpenApp={openAppInMainSurface}>
         <div className="h-full overflow-hidden">
           {!hydrated ? (
             <>
@@ -829,15 +939,22 @@ function WorkspacePage() {
           )}
         </div>
       </WorkspaceSurfaceProvider>
-      <RenameSessionDialog
-        open={renameTargetId !== null}
-        session={renameTargetSession}
-        isSubmitting={renameTargetId !== null && renamingSessionId === renameTargetId}
-        onOpenChange={handleRenameDialogOpenChange}
-        onRenameSession={async (input) => {
-          await renameMutation.mutateAsync(input);
-        }}
-      />
+      {renameTargetSession && (
+        <NameDialog
+          key={renameTargetSession.sessionId}
+          name={renameTargetSession.summary ?? ""}
+          title="Rename session"
+          description="Change how this session appears in the session list."
+          isSubmitting={renamingSessionId === renameTargetSession.sessionId}
+          onOpenChange={handleRenameDialogOpenChange}
+          onSubmit={async (name) => {
+            await renameMutation.mutateAsync({
+              sessionId: renameTargetSession.sessionId,
+              name,
+            });
+          }}
+        />
+      )}
     </>
   );
 }

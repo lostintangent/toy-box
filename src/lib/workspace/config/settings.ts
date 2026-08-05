@@ -1,9 +1,9 @@
 import { z } from "zod";
+import { hexColorSchema, isHexColor } from "@/lib/utils";
 import { areModelConfigurationsEqual, modelConfigurationSchema } from "@/lib/modelConfiguration";
-import type { AccentColor, SessionFeatureScope, SessionFeatureSubject, Settings } from "@/types";
+import type { Settings } from "@/types";
 
 const SESSION_FEATURE_SCOPE_VALUES = ["always", "sessions", "automations", "never"] as const;
-const accentColorSchema = z.templateLiteral(["#", z.string().regex(/^[0-9a-fA-F]{6}$/)]);
 
 export const DEFAULT_SETTINGS: Settings = {
   accentColor: "#facc15",
@@ -16,7 +16,7 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 const SETTINGS_SHAPE = {
-  accentColor: accentColorSchema,
+  accentColor: hexColorSchema,
   defaultModel: modelConfigurationSchema.nullable(),
   terminalShell: z.string(),
   useWorktree: z.boolean(),
@@ -56,17 +56,17 @@ export function areSettingsEqual(left: Settings, right: Settings): boolean {
   });
 }
 
-export function isAccentColor(value: unknown): value is AccentColor {
-  return accentColorSchema.safeParse(value).success;
+export function isAccentColor(value: unknown): value is Settings["accentColor"] {
+  return isHexColor(value);
 }
 
-export function isSessionFeatureScope(value: unknown): value is SessionFeatureScope {
-  return SESSION_FEATURE_SCOPE_VALUES.includes(value as SessionFeatureScope);
+export function isSessionFeatureScope(value: unknown): value is Settings["autoFocusArtifacts"] {
+  return SESSION_FEATURE_SCOPE_VALUES.includes(value as Settings["autoFocusArtifacts"]);
 }
 
 export function matchesSessionFeatureScope(
-  scope: SessionFeatureScope,
-  subject: SessionFeatureSubject,
+  scope: Settings["autoFocusArtifacts"],
+  subject: "session" | "automation",
 ): boolean {
   if (scope === "never") return false;
   if (scope === "always") return true;

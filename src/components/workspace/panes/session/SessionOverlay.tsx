@@ -3,7 +3,6 @@ import { Loader2, MessageCircle, X } from "lucide-react";
 import { Presence as PresencePrimitive } from "radix-ui/internal";
 import { useWorkspaceSessionRunning } from "@/hooks/workspace/state";
 import { cn } from "@/lib/utils";
-import { SessionPane } from "./SessionPane";
 import {
   CONTAINER_OVERLAY_BOUNDS,
   SESSION_OVERLAY_BASE_CLASS,
@@ -11,8 +10,9 @@ import {
 import {
   PANE_OVERLAY_BUTTON_CLASS,
   PANE_OVERLAY_ICON_CLASS,
-} from "@/components/workspace/panes/paneControls";
-import { PaneStatus } from "@/components/workspace/panes/PaneSlots";
+} from "@/components/workspace/panes/shell/paneControls";
+import { PaneStatus } from "@/components/workspace/panes/shell/PaneSlots";
+import { SessionPane } from "./SessionPane";
 
 export function SessionOverlay({ sessionId }: { sessionId: string }) {
   const [isOpen, setIsOpen] = useState(false);

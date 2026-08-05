@@ -17,15 +17,17 @@ import {
   getAllSessionWorktrees,
   mergeSessionWorktree as mergeWorktree,
 } from "./state/session/worktrees";
-import { getWorkerSessionIds } from "./state/session/workers";
+import { getWorkerSessionParents } from "./state/session/workers";
 import {
   createSession as createRuntimeSession,
   deliverSessionMessage,
   SessionStream,
   streamSession as streamSessionEvents,
+  waitForSession as waitForRuntimeSession,
 } from "./runtime/stream";
 import type {
   ModelInfo,
+  SessionCompletion,
   SessionEvent,
   SessionMetadata,
   SessionSkill,
@@ -36,7 +38,7 @@ import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 import { toSessionSnapshot } from "@/lib/session/sessionReducer";
 import { encodeSessionEvent } from "@/lib/session/streamCodec";
 import {
-  createSessionInputSchema,
+  sessionLaunchSchema,
   createDraftSessionInputSchema,
   deliverMessageInputSchema,
   listSkillsInputSchema,
@@ -45,6 +47,7 @@ import {
   renameSessionInputSchema,
   sessionInputSchema,
   streamSessionRequestSchema,
+  waitForSessionInputSchema,
 } from "@/lib/session/protocol";
 
 // ============================================================================
@@ -63,22 +66,31 @@ const withSessionId = createMiddleware({ type: "function" }).validator(
 export type SessionsState = {
   sessions: SessionMetadata[];
   worktrees: Record<string, SessionWorktree>;
-  workerSessionIds: string[];
+  /** Worker session ID to its parent session ID, or null for app-owned workers. */
+  workerSessionParents: Record<string, string | null>;
 };
 
 /** Fetch durable session list metadata in a single round-trip. */
 export const getSessionsState = createServerFn({ method: "GET" }).handler(
   async (): Promise<SessionsState> => {
-    const [sessions, worktrees, workerSessionIds] = await Promise.all([
+    // Worker registration precedes SDK session creation, while SDK deletion
+    // precedes unregistering. Reading ownership on both sides of the SDK list
+    // therefore closes both races and gives list projections complete worker
+    // ownership without discarding metadata needed by linked panes.
+    const workerSessionParentsBefore = await getWorkerSessionParents();
+    const [allSessions, worktrees] = await Promise.all([
       listSdkSessions(),
       getAllSessionWorktrees(),
-      getWorkerSessionIds(),
     ]);
+    const workerSessionParentsAfter = await getWorkerSessionParents();
 
     return {
-      sessions,
+      sessions: allSessions,
       worktrees,
-      workerSessionIds,
+      workerSessionParents: {
+        ...workerSessionParentsBefore,
+        ...workerSessionParentsAfter,
+      },
     };
   },
 );
@@ -94,7 +106,7 @@ export const listModels = createServerFn({ method: "GET" }).handler(
 export const listSkills = createServerFn({ method: "POST" })
   .validator(zodValidator(listSkillsInputSchema))
   .handler(async ({ data }): Promise<SessionSkill[]> => {
-    return listSdkSkills(data.cwd);
+    return listSdkSkills(data.cwd, data.sessionType);
   });
 
 /** A session's reduced transcript snapshot, served from the cheapest source
@@ -111,6 +123,13 @@ export const querySession = createServerFn({ method: "POST" })
 
     return loadSessionSnapshot(data.sessionId);
   });
+
+/** Wait for the announced, live, or latest persisted execution of one session. */
+export const waitForSession = createServerFn({ method: "POST" })
+  .validator(zodValidator(waitForSessionInputSchema))
+  .handler(({ data }): Promise<SessionCompletion> =>
+    waitForRuntimeSession(data.sessionId, data.timeoutMs),
+  );
 
 function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
@@ -146,7 +165,7 @@ export const streamSession = createServerFn({ method: "POST" })
  *  running → idle/unread), the same way automation and agent-spawned sessions
  *  surface. Resolves once the turn has opened, not when it completes. */
 export const createSession = createServerFn({ method: "POST" })
-  .validator(zodValidator(createSessionInputSchema))
+  .validator(zodValidator(sessionLaunchSchema))
   .handler(async ({ data }): Promise<{ sessionId: string }> => {
     const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
     await createRuntimeSession(sessionId, data.message, {

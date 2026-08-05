@@ -1,43 +1,42 @@
-// RPC boundary for spawning and cancelling background workers, optionally scoped to
-// a workspace file. The server-only admission (and its Node/SDK imports) lives in
-// ./workers/admission, imported only inside handlers so it stays out of the client bundle.
+// RPC boundary for file- and app-owned workers. TanStack keeps handler-only dependencies in
+// the server graph, so admission remains a plain static import.
 
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { z } from "zod";
-import { workspaceFileSchema } from "@/lib/files/workspaceFile";
-import { cancelWorkerOnServer, spawnWorkerOnServer } from "@/functions/workers/admission";
-import type { JsonValue } from "@/types";
+import { cancelWorkerOnServer, spawnWorkerOnServer } from "./workers/admission";
+import { sessionLaunchSchema } from "@/lib/session/protocol";
+import { sessionFileSchema } from "@/lib/files/workspaceFile";
+import { smallJsonSchema } from "@/lib/smallJson";
 
-const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([
-    z.string(),
-    z.number(),
-    z.boolean(),
-    z.null(),
-    z.array(jsonValueSchema),
-    z.record(z.string(), jsonValueSchema),
-  ]),
+const workerResourceSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("file"), file: sessionFileSchema }),
+  z.object({
+    type: z.literal("app"),
+    appId: z.string().min(1),
+    ephemeral: z.boolean().optional(),
+  }),
+]);
+
+const spawnWorkerInputSchema = z.intersection(
+  sessionLaunchSchema.extend({
+    name: z.string().trim().min(1).max(100).optional(),
+    metadata: smallJsonSchema.optional(),
+  }),
+  workerResourceSchema,
 );
 
-const spawnWorkerInputSchema = z.object({
-  file: workspaceFileSchema,
-  name: z.string().trim().min(1).max(100).optional(),
-  prompt: z.string().trim().min(1).max(100_000),
-  metadata: jsonValueSchema.optional(),
-});
+const workerInputSchema = z.intersection(
+  z.object({ workerSessionId: z.string().min(1) }),
+  workerResourceSchema,
+);
 
-const cancelWorkerInputSchema = z.object({
-  file: workspaceFileSchema,
-  workerSessionId: z.string().min(1),
-});
-
-/** Spawn a renderer-authored background worker for a file, serialized per file. */
+/** Spawn a background worker owned by a file or app. */
 export const spawnWorker = createServerFn({ method: "POST" })
   .validator(zodValidator(spawnWorkerInputSchema))
   .handler(({ data }): Promise<{ sessionId: string }> => spawnWorkerOnServer(data));
 
-/** Cancel a queued or running worker owned by this file. */
+/** Cancel a queued or running worker through its exact owner. */
 export const cancelWorker = createServerFn({ method: "POST" })
-  .validator(zodValidator(cancelWorkerInputSchema))
+  .validator(zodValidator(workerInputSchema))
   .handler(({ data }): Promise<boolean> => cancelWorkerOnServer(data));

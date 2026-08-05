@@ -14,28 +14,27 @@ import {
   Table,
   type LucideIcon,
 } from "lucide-react";
-import type { FileState, WorkerRequest } from "@/hooks/files/useWorkspaceFile";
-import type { EditorPaneMode } from "@/lib/workspace/panes";
-import type { PaneVariant } from "../../types";
-import type { Worker, CustomEditorKind } from "@/types";
-import { getPathBasename } from "@/lib/paths";
+import type { FileState, WorkerRequest } from "@/hooks/files/useFile";
+import type { PaneVariant } from "../../WorkspacePaneView";
+import type { CustomEditorKind, Worker, WorkspaceFileMode } from "@/types";
+import { getPathBasename } from "@/lib/files/paths";
 import { fileName } from "@/lib/files/display";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import { HtmlEditor } from "./html/HtmlEditor";
-import { CustomEditor } from "./CustomEditor";
+import { CustomEditor } from "./custom/CustomEditor";
 
 // Rendering registry for built-in and user-registered file kinds. Pane state
 // stores only the path; rendering details are resolved here at the point of use.
 
 export type EditorProps = {
   title: string;
-  mode: EditorPaneMode;
+  mode: WorkspaceFileMode;
   variant: PaneVariant;
   baseUri?: string;
   definition?: CustomEditorKind;
   file: FileState;
   pendingWorkers: Worker[];
-  spawnWorker: (request: WorkerRequest) => Promise<{ sessionId: string }>;
+  spawnWorker?: (request: WorkerRequest) => Promise<{ sessionId: string }>;
 };
 
 export type EditorKind = {

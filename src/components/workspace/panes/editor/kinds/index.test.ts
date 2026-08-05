@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { CustomEditorKind } from "@/types";
 import { resolveEditorKind } from "./index";
 import { HtmlEditor } from "./html/HtmlEditor";
-import { CustomEditor } from "./CustomEditor";
+import { CustomEditor } from "./custom/CustomEditor";
 
 // The core contract of the whole feature: a registered custom kind resolves for the files
 // it claims, built-ins keep priority, and unknown extensions fall back — all from the path.

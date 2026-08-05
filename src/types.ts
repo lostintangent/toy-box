@@ -1,32 +1,27 @@
 // Shared types that cross the client/server boundary
 
 import type { SessionContext } from "@github/copilot-sdk";
+import type { JSONType } from "zod";
 export type { SessionMetadata, SessionContext, ModelInfo } from "@github/copilot-sdk";
+import type { AppIconName } from "@/lib/apps/icons";
+import type { HexColor } from "@/lib/utils";
 import type { WorkspaceAction } from "@/lib/workspace/state/actions";
 
 /* Workspace settings */
 
-export type AccentColor = `#${string}`;
-export type SessionFeatureScope = "always" | "sessions" | "automations" | "never";
-export type SessionFeatureSubject = "session" | "automation";
-
 export type Settings = {
-  accentColor: AccentColor;
+  accentColor: HexColor;
   defaultModel: ModelConfiguration | null;
   terminalShell: string;
   useWorktree: boolean;
-  autoFocusArtifacts: SessionFeatureScope;
+  autoFocusArtifacts: "always" | "sessions" | "automations" | "never";
   showExternalSessions: boolean;
   pinnedSessionIds: string[];
 };
 
-/** Open-ended on purpose: the SDK's public union can lag the wire protocol
- *  and model catalog values such as "none" and "max". */
-export type ReasoningEffort = string;
-
 export type ModelConfiguration = {
   name: string;
-  reasoningEffort?: ReasoningEffort;
+  reasoningEffort?: string;
 };
 
 /* Skills (resolved for a CWD, or from host-level sources without one) */
@@ -67,6 +62,25 @@ export type SessionStatus = "idle" | "thinking" | "compacting" | "reasoning" | "
 /** A session's product role, derived from the domain record that manages it. */
 export type SessionType = "standard" | "automation" | "inbox" | "hyper" | "worker";
 
+/** The observable result of waiting for a session's current execution. */
+export type SessionCompletion = {
+  status: "completed" | "failed" | "timed_out";
+  response?: string;
+};
+
+export type SessionMessage = {
+  id?: string;
+  content: string;
+  attachments?: Attachment[];
+  model?: ModelConfiguration;
+};
+
+export type SessionLaunch = {
+  message: SessionMessage;
+  directory?: string;
+  useWorktree?: boolean;
+};
+
 export type SessionCanvas = {
   key: string;
   extensionId?: string;
@@ -76,7 +90,7 @@ export type SessionCanvas = {
   title: string;
   url: string;
   status?: string;
-  input?: JsonValue;
+  input?: JSONType;
   revision: number;
 };
 
@@ -135,6 +149,9 @@ export type WorkspaceFile =
   | { type: "session"; sessionId: string; path: string }
   | { type: "machine"; path: string };
 
+/** How a mounted workspace surface presents and shares edits to a file. */
+export type WorkspaceFileMode = "read" | "edit" | "shared";
+
 export type AgentNotification = { type: "file_edited"; file: WorkspaceFile };
 
 export type AgentNotificationMessage = {
@@ -162,7 +179,7 @@ export type SubAgent = {
 export type ToolCall = {
   id: string;
   name: string;
-  arguments: { [key: string]: JsonValue };
+  arguments: { [key: string]: JSONType };
   result?: {
     content: string;
     success: boolean;
@@ -197,13 +214,55 @@ export type QueuedAgentNotificationMessage = Omit<AgentNotificationMessage, "tim
 
 export type QueuedMessage = QueuedUserMessage | QueuedAgentNotificationMessage;
 
-export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+/* Apps */
+
+/** The serializable state contract authored in an app manifest. */
+export type AppStateDefinition = {
+  schema: JSONType;
+  default: JSONType;
+};
+
+/** An immutable, pending handoff between two saved app instances. */
+export type AppShare = {
+  id: string;
+  sourceAppId: string;
+  targetAppId: string;
+  mimeType: string;
+  content: JSONType;
+  createdAt: string;
+};
+
+/** An installed TSX component that can back any number of saved app instances. */
+export type AppDefinition = {
+  /** Stable definition id and owner definition's on-disk folder name. */
+  id: string;
+  title: string;
+  description?: string;
+  icon?: AppIconName;
+  /** Default Apps-panel icon color for new instances. */
+  color: HexColor;
+  /** The durable state contract and initial value for new instances. */
+  state: AppStateDefinition;
+  /** MIME types instances of this definition know how to consume. */
+  accepts: string[];
+  /** Content-derived identity used to invalidate a loaded component bundle. */
+  revision: string;
+};
+
+/**
+ * A durable, reopenable app surface. Definition code is stored separately;
+ * SQLite owns the instance's identity, small state, and revision.
+ */
+export type AppInstance = {
+  id: string;
+  definitionId: string;
+  title: string;
+  color: HexColor;
+  state: JSONType;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type DraftPrompt = {
   text: string;
@@ -226,13 +285,22 @@ export type InboxEntry = {
   artifact?: string;
 };
 
-/** A pending worker, optionally associated with a workspace file that scopes it to an editor. */
+/**
+ * A worker session and the resource that owns its lifecycle.
+ *
+ * Ownership determines supervision and visibility. Ephemerality independently
+ * determines whether the supervisor deletes the session after execution.
+ */
 export type Worker = {
   sessionId: string;
-  file?: WorkspaceFile;
+  ephemeral: boolean;
   name?: string;
-  metadata?: JsonValue;
-};
+  metadata?: JSONType;
+} & (
+  | { type: "session"; parentSessionId: string }
+  | { type: "file"; file: Extract<WorkspaceFile, { type: "session" }> }
+  | { type: "app"; appId: string }
+);
 
 /* Session types (server->client replay + streaming) */
 
@@ -263,7 +331,7 @@ export type SessionEvent = (
       toolName: string;
       toolCallId: string;
       agentId?: string;
-      arguments: { [key: string]: JsonValue };
+      arguments: { [key: string]: JSONType };
     }
   | {
       type: "tool_end";
@@ -331,6 +399,30 @@ export type WorkspaceEvent =
       kind: CustomEditorKind;
     }
   | {
+      type: "app.registered";
+      definition: AppDefinition;
+    }
+  | {
+      type: "app.unregistered";
+      definitionId: string;
+    }
+  | {
+      type: "app.upserted";
+      app: AppInstance;
+    }
+  | {
+      type: "app.deleted";
+      appId: string;
+    }
+  | {
+      type: "app.share.created";
+      share: AppShare;
+    }
+  | {
+      type: "app.share.deleted";
+      shareId: string;
+    }
+  | {
       type: "worker.started";
       worker: Worker;
     }
@@ -365,13 +457,12 @@ export type SessionMetadataUpdate = {
   context?: SessionContext;
   worktree?: SessionWorktree;
   parentSessionId?: string;
+  sessionType?: SessionType;
 };
 
 export type FileWatchEvent = { type: "modified"; timestamp: number } | { type: "deleted" };
 
 /* Terminal (client->server protocol) */
-
-export const DEFAULT_TERMINAL_WS_PORT = 3001;
 
 export type TerminalClientMessage =
   | { type: "init"; clientId: string; cols?: number; rows?: number; shell?: string }

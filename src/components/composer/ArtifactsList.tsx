@@ -1,4 +1,4 @@
-import { useFocusedPaneAtom } from "@/hooks/workspace/layout/focus";
+import { useFocusedPaneAtom } from "@/hooks/workspace/layout/surface";
 import { useEditorDisplay } from "@/components/workspace/panes/editor/kinds";
 import { createEditorPaneId } from "@/lib/workspace/panes";
 import { sessionFile } from "@/lib/files/workspaceFile";

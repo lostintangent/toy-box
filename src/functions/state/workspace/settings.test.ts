@@ -5,7 +5,7 @@ import { SettingsDatabase } from "./settings";
 
 test("persists one complete settings document", async () => {
   const database = await createTestDatabase();
-  onTestFinished(() => database.dispose());
+  onTestFinished(() => database.close());
   const settingsDatabase = new SettingsDatabase(database);
   const settings = {
     ...DEFAULT_SETTINGS,
@@ -27,6 +27,6 @@ test("persists one complete settings document", async () => {
   ).toBe(false);
   expect(await settingsDatabase.get()).toEqual(settings);
 
-  const { rows } = await database.sql`SELECT id, value FROM settings`;
-  expect(rows).toEqual([{ id: 1, value: JSON.stringify(settings) }]);
+  const rows = await database<{ id: number; value: string }[]>`SELECT id, value FROM settings`;
+  expect(Array.from(rows)).toEqual([{ id: 1, value: JSON.stringify(settings) }]);
 });

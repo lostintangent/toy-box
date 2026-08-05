@@ -3,7 +3,7 @@ import * as streamModule from "@/functions/runtime/stream";
 import * as registryModule from "@/functions/state/session/registry";
 import * as workspaceModule from "@/functions/state/workspace";
 import * as inboxStateModule from "@/functions/state/workspace/inbox";
-import type { SessionStreamCompletion } from "@/functions/runtime/stream";
+import type { SessionCompletion } from "@/types";
 import type { InboxEntry } from "@/types";
 
 const realStreamModule = { ...streamModule };
@@ -11,7 +11,7 @@ const realRegistryModule = { ...registryModule };
 const realWorkspaceModule = { ...workspaceModule };
 const realInboxStateModule = { ...inboxStateModule };
 
-let completion: ReturnType<typeof deferred<SessionStreamCompletion>>;
+let completion: ReturnType<typeof deferred<SessionCompletion>>;
 let entry: InboxEntry | null;
 const calls: string[] = [];
 
@@ -66,7 +66,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  completion = deferred<SessionStreamCompletion>();
+  completion = deferred<SessionCompletion>();
   entry = null;
   calls.length = 0;
   createSessionMock.mockClear();

@@ -8,11 +8,7 @@ import type { SessionLocationPickerProps } from "@/components/workspace/panes/se
 import { useModels } from "@/hooks/workspace/useModels";
 import { useSessions } from "@/hooks/session/useSessions";
 import { selectInboxEntries, useWorkspaceSelector } from "@/hooks/workspace/state";
-import {
-  clearLinkedPanes,
-  linkedPanesStore,
-  publishLinkedPanes,
-} from "@/hooks/workspace/layout/linkedPanes";
+import { useWorkspaceSurface } from "@/hooks/workspace/layout/surface";
 import {
   createEditorPane,
   createEditorPaneId,
@@ -26,11 +22,12 @@ import { InboxEntries } from "./InboxEntries";
 /** Starts work without opening a client stream. Run dispatches an Inbox task;
  *  Send leaves an ordinary new session in the normal list. */
 export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => void }) {
+  const { panePublications } = useWorkspaceSurface();
   const { sessions } = useSessions();
   const entries = useWorkspaceSelector(selectInboxEntries);
   const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);
   const { models, defaultModel, setDefaultModel } = useModels();
-  const linkedEditorPane = useSelector(linkedPanesStore, (linkedPanes) =>
+  const linkedEditorPane = useSelector(panePublications, (linkedPanes) =>
     linkedPanes[INBOX_PANE.id]?.find(isEditorPane),
   );
   const [prompt, setPrompt] = useState("");
@@ -60,8 +57,8 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
   // another client deletes or replaces the linked entry.
   useEffect(() => {
     if (linkedArtifactExists) return;
-    clearLinkedPanes(INBOX_PANE.id);
-  }, [linkedArtifactExists]);
+    panePublications.actions.clearLinkedPanes(INBOX_PANE.id);
+  }, [linkedArtifactExists, panePublications]);
 
   function handleInboxArtifactSelect(entry: InboxEntry) {
     if (!entry.artifact) return;
@@ -70,9 +67,9 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
     const pane = { ...artifactPane, title: entry.message ?? artifactPane.title };
     const isLinked = linkedEditorPane?.id === pane.id;
     if (isLinked) {
-      clearLinkedPanes(INBOX_PANE.id);
+      panePublications.actions.clearLinkedPanes(INBOX_PANE.id);
     } else {
-      publishLinkedPanes(INBOX_PANE.id, [pane]);
+      panePublications.actions.publishLinkedPanes(INBOX_PANE.id, [pane]);
     }
 
     if (!isLinked) onFocusPane?.(pane.id);
@@ -80,7 +77,7 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
 
   function handleInboxArtifactRemoved(entryId: string) {
     if (linkedEditorPane !== undefined && ownerSessionId(linkedEditorPane.file) === entryId) {
-      clearLinkedPanes(INBOX_PANE.id);
+      panePublications.actions.clearLinkedPanes(INBOX_PANE.id);
     }
   }
 

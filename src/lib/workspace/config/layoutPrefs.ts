@@ -1,10 +1,11 @@
 // Layout preferences round-trip through cookies so SSR and the hydrated shell
-// start with the same sidebar, terminal, automation, Hyper, and mobile Inbox layout.
+// start with the same sidebar, terminal, app, automation, Hyper, and mobile Inbox layout.
 
 const LAYOUT_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 const DEFAULT_SIDEBAR_SIZE = 15;
 const DEFAULT_TERMINAL_SIZE = 30;
+const DEFAULT_APPS_EXPANDED = true;
 const DEFAULT_AUTOMATIONS_EXPANDED = true;
 const DEFAULT_MOBILE_INBOX_OPEN = false;
 
@@ -64,6 +65,7 @@ const LAYOUT_PREFS = {
   terminalSize: pref("terminal_size", numberCodec(clampTerminalSize), DEFAULT_TERMINAL_SIZE),
   sidebarOpen: pref("sidebar_open", booleanCodec, true),
   terminalOpen: pref("terminal_open", booleanCodec, false),
+  appsExpanded: pref("apps_expanded", booleanCodec, DEFAULT_APPS_EXPANDED),
   automationsExpanded: pref("automations_expanded", booleanCodec, DEFAULT_AUTOMATIONS_EXPANDED),
   hyperOpen: pref("hyper_open", booleanCodec, false),
   hyperPosition: pref("hyper_pos", pointCodec, DEFAULT_HYPER_POSITION),

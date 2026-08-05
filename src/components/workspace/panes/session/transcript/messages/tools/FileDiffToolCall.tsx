@@ -4,8 +4,8 @@ import type { ThemedToken } from "shiki/core";
 import type { ToolCallProps } from "./types";
 import { useToolCallDiff } from "@/hooks/diffs/EditDiffsContext";
 import { useSessionCwd } from "@/hooks/session/SessionCwdContext";
-import { getToolCallFileDiffs, type DiffHunk, type FileDiff } from "@/lib/diffs/fileDiffs";
-import { toRelativePath } from "@/lib/paths";
+import { getToolCallFileDiffs, type DiffHunk, type FileDiff } from "@/lib/files/diffs/fileDiffs";
+import { toRelativePath } from "@/lib/files/paths";
 import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";
 
@@ -385,7 +385,7 @@ async function highlightDiffLines(
   path: string,
   minIndent: number,
 ): Promise<DiffLine[]> {
-  const { highlightCode, getLangFromPath } = await import("@/lib/diffs/highlight");
+  const { highlightCode, getLangFromPath } = await import("@/lib/files/diffs/highlight");
   const lang = getLangFromPath(path);
   const [oldHighlighted, newHighlighted] = await Promise.all([
     highlightCode(oldText, lang),

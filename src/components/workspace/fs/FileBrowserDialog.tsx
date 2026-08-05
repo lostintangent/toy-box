@@ -1,4 +1,12 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -9,9 +17,11 @@ import {
   FolderClosed,
   FolderUp,
   Loader2,
+  Plus,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -20,21 +30,28 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { listDirectory, type DirectoryEntry, type DirectoryListing } from "@/functions/fs";
+import {
+  createFile,
+  listDirectory,
+  type DirectoryEntry,
+  type DirectoryListing,
+} from "@/functions/fs";
 import { cn } from "@/lib/utils";
 import { PathBreadcrumbs } from "./PathBreadcrumbs";
 
 /**
  * Browse the host filesystem as an expandable tree. Pass `onOpenFile` to open files
  * (a file browser) or `onSelectDirectory` to choose a directory (a directory picker).
- * The completion handler is the only thing that changes: directories always expand
- * via their chevron; files appear only when they can be opened.
+ * File browsers can also create a file and return it through the same completion
+ * handler. Directories always expand via their chevron; files appear only when they
+ * can be opened.
  */
 export function FileBrowserDialog({
   open,
   onOpenChange,
   title,
   initialPath,
+  extensions,
   onOpenFile,
   onSelectDirectory,
 }: {
@@ -42,26 +59,41 @@ export function FileBrowserDialog({
   onOpenChange: (open: boolean) => void;
   title: string;
   initialPath?: string;
+  extensions?: readonly string[];
   onOpenFile?: (path: string) => void;
   onSelectDirectory?: (path: string) => void;
 }) {
+  const [creatingFileIn, setCreatingFileIn] = useState<string | undefined>(undefined);
+
+  const changeOpen = (nextOpen: boolean) => {
+    if (!nextOpen) setCreatingFileIn(undefined);
+    onOpenChange(nextOpen);
+  };
   const complete = (handler: (path: string) => void) => (path: string) => {
     handler(path);
-    onOpenChange(false);
+    changeOpen(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent
         showCloseButton={false}
         className="flex max-h-[80vh] flex-col gap-3 p-4 sm:max-w-lg"
+        onEscapeKeyDown={(event) => {
+          if (!creatingFileIn) return;
+          event.preventDefault();
+          setCreatingFileIn(undefined);
+        }}
       >
         <DialogHeader>
           <DialogTitle className="text-sm">{title}</DialogTitle>
         </DialogHeader>
         <FileBrowser
           initialPath={initialPath}
-          onCancel={() => onOpenChange(false)}
+          extensions={extensions}
+          creatingFileIn={creatingFileIn}
+          setCreatingFileIn={setCreatingFileIn}
+          onCancel={() => changeOpen(false)}
           onOpenFile={onOpenFile && complete(onOpenFile)}
           onSelectDirectory={onSelectDirectory && complete(onSelectDirectory)}
         />
@@ -73,9 +105,13 @@ export function FileBrowserDialog({
 // Config shared by every node in the tree, so the recursion stays prop-light.
 type TreeContextValue = {
   showHidden: boolean;
+  extensions?: readonly string[];
   onOpenFile?: (path: string) => void;
   selectedPath?: string;
   onSelect?: (path: string) => void;
+  creatingFileIn?: string;
+  onStartFileCreation?: (directory: string) => void;
+  onCancelFileCreation?: (directory: string) => void;
 };
 
 const TreeContext = createContext<TreeContextValue | null>(null);
@@ -87,11 +123,17 @@ const useTree = () => {
 
 function FileBrowser({
   initialPath,
+  extensions,
+  creatingFileIn,
+  setCreatingFileIn,
   onCancel,
   onOpenFile,
   onSelectDirectory,
 }: {
   initialPath?: string;
+  extensions?: readonly string[];
+  creatingFileIn?: string;
+  setCreatingFileIn: Dispatch<SetStateAction<string | undefined>>;
   onCancel: () => void;
   onOpenFile?: (path: string) => void;
   onSelectDirectory?: (path: string) => void;
@@ -118,22 +160,51 @@ function FileBrowser({
 
   function navigate(path: string) {
     setSelectedPath(undefined);
+    setCreatingFileIn(undefined);
     setRoot(path);
+  }
+
+  function cancelFileCreation(directory: string) {
+    setCreatingFileIn((current) => (current === directory ? undefined : current));
   }
 
   const context: TreeContextValue = {
     showHidden,
+    extensions: onOpenFile ? extensions : undefined,
     onOpenFile,
     selectedPath: onSelectDirectory ? chosenPath : undefined,
     onSelect: onSelectDirectory ? setSelectedPath : undefined,
+    creatingFileIn,
+    onStartFileCreation: onOpenFile ? setCreatingFileIn : undefined,
+    onCancelFileCreation: onOpenFile ? cancelFileCreation : undefined,
   };
   const isEmpty =
-    !!listing && listing.directories.length === 0 && (!onOpenFile || listing.files.length === 0);
+    !!listing &&
+    listing.directories.length === 0 &&
+    (!onOpenFile || listing.files.every((file) => !acceptsExtension(file.path, extensions))) &&
+    creatingFileIn !== listing.currentPath;
 
   return (
     <TreeContext.Provider value={context}>
-      {listing && <PathBreadcrumbs path={listing.currentPath} onNavigate={navigate} />}
-      <ScrollArea className="h-96 rounded-md border">
+      {listing && (
+        <div className="flex min-w-0 items-center gap-1">
+          <PathBreadcrumbs path={listing.currentPath} onNavigate={navigate} />
+          {onOpenFile && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="ml-auto"
+              aria-label={`Create a file in ${listing.currentPath}`}
+              title="New file here"
+              onClick={() => setCreatingFileIn(listing.currentPath)}
+            >
+              <Plus />
+            </Button>
+          )}
+        </div>
+      )}
+      <ScrollArea className="h-96 min-h-0 rounded-md border">
         <div className="p-1">
           {isPending ? (
             <Centered>
@@ -153,6 +224,14 @@ function FileBrowser({
                   label=".."
                   muted
                   onActivate={() => navigate(listing.parentPath!)}
+                />
+              )}
+              {creatingFileIn === listing.currentPath && onOpenFile && (
+                <NewFileRow
+                  directory={listing.currentPath}
+                  depth={0}
+                  onCancel={() => cancelFileCreation(listing.currentPath)}
+                  onCreated={onOpenFile}
                 />
               )}
               <DirectoryChildren listing={listing} depth={0} />
@@ -193,7 +272,7 @@ function FileBrowser({
 }
 
 function DirectoryChildren({ listing, depth }: { listing: DirectoryListing; depth: number }) {
-  const { onOpenFile } = useTree();
+  const { extensions, onOpenFile } = useTree();
 
   return (
     <>
@@ -201,21 +280,31 @@ function DirectoryChildren({ listing, depth }: { listing: DirectoryListing; dept
         <DirectoryNode key={directory.path} entry={directory} depth={depth} />
       ))}
       {onOpenFile &&
-        listing.files.map((file) => (
-          <Row
-            key={file.path}
-            depth={depth}
-            icon={FileIcon}
-            label={file.name}
-            onActivate={() => onOpenFile(file.path)}
-          />
-        ))}
+        listing.files
+          .filter((file) => acceptsExtension(file.path, extensions))
+          .map((file) => (
+            <Row
+              key={file.path}
+              depth={depth}
+              icon={FileIcon}
+              label={file.name}
+              onActivate={() => onOpenFile(file.path)}
+            />
+          ))}
     </>
   );
 }
 
 function DirectoryNode({ entry, depth }: { entry: DirectoryEntry; depth: number }) {
-  const { showHidden, onSelect, selectedPath } = useTree();
+  const {
+    showHidden,
+    onOpenFile,
+    onSelect,
+    selectedPath,
+    creatingFileIn,
+    onStartFileCreation,
+    onCancelFileCreation,
+  } = useTree();
   const [expanded, setExpanded] = useState(false);
   const { data: listing, isPending } = useQuery({
     queryKey: ["filesystem", "browse", entry.path, showHidden],
@@ -242,18 +331,116 @@ function DirectoryNode({ entry, depth }: { entry: DirectoryEntry; depth: number 
               }
             : toggle
         }
+        onCreateFile={
+          onStartFileCreation
+            ? () => {
+                setExpanded(true);
+                onStartFileCreation(entry.path);
+              }
+            : undefined
+        }
         selected={selectedPath === entry.path}
       />
-      {expanded &&
-        (isPending ? (
-          <Row depth={depth + 1} icon={Loader2} label="Loading…" muted spin />
-        ) : listing ? (
-          <DirectoryChildren listing={listing} depth={depth + 1} />
-        ) : (
-          <Row depth={depth + 1} icon={AlertCircle} label="Unable to read" muted />
-        ))}
+      {expanded && (
+        <>
+          {creatingFileIn === entry.path && onOpenFile && (
+            <NewFileRow
+              directory={entry.path}
+              depth={depth + 1}
+              onCancel={() => onCancelFileCreation?.(entry.path)}
+              onCreated={onOpenFile}
+            />
+          )}
+          {isPending ? (
+            <Row depth={depth + 1} icon={Loader2} label="Loading…" muted spin />
+          ) : listing ? (
+            <DirectoryChildren listing={listing} depth={depth + 1} />
+          ) : (
+            <Row depth={depth + 1} icon={AlertCircle} label="Unable to read" muted />
+          )}
+        </>
+      )}
     </>
   );
+}
+
+function NewFileRow({
+  directory,
+  depth,
+  onCancel,
+  onCreated,
+}: {
+  directory: string;
+  depth: number;
+  onCancel: () => void;
+  onCreated: (path: string) => void;
+}) {
+  const { extensions } = useTree();
+  const [name, setName] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!name.trim() || isCreating) return;
+    if (extensions?.length && !acceptsExtension(name.trim(), extensions)) {
+      setError(`File name must end in ${extensions.join(" or ")}.`);
+      return;
+    }
+
+    setIsCreating(true);
+    setError(null);
+    try {
+      const result = await createFile({ data: { directory, name } });
+      onCreated(result.path);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to create the file.");
+      setIsCreating(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ paddingLeft: depth * 14 + 28 }} className="py-1 pr-2">
+      <div className="flex items-center gap-1.5">
+        <FileIcon className="size-4 shrink-0 text-muted-foreground" />
+        <Input
+          autoFocus
+          value={name}
+          readOnly={isCreating}
+          aria-label={`New file name in ${directory}`}
+          aria-invalid={!!error}
+          aria-disabled={isCreating}
+          placeholder="File name"
+          className="h-7 px-2 text-xs"
+          onBlur={() => {
+            if (!isCreating) setTimeout(onCancel);
+          }}
+          onChange={(event) => {
+            setName(event.target.value);
+            setError(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (!isCreating) onCancel();
+          }}
+        />
+        {isCreating && <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />}
+      </div>
+      {error && (
+        <p role="alert" className="pt-1 pl-5.5 text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function acceptsExtension(path: string, extensions?: readonly string[]): boolean {
+  if (!extensions?.length) return true;
+  const normalizedPath = path.toLowerCase();
+  return extensions.some((extension) => normalizedPath.endsWith(extension.toLowerCase()));
 }
 
 function Row({
@@ -264,6 +451,7 @@ function Row({
   onToggle,
   expanded,
   selected,
+  onCreateFile,
   muted,
   spin,
 }: {
@@ -274,6 +462,7 @@ function Row({
   onToggle?: () => void;
   expanded?: boolean;
   selected?: boolean;
+  onCreateFile?: () => void;
   muted?: boolean;
   spin?: boolean;
 }) {
@@ -281,7 +470,7 @@ function Row({
     <div
       style={{ paddingLeft: depth * 14 + 8 }}
       className={cn(
-        "flex items-center gap-1 rounded-sm pr-2 text-sm",
+        "group flex items-center gap-1 rounded-sm pr-2 text-sm",
         selected && "bg-accent text-accent-foreground",
       )}
     >
@@ -315,6 +504,19 @@ function Row({
         <Icon className={cn("h-4 w-4 shrink-0 text-muted-foreground", spin && "animate-spin")} />
         <span className={cn("truncate", muted && "text-muted-foreground")}>{label}</span>
       </button>
+      {onCreateFile && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="opacity-50 transition-opacity hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+          aria-label={`Create a file in ${label}`}
+          title={`New file in ${label}`}
+          onClick={onCreateFile}
+        >
+          <Plus />
+        </Button>
+      )}
     </div>
   );
 }

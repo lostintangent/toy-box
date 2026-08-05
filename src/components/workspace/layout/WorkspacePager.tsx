@@ -4,7 +4,7 @@ import { useAtom } from "@tanstack/react-store";
 import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceSessionActivity } from "@/hooks/workspace/state";
-import { useFocusedPaneAtom } from "@/hooks/workspace/layout/focus";
+import { useFocusedPaneAtom } from "@/hooks/workspace/layout/surface";
 import { cn } from "@/lib/utils";
 import { isEditorPane, paneSourceSessionId, type WorkspacePane } from "@/lib/workspace/panes";
 import { WorkspacePaneView } from "../panes/WorkspacePaneView";
@@ -14,7 +14,7 @@ type WorkspacePagerProps = {
   panes: WorkspacePane[];
   primaryPaneId: string;
   onBack?: () => void;
-  resolveFileClose?: (pane: WorkspacePane) => (() => void) | undefined;
+  resolvePaneClose?: (pane: WorkspacePane) => (() => void) | undefined;
   /**
    * When set (the hyper deck), the pager's toolbar — the dots + the active
    * pane's declared actions — is portaled into this element (the window's title
@@ -28,7 +28,7 @@ export function WorkspacePager({
   panes,
   primaryPaneId,
   onBack,
-  resolveFileClose,
+  resolvePaneClose,
   toolbarSlot,
 }: WorkspacePagerProps) {
   const [focusedPaneId, setFocusedPaneId] = useAtom(useFocusedPaneAtom());
@@ -48,7 +48,7 @@ export function WorkspacePager({
   const appearingPaneIds = useAppearingPanes(paneIds);
 
   const activePane = panes.find((pane) => pane.id === effectiveActivePaneId);
-  const closeActivePane = activePane ? resolveFileClose?.(activePane) : undefined;
+  const closeActivePane = activePane ? resolvePaneClose?.(activePane) : undefined;
 
   // The pager's toolbar: an optional mobile back button, the dot strip, and
   // slots the active pane fills with transient status and persistent actions.
@@ -231,17 +231,21 @@ function PagerDotButton({
         ? "bg-unread h-2.5 w-2.5"
         : pane.kind === "canvas"
           ? "bg-violet-500 h-2.5 w-2.5"
-          : pane.kind === "editor"
-            ? "bg-emerald-500 h-2.5 w-2.5"
-            : "bg-muted-foreground/40 h-2.5 w-2.5";
+          : pane.kind === "app"
+            ? "bg-amber-500 h-2.5 w-2.5"
+            : pane.kind === "editor"
+              ? "bg-emerald-500 h-2.5 w-2.5"
+              : "bg-muted-foreground/40 h-2.5 w-2.5";
   const label =
     pane.kind === "inbox"
       ? "Inbox"
       : pane.kind === "canvas"
         ? `Canvas ${pane.canvas.title || pane.canvas.canvasId}`
-        : isEditorPane(pane)
-          ? pane.title
-          : "Session";
+        : pane.kind === "app"
+          ? "App"
+          : isEditorPane(pane)
+            ? pane.title
+            : "Session";
 
   return (
     <button

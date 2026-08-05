@@ -4,15 +4,15 @@
 import { approveAll, CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
 import type { CopilotSession, SessionContext, SessionMetadata, Tool } from "@github/copilot-sdk";
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { ModelConfiguration, SessionSkill, SessionType } from "@/types";
 import { toSdkSessionModelOptions } from "@/lib/modelConfiguration";
-import { SESSION_STATE_PATH } from "@/lib/paths";
-import { SESSION_ID_PREFIX } from "@/lib/session/constants";
+import { SESSION_ID_PREFIX, SESSION_STATE_PATH } from "@/lib/session/constants";
 import { SDK_AGENT_NOTIFICATION_INSTRUCTIONS } from "@/functions/sdk/agentNotificationCodec";
 import { toSessionSkills } from "@/functions/sdk/skills";
+import { getSessionSkillDirectories } from "@/functions/sdk/bundledSkills";
+import { sharedMap } from "@/functions/runtime/processState";
 
 // ── Public API ────────────────────────────────────────────────────────
 
@@ -26,7 +26,10 @@ export async function createSession(
     artifactPath?: string;
   },
 ): Promise<CopilotSession> {
-  const client = await getCopilotClient();
+  const [client, skillDirectories] = await Promise.all([
+    startCopilotClient(),
+    getSessionSkillDirectories(options.sessionType),
+  ]);
 
   return client.createSession({
     sessionId,
@@ -35,6 +38,7 @@ export async function createSession(
     ...toSdkSessionModelOptions(options.model),
     workingDirectory: options.directory,
     enableConfigDiscovery: true,
+    ...(skillDirectories ? { enableSkills: true, skillDirectories } : {}),
     systemMessage: buildSessionSystemMessage(sessionId, options),
     onPermissionRequest: approveAll,
     tools: options.tools,
@@ -45,7 +49,7 @@ export async function createDraftSession(
   sessionId: string,
   artifact?: { path: string; content: string },
 ): Promise<void> {
-  const client = await getCopilotClient();
+  const client = await startCopilotClient();
 
   const session = await client.createSession({
     sessionId,
@@ -61,12 +65,16 @@ export async function resumeSession(
   sessionId: string,
   options: { directory: string; sessionType: SessionType; tools?: Tool<any>[] },
 ): Promise<CopilotSession> {
-  const client = await getCopilotClient();
+  const [client, skillDirectories] = await Promise.all([
+    startCopilotClient(),
+    getSessionSkillDirectories(options.sessionType),
+  ]);
   return client.resumeSession(sessionId, {
     streaming: true,
     requestCanvasRenderer: true,
     workingDirectory: options.directory,
     enableConfigDiscovery: true,
+    ...(skillDirectories ? { enableSkills: true, skillDirectories } : {}),
     systemMessage: buildSessionSystemMessage(sessionId, options),
     onPermissionRequest: approveAll,
     tools: options.tools,
@@ -75,13 +83,13 @@ export async function resumeSession(
 
 /** Delete a session from SDK persistence */
 export async function deleteSession(sessionId: string): Promise<void> {
-  const client = await getCopilotClient();
+  const client = await startCopilotClient();
   await client.deleteSession(sessionId);
 }
 
 /** List persisted SDK sessions with normalized workspace context. */
 export async function listSessions(): Promise<SessionMetadata[]> {
-  const client = await getCopilotClient();
+  const client = await startCopilotClient();
   const sessions = await client.listSessions();
   await Promise.all(
     sessions.map(async (session) => {
@@ -103,7 +111,7 @@ export async function listSessions(): Promise<SessionMetadata[]> {
 export async function readSessionContext(sessionId: string): Promise<SessionContext | undefined> {
   try {
     const eventsPath = join(homedir(), SESSION_STATE_PATH, sessionId, "events.jsonl");
-    const raw = await readFile(eventsPath, "utf-8");
+    const raw = await Bun.file(eventsPath).text();
     const firstNewline = raw.indexOf("\n");
     const firstLine = firstNewline === -1 ? raw : raw.slice(0, firstNewline);
     if (!firstLine) return undefined;
@@ -130,7 +138,7 @@ export async function readSessionContext(sessionId: string): Promise<SessionCont
  * fallback sessions remain application-level user scope and return undefined.
  */
 export async function getSessionDirectory(sessionId: string): Promise<string | undefined> {
-  const client = await getCopilotClient();
+  const client = await startCopilotClient();
   const metadata = await client.getSessionMetadata(sessionId);
   const context = metadata?.context
     ? normalizeSessionContext(metadata.context)
@@ -139,14 +147,23 @@ export async function getSessionDirectory(sessionId: string): Promise<string | u
 }
 
 export async function listModels() {
-  const client = await getCopilotClient();
+  const client = await startCopilotClient();
   return client.listModels();
 }
 
 /** Discover user-invocable skills for a working directory, or host-level skills without one. */
-export async function listSkills(cwd?: string): Promise<SessionSkill[]> {
-  const client = await getCopilotClient();
-  const result = await client.rpc.skills.discover(cwd ? { projectPaths: [cwd] } : {});
+export async function listSkills(
+  cwd?: string,
+  sessionType: SessionType = "standard",
+): Promise<SessionSkill[]> {
+  const [client, skillDirectories] = await Promise.all([
+    startCopilotClient(),
+    getSessionSkillDirectories(sessionType),
+  ]);
+  const result = await client.rpc.skills.discover({
+    ...(cwd ? { projectPaths: [cwd] } : {}),
+    ...(skillDirectories ? { skillDirectories } : {}),
+  });
   return toSessionSkills(result.skills);
 }
 
@@ -202,6 +219,12 @@ export function buildSessionSystemMessage(
     );
   }
 
+  if (sessionType === "hyper") {
+    parts.push(
+      "This is Toy Box's Hyper session. Invoke the `create-toy-box-app` skill for app authoring and lifecycle requests, or `create-toy-box-editor` for custom file-editor requests, and follow the selected skill completely. Do not inspect Toy Box source code or its database to discover these authoring contracts.",
+    );
+  }
+
   parts.push(
     'Toy Box renders files ending in `.svg` as rich, directly editable drawing artifacts. When creating a whiteboard, drawing, or spatial diagram, write standard static SVG with an `xmlns`, a meaningful `viewBox`, and ordinary SVG elements such as `<g>`, `<path>`, `<rect>`, `<ellipse>`, `<line>`, `<text>`, and `<image>`; gradients, filters, masks, patterns, markers, and transforms are supported. Give logical objects unique, descriptive IDs and wrap multi-part objects in `<g id="...">` so Toy Box can select, move, resize, and rotate them as one unit. Keep the file self-contained when practical. The editor supplies its own theme-derived background and dot grid, so do not add a background unless it is meaningful document content. Editable SVG artifacts must not contain doctypes, scripts, `<foreignObject>`, event-handler attributes, imported or executable CSS, or unsafe resource protocols.',
     `If needed, you can discover other sessions by grepping the files at ~/${SESSION_STATE_PATH}/${SESSION_ID_PREFIX}*/events.jsonl — each parent directory name is a session ID and the events.jsonl contains the full session history including user messages. Do NOT use a database to look up sessions; always grep these files directly.`,
@@ -216,39 +239,39 @@ export function buildSessionSystemMessage(
 
 // ── Client process ────────────────────────────────────────────────────
 
-let copilotClientPromise: Promise<CopilotClient> | undefined;
+const copilotClients = sharedMap<Promise<CopilotClient>>("copilot-clients");
 
-function getCopilotClient(): Promise<CopilotClient> {
-  if (!copilotClientPromise) {
-    copilotClientPromise = (async () => {
-      try {
-        const cliPath = resolveCopilotCliPath();
-        const client = new CopilotClient({
-          // Compiled binaries cannot rely on the SDK's import.meta.resolve
-          // lookup, so production passes the global CLI explicitly.
-          ...(cliPath ? { connection: RuntimeConnection.forStdio({ path: cliPath }) } : {}),
-          // Make a compiled Bun executable behave like the Bun CLI when the SDK
-          // uses process.execPath for child JavaScript entrypoints.
-          env: {
-            ...process.env,
-            BUN_BE_BUN: "1",
-          },
-        });
-        await client.start();
-        return client;
-      } catch (error) {
-        copilotClientPromise = undefined;
-        throw error;
-      }
-    })();
-  }
-  return copilotClientPromise;
+/** Start or reuse the one Copilot process shared by every server operation. */
+export function startCopilotClient(): Promise<CopilotClient> {
+  const existing = copilotClients.get("shared");
+  if (existing) return existing;
+
+  const promise = (async () => {
+    const client = new CopilotClient({
+      connection: RuntimeConnection.forStdio({ path: resolveCopilotCliPath() }),
+      // Make a compiled Bun executable behave like the Bun CLI when the SDK
+      // uses process.execPath for child JavaScript entrypoints.
+      env: {
+        ...process.env,
+        BUN_BE_BUN: "1",
+      },
+    });
+    await client.start();
+    return client;
+  })();
+  copilotClients.set("shared", promise);
+  void promise.catch(() => {
+    if (copilotClients.get("shared") === promise) copilotClients.delete("shared");
+  });
+  return promise;
 }
 
-/** Use the SDK's bundled CLI in development and the global executable in a
- *  compiled production binary. */
-function resolveCopilotCliPath(): string | undefined {
-  if (import.meta.env.DEV) return;
+/** Use the installed native CLI in Bun development and the global executable
+ *  in a compiled production binary. */
+function resolveCopilotCliPath(): string {
+  if (import.meta.env.DEV) {
+    return Bun.resolveSync(`@github/copilot-${process.platform}-${process.arch}`, process.cwd());
+  }
 
   try {
     const copilotBin = Bun.which("copilot");

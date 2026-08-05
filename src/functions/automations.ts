@@ -8,7 +8,7 @@ import {
   updateAutomationInputSchema,
 } from "@/lib/automation/schema";
 import type { Automation } from "@/types";
-import { getAppDatabase } from "./state/database";
+import { getStateDatabase } from "./state/database";
 import { deleteSessionIfExists } from "./state/session/registry";
 import { AutomationDatabase } from "./automations/database";
 import { broadcast } from "./runtime/broadcast";
@@ -16,7 +16,7 @@ import { startAutomationRun } from "./automations/scheduler";
 
 export const listAutomations = createServerFn({ method: "GET" }).handler(
   async (): Promise<Automation[]> => {
-    const database = await getAppDatabase({ createIfMissing: false });
+    const database = await getStateDatabase({ createIfMissing: false });
     return database ? new AutomationDatabase(database).list() : [];
   },
 );
@@ -24,7 +24,7 @@ export const listAutomations = createServerFn({ method: "GET" }).handler(
 export const createAutomation = createServerFn({ method: "POST" })
   .validator(zodValidator(automationOptionsSchema))
   .handler(async ({ data }): Promise<Automation> => {
-    const automation = await new AutomationDatabase(await getAppDatabase()).create(data);
+    const automation = await new AutomationDatabase(await getStateDatabase()).create(data);
     broadcast({
       type: "automation.upserted",
       automation,
@@ -36,7 +36,7 @@ export const updateAutomation = createServerFn({ method: "POST" })
   .validator(zodValidator(updateAutomationInputSchema))
   .handler(async ({ data }): Promise<Automation | null> => {
     const { automationId, ...options } = data;
-    const automation = await new AutomationDatabase(await getAppDatabase()).update(
+    const automation = await new AutomationDatabase(await getStateDatabase()).update(
       automationId,
       options,
     );
@@ -53,7 +53,7 @@ export const updateAutomation = createServerFn({ method: "POST" })
 export const deleteAutomation = createServerFn({ method: "POST" })
   .validator(zodValidator(automationIdInputSchema))
   .handler(async ({ data }): Promise<boolean> => {
-    const database = new AutomationDatabase(await getAppDatabase());
+    const database = new AutomationDatabase(await getStateDatabase());
     const automation = await database.get(data.automationId);
     if (!automation) return false;
 

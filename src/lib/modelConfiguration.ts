@@ -1,6 +1,6 @@
 import type { CopilotSession, SessionConfig as SdkSessionConfig } from "@github/copilot-sdk";
 import { z } from "zod";
-import type { ModelConfiguration, ReasoningEffort } from "@/types";
+import type { ModelConfiguration } from "@/types";
 
 export const modelConfigurationSchema = z
   .object({
@@ -17,20 +17,19 @@ export const modelConfigurationSchema = z
   .passthrough();
 
 type ReasoningModelInfo = {
-  supportedReasoningEfforts?: readonly ReasoningEffort[];
-  defaultReasoningEffort?: ReasoningEffort;
+  supportedReasoningEfforts?: readonly string[];
+  defaultReasoningEffort?: string;
 };
 type ModelCatalogInfo = ReasoningModelInfo & { id: string };
 type SdkSetModelOptions = NonNullable<Parameters<CopilotSession["setModel"]>[1]>;
-type SdkReasoningEffort = NonNullable<SdkSessionConfig["reasoningEffort"]>;
 type SdkSessionModelOptions = Pick<SdkSessionConfig, "model" | "reasoningEffort">;
 
 /** The SDK's public type is narrower than the generated protocol and live
  *  model metadata, so keep the cast in one boundary helper. */
 export function toSdkReasoningEffort(
-  reasoningEffort?: ReasoningEffort,
-): SdkReasoningEffort | undefined {
-  return reasoningEffort as SdkReasoningEffort | undefined;
+  reasoningEffort?: string,
+): SdkSessionConfig["reasoningEffort"] {
+  return reasoningEffort as SdkSessionConfig["reasoningEffort"];
 }
 
 export function toSdkSetModelOptions(configuration?: ModelConfiguration): SdkSetModelOptions {
@@ -104,14 +103,14 @@ export function normalizeModelConfiguration(
 
 function resolveModelReasoningEffort(
   model: ReasoningModelInfo | undefined,
-  requestedReasoningEffort: ReasoningEffort | undefined,
-): ReasoningEffort | undefined {
+  requestedReasoningEffort: string | undefined,
+): string | undefined {
   return getModelReasoningConfig(model, requestedReasoningEffort).reasoningEffort;
 }
 
 export function getModelReasoningConfig(
   model: ReasoningModelInfo | undefined,
-  requestedReasoningEffort: ReasoningEffort | undefined,
+  requestedReasoningEffort: string | undefined,
 ) {
   const supportedReasoningEfforts = model?.supportedReasoningEfforts ?? [];
   const reasoningEffort =
@@ -125,7 +124,7 @@ export function getModelReasoningConfig(
   };
 }
 
-export function formatReasoningEffort(reasoningEffort: ReasoningEffort) {
+export function formatReasoningEffort(reasoningEffort: string) {
   return reasoningEffort
     .replace(/^xhigh$/i, "Extra High")
     .split(/[\s_-]+/)

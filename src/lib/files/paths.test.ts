@@ -1,5 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { createFileRouteBaseUrl, createFileRouteUrl } from "./paths";
+import {
+  createFileRouteBaseUrl,
+  createFileRouteUrl,
+  getPathBasename,
+  getPathDirname,
+  toRelativePath,
+} from "./paths";
+
+describe("file path display", () => {
+  test("reads basenames and directories across POSIX and Windows separators", () => {
+    expect(getPathBasename("/repo/src/file.ts/")).toBe("file.ts");
+    expect(getPathBasename(String.raw`C:\repo\src\file.ts`)).toBe("file.ts");
+    expect(getPathDirname("/repo/src/file.ts")).toBe("/repo/src");
+    expect(getPathDirname(String.raw`C:\repo\src\file.ts`)).toBe(String.raw`C:\repo\src`);
+  });
+
+  test("collapses paths beneath the working or home directory", () => {
+    expect(toRelativePath("/repo/src/file.ts", "/repo")).toBe("src/file.ts");
+    expect(toRelativePath("/repo", "/repo")).toBe(".");
+    expect(toRelativePath("/Users/person/project/file.ts")).toBe("~/project/file.ts");
+  });
+});
 
 describe("artifact route paths", () => {
   test("encodes session IDs and artifact path segments while preserving hierarchy", () => {

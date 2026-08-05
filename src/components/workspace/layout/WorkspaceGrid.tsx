@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useAtom } from "@tanstack/react-store";
 import { X, Maximize2, Minimize2 } from "lucide-react";
-import { useFocusedPaneAtom } from "@/hooks/workspace/layout/focus";
+import { useFocusedPaneAtom } from "@/hooks/workspace/layout/surface";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import type { ImperativePanelGroupHandle } from "react-resizable-panels";
 import { WorkspacePaneView } from "../panes/WorkspacePaneView";
-import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "../panes/paneControls";
+import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "../panes/shell/paneControls";
 import { SessionOverlay } from "../panes/session/SessionOverlay";
 import { cn } from "@/lib/utils";
 import { paneSourceSessionId, type WorkspacePane } from "@/lib/workspace/panes";
@@ -17,7 +17,7 @@ import { paneSourceSessionId, type WorkspacePane } from "@/lib/workspace/panes";
 export interface WorkspaceGridProps {
   panes: WorkspacePane[];
   onCloseSession: (sessionId: string) => void;
-  resolveFileClose: (pane: WorkspacePane) => (() => void) | undefined;
+  resolvePaneClose: (pane: WorkspacePane) => (() => void) | undefined;
 }
 
 type WorkspaceGridLayout = {
@@ -118,7 +118,7 @@ function applyWorkspaceGridLayout(
   rowGroupRef.current?.setLayout(layout.rows);
 }
 
-export function WorkspaceGrid({ panes, onCloseSession, resolveFileClose }: WorkspaceGridProps) {
+export function WorkspaceGrid({ panes, onCloseSession, resolvePaneClose }: WorkspaceGridProps) {
   const count = panes.length;
   const [isDragging, setIsDragging] = useState(false);
   const [focusedPaneId, setFocusedPaneId] = useAtom(useFocusedPaneAtom());
@@ -236,7 +236,7 @@ export function WorkspaceGrid({ panes, onCloseSession, resolveFileClose }: Works
         (candidate) => candidate.kind === "session" && candidate.sessionId === sourceSessionId,
       );
 
-    const onClosePane = resolveFileClose(pane);
+    const onClosePane = resolvePaneClose(pane);
 
     return (
       <WorkspaceGridCell
@@ -342,6 +342,7 @@ function WorkspaceGridCell({
       className={cn(
         "h-full w-full relative group bg-background transition-shadow",
         showControls && !isMaximized && "border-r border-b border-border",
+        showControls && "[--toybox-pane-actions-inset:5rem]",
       )}
     >
       {pane.kind === "session" && pane.isLinkedOnly && (

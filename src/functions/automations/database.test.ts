@@ -12,6 +12,7 @@ function mockTime(date: string | Date): void {
 
 async function openTestDatabase(path = ":memory:"): Promise<AutomationDatabase> {
   const db = await createTestDatabase(path);
+  onTestFinished(() => db.close());
   return new AutomationDatabase(db);
 }
 
@@ -148,6 +149,7 @@ describe("automation database", () => {
     const consoleErrorMock = spyOn(console, "error").mockImplementation(() => {});
     onTestFinished(() => consoleErrorMock.mockRestore());
     const rawDb = await createTestDatabase();
+    onTestFinished(() => rawDb.close());
     const db = new AutomationDatabase(rawDb);
 
     const valid = await db.create({
@@ -156,7 +158,7 @@ describe("automation database", () => {
       model: { name: "gpt-5" },
       cron: "0 9 * * *",
     });
-    await rawDb.sql`
+    await rawDb`
       INSERT INTO automations (id, title, prompt, model_configuration, cron, cwd, created_at, updated_at, next_run_at)
       VALUES (${"broken"}, ${"Broken automation"}, ${"noop"}, ${"{bad json"}, ${"0 9 * * *"}, ${null}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"})
     `;
@@ -170,6 +172,7 @@ describe("automation database", () => {
     const consoleErrorMock = spyOn(console, "error").mockImplementation(() => {});
     onTestFinished(() => consoleErrorMock.mockRestore());
     const rawDb = await createTestDatabase();
+    onTestFinished(() => rawDb.close());
     const db = new AutomationDatabase(rawDb);
 
     const valid = await db.create({
@@ -178,7 +181,7 @@ describe("automation database", () => {
       model: { name: "gpt-5" },
       cron: "* * * * *",
     });
-    await rawDb.sql`
+    await rawDb`
       INSERT INTO automations (id, title, prompt, model_configuration, cron, cwd, created_at, updated_at, next_run_at)
       VALUES (${"broken-due"}, ${"Broken due automation"}, ${"noop"}, ${"{bad json"}, ${"* * * * *"}, ${null}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"})
     `;
@@ -187,12 +190,14 @@ describe("automation database", () => {
     expect((await db.claimDue()).map((automation) => automation.id)).toEqual([valid.id]);
     expect(consoleErrorMock).toHaveBeenCalledTimes(1);
 
-    const rows = await rawDb.sql`SELECT id, next_run_at FROM automations ORDER BY id`;
-    expect(rows.rows).toContainEqual({
+    const rows = await rawDb<{ id: string; next_run_at: string }[]>`
+      SELECT id, next_run_at FROM automations ORDER BY id
+    `;
+    expect(Array.from(rows)).toContainEqual({
       id: "broken-due",
       next_run_at: expect.stringMatching(/^2026-02-14T10:02:/),
     });
-    expect(rows.rows).toContainEqual({
+    expect(Array.from(rows)).toContainEqual({
       id: valid.id,
       next_run_at: expect.stringMatching(/^2026-02-14T10:02:/),
     });

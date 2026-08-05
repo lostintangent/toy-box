@@ -7,15 +7,15 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createDatabase, type Database } from "db0";
+import { SMALL_JSON_MAX_BYTES } from "@/lib/smallJson";
 
-let dbPromise: Promise<Database> | undefined;
+let dbPromise: Promise<Bun.SQL> | undefined;
 
-export function getAppDatabase(): Promise<Database>;
-export function getAppDatabase(options: { createIfMissing: false }): Promise<Database | null>;
-export function getAppDatabase(
+export function getStateDatabase(): Promise<Bun.SQL>;
+export function getStateDatabase(options: { createIfMissing: false }): Promise<Bun.SQL | null>;
+export function getStateDatabase(
   options: { createIfMissing?: false } = {},
-): Promise<Database | null> {
+): Promise<Bun.SQL | null> {
   if (!dbPromise) {
     const path = resolveDefaultPath();
     if (options.createIfMissing === false && !existsSync(path)) {
@@ -23,7 +23,7 @@ export function getAppDatabase(
     }
 
     dbPromise = (async () => {
-      const db = await createRuntimeDatabase(path);
+      const db = createRuntimeDatabase(path);
       await initializeSchema(db, path);
       return db;
     })();
@@ -37,27 +37,20 @@ function resolveDefaultPath(): string {
   return join(process.cwd(), ".toy-box", "toy-box.sqlite");
 }
 
-async function createRuntimeDatabase(path: string): Promise<Database> {
+function createRuntimeDatabase(path: string): Bun.SQL {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-
-  const connectorFactory =
-    typeof Bun !== "undefined"
-      ? (await import("db0/connectors/bun-sqlite")).default
-      : (await import("db0/connectors/node-sqlite")).default;
-  const connectorOptions = path === ":memory:" ? { name: ":memory:" } : { path };
-  return createDatabase(connectorFactory(connectorOptions));
+  return new Bun.SQL({ adapter: "sqlite", filename: path, strict: true });
 }
 
-async function initializeSchema(db: Database, path: string): Promise<void> {
-  await db.exec("PRAGMA foreign_keys = ON;");
+async function initializeSchema(db: Bun.SQL, path: string): Promise<void> {
+  await db`PRAGMA foreign_keys = ON`;
   if (path !== ":memory:") {
-    await db.exec("PRAGMA journal_mode = WAL;");
-    await db.exec("PRAGMA synchronous = NORMAL;");
+    await db`PRAGMA journal_mode = WAL`;
+    await db`PRAGMA synchronous = NORMAL`;
   }
 
-  // The app DB schema has not shipped yet, so startup defines the current shape
-  // directly instead of carrying migrations for earlier local prototypes.
-  await db.exec(`
+  // This schema has not shipped, so startup defines its current shape directly.
+  await db.unsafe(`
     CREATE TABLE IF NOT EXISTS automations (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -70,14 +63,10 @@ async function initializeSchema(db: Database, path: string): Promise<void> {
       next_run_at TEXT NOT NULL,
       last_run_at TEXT
     );
-  `);
 
-  await db.exec(`
     CREATE INDEX IF NOT EXISTS idx_automations_next_run_at
       ON automations(next_run_at);
-  `);
 
-  await db.exec(`
     CREATE TABLE IF NOT EXISTS worktrees (
       session_id           TEXT PRIMARY KEY,
       worktree_path        TEXT NOT NULL,
@@ -86,50 +75,95 @@ async function initializeSchema(db: Database, path: string): Promise<void> {
       lines_added          INTEGER,
       lines_removed        INTEGER
     );
-  `);
 
-  await db.exec(`
     CREATE TABLE IF NOT EXISTS workers (
       session_id        TEXT PRIMARY KEY,
-      parent_session_id TEXT NOT NULL,
-      retained          INTEGER NOT NULL DEFAULT 0
-        CHECK (retained IN (0, 1))
+      worker_type       TEXT NOT NULL
+        CHECK (worker_type IN ('session', 'file', 'app')),
+      parent_session_id TEXT,
+      app_id            TEXT,
+      ephemeral         INTEGER NOT NULL
+        CHECK (ephemeral IN (0, 1)),
+      CHECK (
+        (
+          worker_type = 'app'
+          AND parent_session_id IS NULL
+          AND app_id IS NOT NULL
+        )
+        OR
+        (
+          worker_type IN ('session', 'file')
+          AND parent_session_id IS NOT NULL
+          AND app_id IS NULL
+        )
+      )
     );
-  `);
 
-  await db.exec(`
     CREATE INDEX IF NOT EXISTS idx_workers_parent_session_id
       ON workers(parent_session_id);
-  `);
 
-  await db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_workers_app_id
+      ON workers(app_id);
+
     CREATE TABLE IF NOT EXISTS drafts (
       session_id    TEXT PRIMARY KEY,
       artifact_path TEXT,
       created_at    INTEGER NOT NULL
     );
-  `);
 
-  await db.exec(`
     CREATE TABLE IF NOT EXISTS inbox (
       id         TEXT PRIMARY KEY,
       message    TEXT,
       artifact   TEXT,
       created_at TEXT NOT NULL
     );
-  `);
 
-  await db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       id    INTEGER PRIMARY KEY CHECK (id = 1),
       value TEXT NOT NULL CHECK (json_valid(value))
     );
+
+    CREATE TABLE IF NOT EXISTS apps (
+      id            TEXT PRIMARY KEY,
+      definition_id TEXT NOT NULL,
+      title         TEXT NOT NULL,
+      color         TEXT NOT NULL,
+      state         TEXT NOT NULL CHECK (
+        json_valid(state)
+        AND length(CAST(state AS BLOB)) <= ${SMALL_JSON_MAX_BYTES}
+      ),
+      revision      INTEGER NOT NULL DEFAULT 0
+        CHECK (typeof(revision) = 'integer' AND revision >= 0),
+      created_at    TEXT NOT NULL,
+      updated_at    TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_apps_updated_at
+      ON apps(updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_apps_definition_id
+      ON apps(definition_id);
+
+    CREATE TABLE IF NOT EXISTS app_shares (
+      id            TEXT PRIMARY KEY,
+      source_app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+      target_app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+      mime_type     TEXT NOT NULL,
+      content       TEXT NOT NULL CHECK (
+        json_valid(content)
+        AND length(CAST(content AS BLOB)) <= ${SMALL_JSON_MAX_BYTES}
+      ),
+      created_at    TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_app_shares_target_app_id
+      ON app_shares(target_app_id, created_at);
   `);
 }
 
 /** Create a standalone database connection for tests that need isolated state. */
-export async function createTestDatabase(path = ":memory:"): Promise<Database> {
-  const db = await createRuntimeDatabase(path);
+export async function createTestDatabase(path = ":memory:"): Promise<Bun.SQL> {
+  const db = createRuntimeDatabase(path);
   await initializeSchema(db, path);
   return db;
 }

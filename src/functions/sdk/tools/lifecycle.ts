@@ -16,26 +16,43 @@ const sessionExecutionParameters = {
 
 const createWorkerSessionTool = defineTool("create_worker_session", {
   description:
-    "Creates a retained child worker session owned by the current session for delegated or parallel work. " +
-    "The worker automatically opens as a linked pane, inherits the current model and directory by default, and remains available for waiting, inspection, or follow-up messages after it completes. " +
-    "It is deleted with the current session; delete it sooner when it is no longer needed.",
+    "Creates a child worker session owned by the current session for delegated or parallel work. " +
+    "It inherits the current model and directory by default. Durable children open as linked panes and remain available for follow-up; ephemeral children run headlessly and are deleted after their initial execution. " +
+    "Every child is deleted with the current session.",
   parameters: z.object({
     task: z.string().describe("The task to delegate to the new worker"),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("A concise, durable display name for the worker's role or assignment."),
     ...sessionExecutionParameters,
+    ephemeral: z
+      .boolean()
+      .optional()
+      .describe("Delete the child after its initial execution. Defaults to false."),
   }),
   skipPermission: true,
   handler: async (args, invocation) => {
-    const { spawnWorker } = await import("@/functions/runtime/workers");
-    const { sessionId } = await spawnWorker({
-      parentSessionId: invocation.sessionId,
-      task: args.task,
-      model: args.model,
+    const { spawnWorker } = await import("@/functions/workers/supervisor");
+    const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
+    const ephemeral = args.ephemeral ?? false;
+    await spawnWorker({
+      worker: {
+        type: "session",
+        sessionId,
+        parentSessionId: invocation.sessionId,
+        ephemeral,
+        ...(args.name === undefined ? {} : { name: args.name }),
+      },
+      message: { content: args.task, model: args.model },
       directory: args.directory,
       useWorktree: args.useWorktree,
-      retained: true,
     });
 
-    return JSON.stringify({ sessionId, opened: true });
+    return JSON.stringify({ sessionId, opened: !ephemeral });
   },
 });
 

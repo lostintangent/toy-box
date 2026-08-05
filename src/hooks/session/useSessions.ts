@@ -4,18 +4,18 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { createEmptySessionsState, sessionQueries } from "@/lib/queries";
+import { createEmptySessionsState, selectNonWorkerSessions, sessionQueries } from "@/lib/queries";
 
 export function useSessions() {
   const { data, isLoading } = useQuery(sessionQueries.state());
-  const { sessions, worktrees, workerSessionIds } = data ?? createEmptySessionsState();
+  const state = data ?? createEmptySessionsState();
+  const { worktrees } = state;
 
   const worktreeSessionIds = Object.keys(worktrees);
 
   return {
     isLoading,
-    sessions,
+    sessions: selectNonWorkerSessions(state),
     worktreeSessionIds,
-    workerSessionIds,
   };
 }

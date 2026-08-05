@@ -2,14 +2,8 @@
 
 import { defineCommand, runMain } from "citty";
 import open from "open";
-import { statSync } from "node:fs";
 
 import { version } from "../package.json";
-import { startTerminalServer } from "../terminal-server/index";
-import { DEFAULT_TERMINAL_WS_PORT } from "../src/types";
-
-const MIN_PORT = 1;
-const MAX_PORT = 65_535;
 
 function configureBunIdleTimeout(defaultIdleTimeoutSeconds: number): void {
   const originalServe = Bun.serve.bind(Bun);
@@ -26,23 +20,9 @@ function configureBunIdleTimeout(defaultIdleTimeoutSeconds: number): void {
   }) as typeof Bun.serve;
 }
 
-function parsePort(value: string, flagName: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < MIN_PORT || parsed > MAX_PORT) {
-    throw new Error(
-      `Invalid ${flagName}: "${value}". Expected an integer between ${MIN_PORT} and ${MAX_PORT}.`,
-    );
-  }
-  return parsed;
-}
-
-function resolveTerminalWsPort(flagValue: string | undefined): number {
-  return flagValue !== undefined ? parsePort(flagValue, "--ws-port") : DEFAULT_TERMINAL_WS_PORT;
-}
-
-function isDirectory(path: string): boolean {
+async function isDirectory(path: string): Promise<boolean> {
   try {
-    return statSync(path).isDirectory();
+    return (await Bun.file(path).stat()).isDirectory();
   } catch {
     return false;
   }
@@ -72,10 +52,6 @@ const main = defineCommand({
       default: "0.0.0.0",
       description: "Host to bind to",
     },
-    "ws-port": {
-      type: "string",
-      description: "WebSocket server port for terminal (default: 3001)",
-    },
     "no-open": {
       type: "boolean",
       default: false,
@@ -95,21 +71,11 @@ const main = defineCommand({
 
     // The compiled binary is sometimes invoked as a subprocess by SDK internals
     // with a file path in argv[2]. Only treat positional cwd as valid when it's a directory.
-    if (args.cwd && isDirectory(args.cwd)) {
+    if (args.cwd && (await isDirectory(args.cwd))) {
       process.chdir(args.cwd);
     }
 
-    // Resolve WS port once so app runtime config and terminal server stay in sync.
-    const wsPort = resolveTerminalWsPort(args["ws-port"]);
-    process.env.TERMINAL_WS_PORT = String(wsPort);
-
-    // Start WebSocket server for terminals
-    const wsServer = startTerminalServer(wsPort);
-
-    process.once("SIGTERM", () => wsServer.stop());
-    process.once("SIGINT", () => wsServer.stop());
-
-    // Start main Nitro server
+    // Start the Nitro server.
     // @ts-expect-error - built output has no types
     await import("../.output/server/index.mjs");
 

@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { querySession, getSessionsState, listModels, listSkills } from "@/functions/sessions";
 import type { SessionsState } from "@/functions/sessions";
+import type { SessionType } from "@/types";
 
 export type { SessionsState };
 export const sessionQueries = {
@@ -36,8 +37,16 @@ export function createEmptySessionsState(): SessionsState {
   return {
     sessions: [],
     worktrees: {},
-    workerSessionIds: [],
+    workerSessionParents: {},
   };
+}
+
+/** Preserve worker metadata for linked panes while excluding it from every ordinary list. */
+export function selectNonWorkerSessions(state: SessionsState): SessionsState["sessions"] {
+  if (Object.keys(state.workerSessionParents).length === 0) return state.sessions;
+  return state.sessions.filter(
+    ({ sessionId }) => !Object.hasOwn(state.workerSessionParents, sessionId),
+  );
 }
 
 export const modelQueries = {
@@ -61,12 +70,13 @@ export const modelQueries = {
 export const skillQueries = {
   all: () => ["skills"] as const,
 
-  byCwd: (cwd?: string) => [...skillQueries.all(), cwd ?? null] as const,
+  byCwd: (cwd?: string, sessionType: SessionType = "standard") =>
+    [...skillQueries.all(), cwd ?? null, sessionType] as const,
 
-  list: (cwd?: string) =>
+  list: (cwd?: string, sessionType?: SessionType) =>
     queryOptions({
-      queryKey: skillQueries.byCwd(cwd),
-      queryFn: () => listSkills({ data: { cwd } }),
+      queryKey: skillQueries.byCwd(cwd, sessionType),
+      queryFn: () => listSkills({ data: { cwd, sessionType } }),
       staleTime: Infinity,
     }),
 };

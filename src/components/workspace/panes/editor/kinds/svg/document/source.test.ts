@@ -33,7 +33,13 @@ describe("editable SVG document", () => {
   });
 
   test("rejects malformed XML, non-SVG roots, and external doctypes", () => {
-    expect(parseSvgDocument("<svg>", parser).error).toBeDefined();
+    const rejectingParser: Pick<globalThis.DOMParser, "parseFromString"> = {
+      parseFromString() {
+        throw new Error("Invalid XML");
+      },
+    };
+
+    expect(parseSvgDocument("<svg>", rejectingParser).error).toBeDefined();
     expect(
       parseSvgDocument('<html xmlns="http://www.w3.org/1999/xhtml" />', parser).error,
     ).toContain("document root");

@@ -14,8 +14,10 @@ const WATCH_DEBOUNCE_MS = 50;
 
 async function statWatchedFile(absolutePath: string): Promise<FileWatchEvent> {
   try {
-    const { stat } = await import("node:fs/promises");
-    return { type: "modified", timestamp: (await stat(absolutePath)).mtimeMs };
+    return {
+      type: "modified",
+      timestamp: (await Bun.file(absolutePath).stat()).mtimeMs,
+    };
   } catch {
     return { type: "deleted" };
   }

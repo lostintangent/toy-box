@@ -1,25 +1,27 @@
 import { Component, Suspense, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useWorkspaceFile } from "@/hooks/files/useWorkspaceFile";
-import { setEditorPaneMode } from "@/hooks/workspace/layout/linkedPanes";
+import { useFile } from "@/hooks/files/useFile";
+import { useWorkspaceSurface } from "@/hooks/workspace/layout/surface";
 import type { EditorWorkspacePane } from "@/lib/workspace/panes";
 import { createFileBaseUri } from "@/lib/files/html";
 import { useEditorKind, type EditorProps, type EditorKind } from "./kinds";
-import type { PaneProps } from "../types";
-import { PaneActions, PaneStatus } from "../PaneSlots";
+import type { PaneVariant } from "../WorkspacePaneView";
+import { PaneActions, PaneStatus } from "../shell/PaneSlots";
+import { WorkersMenu } from "../shell/WorkersMenu";
 import { EditorActions } from "./actions";
-import { WorkersMenu } from "./actions/WorkersMenu";
 
-type EditorPaneProps = PaneProps & {
+type EditorPaneProps = {
   pane: EditorWorkspacePane;
+  variant?: PaneVariant;
 };
 
 /** Composes one workspace file's lifecycle — content, workers, actions, and renderer. */
 export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
+  const { panePublications } = useWorkspaceSurface();
   const { file, title, mode } = pane;
   const kind = useEditorKind(file.path);
   const { editable = true } = kind;
-  const { workers, spawnWorker, cancelWorker, ...fileState } = useWorkspaceFile(file, mode);
+  const { workers, spawnWorker, cancelWorker, ...fileState } = useFile(file, mode);
   const baseUri =
     typeof window === "undefined" ? undefined : createFileBaseUri(file, window.location.origin);
   const { error, isLoading, isSaving, isReady } = fileState;
@@ -37,7 +39,7 @@ export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
             editable={editable}
             mode={mode}
             isSaving={isSaving}
-            onModeChange={(nextMode) => setEditorPaneMode(pane, nextMode)}
+            onModeChange={(nextMode) => panePublications.actions.setEditorPaneMode(pane, nextMode)}
             variant={variant}
           />
         </PaneActions>

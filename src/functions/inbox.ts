@@ -3,8 +3,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { dispatchInboxTask as dispatchInboxTaskOnServer } from "./inbox/dispatcher";
-import { dispatchInboxTaskInputSchema } from "@/lib/session/protocol";
+import { sessionLaunchSchema } from "@/lib/session/protocol";
 
 export const dispatchInboxTask = createServerFn({ method: "POST" })
-  .validator(zodValidator(dispatchInboxTaskInputSchema))
+  .validator(zodValidator(sessionLaunchSchema))
   .handler(async ({ data }) => dispatchInboxTaskOnServer(data));

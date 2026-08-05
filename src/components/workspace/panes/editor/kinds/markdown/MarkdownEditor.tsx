@@ -4,13 +4,10 @@ import {
   type DocumentPresence,
   type DocumentUser,
   type EditorTheme,
-} from "documint";
-import type { AccentColor, JsonValue } from "@/types";
+} from "@lostintangent/documint";
+import type { JSONType } from "zod";
 import type { EditorProps } from "../index";
-import {
-  usePreferredColorScheme,
-  type PreferredColorScheme,
-} from "@/hooks/browser/usePreferredColorScheme";
+import { usePreferredColorScheme } from "@/hooks/browser/usePreferredColorScheme";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
 import { buildArtifactCommentPrompt } from "./comments";
 
@@ -30,7 +27,7 @@ export function MarkdownEditor({ mode, file, pendingWorkers, spawnWorker }: Edit
   });
 
   async function handleCommentChanged(change: CommentChange) {
-    if (change.kind !== "added") {
+    if (change.kind !== "added" || !spawnWorker) {
       await file.flush({ notifyAgent: false });
       return;
     }
@@ -56,59 +53,29 @@ export function MarkdownEditor({ mode, file, pendingWorkers, spawnWorker }: Edit
   );
 }
 
-function artifactCommentThreadId(metadata: JsonValue | undefined): string | undefined {
+function artifactCommentThreadId(metadata: JSONType | undefined): string | undefined {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
   return typeof metadata.threadId === "string" ? metadata.threadId : undefined;
 }
 
-const DOCUMINT_THEME_FALLBACKS = {
-  light: {
-    accent: "oklch(0.708 0 0)",
-    background: "oklch(1 0 0)",
-    externalChangeAdditionBackground: "rgba(34, 197, 94, 0.18)",
-    externalChangeModificationBackground: "rgba(59, 130, 246, 0.18)",
-    muted: "oklch(0.556 0 0)",
-    text: "oklch(0.145 0 0)",
-  },
-  dark: {
-    accent: "oklch(0.556 0 0)",
-    background: "oklch(0.145 0 0)",
-    externalChangeAdditionBackground: "rgba(34, 197, 94, 0.24)",
-    externalChangeModificationBackground: "rgba(96, 165, 250, 0.24)",
-    muted: "oklch(0.708 0 0)",
-    text: "oklch(0.985 0 0)",
-  },
-} satisfies Record<PreferredColorScheme, EditorTheme>;
-const DOCUMINT_FONT_SIZE = 14;
-
 function useDocumintTheme(): EditorTheme {
-  const colorScheme = usePreferredColorScheme();
+  // Re-read computed theme tokens whenever their media query changes.
+  usePreferredColorScheme();
   const accentColor = useWorkspaceSelector((workspace) => workspace.settings.accentColor);
-
-  return createDocumintTheme(colorScheme, accentColor);
-}
-
-function createDocumintTheme(
-  colorScheme: PreferredColorScheme,
-  accentColor: AccentColor,
-): EditorTheme {
-  const fallback = DOCUMINT_THEME_FALLBACKS[colorScheme];
 
   return {
     accent: accentColor,
-    background: readThemeColor("--background", fallback.background),
-    externalChangeAdditionBackground: fallback.externalChangeAdditionBackground,
-    externalChangeModificationBackground: fallback.externalChangeModificationBackground,
-    fontSize: DOCUMINT_FONT_SIZE,
-    muted: readThemeColor("--muted-foreground", fallback.muted),
-    text: readThemeColor("--foreground", fallback.text),
+    background: readThemeColor("--background"),
+    fontSize: 14,
+    muted: readThemeColor("--muted-foreground"),
+    text: readThemeColor("--foreground"),
   };
 }
 
-function readThemeColor(variableName: string, fallback: string): string {
-  if (typeof document === "undefined") return fallback;
+function readThemeColor(variableName: `--${string}`): string {
+  if (typeof document === "undefined") return `var(${variableName})`;
 
-  return (
-    getComputedStyle(document.documentElement).getPropertyValue(variableName).trim() || fallback
-  );
+  const value = getComputedStyle(document.documentElement).getPropertyValue(variableName).trim();
+  if (!value) throw new Error(`Missing Toy Box theme color: ${variableName}`);
+  return value;
 }

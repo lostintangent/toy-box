@@ -1,59 +1,103 @@
-// Durable ownership and retention policy for sessions created by another session.
+// Durable ownership and lifetime policy for worker sessions.
 //
 // The SDK owns session history. This table identifies sessions managed as workers,
-// keeps them out of the ordinary session list, and tells startup cleanup which
-// workers are safe to discard after their supervising process exits.
+// keeps them out of the ordinary session list, and tells supervisors which
+// sessions to delete after execution or an interrupted process.
 
-import { getAppDatabase } from "../database";
+import { getStateDatabase } from "../database";
+import { workerParentSessionId } from "@/lib/workers";
+import type { Worker } from "@/types";
 
-export async function getWorkerSessionIds(): Promise<string[]> {
-  const db = await getAppDatabase({ createIfMissing: false });
-  if (!db) return [];
-  const { rows } = await db.sql`SELECT session_id FROM workers ORDER BY session_id`;
-  return (rows as WorkerSessionIdRow[]).map((row) => row.session_id);
+/** Map every worker session to its parent session, or null when its owner is an app. */
+export async function getWorkerSessionParents(): Promise<Record<string, string | null>> {
+  const db = await getStateDatabase({ createIfMissing: false });
+  if (!db) return {};
+  const rows = await db<WorkerSessionParentRow[]>`
+    SELECT session_id, parent_session_id
+    FROM workers
+    ORDER BY session_id
+  `;
+  return Object.fromEntries(rows.map((row) => [row.session_id, row.parent_session_id]));
 }
 
 export async function getWorkerSessionIdsForParent(parentSessionId: string): Promise<string[]> {
-  const db = await getAppDatabase({ createIfMissing: false });
+  const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return [];
-  const { rows } = await db.sql`
+  const rows = await db<WorkerSessionIdRow[]>`
     SELECT session_id FROM workers
     WHERE parent_session_id = ${parentSessionId}
     ORDER BY session_id
   `;
-  return (rows as WorkerSessionIdRow[]).map((row) => row.session_id);
+  return rows.map((row) => row.session_id);
 }
 
-/** Disposable workers cannot be resumed safely without their process-local supervisor. */
-export async function getDisposableWorkerSessionIds(): Promise<string[]> {
-  const db = await getAppDatabase({ createIfMissing: false });
+export async function getWorkerSessionIdsForApp(appId: string): Promise<string[]> {
+  const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return [];
-  const { rows } = await db.sql`
+  const rows = await db<WorkerSessionIdRow[]>`
     SELECT session_id FROM workers
-    WHERE retained = ${0}
+    WHERE app_id = ${appId}
     ORDER BY session_id
   `;
-  return (rows as WorkerSessionIdRow[]).map((row) => row.session_id);
+  return rows.map((row) => row.session_id);
 }
 
-export async function registerWorkerSession(
-  sessionId: string,
-  parentSessionId: string,
-  retained = false,
-): Promise<void> {
-  const db = await getAppDatabase();
-  await db.sql`
-    INSERT OR IGNORE INTO workers (session_id, parent_session_id, retained)
-    VALUES (${sessionId}, ${parentSessionId}, ${retained ? 1 : 0})
+/** Ephemeral workers cannot outlive their process-local supervisor. */
+export async function getEphemeralWorkerSessionIds(): Promise<string[]> {
+  const db = await getStateDatabase({ createIfMissing: false });
+  if (!db) return [];
+  const rows = await db<WorkerSessionIdRow[]>`
+    SELECT session_id FROM workers
+    WHERE ephemeral = 1
+    ORDER BY session_id
+  `;
+  return rows.map((row) => row.session_id);
+}
+
+/** Recover the capability scope of an app worker resumed in a new process. */
+export async function getWorkerAppId(sessionId: string): Promise<string | undefined> {
+  const db = await getStateDatabase({ createIfMissing: false });
+  if (!db) return;
+  const [row] = await db<{ app_id: string | null }[]>`
+    SELECT app_id
+    FROM workers
+    WHERE session_id = ${sessionId}
+  `;
+  return row?.app_id ?? undefined;
+}
+
+export async function registerWorkerSession(worker: Worker): Promise<void> {
+  const db = await getStateDatabase();
+  const parentSessionId = workerParentSessionId(worker);
+  const appId = worker.type === "app" ? worker.appId : undefined;
+  await db`
+    INSERT OR IGNORE INTO workers (
+      session_id,
+      worker_type,
+      parent_session_id,
+      app_id,
+      ephemeral
+    )
+    VALUES (
+      ${worker.sessionId},
+      ${worker.type},
+      ${parentSessionId ?? null},
+      ${appId ?? null},
+      ${worker.ephemeral ? 1 : 0}
+    )
   `;
 }
 
 export async function unregisterWorkerSession(sessionId: string): Promise<void> {
-  const db = await getAppDatabase({ createIfMissing: false });
+  const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return;
-  await db.sql`DELETE FROM workers WHERE session_id = ${sessionId}`;
+  await db`DELETE FROM workers WHERE session_id = ${sessionId}`;
 }
 
 type WorkerSessionIdRow = {
   session_id: string;
+};
+
+type WorkerSessionParentRow = WorkerSessionIdRow & {
+  parent_session_id: string | null;
 };

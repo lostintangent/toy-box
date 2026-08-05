@@ -15,8 +15,9 @@ export async function resolveFileRequest(
   if (!absolutePath) return fail(403, "Invalid file path.");
 
   try {
-    const { stat } = await import("node:fs/promises");
-    if (!(await stat(absolutePath)).isFile()) return fail(404, "Requested path is not a file.");
+    if (!(await Bun.file(absolutePath).stat()).isFile()) {
+      return fail(404, "Requested path is not a file.");
+    }
   } catch {
     return fail(404, "File not found.");
   }

@@ -2,29 +2,30 @@
 // its optional artifact is an ordinary file in that session's workspace, recorded
 // here only by filename.
 
-import { getAppDatabase } from "../database";
+import { getStateDatabase } from "../database";
 import type { InboxEntry } from "@/types";
 
 export async function getInboxEntries(): Promise<InboxEntry[]> {
-  const db = await getAppDatabase({ createIfMissing: false });
+  const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return [];
-  const { rows } = await db.sql`SELECT * FROM inbox ORDER BY created_at DESC`;
-  return (rows as InboxEntryRow[]).map(inboxEntryFromRow);
+  const rows = await db<InboxEntryRow[]>`SELECT * FROM inbox ORDER BY created_at DESC`;
+  return rows.map(inboxEntryFromRow);
 }
 
 export async function getInboxEntry(entryId: string): Promise<InboxEntry | null> {
-  const db = await getAppDatabase({ createIfMissing: false });
+  const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return null;
-  const { rows } = await db.sql`SELECT * FROM inbox WHERE id = ${entryId}`;
-  const row = (rows as InboxEntryRow[])[0];
+  const [row] = await db<InboxEntryRow[]>`SELECT * FROM inbox WHERE id = ${entryId}`;
   return row ? inboxEntryFromRow(row) : null;
 }
 
 export async function hasInboxEntry(entryId: string): Promise<boolean> {
-  const db = await getAppDatabase({ createIfMissing: false });
+  const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return false;
-  const { rows } = await db.sql`SELECT 1 FROM inbox WHERE id = ${entryId}`;
-  return (rows?.length ?? 0) > 0;
+  const rows = await db<{ present: number }[]>`
+    SELECT 1 AS present FROM inbox WHERE id = ${entryId}
+  `;
+  return rows.length > 0;
 }
 
 export async function createInboxEntry(id: string): Promise<InboxEntry> {
@@ -32,8 +33,8 @@ export async function createInboxEntry(id: string): Promise<InboxEntry> {
     id: validateEntryId(id),
     createdAt: new Date().toISOString(),
   };
-  const db = await getAppDatabase();
-  await db.sql`
+  const db = await getStateDatabase();
+  await db`
     INSERT INTO inbox (id, message, artifact, created_at)
     VALUES (${entry.id}, ${null}, ${null}, ${entry.createdAt})
   `;
@@ -52,27 +53,26 @@ export async function completeInboxEntry(
 
   const filename = artifactFilename ? validateFilename(artifactFilename) : undefined;
 
-  const db = await getAppDatabase();
-  const result = await db.sql`
+  const db = await getStateDatabase();
+  const [row] = await db<InboxEntryRow[]>`
     UPDATE inbox
     SET message = ${message}, artifact = ${filename ?? null}
     WHERE id = ${entryId} AND message IS NULL
+    RETURNING *
   `;
-  if ((result.changes ?? 0) === 0) throw new Error("Inbox entry already completed.");
+  if (!row) throw new Error("Inbox entry already completed.");
 
-  return {
-    ...existing,
-    message,
-    ...(filename ? { artifact: filename } : {}),
-  };
+  return inboxEntryFromRow(row);
 }
 
 export async function deleteInboxEntryState(entryId: string): Promise<boolean> {
   entryId = validateEntryId(entryId);
-  const db = await getAppDatabase({ createIfMissing: false });
+  const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return false;
-  const result = await db.sql`DELETE FROM inbox WHERE id = ${entryId}`;
-  return (result.changes ?? 0) > 0;
+  const rows = await db<{ id: string }[]>`
+    DELETE FROM inbox WHERE id = ${entryId} RETURNING id
+  `;
+  return rows.length > 0;
 }
 
 type InboxEntryRow = {

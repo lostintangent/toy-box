@@ -1,5 +1,14 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { z } from "zod";
+
+export const hexColorSchema = z.templateLiteral(["#", z.string().regex(/^[0-9a-fA-F]{6}$/)]);
+
+export type HexColor = z.output<typeof hexColorSchema>;
+
+export function isHexColor(value: unknown): value is HexColor {
+  return hexColorSchema.safeParse(value).success;
+}
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

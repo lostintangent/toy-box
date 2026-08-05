@@ -1,3 +1,7 @@
+## 📅 v0.1.15 (08/05/26)
+
+- Added initial support for custom apps
+
 ## 📅 v0.1.14 (07/21/26)
 
 - Introduce support for "hyper sessions"

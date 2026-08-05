@@ -10,9 +10,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { usePreferredColorScheme } from "@/hooks/browser/usePreferredColorScheme";
 import { cn } from "@/lib/utils";
-import { PaneActions } from "../../../../PaneSlots";
-import type { PaneVariant } from "../../../../types";
-import { PANE_OVERLAY_BUTTON_CLASS } from "../../../../paneControls";
+import type { PaneVariant } from "../../../../WorkspacePaneView";
+import { PaneActions } from "../../../../shell/PaneSlots";
+import { PANE_OVERLAY_BUTTON_CLASS } from "../../../../shell/paneControls";
 import { Check, ChevronDown, Copy, ImagePlus, Maximize2, Minus, Plus, Trash2 } from "lucide-react";
 import type { SvgDocument } from "../document";
 import {

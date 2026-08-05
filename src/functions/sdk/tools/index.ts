@@ -4,6 +4,7 @@
 
 import type { Tool } from "@github/copilot-sdk";
 import { editorTools } from "./editors";
+import { appLifecycleTools, createAppStateTools } from "./apps";
 import { automationTools } from "./automations";
 import { coordinationTools } from "./coordination";
 import { fileTools } from "./files";
@@ -13,7 +14,7 @@ import { settingsTools } from "./settings";
 import type { SessionType } from "@/types";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getSessionTools(sessionType: SessionType): Tool<any>[] {
+export function getSessionTools(sessionType: SessionType, appId?: string): Tool<any>[] {
   const interactive = sessionType === "standard" || sessionType === "hyper";
   const canUpdateSettings = sessionType === "automation" || sessionType === "hyper";
   return [
@@ -23,8 +24,10 @@ export function getSessionTools(sessionType: SessionType): Tool<any>[] {
     ...(interactive ? fileTools : []),
     ...coordinationTools,
     ...automationTools,
+    ...createAppStateTools(sessionType === "worker" ? appId : undefined),
     ...(canUpdateSettings ? settingsTools : []),
     ...(sessionType === "hyper" ? editorTools : []),
+    ...(sessionType === "hyper" ? appLifecycleTools : []),
     ...(sessionType === "inbox" ? inboxTools : []),
   ].map((tool) => ({
     ...tool,

@@ -2,7 +2,7 @@
 //
 // Workspace coordination and this durable session list occupy separate Query
 // entries. Workspace lifecycle events update the list only when they carry
-// session metadata or deletion; worktrees and worker membership remain here.
+// session metadata or deletion; worktrees and worker ownership remain here.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { createEmptySessionsState, sessionQueries, type SessionsState } from "@/lib/queries";
@@ -47,17 +47,18 @@ export function removeSessionFromState(queryClient: QueryClient, sessionId: stri
   updateSessionsState(queryClient, (state) => {
     if (
       !state.sessions.some((session) => session.sessionId === sessionId) &&
-      !state.workerSessionIds.includes(sessionId) &&
+      !Object.hasOwn(state.workerSessionParents, sessionId) &&
       !(sessionId in state.worktrees)
     ) {
       return state;
     }
 
-    const { [sessionId]: _, ...remainingWorktrees } = state.worktrees;
+    const { [sessionId]: _worktree, ...remainingWorktrees } = state.worktrees;
+    const { [sessionId]: _workerParent, ...workerSessionParents } = state.workerSessionParents;
     return {
       ...state,
       sessions: state.sessions.filter((session) => session.sessionId !== sessionId),
-      workerSessionIds: state.workerSessionIds.filter((id) => id !== sessionId),
+      workerSessionParents,
       worktrees: remainingWorktrees,
     };
   });
@@ -80,16 +81,18 @@ export function upsertSessionInState(
     const worktrees = sessionUpdate.worktree
       ? { ...state.worktrees, [sessionUpdate.sessionId]: sessionUpdate.worktree }
       : state.worktrees;
-    const workerSessionIds =
-      sessionUpdate.parentSessionId && !state.workerSessionIds.includes(sessionUpdate.sessionId)
-        ? [...state.workerSessionIds, sessionUpdate.sessionId]
-        : state.workerSessionIds;
+    const parentSessionId = sessionUpdate.parentSessionId ?? null;
+    const workerSessionParents =
+      sessionUpdate.sessionType === "worker" &&
+      state.workerSessionParents[sessionUpdate.sessionId] !== parentSessionId
+        ? { ...state.workerSessionParents, [sessionUpdate.sessionId]: parentSessionId }
+        : state.workerSessionParents;
 
     return {
       ...state,
       sessions,
       worktrees,
-      workerSessionIds,
+      workerSessionParents,
     };
   });
 }

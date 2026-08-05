@@ -1,7 +1,7 @@
 import { Loader2 } from "lucide-react";
-import type { EditorPaneMode } from "@/lib/workspace/panes";
-import type { PaneVariant } from "../../types";
-import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "../../paneControls";
+import type { WorkspaceFileMode } from "@/types";
+import type { PaneVariant } from "../../WorkspacePaneView";
+import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "../../shell/paneControls";
 import { EditorModeMenu } from "./EditorModeMenu";
 
 /** Saving state and mode controls shared by grid and pager hosts. */
@@ -13,9 +13,9 @@ export function EditorActions({
   variant,
 }: {
   editable: boolean;
-  mode: EditorPaneMode;
+  mode: WorkspaceFileMode;
   isSaving: boolean;
-  onModeChange: (mode: EditorPaneMode) => void;
+  onModeChange: (mode: WorkspaceFileMode) => void;
   variant: PaneVariant;
 }) {
   const isNormal = variant === "normal";

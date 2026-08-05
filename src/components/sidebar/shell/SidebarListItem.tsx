@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { Circle, Loader2, MoreHorizontal, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollableFade } from "@/components/ui/scrollable-fade";
@@ -17,30 +17,65 @@ import { useWorkspaceSessionActivity } from "@/hooks/workspace/state";
 import { cn } from "@/lib/utils";
 
 type SidebarListItemProps = Omit<ComponentProps<"button">, "children" | "className" | "title"> & {
-  sessionId: string;
   title: string;
-  titlePrefix?: ReactNode;
+  icon?: ReactNode;
   time?: ReactNode;
-  badges?: ReactNode;
+  badge?: ReactNode;
   menuItems: ReactNode;
   menuDisabled?: boolean;
   isActive?: boolean;
-  previewDisabled?: boolean;
   className?: string;
   buttonClassName?: string;
   titleClassName?: string;
 };
 
 export function SidebarListItem({
-  sessionId,
   title,
-  titlePrefix,
+  icon,
   time,
-  badges,
+  badge,
   menuItems,
   menuDisabled = false,
   isActive = false,
+  className,
+  buttonClassName,
+  titleClassName,
+  ...props
+}: SidebarListItemProps) {
+  return (
+    <SidebarListItemLayout
+      isActive={isActive}
+      className={className}
+      action={
+        <SidebarListItemMenu title={title} disabled={menuDisabled}>
+          {menuItems}
+        </SidebarListItemMenu>
+      }
+    >
+      <SidebarListItemButton
+        {...props}
+        title={title}
+        icon={icon}
+        time={time}
+        badge={badge}
+        isActive={isActive}
+        buttonClassName={buttonClassName}
+        titleClassName={titleClassName}
+      />
+    </SidebarListItemLayout>
+  );
+}
+
+export function SidebarSessionItem({
+  sessionId,
   previewDisabled = false,
+  title,
+  icon,
+  time,
+  badge,
+  menuItems,
+  menuDisabled = false,
+  isActive = false,
   className,
   buttonClassName,
   titleClassName,
@@ -49,16 +84,12 @@ export function SidebarListItem({
   onMouseEnter,
   onMouseLeave,
   ...props
-}: SidebarListItemProps) {
-  const { hydrated, isMobile } = useViewport();
+}: SidebarListItemProps & {
+  sessionId: string;
+  previewDisabled?: boolean;
+}) {
   const { running, unread, hasDraftPrompt } = useWorkspaceSessionActivity(sessionId);
   const preview = useSessionPreview(isActive || previewDisabled || disabled);
-  const showUnread = unread && !isActive;
-
-  function scrollIntoViewRef(node: HTMLDivElement | null) {
-    if (!node || !isActive || !hydrated || isMobile) return;
-    node.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
 
   function handleClick(event: React.MouseEvent<HTMLButtonElement>) {
     preview.close();
@@ -76,17 +107,21 @@ export function SidebarListItem({
   }
 
   return (
-    <div
-      ref={scrollIntoViewRef}
-      className={cn(
-        "flex items-center justify-between rounded-lg px-2 py-2 transition-colors",
-        isActive
-          ? "bg-foreground/24 ring-1 ring-border/70"
-          : preview.open
-            ? "bg-foreground/14"
-            : "hover:bg-foreground/14",
-        className,
-      )}
+    <SidebarListItemLayout
+      isActive={isActive}
+      isHighlighted={preview.open}
+      className={className}
+      action={
+        <SidebarSessionItemAction
+          title={title}
+          running={running}
+          unread={unread && !isActive}
+          hasDraftPrompt={hasDraftPrompt}
+          menuDisabled={menuDisabled}
+        >
+          {menuItems}
+        </SidebarSessionItemAction>
+      }
     >
       <SessionPreview
         sessionId={sessionId}
@@ -94,51 +129,107 @@ export function SidebarListItem({
         onMouseEnter={preview.onMouseEnter}
         onMouseLeave={preview.onMouseLeave}
       >
-        <button
+        <SidebarListItemButton
           {...props}
           disabled={disabled}
-          aria-current={isActive ? "page" : undefined}
+          title={title}
+          icon={icon}
+          time={time}
+          badge={badge}
+          isActive={isActive}
           onClick={handleClick}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
-          className={cn("mr-2 min-w-0 flex-1 text-left", buttonClassName)}
-        >
-          <ScrollableFade
-            asChild
-            className={cn("flex items-center gap-1.5 whitespace-nowrap", titleClassName)}
-          >
-            <span>
-              {titlePrefix}
-              <span className="shrink-0">{title}</span>
-            </span>
-          </ScrollableFade>
-          {(time || badges) && (
-            <span className="mt-1 flex min-w-0 items-center gap-1.5">
-              {time && (
-                <span className="shrink-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-foreground/70">
-                  {time}
-                </span>
-              )}
-              {badges}
-            </span>
-          )}
-        </button>
+          buttonClassName={buttonClassName}
+          titleClassName={titleClassName}
+        />
       </SessionPreview>
+    </SidebarListItemLayout>
+  );
+}
 
-      <SidebarListItemAction
-        title={title}
-        running={running}
-        unread={showUnread}
-        hasDraftPrompt={hasDraftPrompt}
-        menuDisabled={menuDisabled}
-      >
-        {menuItems}
-      </SidebarListItemAction>
+function SidebarListItemLayout({
+  isActive,
+  isHighlighted = false,
+  className,
+  action,
+  children,
+}: {
+  isActive: boolean;
+  isHighlighted?: boolean;
+  className?: string;
+  action: ReactNode;
+  children: ReactNode;
+}) {
+  const { hydrated, isMobile } = useViewport();
+  const itemRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isActive || !hydrated || isMobile) return;
+    itemRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [hydrated, isActive, isMobile]);
+
+  return (
+    <div
+      ref={itemRef}
+      className={cn(
+        "flex items-center justify-between rounded-lg px-2 py-2 transition-colors",
+        isActive
+          ? "bg-foreground/24 ring-1 ring-border/70"
+          : isHighlighted
+            ? "bg-foreground/14"
+            : "hover:bg-foreground/14",
+        className,
+      )}
+    >
+      {children}
+      {action}
     </div>
   );
 }
 
-function SidebarListItemAction({
+function SidebarListItemButton({
+  title,
+  icon,
+  time,
+  badge,
+  isActive,
+  buttonClassName,
+  titleClassName,
+  ...props
+}: Omit<SidebarListItemProps, "className" | "menuDisabled" | "menuItems"> & {
+  isActive: boolean;
+}) {
+  return (
+    <button
+      {...props}
+      aria-current={isActive ? "page" : undefined}
+      className={cn("mr-2 min-w-0 flex-1 text-left", buttonClassName)}
+    >
+      <ScrollableFade
+        asChild
+        className={cn("flex items-center gap-1.5 whitespace-nowrap", titleClassName)}
+      >
+        <span>
+          {icon}
+          <span className="shrink-0">{title}</span>
+        </span>
+      </ScrollableFade>
+      {(time || badge) && (
+        <span className="mt-1 flex min-w-0 items-center gap-1.5">
+          {time && (
+            <span className="shrink-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-foreground/70">
+              {time}
+            </span>
+          )}
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function SidebarSessionItemAction({
   title,
   running,
   unread,
@@ -191,12 +282,28 @@ function SidebarListItemAction({
   }
 
   return (
+    <SidebarListItemMenu title={title} disabled={menuDisabled}>
+      {children}
+    </SidebarListItemMenu>
+  );
+}
+
+function SidebarListItemMenu({
+  title,
+  disabled,
+  children,
+}: {
+  title: string;
+  disabled: boolean;
+  children: ReactNode;
+}) {
+  return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
           size="icon"
-          disabled={menuDisabled}
+          disabled={disabled}
           className="ml-2 h-8 w-8 shrink-0"
           aria-label={`Actions for ${title}`}
         >

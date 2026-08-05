@@ -1,9 +1,4 @@
-import type {
-  SessionCanvas,
-  SessionFeatureScope,
-  SessionFeatureSubject,
-  WorkspaceFile,
-} from "@/types";
+import type { SessionCanvas, Settings, WorkspaceFile, WorkspaceFileMode } from "@/types";
 import { isAutomationId } from "@/lib/automation/id";
 import {
   machineFile,
@@ -14,7 +9,8 @@ import {
 import { fileName } from "@/lib/files/display";
 import { matchesSessionFeatureScope } from "@/lib/workspace/config/settings";
 
-export type EditorPaneMode = "read" | "edit" | "shared";
+export const MAX_WORKSPACE_PANES = 4;
+export const MAX_HYPER_PANES = 6;
 
 export const INBOX_PANE = {
   kind: "inbox",
@@ -26,6 +22,7 @@ type InboxWorkspacePane = typeof INBOX_PANE;
 /** Browser-local content identity shared by grid, pager, and Hyper hosts. */
 export type WorkspacePane =
   | InboxWorkspacePane
+  | AppWorkspacePane
   | {
       kind: "session";
       id: string;
@@ -45,11 +42,17 @@ export type EditorWorkspacePane = {
   id: string;
   file: WorkspaceFile;
   title: string;
-  mode: EditorPaneMode;
+  mode: WorkspaceFileMode;
+};
+
+export type AppWorkspacePane = {
+  kind: "app";
+  id: string;
+  appId: string;
 };
 
 /** The browser-local pane graph, keyed by the pane that published each edge. */
-export type LinkedPanesByPublisher = Readonly<Record<string, readonly WorkspacePane[]>>;
+export type PanePublications = Readonly<Record<string, readonly WorkspacePane[]>>;
 
 // Session-backed pane ids are `type:sourceSessionId:naturalKey`, while the one
 // Inbox pane uses `inbox`. Editor pane identity includes its file; canvas identity
@@ -58,6 +61,14 @@ export type LinkedPanesByPublisher = Readonly<Record<string, readonly WorkspaceP
 
 export function createSessionPaneId(sessionId: string): string {
   return `session:${sessionId}`;
+}
+
+export function createAppPane(appId: string): AppWorkspacePane {
+  return {
+    kind: "app",
+    id: `app:${appId}`,
+    appId,
+  };
 }
 
 export function createEditorPaneId(file: WorkspaceFile): string {
@@ -121,6 +132,7 @@ export function isEditorPane(pane: WorkspacePane): pane is EditorWorkspacePane {
 export function paneSourceSessionId(pane: WorkspacePane): string | undefined {
   switch (pane.kind) {
     case "inbox":
+    case "app":
       return undefined;
     case "session":
       return pane.sessionId;
@@ -134,11 +146,21 @@ export function paneSourceSessionId(pane: WorkspacePane): string | undefined {
 export function deriveWorkspaceRootPanes(
   selectedSessionIds: string[],
   openFilePaths: readonly string[] = [],
+  openAppIds: readonly string[] = [],
 ): WorkspacePane[] {
-  const roots: WorkspacePane[] = [
+  const candidates: WorkspacePane[] = [
     ...selectedSessionIds.map((sessionId) => createSessionPane(sessionId, false)),
     ...openFilePaths.map((path) => createEditorPane(machineFile(path))),
+    ...openAppIds.map(createAppPane),
   ];
+  const paneIds = new Set<string>();
+  const roots = candidates
+    .filter((pane) => {
+      if (paneIds.has(pane.id)) return false;
+      paneIds.add(pane.id);
+      return true;
+    })
+    .slice(0, MAX_WORKSPACE_PANES);
   return roots.length > 0 ? roots : [INBOX_PANE];
 }
 
@@ -168,33 +190,47 @@ export function createLinkedPanes(
 
 type DeriveVisibleWorkspacePanesOptions = {
   rootPanes: WorkspacePane[];
-  linkedPanesByPublisher: LinkedPanesByPublisher;
+  panePublications: PanePublications;
   maxVisible?: number;
 };
 
 export function deriveVisibleWorkspacePanes({
   rootPanes,
-  linkedPanesByPublisher,
-  maxVisible = 4,
+  panePublications,
+  maxVisible = MAX_WORKSPACE_PANES,
 }: DeriveVisibleWorkspacePanesOptions): WorkspacePane[] {
-  const rootPaneIds = new Set(rootPanes.map((pane) => pane.id));
-  const linkedPanes = deriveReachablePanes(rootPanes, linkedPanesByPublisher).filter(
-    (pane) => !rootPaneIds.has(pane.id),
-  );
+  const visiblePanes = rootPanes.slice(0, maxVisible);
+  const seenPaneIds = new Set(visiblePanes.map((pane) => pane.id));
+  const publishers = [...visiblePanes];
 
-  return [
-    ...rootPanes,
-    ...linkedPanes.filter((pane) => pane.kind === "editor"),
-    ...linkedPanes.filter((pane) => pane.kind === "canvas"),
-    ...linkedPanes.filter((pane) => pane.kind === "session"),
-  ].slice(0, maxVisible);
+  while (publishers.length > 0 && visiblePanes.length < maxVisible) {
+    const publisher = publishers.shift();
+    if (!publisher) break;
+
+    const linkedPanes = panePublications[publisher.id] ?? [];
+    const prioritizedPanes = [
+      ...linkedPanes.filter((pane) => pane.kind === "editor"),
+      ...linkedPanes.filter((pane) => pane.kind === "canvas"),
+      ...linkedPanes.filter((pane) => pane.kind === "session"),
+    ];
+
+    for (const pane of prioritizedPanes) {
+      if (seenPaneIds.has(pane.id)) continue;
+      seenPaneIds.add(pane.id);
+      visiblePanes.push(pane);
+      publishers.push(pane);
+      if (visiblePanes.length === maxVisible) break;
+    }
+  }
+
+  return visiblePanes;
 }
 
 export function deriveReachablePaneIds(
   rootPanes: WorkspacePane[],
-  linkedPanesByPublisher: LinkedPanesByPublisher,
+  panePublications: PanePublications,
 ): string[] {
-  return deriveReachablePanes(rootPanes, linkedPanesByPublisher).map((pane) => pane.id);
+  return deriveReachablePanes(rootPanes, panePublications).map((pane) => pane.id);
 }
 
 export function deriveOpenSessionIds(panes: WorkspacePane[]): string[] {
@@ -203,7 +239,7 @@ export function deriveOpenSessionIds(panes: WorkspacePane[]): string[] {
 
 function deriveReachablePanes(
   rootPanes: WorkspacePane[],
-  linkedPanesByPublisher: LinkedPanesByPublisher,
+  panePublications: PanePublications,
 ): WorkspacePane[] {
   const reachablePanes: WorkspacePane[] = [];
   const seenPaneIds = new Set<string>();
@@ -216,7 +252,7 @@ function deriveReachablePanes(
     seenPaneIds.add(pane.id);
     reachablePanes.push(pane);
 
-    for (const linkedPane of linkedPanesByPublisher[pane.id] ?? []) {
+    for (const linkedPane of panePublications[pane.id] ?? []) {
       if (!seenPaneIds.has(linkedPane.id)) queue.push(linkedPane);
     }
   }
@@ -246,7 +282,7 @@ type EditorAutoFocusResolution = {
 export function resolveEditorAutoFocus(
   seenPaneIds: ReadonlySet<string>,
   panes: WorkspacePane[],
-  autoFocusArtifacts: SessionFeatureScope,
+  autoFocusArtifacts: Settings["autoFocusArtifacts"],
   forceFocusPaneIds?: ReadonlySet<string>,
 ): EditorAutoFocusResolution {
   return {
@@ -265,7 +301,7 @@ function isSingleSessionLayout(panes: WorkspacePane[]): boolean {
 
 function shouldAutoFocusEditorPane(
   pane: WorkspacePane,
-  autoFocusArtifacts: SessionFeatureScope,
+  autoFocusArtifacts: Settings["autoFocusArtifacts"],
   forceFocusPaneIds?: ReadonlySet<string>,
 ): pane is EditorWorkspacePane {
   if (!isEditorPane(pane)) return false;
@@ -278,11 +314,11 @@ function shouldAutoFocusEditorPane(
   );
 }
 
-function getArtifactSessionType(sourceSessionId: string): SessionFeatureSubject {
+function getArtifactSessionType(sourceSessionId: string): "session" | "automation" {
   return isAutomationId(sourceSessionId) ? "automation" : "session";
 }
 
-function getDefaultEditorPaneMode(file: WorkspaceFile): EditorPaneMode {
+function getDefaultEditorPaneMode(file: WorkspaceFile): WorkspaceFileMode {
   const owner = ownerSessionId(file);
   return owner !== undefined && isAutomationId(owner) ? "read" : "edit";
 }

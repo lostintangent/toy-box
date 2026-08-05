@@ -2,11 +2,23 @@
 // client connecting. Each task is isolated so one failure cannot skip the rest.
 
 import { ensureSchedulerStarted } from "@/functions/automations/scheduler";
-import { ensureWorkersSwept } from "@/functions/runtime/workers";
+import { ensureWorkersSwept } from "@/functions/workers/supervisor";
+import { installBundledSkills } from "@/functions/sdk/bundledSkills";
+import { startCopilotClient } from "@/functions/sdk/client";
 import { retainSessionSnapshots } from "@/functions/state/session/snapshots";
 import { getSettings } from "@/functions/state/workspace/settings";
+import { terminalRuntime } from "../terminal/runtime";
+import { definePlugin } from "nitro";
 
-export default function startupPlugin(): void {
+export default definePlugin((nitroApp) => {
+  nitroApp.hooks.hook("close", () => terminalRuntime.dispose());
+
+  // Keep Toy Box-owned skills and their bundled resources current on disk.
+  start("install bundled skills", installBundledSkills);
+
+  // Start the shared SDK process before the first session-list request needs it.
+  start("start the Copilot client", startCopilotClient);
+
   // Run any scheduled automations that were missed while the server was down
   start("start the automation scheduler", ensureSchedulerStarted);
 
@@ -15,12 +27,11 @@ export default function startupPlugin(): void {
     retainSessionSnapshots((await getSettings()).pinnedSessionIds),
   );
 
-  // Look for any worker sessions that got disrupted/abandoned
-  // and delete them, since worker sessions are meant to feel ephemeral.
-  start("sweep abandoned workers", ensureWorkersSwept);
-}
+  // Ephemeral workers cannot resume without their process supervisor.
+  start("sweep abandoned ephemeral workers", ensureWorkersSwept);
+});
 
-function start(description: string, run: () => void | Promise<void>): void {
+function start(description: string, run: () => unknown | Promise<unknown>): void {
   void (async () => run())().catch((error) =>
     console.error(`Unable to ${description} on startup:`, error),
   );

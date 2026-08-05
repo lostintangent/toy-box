@@ -1,4 +1,7 @@
 import type {
+  AppDefinition,
+  AppInstance,
+  AppShare,
   Automation,
   Worker,
   CustomEditorKind,
@@ -7,9 +10,8 @@ import type {
   Settings,
   WorkspaceEvent,
 } from "@/types";
-import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 import { areSettingsEqual, DEFAULT_SETTINGS } from "@/lib/workspace/config/settings";
-import { isWorkerOwnedBySession } from "@/lib/files/workspaceFile";
+import { workerReferencesSession } from "@/lib/workers";
 
 /** The complete shared workspace projection assembled by the server and reduced by clients. */
 export type WorkspaceState = {
@@ -20,12 +22,14 @@ export type WorkspaceState = {
   inboxEntries: InboxEntry[];
   workers: Worker[];
   customEditors: CustomEditorKind[];
+  appDefinitions: AppDefinition[];
+  apps: AppInstance[];
+  appShares: AppShare[];
   environment: WorkspaceEnvironment;
 };
 
 /** Passive capabilities configured by the server process. */
 export type WorkspaceEnvironment = {
-  terminalWsPort: number;
   voiceEnabled: boolean;
 };
 
@@ -46,7 +50,10 @@ export function createEmptyWorkspaceState(): WorkspaceState {
     inboxEntries: [],
     workers: [],
     customEditors: [],
-    environment: { terminalWsPort: DEFAULT_TERMINAL_WS_PORT, voiceEnabled: false },
+    appDefinitions: [],
+    apps: [],
+    appShares: [],
+    environment: { voiceEnabled: false },
   };
 }
 
@@ -63,7 +70,9 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
     case "session.deleted": {
       const next = reduceSessionInWorkspace(state, event.sessionId, event);
       const withoutHyper = setHyperSessionMembership(next, event.sessionId, false);
-      return removeWorkersForSession(withoutHyper, event.sessionId);
+      return updateList(withoutHyper, "workers", (workers) =>
+        removeWhere(workers, (worker) => workerReferencesSession(worker, event.sessionId)),
+      );
     }
     case "session.hyper.promoted":
       return setHyperSessionMembership(state, event.sessionId, false);
@@ -76,19 +85,79 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
     case "session.upserted":
       return state;
     case "inbox.entry.upserted":
-      return upsertInboxEntry(state, event.entry);
+      return updateList(state, "inboxEntries", (entries) =>
+        upsertBy(entries, event.entry, "id", Object.is, (left, right) =>
+          right.createdAt.localeCompare(left.createdAt),
+        ),
+      );
     case "inbox.entry.deleted":
-      return deleteInboxEntry(state, event.entryId);
+      return updateList(state, "inboxEntries", (entries) => removeBy(entries, "id", event.entryId));
     case "editor.registered":
-      return registerEditorKind(state, event.kind);
+      return updateList(state, "customEditors", (editors) => upsertBy(editors, event.kind, "name"));
+    case "app.registered":
+      return updateList(state, "appDefinitions", (definitions) =>
+        upsertBy(
+          definitions,
+          event.definition,
+          "id",
+          (current, next) => current.revision === next.revision,
+          (left, right) => left.title.localeCompare(right.title),
+        ),
+      );
+    case "app.unregistered":
+      return updateList(state, "appDefinitions", (definitions) =>
+        removeBy(definitions, "id", event.definitionId),
+      );
+    case "app.upserted":
+      return updateList(state, "apps", (apps) =>
+        upsertBy(
+          apps,
+          event.app,
+          "id",
+          (current, next) => current.revision === next.revision,
+          (left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id),
+        ),
+      );
+    case "app.deleted": {
+      const withoutApp = updateList(state, "apps", (apps) => removeBy(apps, "id", event.appId));
+      const withoutWorkers = updateList(withoutApp, "workers", (workers) =>
+        removeWhere(workers, (worker) => worker.type === "app" && worker.appId === event.appId),
+      );
+      return updateList(withoutWorkers, "appShares", (shares) =>
+        removeWhere(
+          shares,
+          (share) => share.sourceAppId === event.appId || share.targetAppId === event.appId,
+        ),
+      );
+    }
+    case "app.share.created":
+      return updateList(state, "appShares", (shares) =>
+        upsertBy(shares, event.share, "id", Object.is, (left, right) =>
+          left.createdAt.localeCompare(right.createdAt),
+        ),
+      );
+    case "app.share.deleted":
+      return updateList(state, "appShares", (shares) => removeBy(shares, "id", event.shareId));
     case "worker.started":
-      return startWorker(state, event.worker);
+      return updateList(state, "workers", (workers) =>
+        workers.some((worker) => worker.sessionId === event.worker.sessionId)
+          ? workers
+          : [...workers, event.worker],
+      );
     case "worker.finished":
-      return finishWorker(state, event.sessionId);
+      return updateList(state, "workers", (workers) =>
+        removeBy(workers, "sessionId", event.sessionId),
+      );
     case "automation.upserted":
-      return upsertAutomation(state, event.automation);
+      return updateList(state, "automations", (automations) =>
+        upsertBy(automations, event.automation, "id", Object.is, (left, right) =>
+          right.updatedAt.localeCompare(left.updatedAt),
+        ),
+      );
     case "automation.deleted":
-      return deleteAutomation(state, event.automationId);
+      return updateList(state, "automations", (automations) =>
+        removeBy(automations, "id", event.automationId),
+      );
   }
 }
 
@@ -202,58 +271,42 @@ function setHyperSessionMembership(
   };
 }
 
-function upsertInboxEntry(state: WorkspaceState, entry: InboxEntry): WorkspaceState {
-  const index = state.inboxEntries.findIndex((existing) => existing.id === entry.id);
-  if (index === -1) return { ...state, inboxEntries: [entry, ...state.inboxEntries] };
-  if (state.inboxEntries[index] === entry) return state;
+type WorkspaceListKey = {
+  [Key in keyof WorkspaceState]: WorkspaceState[Key] extends unknown[] ? Key : never;
+}[keyof WorkspaceState];
 
-  const inboxEntries = [...state.inboxEntries];
-  inboxEntries[index] = entry;
-  return { ...state, inboxEntries };
+function updateList<Key extends WorkspaceListKey>(
+  state: WorkspaceState,
+  key: Key,
+  update: (current: WorkspaceState[Key]) => WorkspaceState[Key],
+): WorkspaceState {
+  const current = state[key];
+  const next = update(current);
+  return next === current ? state : { ...state, [key]: next };
 }
 
-function deleteInboxEntry(state: WorkspaceState, entryId: string): WorkspaceState {
-  const inboxEntries = state.inboxEntries.filter((entry) => entry.id !== entryId);
-  return inboxEntries.length === state.inboxEntries.length ? state : { ...state, inboxEntries };
+function upsertBy<Item, Key extends keyof Item>(
+  items: Item[],
+  item: Item,
+  key: Key,
+  equivalent: (current: Item, next: Item) => boolean = Object.is,
+  compare?: (left: Item, right: Item) => number,
+): Item[] {
+  const index = items.findIndex((current) => Object.is(current[key], item[key]));
+  if (index !== -1 && equivalent(items[index]!, item)) return items;
+
+  const next = [...items];
+  if (index === -1) next.push(item);
+  else next[index] = item;
+  if (compare) next.sort(compare);
+  return next;
 }
 
-function registerEditorKind(state: WorkspaceState, kind: CustomEditorKind): WorkspaceState {
-  const index = state.customEditors.findIndex((current) => current.name === kind.name);
-  if (index === -1) return { ...state, customEditors: [...state.customEditors, kind] };
-  if (state.customEditors[index] === kind) return state;
-
-  const customEditors = [...state.customEditors];
-  customEditors[index] = kind;
-  return { ...state, customEditors };
+function removeBy<Item, Key extends keyof Item>(items: Item[], key: Key, value: Item[Key]): Item[] {
+  return removeWhere(items, (item) => Object.is(item[key], value));
 }
 
-function startWorker(state: WorkspaceState, worker: Worker): WorkspaceState {
-  if (state.workers.some((current) => current.sessionId === worker.sessionId)) return state;
-  return { ...state, workers: [...state.workers, worker] };
-}
-
-function finishWorker(state: WorkspaceState, sessionId: string): WorkspaceState {
-  const workers = state.workers.filter((worker) => worker.sessionId !== sessionId);
-  return workers.length === state.workers.length ? state : { ...state, workers };
-}
-
-function removeWorkersForSession(state: WorkspaceState, sessionId: string): WorkspaceState {
-  const workers = state.workers.filter((worker) => !isWorkerOwnedBySession(worker, sessionId));
-  return workers.length === state.workers.length ? state : { ...state, workers };
-}
-
-function upsertAutomation(state: WorkspaceState, automation: Automation): WorkspaceState {
-  const index = state.automations.findIndex((current) => current.id === automation.id);
-  if (index !== -1 && state.automations[index] === automation) return state;
-
-  const automations = [...state.automations];
-  if (index === -1) automations.push(automation);
-  else automations[index] = automation;
-  automations.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  return { ...state, automations };
-}
-
-function deleteAutomation(state: WorkspaceState, automationId: string): WorkspaceState {
-  const automations = state.automations.filter((automation) => automation.id !== automationId);
-  return automations.length === state.automations.length ? state : { ...state, automations };
+function removeWhere<Item>(items: Item[], remove: (item: Item) => boolean): Item[] {
+  const next = items.filter((item) => !remove(item));
+  return next.length === items.length ? items : next;
 }

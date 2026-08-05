@@ -1,15 +1,14 @@
 // Inbox-managed session dispatch and completion supervision.
 
 import { createSession } from "@/functions/runtime/stream";
-import type { SessionStreamCompletion } from "@/functions/runtime/stream";
 import { deleteSessionIfExists } from "@/functions/state/session/registry";
 import { createPendingInboxEntry, deleteInboxEntry } from "@/functions/state/workspace";
 import { getInboxEntry } from "@/functions/state/workspace/inbox";
 import { SESSION_ID_PREFIX } from "@/lib/session/constants";
-import type { SessionMessageInput } from "@/lib/session/protocol";
+import type { SessionCompletion, SessionMessage } from "@/types";
 
 export type DispatchInboxTaskInput = {
-  message: SessionMessageInput;
+  message: SessionMessage;
   directory?: string;
   useWorktree?: boolean;
 };
@@ -21,7 +20,7 @@ export async function dispatchInboxTask(
   const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
   await createPendingInboxEntry(sessionId);
 
-  let waitForCompletion: () => Promise<SessionStreamCompletion>;
+  let waitForCompletion: () => Promise<SessionCompletion>;
   try {
     const receipt = await createSession(sessionId, input.message, {
       directory: input.directory,
@@ -42,7 +41,7 @@ export async function dispatchInboxTask(
 
 async function superviseInboxTask(
   sessionId: string,
-  waitForCompletion: () => Promise<SessionStreamCompletion>,
+  waitForCompletion: () => Promise<SessionCompletion>,
 ): Promise<void> {
   const completion = await waitForCompletion();
   if (completion.status !== "completed") return;

@@ -1,17 +1,15 @@
 import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import type { Database } from "db0";
 import { subscribeWorkspaceEvents } from "@/functions/runtime/broadcast";
 import { createTestDatabase } from "../database";
 import { deleteHyperState } from "./hyperSessions";
 import { deleteSessionState, getSessionState } from "./sessions";
 import type { Automation, WorkspaceEvent } from "@/types";
-import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 import { sessionFile } from "@/lib/files/workspaceFile";
 
-let currentDb: Database | undefined;
+let currentDb: Bun.SQL | undefined;
 
 mock.module("../database", () => ({
-  getAppDatabase: async (options?: { createIfMissing?: boolean }) => {
+  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
     if (!currentDb && options?.createIfMissing === false) return null;
     if (!currentDb) throw new Error("Test database has not been opened");
     return currentDb;
@@ -38,7 +36,7 @@ const { deleteInboxEntryState } = await import("./inbox");
 async function openWorkspaceTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
   onTestFinished(async () => {
-    await currentDb?.dispose();
+    await currentDb?.close();
     currentDb = undefined;
   });
 }
@@ -61,7 +59,10 @@ function snapshot(automations: Automation[] = []) {
   return getWorkspaceState({
     automations,
     customEditors: [],
-    environment: { terminalWsPort: DEFAULT_TERMINAL_WS_PORT, voiceEnabled: false },
+    appDefinitions: [],
+    apps: [],
+    appShares: [],
+    environment: { voiceEnabled: false },
   });
 }
 
@@ -200,7 +201,9 @@ describe("workspace state", () => {
 
   test("snapshots and broadcasts worker links", async () => {
     const worker = {
+      type: "file" as const,
       sessionId: `artifact-worker-${crypto.randomUUID()}`,
+      ephemeral: true,
       file: sessionFile(`artifact-source-${crypto.randomUUID()}`, "plan.md"),
       name: "Respond to comment",
       metadata: { threadId: "thread-a" },

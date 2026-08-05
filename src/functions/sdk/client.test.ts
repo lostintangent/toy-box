@@ -118,6 +118,26 @@ describe("SDK session system message", () => {
     expect(instructions("standard")).not.toContain("automation ID");
   });
 
+  test("routes only Hyper sessions to bundled authoring skills", () => {
+    const content = instructions("hyper");
+
+    expect(content).toContain("Toy Box's Hyper session");
+    expect(content).toContain("Invoke the `create-toy-box-app` skill");
+    expect(content).toContain("`create-toy-box-editor`");
+    expect(content).toContain("Do not inspect Toy Box source code");
+    expect(content).toContain("or its database");
+
+    for (const sessionType of [
+      "standard",
+      "automation",
+      "inbox",
+      "worker",
+    ] satisfies SessionType[]) {
+      expect(instructions(sessionType)).not.toContain("`create-toy-box-app`");
+      expect(instructions(sessionType)).not.toContain("`create-toy-box-editor`");
+    }
+  });
+
   test("gives inbox sessions their initial result contract", () => {
     const content = instructions("inbox");
 

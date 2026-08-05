@@ -28,15 +28,10 @@ import {
   toSessionSnapshot,
   type Session,
 } from "@/lib/session/sessionReducer";
-import type { ModelConfiguration, QueuedMessage, SessionEvent } from "@/types";
+import type { ModelConfiguration, QueuedMessage, SessionCompletion, SessionEvent } from "@/types";
 import { emitSessionNameUpdate } from "../broadcast";
 import { sharedMap } from "../processState";
 import { createSessionEventBus, type SessionStreamSubscription } from "./eventBus";
-
-export type SessionStreamCompletion = {
-  status: "completed" | "failed" | "timed_out";
-  response?: string;
-};
 
 type MessageDisposition = "started" | "queued";
 type StreamEndReason = Extract<SessionEvent, { type: "end" }>["reason"];
@@ -83,7 +78,7 @@ export class SessionStream {
   static async waitForCompletion(
     sessionId: string,
     timeoutMs?: number,
-  ): Promise<SessionStreamCompletion> {
+  ): Promise<SessionCompletion> {
     const stream = SessionStream.get(sessionId);
     if (!stream) {
       return completionResult((await loadSessionSnapshot(sessionId)).messages);
@@ -137,7 +132,7 @@ export class SessionStream {
   #abortRequested = false;
   #closed = false;
   #shutdownComplete = false;
-  #completionResult: SessionStreamCompletion | undefined;
+  #completionResult: SessionCompletion | undefined;
   // Repeated delivery of one message ID returns its original decision instead
   // of starting or queueing it twice.
   readonly #dispositions = new Map<string, Promise<MessageDisposition>>();
@@ -247,7 +242,7 @@ export class SessionStream {
   }
 
   /** Wait for this stream instance to complete, not future replacements with the same ID. */
-  waitForCompletion(timeoutMs?: number): Promise<SessionStreamCompletion> {
+  waitForCompletion(timeoutMs?: number): Promise<SessionCompletion> {
     if (!this.#isCurrentStream()) {
       return Promise.resolve(
         this.#completionResult ?? completionResult(this.#sessionState.messages),
@@ -258,7 +253,7 @@ export class SessionStream {
       let settled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
 
-      const finish = (status: SessionStreamCompletion["status"] = "completed") => {
+      const finish = (status: SessionCompletion["status"] = "completed") => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
@@ -539,8 +534,8 @@ function turnOpeningEvent(message: QueuedMessage): SessionEvent {
 
 function completionResult(
   messages: Session["messages"],
-  status: SessionStreamCompletion["status"] = "completed",
-): SessionStreamCompletion {
+  status: SessionCompletion["status"] = "completed",
+): SessionCompletion {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
     if (message.role === "assistant" && message.content.trim().length > 0) {

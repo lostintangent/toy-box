@@ -5,8 +5,8 @@ import {
   computeFileDiffStats,
   getToolCallFileDiffs,
   type DiffStats,
-} from "@/lib/diffs/fileDiffs";
-import { toRelativePath } from "@/lib/paths";
+} from "@/lib/files/diffs/fileDiffs";
+import { toRelativePath } from "@/lib/files/paths";
 
 export { computeDiffStats };
 export type { DiffStats };

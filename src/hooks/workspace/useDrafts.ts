@@ -9,7 +9,7 @@ import { useWorkspaceSelector } from "./state";
 type DraftState = Extract<WorkspaceSessionState, { status: "draft" }>;
 type CreateDraftOptions = { hyper?: true; artifact?: { path: string; content: string } };
 
-export function useDrafts({ hyperSessionIds }: { hyperSessionIds: string[] }) {
+export function useDrafts({ hiddenSessionIds }: { hiddenSessionIds: string[] }) {
   const queryClient = useQueryClient();
   const drafts = useWorkspaceSelector((workspace) =>
     Object.entries(workspace.sessionStates).filter(
@@ -17,8 +17,8 @@ export function useDrafts({ hyperSessionIds }: { hyperSessionIds: string[] }) {
     ),
   );
 
-  const hyperSessionIdSet = new Set(hyperSessionIds);
-  const visibleDrafts = drafts.filter(([sessionId]) => !hyperSessionIdSet.has(sessionId));
+  const hiddenSessionIdSet = new Set(hiddenSessionIds);
+  const visibleDrafts = drafts.filter(([sessionId]) => !hiddenSessionIdSet.has(sessionId));
   const reusableDraftId = visibleDrafts.find(
     ([, state]) => !state.prompt?.text && !state.artifactPath,
   )?.[0];

@@ -1,4 +1,4 @@
-Toy Box is a full stack binary built on the Bun runtime. It uses the GitHub Copilot SDK for agent sessions; TanStack Start and Nitro for the SSR web server, server functions, and HTTP/SSE routes; React, TanStack Router and Query, and Jotai for the client; and Tailwind CSS with shadcn/ui for presentation. Interactive terminals run through a separate Bun WebSocket server in the same process.
+Toy Box is a full stack binary built on the Bun runtime. It uses the GitHub Copilot SDK for agent sessions; TanStack Start and Nitro for the SSR web server, server functions, and HTTP/SSE/WebSocket routes; React, TanStack Router and Query, and Jotai for the client; and Tailwind CSS with shadcn/ui for presentation.
 
 ## Architecture
 
@@ -10,9 +10,11 @@ Raw Copilot SDK activity is translated into canonical `SessionEvent`s. One pure 
 
 Automations, Inbox, Hyper, and parent sessions govern managed-session lifecycles while reusing that same runtime rather than defining alternate execution models. Files open as live, editable editor surfaces that can notify their owning agent. High-frequency transcript activity travels through ordered, replayable per-session streams. Lower-frequency shared workspace changes use a separate at-most-once update stream and recover missed events from authoritative snapshots or query refetches.
 
+Apps are durable, bookmarked workspace surfaces rather than file renderers. An installed TSX definition supplies trusted owner-authored presentation, behavior, and default state; each SQLite-backed app instance supplies its own title, small durable state, and revision. Apps consume a versioned public wrapper over workspace state, sessions, and files, and can publish ordinary session or editor panes without introducing another execution model.
+
 ```mermaid
 flowchart LR
-    Clients[Desktop and phone clients] --> API[RPC and HTTP routes]
+    Clients[Desktop and phone clients] <--> API[RPC, HTTP, SSE, and WebSocket routes]
     API --> Runtime[Session runtime]
     Runtime <--> SDK[Copilot SDK and session history]
     Runtime --> Streams[Replayable session streams]
@@ -24,7 +26,7 @@ flowchart LR
     Runtime --> Updates
     State --> Updates
     Updates --> Clients
-    Clients <--> Terminal[Terminal WebSocket runtime]
+    API --> Terminal[Terminal PTY runtime]
 ```
 
 Toy Box currently assumes one trusted, coordinating server process for one owner; it does not provide an authentication boundary or horizontal coordination. SDK history, SQLite metadata, worktrees, and artifact files survive restarts; active execution, replay buffers, workspace coordination, Hyper membership, and terminal PTYs do not.
@@ -37,10 +39,11 @@ Each guide explains one capability end to end, including adjacent callers and co
 - [`src/functions/sdk/AGENTS.md`](src/functions/sdk/AGENTS.md): one stable application language over Copilot SDK events, history, configuration, and tools
 - [`src/functions/state/AGENTS.md`](src/functions/state/AGENTS.md): authoritative state and lifecycle across session resources, workspace coordination, and managed sessions
 - [`src/functions/automations/AGENTS.md`](src/functions/automations/AGENTS.md): dependable recurring work by scheduling ordinary managed sessions
+- [`src/functions/apps/AGENTS.md`](src/functions/apps/AGENTS.md): installed TSX app definitions, saved instances, compilation, and the public app capability boundary
 - [`src/components/workspace/AGENTS.md`](src/components/workspace/AGENTS.md): one pane model composed into desktop, mobile, preview, overlay, Hyper, and Inbox workflows
 - [`src/components/workspace/panes/editor/AGENTS.md`](src/components/workspace/panes/editor/AGENTS.md): durable files presented as live, bidirectionally editable surfaces
-- [`terminal-server/AGENTS.md`](terminal-server/AGENTS.md): reconnectable PTYs with mode-aware scrollback that preserves the visible terminal
-- [`cli/AGENTS.md`](cli/AGENTS.md): one installable binary that assembles the web application and its independent runtimes
+- [`src/server/terminal/AGENTS.md`](src/server/terminal/AGENTS.md): reconnectable PTYs with mode-aware scrollback that preserves the visible terminal
+- [`cli/AGENTS.md`](cli/AGENTS.md): one installable binary that assembles the browser app and Nitro server
 - [`tests/AGENTS.md`](tests/AGENTS.md): live runtime and historical replay behavior locked against real SDK fixtures
 
 ## Writing Great Code

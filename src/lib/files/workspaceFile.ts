@@ -2,7 +2,7 @@
 // artifact under a session's files directory, or a real file on the host machine.
 
 import { z } from "zod";
-import type { WorkspaceFile, Worker } from "@/types";
+import type { WorkspaceFile } from "@/types";
 
 /** Stable identity for a workspace file: pane id, worker queue key, and notification coalesce key. */
 export function workspaceFileId(file: WorkspaceFile): string {
@@ -11,22 +11,20 @@ export function workspaceFileId(file: WorkspaceFile): string {
     : `machine:${file.path}`;
 }
 
+export const sessionFileSchema = z.object({
+  type: z.literal("session"),
+  sessionId: z.string().min(1),
+  path: z.string().min(1),
+});
+
 export const workspaceFileSchema: z.ZodType<WorkspaceFile> = z.union([
-  z.object({ type: z.literal("session"), sessionId: z.string().min(1), path: z.string().min(1) }),
+  sessionFileSchema,
   z.object({ type: z.literal("machine"), path: z.string().min(1) }),
 ]);
 
 /** The session that owns a file, for edit notifications and default-mode policy. */
 export function ownerSessionId(file: WorkspaceFile): string | undefined {
   return file.type === "session" ? file.sessionId : undefined;
-}
-
-/** Whether a worker belongs to a session — its own session, or the one that owns its file. */
-export function isWorkerOwnedBySession(worker: Worker, sessionId: string): boolean {
-  return (
-    worker.sessionId === sessionId ||
-    (worker.file !== undefined && ownerSessionId(worker.file) === sessionId)
-  );
 }
 
 /** Split a file into its route scope segment and relative splat. Session URLs stay bare. */
@@ -42,11 +40,14 @@ export function decodeFileRoute(scope: string, path: string): WorkspaceFile {
 }
 
 /** A session file (an artifact): a path beneath a session's own files directory. */
-export function sessionFile(sessionId: string, path: string): WorkspaceFile {
+export function sessionFile(
+  sessionId: string,
+  path: string,
+): Extract<WorkspaceFile, { type: "session" }> {
   return { type: "session", sessionId, path };
 }
 
 /** A machine file: a real file on the host, addressed by its absolute path. */
-export function machineFile(path: string): WorkspaceFile {
+export function machineFile(path: string): Extract<WorkspaceFile, { type: "machine" }> {
   return { type: "machine", path };
 }

@@ -1,6 +1,5 @@
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { terminalManager } from "@/lib/terminal/terminalManager";
-import { DEFAULT_TERMINAL_WS_PORT } from "@/types";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
 
 import "@xterm/xterm/css/xterm.css";
@@ -8,14 +7,9 @@ import "@xterm/xterm/css/xterm.css";
 export interface TerminalProps {
   onClose?: () => void;
   isResizing?: boolean;
-  wsPort?: number;
 }
 
-export function Terminal({
-  onClose,
-  isResizing = false,
-  wsPort = DEFAULT_TERMINAL_WS_PORT,
-}: TerminalProps) {
+export function Terminal({ onClose, isResizing = false }: TerminalProps) {
   const [isPtyReady, setIsPtyReady] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalShell = useWorkspaceSelector((workspace) => workspace.settings.terminalShell);
@@ -29,15 +23,11 @@ export function Terminal({
     const container = containerRef.current;
     if (!container) return;
 
-    return terminalManager.attach(
-      container,
-      {
-        onReady: setIsPtyReady,
-        onClose: () => handleClose(),
-      },
-      wsPort,
-    );
-  }, [wsPort]);
+    return terminalManager.attach(container, {
+      onReady: setIsPtyReady,
+      onClose: () => handleClose(),
+    });
+  }, []);
 
   // Debounce PTY resizing while the user is actively resizing the panel
   useEffect(() => {

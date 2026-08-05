@@ -7,7 +7,7 @@
 import * as childProcess from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { getAppDatabase } from "../database";
+import { getStateDatabase } from "../database";
 import type { SessionWorktree } from "@/types";
 
 /** Create and persist a worktree for a session when its directory is a Git repository. */
@@ -40,12 +40,12 @@ export async function createSessionWorktree(
 
 /** Get every session worktree for session-list hydration. */
 export async function getAllSessionWorktrees(): Promise<Record<string, SessionWorktree>> {
-  const db = await getAppDatabase({ createIfMissing: false });
+  const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return {};
 
-  const { rows } = await db.sql`SELECT * FROM worktrees`;
+  const rows = await db<SessionWorktreeRow[]>`SELECT * FROM worktrees`;
   const worktrees: Record<string, SessionWorktree> = {};
-  for (const row of rows as SessionWorktreeRow[]) {
+  for (const row of rows) {
     const worktree = toSessionWorktree(row);
     if (worktree) worktrees[row.session_id] = worktree;
   }
@@ -96,13 +96,12 @@ type SessionWorktreeRow = {
 };
 
 async function getSessionWorktree(sessionId: string): Promise<SessionWorktree | null> {
-  const db = await getAppDatabase({ createIfMissing: false });
+  const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return null;
 
-  const { rows } = await db.sql`
+  const [row] = await db<SessionWorktreeRow[]>`
     SELECT * FROM worktrees WHERE session_id = ${sessionId}
   `;
-  const row = (rows as SessionWorktreeRow[])[0];
   return row ? toSessionWorktree(row) : null;
 }
 
@@ -119,8 +118,8 @@ function toSessionWorktree(row: SessionWorktreeRow): SessionWorktree | null {
 }
 
 async function saveSessionWorktree(sessionId: string, worktree: SessionWorktree): Promise<void> {
-  const db = await getAppDatabase();
-  await db.sql`
+  const db = await getStateDatabase();
+  await db`
     INSERT INTO worktrees (
       session_id,
       worktree_path,
@@ -147,9 +146,9 @@ async function saveSessionWorktree(sessionId: string, worktree: SessionWorktree)
 }
 
 async function deleteSessionWorktreeRecord(sessionId: string): Promise<void> {
-  const db = await getAppDatabase({ createIfMissing: false });
+  const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return;
-  await db.sql`DELETE FROM worktrees WHERE session_id = ${sessionId}`;
+  await db`DELETE FROM worktrees WHERE session_id = ${sessionId}`;
 }
 
 // Git mechanics

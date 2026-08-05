@@ -2,21 +2,21 @@
 // No type is stored on the session itself: absence of a managing record means
 // a standard session, while conflicting records are an invariant violation.
 
-import { getAppDatabase } from "@/functions/state/database";
+import { getStateDatabase } from "@/functions/state/database";
 import { hasHyperSession } from "../workspace/hyperSessions";
 import type { SessionType } from "@/types";
 
 export async function resolveSessionType(sessionId: string): Promise<SessionType> {
-  const database = await getAppDatabase({ createIfMissing: false });
+  const database = await getStateDatabase({ createIfMissing: false });
   const row = database
-    ? ((
-        await database.sql`
+    ? (
+        await database<SessionTypeClaims[]>`
           SELECT
             EXISTS(SELECT 1 FROM automations WHERE id = ${sessionId}) AS automation,
             EXISTS(SELECT 1 FROM inbox WHERE id = ${sessionId}) AS inbox,
             EXISTS(SELECT 1 FROM workers WHERE session_id = ${sessionId}) AS worker
         `
-      ).rows?.[0] as SessionTypeClaims | undefined)
+      )[0]
     : undefined;
 
   const types: SessionType[] = [];

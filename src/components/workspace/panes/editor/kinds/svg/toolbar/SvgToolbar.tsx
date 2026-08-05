@@ -7,7 +7,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { PANE_OVERLAY_BORDER_CLASS } from "../../../../paneControls";
+import { PANE_OVERLAY_BORDER_CLASS } from "../../../../shell/paneControls";
 import { useState, useSyncExternalStore } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { shallow } from "@tanstack/store";

@@ -1,4 +1,4 @@
-import { getPathBasename } from "@/lib/paths";
+import { getPathBasename } from "@/lib/files/paths";
 
 /** The concise label used when a file path has a product-level name. */
 export function fileName(path: string): string {

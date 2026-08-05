@@ -1,6 +1,12 @@
 import type { CopilotSession } from "@github/copilot-sdk";
 import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import { deliverSessionMessage, SessionStream } from "./index";
+import {
+  deliverSessionMessage,
+  registerPendingSessionCompletion,
+  rejectPendingSessionCompletion,
+  SessionStream,
+  waitForSession,
+} from "./index";
 import * as realSnapshotCache from "../../state/session/snapshots";
 import * as realWorkspaceState from "../../state/workspace";
 import * as realBroadcast from "../broadcast";
@@ -1343,7 +1349,12 @@ describe("createSession", () => {
       {
         directory: "/repo",
         useWorktree: true,
-        worker: { parentSessionId: "parent-session", retained: false },
+        worker: {
+          type: "file",
+          sessionId: "session-headless-create",
+          ephemeral: true,
+          file: { type: "session", sessionId: "parent-session", path: "report.md" },
+        },
         initialContext: { workingDirectory: "/repo" },
         sessionType: "worker",
         name: "Background task",
@@ -1355,7 +1366,12 @@ describe("createSession", () => {
       model: { name: "gpt-5.5", reasoningEffort: "high" },
       directory: "/repo",
       useWorktree: true,
-      worker: { parentSessionId: "parent-session", retained: false },
+      worker: {
+        type: "file",
+        sessionId: "session-headless-create",
+        ephemeral: true,
+        file: { type: "session", sessionId: "parent-session", path: "report.md" },
+      },
       initialContext: { workingDirectory: "/repo" },
       sessionType: "worker",
       name: "Background task",
@@ -1847,5 +1863,42 @@ describe("SessionStream.waitForCompletion", () => {
       response: "First result",
     });
     expect(SessionStream.get("session-replaced")).toBe(second);
+  });
+});
+
+describe("waitForSession", () => {
+  test("observes a session announced before its live stream exists", async () => {
+    const receipt = registerPendingSessionCompletion("session-pending-wait");
+    const first = waitForSession("session-pending-wait");
+
+    expect(waitForSession("session-pending-wait")).toBe(first);
+    receipt.resolve({ status: "completed", response: "Pending result" });
+
+    await expect(first).resolves.toEqual({ status: "completed", response: "Pending result" });
+  });
+
+  test("times out one observer without settling the announced session", async () => {
+    const receipt = registerPendingSessionCompletion("session-pending-timeout");
+
+    await expect(waitForSession("session-pending-timeout", 1)).resolves.toEqual({
+      status: "timed_out",
+    });
+
+    const completion = waitForSession("session-pending-timeout");
+    receipt.resolve({ status: "completed", response: "Finished later" });
+    await expect(completion).resolves.toEqual({
+      status: "completed",
+      response: "Finished later",
+    });
+  });
+
+  test("rejects observers when an announced session is canceled", async () => {
+    registerPendingSessionCompletion("session-pending-canceled");
+    const completion = waitForSession("session-pending-canceled");
+    const error = new Error("Canceled");
+
+    expect(rejectPendingSessionCompletion("session-pending-canceled", error)).toBe(true);
+    await expect(completion).rejects.toBe(error);
+    expect(rejectPendingSessionCompletion("session-pending-canceled", error)).toBe(false);
   });
 });

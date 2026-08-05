@@ -4,7 +4,7 @@
 // derived from that registry so adding a type touches one policy table.
 
 import { z } from "zod";
-import { getPathBasename } from "@/lib/paths";
+import { getPathBasename } from "@/lib/files/paths";
 import { workspaceFileId, workspaceFileSchema } from "@/lib/files/workspaceFile";
 import type { AgentNotification } from "@/types";
 

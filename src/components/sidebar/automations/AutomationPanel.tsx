@@ -1,22 +1,12 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { AutomationDialog } from "./AutomationDialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { ScrollableFade } from "@/components/ui/scrollable-fade";
+import { DestructiveConfirmationDialog } from "@/components/sidebar/shell/DestructiveConfirmationDialog";
+import { SidebarPanel } from "@/components/sidebar/shell/SidebarPanel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAutomationActions } from "@/hooks/automations/useAutomationActions";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
-import { cn } from "@/lib/utils";
 import { AutomationListItem } from "./AutomationListItem";
 
 type AutomationPanelProps = {
@@ -75,10 +65,9 @@ export function AutomationPanel({
     }
   }
 
-  function toggleExpanded() {
-    const nextExpanded = !isExpanded;
-    if (!nextExpanded) closeDialog();
-    onExpandedChange(nextExpanded);
+  function handleExpandedChange(expanded: boolean) {
+    if (!expanded) closeDialog();
+    onExpandedChange(expanded);
   }
 
   const isEditing = dialogState?.mode === "edit";
@@ -93,26 +82,13 @@ export function AutomationPanel({
     automations.find((automation) => automation.id === deleteTargetId) ?? null;
 
   return (
-    <div className="min-w-0 overflow-hidden border-t">
-      <div
-        className={cn(
-          "flex items-center gap-2 bg-background px-3 py-2",
-          isExpanded && "border-b border-border",
-        )}
-      >
-        <button
-          type="button"
-          aria-label={isExpanded ? "Collapse automations" : "Expand automations"}
-          aria-expanded={isExpanded}
-          onClick={toggleExpanded}
-          className="min-w-0 flex-1 cursor-pointer text-left"
-        >
-          <span className="section-heading">
-            Automations{automations.length > 0 ? ` (${automations.length})` : ""}
-          </span>
-        </button>
-
-        {isExpanded && (
+    <>
+      <SidebarPanel
+        title="Automations"
+        count={automations.length}
+        isExpanded={isExpanded}
+        onExpandedChange={handleExpandedChange}
+        action={
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -127,57 +103,38 @@ export function AutomationPanel({
             </TooltipTrigger>
             <TooltipContent sideOffset={6}>Add automation</TooltipContent>
           </Tooltip>
-        )}
-      </div>
-
-      <div
-        aria-hidden={!isExpanded}
-        className={cn(
-          "grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
-          isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
-        )}
+        }
       >
-        <div className="min-h-0 overflow-hidden">
-          <div
-            className={cn(
-              "transition-transform duration-200 ease-out motion-reduce:transition-none",
-              isExpanded ? "translate-y-0" : "-translate-y-1 pointer-events-none",
-            )}
-          >
-            <ScrollableFade axis="vertical" className="max-h-58 min-w-0 p-3">
-              {automations.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No automations yet.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {automations.map((automation) => {
-                    const isSelected = openSessionIds.includes(automation.id);
-                    return (
-                      <li key={automation.id}>
-                        <AutomationListItem
-                          automation={automation}
-                          isSelected={isSelected}
-                          isDeleting={deletingAutomationId === automation.id}
-                          isUpdating={updatingAutomationId === automation.id}
-                          onOpenSession={onSessionOpen}
-                          onRun={() => {
-                            void handleRunAutomation(automation.id);
-                          }}
-                          onEdit={() => {
-                            openEditDialog(automation.id);
-                          }}
-                          onDelete={() => {
-                            setDeleteTargetId(automation.id);
-                          }}
-                        />
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </ScrollableFade>
-          </div>
-        </div>
-      </div>
+        {automations.length === 0 ? (
+          <p className="px-2 py-3 text-xs text-muted-foreground">No automations yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {automations.map((automation) => {
+              const isSelected = openSessionIds.includes(automation.id);
+              return (
+                <li key={automation.id}>
+                  <AutomationListItem
+                    automation={automation}
+                    isSelected={isSelected}
+                    isDeleting={deletingAutomationId === automation.id}
+                    isUpdating={updatingAutomationId === automation.id}
+                    onOpenSession={onSessionOpen}
+                    onRun={() => {
+                      void handleRunAutomation(automation.id);
+                    }}
+                    onEdit={() => {
+                      openEditDialog(automation.id);
+                    }}
+                    onDelete={() => {
+                      setDeleteTargetId(automation.id);
+                    }}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </SidebarPanel>
 
       <AutomationDialog
         open={isDialogOpen}
@@ -191,38 +148,23 @@ export function AutomationPanel({
         onUpdateAutomation={updateAutomation}
       />
 
-      <AlertDialog
+      <DestructiveConfirmationDialog
         open={deleteTargetAutomation !== null}
+        title="Delete automation?"
+        description={`This removes ${
+          deleteTargetAutomation?.title ?? "the automation"
+        }, its schedule, and its session.`}
         onOpenChange={(open) => {
           if (!open) {
             setDeleteTargetId(null);
           }
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete automation?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This removes {deleteTargetAutomation?.title ?? "the automation"}, its schedule, and
-              its session.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={!deleteTargetAutomation}
-              onClick={() => {
-                if (!deleteTargetAutomation) return;
-                void handleDeleteAutomation(deleteTargetAutomation.id);
-                setDeleteTargetId(null);
-              }}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+        onConfirm={() => {
+          if (!deleteTargetAutomation) return;
+          void handleDeleteAutomation(deleteTargetAutomation.id);
+          setDeleteTargetId(null);
+        }}
+      />
+    </>
   );
 }

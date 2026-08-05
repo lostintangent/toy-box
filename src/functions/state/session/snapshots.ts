@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { withSession } from "./registry";
 import { replaySdkHistory } from "@/functions/sdk/historyReplay";
 import { toSessionSnapshot } from "@/lib/session/sessionReducer";
-import { SESSION_STATE_PATH } from "@/lib/paths";
+import { SESSION_STATE_PATH } from "@/lib/session/constants";
 import { sharedMap, sharedSet } from "../../runtime/processState";
 import type { SessionSnapshot } from "@/types";
 

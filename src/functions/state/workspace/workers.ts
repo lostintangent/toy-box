@@ -1,9 +1,8 @@
-// Process-local registry of pending workers. A worker may be associated with a
-// workspace file, which scopes it to that file's editor. Canonical session state
+// Process-local registry of queued and running workers. Canonical session state
 // remains the execution lifecycle authority.
 
 import { sharedMap } from "@/functions/runtime/processState";
-import { isWorkerOwnedBySession } from "@/lib/files/workspaceFile";
+import { workerReferencesSession } from "@/lib/workers";
 import type { Worker } from "@/types";
 
 const workers = sharedMap<Worker>("workers");
@@ -32,9 +31,17 @@ export function finishWorker(sessionId: string): boolean {
 }
 
 export function finishWorkersForSession(sessionId: string): string[] {
+  return finishWorkers((worker) => workerReferencesSession(worker, sessionId));
+}
+
+export function finishWorkersForApp(appId: string): string[] {
+  return finishWorkers((worker) => worker.type === "app" && worker.appId === appId);
+}
+
+function finishWorkers(matches: (worker: Worker) => boolean): string[] {
   const finished: string[] = [];
   for (const [workerSessionId, worker] of workers) {
-    if (!isWorkerOwnedBySession(worker, sessionId)) continue;
+    if (!matches(worker)) continue;
     workers.delete(workerSessionId);
     finished.push(workerSessionId);
   }

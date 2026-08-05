@@ -14,20 +14,17 @@ import {
   clampViewportOverlayPosition,
   type OverlayPosition,
 } from "@/components/workspace/overlayWindow";
-import { WorkspaceSurfaceProvider } from "@/hooks/workspace/layout/focus";
-import { arePaneListsEqual, linkedPanesStore } from "@/hooks/workspace/layout/linkedPanes";
+import { workspaceSurfaces, WorkspaceSurfaceProvider } from "@/hooks/workspace/layout/surface";
+import { arePaneListsEqual } from "@/hooks/workspace/layout/panePublications";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   createSessionPaneId,
   deriveVisibleWorkspacePanes,
   deriveWorkspaceRootPanes,
+  MAX_HYPER_PANES,
 } from "@/lib/workspace/panes";
 import type { HyperSessionState } from "@/hooks/workspace/layout/useHyperSession";
 import { cn } from "@/lib/utils";
-
-// The hyper deck is a swipeable pager, not a fixed 2×2, so it can page through
-// more than the grid's four visible panes.
-const HYPER_DECK_MAX_PANES = 6;
 
 type DragState = {
   pointerId: number;
@@ -44,6 +41,8 @@ export interface HyperSessionProps {
   onDelete: (sessionId: string) => void;
   onMinimize: () => void;
   onPromote: (sessionId: string) => void;
+  onOpenApp: (appId: string) => void;
+  onCloseApp: (appId: string) => void;
 }
 
 function TrafficLight({
@@ -86,6 +85,8 @@ export function HyperSession({
   onDelete,
   onMinimize,
   onPromote,
+  onOpenApp,
+  onCloseApp,
 }: HyperSessionProps) {
   const dragRef = useRef<DragState | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -156,14 +157,14 @@ export function HyperSession({
   // The hyper session hosts its own mini-workspace: its interactive session
   // publishes linked panes under its pane id, which the pager pages through as
   // a self-contained deck. Promote is what graduates it to the main grid.
-  const rootPanes = deriveWorkspaceRootPanes([state.sessionId]);
+  const rootPanes = deriveWorkspaceRootPanes([state.sessionId], [], state.appIds);
   const hyperPanes = useSelector(
-    linkedPanesStore,
-    (linkedPanesByPublisher) =>
+    workspaceSurfaces.hyper.panePublications,
+    (panePublications) =>
       deriveVisibleWorkspacePanes({
         rootPanes,
-        linkedPanesByPublisher,
-        maxVisible: HYPER_DECK_MAX_PANES,
+        panePublications,
+        maxVisible: MAX_HYPER_PANES,
       }),
     { compare: arePaneListsEqual },
   );
@@ -211,11 +212,14 @@ export function HyperSession({
         <div ref={setToolbarSlot} className="flex min-w-0 flex-1 items-center gap-2" />
       </div>
       <div className="min-h-0 flex-1">
-        <WorkspaceSurfaceProvider surface="hyper" panes={hyperPanes}>
+        <WorkspaceSurfaceProvider surface="hyper" panes={hyperPanes} onOpenApp={onOpenApp}>
           <WorkspacePager
             panes={hyperPanes}
             primaryPaneId={createSessionPaneId(state.sessionId)}
             toolbarSlot={toolbarSlot}
+            resolvePaneClose={(pane) =>
+              pane.kind === "app" ? () => onCloseApp(pane.appId) : undefined
+            }
           />
         </WorkspaceSurfaceProvider>
       </div>

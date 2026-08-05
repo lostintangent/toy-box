@@ -1,4 +1,3 @@
-import type { Database } from "db0";
 import {
   afterAll,
   beforeEach,
@@ -26,7 +25,7 @@ type CreateSession = typeof streamModule.createSession;
 type CreationArguments = Parameters<CreateSession>;
 type CreationReceipt = Awaited<ReturnType<CreateSession>>;
 
-let appDatabase: Database;
+let appDatabase: Bun.SQL;
 let automationDatabase: AutomationDatabase;
 let create: (...args: CreationArguments) => Promise<CreationReceipt>;
 let removeSession: typeof sessionRegistryModule.deleteSessionIfExists;
@@ -37,7 +36,7 @@ const deleteSessionIfExistsMock = mock((sessionId: string) => removeSession(sess
 const broadcastMock = mock((_event: WorkspaceEvent) => {});
 
 mock.module("@/functions/state/database", () => ({
-  getAppDatabase: async () => appDatabase,
+  getStateDatabase: async () => appDatabase,
 }));
 mock.module("@/functions/state/session/registry", () => ({
   deleteSessionIfExists: deleteSessionIfExistsMock,
@@ -64,6 +63,8 @@ afterAll(() => {
 beforeEach(async () => {
   setSystemTime();
   appDatabase = await realDatabaseModule.createTestDatabase();
+  const database = appDatabase;
+  onTestFinished(() => database.close());
   automationDatabase = new AutomationDatabase(appDatabase);
   runningSessionIds.clear();
   deleteSessionIfExistsMock.mockClear();
@@ -200,7 +201,7 @@ describe.serial("automation scheduler", () => {
     const heldCompletion = holdCompletion();
 
     await startAutomationRun(automation.id);
-    await appDatabase.exec("DROP TABLE automations");
+    await appDatabase`DROP TABLE automations`;
     heldCompletion.resolve({ status: "completed" });
     await waitFor(() => consoleError.mock.calls.length === 1);
 

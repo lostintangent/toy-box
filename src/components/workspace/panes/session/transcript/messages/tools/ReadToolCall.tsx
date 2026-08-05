@@ -1,6 +1,6 @@
 import { FileText } from "lucide-react";
 import type { ToolCallProps } from "./types";
-import { toRelativePath } from "@/lib/paths";
+import { toRelativePath } from "@/lib/files/paths";
 import { useSessionCwd } from "@/hooks/session/SessionCwdContext";
 import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";

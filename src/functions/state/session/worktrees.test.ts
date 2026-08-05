@@ -2,18 +2,17 @@ import { beforeEach, describe, expect, mock, onTestFinished, spyOn, test } from 
 import * as childProcess from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Database } from "db0";
 import { createTestDatabase } from "../database";
 import type { SessionWorktree } from "@/types";
 
-let currentDb: Database | undefined;
+let currentDb: Bun.SQL | undefined;
 let gitCalls: Array<{ directory: string; args: string[] }> = [];
 let runGit = async (_directory: string, _args: string[]): Promise<string> => {
   throw new Error("Not a Git repository");
 };
 
 mock.module("../database", () => ({
-  getAppDatabase: async (options?: { createIfMissing?: boolean }) => {
+  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
     if (!currentDb && options?.createIfMissing === false) return null;
     if (!currentDb) throw new Error("Test database has not been opened");
     return currentDb;
@@ -26,13 +25,13 @@ const { createSessionWorktree, deleteSessionWorktree, getAllSessionWorktrees } =
 async function openWorktreeTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
   onTestFinished(async () => {
-    await currentDb?.dispose();
+    await currentDb?.close();
     currentDb = undefined;
   });
 }
 
 async function insertWorktree(sessionId: string, worktree: SessionWorktree): Promise<void> {
-  await currentDb!.sql`
+  await currentDb!`
     INSERT INTO worktrees (
       session_id,
       worktree_path,
@@ -187,9 +186,15 @@ describe("session worktrees", () => {
   test("database requires complete worktree identity fields", async () => {
     await openWorktreeTestDatabase();
 
-    await expect(currentDb!.sql`
-      INSERT INTO worktrees (session_id)
-      VALUES (${"toy-box-session"})
-    `).rejects.toThrow();
+    let failure: unknown;
+    try {
+      await currentDb!`
+        INSERT INTO worktrees (session_id)
+        VALUES (${"toy-box-session"})
+      `;
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
   });
 });

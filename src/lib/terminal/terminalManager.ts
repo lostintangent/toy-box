@@ -9,7 +9,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { getOrCreateClientId } from "@/lib/workspace/config/clientId";
-import { DEFAULT_TERMINAL_WS_PORT, type TerminalServerMessage } from "@/types";
+import type { TerminalServerMessage } from "@/types";
 import { TerminalConnection } from "./connection";
 import { TerminalResize, isValidSize } from "./resize";
 import { TerminalBuffer } from "./buffer";
@@ -121,11 +121,9 @@ class TerminalManager {
     });
   }
 
-  attach(container: HTMLDivElement, handlers: TerminalHandlers, wsPort = DEFAULT_TERMINAL_WS_PORT) {
+  attach(container: HTMLDivElement, handlers: TerminalHandlers) {
     const attachment = { container };
     this.#activeAttachment = attachment;
-
-    const portChanged = this.#connection.setPort(wsPort);
 
     if (this.#container && this.#container !== container) {
       this.#detachContainer();
@@ -134,10 +132,6 @@ class TerminalManager {
     this.#onReady = handlers.onReady ?? null;
     this.#onClose = handlers.onClose ?? null;
     this.#attachContainer(container);
-
-    if (portChanged) {
-      this.#connection.closeIfOpen();
-    }
 
     this.#connection.connect();
     this.#onReady?.(this.#isReady);
@@ -159,7 +153,11 @@ class TerminalManager {
       this.#detachContainer();
     }
 
-    this.#closeConnection();
+    // Preserve the socket when React immediately remounts this shared terminal
+    // into another container; a genuine detach still closes on the next task.
+    setTimeout(() => {
+      if (this.#activeAttachment === null) this.#closeConnection();
+    });
   }
 
   close() {

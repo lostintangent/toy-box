@@ -7,8 +7,8 @@ import { createSvgEraserNodes, createSvgPath, createSvgShape } from "./nodes";
 const parser = new DOMParser() as unknown as globalThis.DOMParser;
 const serializer = new XMLSerializer() as unknown as globalThis.XMLSerializer;
 
-function createSvgDocument() {
-  return new SvgDocument({ parser, serializer });
+function createSvgDocument(documentParser = parser) {
+  return new SvgDocument({ parser: documentParser, serializer });
 }
 
 function appendPath(
@@ -35,7 +35,13 @@ describe("SVG document", () => {
   });
 
   test("clears the previous document when replacement source is invalid", () => {
-    const svgDocument = createSvgDocument();
+    const rejectingParser: Pick<globalThis.DOMParser, "parseFromString"> = {
+      parseFromString(content, mimeType) {
+        if (content === "<svg>") throw new Error("Invalid XML");
+        return parser.parseFromString(content, mimeType);
+      },
+    };
+    const svgDocument = createSvgDocument(rejectingParser);
     svgDocument.load('<svg xmlns="http://www.w3.org/2000/svg"><rect /></svg>');
     svgDocument.load("<svg>");
 

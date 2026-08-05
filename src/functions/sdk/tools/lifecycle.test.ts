@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ToolInvocation } from "@github/copilot-sdk";
 import * as streamModule from "@/functions/runtime/stream";
-import * as workersModule from "@/functions/runtime/workers";
+import * as workersModule from "@/functions/workers/supervisor";
 
 const realStreamModule = { ...streamModule };
 const realWorkersModule = { ...workersModule };
@@ -13,15 +13,15 @@ const createSessionMock = mock(async (..._args: CreateSessionArguments) => ({
   disposition: "started" as const,
   waitForCompletion: async () => ({ status: "completed" as const }),
 }));
-const spawnWorkerMock = mock(async (_input: SpawnWorkerInput) => ({
-  sessionId: "toy-box-worker",
+const spawnWorkerMock = mock(async (input: SpawnWorkerInput) => ({
+  sessionId: input.worker.sessionId,
   waitForCompletion: async () => ({ status: "completed" as const }),
 }));
 mock.module("@/functions/runtime/stream", () => ({
   ...realStreamModule,
   createSession: createSessionMock,
 }));
-mock.module("@/functions/runtime/workers", () => ({
+mock.module("@/functions/workers/supervisor", () => ({
   ...realWorkersModule,
   spawnWorker: spawnWorkerMock,
 }));
@@ -30,7 +30,7 @@ const { getSessionTools } = await import("./index");
 
 afterAll(() => {
   mock.module("@/functions/runtime/stream", () => realStreamModule);
-  mock.module("@/functions/runtime/workers", () => realWorkersModule);
+  mock.module("@/functions/workers/supervisor", () => realWorkersModule);
 });
 
 beforeEach(() => {
@@ -39,30 +39,56 @@ beforeEach(() => {
 });
 
 describe("SDK lifecycle tools", () => {
-  test("create_worker_session spawns a retained child owned by the caller", async () => {
+  test("create_worker_session spawns a durable child owned by the caller", async () => {
     const tool = getSessionTools("standard").find(
       (candidate) => candidate.name === "create_worker_session",
     );
     const model = { name: "claude-sonnet-4.5" };
 
     const result = await tool?.handler?.(
-      { task: "Review the runtime", model, directory: "/workspace", useWorktree: true },
+      {
+        task: "Review the runtime",
+        name: "Runtime reviewer",
+        model,
+        directory: "/workspace",
+        useWorktree: true,
+      },
+      invocation("create_worker_session"),
+    );
+
+    const parsed = JSON.parse(String(result)) as { sessionId: string; opened: boolean };
+    expect(parsed).toEqual({ sessionId: expect.stringMatching(/^toy-box-/), opened: true });
+    expect(spawnWorkerMock).toHaveBeenCalledWith({
+      worker: {
+        type: "session",
+        sessionId: parsed.sessionId,
+        parentSessionId: "toy-box-caller",
+        ephemeral: false,
+        name: "Runtime reviewer",
+      },
+      message: { content: "Review the runtime", model },
+      directory: "/workspace",
+      useWorktree: true,
+    });
+    expect(createSessionMock).not.toHaveBeenCalled();
+    expect(tool?.description).toContain("Durable children open as linked panes");
+  });
+
+  test("create_worker_session can make a child ephemeral", async () => {
+    const tool = getSessionTools("standard").find(
+      (candidate) => candidate.name === "create_worker_session",
+    );
+
+    const result = await tool?.handler?.(
+      { task: "Run once", ephemeral: true },
       invocation("create_worker_session"),
     );
 
     expect(JSON.parse(String(result))).toEqual({
-      sessionId: "toy-box-worker",
-      opened: true,
+      sessionId: expect.stringMatching(/^toy-box-/),
+      opened: false,
     });
-    expect(spawnWorkerMock).toHaveBeenCalledWith({
-      parentSessionId: "toy-box-caller",
-      task: "Review the runtime",
-      model,
-      directory: "/workspace",
-      useWorktree: true,
-      retained: true,
-    });
-    expect(createSessionMock).not.toHaveBeenCalled();
+    expect(spawnWorkerMock.mock.calls[0]?.[0].worker.ephemeral).toBe(true);
   });
 
   test("create_session creates a standard session without inherited defaults or a worker owner", async () => {

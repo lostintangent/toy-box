@@ -5,13 +5,21 @@
 import { z } from "zod";
 import { agentNotificationSchema } from "@/lib/session/agentNotifications";
 import { modelConfigurationSchema } from "@/lib/modelConfiguration";
+import type { SessionLaunch, SessionMessage, SessionType } from "@/types";
 
 export const sessionInputSchema = z.object({
   sessionId: z.string(),
 });
 
+export const waitForSessionInputSchema = sessionInputSchema.extend({
+  timeoutMs: z.number().int().nonnegative().max(300_000).optional(),
+});
+
 export const listSkillsInputSchema = z.object({
   cwd: z.string().min(1).optional(),
+  sessionType: z
+    .enum(["standard", "automation", "inbox", "hyper", "worker"] satisfies SessionType[])
+    .optional(),
 });
 
 export const renameSessionInputSchema = sessionInputSchema.extend({
@@ -38,7 +46,7 @@ export const sessionAttachmentsSchema = z
   )
   .optional();
 
-const sessionMessageInputSchema = z
+const sessionMessageSchema = z
   .object({
     id: z.string().optional(),
     content: z.string(),
@@ -48,7 +56,7 @@ const sessionMessageInputSchema = z
   .refine(
     (message) => message.content.trim().length > 0 || (message.attachments?.length ?? 0) > 0,
     { message: "A prompt or attachment is required" },
-  );
+  ) satisfies z.ZodType<SessionMessage>;
 
 const sessionLocationSchema = z.object({
   directory: z.string().optional(),
@@ -66,7 +74,7 @@ const sessionSubscriptionModeSchema = z.enum(["active", "passive"]);
 export const streamSessionRequestSchema = streamSessionBaseSchema.and(
   z.union([
     z.object({
-      message: sessionMessageInputSchema,
+      message: sessionMessageSchema,
       location: sessionLocationSchema.optional(),
     }),
     z.object({
@@ -77,15 +85,12 @@ export const streamSessionRequestSchema = streamSessionBaseSchema.and(
   ]),
 );
 
-const sessionLaunchInputSchema = sessionLocationSchema.extend({
-  message: sessionMessageInputSchema,
-});
-
-export const createSessionInputSchema = sessionLaunchInputSchema;
-export const dispatchInboxTaskInputSchema = sessionLaunchInputSchema;
+export const sessionLaunchSchema = sessionLocationSchema.extend({
+  message: sessionMessageSchema,
+}) satisfies z.ZodType<SessionLaunch>;
 
 export const deliverMessageInputSchema = sessionInputSchema.extend({
-  message: sessionMessageInputSchema,
+  message: sessionMessageSchema,
 });
 
 export const notifyAgentInputSchema = sessionInputSchema.extend({
@@ -96,6 +101,5 @@ export const queuedMessageInputSchema = sessionInputSchema.extend({
   queuedMessageId: z.string(),
 });
 
-export type SessionMessageInput = z.infer<typeof sessionMessageInputSchema>;
 export type SessionSubscriptionMode = z.infer<typeof sessionSubscriptionModeSchema>;
 export type StreamSessionRequest = z.infer<typeof streamSessionRequestSchema>;

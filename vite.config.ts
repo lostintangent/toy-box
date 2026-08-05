@@ -1,46 +1,10 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import babel from "@rolldown/plugin-babel";
 import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { nitro } from "nitro/vite";
+import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
-
-// Temporary workaround for TanStack Start/Nitro dev asset routing on non-localhost
-// HTTP origins when browsers omit `Sec-Fetch-Dest`, causing Vite CSS/JS requests to
-// fall through to Nitro and return 404s. Remove once upstream fixes this behavior:
-// https://github.com/TanStack/router/issues/7095
-function inferAssetFetchDestination(): Plugin {
-  return {
-    name: "infer-asset-fetch-destination",
-    configureServer({ middlewares }) {
-      middlewares.use((req, res, next) => {
-        res.setHeader("Cache-Control", "no-store");
-
-        if (typeof req.headers["sec-fetch-dest"] === "string" || !req.url) {
-          next();
-          return;
-        }
-
-        const pathname = new URL(req.url, "http://vite.local").pathname;
-        const accept = req.headers.accept ?? "";
-
-        if (accept.includes("text/css") || pathname.endsWith(".css")) {
-          req.headers["sec-fetch-dest"] = "style";
-        } else if (
-          pathname.endsWith(".js") ||
-          pathname.endsWith(".mjs") ||
-          pathname.endsWith(".ts") ||
-          pathname.endsWith(".tsx") ||
-          pathname.endsWith(".jsx")
-        ) {
-          req.headers["sec-fetch-dest"] = "script";
-        }
-
-        next();
-      });
-    },
-  };
-}
 
 const config = defineConfig(({ mode }) => {
   const isProduction = mode === "production";
@@ -48,23 +12,37 @@ const config = defineConfig(({ mode }) => {
     server: {
       host: "::",
       allowedHosts: [".ts.net"],
-      headers: {
-        "Cache-Control": "no-store",
+      proxy: {
+        "/terminal": {
+          target: `ws://127.0.0.1:${process.env.TERMINAL_WS_PORT ?? 3101}`,
+          ws: true,
+        },
       },
     },
+    optimizeDeps: {
+      exclude: ["@tailwindcss/oxide"],
+    },
     resolve: {
+      alias: isProduction
+        ? [
+            {
+              find: /^koffi$/,
+              replacement: resolve("src/functions/sdk/unsupportedCopilotFfi.ts"),
+            },
+          ]
+        : [],
       tsconfigPaths: true,
     },
     plugins: [
-      inferAssetFetchDestination(),
       tailwindcss(),
       nitro({
         preset: "bun",
         serverDir: "./src/server",
-        features: {
-          websocket: true,
+        features: { websocket: isProduction },
+        output: {
+          publicDir: ".output/server/public",
         },
-        serveStatic: isProduction ? "inline" : false, // Inline only for production
+        serveStatic: isProduction,
         rollupConfig: {
           onwarn(warning, defaultHandler) {
             if (
@@ -85,7 +63,7 @@ const config = defineConfig(({ mode }) => {
       }),
       tanstackStart(),
       viteReact(),
-      babel({ presets: [reactCompilerPreset()] }),
+      isProduction && babel({ presets: [reactCompilerPreset()] }),
     ],
   };
 });

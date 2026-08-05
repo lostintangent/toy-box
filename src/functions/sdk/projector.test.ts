@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { homedir } from "node:os";
+import type { JSONType } from "zod";
 import { encodeSdkAgentNotification } from "@/functions/sdk/agentNotificationCodec";
 import {
   createSdkEventProjector,
   getSdkSessionName,
   getSdkTurnEndReason,
 } from "@/functions/sdk/projector";
-import type { JsonValue, SessionEvent } from "@/types";
+import type { SessionEvent } from "@/types";
 
 function createStreamingContext() {
   return createSdkEventProjector("toy-box-session");
@@ -105,7 +106,7 @@ function titleChanged(title: string): SdkSessionEvent {
 function toolExecutionStart(
   toolName: string,
   toolCallId: string,
-  argumentsRecord: { [key: string]: JsonValue } | string = {},
+  argumentsRecord: { [key: string]: JSONType } | string = {},
   extraData: Record<string, unknown> = {},
   options: { agentId?: string } = {},
 ): SdkSessionEvent {
@@ -167,7 +168,7 @@ function expectOmittedToolLifecycle(
   options: {
     toolName: string;
     toolCallId: string;
-    argumentsRecord?: { [key: string]: JsonValue } | string;
+    argumentsRecord?: { [key: string]: JSONType } | string;
     startEvents?: SessionEvent[];
     completionSuccess?: boolean;
     completionResultContent?: string;
@@ -202,7 +203,7 @@ function expectVisibleToolLifecycle(
   options: {
     toolName: string;
     toolCallId: string;
-    argumentsRecord?: { [key: string]: JsonValue };
+    argumentsRecord?: { [key: string]: JSONType };
     progressMessage: string;
     resultContent: string;
   },

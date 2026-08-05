@@ -65,7 +65,7 @@ describe("session query cache", () => {
     });
   });
 
-  test("upsert inserts or updates durable session metadata and side facts", () => {
+  test("worker upserts retain durable metadata and parentage", () => {
     const queryClient = new QueryClient();
     const sessionId = "toy-box-upsert";
     seedState(queryClient, {
@@ -79,6 +79,7 @@ describe("session query cache", () => {
         modifiedTime: "2026-02-14T02:00:00.000Z",
         summary: "Updated",
         parentSessionId: "parent",
+        sessionType: "worker",
         worktree: {
           branch: "feature",
           baseBranch: "main",
@@ -94,8 +95,20 @@ describe("session query cache", () => {
       summary: "Updated",
       modifiedTime: new Date("2026-02-14T02:00:00.000Z"),
     });
-    expect(state.workerSessionIds).toEqual([sessionId]);
+    expect(state.workerSessionParents).toEqual({ [sessionId]: "parent" });
     expect(state.worktrees[sessionId]).toMatchObject({ branch: "feature" });
+  });
+
+  test("classifies a parentless app worker", () => {
+    const queryClient = new QueryClient();
+    const sessionId = "toy-box-app-worker";
+
+    upsertSessionInState(queryClient, {
+      sessionId,
+      sessionType: "worker",
+    });
+
+    expect(readState(queryClient).workerSessionParents).toEqual({ [sessionId]: null });
   });
 
   test("upsert preserves summary when omitted", () => {
@@ -144,7 +157,7 @@ describe("session query cache", () => {
     const sessionId = "toy-box-delete";
     seedState(queryClient, {
       sessions: [createSession(sessionId)],
-      workerSessionIds: [sessionId],
+      workerSessionParents: { [sessionId]: "parent" },
       worktrees: {
         [sessionId]: {
           branch: "feature",
@@ -161,7 +174,7 @@ describe("session query cache", () => {
 
     const state = readState(queryClient);
     expect(state.sessions).toEqual([]);
-    expect(state.workerSessionIds).toEqual([]);
+    expect(state.workerSessionParents).toEqual({});
     expect(state.worktrees).toEqual({});
   });
 

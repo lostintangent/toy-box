@@ -1,11 +1,10 @@
 import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import type { Database } from "db0";
 import { createTestDatabase } from "../database";
 
-let currentDb: Database | undefined;
+let currentDb: Bun.SQL | undefined;
 
 mock.module("../database", () => ({
-  getAppDatabase: async (options?: { createIfMissing?: boolean }) => {
+  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
     if (!currentDb && options?.createIfMissing === false) return null;
     if (!currentDb) throw new Error("Test database has not been opened");
     return currentDb;
@@ -21,7 +20,7 @@ const { resolveSessionType } = await import("./type");
 async function openSessionTypeTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
   onTestFinished(async () => {
-    await currentDb?.dispose();
+    await currentDb?.close();
     currentDb = undefined;
   });
 }
@@ -45,7 +44,12 @@ describe("session type resolution", () => {
     const workerId = `toy-box-${crypto.randomUUID()}`;
     await createInboxEntry(inboxId);
     addHyperSession(hyperId);
-    await registerWorkerSession(workerId, "toy-box-parent");
+    await registerWorkerSession({
+      type: "app",
+      sessionId: workerId,
+      appId: "app-a",
+      ephemeral: true,
+    });
     onTestFinished(() => deleteHyperState(hyperId));
 
     expect(await resolveSessionType(automation.id)).toBe("automation");

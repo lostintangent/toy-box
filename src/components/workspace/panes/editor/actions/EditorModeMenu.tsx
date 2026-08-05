@@ -7,11 +7,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MetadataBadge } from "@/components/ui/metadata-badge";
-import type { EditorPaneMode } from "@/lib/workspace/panes";
+import type { WorkspaceFileMode } from "@/types";
 import { cn } from "@/lib/utils";
 
 type EditorModeOption = {
-  value: EditorPaneMode;
+  value: WorkspaceFileMode;
   label: string;
   description: string;
   Icon: LucideIcon;
@@ -20,8 +20,8 @@ type EditorModeOption = {
 };
 
 type EditorModeMenuProps = {
-  mode: EditorPaneMode;
-  onModeChange: (mode: EditorPaneMode) => void;
+  mode: WorkspaceFileMode;
+  onModeChange: (mode: WorkspaceFileMode) => void;
   className?: string;
   iconClassName?: string;
   showLabel?: boolean;

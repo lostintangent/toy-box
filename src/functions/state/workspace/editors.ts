@@ -7,7 +7,7 @@
 // `loadCustomEditors` feeds workspace state on every hydration; the SDK
 // `register_editor` tool is the sole writer.
 
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { CustomEditorKind } from "@/types";
@@ -40,7 +40,6 @@ export async function loadCustomEditors(): Promise<CustomEditorKind[]> {
 /** Write (or overwrite) an editor's folder. The name is validated as a safe path segment. */
 export async function writeCustomEditor(kind: CustomEditorKind): Promise<void> {
   const directory = editorDirectory(kind.name);
-  await mkdir(directory, { recursive: true });
 
   const metadata = {
     extensions: kind.extensions,
@@ -49,8 +48,8 @@ export async function writeCustomEditor(kind: CustomEditorKind): Promise<void> {
   };
 
   await Promise.all([
-    writeFile(join(directory, METADATA_FILE), `${JSON.stringify(metadata, null, 2)}\n`, "utf-8"),
-    writeFile(join(directory, TEMPLATE_FILE), kind.html, "utf-8"),
+    Bun.write(join(directory, METADATA_FILE), `${JSON.stringify(metadata, null, 2)}\n`),
+    Bun.write(join(directory, TEMPLATE_FILE), kind.html),
   ]);
 }
 
@@ -71,8 +70,8 @@ async function readCustomEditor(name: string): Promise<CustomEditorKind | null> 
 
   try {
     const [rawMetadata, html] = await Promise.all([
-      readFile(join(directory, METADATA_FILE), "utf-8"),
-      readFile(join(directory, TEMPLATE_FILE), "utf-8"),
+      Bun.file(join(directory, METADATA_FILE)).text(),
+      Bun.file(join(directory, TEMPLATE_FILE)).text(),
     ]);
     return parseCustomEditor(name, rawMetadata, html);
   } catch {

@@ -119,7 +119,7 @@ export function SidebarHeader({
             <Button
               size="icon-sm"
               variant="accent"
-              className="w-6 rounded-l-none border-l border-accent-foreground/15"
+              className="w-6 rounded-l-none border-l border-background"
               aria-label="New session options"
               suppressHydrationWarning
             >

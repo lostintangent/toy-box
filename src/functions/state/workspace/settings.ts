@@ -1,11 +1,10 @@
-import type { Database } from "db0";
 import {
   areSettingsEqual,
   DEFAULT_SETTINGS,
   normalizeSettings,
 } from "@/lib/workspace/config/settings";
 import type { Settings } from "@/types";
-import { getAppDatabase } from "../database";
+import { getStateDatabase } from "../database";
 
 const SETTINGS_ROW_ID = 1;
 
@@ -15,7 +14,7 @@ type SettingsRow = {
 
 /** Durable repository for the workspace's singleton settings document. */
 export class SettingsDatabase {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: Bun.SQL) {}
 
   async get(): Promise<Settings> {
     const row = await this.#getRow();
@@ -27,7 +26,7 @@ export class SettingsDatabase {
     if (current && areSettingsEqual(deserializeSettings(current.value), settings)) return false;
 
     const value = JSON.stringify(settings);
-    await this.db.sql`
+    await this.db`
       INSERT INTO settings (id, value)
       VALUES (${SETTINGS_ROW_ID}, ${value})
       ON CONFLICT(id) DO UPDATE SET value = excluded.value
@@ -36,18 +35,20 @@ export class SettingsDatabase {
   }
 
   async #getRow(): Promise<SettingsRow | undefined> {
-    const { rows } = await this.db.sql`SELECT value FROM settings WHERE id = ${SETTINGS_ROW_ID}`;
-    return (rows as SettingsRow[])[0];
+    const [row] = await this.db<SettingsRow[]>`
+      SELECT value FROM settings WHERE id = ${SETTINGS_ROW_ID}
+    `;
+    return row;
   }
 }
 
 export async function getSettings(): Promise<Settings> {
-  const database = await getAppDatabase({ createIfMissing: false });
+  const database = await getStateDatabase({ createIfMissing: false });
   return database ? new SettingsDatabase(database).get() : DEFAULT_SETTINGS;
 }
 
 export async function persistSettings(settings: Settings): Promise<boolean> {
-  return new SettingsDatabase(await getAppDatabase()).set(settings);
+  return new SettingsDatabase(await getStateDatabase()).set(settings);
 }
 
 function deserializeSettings(value: string): Settings {

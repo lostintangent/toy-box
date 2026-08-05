@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   createEditorPane,
+  createAppPane,
   createCanvasPaneId,
   createLinkedCanvasPane,
   createLinkedPanes,
@@ -25,11 +26,11 @@ function selectedSessionPane(sessionId: string): Extract<WorkspacePane, { kind: 
 
 function derivePanes(
   selectedSessionIds: string[],
-  linkedPanesByPublisher: Record<string, WorkspacePane[]>,
+  panePublications: Record<string, WorkspacePane[]>,
 ) {
   return deriveVisibleWorkspacePanes({
     rootPanes: deriveWorkspaceRootPanes(selectedSessionIds),
-    linkedPanesByPublisher,
+    panePublications,
   });
 }
 
@@ -63,6 +64,25 @@ describe("workspace pane derivation", () => {
     expect(deriveWorkspaceRootPanes([], [path])).toEqual([createEditorPane(file)]);
   });
 
+  test("adds saved apps as durable root panes without assigning a source session", () => {
+    const appPane = createAppPane("app-a");
+    expect(deriveWorkspaceRootPanes([], [], ["app-a"])).toEqual([appPane]);
+    expect(paneSourceSessionId(appPane)).toBeUndefined();
+    expect(deriveWorkspaceRootPanes(["A"], [], ["app-a"])).toEqual([
+      selectedSessionPane("A"),
+      appPane,
+    ]);
+  });
+
+  test("deduplicates roots and enforces one combined workspace cap", () => {
+    expect(deriveWorkspaceRootPanes(["A", "A", "B"], ["/one.md", "/two.md"], ["app-a"])).toEqual([
+      selectedSessionPane("A"),
+      selectedSessionPane("B"),
+      createEditorPane(machineFile("/one.md")),
+      createEditorPane(machineFile("/two.md")),
+    ]);
+  });
+
   test("resolves source sessions without assigning one to Inbox", () => {
     expect(paneSourceSessionId(INBOX_PANE)).toBeUndefined();
     expect(paneSourceSessionId(selectedSessionPane("A"))).toBe("A");
@@ -71,10 +91,10 @@ describe("workspace pane derivation", () => {
 
   test("lets the Inbox pane publish an Inbox artifact", () => {
     const artifactPane = createEditorPane(sessionFile("inbox-1", "result.md"), "edit");
-    const linkedPanesByPublisher = { [INBOX_PANE.id]: [artifactPane] };
+    const panePublications = { [INBOX_PANE.id]: [artifactPane] };
 
-    expect(derivePanes([], linkedPanesByPublisher)).toEqual([INBOX_PANE, artifactPane]);
-    expect(deriveReachablePaneIds([INBOX_PANE], linkedPanesByPublisher)).toEqual([
+    expect(derivePanes([], panePublications)).toEqual([INBOX_PANE, artifactPane]);
+    expect(deriveReachablePaneIds([INBOX_PANE], panePublications)).toEqual([
       INBOX_PANE.id,
       artifactPane.id,
     ]);
@@ -209,28 +229,22 @@ describe("workspace pane derivation", () => {
     ]);
   });
 
-  test("follows linked session descendants without requiring list availability", () => {
-    const descendantCanvas = canvas();
+  test("keeps a linked session visible ahead of the panes it publishes", () => {
+    const appPane = createAppPane("factory");
+    const coordinatorPane = createLinkedSessionPane("coordinator");
+    const artifacts = ["plan.md", "implementation.md", "review.md"].map((path) =>
+      createEditorPane(sessionFile("coordinator", path)),
+    );
 
     expect(
-      derivePanes(["A"], {
-        [createSessionPaneId("A")]: [createLinkedSessionPane("B")],
-        [createSessionPaneId("B")]: [
-          createLinkedSessionPane("C"),
-          createLinkedCanvasPane("B", descendantCanvas),
-        ],
+      deriveVisibleWorkspacePanes({
+        rootPanes: [appPane],
+        panePublications: {
+          [appPane.id]: [coordinatorPane],
+          [coordinatorPane.id]: artifacts,
+        },
       }),
-    ).toEqual([
-      { kind: "session", id: "session:A", sessionId: "A", isLinkedOnly: false },
-      {
-        kind: "canvas",
-        id: createCanvasPaneId("B", descendantCanvas),
-        sourceSessionId: "B",
-        canvas: descendantCanvas,
-      },
-      { kind: "session", id: "session:B", sessionId: "B", isLinkedOnly: true },
-      { kind: "session", id: "session:C", sessionId: "C", isLinkedOnly: true },
-    ]);
+    ).toEqual([appPane, coordinatorPane, artifacts[0], artifacts[1]]);
   });
 
   test("derives open session ids from the rendered panes", () => {

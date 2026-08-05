@@ -243,7 +243,9 @@ describe("workspace query selectors", () => {
   test("projects workers for only one artifact", () => {
     const queryClient = createQueryClient();
     const worker = {
+      type: "file" as const,
       sessionId: "artifact-worker-a",
+      ephemeral: true,
       file: sessionFile("session-a", "plan.md"),
       name: "Respond to comment",
       metadata: { threadId: "thread-a" },
@@ -253,7 +255,9 @@ describe("workspace query selectors", () => {
       workers: [
         worker,
         {
+          type: "file",
           sessionId: "artifact-worker-b",
+          ephemeral: true,
           file: sessionFile("session-a", "other.md"),
           metadata: { threadId: "thread-b" },
         },
@@ -262,7 +266,7 @@ describe("workspace query selectors", () => {
     const workers = observe(queryClient, (workspace) =>
       workspace.workers.filter(
         (candidate) =>
-          candidate.file !== undefined &&
+          candidate.type === "file" &&
           workspaceFileId(candidate.file) === workspaceFileId(sessionFile("session-a", "plan.md")),
       ),
     );

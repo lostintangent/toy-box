@@ -1,4 +1,3 @@
-import type { Database } from "db0";
 import { computeNextAutomationRunAt } from "@/lib/automation/cron";
 import { createAutomationId } from "@/lib/automation/id";
 import { parseSerializedModelConfiguration } from "@/lib/modelConfiguration";
@@ -7,16 +6,19 @@ import type { Automation, AutomationOptions } from "@/types";
 const DUE_AUTOMATION_RETRY_DELAY_MS = 60_000;
 
 export class AutomationDatabase {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: Bun.SQL) {}
 
   async list(): Promise<Automation[]> {
-    const { rows } = await this.db.sql`SELECT * FROM automations ORDER BY updated_at DESC`;
-    return readValidAutomations(rows as AutomationRow[], "list");
+    const rows = await this.db<AutomationRow[]>`
+      SELECT * FROM automations ORDER BY updated_at DESC
+    `;
+    return readValidAutomations(rows, "list");
   }
 
   async get(automationId: string): Promise<Automation | null> {
-    const { rows } = await this.db.sql`SELECT * FROM automations WHERE id = ${automationId}`;
-    const row = (rows as AutomationRow[])[0];
+    const [row] = await this.db<AutomationRow[]>`
+      SELECT * FROM automations WHERE id = ${automationId}
+    `;
     return row ? automationFromRow(row) : null;
   }
 
@@ -27,7 +29,7 @@ export class AutomationDatabase {
     const id = createAutomationId();
     const values = serializeOptions(input);
 
-    await this.db.sql`
+    await this.db`
       INSERT INTO automations (id, title, prompt, model_configuration, cron, cwd, created_at, updated_at, next_run_at)
       VALUES (${id}, ${values.title}, ${values.prompt}, ${values.model}, ${values.cron}, ${values.cwd}, ${nowIso}, ${nowIso}, ${nextRunAt})
     `;
@@ -47,25 +49,27 @@ export class AutomationDatabase {
     const nextRunAt = computeNextAutomationRunAt(input.cron, now).toISOString();
     const values = serializeOptions(input);
 
-    const result = await this.db.sql`
+    const [row] = await this.db<AutomationRow[]>`
       UPDATE automations
       SET title = ${values.title}, prompt = ${values.prompt}, cron = ${values.cron},
           model_configuration = ${values.model},
           cwd = ${values.cwd}, updated_at = ${nowIso}, next_run_at = ${nextRunAt}
       WHERE id = ${automationId}
+      RETURNING *
     `;
-    if ((result.changes ?? 0) === 0) return null;
-    return this.get(automationId);
+    return row ? automationFromRow(row) : null;
   }
 
   async delete(automationId: string): Promise<boolean> {
-    const result = await this.db.sql`DELETE FROM automations WHERE id = ${automationId}`;
-    return (result.changes ?? 0) > 0;
+    const rows = await this.db<{ id: string }[]>`
+      DELETE FROM automations WHERE id = ${automationId} RETURNING id
+    `;
+    return rows.length > 0;
   }
 
   async recordRunFinish(automationId: string, finishedAt: Date): Promise<void> {
     const finishedAtIso = finishedAt.toISOString();
-    await this.db.sql`
+    await this.db`
       UPDATE automations
       SET last_run_at = ${finishedAtIso}, updated_at = ${finishedAtIso}
       WHERE id = ${automationId}
@@ -76,34 +80,24 @@ export class AutomationDatabase {
     const now = new Date();
     const nowIso = now.toISOString();
     const fallbackNextRunAt = new Date(now.getTime() + DUE_AUTOMATION_RETRY_DELAY_MS).toISOString();
-    await this.db.exec("BEGIN IMMEDIATE");
-    try {
-      const { rows } = await this.db.sql`
+    return this.db.begin("IMMEDIATE", async (db) => {
+      const rows = await db<AutomationRow[]>`
         SELECT * FROM automations WHERE next_run_at <= ${nowIso} ORDER BY next_run_at ASC
       `;
-      const dueRows = rows as AutomationRow[];
 
-      for (const row of dueRows) {
+      for (const row of rows) {
         let nextRunAt = fallbackNextRunAt;
         try {
           nextRunAt = computeNextAutomationRunAt(row.cron, now).toISOString();
         } catch (error) {
           console.error(`Failed to reschedule automation ${row.id}:`, error);
         }
-        await this.db.sql`UPDATE automations SET next_run_at = ${nextRunAt} WHERE id = ${row.id}`;
+        await db`UPDATE automations SET next_run_at = ${nextRunAt} WHERE id = ${row.id}`;
         row.next_run_at = nextRunAt;
       }
 
-      await this.db.exec("COMMIT");
-      return readValidAutomations(dueRows, "claim");
-    } catch (error) {
-      try {
-        await this.db.exec("ROLLBACK");
-      } catch {
-        // Ignore rollback failures if the transaction has already ended.
-      }
-      throw error;
-    }
+      return readValidAutomations(rows, "claim");
+    });
   }
 }
 

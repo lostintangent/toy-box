@@ -8,6 +8,7 @@ describe("layout prefs", () => {
       "toybox_terminal_size=42",
       "toybox_sidebar_open=false",
       "toybox_terminal_open=true",
+      "toybox_apps_expanded=false",
       "toybox_automations_expanded=false",
       "toybox_hyper_open=true",
       "toybox_hyper_pos=120,80",
@@ -19,6 +20,7 @@ describe("layout prefs", () => {
       terminalSize: 42,
       sidebarOpen: false,
       terminalOpen: true,
+      appsExpanded: false,
       automationsExpanded: false,
       hyperOpen: true,
       hyperPosition: { x: 120, y: 80 },
@@ -28,6 +30,7 @@ describe("layout prefs", () => {
 
   test("defaults layout preferences when cookies are missing", () => {
     const resolved = resolveLayoutPrefs({});
+    expect(resolved.appsExpanded).toBe(true);
     expect(resolved.automationsExpanded).toBe(true);
     expect(resolved.hyperOpen).toBe(false);
     expect(resolved.hyperPosition).toEqual({ x: 24, y: 24 });

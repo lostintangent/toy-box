@@ -12,14 +12,14 @@ import type {
   SessionEvent as SdkSessionEvent,
   ToolExecutionCompleteData,
 } from "@github/copilot-sdk";
+import type { JSONType } from "zod";
 import {
-  type JsonValue,
   type SessionArtifactPatch,
   type SessionEvent,
   type ToolCall,
   type WorkspaceFile,
 } from "@/types";
-import { parsePatchTouchedFiles, type PatchTouchedFile } from "@/lib/diffs/fileDiffs";
+import { parsePatchTouchedFiles, type PatchTouchedFile } from "@/lib/files/diffs/fileDiffs";
 import { projectSessionArtifactPath } from "@/lib/server/filePaths";
 import { workspaceFileSchema } from "@/lib/files/workspaceFile";
 import { decodeSdkAgentNotification } from "@/functions/sdk/agentNotificationCodec";
@@ -235,7 +235,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
     case "session.canvas.opened": {
       if (!event.data.url) return [];
 
-      const input = event.data.input as JsonValue | undefined;
+      const input = event.data.input as JSONType | undefined;
       const title = event.data.title ?? readCanvasInputTitle(input) ?? event.data.canvasId;
 
       return [
@@ -561,7 +561,7 @@ function readPathArg(value: Record<string, unknown> | undefined): string | undef
   return readStringArg(value, "path") ?? readStringArg(value, "filePath");
 }
 
-function readCanvasInputTitle(input: JsonValue | undefined): string | undefined {
+function readCanvasInputTitle(input: JSONType | undefined): string | undefined {
   return input &&
     typeof input === "object" &&
     !Array.isArray(input) &&

@@ -1,11 +1,10 @@
 import { expect, mock, onTestFinished, test } from "bun:test";
-import type { Database } from "db0";
 import { createTestDatabase } from "../database";
 
-let currentDb: Database | undefined;
+let currentDb: Bun.SQL | undefined;
 
 mock.module("../database", () => ({
-  getAppDatabase: async (options?: { createIfMissing?: boolean }) => {
+  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
     if (!currentDb && options?.createIfMissing === false) return null;
     if (!currentDb) throw new Error("Test database has not been opened");
     return currentDb;
@@ -23,7 +22,7 @@ const {
 async function openInboxTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
   onTestFinished(async () => {
-    await currentDb?.dispose();
+    await currentDb?.close();
     currentDb = undefined;
   });
 }

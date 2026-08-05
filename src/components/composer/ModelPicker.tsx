@@ -7,19 +7,26 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { type ModelInfo, type ModelConfiguration } from "@/types";
+import type { ModelConfiguration } from "@/types";
 import {
   formatReasoningEffort,
   getModelReasoningConfig,
   resolveModelConfigurationForModel,
 } from "@/lib/modelConfiguration";
 
+type ModelPickerInfo = {
+  id: string;
+  name: string;
+  supportedReasoningEfforts?: readonly string[];
+  defaultReasoningEffort?: string;
+};
+
 function ModelPicker({
   models,
   selectedModel,
   onModelChange,
 }: {
-  models: ModelInfo[];
+  models: readonly ModelPickerInfo[];
   selectedModel?: string;
   onModelChange: (modelId: string) => void;
 }) {
@@ -54,7 +61,7 @@ function ReasoningEffortPicker({
   selectedReasoningEffort,
   onReasoningEffortChange,
 }: {
-  model?: ModelInfo;
+  model?: ModelPickerInfo;
   selectedReasoningEffort?: string;
   onReasoningEffortChange: (reasoningEffort: string | undefined) => void;
 }) {
@@ -91,7 +98,7 @@ export function ModelConfigurationPicker({
   value,
   onValueChange,
 }: {
-  models: ModelInfo[];
+  models: readonly ModelPickerInfo[];
   value: ModelConfiguration;
   onValueChange: (value: ModelConfiguration) => void;
 }) {

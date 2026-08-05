@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   createDraftSessionInputSchema,
   deliverMessageInputSchema,
-  createSessionInputSchema,
-  dispatchInboxTaskInputSchema,
+  sessionLaunchSchema,
   listSkillsInputSchema,
   streamSessionRequestSchema,
+  waitForSessionInputSchema,
 } from "./protocol";
 
 const attachment = {
@@ -72,7 +72,7 @@ describe("session protocol", () => {
     const message = { id: "message", content: "hello", attachments: [attachment] };
 
     expect(
-      createSessionInputSchema.parse({
+      sessionLaunchSchema.parse({
         message,
         directory: "/repo",
         useWorktree: true,
@@ -83,7 +83,7 @@ describe("session protocol", () => {
       useWorktree: true,
     });
     expect(
-      dispatchInboxTaskInputSchema.parse({ message, directory: "/repo", useWorktree: true }),
+      sessionLaunchSchema.parse({ message, directory: "/repo", useWorktree: true }),
     ).toMatchObject({ message, directory: "/repo", useWorktree: true });
     expect(deliverMessageInputSchema.parse({ sessionId: "session", message })).toMatchObject({
       sessionId: "session",
@@ -91,9 +91,27 @@ describe("session protocol", () => {
     });
   });
 
+  test("accepts a bounded optional session wait timeout", () => {
+    expect(waitForSessionInputSchema.parse({ sessionId: "session" })).toEqual({
+      sessionId: "session",
+    });
+    expect(waitForSessionInputSchema.parse({ sessionId: "session", timeoutMs: 300_000 })).toEqual({
+      sessionId: "session",
+      timeoutMs: 300_000,
+    });
+    expect(
+      waitForSessionInputSchema.safeParse({ sessionId: "session", timeoutMs: 300_001 }).success,
+    ).toBe(false);
+  });
+
   test("accepts a working directory or host-level skill discovery", () => {
     expect(listSkillsInputSchema.parse({ cwd: "/repo" })).toEqual({ cwd: "/repo" });
+    expect(listSkillsInputSchema.parse({ cwd: "/repo", sessionType: "hyper" })).toEqual({
+      cwd: "/repo",
+      sessionType: "hyper",
+    });
     expect(listSkillsInputSchema.parse({})).toEqual({});
     expect(listSkillsInputSchema.safeParse({ cwd: "" }).success).toBe(false);
+    expect(listSkillsInputSchema.safeParse({ sessionType: "custom" }).success).toBe(false);
   });
 });

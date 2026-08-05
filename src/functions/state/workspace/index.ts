@@ -1,7 +1,6 @@
 // Authoritative server boundary for workspace-wide facts outside transcripts.
 
 import type {
-  Automation,
   Worker,
   CustomEditorKind,
   DraftSession,
@@ -13,7 +12,6 @@ import { DRAFT_PROMPT_SERVER_ORIGIN } from "@/lib/session/constants";
 import { normalizeSettings } from "@/lib/workspace/config/settings";
 import {
   reduceWorkspaceSessionState,
-  type WorkspaceEnvironment,
   type WorkspaceSessionEvent,
   type WorkspaceState,
 } from "@/lib/workspace/state/reducer";
@@ -33,6 +31,7 @@ import { writeCustomEditor } from "./editors";
 import { getSettings, persistSettings } from "./settings";
 import {
   finishWorker as finishWorkerState,
+  finishWorkersForApp,
   finishWorkersForSession,
   getWorker,
   getWorkers,
@@ -43,11 +42,12 @@ import {
 export { loadCustomEditors, normalizeExtensions } from "./editors";
 export { getEnvironment } from "./environment";
 
-export async function getWorkspaceState(options: {
-  automations: Automation[];
-  customEditors: CustomEditorKind[];
-  environment: WorkspaceEnvironment;
-}): Promise<WorkspaceState> {
+export async function getWorkspaceState(
+  options: Pick<
+    WorkspaceState,
+    "automations" | "customEditors" | "appDefinitions" | "apps" | "appShares" | "environment"
+  >,
+): Promise<WorkspaceState> {
   const [drafts, inboxEntries, settings] = await Promise.all([
     getDraftSessions(),
     getInboxEntries(),
@@ -65,11 +65,9 @@ export async function getWorkspaceState(options: {
     settings,
     sessionStates,
     hyperSessionIds: getHyperSessionIds(),
-    automations: options.automations,
     inboxEntries,
     workers: getWorkers(),
-    customEditors: options.customEditors,
-    environment: options.environment,
+    ...options,
   };
 }
 
@@ -178,6 +176,12 @@ export function startWorker(worker: Worker): void {
 export function finishWorker(sessionId: string): void {
   if (!finishWorkerState(sessionId)) return;
   broadcast({ type: "worker.finished", sessionId });
+}
+
+export function finishAppWorkers(appId: string): string[] {
+  const sessionIds = finishWorkersForApp(appId);
+  for (const sessionId of sessionIds) broadcast({ type: "worker.finished", sessionId });
+  return sessionIds;
 }
 
 export { getWorker, hasWorker };

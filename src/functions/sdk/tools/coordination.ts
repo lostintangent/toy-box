@@ -22,8 +22,8 @@ const checkSessionStatus = defineTool("check_session_status", {
 
 const waitForSessions = defineTool("wait_for_sessions", {
   description:
-    "Waits for one or more sessions' current runtime streams to complete before returning. " +
-    "Returns each stream's completion status and latest assistant response when available.",
+    "Waits for one or more sessions' current executions to complete before returning. " +
+    "Returns each completion status and latest assistant response when available; timing out does not abort the session.",
   parameters: z.object({
     sessionIds: z.array(z.string()).min(1).describe("One or more session IDs to wait for"),
     timeoutMs: z
@@ -36,11 +36,11 @@ const waitForSessions = defineTool("wait_for_sessions", {
   }),
   skipPermission: true,
   handler: async ({ sessionIds, timeoutMs }) => {
-    const { SessionStream } = await import("@/functions/runtime/stream");
+    const { waitForSession } = await import("@/functions/runtime/stream");
     return JSON.stringify({
       responses: await Promise.all(
         sessionIds.map(async (sessionId) => {
-          const completion = await SessionStream.waitForCompletion(sessionId, timeoutMs);
+          const completion = await waitForSession(sessionId, timeoutMs);
           return { sessionId, ...completion };
         }),
       ),

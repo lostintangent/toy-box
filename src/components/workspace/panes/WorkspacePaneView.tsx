@@ -1,15 +1,18 @@
 import type { ReactNode } from "react";
 import type { WorkspacePane } from "@/lib/workspace/panes";
-import { InboxPane } from "./inbox/InboxPane";
-import { CanvasPane } from "./CanvasPane";
+import { PaneSlotsProvider, type PaneSlots } from "./shell/PaneSlots";
+import { AppPane } from "./app/AppPane";
+import { CanvasPane } from "./canvas/CanvasPane";
 import { EditorPane } from "./editor/EditorPane";
+import { InboxPane } from "./inbox/InboxPane";
 import { SessionPane } from "./session/SessionPane";
-import type { PaneProps } from "./types";
-import { PaneSlotsProvider, type PaneSlots } from "./PaneSlots";
 
-type WorkspacePaneViewProps = PaneProps & {
+export type PaneVariant = "normal" | "compact";
+
+export type WorkspacePaneViewProps = {
   pane: WorkspacePane;
   slots: PaneSlots;
+  variant?: PaneVariant;
   children?: ReactNode;
   onFocusPane?: (paneId: string) => void;
 };
@@ -26,6 +29,8 @@ export function WorkspacePaneView({
 
   if (pane.kind === "inbox") {
     content = <InboxPane onFocusPane={onFocusPane} />;
+  } else if (pane.kind === "app") {
+    content = <AppPane pane={pane} variant={variant} />;
   } else if (pane.kind === "session") {
     content = <SessionPane sessionId={pane.sessionId} variant={variant} />;
   } else if (pane.kind === "canvas") {

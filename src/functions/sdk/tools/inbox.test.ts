@@ -1,13 +1,12 @@
 import { expect, mock, onTestFinished, test } from "bun:test";
 import type { CopilotSession, ToolInvocation } from "@github/copilot-sdk";
-import type { Database } from "db0";
 import { createTestDatabase } from "@/functions/state/database";
 import { SessionStream } from "@/functions/runtime/stream";
 
-let currentDb: Database | undefined;
+let currentDb: Bun.SQL | undefined;
 
 mock.module("@/functions/state/database", () => ({
-  getAppDatabase: async (options?: { createIfMissing?: boolean }) => {
+  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
     if (!currentDb && options?.createIfMissing === false) return null;
     if (!currentDb) throw new Error("Test database has not been opened");
     return currentDb;
@@ -20,7 +19,7 @@ const { inboxTools } = await import("./inbox");
 async function openInboxToolTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
   onTestFinished(async () => {
-    await currentDb?.dispose();
+    await currentDb?.close();
     currentDb = undefined;
   });
 }

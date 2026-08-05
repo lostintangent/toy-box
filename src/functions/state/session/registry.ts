@@ -1,9 +1,9 @@
 // Server-side SDK session registry and lifecycle coordination.
 //
 // The SDK persists sessions to disk; this module keeps live CopilotSession
-// handles in memory, resumes them single-flight, and coordinates create/delete
-// side effects across runtime streams, unread state, snapshots, worktrees, and
-// SDK persistence.
+// handles in memory, creates and resumes them with role-scoped tools, and
+// coordinates lifecycle effects across runtime streams, workspace state,
+// snapshots, worktrees, and SDK persistence.
 
 import { homedir } from "node:os";
 import type { CopilotSession, SessionContext } from "@github/copilot-sdk";
@@ -25,6 +25,7 @@ import { addDraftSession, deleteSessionWorkspaceState, unpinSession } from "../w
 import { createSessionWorktree, deleteSessionWorktree } from "./worktrees";
 import { deleteDraftSession, getDraftSession, persistDraftSession } from "./drafts";
 import {
+  getWorkerAppId,
   getWorkerSessionIdsForParent,
   registerWorkerSession,
   unregisterWorkerSession,
@@ -32,7 +33,8 @@ import {
 import { sharedMap } from "../../runtime/processState";
 import { hasHyperSession } from "../workspace/hyperSessions";
 import { resolveSessionType } from "./type";
-import type { ModelConfiguration, SessionType, SessionWorktree } from "@/types";
+import { workerParentSessionId } from "@/lib/workers";
+import type { ModelConfiguration, SessionType, SessionWorktree, Worker } from "@/types";
 
 const cachedSessions = sharedMap<CopilotSession>("active-sessions");
 // In-flight resumes share one SDK handle per session ID.
@@ -45,10 +47,7 @@ export type CreateSessionOptions = {
   sessionType?: SessionType;
   useWorktree?: boolean;
   initialContext?: SessionContext;
-  worker?: {
-    parentSessionId: string;
-    retained?: boolean;
-  };
+  worker?: Worker;
 };
 
 // ── Creation ──────────────────────────────────────────────────────────
@@ -75,18 +74,27 @@ export async function createSession(
   sessionId: string,
   options?: CreateSessionOptions,
 ): Promise<{ session: CopilotSession; artifactPath?: string }> {
-  const { model, name, directory, useWorktree, initialContext, worker } = options ?? {};
-  const parentSessionId = worker?.parentSessionId;
+  const requested = options ?? {};
   const sessionType =
-    options?.sessionType ?? (worker ? "worker" : hasHyperSession(sessionId) ? "hyper" : "standard");
+    options?.sessionType ??
+    (requested.worker ? "worker" : hasHyperSession(sessionId) ? "hyper" : "standard");
+  const worker = requested.worker;
+  const model = requested.model;
+  const name = requested.name;
+  const directory = requested.directory;
+  const useWorktree = requested.useWorktree;
+  const parentSessionId = worker ? workerParentSessionId(worker) : undefined;
   if ((sessionType === "worker") !== Boolean(worker)) {
     throw new Error("Worker session creation requires exactly one worker owner.");
   }
-  const draft = worker ? null : await getDraftSession(sessionId);
+  if (worker && worker.sessionId !== sessionId) {
+    throw new Error("Worker session creation requires matching session IDs.");
+  }
+  const draft = await getDraftSession(sessionId);
   const { executionDirectory, displayContext, worktree } = await prepareSessionCreation(sessionId, {
     directory,
     useWorktree,
-    initialContext,
+    initialContext: requested.initialContext,
   });
 
   // The SDK requires a working directory. When none was explicitly provided
@@ -95,7 +103,7 @@ export async function createSession(
   let session: CopilotSession | undefined;
   try {
     if (worker) {
-      await registerWorkerSession(sessionId, worker.parentSessionId, worker.retained);
+      await registerWorkerSession(worker);
     }
     // Drafts temporarily use this same-ID create path. TODO: Resume the draft
     // directly when the Copilot SDK can resume a zero-turn session; today it
@@ -104,7 +112,7 @@ export async function createSession(
       model,
       directory: executionDirectory ?? homedir(),
       sessionType,
-      tools: getSessionTools(sessionType),
+      tools: getSessionTools(sessionType, worker?.type === "app" ? worker.appId : undefined),
       artifactPath: draft?.artifactPath,
     });
     if (draft?.artifactPath) {
@@ -121,7 +129,9 @@ export async function createSession(
       if (draft) await session.disconnect().catch(console.error);
       else await sdkDeleteSession(sessionId).catch(console.error);
     }
-    if (worker) await unregisterWorkerSession(sessionId).catch(console.error);
+    if (worker) {
+      await unregisterWorkerSession(sessionId).catch(console.error);
+    }
     if (worktree) await deleteSessionWorktree(sessionId).catch(console.error);
     throw error;
   }
@@ -141,6 +151,7 @@ export async function createSession(
     context: displayContext,
     worktree,
     parentSessionId,
+    sessionType,
   });
 
   // Backfill full context (gitRoot, repository, branch) from the SDK's
@@ -180,11 +191,12 @@ export function getSession(sessionId: string): Promise<CopilotSession> {
       getSessionDirectory(sessionId),
       resolveSessionType(sessionId),
     ]);
+    const appId = sessionType === "worker" ? await getWorkerAppId(sessionId) : undefined;
     const directory = workspaceDirectory ?? homedir();
     const session = await sdkResumeSession(sessionId, {
       directory,
       sessionType,
-      tools: getSessionTools(sessionType),
+      tools: getSessionTools(sessionType, appId),
     });
     cachedSessions.set(sessionId, session);
     return session;

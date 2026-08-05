@@ -35,8 +35,7 @@ export const Route = createFileRoute("/api/serve/$scope/$")({
         if (error) return error;
 
         try {
-          const { readFile } = await import("node:fs/promises");
-          return new Response(await readFile(absolutePath), {
+          return new Response(Bun.file(absolutePath), {
             headers: {
               "Cache-Control": "no-store",
               "Content-Security-Policy":
