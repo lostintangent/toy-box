@@ -159,7 +159,7 @@ export async function createSession(
   // sessions — their events.jsonl contains the homedir fallback, not a
   // meaningful location the user chose.
   if (executionDirectory) {
-    readSessionContext(sessionId).then((context) => {
+    void readSessionContext(sessionId).then((context) => {
       if (context) {
         emitSessionUpsert({ sessionId, context });
       }

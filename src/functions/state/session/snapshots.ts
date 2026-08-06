@@ -20,7 +20,7 @@ import type { SessionSnapshot } from "@/types";
 const SNAPSHOT_CACHE_MAX_ENTRIES = 10;
 const SNAPSHOT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 // Log writes inside this window are treated as the SDK flushing the turn we
-// just observed, not new content.
+// already reflected in the snapshot, not new content.
 const EVENTS_LOG_WRITE_GRACE_MS = 2_000;
 
 export type CachedSnapshotEntry = {

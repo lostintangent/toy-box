@@ -44,7 +44,7 @@ Its heart is the sparse `sessionStates` map, whose rows carry one session's life
 
 - `draft`: a durably claimed session identity and SDK workspace that has not sent its first message
 - `running`: server work is active
-- `unread`: work finished without an active observer
+- `unread`: work finished without an active subscription
 - `idle`: no activity, but a draft prompt remains
 
 Keeping these mutually exclusive in one state machine — instead of separate draft, running, and unread collections — is what lets one reducer serve the live server store and the browser identically. Server transitions publish only accepted changes. A client issues the subset it is allowed to: validated `WorkspaceAction`s, plus settings patches the server merges into the singleton document and re-publishes whole. It reduces its own action optimistically and repairs from a fresh snapshot if the RPC is rejected.
@@ -53,7 +53,7 @@ Two client caches consume the one stream. `useWorkspaceSync` is the single event
 
 ## Managed sessions and Inbox
 
-A managed session is an ordinary runtime session whose lifecycle is supervised by a product workflow rather than direct session-list interaction. Exactly one managing record or relationship—an automation definition, Inbox entry, Hyper membership, or worker record—identifies that policy without becoming another field on the session. The supervisor observes the same runtime completion as any other caller, but owns the session's creation or reset behavior, retention, dedicated presentation, ownership transfer, and teardown. Its UI is an expression of that lifecycle: managed sessions stay out of the standard list and are opened, promoted, inspected, or deleted through their owning workflow.
+A managed session is an ordinary runtime session whose lifecycle is supervised by a product workflow rather than direct session-list interaction. Exactly one managing record or relationship—an automation definition, Inbox entry, Hyper membership, or worker record—identifies that policy without becoming another field on the session. The supervisor waits for the same runtime completion as any other caller, but owns the session's creation or reset behavior, retention, dedicated presentation, ownership transfer, and teardown. Its UI is an expression of that lifecycle: managed sessions stay out of the standard list and are opened, promoted, inspected, or deleted through their owning workflow.
 
 An Inbox entry's ID is also its managed session ID. Inbox dispatch writes a pending row before delivery so every client can see the running task immediately. `send_to_inbox` completes that same row once with a concise message and optionally one artifact file, written to its managed session's files directory through the SDK. If the initial task finishes cleanly without completing the pending entry, it produced no Inbox result and the entry and session are removed together. Failed work retains its entry and session for inspection. Deleting a completed entry deletes its managed session, and with it that artifact file, as one lifecycle.
 

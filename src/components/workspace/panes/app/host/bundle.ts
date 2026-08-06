@@ -25,6 +25,7 @@ export function evaluateAppBundle(
   try {
     // App definitions are trusted owner-installed extensions. The server has
     // bundled their allow-listed imports into this registration boundary.
+    // oxlint-disable-next-line typescript/no-implied-eval -- This is the intentional trusted-extension evaluation boundary.
     Function(bundle.code)();
   } finally {
     delete globals[APP_REGISTER_GLOBAL];

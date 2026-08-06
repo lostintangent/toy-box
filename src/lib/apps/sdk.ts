@@ -207,7 +207,7 @@ export type AppActions = {
     },
   ): Promise<{ sessionId: string }>;
   waitForSession(sessionId: string, timeoutMs?: number): Promise<SessionCompletion>;
-  cancelWorker(sessionId: string): Promise<boolean>;
+  cancelWorker(this: void, sessionId: string): Promise<boolean>;
   deleteSession(sessionId: string): Promise<void>;
   deliverMessage(sessionId: string, message: SessionMessage): Promise<void>;
   abortSession(sessionId: string): Promise<void>;

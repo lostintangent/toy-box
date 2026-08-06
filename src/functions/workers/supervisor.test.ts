@@ -333,7 +333,7 @@ describe("spawnWorker", () => {
     ]);
   });
 
-  test("reports cleanup failures to completion observers", async () => {
+  test("reports cleanup failures to completion waiters", async () => {
     const cleanupError = new Error("Unable to delete worker.");
     deleteSessionIfExistsMock.mockImplementationOnce(async () => {
       throw cleanupError;

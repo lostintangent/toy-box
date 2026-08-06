@@ -132,7 +132,7 @@ export function WorkspaceGrid({ panes, onCloseSession, resolvePaneClose }: Works
   const savedLayoutRef = useRef<WorkspaceGridLayout | null>(null);
   const prevCountRef = useRef(count);
 
-  const transitionClass = !isDragging ? "panel-transition" : "";
+  const transitionClass = !isDragging ? "transition-[flex-grow] duration-300 ease-layout" : "";
   const isResizeLocked = focusedPaneId !== null;
 
   function handleMinimize() {

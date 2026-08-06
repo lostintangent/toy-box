@@ -2,7 +2,7 @@ import { Clock3, Pencil, Play, Trash2 } from "lucide-react";
 import { MetadataBadge } from "@/components/ui/metadata-badge";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { SidebarSessionItem } from "@/components/sidebar/shell/SidebarListItem";
+import { SidebarSessionItem } from "@/components/sidebar/shell/panels/SidebarListItem";
 import type { Automation } from "@/types";
 import { useWorkspaceSessionActivity } from "@/hooks/workspace/state";
 

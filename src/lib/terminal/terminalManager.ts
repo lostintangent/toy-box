@@ -179,21 +179,17 @@ class TerminalManager {
     this.#shell = shell.trim() || undefined;
   }
 
-  setResizePaused(paused: boolean) {
-    this.#resize.setResizePaused(paused);
-  }
-
   // Container lifecycle
 
   #attachContainer(container: HTMLDivElement) {
     this.#container = container;
     this.#ensureTerminal(container);
     this.#resize.install(container, this.#xterm!, this.#fitAddon!);
-    this.#resize.scheduleFit();
+    this.#resize.fit();
 
     if (document?.fonts?.ready) {
-      document.fonts.ready.then(() => {
-        this.#resize.scheduleFit();
+      void document.fonts.ready.then(() => {
+        this.#resize.fit();
       });
     }
 

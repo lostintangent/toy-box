@@ -119,7 +119,7 @@ export const BUILT_IN_APP_DEFINITIONS: Array<Omit<AppDefinition, "revision"> & {
   {
     id: "toybox-squad",
     title: "Squad Board",
-    description: "Launch and observe session-native agent squads from one live control surface.",
+    description: "Launch and coordinate session-native agent squads from one live control surface.",
     icon: "Bot",
     color: "#6366f1",
     accepts: ["x-session-launch"],

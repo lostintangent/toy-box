@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { terminalManager } from "@/lib/terminal/terminalManager";
 import { useWorkspaceSelector } from "@/hooks/workspace/state";
 
@@ -6,10 +6,9 @@ import "@xterm/xterm/css/xterm.css";
 
 export interface TerminalProps {
   onClose?: () => void;
-  isResizing?: boolean;
 }
 
-export function Terminal({ onClose, isResizing = false }: TerminalProps) {
+export function Terminal({ onClose }: TerminalProps) {
   const [isPtyReady, setIsPtyReady] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalShell = useWorkspaceSelector((workspace) => workspace.settings.terminalShell);
@@ -28,14 +27,6 @@ export function Terminal({ onClose, isResizing = false }: TerminalProps) {
       onClose: () => handleClose(),
     });
   }, []);
-
-  // Debounce PTY resizing while the user is actively resizing the panel
-  useEffect(() => {
-    terminalManager.setResizePaused(isResizing);
-    return () => {
-      terminalManager.setResizePaused(false);
-    };
-  }, [isResizing]);
 
   return (
     <div className="relative h-full min-h-0 p-2 pb-0">

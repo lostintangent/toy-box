@@ -7,7 +7,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
 import { z } from "zod";
 import type { ImperativePanelHandle } from "react-resizable-panels";
-import { PanelLeft } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { deleteSession, renameSession } from "@/functions/sessions";
 import { useDrafts } from "@/hooks/workspace/useDrafts";
@@ -19,7 +18,7 @@ import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@/hooks/workspa
 import { useViewport } from "@/hooks/browser/useViewport";
 import { usePanelTransition } from "@/hooks/browser/usePanelTransition";
 import { Sidebar, type SidebarProps } from "@/components/sidebar/Sidebar";
-import { NameDialog } from "@/components/sidebar/shell/NameDialog";
+import { NameDialog } from "@/components/sidebar/shell/dialogs/NameDialog";
 import { WorkspaceGrid } from "@/components/workspace/layout/WorkspaceGrid";
 import { HyperSession } from "@/components/workspace/layout/HyperSession";
 import { WorkspacePager } from "@/components/workspace/layout/WorkspacePager";
@@ -136,9 +135,9 @@ function WorkspacePage() {
     structuralSharing: true,
   });
   const {
-    sidebarSize: initialSidebarSize,
+    sidebarWidth: initialSidebarWidth,
     terminalSize: initialTerminalSize,
-    sidebarOpen: initialSidebarOpen,
+    sidebarCollapsed: initialSidebarCollapsed,
     terminalOpen: initialTerminalOpen,
     appsExpanded: initialAppsExpanded,
     automationsExpanded: initialAutomationsExpanded,
@@ -153,7 +152,7 @@ function WorkspacePage() {
     nextSelectedSessionIds: string[],
     options?: { replaceWorkspace?: boolean },
   ) {
-    navigate({
+    void navigate({
       to: "/",
       search: (prev) => ({
         ...prev,
@@ -174,7 +173,7 @@ function WorkspacePage() {
     // session — it's ignored when the four-pane surface is full (which keeps the
     // URL within its cap); re-opening an already-open file just re-focuses it.
     if (!openFilePaths.includes(path) && openPanes.length >= MAX_WORKSPACE_PANES) return;
-    navigate({
+    void navigate({
       to: "/",
       search: (prev) => {
         const files = prev.files ?? [];
@@ -191,7 +190,7 @@ function WorkspacePage() {
   }
 
   function closeFile(path: string) {
-    navigate({
+    void navigate({
       to: "/",
       search: (prev) => {
         const files = (prev.files ?? []).filter((open) => open !== path);
@@ -202,7 +201,7 @@ function WorkspacePage() {
   }
 
   function closeApp(appId: string) {
-    navigate({
+    void navigate({
       to: "/",
       search: (prev) => {
         const apps = (prev.apps ?? []).filter((open) => open !== appId);
@@ -240,9 +239,9 @@ function WorkspacePage() {
   );
   const updateSetting = useUpdateWorkspaceSetting();
 
-  const [sidebarSize, setSidebarSize] = useState(initialSidebarSize);
+  const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
   const [terminalSize, setTerminalSize] = useState(initialTerminalSize);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(initialSidebarOpen);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(initialSidebarCollapsed);
 
   // Terminal state - synced with cookie (SSR-safe)
   const [isTerminalOpen, setIsTerminalOpen] = useState(initialTerminalOpen);
@@ -296,7 +295,7 @@ function WorkspacePage() {
   function handleAppOpen(appId: string, toggleInWorkspace = false) {
     if (!toggleInWorkspace || isMobileLayout) {
       if (isMobileLayout) setIsMobileInboxOpen(false);
-      navigate({
+      void navigate({
         to: "/",
         search: (prev) => ({
           ...prev,
@@ -313,7 +312,7 @@ function WorkspacePage() {
       return;
     }
     if (openPanes.length >= MAX_WORKSPACE_PANES) return;
-    navigate({
+    void navigate({
       to: "/",
       search: (prev) => ({
         ...prev,
@@ -353,7 +352,7 @@ function WorkspacePage() {
 
     if (validSessionIds.length === selectedSessionIds.length) return;
 
-    navigate({
+    void navigate({
       to: "/",
       search: (prev) => ({
         ...prev,
@@ -379,7 +378,7 @@ function WorkspacePage() {
     const validAppIds = selectedAppIds.filter((appId) => availableAppIds.has(appId));
     if (validAppIds.length === selectedAppIds.length) return;
 
-    navigate({
+    void navigate({
       to: "/",
       search: (prev) => ({
         ...prev,
@@ -391,12 +390,8 @@ function WorkspacePage() {
 
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
-  const [isSidebarDragging, setIsSidebarDragging] = useState(false);
   const [isTerminalDragging, setIsTerminalDragging] = useState(false);
-  const sidebarPanelRef = useRef<ImperativePanelHandle>(null);
-  const sidebarSizeRef = useRef(sidebarSize);
   const terminalSizeRef = useRef(terminalSize);
-  const isSidebarDraggingRef = useRef(false);
   const isTerminalDraggingRef = useRef(false);
 
   // Keep terminal mounted during close animation for smooth transition.
@@ -416,29 +411,16 @@ function WorkspacePage() {
   }, [isTerminalOpen, terminalSize]);
 
   useEffect(() => {
-    sidebarSizeRef.current = sidebarSize;
-  }, [sidebarSize]);
-
-  useEffect(() => {
     terminalSizeRef.current = terminalSize;
   }, [terminalSize]);
 
-  useLayoutCookie("sidebarOpen", isSidebarOpen);
-  useLayoutCookie("sidebarSize", sidebarSize);
+  useLayoutCookie("sidebarCollapsed", isSidebarCollapsed);
+  useLayoutCookie("sidebarWidth", sidebarWidth);
   useLayoutCookie("terminalOpen", isTerminalOpen);
   useLayoutCookie("terminalSize", terminalSize);
   useLayoutCookie("appsExpanded", isAppsExpanded);
   useLayoutCookie("automationsExpanded", isAutomationsExpanded);
   useLayoutCookie("mobileInboxOpen", hydrated && isMobileLayout ? isMobileInboxOpen : undefined);
-
-  function handleSidebarResize(size: number) {
-    if (size > 0) {
-      sidebarSizeRef.current = size;
-      if (!isSidebarDraggingRef.current) {
-        setSidebarSize(size);
-      }
-    }
-  }
 
   function handleTerminalResize(size: number) {
     if (size > 0) {
@@ -446,14 +428,6 @@ function WorkspacePage() {
       if (!isTerminalDraggingRef.current) {
         setTerminalSize(size);
       }
-    }
-  }
-
-  function handleSidebarDragging(dragging: boolean) {
-    isSidebarDraggingRef.current = dragging;
-    setIsSidebarDragging(dragging);
-    if (!dragging) {
-      setSidebarSize(sidebarSizeRef.current);
     }
   }
 
@@ -465,28 +439,7 @@ function WorkspacePage() {
     }
   }
 
-  // Pause PTY resize during sidebar open/close animation
-  const isSidebarAnimating = usePanelTransition("sidebar");
-
-  const isCollapsed = !isSidebarOpen;
-  const showExpandButton = isCollapsed && !isSidebarAnimating;
-
-  const toggleSidebar = () => {
-    const panel = sidebarPanelRef.current;
-    if (panel) {
-      if (panel.isCollapsed()) {
-        if (Number.isFinite(sidebarSize)) {
-          panel.resize(sidebarSize);
-        } else {
-          panel.expand();
-        }
-        setIsSidebarOpen(true);
-      } else {
-        panel.collapse();
-        setIsSidebarOpen(false);
-      }
-    }
-  };
+  const toggleSidebar = () => setIsSidebarCollapsed((collapsed) => !collapsed);
 
   function toggleTerminal() {
     setIsTerminalOpen((prev) => !prev);
@@ -665,7 +618,7 @@ function WorkspacePage() {
 
   function openAppInMainSurface(appId: string) {
     if (!selectedAppIds.includes(appId)) {
-      navigate({
+      void navigate({
         to: "/",
         search: (prev) =>
           openPanes.length >= MAX_WORKSPACE_PANES
@@ -732,14 +685,10 @@ function WorkspacePage() {
     </div>
   );
 
-  // Suppress PTY resize during any panel drag or animated open/close
-  const isPanelTransitioning =
-    isSidebarDragging || isTerminalDragging || isSidebarAnimating || isTerminalAnimating;
-
   const terminalBody = (
     <ClientOnly fallback={terminalBodySkeleton}>
       <Suspense fallback={terminalBodySkeleton}>
-        <Terminal onClose={handleTerminalClose} isResizing={isPanelTransitioning} />
+        <Terminal onClose={handleTerminalClose} />
       </Suspense>
     </ClientOnly>
   );
@@ -821,55 +770,25 @@ function WorkspacePage() {
     </div>
   );
 
-  // Desktop layout - resizable panels
+  // Desktop layout - fixed-width sidebar beside resizable panes
   const desktopLayout = (
     <div className="h-full hidden md:block">
-      <ResizablePanelGroup direction="horizontal" className="h-full">
-        {/* Left Sidebar - Sessions List */}
-        <ResizablePanel
-          ref={sidebarPanelRef}
-          id="sidebar"
-          order={1}
-          defaultSize={isSidebarOpen ? sidebarSize : 0}
-          minSize={8}
-          maxSize={40}
-          collapsible
-          collapsedSize={0}
-          onResize={handleSidebarResize}
-          onCollapse={() => setIsSidebarOpen(false)}
-          onExpand={() => setIsSidebarOpen(true)}
-          className={!isSidebarDragging ? "panel-transition" : ""}
-        >
-          <div className={`h-full border-r ${isCollapsed ? "hidden" : ""}`}>
-            <Sidebar {...sidebarProps} onCollapse={toggleSidebar} />
-          </div>
-        </ResizablePanel>
-
-        <ResizableHandle
-          onDragging={handleSidebarDragging}
-          className={isCollapsed ? "hidden" : ""}
+      <div className="flex h-full">
+        <Sidebar
+          {...sidebarProps}
+          collapsible={{
+            expandedWidth: sidebarWidth,
+            collapsed: isSidebarCollapsed,
+            onExpandedWidthChange: setSidebarWidth,
+            onCollapsedChange: setIsSidebarCollapsed,
+          }}
         />
 
-        {/* Right Panel - Chat View + Terminal */}
-        <ResizablePanel
-          order={2}
-          defaultSize={isSidebarOpen ? 100 - sidebarSize : 100}
-          className={!isSidebarDragging ? "panel-transition" : ""}
-        >
+        <div className="min-w-0 flex-1">
           <ResizablePanelGroup direction="vertical" className="h-full">
             {/* Main workspace */}
             <ResizablePanel order={1} defaultSize={isTerminalOpen ? 100 - terminalSize : 100}>
               <div className="h-full overflow-hidden relative">
-                {/* Expand button when collapsed */}
-                {showExpandButton && (
-                  <button
-                    onClick={toggleSidebar}
-                    className="absolute top-3 left-3 z-10 text-muted-foreground hover:text-foreground"
-                    aria-label="Expand sidebar"
-                  >
-                    <PanelLeft className="h-5 w-5" />
-                  </button>
-                )}
                 <WorkspaceGrid
                   panes={openPanes}
                   onCloseSession={handleCloseVisibleSession}
@@ -896,7 +815,9 @@ function WorkspacePage() {
               onResize={handleTerminalResize}
               onCollapse={() => setIsTerminalOpen(false)}
               onExpand={() => setIsTerminalOpen(true)}
-              className={!isTerminalDragging ? "panel-transition" : ""}
+              className={
+                !isTerminalDragging ? "transition-[flex-grow] duration-300 ease-layout" : ""
+              }
             >
               {isTerminalMounted && (
                 <div className="h-full border-t">
@@ -907,8 +828,8 @@ function WorkspacePage() {
               )}
             </ResizablePanel>
           </ResizablePanelGroup>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        </div>
+      </div>
       {hyperSession?.open && (
         <HyperSession
           state={hyperSession}

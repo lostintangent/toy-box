@@ -7,10 +7,10 @@ import { BUILT_IN_APP_DEFINITION_PREFIX, type AppUpdate } from "@/lib/apps/schem
 import { applyWorkspaceEvent } from "@/lib/workspace/state/query";
 import type { AppDefinition, AppInstance } from "@/types";
 import { Button } from "@/components/ui/button";
-import { DestructiveConfirmationDialog } from "@/components/sidebar/shell/DestructiveConfirmationDialog";
-import { NameDialog } from "@/components/sidebar/shell/NameDialog";
-import { SidebarListItem } from "@/components/sidebar/shell/SidebarListItem";
-import { SidebarPanel } from "@/components/sidebar/shell/SidebarPanel";
+import { DestructiveConfirmationDialog } from "@/components/sidebar/shell/dialogs/DestructiveConfirmationDialog";
+import { NameDialog } from "@/components/sidebar/shell/dialogs/NameDialog";
+import { SidebarListItem } from "@/components/sidebar/shell/panels/SidebarListItem";
+import { SidebarPanel } from "@/components/sidebar/shell/panels/SidebarPanel";
 import {
   DropdownMenu,
   DropdownMenuContent,

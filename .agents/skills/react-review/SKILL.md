@@ -13,7 +13,7 @@ Use the project's Writing Great Code section as the design standard and [referen
    - Start with every changed component and React hook.
    - Include the nearest owner when a `key`, conditional, route, dialog, or pane controls its mounted identity.
    - Include direct consumers when a changed hook exposes values or functions, and include relevant Jotai atoms or React Query definitions when they own the state being consumed.
-2. Run `bun lint` before editing.
+2. Run `bun check` before editing.
    - The `react/react-compiler` rule reports every React Compiler bailout as an error.
    - `toy-box-react/no-manual-memoization` rejects `memo`, `useMemo`, and `useCallback`; the TanStack plugins check Query and Router usage.
    - Treat diagnostics as locations to investigate. Understand the cause before changing code or adding a targeted suppression.
@@ -23,5 +23,5 @@ Use the project's Writing Great Code section as the design standard and [referen
    - Compare the behavior with focused tests and inspect committed behavior when checking a suspected regression.
 4. Apply only concrete findings.
    - Use the project standard and React reference to choose the smallest behavior-preserving correction.
-   - Re-run `bun lint` after editing and resolve every new Compiler, React, Query, or Router diagnostic.
+   - Re-run `bun check` after editing and resolve every new Compiler, React, Query, or Router diagnostic.
 5. Complete the Definition of Done in `AGENTS.md`. For review-only requests, report only concrete behavioral risks or meaningful clarity improvements.

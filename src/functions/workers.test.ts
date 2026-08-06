@@ -132,7 +132,7 @@ describe("workers", () => {
     expect(events.at(-1)).toEqual({ type: "worker.finished", sessionId });
   });
 
-  test("shares an admitted worker's session completion with every observer", async () => {
+  test("shares an admitted worker's session completion with every waiter", async () => {
     const completion = deferred<SessionCompletion>();
     completions.push(completion.promise);
     const worker = await spawnWorkerOnServer(input);
@@ -301,6 +301,7 @@ describe("workers", () => {
     });
     const stateRead = deferred<void>();
     const releaseRead = deferred<void>();
+    // oxlint-disable-next-line typescript/unbound-method -- The original method is explicitly rebound with call below.
     const realGet = AppDatabase.prototype.get;
     let reads = 0;
     const get = spyOn(AppDatabase.prototype, "get").mockImplementation(
@@ -411,16 +412,18 @@ describe("workers", () => {
     completion.resolve({ status: "completed" });
   });
 
-  test("rejects completion observers when their worker is canceled", async () => {
+  test("rejects completion waiters when their worker is canceled", async () => {
     const completion = deferred<SessionCompletion>();
     completions.push(completion.promise);
     const worker = await spawnWorkerOnServer(input);
     onTestFinished(() => finishWorker(worker.sessionId));
     const request = { type: "file" as const, file, workerSessionId: worker.sessionId };
-    const observed = waitForSession(worker.sessionId);
+    const completionWait = waitForSession(worker.sessionId);
 
     await expect(cancelWorkerOnServer(request)).resolves.toBe(true);
-    await expect(observed).rejects.toBeInstanceOf(realRuntimeWorkersModule.WorkerCanceledError);
+    await expect(completionWait).rejects.toBeInstanceOf(
+      realRuntimeWorkersModule.WorkerCanceledError,
+    );
     completion.resolve({ status: "completed" });
   });
 

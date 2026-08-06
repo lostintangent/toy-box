@@ -1,21 +1,16 @@
 // Public operations for the session runtime. Headless callers explicitly
-// create or deliver; connected callers use one composite that observes while
+// create or deliver; connected callers use one composite that subscribes while
 // optionally doing either. Every mutation acquires the same live runtime.
 
 import { sessionSeedFromSnapshot } from "@/lib/session/sessionReducer";
 import type { StreamSessionRequest } from "@/lib/session/protocol";
-import type {
-  AgentNotification,
-  QueuedMessage,
-  SessionCompletion,
-  SessionEvent,
-  SessionMessage,
-} from "@/types";
+import type { AgentNotification, QueuedMessage, SessionCompletion, SessionMessage } from "@/types";
 import * as sessionRegistry from "@/functions/state/session/registry";
 import { loadSessionSnapshot } from "@/functions/state/session/snapshots";
 import { clearDraftPrompt } from "@/functions/state/workspace";
 import { sharedMap } from "../processState";
-import { SessionStream, SessionStreamClosedError } from "./sessionStream";
+import { SessionStream, SessionStreamFinishedError } from "./sessionStream";
+import type { SessionStreamSubscription } from "./eventBus";
 
 export { SessionStream };
 
@@ -30,7 +25,7 @@ const pendingSessionCompletions = sharedMap<PendingSessionCompletion>(
   "pending-session-completions",
 );
 
-/** Register a session that callers may observe before its live stream exists. */
+/** Register a session that callers may wait for before its live stream exists. */
 export function registerPendingSessionCompletion(sessionId: string): PendingSessionCompletion {
   if (pendingSessionCompletions.has(sessionId)) {
     throw new Error(`Session ${sessionId} already has a pending completion.`);
@@ -95,18 +90,19 @@ function waitForPendingSession(
 }
 
 /**
- * Observe a session stream, optionally creating it and delivering a message.
- * Observation is active by default; passive subscriptions do not acknowledge completion.
+ * Stream a session, optionally creating it and delivering a message.
+ * Subscriptions are active by default; passive ones do not acknowledge completion.
  */
-export async function* streamSession(request: StreamSessionRequest): AsyncGenerator<SessionEvent> {
+export async function streamSession(
+  request: StreamSessionRequest,
+): Promise<SessionStreamSubscription | undefined> {
   if (!request.message) {
     const stream = SessionStream.get(request.sessionId);
-    if (stream) yield* stream.subscribe(request.afterEventId, request.mode);
-    return;
+    return stream?.subscribe(request.afterEventId, request.mode);
   }
 
   const message = normalizeMessage(request.message);
-  let retriedClosedStream = false;
+  let retriedFinishedStream = false;
 
   for (;;) {
     const stream = await acquireSessionStream(request.sessionId, message, request.location);
@@ -119,8 +115,8 @@ export async function* streamSession(request: StreamSessionRequest): AsyncGenera
       await stream.deliver(message);
       clearDraftPrompt(request.sessionId);
     } catch (error) {
-      if (error instanceof SessionStreamClosedError && !retriedClosedStream) {
-        retriedClosedStream = true;
+      if (error instanceof SessionStreamFinishedError && !retriedFinishedStream) {
+        retriedFinishedStream = true;
         await events.return();
         continue;
       }
@@ -130,8 +126,7 @@ export async function* streamSession(request: StreamSessionRequest): AsyncGenera
       // rather than a transport exception.
     }
 
-    yield* events;
-    return;
+    return events;
   }
 }
 
@@ -155,7 +150,7 @@ export function deliverSessionMessage(sessionId: string, message: MessageInput) 
 
 async function deliver(sessionId: string, message: MessageInput, create?: SessionCreationOptions) {
   const normalizedMessage = normalizeMessage(message);
-  let retriedClosedStream = false;
+  let retriedFinishedStream = false;
   let retriedStaleHandle = false;
 
   for (;;) {
@@ -167,14 +162,14 @@ async function deliver(sessionId: string, message: MessageInput, create?: Sessio
         waitForCompletion: () => stream.waitForCompletion(),
       };
     } catch (error) {
-      if (error instanceof SessionStreamClosedError && !retriedClosedStream) {
-        retriedClosedStream = true;
+      if (error instanceof SessionStreamFinishedError && !retriedFinishedStream) {
+        retriedFinishedStream = true;
         continue;
       }
 
       // A stale cached SDK handle (possible on the snapshot-seed path, which
       // skips the replay path's getEvents probe) surfaces as a send failure
-      // after turn start evicts it and closes the stream. No client is attached
+      // after turn start evicts it and finishes the stream. No client is subscribed
       // to retry, so rebuild once — the resume is fresh by construction and the
       // cached snapshot is still valid (the log never changed).
       if (!retriedStaleHandle && sessionRegistry.evictCachedSessionIfStale(sessionId, error)) {

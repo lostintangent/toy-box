@@ -40,8 +40,22 @@ function fileEdit(path: string, id: string = crypto.randomUUID()): QueuedMessage
   };
 }
 
-function closeStream(sessionId: string): void {
-  SessionStream.get(sessionId)?.close();
+function finishStream(sessionId: string): void {
+  SessionStream.get(sessionId)?.finish();
+}
+
+function cleanUpStreamAfterTest(
+  sessionId: string,
+  { restoreMocks = false }: { restoreMocks?: boolean } = {},
+): void {
+  onTestFinished(() => {
+    if (restoreMocks) mock.restore();
+    finishStream(sessionId);
+  });
+}
+
+function restoreMocksAfterTest(): void {
+  onTestFinished(() => mock.restore());
 }
 
 async function nextStreamEvent(iterator: AsyncIterator<SessionEvent>): Promise<SessionEvent> {
@@ -81,10 +95,16 @@ function makeFakeSession(overrides: Record<string, unknown> = {}): CopilotSessio
   } as unknown as CopilotSession;
 }
 
+function createStreamWithAssistantResponse(sessionId: string, response: string): SessionStream {
+  return SessionStream.getOrCreate(sessionId, makeFakeSession(), {
+    messages: [{ role: "assistant", content: response }],
+  });
+}
+
 /** Fake SDK session that captures its event listener so tests can play SDK
  *  events back into the stream. Emission is synchronous, exactly like the SDK
  *  callback; pair turn-terminal events with `await settle()` to let the
- *  floating queue drain and close land before asserting. */
+ *  floating queue drain and finish land before asserting. */
 function makeControllableSession(overrides: Record<string, unknown> = {}) {
   let sdkHandler: ((event: { type: string; data: unknown }) => void) | undefined;
   const session = {
@@ -107,16 +127,33 @@ function makeControllableSession(overrides: Record<string, unknown> = {}) {
 /** Let the runtime's floating continuations settle before asserting. */
 const settle = () => Bun.sleep(0);
 
+function idleSnapshot(sessionId: string, messages: SessionSnapshot["messages"]): SessionSnapshot {
+  return {
+    id: sessionId,
+    messages,
+    queuedMessages: [],
+    status: "idle",
+    reasoningContent: "",
+  };
+}
+
+type StreamRuntimeModuleMocks = {
+  sessionRegistry?: Record<string, unknown>;
+  snapshotCache?: Record<string, unknown>;
+  broadcast?: Record<string, unknown>;
+  workspace?: Record<string, unknown>;
+};
+
 /** Mock the runtime modules SessionStream imports so tests can drive streams with
  *  fake SDK sessions. Callers override the sessionRegistry and snapshotCache
  *  behavior they need; the defaults fail loudly if an unexpected path is
  *  taken, and the default snapshot cache is always empty. */
-function mockStreamRuntimeModules(
-  sessionRegistryOverrides: Record<string, unknown> = {},
-  snapshotCacheOverrides: Record<string, unknown> = {},
-  broadcastOverrides: Record<string, unknown> = {},
-  workspaceOverrides: Record<string, unknown> = {},
-) {
+function mockStreamRuntimeModules({
+  sessionRegistry: sessionRegistryOverrides = {},
+  snapshotCache: snapshotCacheOverrides = {},
+  broadcast: broadcastOverrides = {},
+  workspace: workspaceOverrides = {},
+}: StreamRuntimeModuleMocks = {}) {
   const getCachedSnapshot =
     (snapshotCacheOverrides.getCachedSnapshot as
       | ((sessionId: string) => Promise<SessionSnapshot | undefined>)
@@ -194,15 +231,15 @@ function mockStreamRuntimeModules(
 }
 
 describe("SessionStream lifecycle", () => {
-  test("close clears the queue, signals end-of-stream, and deregisters", async () => {
+  test("finish clears the queue, signals end-of-stream, and deregisters", async () => {
     const fakeSession = makeFakeSession();
 
-    const stream = SessionStream.getOrCreate("session-close-semantics", fakeSession);
+    const stream = SessionStream.getOrCreate("session-finish-semantics", fakeSession);
     const events = stream.subscribe();
 
     await stream.deliver(userMessage("go"));
     await stream.deliver(userMessage("queued"));
-    stream.close();
+    stream.finish();
 
     expect((await collectStreamEvents(events)).map((event) => event.type)).toEqual([
       "user_message",
@@ -211,33 +248,10 @@ describe("SessionStream lifecycle", () => {
     ]);
     expect(stream.getQueuedMessages()).toEqual([]);
     expect(stream.getReplayEventsSince()).toEqual([]);
-    expect(SessionStream.isRunning("session-close-semantics")).toBe(false);
+    expect(SessionStream.isRunning("session-finish-semantics")).toBe(false);
   });
 
-  test("detach deregisters without signalling end-of-stream", async () => {
-    const fakeSession = makeFakeSession();
-
-    const stream = SessionStream.getOrCreate("session-detach-semantics", fakeSession);
-    const events = stream.subscribe();
-    await stream.deliver(userMessage("go"));
-    expect(await nextStreamEvent(events)).toMatchObject({ type: "user_message" });
-
-    let settled = false;
-    const pending = events.next().then(() => {
-      settled = true;
-    });
-    stream.detach();
-    await Bun.sleep(1);
-
-    expect(settled).toBe(false);
-    expect(SessionStream.isRunning("session-detach-semantics")).toBe(false);
-    // Replay history survives detach — the runtime object is cleaned up, not the turn.
-    expect(stream.getReplayEventsSince().length).toBeGreaterThan(0);
-    await events.return();
-    await pending;
-  });
-
-  test("unsubscribing from an idle stream detaches it", async () => {
+  test("ending the only unused subscription disposes its stream", async () => {
     const fakeSession = makeFakeSession();
 
     const stream = SessionStream.getOrCreate("session-idle-unsubscribe", fakeSession);
@@ -246,17 +260,94 @@ describe("SessionStream lifecycle", () => {
     await events.return();
 
     expect(SessionStream.isRunning("session-idle-unsubscribe")).toBe(false);
+    await expect(stream.deliver(userMessage("stale"))).rejects.toThrow(
+      "Session stream finished before the message could be delivered.",
+    );
+  });
+
+  test("caches the canonical final state before publishing terminal status", async () => {
+    const sessionId = "session-finish-cache";
+    cleanUpStreamAfterTest(sessionId, { restoreMocks: true });
+
+    const transitions: string[] = [];
+    const cacheSnapshot = mock((_sessionId: string, snapshot: SessionSnapshot) => {
+      transitions.push(`cache:${snapshot.status}`);
+    });
+    const setSessionStatus = mock((_sessionId: string, status: string) => {
+      transitions.push(`status:${status}`);
+    });
+    mockStreamRuntimeModules({
+      snapshotCache: { cacheSnapshot },
+      workspace: { setSessionStatus },
+    });
+
+    const { SessionStream: ImportedSessionStream } = await import("./index");
+    const stream = ImportedSessionStream.getOrCreate(sessionId, makeFakeSession());
+    const subscription = stream.subscribe();
+    await stream.deliver(userMessage("go"));
+    transitions.length = 0;
+
+    stream.finish();
+
+    const events = await collectStreamEvents(subscription);
+    expect(events.map((event) => event.type)).toEqual(["user_message", "end"]);
+    expect(cacheSnapshot).toHaveBeenCalledTimes(1);
+    expect(cacheSnapshot).toHaveBeenCalledWith(
+      sessionId,
+      expect.objectContaining({
+        status: "idle",
+        lastSeenEventId: events.at(-1)?.eventId,
+      }),
+    );
+    expect(transitions).toEqual(["cache:idle", "status:idle"]);
+  });
+
+  test("does not cache aborted or failed live state", async () => {
+    cleanUpStreamAfterTest("session-abort-no-cache", { restoreMocks: true });
+    cleanUpStreamAfterTest("session-error-no-cache");
+
+    const cacheSnapshot = mock((_sessionId: string, _snapshot: SessionSnapshot) => {});
+    mockStreamRuntimeModules({ snapshotCache: { cacheSnapshot } });
+
+    const { SessionStream: ImportedSessionStream } = await import("./index");
+    const aborted = ImportedSessionStream.getOrCreate("session-abort-no-cache", makeFakeSession());
+    await aborted.deliver(userMessage("abort"));
+    await aborted.abort();
+
+    const failed = ImportedSessionStream.getOrCreate("session-error-no-cache", makeFakeSession());
+    await failed.deliver(userMessage("fail"));
+    failed.finish("error");
+
+    expect(cacheSnapshot).toHaveBeenCalledTimes(0);
+  });
+
+  test("emits an error end when the SDK terminates the stream with an error", async () => {
+    cleanUpStreamAfterTest("session-sdk-error");
+
+    const { session, emitSdkEvent } = makeControllableSession();
+
+    const stream = SessionStream.getOrCreate("session-sdk-error", session);
+    const events = stream.subscribe();
+    await stream.deliver(userMessage("go"));
+
+    emitSdkEvent("session.error");
+
+    const emitted = await collectStreamEvents(events);
+    expect(emitted.map((event) => event.type)).toEqual(["user_message", "end"]);
+    expect(emitted.at(-1)).toMatchObject({ type: "end", reason: "error" });
+    expect(stream.getSessionState().messages.at(-1)).toMatchObject({
+      role: "assistant",
+      content: "An error occurred. Please try again.",
+    });
+    expect(SessionStream.isRunning("session-sdk-error")).toBe(false);
   });
 
   test("marks a completed stream unread after its client disconnects", async () => {
     const sessionId = "session-disconnected-unread";
-    onTestFinished(() => {
-      mock.restore();
-      closeStream(sessionId);
-    });
+    cleanUpStreamAfterTest(sessionId, { restoreMocks: true });
 
     const setSessionStatus = mock((_sessionId: string, _status: string) => {});
-    mockStreamRuntimeModules({}, {}, {}, { setSessionStatus });
+    mockStreamRuntimeModules({ workspace: { setSessionStatus } });
 
     const { SessionStream: ImportedSessionStream } = await import("./index");
     const stream = ImportedSessionStream.getOrCreate(sessionId, makeFakeSession());
@@ -264,36 +355,33 @@ describe("SessionStream lifecycle", () => {
     await stream.deliver(userMessage("go"));
 
     await events.return();
-    stream.close();
+    stream.finish();
 
     expect(setSessionStatus).toHaveBeenCalledTimes(2);
     expect(setSessionStatus).toHaveBeenNthCalledWith(1, sessionId, "running");
     expect(setSessionStatus).toHaveBeenNthCalledWith(2, sessionId, "unread");
   });
 
-  test("uses subscription mode to resolve completed stream status", async () => {
+  test("active subscribers acknowledge completion while passive subscribers do not", async () => {
     const activeSessionId = "session-active-subscriber";
     const passiveSessionId = "session-passive-subscriber";
-    onTestFinished(() => {
-      mock.restore();
-      closeStream(activeSessionId);
-      closeStream(passiveSessionId);
-    });
+    cleanUpStreamAfterTest(activeSessionId, { restoreMocks: true });
+    cleanUpStreamAfterTest(passiveSessionId);
 
     const setSessionStatus = mock((_sessionId: string, _status: string) => {});
-    mockStreamRuntimeModules({}, {}, {}, { setSessionStatus });
+    mockStreamRuntimeModules({ workspace: { setSessionStatus } });
 
     const { SessionStream: ImportedSessionStream } = await import("./index");
     const activeStream = ImportedSessionStream.getOrCreate(activeSessionId, makeFakeSession());
     const activeEvents = activeStream.subscribe();
     await activeStream.deliver(userMessage("go"));
-    activeStream.close();
+    activeStream.finish();
     await activeEvents.return();
 
     const passiveStream = ImportedSessionStream.getOrCreate(passiveSessionId, makeFakeSession());
     const passiveEvents = passiveStream.subscribe(undefined, "passive");
     await passiveStream.deliver(userMessage("go"));
-    passiveStream.close();
+    passiveStream.finish();
     await passiveEvents.return();
 
     expect(setSessionStatus.mock.calls).toEqual([
@@ -305,13 +393,10 @@ describe("SessionStream lifecycle", () => {
   });
 
   test("remove publishes a terminal event without global lifecycle updates", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-remove-semantics");
-    });
+    cleanUpStreamAfterTest("session-remove-semantics", { restoreMocks: true });
 
     const setSessionStatus = mock((_sessionId: string, _status: string) => {});
-    mockStreamRuntimeModules({}, {}, {}, { setSessionStatus });
+    mockStreamRuntimeModules({ workspace: { setSessionStatus } });
 
     const { SessionStream: ImportedSessionStream } = await import("./index");
     const fakeSession = makeFakeSession();
@@ -337,24 +422,50 @@ describe("SessionStream lifecycle", () => {
     expect(setSessionStatus).toHaveBeenCalledTimes(0);
   });
 
-  test("closed streams reject late delivery and queue cancellation", async () => {
+  test("finished streams reject late delivery and queue cancellation", async () => {
     const fakeSession = makeFakeSession();
 
-    const stream = SessionStream.getOrCreate("session-closed-mutations", fakeSession);
-    stream.close();
+    const stream = SessionStream.getOrCreate("session-finished-mutations", fakeSession);
+    stream.finish();
 
     await expect(stream.deliver(userMessage("late follow-up", "late"))).rejects.toThrow(
-      "Session stream closed before the message could be delivered.",
+      "Session stream finished before the message could be delivered.",
     );
     expect(stream.cancelQueuedMessage("late")).toBe(false);
 
     expect(stream.getQueuedMessages()).toEqual([]);
   });
+});
 
-  test("abort clears pending SDK input first and still closes when abort fails", async () => {
-    onTestFinished(() => {
-      closeStream("session-abort-failure");
+describe("SessionStream abort", () => {
+  test("aborts SDK work and finishes idle after its subscriber disconnects", async () => {
+    const sessionId = "session-disconnected-abort";
+    cleanUpStreamAfterTest(sessionId, { restoreMocks: true });
+
+    const abortSdk = mock(async () => {});
+    const statuses: string[] = [];
+    mockStreamRuntimeModules({
+      workspace: {
+        setSessionStatus: (_sessionId: string, status: string) => statuses.push(status),
+      },
     });
+
+    const { SessionStream: ImportedSessionStream } = await import("./index");
+    const stream = ImportedSessionStream.getOrCreate(
+      sessionId,
+      makeFakeSession({ abort: abortSdk }),
+    );
+    const events = stream.subscribe();
+    await stream.deliver(userMessage("go"));
+    await events.return();
+    await stream.abort();
+
+    expect(abortSdk).toHaveBeenCalledTimes(1);
+    expect(statuses).toEqual(["running", "idle"]);
+  });
+
+  test("abort clears pending SDK input first and still finishes when abort fails", async () => {
+    cleanUpStreamAfterTest("session-abort-failure");
 
     const calls: string[] = [];
     const fakeSession = makeFakeSession({
@@ -379,7 +490,7 @@ describe("SessionStream lifecycle", () => {
     expect(SessionStream.isRunning("session-abort-failure")).toBe(false);
   });
 
-  test("steering yields to a stop already in progress", async () => {
+  test("abort wins a race with queued-message steering", async () => {
     let releaseClear!: () => void;
     const clearGate = new Promise<void>((resolve) => {
       releaseClear = resolve;
@@ -403,41 +514,11 @@ describe("SessionStream lifecycle", () => {
     await stopping;
     expect(SessionStream.isRunning("session-abort-steering-race")).toBe(false);
   });
+});
 
-  test("an explicit abort finishes idle after its client disconnects", async () => {
-    const sessionId = "session-disconnected-abort";
-    onTestFinished(() => {
-      mock.restore();
-      closeStream(sessionId);
-    });
-
-    const statuses: string[] = [];
-    mockStreamRuntimeModules(
-      {},
-      {},
-      {},
-      {
-        setSessionStatus: (_sessionId: string, status: string) => statuses.push(status),
-      },
-    );
-
-    const { SessionStream: ImportedSessionStream } = await import("./index");
-    const stream = ImportedSessionStream.getOrCreate(
-      sessionId,
-      makeFakeSession({ abort: async () => {} }),
-    );
-    const events = stream.subscribe();
-    await stream.deliver(userMessage("go"));
-    await events.return();
-    await stream.abort();
-
-    expect(statuses).toEqual(["running", "idle"]);
-  });
-
-  test("drains the queue on idle: sends, accepts, then closes when empty", async () => {
-    onTestFinished(() => {
-      closeStream("session-drain");
-    });
+describe("SessionStream queued messages", () => {
+  test("drains the queue on idle: sends, accepts, then finishes when empty", async () => {
+    cleanUpStreamAfterTest("session-drain");
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const { session, emitSdkEvent } = makeControllableSession({ send: sendMock });
@@ -465,16 +546,52 @@ describe("SessionStream lifecycle", () => {
     expect(userMessages).toHaveLength(2);
     expect(userMessages.at(-1)).toMatchObject({ content: "second turn" });
 
-    // Second idle with an empty queue: closes the stream.
+    // Second idle with an empty queue finishes the stream.
     emitSdkEvent("session.idle");
     await settle();
 
     expect(SessionStream.isRunning("session-drain")).toBe(false);
   });
 
+  test("cancelQueuedMessage cancels known ids and rejects unknown ones", async () => {
+    cleanUpStreamAfterTest("session-queue-remove");
+
+    const fakeSession = makeFakeSession();
+
+    const stream = SessionStream.getOrCreate("session-queue-remove", fakeSession);
+    await stream.deliver(userMessage("active", "active"));
+    await stream.deliver(userMessage("keep me", "q1"));
+    await stream.deliver(userMessage("cancel me", "q2"));
+
+    expect(stream.cancelQueuedMessage("missing")).toBe(false);
+    expect(stream.cancelQueuedMessage("q2")).toBe(true);
+    expect(stream.getQueuedMessages().map((m) => m.id)).toEqual(["q1"]);
+  });
+
+  test("coalesces equivalent notifications but preserves repeated user messages", async () => {
+    cleanUpStreamAfterTest("session-coalesce-direct");
+
+    const fakeSession = makeFakeSession();
+    const stream = SessionStream.getOrCreate("session-coalesce-direct", fakeSession);
+    await stream.deliver(userMessage("Already running", "active-turn"));
+
+    await stream.deliver(fileEdit("plan.md", "edit-1"));
+    await stream.deliver(fileEdit("plan.md", "edit-2"));
+    await stream.deliver(fileEdit("other.md", "edit-3"));
+    await stream.deliver(userMessage("hello", "u1"));
+    await stream.deliver(userMessage("hello", "u2"));
+
+    expect(stream.getQueuedMessages().map((message) => message.id)).toEqual([
+      "edit-1",
+      "edit-3",
+      "u1",
+      "u2",
+    ]);
+  });
+
   test("steering stays queued until the SDK emits its user message", async () => {
     const sessionId = "session-steering";
-    onTestFinished(() => closeStream(sessionId));
+    cleanUpStreamAfterTest(sessionId);
 
     let acknowledgeImmediate: (() => void) | undefined;
     const sendMock = mock((options: { mode?: "enqueue" | "immediate" }): Promise<string> => {
@@ -534,7 +651,7 @@ describe("SessionStream lifecycle", () => {
 
   test("steering rejects queued agent notifications", async () => {
     const sessionId = "session-notification-steering";
-    onTestFinished(() => closeStream(sessionId));
+    cleanUpStreamAfterTest(sessionId);
 
     const sendMock = mock(async () => "sent");
     const stream = SessionStream.getOrCreate(sessionId, makeFakeSession({ send: sendMock }));
@@ -557,7 +674,7 @@ describe("SessionStream lifecycle", () => {
 
   test("keeps the message queued when SDK steering acknowledgement fails", async () => {
     const sessionId = "session-steering-failure";
-    onTestFinished(() => closeStream(sessionId));
+    cleanUpStreamAfterTest(sessionId);
 
     const sendMock = mock(async (options: { mode?: "enqueue" | "immediate" }): Promise<string> => {
       if (options.mode === "immediate") throw new Error("immediate send failed");
@@ -573,7 +690,7 @@ describe("SessionStream lifecycle", () => {
     expect(SessionStream.isRunning(sessionId)).toBe(true);
   });
 
-  test("closes the stream when draining fails to send", async () => {
+  test("finishes the stream when draining fails to send", async () => {
     let sendCount = 0;
     const { session, emitSdkEvent } = makeControllableSession({
       // The first turn sends fine; the drained follow-up explodes.
@@ -599,114 +716,11 @@ describe("SessionStream lifecycle", () => {
     });
     expect(SessionStream.isRunning("session-drain-failure")).toBe(false);
   });
-
-  test("emits an error end when the SDK terminates the stream with an error", async () => {
-    onTestFinished(() => {
-      closeStream("session-sdk-error");
-    });
-
-    const { session, emitSdkEvent } = makeControllableSession();
-
-    const stream = SessionStream.getOrCreate("session-sdk-error", session);
-    const events = stream.subscribe();
-    await stream.deliver(userMessage("go"));
-
-    emitSdkEvent("session.error");
-
-    const emitted = await collectStreamEvents(events);
-    expect(emitted.map((event) => event.type)).toEqual(["user_message", "end"]);
-    expect(emitted.at(-1)).toMatchObject({ type: "end", reason: "error" });
-    expect(stream.getSessionState().messages.at(-1)).toMatchObject({
-      role: "assistant",
-      content: "An error occurred. Please try again.",
-    });
-    expect(SessionStream.isRunning("session-sdk-error")).toBe(false);
-  });
-
-  test("cancelQueuedMessage cancels known ids and rejects unknown ones", async () => {
-    onTestFinished(() => {
-      closeStream("session-queue-remove");
-    });
-
-    const fakeSession = makeFakeSession();
-
-    const stream = SessionStream.getOrCreate("session-queue-remove", fakeSession);
-    await stream.deliver(userMessage("active", "active"));
-    await stream.deliver(userMessage("keep me", "q1"));
-    await stream.deliver(userMessage("cancel me", "q2"));
-
-    expect(stream.cancelQueuedMessage("missing")).toBe(false);
-    expect(stream.cancelQueuedMessage("q2")).toBe(true);
-    expect(stream.getQueuedMessages().map((m) => m.id)).toEqual(["q1"]);
-  });
-});
-
-describe("queued-message coalescing", () => {
-  test("collapses equivalent notifications and always queues normal prompts", async () => {
-    onTestFinished(() => {
-      closeStream("session-coalesce");
-    });
-
-    const fakeSession = makeFakeSession();
-    const stream = SessionStream.getOrCreate("session-coalesce", fakeSession);
-    await stream.deliver(userMessage("Already running", "active-turn"));
-
-    // Editing the same artifact twice collapses to a single nudge.
-    await deliverSessionMessage("session-coalesce", {
-      id: "plan-edit-1",
-      notification: {
-        type: "file_edited",
-        file: { type: "session", sessionId: "session-coalesce", path: "plan.md" },
-      },
-    });
-    await deliverSessionMessage("session-coalesce", {
-      id: "plan-edit-2",
-      notification: {
-        type: "file_edited",
-        file: { type: "session", sessionId: "session-coalesce", path: "plan.md" },
-      },
-    });
-    expect(stream.getQueuedMessages()).toHaveLength(1);
-
-    // A different artifact is its own notification.
-    await deliverSessionMessage("session-coalesce", {
-      id: "other-edit",
-      notification: {
-        type: "file_edited",
-        file: { type: "session", sessionId: "session-coalesce", path: "other.md" },
-      },
-    });
-    expect(stream.getQueuedMessages()).toHaveLength(2);
-
-    // Normal prompts never coalesce.
-    await deliverSessionMessage("session-coalesce", userMessage("hello", "hello-1"));
-    await deliverSessionMessage("session-coalesce", userMessage("hello", "hello-2"));
-    expect(stream.getQueuedMessages()).toHaveLength(4);
-  });
-
-  test("coalesces notifications delivered directly to an active stream", async () => {
-    onTestFinished(() => {
-      closeStream("session-coalesce-direct");
-    });
-
-    const fakeSession = makeFakeSession();
-    const stream = SessionStream.getOrCreate("session-coalesce-direct", fakeSession);
-    await stream.deliver(userMessage("Already running", "active-turn"));
-
-    await stream.deliver(fileEdit("plan.md", "edit-1"));
-    await stream.deliver(fileEdit("plan.md", "edit-2"));
-    await stream.deliver(userMessage("hello", "u1"));
-    await stream.deliver(userMessage("hello", "u2"));
-
-    expect(stream.getQueuedMessages().map((message) => message.id)).toEqual(["edit-1", "u1", "u2"]);
-  });
 });
 
 describe("SessionStream event replay", () => {
-  test("getReplayEventsSince filters by cursor and returns a defensive copy", async () => {
-    onTestFinished(() => {
-      closeStream("session-replay-since");
-    });
+  test("replays canonical events strictly after the cursor", async () => {
+    cleanUpStreamAfterTest("session-replay-since");
 
     const fakeSession = makeFakeSession();
 
@@ -720,16 +734,10 @@ describe("SessionStream event replay", () => {
 
     const afterFirst = stream.getReplayEventsSince(all[0].eventId);
     expect(afterFirst.map((e) => e.type)).toEqual(["message_queued", "message_queued"]);
-
-    // Mutating the returned array must not affect retained replay.
-    all.length = 0;
-    expect(stream.getReplayEventsSince().length).toBe(3);
   });
 
   test("caps replay history at the retention limit, keeping the newest events", () => {
-    onTestFinished(() => {
-      closeStream("session-replay-cap");
-    });
+    cleanUpStreamAfterTest("session-replay-cap");
 
     const { session, emitSdkEvent } = makeControllableSession();
 
@@ -747,14 +755,12 @@ describe("SessionStream event replay", () => {
 
 describe("SessionStream event IDs", () => {
   test("increase across consecutive stream instances for the same session", async () => {
-    onTestFinished(() => {
-      closeStream("session-event-id-reuse");
-    });
+    cleanUpStreamAfterTest("session-event-id-reuse");
 
     const first = SessionStream.getOrCreate("session-event-id-reuse", makeFakeSession());
     await first.deliver(userMessage("First run"));
     const firstEventId = first.getReplayEventsSince()[0]?.eventId;
-    first.detach();
+    first.finish();
 
     const second = SessionStream.getOrCreate("session-event-id-reuse", makeFakeSession());
     await second.deliver(userMessage("Second run"));
@@ -766,9 +772,7 @@ describe("SessionStream event IDs", () => {
   });
 
   test("do not regress after a synchronous burst faster than 1 event/ms", async () => {
-    onTestFinished(() => {
-      closeStream("session-event-id-burst");
-    });
+    cleanUpStreamAfterTest("session-event-id-burst");
 
     const { session, emitSdkEvent } = makeControllableSession();
 
@@ -780,7 +784,7 @@ describe("SessionStream event IDs", () => {
       emitSdkEvent("assistant.message_delta", { deltaContent: `chunk-${i} ` });
     }
     const lastBurstEventId = first.getReplayEventsSince().at(-1)!.eventId!;
-    first.detach();
+    first.finish();
 
     // A replacement stream for the same session must keep ids increasing, or
     // the client's lastSeenEventId filter would silently drop its events.
@@ -791,11 +795,9 @@ describe("SessionStream event IDs", () => {
   });
 });
 
-describe("SessionStream model", () => {
+describe("SessionStream model selection", () => {
   test("a turn model emits model_changed into live stream state", async () => {
-    onTestFinished(() => {
-      closeStream("session-model-change");
-    });
+    cleanUpStreamAfterTest("session-model-change");
 
     const setModelMock = mock(
       async (_model: string, _options?: { reasoningEffort?: string }) => {},
@@ -832,10 +834,7 @@ describe("SessionStream model", () => {
 
 describe("streamSession", () => {
   test("reuses the active stream for reconnects without replaying SDK history", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-reconnect");
-    });
+    cleanUpStreamAfterTest("session-reconnect", { restoreMocks: true });
 
     const fakeSession = makeFakeSession();
 
@@ -849,7 +848,7 @@ describe("streamSession", () => {
     });
     await stream.deliver(userMessage("Reconnect me"));
 
-    const iterator = importedStreamSession({ sessionId: "session-reconnect" });
+    const iterator = (await importedStreamSession({ sessionId: "session-reconnect" }))!;
     const first = await iterator.next();
     await iterator.return?.(undefined);
 
@@ -861,16 +860,15 @@ describe("streamSession", () => {
   });
 
   test("deduplicates stale draft-start requests by message id while reconnecting", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-draft-race");
-    });
+    cleanUpStreamAfterTest("session-draft-race", { restoreMocks: true });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const fakeSession = makeFakeSession({ send: sendMock });
     const clearDraftPromptMock = mock((_sessionId: string) => {});
 
-    mockStreamRuntimeModules({}, {}, {}, { clearDraftPrompt: clearDraftPromptMock });
+    mockStreamRuntimeModules({
+      workspace: { clearDraftPrompt: clearDraftPromptMock },
+    });
 
     const { SessionStream: ImportedSessionStream, streamSession: importedStreamSession } =
       await import("./index");
@@ -880,11 +878,11 @@ describe("streamSession", () => {
     });
     await stream.deliver(userMessage("Original draft prompt", "client-1"));
 
-    const iterator = importedStreamSession({
+    const iterator = (await importedStreamSession({
       sessionId: "session-draft-race",
       message: userMessage("Original draft prompt", "client-1"),
       location: {},
-    });
+    }))!;
     const first = await iterator.next();
     await iterator.return?.(undefined);
 
@@ -901,15 +899,14 @@ describe("streamSession", () => {
   });
 
   test("stays subscribed when a client prompt queues onto an active stream", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-client-delivered-queue");
-    });
+    cleanUpStreamAfterTest("session-client-delivered-queue", { restoreMocks: true });
 
     const fakeSession = makeFakeSession();
     const clearDraftPromptMock = mock((_sessionId: string) => {});
 
-    mockStreamRuntimeModules({}, {}, {}, { clearDraftPrompt: clearDraftPromptMock });
+    mockStreamRuntimeModules({
+      workspace: { clearDraftPrompt: clearDraftPromptMock },
+    });
 
     const { SessionStream: ImportedSessionStream, streamSession: importedStreamSession } =
       await import("./index");
@@ -917,10 +914,10 @@ describe("streamSession", () => {
     const stream = ImportedSessionStream.getOrCreate("session-client-delivered-queue", fakeSession);
     await stream.deliver(userMessage("Already running"));
 
-    const iterator = importedStreamSession({
+    const iterator = (await importedStreamSession({
       sessionId: "session-client-delivered-queue",
       message: { id: "queued-client", content: "Queue this client prompt" },
-    });
+    }))!;
     const first = await iterator.next();
     const second = await iterator.next();
     await iterator.return?.(undefined);
@@ -947,10 +944,7 @@ describe("streamSession", () => {
   });
 
   test("queues a distinct message even when it carries a location", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-distinct-location-message");
-    });
+    cleanUpStreamAfterTest("session-distinct-location-message", { restoreMocks: true });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const fakeSession = makeFakeSession({ send: sendMock });
@@ -966,11 +960,11 @@ describe("streamSession", () => {
     );
     await stream.deliver(userMessage("Original message", "original-message"));
 
-    const iterator = importedStreamSession({
+    const iterator = (await importedStreamSession({
       sessionId: "session-distinct-location-message",
       message: userMessage("Distinct follow-up", "distinct-message"),
       location: {},
-    });
+    }))!;
     await iterator.next();
     await iterator.next();
     await iterator.return?.(undefined);
@@ -982,31 +976,26 @@ describe("streamSession", () => {
   });
 
   test("clears the draft prompt when a client prompt starts a new stream turn", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-client-delivered-start");
-    });
+    cleanUpStreamAfterTest("session-client-delivered-start", { restoreMocks: true });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const fakeSession = makeFakeSession({ send: sendMock });
     const clearDraftPromptMock = mock((_sessionId: string) => {});
 
-    mockStreamRuntimeModules(
-      {
+    mockStreamRuntimeModules({
+      sessionRegistry: {
         createSession: async () => ({ session: fakeSession }),
       },
-      {},
-      {},
-      { clearDraftPrompt: clearDraftPromptMock },
-    );
+      workspace: { clearDraftPrompt: clearDraftPromptMock },
+    });
 
     const { streamSession: importedStreamSession } = await import("./index");
 
-    const iterator = importedStreamSession({
+    const iterator = (await importedStreamSession({
       sessionId: "session-client-delivered-start",
       message: userMessage("Start this client prompt"),
       location: {},
-    });
+    }))!;
     const first = await iterator.next();
     await settle();
     await iterator.return?.(undefined);
@@ -1021,10 +1010,7 @@ describe("streamSession", () => {
   });
 
   test("starts a new stream turn for an attachment-only client message", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-client-attachment-only");
-    });
+    cleanUpStreamAfterTest("session-client-attachment-only", { restoreMocks: true });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const fakeSession = makeFakeSession({ send: sendMock });
@@ -1035,12 +1021,14 @@ describe("streamSession", () => {
     };
 
     mockStreamRuntimeModules({
-      createSession: async () => ({ session: fakeSession }),
+      sessionRegistry: {
+        createSession: async () => ({ session: fakeSession }),
+      },
     });
 
     const { streamSession: importedStreamSession } = await import("./index");
 
-    const iterator = importedStreamSession({
+    const iterator = (await importedStreamSession({
       sessionId: "session-client-attachment-only",
       message: {
         id: "attachment-only",
@@ -1048,7 +1036,7 @@ describe("streamSession", () => {
         attachments: [attachment],
       },
       location: {},
-    });
+    }))!;
     const first = await iterator.next();
     await iterator.return?.(undefined);
 
@@ -1071,11 +1059,8 @@ describe("streamSession", () => {
     });
   });
 
-  test("retries a client follow-up if the active stream closes before delivery", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-client-queue-retry");
-    });
+  test("retries a client follow-up if the active stream finishes before delivery", async () => {
+    cleanUpStreamAfterTest("session-client-queue-retry", { restoreMocks: true });
 
     const activeSession = makeFakeSession();
 
@@ -1094,8 +1079,10 @@ describe("streamSession", () => {
     } as unknown as CopilotSession;
 
     mockStreamRuntimeModules({
-      withSession: withSessionEvents([]),
-      getSession: async () => resumedSession,
+      sessionRegistry: {
+        withSession: withSessionEvents([]),
+        getSession: async () => resumedSession,
+      },
     });
 
     const { SessionStream: ImportedSessionStream, streamSession: importedStreamSession } =
@@ -1109,26 +1096,26 @@ describe("streamSession", () => {
     stream.deliver = ((message: QueuedMessage) => {
       if (!closedBeforeDelivery) {
         closedBeforeDelivery = true;
-        stream.close();
+        stream.finish();
       }
 
       return originalDeliver(message);
     }) as typeof stream.deliver;
 
     const events = await collectStreamEvents(
-      importedStreamSession({
+      (await importedStreamSession({
         sessionId: "session-client-queue-retry",
-        message: userMessage("Follow-up after close"),
-      }),
+        message: userMessage("Follow-up after finish"),
+      }))!,
     );
 
     expect(closedBeforeDelivery).toBe(true);
     expect(sendMock).toHaveBeenCalledWith({
-      prompt: "Follow-up after close",
+      prompt: "Follow-up after finish",
       attachments: undefined,
     });
     expect(events).toEqual([
-      expect.objectContaining({ type: "user_message", content: "Follow-up after close" }),
+      expect.objectContaining({ type: "user_message", content: "Follow-up after finish" }),
       expect.objectContaining({ type: "status", status: "thinking" }),
       expect.objectContaining({ type: "assistant_message", content: "retried response" }),
       expect.objectContaining({ type: "end", reason: "idle" }),
@@ -1136,10 +1123,7 @@ describe("streamSession", () => {
   });
 
   test("subscribes before sending so short committed responses are delivered", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-short-response");
-    });
+    cleanUpStreamAfterTest("session-short-response", { restoreMocks: true });
 
     let sdkHandler: ((event: { type: string; data: unknown }) => void) | undefined;
     const sendMock = mock(async (_message: { prompt: string }) => {
@@ -1159,17 +1143,19 @@ describe("streamSession", () => {
     } as unknown as CopilotSession;
 
     mockStreamRuntimeModules({
-      withSession: withSessionEvents([]),
-      getSession: async () => fakeSession,
+      sessionRegistry: {
+        withSession: withSessionEvents([]),
+        getSession: async () => fakeSession,
+      },
     });
 
     const { streamSession: importedStreamSession } = await import("./index");
 
     const events: Array<{ type: string; content?: string }> = [];
-    for await (const event of importedStreamSession({
+    for await (const event of (await importedStreamSession({
       sessionId: "session-short-response",
       message: userMessage("What is France's capital?"),
-    })) {
+    }))!) {
       events.push(event);
     }
 
@@ -1189,10 +1175,7 @@ describe("streamSession", () => {
   });
 
   test("emits an error end when the first send fails before the first pull", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-first-send-failure");
-    });
+    cleanUpStreamAfterTest("session-first-send-failure", { restoreMocks: true });
 
     const evictMock = mock((_sessionId: string, _error: unknown) => false);
     const fakeSession = makeFakeSession({
@@ -1202,18 +1185,20 @@ describe("streamSession", () => {
     });
 
     mockStreamRuntimeModules({
-      withSession: withSessionEvents([]),
-      getSession: async () => fakeSession,
-      evictCachedSessionIfStale: evictMock,
+      sessionRegistry: {
+        withSession: withSessionEvents([]),
+        getSession: async () => fakeSession,
+        evictCachedSessionIfStale: evictMock,
+      },
     });
 
     const { SessionStream: ImportedSessionStream, streamSession: importedStreamSession } =
       await import("./index");
 
-    const iterator = importedStreamSession({
+    const iterator = (await importedStreamSession({
       sessionId: "session-first-send-failure",
       message: userMessage("doomed prompt"),
-    });
+    }))!;
 
     const first = await iterator.next();
     expect(first.value).toMatchObject({ type: "user_message", content: "doomed prompt" });
@@ -1226,11 +1211,9 @@ describe("streamSession", () => {
   });
 });
 
-describe("message receipts", () => {
+describe("delivery receipts", () => {
   test("returns a queued receipt when the target stream is already live", async () => {
-    onTestFinished(() => {
-      closeStream("session-delivery-queued");
-    });
+    cleanUpStreamAfterTest("session-delivery-queued");
 
     const fakeSession = makeFakeSession();
 
@@ -1248,22 +1231,21 @@ describe("message receipts", () => {
     ]);
 
     const completion = receipt.waitForCompletion();
-    stream.close();
+    stream.finish();
     await expect(completion).resolves.toEqual({ status: "completed" });
   });
 
   test("returns a started receipt when the message opens an idle session turn", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-delivery-sent");
-    });
+    cleanUpStreamAfterTest("session-delivery-sent", { restoreMocks: true });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const fakeSession = makeFakeSession({ send: sendMock });
 
     mockStreamRuntimeModules({
-      withSession: withSessionEvents([]),
-      getSession: async () => fakeSession,
+      sessionRegistry: {
+        withSession: withSessionEvents([]),
+        getSession: async () => fakeSession,
+      },
     });
 
     const { deliverSessionMessage: importedDeliver } = await import("./index");
@@ -1280,22 +1262,21 @@ describe("message receipts", () => {
     });
 
     const completion = receipt.waitForCompletion();
-    closeStream("session-delivery-sent");
+    finishStream("session-delivery-sent");
     await expect(completion).resolves.toEqual({ status: "completed" });
   });
 
   test("returns the original disposition when the same message id is delivered again", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-delivery-idempotent");
-    });
+    cleanUpStreamAfterTest("session-delivery-idempotent", { restoreMocks: true });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const fakeSession = makeFakeSession({ send: sendMock });
 
     mockStreamRuntimeModules({
-      withSession: withSessionEvents([]),
-      getSession: async () => fakeSession,
+      sessionRegistry: {
+        withSession: withSessionEvents([]),
+        getSession: async () => fakeSession,
+      },
     });
 
     const { deliverSessionMessage: importedDeliver, SessionStream: ImportedSessionStream } =
@@ -1316,10 +1297,7 @@ describe("message receipts", () => {
 
 describe("createSession", () => {
   test("creates the session and starts its first message as one operation", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-headless-create");
-    });
+    cleanUpStreamAfterTest("session-headless-create", { restoreMocks: true });
 
     const calls: string[] = [];
     const sendMock = mock(async (_message: { prompt: string }) => {
@@ -1336,7 +1314,10 @@ describe("createSession", () => {
       calls.push(status);
     });
 
-    mockStreamRuntimeModules({ createSession: createSessionMock }, {}, {}, { setSessionStatus });
+    mockStreamRuntimeModules({
+      sessionRegistry: { createSession: createSessionMock },
+      workspace: { setSessionStatus },
+    });
 
     const { createSession: importedCreate } = await import("./index");
     const receipt = await importedCreate(
@@ -1385,14 +1366,13 @@ describe("createSession", () => {
 
   test("seeds an artifact-backed draft into the live session", async () => {
     const sessionId = "session-artifact-draft";
-    onTestFinished(() => {
-      mock.restore();
-      closeStream(sessionId);
-    });
+    cleanUpStreamAfterTest(sessionId, { restoreMocks: true });
     const fakeSession = makeFakeSession();
 
     mockStreamRuntimeModules({
-      createSession: async () => ({ session: fakeSession, artifactPath: "document.md" }),
+      sessionRegistry: {
+        createSession: async () => ({ session: fakeSession, artifactPath: "document.md" }),
+      },
     });
 
     const { createSession: importedCreate, SessionStream: ImportedSessionStream } =
@@ -1406,43 +1386,17 @@ describe("createSession", () => {
 });
 
 describe("deliverSessionMessage", () => {
-  test("queues prompts onto an active stream", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-queue-helper");
-    });
-
-    const fakeSession = makeFakeSession();
-
-    const stream = SessionStream.getOrCreate("session-queue-helper", fakeSession, {
-      model: { name: "gpt-5" },
-    });
-    await stream.deliver(userMessage("Already running"));
-
-    const { deliverSessionMessage: importedDeliver } = await import("./index");
-
-    await importedDeliver("session-queue-helper", { content: "Queue this follow-up" });
-
-    expect(stream.getQueuedMessages()).toEqual([
-      expect.objectContaining({
-        role: "user",
-        content: "Queue this follow-up",
-      }),
-    ]);
-  });
-
   test("starts an idle historical session immediately", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-start-helper");
-    });
+    cleanUpStreamAfterTest("session-start-helper", { restoreMocks: true });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const fakeSession = makeFakeSession({ send: sendMock });
 
     mockStreamRuntimeModules({
-      withSession: withSessionEvents([]),
-      getSession: async () => fakeSession,
+      sessionRegistry: {
+        withSession: withSessionEvents([]),
+        getSession: async () => fakeSession,
+      },
     });
 
     const { deliverSessionMessage: importedDeliver, SessionStream: ImportedSessionStream } =
@@ -1475,34 +1429,26 @@ describe("deliverSessionMessage", () => {
   });
 
   test("seeds a resumed stream from a cached snapshot without fetching history", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-snapshot-seed");
-    });
+    cleanUpStreamAfterTest("session-snapshot-seed", { restoreMocks: true });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const fakeSession = makeFakeSession({ send: sendMock });
 
-    mockStreamRuntimeModules(
-      {
+    mockStreamRuntimeModules({
+      sessionRegistry: {
         withSession: async () => {
           throw new Error("snapshot-seeded streams must not fetch history");
         },
         getSession: async () => fakeSession,
       },
-      {
-        getCachedSnapshot: async () => ({
-          id: "session-snapshot-seed",
-          messages: [
+      snapshotCache: {
+        getCachedSnapshot: async () =>
+          idleSnapshot("session-snapshot-seed", [
             { role: "user", content: "earlier prompt" },
             { role: "assistant", content: "earlier answer" },
-          ],
-          queuedMessages: [],
-          status: "idle",
-          reasoningContent: "",
-        }),
+          ]),
       },
-    );
+    });
 
     const { deliverSessionMessage: importedDeliver, SessionStream: ImportedSessionStream } =
       await import("./index");
@@ -1523,10 +1469,7 @@ describe("deliverSessionMessage", () => {
   });
 
   test("retries once when a snapshot-seeded send hits a stale cached handle", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-snapshot-stale");
-    });
+    cleanUpStreamAfterTest("session-snapshot-stale", { restoreMocks: true });
 
     const staleSend = mock(async () => {
       throw new Error("Session not found: session-snapshot-stale");
@@ -1538,25 +1481,20 @@ describe("deliverSessionMessage", () => {
     // First resume returns the stale cached handle; after eviction the next
     // resume is fresh.
     let resumeCount = 0;
-    mockStreamRuntimeModules(
-      {
+    mockStreamRuntimeModules({
+      sessionRegistry: {
         getSession: async () => (resumeCount++ === 0 ? staleSession : freshSession),
         evictCachedSessionIfStale: (_sessionId: string, error: unknown) =>
           error instanceof Error && error.message.toLowerCase().includes("session not found"),
       },
-      {
-        getCachedSnapshot: async () => ({
-          id: "session-snapshot-stale",
-          messages: [
+      snapshotCache: {
+        getCachedSnapshot: async () =>
+          idleSnapshot("session-snapshot-stale", [
             { role: "user", content: "earlier prompt" },
             { role: "assistant", content: "earlier answer" },
-          ],
-          queuedMessages: [],
-          status: "idle",
-          reasoningContent: "",
-        }),
+          ]),
       },
-    );
+    });
 
     const { deliverSessionMessage: importedDeliver, SessionStream: ImportedSessionStream } =
       await import("./index");
@@ -1577,10 +1515,7 @@ describe("deliverSessionMessage", () => {
 
 describe("single-flight stream acquisition", () => {
   test("concurrent background sends share one acquisition: creator sends, joiner queues", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-single-flight");
-    });
+    cleanUpStreamAfterTest("session-single-flight", { restoreMocks: true });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const fakeSession = makeFakeSession({ send: sendMock });
@@ -1599,8 +1534,10 @@ describe("single-flight stream acquisition", () => {
     );
 
     mockStreamRuntimeModules({
-      withSession: withSessionMock,
-      getSession: async () => fakeSession,
+      sessionRegistry: {
+        withSession: withSessionMock,
+        getSession: async () => fakeSession,
+      },
     });
 
     const { deliverSessionMessage: importedDeliver, SessionStream: ImportedSessionStream } =
@@ -1622,10 +1559,7 @@ describe("single-flight stream acquisition", () => {
   });
 
   test("a client prompt during a background acquisition joins the created stream and queues", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-client-join");
-    });
+    cleanUpStreamAfterTest("session-client-join", { restoreMocks: true });
 
     const sendMock = mock(async (_message: { prompt: string }) => {});
     const fakeSession = makeFakeSession({ send: sendMock });
@@ -1635,14 +1569,16 @@ describe("single-flight stream acquisition", () => {
       releaseResume = resolve;
     });
     mockStreamRuntimeModules({
-      withSession: async <T>(
-        _sessionId: string,
-        operation: (session: CopilotSession) => Promise<T>,
-      ) => {
-        await resumeGate;
-        return operation({ getEvents: async () => [] } as unknown as CopilotSession);
+      sessionRegistry: {
+        withSession: async <T>(
+          _sessionId: string,
+          operation: (session: CopilotSession) => Promise<T>,
+        ) => {
+          await resumeGate;
+          return operation({ getEvents: async () => [] } as unknown as CopilotSession);
+        },
+        getSession: async () => fakeSession,
       },
-      getSession: async () => fakeSession,
     });
 
     const {
@@ -1654,21 +1590,22 @@ describe("single-flight stream acquisition", () => {
     // Background sender enters the acquisition window first...
     const background = importedDeliver("session-client-join", userMessage("background prompt"));
     // ...then a client prompt races in; it must join, not double-send.
-    const clientIterator = importedStreamSession({
+    const clientSubscription = importedStreamSession({
       sessionId: "session-client-join",
       message: userMessage("client prompt"),
     });
-    const clientNext = clientIterator.next();
+    const clientNext = clientSubscription.then((subscription) => subscription!.next());
 
     releaseResume();
     await background;
     const clientResult = await clientNext;
 
-    // The connected joiner observes the stream it queued onto.
+    // The connected joiner subscribes to the stream it queued onto.
     expect(clientResult).toMatchObject({
       done: false,
       value: { type: "user_message", content: "background prompt" },
     });
+    const clientIterator = (await clientSubscription)!;
     await clientIterator.return?.(undefined);
     expect(sendMock).toHaveBeenCalledTimes(1);
     expect(sendMock).toHaveBeenCalledWith({ prompt: "background prompt", attachments: undefined });
@@ -1681,29 +1618,22 @@ describe("single-flight stream acquisition", () => {
 
 describe("SessionStream.waitForCompletion", () => {
   test("answers from a cached snapshot without fetching history when no stream is running", async () => {
-    onTestFinished(() => {
-      mock.restore();
-    });
+    restoreMocksAfterTest();
 
-    mockStreamRuntimeModules(
-      {
+    mockStreamRuntimeModules({
+      sessionRegistry: {
         withSession: async () => {
           throw new Error("waitForCompletion with a cached snapshot must not fetch history");
         },
       },
-      {
-        getCachedSnapshot: async () => ({
-          id: "session-snapshot-wait",
-          messages: [
+      snapshotCache: {
+        getCachedSnapshot: async () =>
+          idleSnapshot("session-snapshot-wait", [
             { role: "user", content: "do the thing" },
             { role: "assistant", content: "Cached result" },
-          ],
-          queuedMessages: [],
-          status: "idle",
-          reasoningContent: "",
-        }),
+          ]),
       },
-    );
+    });
     const { SessionStream: ImportedSessionStream } = await import("./index");
 
     await expect(ImportedSessionStream.waitForCompletion("session-snapshot-wait")).resolves.toEqual(
@@ -1712,20 +1642,20 @@ describe("SessionStream.waitForCompletion", () => {
   });
 
   test("falls back to persisted history when no stream is running for the session", async () => {
-    onTestFinished(() => {
-      mock.restore();
-    });
+    restoreMocksAfterTest();
 
     mockStreamRuntimeModules({
-      withSession: withSessionEvents([
-        {
-          id: "persisted-event",
-          parentId: "persisted-parent",
-          timestamp: "2026-01-01T00:00:00.000Z",
-          type: "assistant.message",
-          data: { messageId: "persisted-message", content: "Persisted result" },
-        },
-      ]),
+      sessionRegistry: {
+        withSession: withSessionEvents([
+          {
+            id: "persisted-event",
+            parentId: "persisted-parent",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            type: "assistant.message",
+            data: { messageId: "persisted-message", content: "Persisted result" },
+          },
+        ]),
+      },
     });
     const { SessionStream: ImportedSessionStream } = await import("./index");
     await expect(ImportedSessionStream.waitForCompletion("session-not-running")).resolves.toEqual({
@@ -1735,13 +1665,11 @@ describe("SessionStream.waitForCompletion", () => {
   });
 
   test("caches the snapshot it replays so the next read is warm", async () => {
-    onTestFinished(() => {
-      mock.restore();
-    });
+    restoreMocksAfterTest();
 
     const cacheSnapshotMock = mock((_sessionId: string, _snapshot: unknown) => {});
-    mockStreamRuntimeModules(
-      {
+    mockStreamRuntimeModules({
+      sessionRegistry: {
         withSession: withSessionEvents([
           {
             id: "replayed-event",
@@ -1752,8 +1680,8 @@ describe("SessionStream.waitForCompletion", () => {
           },
         ]),
       },
-      { cacheSnapshot: cacheSnapshotMock },
-    );
+      snapshotCache: { cacheSnapshot: cacheSnapshotMock },
+    });
     const { SessionStream: ImportedSessionStream } = await import("./index");
 
     await expect(ImportedSessionStream.waitForCompletion("session-replay-cache")).resolves.toEqual({
@@ -1767,32 +1695,23 @@ describe("SessionStream.waitForCompletion", () => {
     );
   });
 
-  test("resolves when the current stream closes", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-close-wait");
-    });
+  test("resolves when the current stream finishes", async () => {
+    cleanUpStreamAfterTest("session-finish-wait", { restoreMocks: true });
 
     const fakeSession = makeFakeSession();
 
-    const stream = SessionStream.getOrCreate("session-close-wait", fakeSession);
+    const stream = SessionStream.getOrCreate("session-finish-wait", fakeSession);
     const waitPromise = stream.waitForCompletion();
 
-    stream.close();
+    stream.finish();
 
     await expect(waitPromise).resolves.toEqual({ status: "completed" });
   });
 
   test("returns timed-out status with the latest reduced assistant response", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-timeout");
-    });
+    cleanUpStreamAfterTest("session-timeout", { restoreMocks: true });
 
-    const fakeSession = makeFakeSession();
-
-    const stream = SessionStream.getOrCreate("session-timeout", fakeSession);
-    stream.getSessionState().messages.push({ role: "assistant", content: "Partial result" });
+    const stream = createStreamWithAssistantResponse("session-timeout", "Partial result");
 
     await expect(stream.waitForCompletion(1)).resolves.toEqual({
       status: "timed_out",
@@ -1802,18 +1721,12 @@ describe("SessionStream.waitForCompletion", () => {
   });
 
   test("returns failed status with the latest real assistant response", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-error-completion");
-    });
+    cleanUpStreamAfterTest("session-error-completion", { restoreMocks: true });
 
-    const fakeSession = makeFakeSession();
-
-    const stream = SessionStream.getOrCreate("session-error-completion", fakeSession);
-    stream.getSessionState().messages.push({ role: "assistant", content: "Partial result" });
+    const stream = createStreamWithAssistantResponse("session-error-completion", "Partial result");
     const waitPromise = stream.waitForCompletion();
 
-    stream.close("error");
+    stream.finish("error");
 
     await expect(waitPromise).resolves.toEqual({
       status: "failed",
@@ -1826,15 +1739,9 @@ describe("SessionStream.waitForCompletion", () => {
   });
 
   test("deletion resolves waiters as completed with the latest response", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-delete-wait");
-    });
+    cleanUpStreamAfterTest("session-delete-wait", { restoreMocks: true });
 
-    const fakeSession = makeFakeSession();
-
-    const stream = SessionStream.getOrCreate("session-delete-wait", fakeSession);
-    stream.getSessionState().messages.push({ role: "assistant", content: "Deleted result" });
+    const stream = createStreamWithAssistantResponse("session-delete-wait", "Deleted result");
     const waitPromise = stream.waitForCompletion();
 
     SessionStream.remove("session-delete-wait");
@@ -1846,16 +1753,12 @@ describe("SessionStream.waitForCompletion", () => {
   });
 
   test("waits for the captured stream instance, not a future replacement", async () => {
-    onTestFinished(() => {
-      mock.restore();
-      closeStream("session-replaced");
-    });
+    cleanUpStreamAfterTest("session-replaced", { restoreMocks: true });
 
-    const first = SessionStream.getOrCreate("session-replaced", makeFakeSession());
-    first.getSessionState().messages.push({ role: "assistant", content: "First result" });
+    const first = createStreamWithAssistantResponse("session-replaced", "First result");
     const waitPromise = first.waitForCompletion();
 
-    first.detach();
+    first.finish();
     const second = SessionStream.getOrCreate("session-replaced", makeFakeSession());
 
     await expect(waitPromise).resolves.toEqual({
@@ -1867,7 +1770,7 @@ describe("SessionStream.waitForCompletion", () => {
 });
 
 describe("waitForSession", () => {
-  test("observes a session announced before its live stream exists", async () => {
+  test("waits for a session announced before its live stream exists", async () => {
     const receipt = registerPendingSessionCompletion("session-pending-wait");
     const first = waitForSession("session-pending-wait");
 
@@ -1877,7 +1780,7 @@ describe("waitForSession", () => {
     await expect(first).resolves.toEqual({ status: "completed", response: "Pending result" });
   });
 
-  test("times out one observer without settling the announced session", async () => {
+  test("times out one waiter without settling the announced session", async () => {
     const receipt = registerPendingSessionCompletion("session-pending-timeout");
 
     await expect(waitForSession("session-pending-timeout", 1)).resolves.toEqual({
@@ -1892,7 +1795,7 @@ describe("waitForSession", () => {
     });
   });
 
-  test("rejects observers when an announced session is canceled", async () => {
+  test("rejects waiters when an announced session is canceled", async () => {
     registerPendingSessionCompletion("session-pending-canceled");
     const completion = waitForSession("session-pending-canceled");
     const error = new Error("Canceled");

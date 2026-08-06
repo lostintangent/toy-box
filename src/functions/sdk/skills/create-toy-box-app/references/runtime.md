@@ -337,7 +337,7 @@ Use `createSession` when the conversation itself is durable, user-visible
 product data. Set `open: true` only when it should open immediately; otherwise
 save the returned ID and let the user open or close its pane. Use
 `deliverMessage`, `abortSession`, and `deleteSession` to manage a session the app
-owns or explicitly presents. `waitForSession` observes a session's current
+owns or explicitly presents. `waitForSession` waits for a session's current
 execution, whether it is an ordinary session or a worker. Its optional timeout
 ends only the wait; use `abortSession` or `cancelWorker` when the app should stop
 the underlying work.

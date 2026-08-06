@@ -11,7 +11,7 @@ const GIST_ID = "aa5a315d61ae9438b18d";
 describe("Gist app installation source", () => {
   test("reads the exact app definition files from a public Gist URL", async () => {
     const requested: string[] = [];
-    const fetcher = async (input: string | URL | Request) => {
+    const fetcher = async (input: string | URL) => {
       requested.push(String(input));
       return Response.json({
         id: GIST_ID,
@@ -42,7 +42,7 @@ describe("Gist app installation source", () => {
 
   test("follows raw URLs for truncated files", async () => {
     const rawUrl = `https://gist.githubusercontent.com/octocat/${GIST_ID}/raw/app.tsx`;
-    const fetcher = async (input: string | URL | Request) => {
+    const fetcher = async (input: string | URL) => {
       if (String(input) === rawUrl) {
         return new Response("export default function App() { return <main>Full</main>; }");
       }
@@ -112,7 +112,7 @@ describe("Gist app installation source", () => {
 
   test("stops buffering oversized downloads", async () => {
     const rawUrl = `https://gist.githubusercontent.com/octocat/${GIST_ID}/raw/app.tsx`;
-    const fetcher = async (input: string | URL | Request) => {
+    const fetcher = async (input: string | URL) => {
       if (String(input) === rawUrl) {
         return new Response("x", { headers: { "content-length": "600000" } });
       }

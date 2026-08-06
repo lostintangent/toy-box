@@ -54,7 +54,7 @@ async function parseInboxInput(request: Request): Promise<InboxInput> {
   );
 
   return inboxInputSchema.parse({
-    prompt: formData.get("prompt"),
+    prompt: formData.get("prompt") ?? formData.get("transcription"),
     attachments: attachments.length ? attachments : undefined,
   });
 }

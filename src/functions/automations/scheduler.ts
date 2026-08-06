@@ -103,7 +103,7 @@ async function superviseAutomationRun(
   try {
     await waitForCompletion();
   } catch (error) {
-    console.error(`Failed to observe automation run ${automationId}:`, error);
+    console.error(`Failed to await automation run ${automationId}:`, error);
   }
 
   try {

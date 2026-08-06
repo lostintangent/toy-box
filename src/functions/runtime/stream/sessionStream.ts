@@ -45,7 +45,7 @@ const MAX_REPLAY_EVENTS = 1500;
 // Dev HMR can reload this module while active turns are still running. Keep the
 // registry on globalThis so reconnects and stop requests keep finding the same
 // runtime object. A registered stream is therefore expected to mean "active or
-// reconnectable"; terminal paths must close/detach so idle sessions disappear.
+// reconnectable"; terminal paths must finish or dispose it so idle sessions disappear.
 export class SessionStream {
   // ── Static registry and controls ─────────────────────────────────────
 
@@ -87,15 +87,16 @@ export class SessionStream {
   }
 
   /**
-   * Publish a terminal event without idle/unread updates for a deleted session.
-   * Deletion completes waiters cleanly.
+   * Remove the live runtime after its durable session is deleted elsewhere.
+   * Subscribers receive a terminal event, but a deleted session publishes no
+   * idle/unread update. Completion waiters still settle cleanly.
    */
   static remove(sessionId: string): void {
     const stream = SessionStream.streams.get(sessionId);
     if (!stream) return;
 
-    if (!stream.#closed) stream.#emit({ type: "end", reason: "idle" });
-    stream.#shutdown();
+    if (!stream.#finished) stream.#emit({ type: "end", reason: "idle" });
+    stream.#dispose();
   }
 
   // ── Instance fields ──────────────────────────────────────────────────
@@ -107,7 +108,9 @@ export class SessionStream {
   #bus = createSessionEventBus({
     capacity: MAX_REPLAY_EVENTS,
     onNoSubscribers: () => {
-      if (this.#canDetach()) this.detach();
+      if (this.#sessionState.queuedMessages.length === 0 && !this.#bus.hasReplayEvents) {
+        this.#dispose();
+      }
     },
   });
 
@@ -130,8 +133,8 @@ export class SessionStream {
   // cannot both open the stream's first turn.
   #hasOpenedTurn = false;
   #abortRequested = false;
-  #closed = false;
-  #shutdownComplete = false;
+  #finished = false;
+  #disposed = false;
   #completionResult: SessionCompletion | undefined;
   // Repeated delivery of one message ID returns its original decision instead
   // of starting or queueing it twice.
@@ -163,8 +166,8 @@ export class SessionStream {
   deliver(message: QueuedMessage): Promise<MessageDisposition> {
     const existing = this.#dispositions.get(message.id);
     if (existing) return existing;
-    if (this.#closed || this.#abortRequested) {
-      return Promise.reject(new SessionStreamClosedError());
+    if (this.#finished || this.#abortRequested) {
+      return Promise.reject(new SessionStreamFinishedError());
     }
 
     if (!this.#hasOpenedTurn) {
@@ -228,7 +231,7 @@ export class SessionStream {
   }
 
   cancelQueuedMessage(queuedMessageId: string): boolean {
-    if (this.#closed) return false;
+    if (this.#finished) return false;
 
     const message = this.#sessionState.queuedMessages.find(({ id }) => id === queuedMessageId);
     if (!message || (message.role === "user" && message.isSteering)) return false;
@@ -289,10 +292,10 @@ export class SessionStream {
 
   // ── Stream controls ──────────────────────────────────────────────────
 
-  /** @internal Terminal lifecycle transition; external controls should abort or delete. */
-  close(reason: StreamEndReason = "idle"): void {
-    if (this.#closed) return;
-    this.#closed = true;
+  /** @internal Complete this execution; external controls should abort or delete the session. */
+  finish(reason: StreamEndReason = "idle"): void {
+    if (this.#finished) return;
+    this.#finished = true;
     // Capture completion before publishing end/error; the reducer can replace
     // the session state's trailing assistant message for terminal rendering.
     this.#completionResult = completionResult(
@@ -301,15 +304,18 @@ export class SessionStream {
     );
 
     this.#emit({ type: "end", reason });
+    if (reason === "idle" && !this.#abortRequested) {
+      cacheSnapshot(this.sessionId, toSessionSnapshot(this.sessionId, this.#sessionState));
+    }
     setSessionStatus(
       this.sessionId,
       this.#abortRequested || this.#bus.hasActiveSubscribers ? "idle" : "unread",
     );
     this.#bus.clearReplay();
-    this.#shutdown();
+    this.#dispose();
   }
 
-  /** Always close the stream, even if the SDK abort itself fails. */
+  /** Always finish the stream, even if the SDK abort itself fails. */
   async abort(): Promise<void> {
     this.#abortRequested = true;
     try {
@@ -322,15 +328,8 @@ export class SessionStream {
       evictCachedSessionIfStale(this.sessionId, error);
       throw error;
     } finally {
-      this.close();
+      this.finish();
     }
-  }
-
-  /** @internal Registry detachment; production teardown should close or remove. */
-  detach(): void {
-    this.#resolveCompletionWaiters();
-    this.#unsubscribeSdk();
-    SessionStream.streams.delete(this.sessionId);
   }
 
   // ── Turn execution ───────────────────────────────────────────────────
@@ -348,7 +347,7 @@ export class SessionStream {
       await this.#sendToSdk(message);
     } catch (error) {
       evictCachedSessionIfStale(this.sessionId, error);
-      this.close("error");
+      this.finish("error");
       throw error;
     }
   }
@@ -363,7 +362,7 @@ export class SessionStream {
   }
 
   async #setModel(configuration: ModelConfiguration): Promise<void> {
-    if (this.#closed) return;
+    if (this.#finished) return;
 
     if (areModelConfigurationsEqual(configuration, this.#sessionState.model)) {
       return;
@@ -388,7 +387,7 @@ export class SessionStream {
     if (turnEndReason) {
       if (turnEndReason === "error") {
         if (this.#abortRequested) return;
-        this.close("error");
+        this.finish("error");
         return;
       }
       void this.#drainMessageQueue();
@@ -406,8 +405,7 @@ export class SessionStream {
 
     const queuedMessage = this.#sessionState.queuedMessages[0];
     if (!queuedMessage) {
-      this.#cacheFinalSnapshot();
-      this.close();
+      this.finish();
       return;
     }
     if (queuedMessage.role === "user" && queuedMessage.isSteering) return;
@@ -416,11 +414,11 @@ export class SessionStream {
 
     try {
       await this.#startTurn(queuedMessage);
-      if (!this.#closed && !this.#abortRequested) {
+      if (!this.#finished && !this.#abortRequested) {
         this.#emit({ type: "message_dequeued", queuedMessageId: queuedMessage.id });
       }
     } catch {
-      // #startTurn already closed the stream; this runs from a floating SDK handler.
+      // #startTurn already finished the stream; this runs from a floating SDK handler.
     } finally {
       this.#isSendingQueuedMessage = false;
     }
@@ -439,7 +437,7 @@ export class SessionStream {
       // Keep those segments distinct for downstream echo dedupe.
       this.#currentTurnId = this.#generateTurnId();
     } else if (!this.#currentTurnId) {
-      // Events arriving before any turn boundary (e.g. attaching to a
+      // Events arriving before any turn boundary (e.g. subscribing to a
       // resumed session mid-turn) share a stable bootstrap turn id.
       this.#currentTurnId = `${this.sessionId}:turn:bootstrap`;
     }
@@ -463,24 +461,19 @@ export class SessionStream {
     });
   }
 
-  /** Cache the clean-close snapshot; abort/error closes may hold unpersisted content. */
-  #cacheFinalSnapshot(): void {
-    // close() publishes the canonical end event after this. Pre-applying it
-    // here captures finalized idle state before global idle updates can refetch.
-    this.#sessionState = applySessionEvent(this.#sessionState, { type: "end", reason: "idle" });
-    cacheSnapshot(this.sessionId, toSessionSnapshot(this.sessionId, this.#sessionState));
-  }
-
-  #shutdown(): void {
-    if (this.#shutdownComplete) return;
-    this.#shutdownComplete = true;
-    // remove/delete teardown reaches #shutdown directly. Mark the stream
-    // closed so a later close() cannot publish an end event retroactively.
-    this.#closed = true;
+  #dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    // Session deletion and unused-runtime cleanup can dispose without the
+    // domain finish transition. Mark the stream finished so a stale reference
+    // cannot emit a terminal event or accept a message after registry removal.
+    this.#finished = true;
 
     this.#sessionState = { ...this.#sessionState, queuedMessages: [] };
     this.#bus.close();
-    this.detach();
+    this.#resolveCompletionWaiters();
+    this.#unsubscribeSdk();
+    SessionStream.streams.delete(this.sessionId);
   }
 
   #resolveCompletionWaiters(): void {
@@ -494,19 +487,11 @@ export class SessionStream {
   #isCurrentStream(): boolean {
     return SessionStream.get(this.sessionId) === this;
   }
-
-  #canDetach(): boolean {
-    return (
-      !this.#bus.hasSubscribers &&
-      this.#sessionState.queuedMessages.length === 0 &&
-      !this.#bus.hasReplayEvents
-    );
-  }
 }
 
-export class SessionStreamClosedError extends Error {
+export class SessionStreamFinishedError extends Error {
   constructor() {
-    super("Session stream closed before the message could be delivered.");
+    super("Session stream finished before the message could be delivered.");
   }
 }
 

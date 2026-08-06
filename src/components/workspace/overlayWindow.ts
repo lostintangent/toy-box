@@ -57,7 +57,7 @@ export function defaultViewportOverlayPosition(): OverlayPosition {
   // so the hyper window is anchored to the sidebar and clearly distinct from the
   // bottom-right pane overlay. When the sidebar is collapsed or absent the edge
   // resolves to ~0 and the clamp drops the window against the left margin.
-  const sidebar = document.querySelector('[data-panel-id="sidebar"]');
+  const sidebar = document.querySelector("[data-sidebar]");
   const sidebarRight = sidebar?.getBoundingClientRect().right ?? 0;
 
   return clampViewportOverlayPosition({

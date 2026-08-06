@@ -26,10 +26,8 @@ export async function createSession(
     artifactPath?: string;
   },
 ): Promise<CopilotSession> {
-  const [client, skillDirectories] = await Promise.all([
-    startCopilotClient(),
-    getSessionSkillDirectories(options.sessionType),
-  ]);
+  const skillDirectories = getSessionSkillDirectories(options.sessionType);
+  const client = await startCopilotClient();
 
   return client.createSession({
     sessionId,
@@ -65,10 +63,8 @@ export async function resumeSession(
   sessionId: string,
   options: { directory: string; sessionType: SessionType; tools?: Tool<any>[] },
 ): Promise<CopilotSession> {
-  const [client, skillDirectories] = await Promise.all([
-    startCopilotClient(),
-    getSessionSkillDirectories(options.sessionType),
-  ]);
+  const skillDirectories = getSessionSkillDirectories(options.sessionType);
+  const client = await startCopilotClient();
   return client.resumeSession(sessionId, {
     streaming: true,
     requestCanvasRenderer: true,
@@ -156,10 +152,8 @@ export async function listSkills(
   cwd?: string,
   sessionType: SessionType = "standard",
 ): Promise<SessionSkill[]> {
-  const [client, skillDirectories] = await Promise.all([
-    startCopilotClient(),
-    getSessionSkillDirectories(sessionType),
-  ]);
+  const skillDirectories = getSessionSkillDirectories(sessionType);
+  const client = await startCopilotClient();
   const result = await client.rpc.skills.discover({
     ...(cwd ? { projectPaths: [cwd] } : {}),
     ...(skillDirectories ? { skillDirectories } : {}),

@@ -1,9 +1,9 @@
 /**
  * Client facade for one session's live state.
  *
- * The hook owns one pane's session lifecycle: hydrate cold state, observe live
+ * The hook owns one pane's session lifecycle: hydrate cold state, stream live
  * work while visible, reduce stream events, and expose user commands. Server
- * functions keep the domain register underneath: observe, deliver, steer or
+ * functions keep the domain register underneath: stream, deliver, steer or
  * cancel queued input, and abort.
  *
  * Draft start: a draft (see useDrafts) already owns a durable SDK
@@ -29,7 +29,6 @@ import {
   toSessionSnapshot,
 } from "@/lib/session/sessionReducer";
 import { sessionQueries } from "@/lib/queries";
-import { consumeSessionEvents } from "@/lib/session/streamCodec";
 import type { SessionSubscriptionMode, StreamSessionRequest } from "@/lib/session/protocol";
 import { usePageVisibility } from "@/hooks/browser/usePageVisibility";
 import { generateUUID } from "@/lib/utils";
@@ -153,24 +152,25 @@ export function useSession(
     setIsStreaming(true);
 
     const consume = async () => {
-      // Abort the request itself: cancelling only the decoded RawStream leaves
-      // TanStack's multiplexed response subscribed on the server.
-      const response = await streamSession({
+      const events = await streamSession({
         data: request,
         signal: controller.signal,
       });
-      const receivedEvent = await consumeSessionEvents(
-        response as unknown as ReadableStream<Uint8Array>,
-        {
-          signal: controller.signal,
-          onEvent: applyEvent,
-        },
-      );
+      let receivedEvent = false;
+      if (events) {
+        const iterator = events[Symbol.asyncIterator]();
+        while (!controller.signal.aborted) {
+          const next = await iterator.next();
+          if (next.done) break;
+          receivedEvent = true;
+          applyEvent(next.value);
+        }
+      }
 
       if (controller.signal.aborted) return;
 
       // Real runtime streams publish `end` from the server. This fallback is
-      // only for event-less observation when no live stream exists.
+      // only for an event-less subscription when no live stream exists.
       if (!receivedEvent) {
         applyEvent({ type: "end", reason: "idle" });
       }
@@ -182,8 +182,8 @@ export function useSession(
       );
 
       // Do not change workspace session status here. The runtime publishes
-      // the terminal idle/unread transition when the stream truly closes. A
-      // passive event-less subscription can also end without observing a turn.
+      // the terminal idle/unread transition when the execution truly finishes. A
+      // passive event-less subscription can also end without receiving a turn.
     };
 
     try {
@@ -202,7 +202,7 @@ export function useSession(
     await invalidateSessionSnapshot();
   };
 
-  const attachToStream = async (mode: SessionSubscriptionMode = "active") => {
+  const subscribeToSession = async (mode: SessionSubscriptionMode = "active") => {
     if (abortControllerRef.current) return;
 
     try {
@@ -217,11 +217,11 @@ export function useSession(
     }
   };
 
-  // Detaching only ends this client's observation. The transient-state reset
+  // Ending the subscription resets only this client's transient state. The reset
   // goes through the reducer so local and server terminal cleanup cannot drift.
   // It deliberately leaves workspace status running because background work
   // continues on the server.
-  const detachFromStream = () => {
+  const endSubscription = () => {
     const controller = abortControllerRef.current;
     if (!controller) return;
 
@@ -233,7 +233,7 @@ export function useSession(
 
   const stop = async () => {
     if (!abortControllerRef.current) return;
-    detachFromStream();
+    endSubscription();
 
     applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
     sessionRef.current = { ...sessionRef.current, queuedMessages: [] };
@@ -290,8 +290,8 @@ export function useSession(
       if (receipt.disposition === "started") {
         // The server replaced a stream that was still winding down locally.
         // Drop that stale subscription and follow the newly opened turn.
-        detachFromStream();
-        await attachToStream();
+        endSubscription();
+        await subscribeToSession();
       }
     } catch (error) {
       console.error("Failed to deliver follow-up message:", error);
@@ -317,10 +317,9 @@ export function useSession(
     // browser selection the session's effective model.
     const model = sessionRef.current.model ?? defaultModel;
 
-    // Enqueue if a stream is already active. We gate on the controller ref
-    // (not only React state) so rapid consecutive sends in the same tick
-    // reliably enqueue instead of racing into a second stream.
-    if (abortControllerRef.current) {
+    // Server running state owns the send-vs-queue distinction. The controller
+    // also closes the same-tick gap before that shared state reaches React.
+    if (isSessionRunning || abortControllerRef.current) {
       void sendFollowUp(prompt, messageAttachments, model);
       return;
     }
@@ -448,11 +447,11 @@ export function useSession(
   // Reconcile the subscriber whenever its visibility or the session's
   // workspace state changes. Effect events keep transport implementation
   // details out of the reactive transition inputs.
-  const reconcileObservation = useEffectEvent(() => {
+  const reconcileSubscription = useEffectEvent(() => {
     if (wasVisibleRef.current !== isVisible) {
       wasVisibleRef.current = isVisible;
       if (!isVisible) {
-        detachFromStream();
+        endSubscription();
         return;
       }
       void invalidateSessionSnapshot();
@@ -461,7 +460,7 @@ export function useSession(
     if (isDraft || !isVisible || !hasLoadedSessionState) return;
 
     if (isSessionRunning) {
-      void attachToStream(subscriptionMode);
+      void subscribeToSession(subscriptionMode);
       return;
     }
 
@@ -471,10 +470,10 @@ export function useSession(
     dispatchWorkspaceAction(queryClient, { type: "session.read", sessionId });
   });
 
-  // Every visible pane observes live work. A passive subscriber never
+  // Every visible pane streams live work. A passive subscriber never
   // acknowledges completion or clears an existing unread state.
   useEffect(() => {
-    reconcileObservation();
+    reconcileSubscription();
   }, [
     hasLoadedSessionState,
     isDraft,

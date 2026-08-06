@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { createSessionEventBus } from "./eventBus";
 import type { SessionEvent } from "@/types";
 
@@ -123,14 +123,19 @@ describe("session event bus lifecycle", () => {
     expect(await subscription.next()).toEqual({ done: true, value: undefined });
   });
 
-  test("unsubscribe stops live delivery and updates subscriber state", async () => {
-    const bus = createTestBus();
+  test("return releases a pending read and notifies when the last subscriber leaves", async () => {
+    const onNoSubscribers = mock(() => {});
+    const bus = createSessionEventBus({ capacity: 10, onNoSubscribers });
     const subscription = bus.subscribe();
+    const pendingRead = subscription.next();
 
+    await subscription.return();
     await subscription.return();
     bus.publish(event("ignored"));
 
     expect(bus.hasSubscribers).toBe(false);
+    expect(onNoSubscribers).toHaveBeenCalledTimes(1);
+    expect(await pendingRead).toEqual({ done: true, value: undefined });
     expect(await subscription.next()).toEqual({ done: true, value: undefined });
   });
 });

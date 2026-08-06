@@ -1,3 +1,7 @@
+## 📅 v0.1.16 (08/06/26)
+
+- The sidebar can now be collapsed while retaining access to common actions
+
 ## 📅 v0.1.15 (08/05/26)
 
 - Added initial support for custom apps

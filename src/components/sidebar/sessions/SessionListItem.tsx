@@ -3,8 +3,8 @@ import { Pencil, Pin, PinOff, Trash2 } from "lucide-react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { SessionMetadataBadges } from "@/components/workspace/panes/session/location/SessionMetadataBadges";
 import { RelativeTime } from "@/components/ui/relative-time";
-import { DestructiveConfirmationDialog } from "@/components/sidebar/shell/DestructiveConfirmationDialog";
-import { SidebarSessionItem } from "@/components/sidebar/shell/SidebarListItem";
+import { DestructiveConfirmationDialog } from "@/components/sidebar/shell/dialogs/DestructiveConfirmationDialog";
+import { SidebarSessionItem } from "@/components/sidebar/shell/panels/SidebarListItem";
 import type { SessionMetadata } from "@/types";
 
 type SessionListItemProps = {

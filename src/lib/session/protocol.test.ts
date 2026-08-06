@@ -29,7 +29,7 @@ describe("session protocol", () => {
     });
   });
 
-  test("streams observation-only and message requests with an optional location", () => {
+  test("streams subscription-only and message requests with an optional location", () => {
     expect(streamSessionRequestSchema.parse({ sessionId: "session", afterEventId: 42 })).toEqual({
       sessionId: "session",
       afterEventId: 42,

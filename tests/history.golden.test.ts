@@ -24,7 +24,7 @@ describe("history pipeline golden replay", () => {
     const childCounts = agents
       .map((tc) => tc.agent?.toolCalls?.length ?? 0)
       .filter((n) => n > 0)
-      .sort();
+      .sort((a, b) => a - b);
     expect(childCounts).toEqual([3, 4]);
 
     // ...subagent assistant messages stay nested, while root tool calls remain

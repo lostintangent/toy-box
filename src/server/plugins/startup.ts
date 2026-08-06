@@ -31,7 +31,7 @@ export default definePlugin((nitroApp) => {
   start("sweep abandoned ephemeral workers", ensureWorkersSwept);
 });
 
-function start(description: string, run: () => unknown | Promise<unknown>): void {
+function start(description: string, run: () => void | Promise<unknown>): void {
   void (async () => run())().catch((error) =>
     console.error(`Unable to ${description} on startup:`, error),
   );

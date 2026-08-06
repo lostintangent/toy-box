@@ -4,7 +4,7 @@ import { parseAppState } from "@/lib/apps/stateSchema";
 
 const appModule = "./app";
 const { isSquadLeader } = (await import(appModule)) as {
-  isSquadLeader(session: { title: string }): boolean;
+  isSquadLeader: (session: { title: string }) => boolean;
 };
 
 const definition = BUILT_IN_APP_DEFINITIONS.find(({ id }) => id === "toybox-squad")!;

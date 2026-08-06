@@ -1,14 +1,15 @@
 # Session Runtime
 
-A session is Toy Box's core compute primitive: an addressable agent process that can outlive the browser that started it, receive queued messages, and be observed or controlled by many callers. Its durable identity, SDK history, workspace, and owned resources survive individual executions; `SessionStream` is the one live incarnation currently processing that session's mailbox. This resembles the Erlang/Elixir process model as an architectural analogy, not as an implementation claim about isolation or fault tolerance.
+A session is Toy Box's core compute primitive: an addressable agent process that can outlive the browser that started it, receive queued messages, and serve multiple subscribers and callers. Its durable identity, SDK history, workspace, and owned resources survive individual executions; `SessionStream` is the one live incarnation currently processing that session's mailbox. This resembles the Erlang/Elixir process model as an architectural analogy, not as an implementation claim about isolation or fault tolerance.
 
-The end user directly supervises an ordinary session. Scenario-specific supervisors instead govern managed sessions for workers, Automations, Inbox, Hyper, and future workflows. Every observer waits on the same session completion mechanism; a supervisor is distinguished by lifecycle authority, not a special kind of wait. It owns admission, concurrency, context, cancellation, recovery, and what to retain, delete, record, or publish when execution ends. The runtime supplies the common process mechanics and exact execution receipts without defining a generic supervisor abstraction.
+The end user directly supervises an ordinary session. Scenario-specific supervisors instead govern managed sessions for workers, Automations, Inbox, Hyper, and future workflows. Every waiter uses the same session completion mechanism; a supervisor is distinguished by lifecycle authority, not a special kind of wait. It owns admission, concurrency, context, cancellation, recovery, and what to retain, delete, record, or publish when execution ends. The runtime supplies the common process mechanics and exact execution receipts without defining a generic supervisor abstraction.
 
 ```mermaid
 flowchart TB
     User[End user] --> Operations
-    User --> Observation
-    Observer[App, session, or other observer] --> Observation
+    User --> Streaming
+    Caller[App, session, or other caller] --> Streaming
+    Caller --> Waiting
 
     subgraph Supervisors[Scenario-specific supervisors]
         Worker[Worker admission]
@@ -23,14 +24,16 @@ flowchart TB
     end
 
     Policy --> Operations
-    Policy --> Observation
+    Policy --> Waiting
 
     subgraph Runtime[Shared session runtime]
         Operations[Create, deliver, and abort]
-        Observation[Stream or wait for completion]
+        Streaming[Stream a session]
+        Waiting[Wait for completion]
         Process[SessionStream: mailbox, state, events, exact completion]
         Operations --> Process
-        Process --> Observation
+        Process --> Streaming
+        Process --> Waiting
     end
 
     Process <--> SDK[Copilot SDK session and durable history]
@@ -38,18 +41,19 @@ flowchart TB
 
 ## Session operations
 
-The end-to-end session domain has four operation families. Create, deliver, and observe converge on the runtime; individual control commands retain their specific owners:
+The runtime exposes the session operations directly:
 
 1. **Create** turn-bearing SDK history through its required first message. A draft may already own a durable workspace, but the SDK's experimental empty-session surface does not make that workspace resumable.
 2. **Deliver** a message to an existing session. The runtime decides whether it starts immediately or queues behind active execution.
-3. **Observe** through a live event stream, a reduced snapshot, or a completion result. `waitForSession` monitors the announced, live, or latest persisted execution by session ID; a delivery receipt binds a supervisor to the exact execution it started.
-4. **Control** by renaming, steering or cancelling queued input, aborting, deleting, or applying worktree operations.
+3. **Stream** through a subscription to ordered live events, with cursor replay after reconnect.
+4. **Wait** for completion. `waitForSession` covers the announced, live, or latest persisted execution by session ID; a delivery receipt binds a supervisor to the exact execution it started.
+5. **Control** by renaming, steering or cancelling queued input, aborting, deleting, or applying worktree operations.
 
 Control is a category, not one runtime method. Abort, queue steering, and queue cancellation act on live execution; rename, deletion, and worktree commands delegate through the session API to the registry or resource owner described in the state guide. Normal draining and steering share one private queue claim; steering sends its claim through the SDK's immediate mode without opening another turn boundary.
 
 Once a session has turn-bearing history, resume is not a separate operation. Delivering to an idle session resumes its persisted SDK session; delivering to an active session queues. Likewise, callers never choose between send and queue.
 
-`streamSession` is the connected composite: it registers observation before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can start a draft's first turn or create a session with its required first message, deliver to an existing session, or observe without delivering. Headless callers use `createSession`, `deliverSessionMessage`, and `waitForSession` directly. Scenario supervisors compose those operations with their own policy; for example, worker admission and supervision live under [`../workers/`](../workers/), not in the generic runtime.
+`streamSession` is the connected composite: it subscribes before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can start a draft's first turn or create a session with its required first message, deliver to an existing session, or subscribe without delivering. Headless callers use `createSession`, `deliverSessionMessage`, and `waitForSession` directly. Scenario supervisors compose those operations with their own policy; for example, worker admission and supervision live under [`../workers/`](../workers/), not in the generic runtime.
 
 ## Live execution
 
@@ -62,18 +66,18 @@ Inbox dispatch, automation scheduling, and worker admission supervise sessions b
 1. Acquisition is single-flight. A caller joins an existing stream, shares an in-progress creation, creates a new SDK session, or resumes an idle session from its reduced snapshot and SDK handle.
 2. Connected callers subscribe before delivery. `SessionStream.deliver` starts the message synchronously when idle or emits `message_queued`; repeated delivery of the same message ID returns the original disposition. Normal draining emits `message_dequeued` when an idle send starts. Only queued user messages can be steered. Steering marks that same queue entry while awaiting delivery; when the SDK eventually publishes it with `steering` or `queued` delivery, the projector marks the canonical user message as steered and the reducer removes the matching queue entry. The SDK event is the sole queued-message transcript fact, so live state preserves its actual delivery order without echo reconciliation.
 3. The SDK projector translates raw events into canonical `SessionEvent`s. The event bus stamps a process-monotonic `eventId`; the runtime stamps each SDK agent-loop segment with a `turnId`, distinct from the delivered message ID; and the shared reducer returns the next immutable `Session`.
-4. When the SDK session reports idle, the runtime drains the next queued message through the same path. `assistant.turn_end` closes only an agent-loop segment and does not drain the queue. With no queued work, the runtime caches its clean final snapshot and closes.
-5. Every real close publishes a terminal `end` event before releasing listeners, replay, queue state, and the live registry. Transport close means only that no more bytes are available; consumers reason about the domain event.
+4. When the SDK session reports idle, the runtime drains the next queued message through the same path. `assistant.turn_end` ends only an agent-loop segment and does not drain the queue. With no queued work, the runtime finishes the execution.
+5. Finishing publishes one terminal `end`, caches the resulting clean state, selects idle or unread from the active subscriptions, and then disposes the live runtime. Disposing is private resource release: it closes the event bus, resolves waiters, removes the SDK listener, and releases the registry entry. Aborting interrupts SDK work and then finishes; session deletion removes the live runtime without publishing ordinary idle/unread state.
 
-A delivery receipt exposes the initial `started` or `queued` decision and a waiter bound to that exact stream instance. Completion reports `completed`, `failed`, or `timed_out`, plus the latest substantive assistant response when available. Observation by session ID also covers work announced before its stream exists and falls back to the final snapshot when no live stream remains. A wait timeout ends only that observer's wait; it does not abort the session or alter its supervisor's policy.
+A delivery receipt exposes the initial `started` or `queued` decision and a waiter bound to that exact stream instance. Completion reports `completed`, `failed`, or `timed_out`, plus the latest substantive assistant response when available. Waiting by session ID also covers work announced before its stream exists and falls back to the final snapshot when no live stream remains. A timeout ends only that caller's wait; it does not abort the session or alter its supervisor's policy.
 
-## Observation and client orchestration
+## Subscriptions and client orchestration
 
 The per-session event bus provides bounded cursor replay and live fan-out. It registers a subscriber immediately, before iteration begins, so synchronous producers cannot outrun subscription. Existing subscribers retain pending events when future replay is cleared between message deliveries; clients that miss more than the retained window recover from the authoritative detail snapshot.
 
-Subscriptions are either `active` or `passive`. Both receive the same live data. Active observation acknowledges that the user is watching, so a clean finish becomes idle; a stream that finishes without an active observer becomes unread. Passive previews stay live without suppressing that unread transition.
+Subscriptions are either `active` or `passive`. Both receive the same live data. An active subscription acknowledges that the user is watching, so a clean finish becomes idle; a stream that finishes without one becomes unread. Passive previews stay live without suppressing that unread transition.
 
-`useSession` is the browser orchestration boundary for one pane. It hydrates an idle snapshot, attaches while visible, reduces incoming events, batches rapid text deltas to animation frames, and detaches immediately when the pane closes or the page becomes hidden. Detaching stops only that client's observation. Aborting is a separate control that stops server work. `SessionPane` composes this lifecycle with transcript presentation, linked panes, and the composer without owning runtime policy.
+`useSession` is the browser orchestration boundary for one pane. It hydrates an idle snapshot, subscribes while visible, reduces incoming events, batches rapid text deltas to animation frames, and ends its subscription immediately when the pane closes or the page becomes hidden. Ending a subscription does not stop server work; aborting is the separate control that does. `SessionPane` composes this lifecycle with transcript presentation, linked panes, and the composer without owning runtime policy.
 
 ## Realtime planes
 

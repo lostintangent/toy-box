@@ -1,13 +1,20 @@
 /**
- * Observes container size changes and drives xterm.js fit/resize, with
- * throttling and pause support to avoid excessive relayouts during drag.
+ * Keeps xterm fitted to its container.
+ *
+ * Pointer drags, panel open/close animations and window resizes all reach the
+ * terminal the same way: as a burst of intermediate container sizes. Refitting
+ * on those reflows the grid to widths nobody asked for, so a container change
+ * only fits once the size has settled. Moments the terminal chooses itself,
+ * like attaching a container or fonts finishing, are already settled and fit
+ * straight away.
  */
 
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
-import { Throttler } from "@tanstack/pacer/throttler";
+import { Debouncer } from "@tanstack/pacer/debouncer";
 
-const FIT_THROTTLE_MS = 75;
+/** How long the container must hold one size before it counts as settled. */
+export const SETTLE_MS = 100;
 
 export type TerminalResizeCallbacks = {
   onSizeChanged: (cols: number, rows: number) => void;
@@ -19,11 +26,8 @@ export function isValidSize(cols: number, rows: number) {
 
 export class TerminalResize {
   readonly #callbacks: TerminalResizeCallbacks;
-  readonly #fitThrottler: Throttler<() => void>;
+  readonly #settle: Debouncer<() => void>;
   #resizeObserver: ResizeObserver | null = null;
-  #fitRaf: number | null = null;
-  #resizePaused = false;
-  #pendingFit = false;
 
   #container: HTMLDivElement | null = null;
   #xterm: XTerm | null = null;
@@ -31,21 +35,7 @@ export class TerminalResize {
 
   constructor(callbacks: TerminalResizeCallbacks) {
     this.#callbacks = callbacks;
-    this.#fitThrottler = new Throttler(
-      () => {
-        if (this.#resizePaused) {
-          this.#pendingFit = true;
-          return;
-        }
-        if (this.#fitRaf !== null) return;
-
-        this.#fitRaf = requestAnimationFrame(() => {
-          this.#fitRaf = null;
-          this.#applyFit();
-        });
-      },
-      { wait: FIT_THROTTLE_MS },
-    );
+    this.#settle = new Debouncer(() => this.fit(), { wait: SETTLE_MS });
   }
 
   install(container: HTMLDivElement, xterm: XTerm, fitAddon: FitAddon) {
@@ -54,81 +44,40 @@ export class TerminalResize {
     this.#container = container;
     this.#xterm = xterm;
     this.#fitAddon = fitAddon;
-    this.#pendingFit = false;
-    this.#fitThrottler.reset();
 
-    this.#resizeObserver = new ResizeObserver(() => {
-      if (this.#resizePaused) {
-        this.#pendingFit = true;
-        return;
-      }
-      this.scheduleFit();
-    });
+    this.#resizeObserver = new ResizeObserver(() => this.#settle.maybeExecute());
     this.#resizeObserver.observe(container);
   }
 
   uninstall() {
-    if (this.#resizeObserver) {
-      this.#resizeObserver.disconnect();
-      this.#resizeObserver = null;
-    }
-    this.#cancelPendingFit();
+    this.#resizeObserver?.disconnect();
+    this.#resizeObserver = null;
+    this.#settle.cancel();
+
     this.#container = null;
     this.#xterm = null;
     this.#fitAddon = null;
   }
 
-  scheduleFit() {
-    if (this.#resizePaused) {
-      this.#pendingFit = true;
-      return;
-    }
+  /** Fit the grid to the container as it stands now. */
+  fit() {
+    if (!this.#container || !this.#xterm || !this.#fitAddon) return;
 
-    if (this.#fitRaf !== null) return;
-    this.#fitThrottler.maybeExecute();
-  }
+    const { width, height } = this.#container.getBoundingClientRect();
+    if (width <= 0 || height <= 0) return;
 
-  setResizePaused(paused: boolean) {
-    this.#resizePaused = paused;
-    if (paused && this.#fitThrottler.store.state.isPending) {
-      this.#fitThrottler.cancel();
-      this.#pendingFit = true;
-      return;
-    }
-    if (!paused && this.#pendingFit) {
-      this.#pendingFit = false;
-      this.scheduleFit();
-    }
+    const dimensions = this.#fitAddon.proposeDimensions();
+    if (!dimensions) return;
+
+    const cols = Math.floor(dimensions.cols);
+    const rows = Math.floor(dimensions.rows);
+    if (!isValidSize(cols, rows)) return;
+
+    if (this.#xterm.cols !== cols || this.#xterm.rows !== rows) this.#fitAddon.fit();
+    this.#callbacks.onSizeChanged(cols, rows);
   }
 
   dispose() {
     this.uninstall();
-  }
-
-  #applyFit() {
-    if (!this.#container || !this.#xterm || !this.#fitAddon) return;
-    const rect = this.#container.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
-
-    const dims = this.#fitAddon.proposeDimensions();
-    if (!dims) return;
-
-    const cols = Math.floor(dims.cols);
-    const rows = Math.floor(dims.rows);
-    if (!isValidSize(cols, rows)) return;
-
-    if (this.#xterm.cols !== cols || this.#xterm.rows !== rows) {
-      this.#fitAddon.fit();
-    }
-
-    this.#callbacks.onSizeChanged(cols, rows);
-  }
-
-  #cancelPendingFit() {
-    this.#fitThrottler.cancel();
-    if (this.#fitRaf !== null) {
-      cancelAnimationFrame(this.#fitRaf);
-      this.#fitRaf = null;
-    }
   }
 }

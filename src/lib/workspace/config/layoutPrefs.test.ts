@@ -4,9 +4,9 @@ import { parseLayoutPrefs, resolveLayoutPrefs, serializeLayoutCookie } from "./l
 describe("layout prefs", () => {
   test("parses every layout cookie, including a single hyper position", () => {
     const cookieHeader = [
-      "toybox_sidebar_size=18",
+      "toybox_sidebar_width=320",
       "toybox_terminal_size=42",
-      "toybox_sidebar_open=false",
+      "toybox_sidebar_collapsed=true",
       "toybox_terminal_open=true",
       "toybox_apps_expanded=false",
       "toybox_automations_expanded=false",
@@ -16,9 +16,9 @@ describe("layout prefs", () => {
     ].join("; ");
 
     expect(parseLayoutPrefs(cookieHeader)).toEqual({
-      sidebarSize: 18,
+      sidebarWidth: 320,
       terminalSize: 42,
-      sidebarOpen: false,
+      sidebarCollapsed: true,
       terminalOpen: true,
       appsExpanded: false,
       automationsExpanded: false,
@@ -43,7 +43,8 @@ describe("layout prefs", () => {
   });
 
   test("clamps out-of-range sizes on read", () => {
-    expect(parseLayoutPrefs("toybox_sidebar_size=999").sidebarSize).toBe(40);
+    expect(parseLayoutPrefs("toybox_sidebar_width=9999").sidebarWidth).toBe(480);
+    expect(parseLayoutPrefs("toybox_terminal_size=999").terminalSize).toBe(80);
   });
 
   test("ignores a malformed hyper position cookie", () => {

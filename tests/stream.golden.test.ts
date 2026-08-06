@@ -1,5 +1,5 @@
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import { afterAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { SessionEvent, SessionMetadataUpdate, WorkspaceEvent } from "@/types";
 import {
   sessionSeedFromSnapshot,
@@ -14,7 +14,7 @@ import * as realWorkspaceState from "@/functions/state/workspace";
 // Golden replay of the full stream lifetime: real v1 CLI events from the
 // fixture drive a SessionStream through two turns — explicit start, fixture
 // replay, queueing a follow-up, the idle→drain handoff, and the final
-// idle→close teardown. The projector/reducer goldens lock the data pipeline;
+// idle→finish teardown. The projector/reducer goldens lock the data pipeline;
 // this locks the runtime around it: event sequencing (eventId/turnId
 // decoration), buffering, global broadcast ordering, and teardown.
 //
@@ -32,6 +32,7 @@ const realWorkspaceStateExports = { ...realWorkspaceState };
 const unused = () => {
   throw new Error("not used in stream golden replay");
 };
+const settle = () => Bun.sleep(0);
 
 function emitMockWorkspaceEvent(event: WorkspaceEvent): void {
   for (const listener of workspaceEventListeners) {
@@ -91,12 +92,17 @@ afterAll(() => {
   mock.module("@/functions/state/workspace", () => realWorkspaceStateExports);
 });
 
+beforeEach(() => {
+  sideEffects.length = 0;
+  workspaceEventListeners.clear();
+});
+
 const { SessionStream } = await import("@/functions/runtime/stream");
 
 const SESSION_ID = "golden-stream";
 
 describe("stream golden replay", () => {
-  test("two-turn lifetime: fixture replay, queue drain, and close", async () => {
+  test("two-turn lifetime: fixture replay, queue drain, and finish", async () => {
     // ── Normalization for nondeterministic ids ─────────────────────────
     let baseEventId: number | undefined;
     const turnIds = new Map<string, string>();
@@ -137,7 +143,7 @@ describe("stream golden replay", () => {
       for await (const event of events) {
         received.push(normalize(event));
       }
-      received.push("<<STREAM-CLOSED>>");
+      received.push("<<SUBSCRIPTION-DONE>>");
     })();
 
     // Turn 1: explicit start + full fixture replay through the SDK listener.
@@ -152,9 +158,9 @@ describe("stream golden replay", () => {
     // Queue a follow-up, then end turn 1 → drain dequeues and sends turn 2.
     await stream.deliver({ id: "queued-1", role: "user", content: "now fix the findings" });
     sdkHandler!(sdkEvent({ type: "session.idle", data: {} }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
 
-    // Turn 2 streams, then idles with an empty queue → close.
+    // Turn 2 streams, then idles with an empty queue → finish.
     sdkHandler!(
       sdkEvent({
         type: "user.message",
@@ -163,9 +169,9 @@ describe("stream golden replay", () => {
     );
     sdkHandler!(sdkEvent({ type: "assistant.turn_start", data: {} }));
     sdkHandler!(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "On it." } }));
-    sideEffects.push("--- pre-close ---");
+    sideEffects.push("--- pre-finish ---");
     sdkHandler!(sdkEvent({ type: "session.idle", data: {} }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
     await collector;
 
     // ── Invariants ─────────────────────────────────────────────────────
@@ -178,11 +184,11 @@ describe("stream golden replay", () => {
     // Teardown sequence: idle announcement, end-of-stream marker to subscribers,
     // SDK unsubscribe — in that order. The workspace read action is silent when
     // the session was not unread.
-    expect(sideEffects.slice(sideEffects.indexOf("--- pre-close ---") + 1)).toEqual([
+    expect(sideEffects.slice(sideEffects.indexOf("--- pre-finish ---") + 1)).toEqual([
       `idle:${SESSION_ID}`,
       "sdk:unsubscribed",
     ]);
-    expect(received.at(-1)).toBe("<<STREAM-CLOSED>>");
+    expect(received.at(-1)).toBe("<<SUBSCRIPTION-DONE>>");
     expect(SessionStream.isRunning(SESSION_ID)).toBe(false);
 
     // Live mode converges on the same conversation shape as history replay:
@@ -195,7 +201,7 @@ describe("stream golden replay", () => {
     const childCounts = agents
       .map((tc) => tc.agent?.toolCalls?.length ?? 0)
       .filter((n) => n > 0)
-      .sort();
+      .sort((a, b) => a - b);
     expect(childCounts).toEqual([3, 4]);
 
     // ── Golden shape ───────────────────────────────────────────────────
@@ -213,7 +219,7 @@ describe("stream golden replay", () => {
 
   test("a snapshot-seeded stream converges with an uninterrupted stream across turns", async () => {
     // The same two turns travel two roads: one stream that lives through
-    // both, and a stream that closes cleanly after turn 1 (the snapshot capture
+    // both, and a stream that finishes cleanly after turn 1 (the snapshot capture
     // point) and is reborn seeded from its snapshot — the reply-to-idle-
     // session path. Both must reduce to identical session state.
     const fixture = await loadSessionFixture("subagents");
@@ -256,7 +262,7 @@ describe("stream golden replay", () => {
       });
       if (disposition === "queued") {
         emit(sdkEvent({ type: "session.idle", data: {} }));
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await settle();
       }
       emit(
         sdkEvent({
@@ -267,7 +273,7 @@ describe("stream golden replay", () => {
       emit(sdkEvent({ type: "assistant.turn_start", data: {} }));
       emit(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "On it." } }));
       emit(sdkEvent({ type: "session.idle", data: {} }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await settle();
     };
 
     const comparable = (state: Session): unknown => ({
@@ -282,11 +288,11 @@ describe("stream golden replay", () => {
     await runTurnOne(uninterrupted);
     await runTurnTwo(uninterrupted);
 
-    // Road 2: turn 1 closes cleanly, capturing the normalized final state.
+    // Road 2: turn 1 finishes cleanly, capturing the normalized final state.
     const interrupted = driveStream("golden-interrupted");
     await runTurnOne(interrupted);
     interrupted.emit(sdkEvent({ type: "session.idle", data: {} }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
     expect(SessionStream.isRunning("golden-interrupted")).toBe(false);
 
     const capturedSnapshot = toSessionSnapshot(

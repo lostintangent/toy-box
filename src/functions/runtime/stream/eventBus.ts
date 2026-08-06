@@ -1,11 +1,15 @@
 // Per-session event bus: bounded replay plus live fan-out for canonical
 // SessionEvents. Subscribing registers immediately, before the caller starts
 // pulling, so producers can publish synchronously without losing the first
-// event. Subscription mode is observation metadata; SessionStream owns the
-// policy that distinguishes active from passive observers.
+// event. SessionStream owns the policy that distinguishes active from passive
+// subscriptions.
 //
 // The shared replay history is capped; each subscriber's pending live queue is
 // not. Consumers should keep reading or cancel the subscription.
+//
+// This is an explicit iterator rather than an async generator because generator
+// return() waits behind an outstanding next(). A subscription must instead
+// release its subscriber immediately when the request disconnects.
 
 import type { SessionEvent } from "@/types";
 import type { SessionSubscriptionMode } from "@/lib/session/protocol";
@@ -126,6 +130,7 @@ export function createSessionEventBus(options: {
       },
 
       async return() {
+        // Immediately release the subscriber and resolve any pending next().
         return finish();
       },
     };

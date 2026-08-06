@@ -72,8 +72,6 @@ For model examples, see [`src/functions/sdk/projector.ts`](src/functions/sdk/pro
 ## Definition of Done
 
 - For changes to React components or hooks, use the `react-review` skill on the changed files and their relevant lifecycle owners before final validation.
-- Run `bun format` and fix any formatting issues.
-- Run `bun lint` and fix any lint issues.
-- Run `bun check` and fix any typecheck issues.
+- Run `bun check` and fix any formatting, lint, or typecheck issues.
 - Run `bun test` and fix any failing tests.
 - For significant changes, dogfood the change with the `dogfood` skill.

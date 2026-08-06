@@ -5,21 +5,6 @@ import open from "open";
 
 import { version } from "../package.json";
 
-function configureBunIdleTimeout(defaultIdleTimeoutSeconds: number): void {
-  const originalServe = Bun.serve.bind(Bun);
-  (Bun as unknown as { serve: typeof Bun.serve }).serve = ((options) => {
-    const hasIdleTimeout =
-      typeof options === "object" && options !== null && "idleTimeout" in options;
-    if (hasIdleTimeout) {
-      return originalServe(options);
-    }
-    return originalServe({
-      ...(options as unknown as Record<string, unknown>),
-      idleTimeout: defaultIdleTimeoutSeconds,
-    } as Parameters<typeof Bun.serve>[0]);
-  }) as typeof Bun.serve;
-}
-
 async function isDirectory(path: string): Promise<boolean> {
   try {
     return (await Bun.file(path).stat()).isDirectory();
@@ -60,11 +45,6 @@ const main = defineCommand({
   },
   async run({ args }) {
     process.env.NODE_ENV = "production";
-    // Forward-compatible with Nitro Bun runtime knobs (if present),
-    // while we keep the Bun.serve fallback below for current runtime behavior.
-    process.env.NITRO_BUN_IDLE_TIMEOUT ??= "0";
-    // Keep long-lived streaming responses (session streams / updates) from timing out.
-    configureBunIdleTimeout(0);
 
     process.env.NITRO_PORT = args.port;
     process.env.NITRO_HOST = args.host;
@@ -81,9 +61,11 @@ const main = defineCommand({
 
     const shouldOpenBrowser = args["no-open"] === false && process.stdout.isTTY;
     if (shouldOpenBrowser) {
-      open(`http://localhost:${args.port}`);
+      void open(`http://localhost:${args.port}`).catch((error) => {
+        console.error("Unable to open browser:", error);
+      });
     }
   },
 });
 
-runMain(main);
+await runMain(main);

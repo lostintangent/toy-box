@@ -2,8 +2,9 @@
 // protocol lives in "@/lib/session/protocol".
 
 import { createMiddleware, createServerFn } from "@tanstack/react-start";
-import { RawStream } from "@tanstack/router-core";
+import { getRequest } from "@tanstack/react-start/server";
 import { zodValidator } from "@tanstack/zod-adapter";
+import type { ServerRequest } from "nitro/types";
 import {
   listModels as listSdkModels,
   listSessions as listSdkSessions,
@@ -28,7 +29,6 @@ import {
 import type {
   ModelInfo,
   SessionCompletion,
-  SessionEvent,
   SessionMetadata,
   SessionSkill,
   SessionSnapshot,
@@ -36,7 +36,6 @@ import type {
 } from "@/types";
 import { SESSION_ID_PREFIX } from "@/lib/session/constants";
 import { toSessionSnapshot } from "@/lib/session/sessionReducer";
-import { encodeSessionEvent } from "@/lib/session/streamCodec";
 import {
   sessionLaunchSchema,
   createDraftSessionInputSchema,
@@ -127,41 +126,31 @@ export const querySession = createServerFn({ method: "POST" })
 /** Wait for the announced, live, or latest persisted execution of one session. */
 export const waitForSession = createServerFn({ method: "POST" })
   .validator(zodValidator(waitForSessionInputSchema))
-  .handler(({ data }): Promise<SessionCompletion> =>
-    waitForRuntimeSession(data.sessionId, data.timeoutMs),
+  .handler(
+    ({ data }): Promise<SessionCompletion> => waitForRuntimeSession(data.sessionId, data.timeoutMs),
   );
-
-function createEventByteStream(iterator: AsyncGenerator<SessionEvent>): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const next = await iterator.next();
-        if (next.done) {
-          controller.close();
-          return;
-        }
-        controller.enqueue(encodeSessionEvent(next.value));
-      } catch (error) {
-        // Expected runtime failures are emitted as session end/error events.
-        // Reaching the transport error path means the adapter itself failed.
-        controller.error(error);
-      }
-    },
-    async cancel() {
-      await iterator.return(undefined);
-    },
-  });
-}
 
 export const streamSession = createServerFn({ method: "POST" })
   .validator(zodValidator(streamSessionRequestSchema))
-  .handler(async ({ data }) => {
-    const iterator = streamSessionEvents(data);
-    return new RawStream(createEventByteStream(iterator), { hint: "text" });
+  .handler(async function* ({ data }) {
+    const request = getRequest() as ServerRequest;
+    request.runtime?.bun?.server.timeout(request, 0);
+    const subscription = await streamSessionEvents(data);
+    if (!subscription) return;
+
+    // Returning TanStack's serialized client iterator does not reach this
+    // underlying subscription. The browser instead aborts its fetch; Nitro/Bun
+    // exposes that disconnect through request.signal, and this bridge releases
+    // the server subscriber without affecting the session's work.
+    const disconnect = () => void subscription.return();
+    request.signal.addEventListener("abort", disconnect, { once: true });
+    if (request.signal.aborted) disconnect();
+
+    yield* subscription;
   });
 
 /** Create a session and run its first turn without any client stream attached.
- *  Clients observe progress through the broadcast plane alone (upsert →
+ *  Clients receive progress through the broadcast plane alone (upsert →
  *  running → idle/unread), the same way automation and agent-spawned sessions
  *  surface. Resolves once the turn has opened, not when it completes. */
 export const createSession = createServerFn({ method: "POST" })
@@ -219,7 +208,7 @@ export const steerQueuedMessage = createServerFn({ method: "POST" })
   });
 
 /** Abort the currently processing message in a session.
- *  Closes the stream (which clears buffer, queue, and SDK listener). */
+ *  Finishes the stream after interrupting SDK work. */
 export const abortSession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
   .handler(async ({ data }): Promise<boolean> => {

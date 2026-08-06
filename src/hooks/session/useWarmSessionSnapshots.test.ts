@@ -19,8 +19,8 @@ describe("warm session snapshot retention", () => {
       reasoningContent: "",
     });
 
-    const stopWarming = observe(queryClient, warmSessionSnapshotQuery("warm-session"));
-    const closePane = observe(queryClient, sessionQueries.detail("warm-session"));
+    const stopWarming = subscribe(queryClient, warmSessionSnapshotQuery("warm-session"));
+    const closePane = subscribe(queryClient, sessionQueries.detail("warm-session"));
 
     closePane();
     await collectGarbage();
@@ -32,8 +32,11 @@ describe("warm session snapshot retention", () => {
   });
 });
 
-/** Subscribes without fetching, so retention is what the test observes. */
-function observe(queryClient: QueryClient, options: { queryKey: readonly unknown[] }): () => void {
+/** Subscribe without fetching so the test isolates query retention. */
+function subscribe(
+  queryClient: QueryClient,
+  options: { queryKey: readonly unknown[] },
+): () => void {
   return new QueryObserver(queryClient, { ...options, enabled: false }).subscribe(() => {});
 }
 

@@ -41,4 +41,7 @@
   --color-user-accent: var(--user-accent);
   --color-user-accent-foreground: contrast-color(var(--user-accent));
   --color-unread: var(--unread);
+
+  /* Layout open/close motion: panels grow, the sidebar sizes in pixels. */
+  --ease-layout: cubic-bezier(0.16, 1, 0.3, 1);
 }

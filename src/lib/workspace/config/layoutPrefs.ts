@@ -3,14 +3,17 @@
 
 const LAYOUT_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
-const DEFAULT_SIDEBAR_SIZE = 15;
+const DEFAULT_SIDEBAR_WIDTH = 280;
 const DEFAULT_TERMINAL_SIZE = 30;
 const DEFAULT_APPS_EXPANDED = true;
 const DEFAULT_AUTOMATIONS_EXPANDED = true;
 const DEFAULT_MOBILE_INBOX_OPEN = false;
 
-const SIDEBAR_MIN_SIZE = 10;
-const SIDEBAR_MAX_SIZE = 40;
+// The sidebar is sized in pixels so the workspace panes can keep dividing
+// whatever is left as percentages, and so its width survives window resizes.
+export const SIDEBAR_MIN_WIDTH = 200;
+export const SIDEBAR_MAX_WIDTH = 480;
+
 const TERMINAL_MIN_SIZE = 15;
 const TERMINAL_MAX_SIZE = 80;
 
@@ -18,8 +21,8 @@ type Point = { x: number; y: number };
 
 const DEFAULT_HYPER_POSITION: Point = { x: 24, y: 24 };
 
-function clampSidebarSize(value: number): number {
-  return Math.min(SIDEBAR_MAX_SIZE, Math.max(SIDEBAR_MIN_SIZE, value));
+export function clampSidebarWidth(value: number): number {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, value));
 }
 
 function clampTerminalSize(value: number): number {
@@ -61,9 +64,9 @@ function pref<T>(name: string, codec: CookieCodec<T>, fallback: T): LayoutPref<T
 }
 
 const LAYOUT_PREFS = {
-  sidebarSize: pref("sidebar_size", numberCodec(clampSidebarSize), DEFAULT_SIDEBAR_SIZE),
+  sidebarWidth: pref("sidebar_width", numberCodec(clampSidebarWidth), DEFAULT_SIDEBAR_WIDTH),
   terminalSize: pref("terminal_size", numberCodec(clampTerminalSize), DEFAULT_TERMINAL_SIZE),
-  sidebarOpen: pref("sidebar_open", booleanCodec, true),
+  sidebarCollapsed: pref("sidebar_collapsed", booleanCodec, false),
   terminalOpen: pref("terminal_open", booleanCodec, false),
   appsExpanded: pref("apps_expanded", booleanCodec, DEFAULT_APPS_EXPANDED),
   automationsExpanded: pref("automations_expanded", booleanCodec, DEFAULT_AUTOMATIONS_EXPANDED),

@@ -95,7 +95,7 @@ compiled apps:
 - `useFile` exposes the same live file lifecycle used by editor panes,
   including queued saves, external updates, modes, and file-owned workers.
 - App actions compose ordinary Toy Box session, worker, file, and pane operations.
-  One `waitForSession` monitor observes ordinary sessions and workers;
+  One `waitForSession` monitor waits for ordinary sessions and workers;
   worker admission still owns cancellation and disposal. App workers independently
   receive owner-scoped `get_app` and `update_app` tools. Every session can
   use the corresponding addressable tools to coordinate saved apps; reads include

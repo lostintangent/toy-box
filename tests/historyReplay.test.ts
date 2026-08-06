@@ -21,7 +21,7 @@ function assistantToolCalls(state: Session) {
 
 describe("history replay", () => {
   test("replays the subagent fixture through reducer-owned state construction", async () => {
-    const state = await replayHistory(await loadSessionFixture("subagents"));
+    const state = replayHistory(await loadSessionFixture("subagents"));
     const agents = assistantToolCalls(state).filter((toolCall) => toolCall.name === "agent");
 
     expect(state.messages.map((message) => message.role)).toEqual([
@@ -45,14 +45,14 @@ describe("history replay", () => {
       agents
         .map((toolCall) => toolCall.agent?.toolCalls?.length ?? 0)
         .filter((count) => count > 0)
-        .sort(),
+        .sort((a, b) => a - b),
     ).toEqual([3, 4]);
     expect(state.pendingToolCalls.size).toBe(0);
     expect(state.status).toBe("idle");
   });
 
-  test("replays leading root tool lifecycle events even before a visible turn", async () => {
-    const state = await replayHistory([
+  test("replays leading root tool lifecycle events even before a visible turn", () => {
+    const state = replayHistory([
       {
         type: "tool.execution_start",
         data: {
@@ -97,10 +97,10 @@ describe("history replay", () => {
     ]);
   });
 
-  test("translates todo SQL into todos, keeps it out of the tool call list, and applies titles", async () => {
+  test("translates todo SQL into todos, keeps it out of the tool call list, and applies titles", () => {
     const insertTodo =
       "INSERT INTO todos (id, title) VALUES ('inspect-sql-events', 'inspect SQL events');";
-    const state = await replayHistory([
+    const state = replayHistory([
       { type: "user.message", data: { content: "User prompt" } },
       { type: "assistant.message", data: { content: "Assistant response" } },
       {
@@ -133,8 +133,8 @@ describe("history replay", () => {
     ]);
   });
 
-  test("replays session model events through the streaming projector", async () => {
-    const state = await replayHistory([
+  test("replays session model events through the streaming projector", () => {
+    const state = replayHistory([
       {
         type: "session.start",
         data: {
@@ -151,10 +151,10 @@ describe("history replay", () => {
     expect(state.model).toEqual({ name: "claude-sonnet-4.6" });
   });
 
-  test("normalizes apply_patch string arguments and preserves detailed diffs", async () => {
+  test("normalizes apply_patch string arguments and preserves detailed diffs", () => {
     const patchText = "*** Begin Patch\n*** Update File: notes.md\n@@\n-old\n+new\n*** End Patch";
     const patchDiff = "diff --git a/notes.md b/notes.md\n@@ -1 +1 @@\n-old\n+new";
-    const state = await replayHistory([
+    const state = replayHistory([
       { type: "user.message", data: { content: "Patch it" } },
       { type: "assistant.message", data: { content: "Applying patch." } },
       {
@@ -181,8 +181,8 @@ describe("history replay", () => {
     ]);
   });
 
-  test("restores linked sessions without surfacing the translated tool call", async () => {
-    const state = await replayHistory([
+  test("restores linked sessions without surfacing the translated tool call", () => {
+    const state = replayHistory([
       { type: "user.message", data: { content: "Spin one up" } },
       { type: "assistant.message", data: { content: "Opening a companion session." } },
       {
@@ -207,8 +207,8 @@ describe("history replay", () => {
     expect(assistantToolCalls(state)).toEqual([]);
   });
 
-  test("keeps omitted tools out of the transcript", async () => {
-    const state = await replayHistory([
+  test("keeps omitted tools out of the transcript", () => {
+    const state = replayHistory([
       { type: "user.message", data: { content: "Check status" } },
       { type: "assistant.message", data: { content: "Checking." } },
       {
@@ -226,8 +226,8 @@ describe("history replay", () => {
     expect(assistantToolCalls(state)).toEqual([]);
   });
 
-  test("keeps subagent prompts out of the root transcript", async () => {
-    const state = await replayHistory([
+  test("keeps subagent prompts out of the root transcript", () => {
+    const state = replayHistory([
       { type: "user.message", data: { content: "Real root turn" } },
       { type: "assistant.message", data: { content: "Delegating." } },
       {
@@ -247,8 +247,8 @@ describe("history replay", () => {
     expect(state.messages[0]).toMatchObject({ content: "Real root turn" });
   });
 
-  test("reads persisted blob attachments by default, skipping legacy file entries", async () => {
-    const state = await replayHistory([
+  test("reads persisted blob attachments by default, skipping legacy file entries", () => {
+    const state = replayHistory([
       {
         type: "user.message",
         timestamp: "2026-01-01T00:00:00.000Z",

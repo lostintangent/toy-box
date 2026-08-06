@@ -1,6 +1,6 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, and close 1`] = `
+exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, and finish 1`] = `
 {
   "received": [
     {
@@ -630,19 +630,19 @@ index 375b1b8..9db9a3a 100644
       "turnId": "turn-3",
       "type": "end",
     },
-    "<<STREAM-CLOSED>>",
+    "<<SUBSCRIPTION-DONE>>",
   ],
   "sideEffects": [
     "running:golden-stream",
     "running:golden-stream",
-    "--- pre-close ---",
+    "--- pre-finish ---",
     "idle:golden-stream",
     "sdk:unsubscribed",
   ],
 }
 `;
 
-exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, and close 2`] = `
+exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, and finish 2`] = `
 {
   "activeTurnId": "turn-3",
   "artifacts": [],

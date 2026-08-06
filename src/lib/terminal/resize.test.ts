@@ -1,79 +1,63 @@
-import { expect, onTestFinished, spyOn, test } from "bun:test";
+import { expect, onTestFinished, test } from "bun:test";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
-import { TerminalResize } from "./resize";
+import { SETTLE_MS, TerminalResize } from "./resize";
 
-test("fits on the leading frame and once more after a resize burst", async () => {
+const PAST_SETTLE_MS = SETTLE_MS * 2;
+
+test("fits once after a burst of container changes settles", async () => {
   const harness = createHarness();
 
   harness.triggerResize();
-  expect(harness.pendingFrameCount()).toBe(1);
-  harness.flushFrames();
+  harness.triggerResize();
+  harness.triggerResize();
+  expect(harness.sizes).toEqual([]);
+
+  await Bun.sleep(PAST_SETTLE_MS);
   expect(harness.sizes).toEqual([{ cols: 100, rows: 30 }]);
-
-  harness.triggerResize();
-  harness.triggerResize();
-  expect(harness.pendingFrameCount()).toBe(0);
-
-  await Bun.sleep(100);
-  expect(harness.pendingFrameCount()).toBe(1);
-  harness.flushFrames();
-  expect(harness.sizes).toEqual([
-    { cols: 100, rows: 30 },
-    { cols: 100, rows: 30 },
-  ]);
 });
 
-test("defers trailing work while paused and fits once after resuming", async () => {
+test("keeps waiting while the container is still changing", async () => {
   const harness = createHarness();
 
-  harness.triggerResize();
-  harness.flushFrames();
-  harness.triggerResize();
-  harness.resize.setResizePaused(true);
+  for (let i = 0; i < 4; i++) {
+    harness.triggerResize();
+    await Bun.sleep(SETTLE_MS / 2);
+  }
+  expect(harness.sizes).toEqual([]);
 
-  await Bun.sleep(100);
-  expect(harness.pendingFrameCount()).toBe(0);
-  expect(harness.sizes).toHaveLength(1);
-
-  harness.resize.setResizePaused(false);
-  expect(harness.pendingFrameCount()).toBe(1);
-  harness.flushFrames();
-  expect(harness.sizes).toHaveLength(2);
-});
-
-test("uninstall cancels pending frames and trailing work", async () => {
-  const harness = createHarness();
-
-  harness.triggerResize();
-  expect(harness.pendingFrameCount()).toBe(1);
-  harness.resize.uninstall();
-  expect(harness.pendingFrameCount()).toBe(0);
-  harness.flushFrames();
-  expect(harness.sizes).toHaveLength(0);
-
-  harness.install();
-  harness.triggerResize();
-  harness.flushFrames();
-  harness.triggerResize();
-  harness.resize.uninstall();
-
-  await Bun.sleep(100);
-  expect(harness.pendingFrameCount()).toBe(0);
+  await Bun.sleep(PAST_SETTLE_MS);
   expect(harness.sizes).toHaveLength(1);
 });
 
-function createHarness() {
+test("fits straight away when asked directly", () => {
+  const harness = createHarness();
+
+  harness.resize.fit();
+  expect(harness.sizes).toEqual([{ cols: 100, rows: 30 }]);
+});
+
+test("uninstall stops a settle that has not fired", async () => {
+  const harness = createHarness();
+
+  harness.triggerResize();
+  harness.resize.uninstall();
+
+  await Bun.sleep(PAST_SETTLE_MS);
+  expect(harness.sizes).toEqual([]);
+});
+
+test("ignores a container with no area", async () => {
+  const harness = createHarness({ width: 0, height: 0 });
+
+  harness.triggerResize();
+  await Bun.sleep(PAST_SETTLE_MS);
+  expect(harness.sizes).toEqual([]);
+});
+
+function createHarness(size: { width: number; height: number } = { width: 800, height: 600 }) {
   const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
-  const requestFrameDescriptor = Object.getOwnPropertyDescriptor(
-    globalThis,
-    "requestAnimationFrame",
-  );
-  const cancelFrameDescriptor = Object.getOwnPropertyDescriptor(globalThis, "cancelAnimationFrame");
-  const now = spyOn(performance, "now").mockImplementation(() => Date.now());
-  const frames = new Map<number, FrameRequestCallback>();
   const observers: FakeResizeObserver[] = [];
-  let nextFrameId = 1;
 
   class FakeResizeObserver {
     constructor(private readonly callback: ResizeObserverCallback) {
@@ -92,18 +76,6 @@ function createHarness() {
     configurable: true,
     value: FakeResizeObserver,
   });
-  Object.defineProperty(globalThis, "requestAnimationFrame", {
-    configurable: true,
-    value: (callback: FrameRequestCallback) => {
-      const id = nextFrameId++;
-      frames.set(id, callback);
-      return id;
-    },
-  });
-  Object.defineProperty(globalThis, "cancelAnimationFrame", {
-    configurable: true,
-    value: (id: number) => frames.delete(id),
-  });
 
   const sizes: Array<{ cols: number; rows: number }> = [];
   const xterm = { cols: 80, rows: 24 } as XTerm;
@@ -111,44 +83,24 @@ function createHarness() {
     fit() {},
     proposeDimensions: () => ({ cols: 100, rows: 30 }),
   } as unknown as FitAddon;
-  const container = {
-    getBoundingClientRect: () => ({ width: 800, height: 600 }),
-  } as HTMLDivElement;
+  const container = { getBoundingClientRect: () => size } as HTMLDivElement;
   const resize = new TerminalResize({
     onSizeChanged: (cols, rows) => sizes.push({ cols, rows }),
   });
 
-  function install() {
-    resize.install(container, xterm, fitAddon);
-  }
-
-  install();
+  resize.install(container, xterm, fitAddon);
   onTestFinished(() => {
     resize.dispose();
-    now.mockRestore();
-    restoreGlobal("ResizeObserver", resizeObserverDescriptor);
-    restoreGlobal("requestAnimationFrame", requestFrameDescriptor);
-    restoreGlobal("cancelAnimationFrame", cancelFrameDescriptor);
+    if (resizeObserverDescriptor) {
+      Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, "ResizeObserver");
+    }
   });
 
   return {
-    install,
-    pendingFrameCount: () => frames.size,
     resize,
     sizes,
     triggerResize: () => observers.at(-1)?.trigger(),
-    flushFrames: () => {
-      const pending = [...frames.values()];
-      frames.clear();
-      for (const callback of pending) callback(performance.now());
-    },
   };
-}
-
-function restoreGlobal(name: string, descriptor: PropertyDescriptor | undefined) {
-  if (descriptor) {
-    Object.defineProperty(globalThis, name, descriptor);
-  } else {
-    Reflect.deleteProperty(globalThis, name);
-  }
 }

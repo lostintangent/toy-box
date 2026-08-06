@@ -12,7 +12,7 @@ Creation and update validate the cron expression and calculate the next occurren
 
 ## Scheduling
 
-One scheduler loop starts with the Nitro server and periodically claims due work. `claimDue` runs inside an immediate SQLite transaction: it selects due definitions and advances each claimed `nextRunAt` before dispatch. Advancing while the claim is held prevents another tick from selecting the same occurrence. Each committed claim is published before dispatch so clients observe its new schedule even if execution cannot start.
+One scheduler loop starts with the Nitro server and periodically claims due work. `claimDue` runs inside an immediate SQLite transaction: it selects due definitions and advances each claimed `nextRunAt` before dispatch. Advancing while the claim is held prevents another tick from selecting the same occurrence. Each committed claim is published before dispatch so clients receive its new schedule even if execution cannot start.
 
 Missed intervals collapse into one current run instead of producing a catch-up storm. Malformed definitions cannot prevent valid work from being claimed, and scheduler ticks never overlap within the process.
 
@@ -40,7 +40,7 @@ Automation events synchronize durable definition and schedule metadata through t
 
 ## Boundaries and invariants
 
-- [`../runtime/AGENTS.md`](../runtime/AGENTS.md) owns delivery, execution, completion, and transcript streaming. Automation code schedules and observes that runtime; it does not reproduce it.
+- [`../runtime/AGENTS.md`](../runtime/AGENTS.md) owns delivery, execution, completion, and transcript streaming. Automation code schedules sessions and waits for their completion; it does not reproduce the runtime.
 - [`../state/AGENTS.md`](../state/AGENTS.md) owns the shared database connection, managed session teardown, and workspace status transitions. `AutomationDatabase` owns only automation rows and schedule metadata.
 - [`../sdk/AGENTS.md`](../sdk/AGENTS.md) owns automation-specific instructions and tools. Those tools call the same validated automation operations as the UI.
 - One automation ID identifies the definition, its managed session, and its client status. Preserve that single identity across every layer.

@@ -72,7 +72,7 @@ test("send_to_inbox writes its artifact to the session workspace and attaches th
     },
   } as unknown as CopilotSession;
   const stream = SessionStream.getOrCreate(sessionId, fakeSession);
-  onTestFinished(() => stream.close());
+  onTestFinished(() => stream.finish());
 
   const [sendToInbox] = inboxTools;
   const sendResult = await sendToInbox?.handler?.(

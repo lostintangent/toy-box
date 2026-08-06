@@ -13,7 +13,7 @@ const gistSchema = z.object({
   files: z.record(z.string(), gistFileSchema),
 });
 
-type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 const GIST_DOWNLOAD_MAX_BYTES = 512 * 1024;
 const GIST_DOWNLOAD_TIMEOUT_MS = 10_000;

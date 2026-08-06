@@ -16,7 +16,11 @@ export function isSupportedSvgImage(file: Pick<Blob, "size" | "type">): boolean 
 export function fileToDataUrl(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === "string") resolve(result);
+      else reject(new Error("The image could not be read as a data URL."));
+    };
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });

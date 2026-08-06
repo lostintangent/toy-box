@@ -69,8 +69,8 @@ const streamSessionBaseSchema = sessionInputSchema.extend({
 
 const sessionSubscriptionModeSchema = z.enum(["active", "passive"]);
 
-// Every request identifies the observed session/cursor. A message optionally
-// mutates that same stream; location is only established with its first message.
+// Every request identifies the streamed session and replay cursor. A message
+// optionally mutates that same stream; location is established only with its first message.
 export const streamSessionRequestSchema = streamSessionBaseSchema.and(
   z.union([
     z.object({

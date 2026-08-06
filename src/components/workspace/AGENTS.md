@@ -20,7 +20,7 @@ Selected sessions, files, and saved apps come from one deduplicated, four-pane-c
 
 - `active` is the primary interactive surface and publishes linked panes.
 - `overlay` is interactive but secondary, so it does not publish another layer of panes.
-- `passive` observes a live session without accepting input or acknowledging it as read.
+- `passive` streams a live session without accepting input or acknowledging it as read.
 
 Active and overlay panes use active session subscriptions; passive panes use passive subscriptions. An overlay therefore acknowledges existing unread work and suppresses a future unread completion while it is open, whereas a preview does neither.
 
@@ -56,7 +56,7 @@ Preserve these invariants:
 
 - Pane IDs describe mounted content identity; React keys should follow them when switching content requires a new lifecycle.
 - Session and artifact data remain authoritative in their owning hooks and server subsystems. Pane state contains only composition and presentation policy.
-- Passive previews may observe live work but must not acknowledge it as read.
+- Passive previews may stream live work but must not acknowledge it as read.
 - Secondary session surfaces must not recursively publish linked panes.
 - Pane content publishes through its workspace surface and must not choose between Main and Hyper.
 - Every session-backed non-session pane must retain its source session so shared overlays and follow-up workflows remain generic; Inbox and app panes are explicitly not session-backed.

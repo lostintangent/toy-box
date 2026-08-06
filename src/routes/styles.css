@@ -8,6 +8,19 @@
 @source "../../node_modules/@streamdown/code/dist/*.js";
 
 @layer base {
+  /*
+   * The accent a resize handle shows while hovered or dragged, running along
+   * the handle. Shared by the pane group's handles and the sidebar's edge:
+   * each writes its own state prefix, which Tailwind must see spelled out, so
+   * only the value can live in one place.
+   */
+  :root {
+    --resize-accent:
+      transparent 0%, var(--user-accent) 20%, var(--user-accent) 80%, transparent 100%;
+    --resize-accent-y: linear-gradient(to bottom, var(--resize-accent));
+    --resize-accent-x: linear-gradient(to right, var(--resize-accent));
+  }
+
   * {
     @apply border-border outline-ring/50;
   }
@@ -28,13 +41,6 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
-}
-
-/* Shared panel open/close animation. */
-@utility panel-transition {
-  transition-property: flex-grow;
-  transition-duration: 300ms;
-  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Uppercase eyebrow/section heading (sidebar groups, transcript intent dividers). */
