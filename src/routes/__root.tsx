@@ -1,8 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
-import { useWorkspaceSelector } from "@/hooks/workspace/state";
-import { workspaceQueries } from "@/lib/workspace/state/query";
+import { useWorkspaceSelector } from "@workspace/hooks/state";
+import { workspaceQueries } from "@workspace/queries";
 
 import appCss from "./styles.css?url";
 

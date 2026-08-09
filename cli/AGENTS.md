@@ -4,7 +4,7 @@ The CLI bundles two parts into one Bun binary: the browser app and the Nitro ser
 
 ## Building the binary
 
-`bun run build` runs Vite under Bun. Vite, on the Rolldown bundler, compiles the app for the browser and server, and TanStack Start decides what belongs to each. Most UI components are isomorphic and run on both; the code that must stay server-side, the `createServerFn` functions in `src/functions/*.ts` and the file-based API handlers in `src/routes/api/*`, is kept out of the browser build. The browser build lands in `.output/server/public` so it remains below the server when Bun flattens both into its virtual filesystem.
+`bun run build` runs Vite under Bun. Vite, on the Rolldown bundler, compiles the app for the browser and server, and TanStack Start decides what belongs to each. Most UI components are isomorphic and run on both; `createServerFn` handlers and HTTP route handlers stay in the server graph regardless of which feature owns their source files. The browser build lands in `.output/server/public` so it remains below the server when Bun flattens both into its virtual filesystem.
 
 The server build goes to Nitro. Its `bun` preset turns it into one runnable entry, `.output/server/index.mjs`, that owns SSR, server functions, API and stream endpoints, and the terminal WebSocket route. On its own it is an ordinary Bun server you could run directly.
 

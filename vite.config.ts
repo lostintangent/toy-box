@@ -30,7 +30,7 @@ export default defineConfig(({ mode }) => {
         ? [
             {
               find: /^koffi$/,
-              replacement: resolve("src/functions/sdk/unsupportedCopilotFfi.ts"),
+              replacement: resolve("src/features/sessions/server/sdk/unsupportedCopilotFfi.ts"),
             },
           ]
         : [],
@@ -66,9 +66,9 @@ export default defineConfig(({ mode }) => {
           },
         },
       }),
-      tanstackStart(),
+      tanstackStart({ router: { virtualRouteConfig: "./src/routes.ts" } }),
       viteReact(),
-      isProduction && babel({ presets: [reactCompilerPreset()] }),
+      babel({ presets: [reactCompilerPreset()] }),
     ]),
 
     fmt: {
@@ -80,7 +80,6 @@ export default defineConfig(({ mode }) => {
     },
 
     lint: {
-      ignorePatterns: ["src/apps/*/app.tsx"],
       plugins: ["react", "typescript", "import"],
       jsPlugins: [
         "./.oxlint/react.js",

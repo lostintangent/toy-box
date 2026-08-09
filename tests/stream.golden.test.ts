@@ -1,15 +1,12 @@
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { SessionEvent, SessionMetadataUpdate, WorkspaceEvent } from "@/types";
-import {
-  sessionSeedFromSnapshot,
-  toSessionSnapshot,
-  type Session,
-} from "@/lib/session/sessionReducer";
+import type { WorkspaceEvent } from "@workspace/model/events";
+import type { SessionEvent, SessionMetadataUpdate } from "@sessions/model";
+import { sessionSeedFromSnapshot, toSessionSnapshot, type Session } from "@sessions/model/reducer";
 import { loadSessionFixture } from "./helpers";
-import * as realSessionRegistry from "@/functions/state/session/registry";
-import * as realBroadcast from "@/functions/runtime/broadcast";
-import * as realWorkspaceState from "@/functions/state/workspace";
+import * as realSessionRegistry from "@sessions/server/state/registry";
+import * as realBroadcast from "@workspace/server/events";
+import * as realWorkspaceState from "@workspace/server/state";
 
 // Golden replay of the full stream lifetime: real v1 CLI events from the
 // fixture drive a SessionStream through two turns — explicit start, fixture
@@ -44,7 +41,7 @@ function sdkEvent(event: unknown): SdkSessionEvent {
   return event as SdkSessionEvent;
 }
 
-mock.module("@/functions/state/session/registry", () => ({
+mock.module("@sessions/server/state/registry", () => ({
   createSession: unused,
   getSession: unused,
   withSession: unused,
@@ -53,7 +50,7 @@ mock.module("@/functions/state/session/registry", () => ({
   deleteSession: unused,
   deleteSessionIfExists: unused,
 }));
-mock.module("@/functions/runtime/broadcast", () => ({
+mock.module("@workspace/server/events", () => ({
   emitSessionNameUpdate: (sessionId: string, name: string) => {
     sideEffects.push(`summary:${sessionId}:${name}`);
     emitMockWorkspaceEvent({
@@ -77,7 +74,7 @@ mock.module("@/functions/runtime/broadcast", () => ({
     };
   },
 }));
-mock.module("@/functions/state/workspace", () => ({
+mock.module("@workspace/server/state", () => ({
   ...realWorkspaceStateExports,
   setSessionStatus: (sessionId: string, status: "running" | "idle" | "unread") => {
     sideEffects.push(`${status}:${sessionId}`);
@@ -87,9 +84,9 @@ mock.module("@/functions/state/workspace", () => ({
 }));
 
 afterAll(() => {
-  mock.module("@/functions/state/session/registry", () => realSessionRegistryExports);
-  mock.module("@/functions/runtime/broadcast", () => realBroadcastExports);
-  mock.module("@/functions/state/workspace", () => realWorkspaceStateExports);
+  mock.module("@sessions/server/state/registry", () => realSessionRegistryExports);
+  mock.module("@workspace/server/events", () => realBroadcastExports);
+  mock.module("@workspace/server/state", () => realWorkspaceStateExports);
 });
 
 beforeEach(() => {
@@ -97,7 +94,7 @@ beforeEach(() => {
   workspaceEventListeners.clear();
 });
 
-const { SessionStream } = await import("@/functions/runtime/stream");
+const { SessionStream } = await import("@sessions/server/runtime");
 
 const SESSION_ID = "golden-stream";
 

@@ -1,0 +1,144 @@
+import { mutationOptions, type QueryClient } from "@tanstack/react-query";
+import {
+  abortSession,
+  applySessionWorktree,
+  cancelQueuedMessage,
+  createDraftSession,
+  createSession,
+  deleteSession,
+  deliverMessage,
+  mergeSessionWorktree,
+  renameSession,
+  steerQueuedMessage,
+} from "./server/functions";
+import { sessionQueries } from "./queries";
+import {
+  cancelSessionsStateQuery,
+  removeSessionFromState,
+  restoreSessionsState,
+  snapshotSessionsState,
+  upsertSessionInState,
+} from "./queryCache";
+import { applyWorkspaceEvent } from "@workspace/queries";
+import type { SessionLaunch, SessionMessage } from "./model";
+
+type DeliveredMessage = SessionMessage & { id: string };
+type CreateDraftSessionVariables = {
+  sessionId: string;
+  createdAt: number;
+  artifact?: { path: string; content: string };
+  hyper?: true;
+};
+export const sessionMutations = {
+  createSession: () =>
+    mutationOptions({
+      mutationFn: (launch: SessionLaunch) => createSession({ data: launch }),
+    }),
+
+  createDraftSession: () =>
+    mutationOptions({
+      mutationFn: ({ sessionId, artifact, hyper }: CreateDraftSessionVariables) =>
+        createDraftSession({
+          data: {
+            sessionId,
+            ...(artifact ? { artifact } : {}),
+            ...(hyper ? { hyper: true } : {}),
+          },
+        }),
+      onMutate: ({ sessionId, createdAt, artifact, hyper }, { client }) => {
+        applyWorkspaceEvent(client, {
+          type: "session.drafted",
+          sessionId,
+          createdAt,
+          ...(artifact ? { artifactPath: artifact.path } : {}),
+          ...(hyper ? { hyper: true } : {}),
+        });
+      },
+      onError: (_error, { sessionId }, _context, { client }) => {
+        applyWorkspaceEvent(client, { type: "session.deleted", sessionId });
+      },
+    }),
+
+  deleteSession: (sessionId: string) =>
+    mutationOptions({
+      mutationFn: () => deleteSession({ data: { sessionId } }),
+      onMutate: async (_variables, { client }) => {
+        await cancelSessionsStateQuery(client);
+        const previousSessionsState = snapshotSessionsState(client);
+        removeSessionFromState(client, sessionId);
+        return { previousSessionsState };
+      },
+      onError: (_error, _variables, context, { client }) => {
+        if (context?.previousSessionsState) {
+          restoreSessionsState(client, context.previousSessionsState);
+        }
+      },
+      onSuccess: (_result, _variables, _context, { client }) => {
+        applyWorkspaceEvent(client, { type: "session.deleted", sessionId });
+      },
+    }),
+
+  renameSession: (sessionId: string) =>
+    mutationOptions({
+      mutationFn: (name: string) => renameSession({ data: { sessionId, name } }),
+      onMutate: async (name, { client }) => {
+        await cancelSessionsStateQuery(client);
+        const previousSessionsState = snapshotSessionsState(client);
+        upsertSessionInState(client, { sessionId, summary: name });
+        return { previousSessionsState };
+      },
+      onError: (_error, _variables, context, { client }) => {
+        if (context?.previousSessionsState) {
+          restoreSessionsState(client, context.previousSessionsState);
+        }
+      },
+    }),
+
+  deliverMessage: (sessionId: string) =>
+    mutationOptions({
+      mutationFn: (message: DeliveredMessage) => deliverMessage({ data: { sessionId, message } }),
+    }),
+
+  abortSession: (sessionId: string) =>
+    mutationOptions({
+      mutationFn: () => abortSession({ data: { sessionId } }),
+      onSettled: (_result, _error, _variables, _onMutateResult, { client }) =>
+        invalidateSession(client, sessionId),
+    }),
+
+  mergeWorktree: (sessionId: string) =>
+    mutationOptions({
+      mutationFn: () => mergeSessionWorktree({ data: { sessionId } }),
+      onSuccess: (_result, _variables, _onMutateResult, { client }) =>
+        client.invalidateQueries({ queryKey: sessionQueries.stateKey() }),
+    }),
+
+  applyWorktree: (sessionId: string) =>
+    mutationOptions({
+      mutationFn: () => applySessionWorktree({ data: { sessionId } }),
+      onSuccess: (_result, _variables, _onMutateResult, { client }) =>
+        client.invalidateQueries({ queryKey: sessionQueries.stateKey() }),
+    }),
+
+  cancelQueuedMessage: (sessionId: string) =>
+    mutationOptions({
+      mutationFn: (queuedMessageId: string) =>
+        cancelQueuedMessage({ data: { sessionId, queuedMessageId } }),
+      onSuccess: (changed, _variables, _onMutateResult, { client }) => {
+        if (!changed) return invalidateSession(client, sessionId);
+      },
+    }),
+
+  steerQueuedMessage: (sessionId: string) =>
+    mutationOptions({
+      mutationFn: (queuedMessageId: string) =>
+        steerQueuedMessage({ data: { sessionId, queuedMessageId } }),
+      onSuccess: (changed, _variables, _onMutateResult, { client }) => {
+        if (!changed) return invalidateSession(client, sessionId);
+      },
+    }),
+};
+
+function invalidateSession(client: QueryClient, sessionId: string) {
+  return client.invalidateQueries({ queryKey: sessionQueries.detail(sessionId).queryKey });
+}

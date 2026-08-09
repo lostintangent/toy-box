@@ -1,33 +1,35 @@
 import { useHotkey } from "@tanstack/react-hotkeys";
-import { createFileRoute, useNavigate, ClientOnly } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useRouterState, ClientOnly } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { createIsomorphicFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { useState, useRef, useEffect, useDeferredValue, lazy, Suspense } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
 import { z } from "zod";
 import type { ImperativePanelHandle } from "react-resizable-panels";
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
-import { deleteSession, renameSession } from "@/functions/sessions";
-import { useDrafts } from "@/hooks/workspace/useDrafts";
-import { useHyperSession, type HyperSessionState } from "@/hooks/workspace/layout/useHyperSession";
-import { useSessions } from "@/hooks/session/useSessions";
-import { useWarmSessionSnapshots } from "@/hooks/session/useWarmSessionSnapshots";
-import { useWorkspaceSync } from "@/hooks/workspace/useWorkspaceSync";
-import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@/hooks/workspace/state";
-import { useViewport } from "@/hooks/browser/useViewport";
-import { usePanelTransition } from "@/hooks/browser/usePanelTransition";
-import { Sidebar, type SidebarProps } from "@/components/sidebar/Sidebar";
-import { NameDialog } from "@/components/sidebar/shell/dialogs/NameDialog";
-import { WorkspaceGrid } from "@/components/workspace/layout/WorkspaceGrid";
-import { HyperSession } from "@/components/workspace/layout/HyperSession";
-import { WorkspacePager } from "@/components/workspace/layout/WorkspacePager";
-import { TerminalShell } from "@/components/terminal/TerminalShell";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/shared/components/ui/resizable";
+import { useDrafts } from "@sessions/useDrafts";
+import { useHyperSession, type HyperSessionState } from "@workspace/hooks/layout/useHyperSession";
+import { useWarmSessionSnapshots } from "@sessions/useWarmSessionSnapshots";
+import { useWorkspaceSync } from "@workspace/hooks/useWorkspaceSync";
+import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
+import { useViewport } from "@/shared/hooks/useViewport";
+import { usePanelTransition } from "@workspace/hooks/layout/usePanelTransition";
+import { NameDialog } from "@/shared/components/sidebar/NameDialog";
+import { Sidebar, type SidebarProps } from "@workspace/components/sidebar/Sidebar";
+import { WorkspaceGrid } from "@workspace/components/layout/WorkspaceGrid";
+import { HyperSession } from "@workspace/components/layout/HyperSession";
+import { WorkspacePager } from "@workspace/components/layout/WorkspacePager";
+import { TerminalShell } from "@terminal/components/TerminalShell";
 import {
   focusWorkspaceSurfacePane,
   workspaceSurfaces,
   WorkspaceSurfaceProvider,
-} from "@/hooks/workspace/layout/surface";
+} from "@workspace/hooks/layout/surface";
 import {
   createAppPane,
   createEditorPaneId,
@@ -39,22 +41,16 @@ import {
   isEditorPane,
   MAX_WORKSPACE_PANES,
   type WorkspacePane,
-} from "@/lib/workspace/panes";
-import { machineFile } from "@/lib/files/workspaceFile";
-import { parseLayoutPrefs, resolveLayoutPrefs } from "@/lib/workspace/config/layoutPrefs";
-import { useLayoutCookie } from "@/hooks/browser/useLayoutCookie";
-import {
-  cancelSessionsStateQuery,
-  removeSessionFromState,
-  restoreSessionsState,
-  snapshotSessionsState,
-  upsertSessionInState,
-} from "@/lib/session/queryCache";
-import { applyWorkspaceEvent } from "@/lib/workspace/state/query";
-import { SESSION_ID_PREFIX } from "@/lib/session/constants";
-import { sessionQueries } from "@/lib/queries";
+} from "@workspace/model/panes";
+import { machineFile } from "@files/model";
+import { parseLayoutPrefs, resolveLayoutPrefs } from "@workspace/model/config/layoutPrefs";
+import { useLayoutCookie } from "@workspace/hooks/layout/useLayoutCookie";
+import { sessionMutations } from "@sessions/mutations";
+import { SESSION_ID_PREFIX } from "@sessions/model/constants";
+import type { SessionsState } from "@sessions/model";
+import { selectNonWorkerSessions, sessionQueries } from "@sessions/queries";
 const Terminal = lazy(() =>
-  import("@/components/terminal/Terminal").then((m) => ({ default: m.Terminal })),
+  import("@terminal/components/Terminal").then((m) => ({ default: m.Terminal })),
 );
 
 const searchSchema = z
@@ -100,21 +96,14 @@ async function loadLayoutPrefs() {
   return resolveLayoutPrefs(parseLayoutPrefs(cookieHeader));
 }
 
-function closeTerminal() {
-  if (typeof window === "undefined") return;
-  void import("@/lib/terminal/terminalManager").then(({ terminalManager }) => {
-    terminalManager.close();
-  });
-}
-
-function sendTerminalInput(data: string) {
-  if (typeof window === "undefined") return;
-  void import("@/lib/terminal/terminalManager").then(({ terminalManager }) => {
-    terminalManager.sendInput(data);
-  });
-}
-
 type HyperLayoutState = Pick<HyperSessionState, "open" | "position">;
+
+function selectSessionList(state: SessionsState) {
+  return {
+    sessions: selectNonWorkerSessions(state),
+    worktreeSessionIds: Object.keys(state.worktrees),
+  };
+}
 
 function restoreHyperSessionState(
   sessionId: string | undefined,
@@ -125,9 +114,12 @@ function restoreHyperSessionState(
 
 function WorkspacePage() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const selectedSessionIds = Route.useSearch({
     select: (search) => search.sessions ?? [],
+    structuralSharing: true,
+  });
+  const targetSelectedSessionIds = useRouterState({
+    select: (state) => state.location.search.sessions ?? [],
     structuralSharing: true,
   });
   const selectedAppIds = Route.useSearch({
@@ -233,6 +225,13 @@ function WorkspacePage() {
     panePublications,
   });
   const openSessionIds = deriveOpenSessionIds(openPanes);
+  const selectedSessionIdSet = new Set(selectedSessionIds);
+  const sidebarOpenSessionIds = [
+    ...new Set([
+      ...openSessionIds.filter((sessionId) => !selectedSessionIdSet.has(sessionId)),
+      ...targetSelectedSessionIds,
+    ]),
+  ];
 
   const showExternalSessions = useWorkspaceSelector(
     (workspace) => workspace.settings.showExternalSessions,
@@ -252,7 +251,12 @@ function WorkspacePage() {
     ? initialTerminalOpen
     : isTerminalOpen;
 
-  const { sessions, isLoading: isSessionsLoading, worktreeSessionIds } = useSessions();
+  const { data: sessionList, isLoading: isSessionsLoading } = useQuery({
+    ...sessionQueries.state(),
+    select: selectSessionList,
+  });
+  const sessions = sessionList?.sessions;
+  const worktreeSessionIds = sessionList?.worktreeSessionIds ?? [];
   const { apps, automationSessionIds, hyperSessionIds, inboxSessionIds } = useWorkspaceSelector(
     (workspace) => ({
       apps: workspace.apps,
@@ -341,7 +345,7 @@ function WorkspacePage() {
     if (isSessionsLoading) return;
     if (selectedSessionIds.length === 0) return;
 
-    const availableSessionIds = new Set(sessions.map((session) => session.sessionId));
+    const availableSessionIds = new Set(sessions?.map((session) => session.sessionId) ?? []);
     for (const draft of listedDrafts) availableSessionIds.add(draft.sessionId);
     for (const sessionId of hyperSessionIds) availableSessionIds.add(sessionId);
     for (const sessionId of automationSessionIds) availableSessionIds.add(sessionId);
@@ -456,16 +460,13 @@ function WorkspacePage() {
   useHotkey("Control+`", toggleTerminal, { requireReset: true });
 
   function handleTerminalClose() {
-    closeTerminal();
     setIsTerminalOpen(false);
   }
-
-  const handleTerminalQuickKey = sendTerminalInput;
 
   const deferredFilter = useDeferredValue(filter);
 
   // Managed sessions are presented by their automation, inbox, hyper, or parent surface.
-  const listedSessions = sessions
+  const listedSessions = (sessions ?? [])
     .filter((session) => !managedSessionIds.has(session.sessionId) && !isDraft(session.sessionId))
     .sort((left, right) => right.modifiedTime.getTime() - left.modifiedTime.getTime())
     .slice(0, 50);
@@ -488,60 +489,7 @@ function WorkspacePage() {
     );
   }
 
-  const deleteMutation = useMutation({
-    mutationFn: (sessionId: string) => deleteSession({ data: { sessionId } }),
-    onMutate: async (sessionId) => {
-      // Cancel any outgoing refetches to avoid overwriting our optimistic update
-      await cancelSessionsStateQuery(queryClient);
-
-      // Snapshot the previous value for rollback
-      const previousSessionsState = snapshotSessionsState(queryClient);
-
-      // Optimistically remove from cache
-      removeSessionFromState(queryClient, sessionId);
-
-      // Return context with the snapshot for rollback
-      return { previousSessionsState };
-    },
-    onError: (_err, _sessionId, context) => {
-      // Rollback to the previous value on error
-      if (context?.previousSessionsState) {
-        restoreSessionsState(queryClient, context.previousSessionsState);
-      }
-    },
-    onSuccess: (_result, sessionId) => {
-      applyWorkspaceEvent(queryClient, { type: "session.deleted", sessionId });
-    },
-  });
-
-  const renameMutation = useMutation({
-    mutationFn: ({ sessionId, name }: { sessionId: string; name: string }) =>
-      renameSession({ data: { sessionId, name } }),
-    onMutate: async ({ sessionId, name }) => {
-      await cancelSessionsStateQuery(queryClient);
-
-      const previousSessionsState = snapshotSessionsState(queryClient);
-      upsertSessionInState(queryClient, {
-        sessionId,
-        summary: name,
-      });
-
-      return { previousSessionsState };
-    },
-    onError: (_err, _input, context) => {
-      if (context?.previousSessionsState) {
-        restoreSessionsState(queryClient, context.previousSessionsState);
-      }
-    },
-  });
-  const deletingSessionId = deleteMutation.isPending ? (deleteMutation.variables ?? null) : null;
-  const renamingSessionId = renameMutation.isPending
-    ? (renameMutation.variables?.sessionId ?? null)
-    : null;
-
   function handleSessionDelete(sessionIdToDelete: string) {
-    deleteMutation.mutate(sessionIdToDelete);
-
     if (selectedSessionIds.includes(sessionIdToDelete)) {
       if (isMobileLayout) setIsMobileInboxOpen(false);
       updateSelectedSessionIds(selectedSessionIds.filter((id) => id !== sessionIdToDelete));
@@ -549,16 +497,14 @@ function WorkspacePage() {
   }
 
   const renameTargetSession =
-    sessions.find((session) => session.sessionId === renameTargetId) ?? null;
+    sessions?.find((session) => session.sessionId === renameTargetId) ?? null;
 
   function handleSessionRename(sessionId: string) {
     setRenameTargetId(sessionId);
   }
 
   function handleRenameDialogOpenChange(open: boolean) {
-    if (!open) {
-      setRenameTargetId(null);
-    }
+    if (!open) setRenameTargetId(null);
   }
 
   function openSessionInWorkspace(sessionId: string) {
@@ -581,7 +527,6 @@ function WorkspacePage() {
     initialState: restoredHyperSession,
     hyperSessionId,
     createDraft,
-    deleteSession: handleSessionDelete,
     openSessionInWorkspace,
   });
   const hyperSession = hyper.state;
@@ -704,8 +649,7 @@ function WorkspacePage() {
     onSessionSelect: handleSessionSelect,
     onSessionRename: handleSessionRename,
     onSessionDelete: handleSessionDelete,
-    deletingSessionId,
-    openSessionIds,
+    openSessionIds: sidebarOpenSessionIds,
     worktreeSessionIds,
     emptyMessage: deferredFilter ? "No sessions match your filter" : undefined,
     draftSessions: listedDrafts,
@@ -761,7 +705,7 @@ function WorkspacePage() {
       >
         <div className="h-full">
           {shouldRenderMobileTerminalShell && (
-            <TerminalShell onClose={handleTerminalClose} onQuickKey={handleTerminalQuickKey}>
+            <TerminalShell onClose={handleTerminalClose}>
               {isMobileLayout ? terminalBody : terminalBodySkeleton}
             </TerminalShell>
           )}
@@ -821,7 +765,7 @@ function WorkspacePage() {
             >
               {isTerminalMounted && (
                 <div className="h-full border-t">
-                  <TerminalShell onClose={handleTerminalClose} onQuickKey={handleTerminalQuickKey}>
+                  <TerminalShell onClose={handleTerminalClose}>
                     {!isMobileLayout ? terminalBody : terminalBodySkeleton}
                   </TerminalShell>
                 </div>
@@ -834,7 +778,7 @@ function WorkspacePage() {
         <HyperSession
           state={hyperSession}
           onPositionChange={hyper.setPosition}
-          onDelete={hyper.deleteSession}
+          onRemove={hyper.removeSurface}
           onMinimize={hyper.toggle}
           onPromote={hyper.promote}
           onOpenApp={hyper.openApp}
@@ -866,14 +810,8 @@ function WorkspacePage() {
           name={renameTargetSession.summary ?? ""}
           title="Rename session"
           description="Change how this session appears in the session list."
-          isSubmitting={renamingSessionId === renameTargetSession.sessionId}
+          mutation={sessionMutations.renameSession(renameTargetSession.sessionId)}
           onOpenChange={handleRenameDialogOpenChange}
-          onSubmit={async (name) => {
-            await renameMutation.mutateAsync({
-              sessionId: renameTargetSession.sessionId,
-              name,
-            });
-          }}
         />
       )}
     </>

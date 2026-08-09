@@ -6,13 +6,24 @@ import { writeAppTypeLibrary } from "./build";
 
 const projectRoot = resolve(Bun.fileURLToPath(new URL("../", import.meta.url)));
 
-test("writes the app compiler's package-shaped type library", async () => {
+test("writes the app compiler's package-shaped transitive type library", async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "toy-box-app-types-test-"));
   try {
     const outputRoot = join(temporaryDirectory, "app-type-library");
     await writeAppTypeLibrary(projectRoot, outputRoot);
 
-    expect(await Bun.file(join(outputRoot, "src/lib/apps/sdk.ts")).exists()).toBe(true);
+    expect(await Bun.file(join(outputRoot, "tsconfig.json")).exists()).toBe(true);
+    expect(await Bun.file(join(outputRoot, "src/features/apps/sdk.ts")).exists()).toBe(true);
+    expect(await Bun.file(join(outputRoot, "src/features/files/model/index.ts")).exists()).toBe(
+      true,
+    );
+    expect(await Bun.file(join(outputRoot, "src/features/workers/model/index.ts")).exists()).toBe(
+      true,
+    );
+    expect(
+      await Bun.file(join(outputRoot, "src/features/sessions/model/protocol.ts")).exists(),
+    ).toBe(true);
+    expect(await Bun.file(join(outputRoot, "src/shared/smallJson.ts")).exists()).toBe(true);
     expect(
       await Bun.file(join(outputRoot, "node_modules/app-typescript/lib/lib.es2022.d.ts")).exists(),
     ).toBe(true);

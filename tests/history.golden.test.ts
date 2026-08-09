@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { replaySdkHistory } from "@/functions/sdk/historyReplay";
-import type { Session } from "@/lib/session/sessionReducer";
+import { replaySdkHistory } from "@sessions/server/sdk/historyReplay";
+import type { Session } from "@sessions/model/reducer";
 import { loadSessionFixture } from "./helpers";
 
 // Golden replay of the HISTORY pipeline — the resume/replay consumption mode:

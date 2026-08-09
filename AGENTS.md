@@ -35,14 +35,14 @@ Toy Box currently assumes one trusted, coordinating server process for one owner
 
 Each guide explains one capability end to end, including adjacent callers and consumers when its implementation spans folders. Read them in order for a first architecture pass; for a targeted change, start with the guide whose responsibility matches it. A guide's location marks the subsystem's semantic core, not its complete boundary.
 
-- [`src/functions/runtime/AGENTS.md`](src/functions/runtime/AGENTS.md): live session work that outlives clients, with message delivery, replayable observation, and structured completion
-- [`src/functions/sdk/AGENTS.md`](src/functions/sdk/AGENTS.md): one stable application language over Copilot SDK events, history, configuration, and tools
-- [`src/functions/state/AGENTS.md`](src/functions/state/AGENTS.md): authoritative state and lifecycle across session resources, workspace coordination, and managed sessions
-- [`src/functions/automations/AGENTS.md`](src/functions/automations/AGENTS.md): dependable recurring work by scheduling ordinary managed sessions
-- [`src/functions/apps/AGENTS.md`](src/functions/apps/AGENTS.md): installed TSX app definitions, saved instances, compilation, and the public app capability boundary
-- [`src/components/workspace/AGENTS.md`](src/components/workspace/AGENTS.md): one pane model composed into desktop, mobile, preview, overlay, Hyper, and Inbox workflows
-- [`src/components/workspace/panes/editor/AGENTS.md`](src/components/workspace/panes/editor/AGENTS.md): durable files presented as live, bidirectionally editable surfaces
-- [`src/server/terminal/AGENTS.md`](src/server/terminal/AGENTS.md): reconnectable PTYs with mode-aware scrollback that preserves the visible terminal
+- [`src/features/sessions/AGENTS.md`](src/features/sessions/AGENTS.md): the foundational session model, runtime, registry, SDK projection, browser lifecycle, and presentation
+- [`src/workspace/AGENTS.md`](src/workspace/AGENTS.md): aggregate workspace state, synchronization, pane identity, and layout composition
+- [`src/features/automations/AGENTS.md`](src/features/automations/AGENTS.md): dependable recurring work by scheduling ordinary managed sessions
+- [`src/features/inbox/AGENTS.md`](src/features/inbox/AGENTS.md): durable background results presented through ordinary managed sessions
+- [`src/features/workers/AGENTS.md`](src/features/workers/AGENTS.md): owner-scoped background work supervised as ordinary managed sessions
+- [`src/features/apps/AGENTS.md`](src/features/apps/AGENTS.md): installed TSX app definitions, saved instances, compilation, and the public app capability boundary
+- [`src/features/files/AGENTS.md`](src/features/files/AGENTS.md): browsable workspace files presented as live, bidirectionally editable surfaces
+- [`src/features/terminal/AGENTS.md`](src/features/terminal/AGENTS.md): reconnectable PTYs with mode-aware scrollback that preserves the visible terminal
 - [`cli/AGENTS.md`](cli/AGENTS.md): one installable binary that assembles the browser app and Nitro server
 - [`tests/AGENTS.md`](tests/AGENTS.md): live runtime and historical replay behavior locked against real SDK fixtures
 
@@ -67,11 +67,11 @@ Great code pursues simplicity by placing a rich domain model at the center, deco
   - Concentrate exhaustive coverage around foundational state machines, reducers, policies, codecs, and boundaries where one defect propagates widely. Test leaf consumers when they own distinct behavior, lifecycle, or integration risk.
   - Keep tests deterministic and readable as specifications: order common behavior before edge cases, prove one contract per test, and introduce narrow seams or protocol-faithful fakes only when needed.
 
-For model examples, see [`src/functions/sdk/projector.ts`](src/functions/sdk/projector.ts) and [`src/functions/sdk/projector.test.ts`](src/functions/sdk/projector.test.ts).
+For model examples, see [`src/features/sessions/server/sdk/projector.ts`](src/features/sessions/server/sdk/projector.ts) and [`src/features/sessions/server/sdk/projector.test.ts`](src/features/sessions/server/sdk/projector.test.ts).
 
 ## Definition of Done
 
-- For changes to React components or hooks, use the `react-review` skill on the changed files and their relevant lifecycle owners before final validation.
+- For code changes, use the `review` skill on the changed files and their relevant domain, boundary, lifecycle, and consumer context before final validation.
 - Run `bun check` and fix any formatting, lint, or typecheck issues.
 - Run `bun test` and fix any failing tests.
 - For significant changes, dogfood the change with the `dogfood` skill.

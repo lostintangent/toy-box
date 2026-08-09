@@ -1,7 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { APP_DEPENDENCIES } from "../src/lib/apps/runtime";
+import ts from "app-typescript";
+import { APP_DEPENDENCIES } from "../src/features/apps/runtime";
+import { readCompilerOptions } from "../src/features/apps/server/compiler/config";
 
 async function buildCli(): Promise<void> {
   const projectRoot = resolve(Bun.fileURLToPath(new URL("../", import.meta.url)));
@@ -38,13 +40,13 @@ const COMPILER_TYPE_PACKAGES = [
   "ts-algebra",
 ] as const;
 
-const COMPILER_TYPE_SOURCES = ["src/lib/apps/sdk.ts", "src/types.ts"] as const;
+const APP_SDK_SOURCE = "src/features/apps/sdk.ts";
 
 export async function writeAppTypeLibrary(projectRoot: string, destination: string): Promise<void> {
   const runtimeTypePackages = Object.values(APP_DEPENDENCIES).flatMap((dependency) =>
     "typePackage" in dependency ? [dependency.typePackage] : [],
   );
-  const files: string[] = [...COMPILER_TYPE_SOURCES];
+  const files = ["tsconfig.json", ...getAppSdkTypeSources(projectRoot)];
   for (const packageName of new Set([...runtimeTypePackages, ...COMPILER_TYPE_PACKAGES])) {
     const packageRoot = join("node_modules", packageName);
     files.push(join(packageRoot, "package.json"));
@@ -60,6 +62,18 @@ export async function writeAppTypeLibrary(projectRoot: string, destination: stri
   await Promise.all(
     files.map((path) => Bun.write(join(destination, path), Bun.file(join(projectRoot, path)))),
   );
+}
+
+/** The standalone compiler carries exactly the local source graph exported by the app SDK. */
+function getAppSdkTypeSources(projectRoot: string): string[] {
+  const sourceRoot = `${join(projectRoot, "src")}${sep}`;
+  return ts
+    .createProgram([join(projectRoot, APP_SDK_SOURCE)], readCompilerOptions(projectRoot))
+    .getSourceFiles()
+    .map((source) => resolve(source.fileName))
+    .filter((path) => path.startsWith(sourceRoot))
+    .map((path) => relative(projectRoot, path))
+    .sort();
 }
 
 if (import.meta.main) await buildCli();

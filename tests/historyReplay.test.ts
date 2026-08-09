@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import { replaySdkHistory } from "@/functions/sdk/historyReplay";
-import type { Session } from "@/lib/session/sessionReducer";
+import { replaySdkHistory } from "@sessions/server/sdk/historyReplay";
+import type { Session } from "@sessions/model/reducer";
 import { loadSessionFixture } from "./helpers";
 
 // State-level history replay coverage: persisted SDK events → historyReplay

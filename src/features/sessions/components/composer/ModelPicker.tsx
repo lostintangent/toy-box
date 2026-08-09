@@ -1,0 +1,131 @@
+import { ChevronDown } from "lucide-react";
+import { Button } from "@/shared/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/shared/components/ui/dropdown-menu";
+import type { ModelConfiguration } from "../../model/modelConfiguration";
+import {
+  formatReasoningEffort,
+  getModelReasoningConfig,
+  resolveModelConfigurationForModel,
+} from "../../model/modelConfiguration";
+
+type ModelPickerInfo = {
+  id: string;
+  name: string;
+  supportedReasoningEfforts?: readonly string[];
+  defaultReasoningEffort?: string;
+};
+
+function ModelPicker({
+  models,
+  selectedModel,
+  onModelChange,
+}: {
+  models: readonly ModelPickerInfo[];
+  selectedModel?: string;
+  onModelChange: (modelId: string) => void;
+}) {
+  if (models.length === 0) return null;
+
+  const selectedModelName =
+    models.find((model) => model.id === selectedModel)?.name ?? selectedModel ?? models[0].name;
+
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-xs">
+          {selectedModelName}
+          <ChevronDown className="h-3 w-3 opacity-50" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuRadioGroup value={selectedModel} onValueChange={onModelChange}>
+          {models.map((model) => (
+            <DropdownMenuRadioItem key={model.id} value={model.id} className="text-xs">
+              {model.name}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ReasoningEffortPicker({
+  model,
+  selectedReasoningEffort,
+  onReasoningEffortChange,
+}: {
+  model?: ModelPickerInfo;
+  selectedReasoningEffort?: string;
+  onReasoningEffortChange: (reasoningEffort: string | undefined) => void;
+}) {
+  const { supportedReasoningEfforts, reasoningEffort: displayedReasoningEffort } =
+    getModelReasoningConfig(model, selectedReasoningEffort);
+  if (supportedReasoningEfforts.length === 0 || !displayedReasoningEffort) return null;
+
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-xs">
+          {formatReasoningEffort(displayedReasoningEffort)}
+          <ChevronDown className="h-3 w-3 opacity-50" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuRadioGroup
+          value={displayedReasoningEffort}
+          onValueChange={onReasoningEffortChange}
+        >
+          {supportedReasoningEfforts.map((effort) => (
+            <DropdownMenuRadioItem key={effort} value={effort} className="text-xs">
+              {formatReasoningEffort(effort)}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+export function ModelConfigurationPicker({
+  models,
+  value,
+  onValueChange,
+}: {
+  models: readonly ModelPickerInfo[];
+  value: ModelConfiguration;
+  onValueChange: (value: ModelConfiguration) => void;
+}) {
+  const selectedModel = models.find((model) => model.id === value.name);
+
+  return (
+    <>
+      <ModelPicker
+        models={models}
+        selectedModel={value.name}
+        onModelChange={(name) =>
+          onValueChange(
+            resolveModelConfigurationForModel(
+              models.find((candidate) => candidate.id === name),
+              { ...value, name },
+            ),
+          )
+        }
+      />
+      <ReasoningEffortPicker
+        model={selectedModel}
+        selectedReasoningEffort={value.reasoningEffort}
+        onReasoningEffortChange={(reasoningEffort) => {
+          const { reasoningEffort: _currentReasoningEffort, ...rest } = value;
+          onValueChange({ ...rest, ...(reasoningEffort ? { reasoningEffort } : {}) });
+        }}
+      />
+    </>
+  );
+}

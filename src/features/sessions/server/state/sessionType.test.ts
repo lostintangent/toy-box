@@ -1,0 +1,72 @@
+import { describe, expect, mock, onTestFinished, test } from "bun:test";
+import { createTestDatabase } from "@/server/database";
+
+let currentDb: Bun.SQL | undefined;
+
+mock.module("@/server/database", () => ({
+  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
+    if (!currentDb && options?.createIfMissing === false) return null;
+    if (!currentDb) throw new Error("Test database has not been opened");
+    return currentDb;
+  },
+}));
+
+const { AutomationDatabase } = await import("@automations/server/database");
+const { createInboxEntry } = await import("@inbox/server/database");
+const { addHyperSession, deleteHyperState } = await import("@workspace/server/state/hyperSessions");
+const { registerWorkerSession } = await import("@workers/server/database");
+const { resolveSessionType } = await import("./sessionType");
+
+async function openSessionTypeTestDatabase(): Promise<void> {
+  currentDb = await createTestDatabase();
+  onTestFinished(async () => {
+    await currentDb?.close();
+    currentDb = undefined;
+  });
+}
+
+describe("session type resolution", () => {
+  test("defaults sessions without a managing record to standard", async () => {
+    await openSessionTypeTestDatabase();
+    expect(await resolveSessionType("toy-box-standard")).toBe("standard");
+  });
+
+  test("resolves every managed session type from its authoritative record", async () => {
+    await openSessionTypeTestDatabase();
+    const automation = await new AutomationDatabase(currentDb!).create({
+      title: "Managed automation",
+      prompt: "Run",
+      model: { name: "gpt-5" },
+      cron: "0 9 * * *",
+    });
+    const inboxId = `toy-box-${crypto.randomUUID()}`;
+    const hyperId = `toy-box-${crypto.randomUUID()}`;
+    const workerId = `toy-box-${crypto.randomUUID()}`;
+    await createInboxEntry(inboxId);
+    addHyperSession(hyperId);
+    await registerWorkerSession({
+      type: "app",
+      sessionId: workerId,
+      appId: "app-a",
+      ephemeral: true,
+    });
+    onTestFinished(() => deleteHyperState(hyperId));
+
+    expect(await resolveSessionType(automation.id)).toBe("automation");
+    expect(await resolveSessionType(inboxId)).toBe("inbox");
+    expect(await resolveSessionType(hyperId)).toBe("hyper");
+    expect(await resolveSessionType(workerId)).toBe("worker");
+  });
+
+  test("rejects conflicting managed records", async () => {
+    await openSessionTypeTestDatabase();
+    const sessionId = `toy-box-${crypto.randomUUID()}`;
+    await createInboxEntry(sessionId);
+    addHyperSession(sessionId);
+    onTestFinished(() => deleteHyperState(sessionId));
+
+    expect(resolveSessionType(sessionId)).rejects.toThrow(
+      `Session ${sessionId} has conflicting types: inbox, hyper`,
+    );
+  });
+});

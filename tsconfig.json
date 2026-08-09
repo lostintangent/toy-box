@@ -1,6 +1,5 @@
 {
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["src/apps/*/app.tsx"],
   "compilerOptions": {
     "target": "ES2022",
     "jsx": "react-jsx",
@@ -23,7 +22,14 @@
 
     "paths": {
       "@/*": ["./src/*"],
-      "@toy-box/sdk": ["./src/components/workspace/panes/app/runtime/sdk/index.ts"]
+      "@apps/*": ["./src/features/apps/*"],
+      "@automations/*": ["./src/features/automations/*"],
+      "@files/*": ["./src/features/files/*"],
+      "@inbox/*": ["./src/features/inbox/*"],
+      "@sessions/*": ["./src/features/sessions/*"],
+      "@terminal/*": ["./src/features/terminal/*"],
+      "@workers/*": ["./src/features/workers/*"],
+      "@workspace/*": ["./src/workspace/*"]
     }
   }
 }

@@ -10,10 +10,10 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ApiInboxRouteImport } from './routes/api/inbox'
+import { Route as ApiInboxRouteImport } from './features/inbox/routes/inbox'
 import { Route as ApiWorkspaceRouteImport } from './routes/api/workspace'
-import { Route as ApiServeScopeSplatRouteImport } from './routes/api/serve/$scope/$'
-import { Route as ApiWatchScopeSplatRouteImport } from './routes/api/watch/$scope/$'
+import { Route as ApiServeScopeSplatRouteImport } from './features/files/routes/serve/$scope/$'
+import { Route as ApiWatchScopeSplatRouteImport } from './features/files/routes/watch/$scope/$'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
