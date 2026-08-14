@@ -10,7 +10,7 @@ Raw Copilot SDK activity is translated into canonical `SessionEvent`s. One pure 
 
 Automations, Inbox, Hyper, and parent sessions govern managed-session lifecycles while reusing that same runtime rather than defining alternate execution models. Files open as live, editable editor surfaces that can notify their owning agent. High-frequency transcript activity travels through ordered, replayable per-session streams. Lower-frequency shared workspace changes use a separate at-most-once update stream and recover missed events from authoritative snapshots or query refetches.
 
-Apps are durable, bookmarked workspace surfaces rather than file renderers. An installed TSX definition supplies trusted owner-authored presentation, behavior, and default state; each SQLite-backed app instance supplies its own title, small durable state, and revision. Apps consume a versioned public wrapper over workspace state, sessions, and files, and can publish ordinary session or editor panes without introducing another execution model.
+The app runtime supports two ownership models. Installed apps are durable, bookmarked workspace surfaces: a TSX definition supplies trusted owner-authored presentation, behavior, and default state, while each SQLite-backed instance supplies its own title, small durable state, and revision. Session artifact apps are ordinary `.toy` files rendered by editor panes with no manifest, registration, or durable app state. Both consume the same versioned portable wrapper over workspace state, sessions, and files and can publish ordinary session or editor panes without introducing another execution model.
 
 ```mermaid
 flowchart LR
@@ -40,7 +40,7 @@ Each guide explains one capability end to end, including adjacent callers and co
 - [`src/features/automations/AGENTS.md`](src/features/automations/AGENTS.md): dependable recurring work by scheduling ordinary managed sessions
 - [`src/features/inbox/AGENTS.md`](src/features/inbox/AGENTS.md): durable background results presented through ordinary managed sessions
 - [`src/features/workers/AGENTS.md`](src/features/workers/AGENTS.md): owner-scoped background work supervised as ordinary managed sessions
-- [`src/features/apps/AGENTS.md`](src/features/apps/AGENTS.md): installed TSX app definitions, saved instances, compilation, and the public app capability boundary
+- [`src/features/apps/AGENTS.md`](src/features/apps/AGENTS.md): session artifact apps, installed definitions and instances, shared compilation, and the public app capability boundary
 - [`src/features/files/AGENTS.md`](src/features/files/AGENTS.md): browsable workspace files presented as live, bidirectionally editable surfaces
 - [`src/features/terminal/AGENTS.md`](src/features/terminal/AGENTS.md): reconnectable PTYs with mode-aware scrollback that preserves the visible terminal
 - [`cli/AGENTS.md`](cli/AGENTS.md): one installable binary that assembles the browser app and Nitro server

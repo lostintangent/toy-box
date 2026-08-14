@@ -117,12 +117,13 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
       const withoutWorkers = updateList(withoutApp, "workers", (workers) =>
         removeWhere(workers, (worker) => worker.type === "app" && worker.appId === event.appId),
       );
-      return updateList(withoutWorkers, "appShares", (shares) =>
-        removeWhere(
-          shares,
-          (share) => share.sourceAppId === event.appId || share.targetAppId === event.appId,
-        ),
-      );
+      return updateList(withoutWorkers, "appShares", (shares) => {
+        const retained = removeWhere(shares, (share) => share.targetAppId === event.appId);
+        if (!retained.some((share) => share.sourceAppId === event.appId)) return retained;
+        return retained.map((share) =>
+          share.sourceAppId === event.appId ? { ...share, sourceAppId: null } : share,
+        );
+      });
     }
     case "app.share.created":
       return updateList(state, "appShares", (shares) =>

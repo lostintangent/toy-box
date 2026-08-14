@@ -1273,6 +1273,21 @@ describe("projector", () => {
       ).toEqual([]);
     });
 
+    test("drops user messages from skill sources without parsing their content", () => {
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "user.message",
+            data: {
+              content: "Plan instructions",
+              source: "skill-plan",
+            },
+          }),
+          createStreamingContext(),
+        ),
+      ).toEqual([]);
+    });
+
     test("marks only non-idle user deliveries as steered", () => {
       const project = createStreamingContext();
       const deliveries = (["idle", "steering", "queued"] as const).map(

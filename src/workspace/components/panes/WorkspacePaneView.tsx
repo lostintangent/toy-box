@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { EditorPane } from "@files/components/editor/EditorPane";
 import { InboxPane } from "@inbox/components/InboxPane";
-import { AppPane } from "@apps/components/AppPane";
+import { AppPane } from "@apps/components/panes/AppPane";
 import type { WorkspacePane } from "@workspace/model/panes";
 import { PaneSlotsProvider, type PaneSlots } from "./shell/PaneSlots";
 import { CanvasPane } from "@sessions/components/CanvasPane";

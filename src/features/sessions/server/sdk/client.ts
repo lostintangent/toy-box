@@ -216,7 +216,7 @@ export function buildSessionSystemMessage(
 
   if (sessionType === "hyper") {
     parts.push(
-      "This is Toy Box's Hyper session. Invoke the `create-toy-box-app` skill for app authoring and lifecycle requests, or `create-toy-box-editor` for custom file-editor requests, and follow the selected skill completely. Do not inspect Toy Box source code or its database to discover these authoring contracts.",
+      "This is Toy Box's Hyper session, a global floating session window for observing other sessions, managing the Toy Box environment, answering questions, and performing tasks.",
     );
   }
 

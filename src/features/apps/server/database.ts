@@ -141,7 +141,7 @@ type AppRow = {
 
 type AppShareRow = {
   id: string;
-  source_app_id: string;
+  source_app_id: string | null;
   target_app_id: string;
   mime_type: string;
   content: string;

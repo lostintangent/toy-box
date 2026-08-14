@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { domMax, LazyMotion, MotionConfig } from "motion/react";
 import { AutomationPanel } from "@automations/components/AutomationPanel";
 import { cn } from "@/shared/utils";
 import type { SessionMetadata } from "@sessions/model";
@@ -238,11 +237,7 @@ export function Sidebar({
 
   return (
     <>
-      <LazyMotion features={domMax} strict>
-        <MotionConfig reducedMotion="user">
-          {collapsible ? <SidebarResizer {...collapsible}>{body}</SidebarResizer> : body}
-        </MotionConfig>
-      </LazyMotion>
+      {collapsible ? <SidebarResizer {...collapsible}>{body}</SidebarResizer> : body}
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 

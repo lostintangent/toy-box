@@ -150,7 +150,7 @@ describe("app lifecycle", () => {
     onTestFinished(unsubscribe);
 
     const share = await shareWithApp({
-      appId: source.id,
+      sourceAppId: source.id,
       targetAppId: target.id,
       mimeType: "text/markdown",
       content: "# Ship it",
@@ -165,9 +165,18 @@ describe("app lifecycle", () => {
     expect(await apps.listShares()).toEqual([]);
     expect(events).toEqual(["app.share.created", "app.share.deleted"]);
 
+    const artifactShare = await shareWithApp({
+      sourceAppId: null,
+      targetAppId: target.id,
+      mimeType: "text/markdown",
+      content: "# From an artifact",
+    });
+    expect(artifactShare.sourceAppId).toBeNull();
+    expect(await consumeAppShare({ appId: target.id, shareId: artifactShare.id })).toBe(true);
+
     await expect(
       shareWithApp({
-        appId: target.id,
+        sourceAppId: target.id,
         targetAppId: source.id,
         mimeType: "text/plain",
         content: "Rejected",

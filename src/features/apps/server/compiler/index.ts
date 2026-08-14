@@ -1,12 +1,28 @@
 import { APP_REGISTER_GLOBAL, type CompiledAppBundle } from "@apps/runtime";
-import type { AppStateDefinition } from "@apps/model";
+import { appComponentSourceSchema, type AppStateDefinition } from "@apps/model";
+import type { SessionFile } from "@files/model";
+import { workspaceFileId } from "@files/model";
+import { sharedMap } from "@/shared/server/processState";
 import { APP_DEPENDENCY_SOURCES, unsupportedAppImport } from "./dependencies";
 import { compileAppStyles } from "./styles";
 import { checkAppTypeScript } from "./typecheck";
 
-export async function compileAppDefinition(source: {
+const artifactBundles = sharedMap<{
+  revision: string;
+  bundle: Promise<CompiledAppBundle>;
+}>("artifact-app-bundles");
+
+export function compileAppDefinition(source: {
   id: string;
   state: AppStateDefinition;
+  tsx: string;
+}): Promise<CompiledAppBundle> {
+  return compileApp(source);
+}
+
+async function compileApp(source: {
+  id: string;
+  state: AppStateDefinition | null;
   tsx: string;
 }): Promise<CompiledAppBundle> {
   checkAppTypeScript(source);
@@ -14,6 +30,33 @@ export async function compileAppDefinition(source: {
   const [code, css] = await Promise.all([bundleAppCode(source), compileAppStyles(source)]);
 
   return { code, css };
+}
+
+/** Compile one artifact app source, caching only the current content for each file. */
+export async function compileArtifactApp(file: SessionFile, source: string) {
+  const tsx = appComponentSourceSchema.parse(source);
+  const fileId = workspaceFileId(file);
+  const scopeId = `artifact-${hash(fileId)}`;
+  const revision = hash(tsx);
+  const cached = artifactBundles.get(fileId);
+
+  if (cached?.revision === revision) {
+    return { scopeId, bundle: await cached.bundle };
+  }
+
+  const bundle = compileApp({
+    id: scopeId,
+    state: null,
+    tsx,
+  });
+  artifactBundles.set(fileId, { revision, bundle });
+
+  try {
+    return { scopeId, bundle: await bundle };
+  } catch (error) {
+    if (artifactBundles.get(fileId)?.bundle === bundle) artifactBundles.delete(fileId);
+    throw error;
+  }
 }
 
 async function bundleAppCode(source: { id: string; tsx: string }): Promise<string> {
@@ -81,4 +124,8 @@ function appEntryModule(componentId: string): string {
     `import AppComponent from ${JSON.stringify(componentId)};` +
     `globalThis.${APP_REGISTER_GLOBAL}(AppComponent);`
   );
+}
+
+function hash(value: string): string {
+  return Bun.CryptoHasher.hash("sha256", value, "hex").slice(0, 24);
 }

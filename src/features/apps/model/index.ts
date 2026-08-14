@@ -1,6 +1,7 @@
 import { z, type JSONType } from "zod";
 import { APP_ICON_NAMES } from "@apps/model/icons";
 import { appStateDefinitionSchema } from "@apps/model/state";
+import { sessionFileSchema } from "@files/model";
 import { hexColorSchema, type HexColor } from "@/shared/utils";
 import { smallJsonSchema } from "@/shared/smallJson";
 
@@ -26,7 +27,7 @@ const appShareMimeTypeSchema = z.string().trim().min(1).max(128);
 
 export const shareWithAppInputSchema = z
   .object({
-    appId: appIdSchema,
+    sourceAppId: appIdSchema.nullable(),
     targetAppId: appIdSchema,
     mimeType: appShareMimeTypeSchema,
     content: smallJsonSchema,
@@ -101,6 +102,20 @@ export const appDefinitionBundleInputSchema = z.object({
   revision: z.string().min(1).max(128),
 });
 
+export const ARTIFACT_APP_EXTENSION = ".toy";
+
+export const artifactAppPathSchema = z
+  .string()
+  .refine((path) => path.toLowerCase().endsWith(ARTIFACT_APP_EXTENSION), {
+    message: `Artifact app paths must end in ${ARTIFACT_APP_EXTENSION}.`,
+  });
+
+export const artifactAppBundleInputSchema = z
+  .object({
+    file: sessionFileSchema.extend({ path: artifactAppPathSchema }),
+  })
+  .strict();
+
 export const appDefinitionInputSchema = z
   .object({
     id: appDefinitionIdSchema.describe("Definition folder under ~/.toy-box/apps."),
@@ -130,12 +145,12 @@ export const appManifestSchema = z
 export const appComponentSourceSchema = z
   .string()
   .max(256 * 1024)
-  .refine((source) => source.trim().length > 0, "`app.tsx` cannot be empty.");
+  .refine((source) => source.trim().length > 0, "App source cannot be empty.");
 
-/** An immutable, pending handoff between two saved app instances. */
+/** An immutable, pending handoff owned by its saved target. */
 export type AppShare = {
   id: string;
-  sourceAppId: string;
+  sourceAppId: string | null;
   targetAppId: string;
   mimeType: string;
   content: JSONType;

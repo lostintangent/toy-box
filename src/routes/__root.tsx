@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
+import { domMax, LazyMotion, MotionConfig } from "motion/react";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { workspaceQueries } from "@workspace/queries";
 
@@ -63,7 +64,11 @@ function RootDocument({ children }: { children: ReactNode }) {
         <HeadContent />
       </head>
       <body className="h-dvh overflow-hidden bg-background safe-top safe-x">
-        <div className="h-full overflow-hidden">{children}</div>
+        <LazyMotion features={domMax} strict>
+          <MotionConfig reducedMotion="user">
+            <div className="h-full overflow-hidden">{children}</div>
+          </MotionConfig>
+        </LazyMotion>
         <Scripts />
       </body>
     </html>

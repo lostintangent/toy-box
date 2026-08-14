@@ -53,10 +53,10 @@ const typeLibrarySourceFiles = new Map<string, ts.SourceFile>();
 
 export function checkAppTypeScript(source: {
   id: string;
-  state: AppStateDefinition;
+  state: AppStateDefinition | null;
   tsx: string;
 }): void {
-  const stateSchema = parseAppStateSchema(source.state.schema);
+  const stateSchema = source.state === null ? null : parseAppStateSchema(source.state.schema);
   const host = createCompilerHost(source.tsx, stateSchema);
   const program = ts.createProgram(
     [appFileName, componentCheckFileName],
@@ -79,7 +79,7 @@ export function checkAppTypeScript(source: {
 
 function createCompilerHost(
   source: string,
-  stateSchema: AppStateDefinition["schema"],
+  stateSchema: AppStateDefinition["schema"] | null,
 ): ts.CompilerHost {
   const virtualSources = new Map([
     [appFileName, source],
@@ -144,8 +144,13 @@ function createCompilerHost(
   return host;
 }
 
-function appSdkSource(stateSchema: AppStateDefinition["schema"]): string {
-  return `export * from "./src/features/apps/sdk";
+function appSdkSource(stateSchema: AppStateDefinition["schema"] | null): string {
+  const sdkSource = `export * from "./src/features/apps/sdk";`;
+  if (stateSchema === null) {
+    return `${sdkSource}
+export declare const useApp: never;`;
+  }
+  return `${sdkSource}
 import type { AppHandle } from "./src/features/apps/sdk";
 import type { FromSchema } from "json-schema-to-ts";
 const stateSchema = ${jsonSource(stateSchema)} as const;

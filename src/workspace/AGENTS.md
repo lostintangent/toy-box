@@ -64,6 +64,10 @@ server projection.
 - A canvas pane presents an SDK-provided URL associated with its source session.
 - An app pane presents one durable app instance and is not inherently session-backed.
 
+A session `.toy` artifact app remains an editor pane. Reusing the app compiler
+and mounted runtime does not add another pane kind or transfer ownership from its
+source file.
+
 Each pane has a stable ID that represents mounted identity. [`model/panes.ts`](model/panes.ts) owns
 identity, source relationships, reachability, ordering, and focus policy as pure functions. Root
 sessions, files, and apps are deduplicated and capped at four panes. Active session, Inbox, and app

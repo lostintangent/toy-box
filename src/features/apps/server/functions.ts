@@ -3,6 +3,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import {
+  artifactAppBundleInputSchema,
   appDefinitionBundleInputSchema,
   appDefinitionInputSchema,
   appIdInputSchema,
@@ -45,3 +46,7 @@ export const uninstallApp = createServerFn({ method: "POST" })
 export const getAppDefinitionBundle = createServerFn({ method: "GET" })
   .validator(zodValidator(appDefinitionBundleInputSchema))
   .handler(({ data }) => apps.getAppDefinitionBundle(data.definitionId, data.revision));
+
+export const getArtifactAppBundle = createServerFn({ method: "GET" })
+  .validator(zodValidator(artifactAppBundleInputSchema))
+  .handler(({ data }) => apps.getArtifactAppBundle(data.file));

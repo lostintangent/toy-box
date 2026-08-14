@@ -12,7 +12,7 @@ import { smallJsonSchema } from "@/shared/smallJson";
 import { applyWorkspaceEvent } from "@workspace/queries";
 
 type ShareWithApp = {
-  appId: string;
+  sourceAppId: string | null;
   mimeType: string;
   content: unknown;
 };
@@ -73,12 +73,12 @@ export const appMutations = {
       },
     }),
 
-  share: ({ appId, mimeType, content }: ShareWithApp) =>
+  share: ({ sourceAppId, mimeType, content }: ShareWithApp) =>
     mutationOptions({
       mutationFn: (targetAppId: string) =>
         shareWithApp({
           data: {
-            appId,
+            sourceAppId,
             targetAppId,
             mimeType,
             content: smallJsonSchema.parse(content),

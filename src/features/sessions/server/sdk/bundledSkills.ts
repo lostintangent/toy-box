@@ -10,6 +10,7 @@ import type { SessionType } from "@sessions/model";
 const SKILL_PATH_MARKER = "/skills/";
 const DEFAULT_SKILLS_ROOT = join(homedir(), ".toy-box", "skills");
 const SESSION_SKILLS: Partial<Record<SessionType, readonly string[]>> = {
+  standard: ["create-toy-box-app"],
   hyper: ["create-toy-box-app", "create-toy-box-editor"],
 };
 

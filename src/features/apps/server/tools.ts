@@ -1,6 +1,7 @@
 import { defineTool } from "@github/copilot-sdk";
 import { z } from "zod";
 import {
+  artifactAppPathSchema,
   appDefinitionInputSchema,
   appIdInputSchema,
   appWorkerUpdateInputSchema,
@@ -8,6 +9,7 @@ import {
   installAppInputSchema,
   updateAppInputSchema,
 } from "@apps/model";
+import { sessionFile } from "@files/model";
 
 const listAppDefinitionsTool = defineTool("list_app_definitions", {
   description: "Lists installed Toy Box app definitions, including state schemas and defaults.",
@@ -68,6 +70,30 @@ const registerAppTool = defineTool("register_app", {
     } catch (error) {
       return JSON.stringify({
         registered: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  },
+});
+
+const validateArtifactAppTool = defineTool("validate_artifact_app", {
+  description:
+    "Typechecks and compiles a .toy app in the current session without registering or saving it.",
+  parameters: z
+    .object({
+      path: artifactAppPathSchema.describe("Path relative to the current session's files folder."),
+    })
+    .strict(),
+  skipPermission: true,
+  handler: async ({ path }, invocation) => {
+    try {
+      const apps = await import("@apps/server");
+      await apps.getArtifactAppBundle(sessionFile(invocation.sessionId, path));
+      return JSON.stringify({ valid: true, path });
+    } catch (error) {
+      return JSON.stringify({
+        valid: false,
+        path,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -175,6 +201,8 @@ export const appLifecycleTools = [
   createAppTool,
   deleteAppTool,
 ];
+
+export const artifactAppTools = [validateArtifactAppTool];
 
 async function getApp(appId: string) {
   const apps = await import("@apps/server");

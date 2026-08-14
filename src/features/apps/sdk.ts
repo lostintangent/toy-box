@@ -122,6 +122,7 @@ export declare function AppLocationPicker(props: {
   onUseWorktreeChange?: (value: boolean) => void;
 }): ReactElement;
 
+/** Offers MIME-typed content to a compatible saved app from any mounted app. */
 export declare function AppSharePicker(props: {
   mimeType: string;
   content: unknown;
@@ -135,6 +136,12 @@ export declare function AppSharePicker(props: {
 export declare function useWorkspace<T>(selector: (workspace: AppWorkspace) => T): T;
 
 export declare function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): WorkspaceFileState;
+
+/** Host actions available to both saved apps and session-scoped artifact apps. */
+export declare function useAppActions(): Omit<
+  AppActions,
+  "consumeShare" | "spawnWorker" | "cancelWorker"
+>;
 
 export type AppHandle<T = JSONType> = Omit<AppInstance, "state"> & {
   state: T;

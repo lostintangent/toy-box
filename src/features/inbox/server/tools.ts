@@ -10,6 +10,7 @@ const sendToInboxTool = defineTool("send_to_inbox", {
     "Do not send routine progress updates or duplicate messages.",
   parameters: sendToInboxInputSchema,
   skipPermission: true,
+  isTerminal: true,
   handler: async ({ message, artifact }, invocation) => {
     const { sessionId } = invocation;
     if (artifact) {

@@ -336,8 +336,14 @@ describe("workspace state reducer", () => {
     state = reduceWorkspaceState(state, { type: "app.deleted", appId: app.id });
     expect(state.apps).toEqual([alphabeticallyFirst]);
     expect(state.workers).toEqual([]);
-    expect(state.appShares).toEqual([]);
+    expect(state.appShares).toEqual([{ ...shareEvent.share, sourceAppId: null }]);
     expect(state.appDefinitions).toEqual([definition]);
+
+    state = reduceWorkspaceState(state, {
+      type: "app.deleted",
+      appId: alphabeticallyFirst.id,
+    });
+    expect(state.appShares).toEqual([]);
 
     state = reduceWorkspaceState(state, {
       type: "app.unregistered",

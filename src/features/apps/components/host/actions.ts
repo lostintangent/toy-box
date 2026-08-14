@@ -8,29 +8,23 @@ import {
 import { consumeAppShare } from "@apps/server/functions";
 import { readFile, writeFile } from "@files/server/functions";
 import type { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import type { AppActions } from "@apps/sdk";
+import type { AppActions, useAppActions } from "@apps/sdk";
 import {
   createEditorPane,
   createLinkedSessionPane,
   type WorkspacePane,
 } from "@workspace/model/panes";
 
-/** Binds the public app capabilities to one mounted app and workspace surface. */
+/** Binds capabilities shared by every mounted app to its workspace surface. */
 export function bindAppActions({
-  appId,
   publisherPaneId,
-  flushState,
-  spawnWorker,
-  cancelWorker,
+  beforeDeliverMessage,
   surface,
 }: {
-  appId: string;
   publisherPaneId: string;
-  flushState: () => Promise<void>;
-  spawnWorker: AppActions["spawnWorker"];
-  cancelWorker: AppActions["cancelWorker"];
+  beforeDeliverMessage?: () => Promise<void>;
   surface: ReturnType<typeof useWorkspaceSurface>;
-}): AppActions {
+}): ReturnType<typeof useAppActions> {
   function changeLinkedPanes(
     change: (current: readonly WorkspacePane[]) => readonly WorkspacePane[],
   ) {
@@ -66,31 +60,21 @@ export function bindAppActions({
   }
 
   return {
-    consumeShare(shareId) {
-      return consumeAppShare({ data: { appId, shareId } });
-    },
     async createSession(input) {
       const { open, ...launch } = input;
       const result = await createSession({ data: launch });
       if (open) openPane(createLinkedSessionPane(result.sessionId));
       return result;
     },
-    async spawnWorker(input) {
-      await flushState();
-      return spawnWorker(input);
-    },
     waitForSession(sessionId, timeoutMs) {
       return waitForSession({ data: { sessionId, timeoutMs } });
-    },
-    cancelWorker(sessionId) {
-      return cancelWorker(sessionId);
     },
     async deleteSession(sessionId) {
       await deleteSession({ data: { sessionId } });
       closePane(createLinkedSessionPane(sessionId).id);
     },
     async deliverMessage(sessionId, message) {
-      await flushState();
+      await beforeDeliverMessage?.();
       await deliverMessage({ data: { sessionId, message } });
     },
     async abortSession(sessionId) {
@@ -119,6 +103,35 @@ export function bindAppActions({
     },
     async writeFile(file, content) {
       await writeFile({ data: { file, content } });
+    },
+  };
+}
+
+/** Adds saved-instance capabilities to the common mounted app actions. */
+export function bindSavedAppActions({
+  appId,
+  actions,
+  flushState,
+  spawnWorker,
+  cancelWorker,
+}: {
+  appId: string;
+  actions: ReturnType<typeof useAppActions>;
+  flushState: () => Promise<void>;
+  spawnWorker: AppActions["spawnWorker"];
+  cancelWorker: AppActions["cancelWorker"];
+}): AppActions {
+  return {
+    ...actions,
+    consumeShare(shareId) {
+      return consumeAppShare({ data: { appId, shareId } });
+    },
+    async spawnWorker(input) {
+      await flushState();
+      return spawnWorker(input);
+    },
+    cancelWorker(sessionId) {
+      return cancelWorker(sessionId);
     },
   };
 }

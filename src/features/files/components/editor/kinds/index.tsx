@@ -10,13 +10,15 @@ import {
   Image,
   List,
   ListTodo,
+  AppWindow,
   PenTool,
   Table,
   type LucideIcon,
 } from "lucide-react";
 import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
-import type { CustomEditorKind } from "@files/model";
+import type { CustomEditorKind, WorkspaceFile } from "@files/model";
+import { ARTIFACT_APP_EXTENSION } from "@apps/model";
 import type { Worker } from "@workers/model";
 import type { FileState, WorkerRequest } from "../../../useFile";
 import type { WorkspaceFileMode } from "../../../model";
@@ -58,6 +60,19 @@ const SvgEditor = lazy(() =>
 const JsonEditor = lazy(() =>
   import("./json/JsonEditor").then((module) => ({ default: module.JsonEditor })),
 );
+
+const ArtifactAppPane = lazy(() =>
+  import("@apps/components/panes/ArtifactAppPane").then((module) => ({
+    default: module.ArtifactAppPane,
+  })),
+);
+
+const ARTIFACT_APP_EDITOR_KIND: EditorKind = {
+  extensions: [ARTIFACT_APP_EXTENSION.slice(1)],
+  Renderer: ArtifactAppPane,
+  icon: AppWindow,
+  editable: false,
+};
 
 const BUILTIN_EDITOR_KINDS: Record<string, EditorKind> = {
   markdown: {
@@ -113,8 +128,14 @@ function extensionOf(path: string): string {
 }
 
 /** Built-ins win extension conflicts; unclaimed files render as Markdown. */
-export function resolveEditorKind(path: string, customKinds: CustomEditorKind[]): EditorKind {
-  const extension = extensionOf(path);
+export function resolveEditorKind(
+  file: WorkspaceFile,
+  customKinds: CustomEditorKind[],
+): EditorKind {
+  const extension = extensionOf(file.path);
+  if (file.type === "session" && ARTIFACT_APP_EDITOR_KIND.extensions.includes(extension)) {
+    return ARTIFACT_APP_EDITOR_KIND;
+  }
   for (const kind of Object.values(BUILTIN_EDITOR_KINDS)) {
     if (kind.extensions.includes(extension)) return kind;
   }
@@ -122,13 +143,13 @@ export function resolveEditorKind(path: string, customKinds: CustomEditorKind[])
   return custom ? toEditorKind(custom) : FALLBACK_EDITOR_KIND;
 }
 
-export function useEditorKind(path: string): EditorKind {
+export function useEditorKind(file: WorkspaceFile): EditorKind {
   const customKinds = useWorkspaceSelector((workspace) => workspace.customEditors);
-  return resolveEditorKind(path, customKinds);
+  return resolveEditorKind(file, customKinds);
 }
 
-export function useEditorDisplay(path: string): { name: string; Icon: LucideIcon } {
-  const kind = useEditorKind(path);
-  const fileIcon = kind.fileIcons?.[getPathBasename(path)];
-  return { name: fileName(path), Icon: fileIcon ?? kind.icon };
+export function useEditorDisplay(file: WorkspaceFile): { name: string; Icon: LucideIcon } {
+  const kind = useEditorKind(file);
+  const fileIcon = kind.fileIcons?.[getPathBasename(file.path)];
+  return { name: fileName(file.path), Icon: fileIcon ?? kind.icon };
 }

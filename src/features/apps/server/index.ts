@@ -5,6 +5,8 @@
 
 import type { z } from "zod";
 import type { CompiledAppBundle } from "@apps/runtime";
+import type { SessionFile } from "@files/model";
+import { readFile } from "@files/server";
 import { parseAppState } from "@apps/model/state";
 import {
   type appDefinitionInputSchema,
@@ -26,6 +28,7 @@ import { getStateDatabase } from "@/server/database";
 import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 import { downloadGistApp } from "./gist";
 import { AppDatabase } from "./database";
+import { compileArtifactApp } from "./compiler";
 import { appDefinitionRegistry, parseAppDefinitionFiles } from "./definitions";
 
 const definitionQueues = sharedMap<SerialTaskQueue>("app-definition-queues");
@@ -39,6 +42,11 @@ export async function getAppDefinitionBundle(
   revision: string,
 ): Promise<CompiledAppBundle> {
   return appDefinitionRegistry.getBundle(definitionId, revision);
+}
+
+export async function getArtifactAppBundle(file: SessionFile) {
+  const source = await readFile(file);
+  return compileArtifactApp(file, source.content);
 }
 
 export async function listApps(): Promise<AppInstance[]> {
@@ -55,8 +63,13 @@ export async function shareWithApp(
   input: z.output<typeof shareWithAppInputSchema>,
 ): Promise<AppShare> {
   const apps = new AppDatabase(await getStateDatabase());
-  const [source, target] = await Promise.all([apps.get(input.appId), apps.get(input.targetAppId)]);
-  if (!source) throw new Error(`App "${input.appId}" was not found.`);
+  const [source, target] = await Promise.all([
+    input.sourceAppId === null ? null : apps.get(input.sourceAppId),
+    apps.get(input.targetAppId),
+  ]);
+  if (input.sourceAppId !== null && !source) {
+    throw new Error(`App "${input.sourceAppId}" was not found.`);
+  }
   if (!target) throw new Error(`App "${input.targetAppId}" was not found.`);
 
   const definition = await appDefinitionRegistry.get(target.definitionId);
@@ -65,7 +78,7 @@ export async function shareWithApp(
   }
 
   const share = await apps.createShare({
-    sourceAppId: source.id,
+    sourceAppId: input.sourceAppId,
     targetAppId: target.id,
     mimeType: input.mimeType,
     content: input.content,

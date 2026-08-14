@@ -1,16 +1,4 @@
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) + 8px);
-  --radius-3xl: calc(var(--radius) + 12px);
-  --radius-4xl: calc(var(--radius) + 16px);
-
-  /* Micro label size — below text-xs (12px); badges, counts, eyebrow headings. */
-  --text-2xs: 0.6875rem;
-  --text-2xs--line-height: 1rem;
-
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -41,6 +29,18 @@
   --color-user-accent: var(--user-accent);
   --color-user-accent-foreground: contrast-color(var(--user-accent));
   --color-unread: var(--unread);
+
+  /* Micro label size — below text-xs (12px); badges, counts, eyebrow headings. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
 
   /* Layout open/close motion: panels grow, the sidebar sizes in pixels. */
   --ease-layout: cubic-bezier(0.16, 1, 0.3, 1);

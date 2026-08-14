@@ -86,7 +86,7 @@ describe("app instance database", () => {
     const source = await apps.create(initialApp);
     const target = await apps.create({ ...initialApp, title: "Factory Floor" });
     const share = await apps.createShare({
-      sourceAppId: source.id,
+      sourceAppId: null,
       targetAppId: target.id,
       mimeType: "text/markdown",
       content: "# Ship the release",
@@ -97,13 +97,15 @@ describe("app instance database", () => {
     expect(await apps.deleteShare(target.id, share.id)).toBe(true);
     expect(await apps.listShares()).toEqual([]);
 
-    await apps.createShare({
+    const sourced = await apps.createShare({
       sourceAppId: source.id,
       targetAppId: target.id,
       mimeType: "x-reference",
       content: "run-2",
     });
     await apps.delete(source.id);
+    expect(await apps.listShares()).toEqual([{ ...sourced, sourceAppId: null }]);
+    await apps.delete(target.id);
     expect(await apps.listShares()).toEqual([]);
   });
 

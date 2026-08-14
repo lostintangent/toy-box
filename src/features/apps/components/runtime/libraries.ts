@@ -2,6 +2,7 @@ import * as React from "react";
 import * as ReactCompilerRuntime from "react/compiler-runtime";
 import * as JsxRuntime from "react/jsx-runtime";
 import * as JsxDevRuntime from "react/jsx-dev-runtime";
+import * as Motion from "motion/react-m";
 import * as Zod from "zod";
 import type { AppRuntime } from "@apps/runtime";
 import * as AppSdk from "./sdk";
@@ -21,5 +22,6 @@ export const APP_RUNTIME_LIBRARIES = {
   },
   AppSdk: AppSdk satisfies typeof import("@apps/sdk"),
   Icons: APP_ICONS,
+  Motion,
   Zod,
 } satisfies AppRuntime;

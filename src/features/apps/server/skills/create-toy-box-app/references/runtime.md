@@ -1,8 +1,9 @@
 # Toy Box App Runtime
 
-The app runtime compiles and mounts `app.tsx`, which must default-export a React
-component. It provides a deliberately small set of libraries, Toy Box's design
-system, and the app SDK.
+The app runtime compiles and mounts either a session-scoped `.toy` artifact or an
+installed `app.tsx`. Both must default-export a React component and receive the
+same deliberately small set of libraries, Toy Box design system, and portable
+app SDK.
 
 ## Available Libraries
 
@@ -11,20 +12,37 @@ App modules may import from:
 - `react` for component rendering, mount-local interaction state, and effects
   around external resources. Use `useState` for independent values and
   `useReducer` when several values form one transition model.
+
+<!-- TODO: Remove the alias requirement below when Bun's built-in React Compiler
+preserves lowercase JSX member expressions such as `<m.div>` instead of lowering
+them to intrinsic elements. -->
+
+- `motion/react-m` for shared LazyMotion-backed elements. Bind the lowercase exports
+  you render to capitalized module-scope component names:
+  ```tsx
+  import * as m from "motion/react-m";
+
+  const MotionDiv = m.div;
+
+  <MotionDiv layout />;
+  ```
+  Do not render `<m.div>` directly: React Compiler can treat a lowercase JSX member
+  path as an intrinsic element. The host supplies `domMax` features and honors the
+  user's reduced-motion preference.
 - `zod` for app-local parsing when a surface consumes untrusted text or external data.
 - `@toy-box/sdk` for the design-system components and SDK hooks described below.
 - `lucide-react` for the curated icons listed in `SKILL.md`.
 
 Tailwind requires no import. Static utility classes in the TSX are compiled and
-scoped to the app. Registration reports unsupported imports and TypeScript
-errors with source-positioned diagnostics.
+scoped to the app. Artifact validation and installed-app registration report
+unsupported imports and TypeScript errors with source-positioned diagnostics.
 
 ## Design System
 
 ### Theme and Tailwind
 
 Apps inherit Toy Box's colors, typography, and light or dark appearance. Use
-static Tailwind utility classes in `app.tsx`; Toy Box compiles and scopes them
+static Tailwind utility classes in the app source; Toy Box compiles and scopes them
 under the app root. Keep each class complete in source instead of constructing
 names such as `bg-${color}-500`.
 
@@ -33,8 +51,9 @@ names such as `bg-${color}-500`.
 or `lg:`.
 
 For CSS Tailwind cannot express, render a `<style>` element and scope every
-selector beneath `[data-toybox-app='<definition-id>']`. Do not create stylesheet
-sidecars.
+selector beneath a unique app-owned attribute rendered by the component, such
+as `[data-release-board]`. Do not depend on the host's generated scope ID or
+create stylesheet sidecars.
 
 ### App Frame
 
@@ -83,22 +102,32 @@ These components accept their corresponding native element props and
 - Use `AppSharePicker` to offer content to another saved app. Pass
   `{ mimeType, content, label?, className?, disabled? }`; it discovers compatible
   instances, performs the share, opens the receiver on the current surface, and
-  shows `No supporting apps` when none accept that MIME type.
+  shows `No supporting apps` when none accept that MIME type. Both artifact and
+  installed apps may send shares.
 
 ## SDK APIs
 
+The SDK has one portable surface and one saved-instance extension:
+
+- Both artifact and installed apps may use `useWorkspace`, `useFile`,
+  `useAppActions`, `AppSharePicker`, the design-system components, and React
+  mount-local state.
+- Only installed saved apps may use `useApp`, receive or consume pending shares,
+  persist durable state, or own app workers.
+
 ### Utilities
 
-Use `createId()` for opaque IDs stored in app state. It uses browser randomness
+Use `createId()` for opaque IDs used by the surface. It uses browser randomness
 that remains available when Toy Box is opened over an HTTP LAN origin, where
 `crypto.randomUUID()` is unavailable.
 
-### App Instance and Durable State
+### Saved App Instance and Durable State
 
-`useApp()` is the mounted app's primary API. It returns the current instance
-metadata, pending shares addressed to it, manifest-validated durable state, its updater, and the host actions
-described below. Use its state for JSON data that should survive closing the app
-and stay synchronized across mounts and clients:
+`useApp()` is available only to an installed saved app. It returns the current
+instance metadata, pending shares addressed to it, manifest-validated durable
+state, its updater, and the complete saved-app actions described below. Use its
+state for JSON data that should survive closing the app and stay synchronized
+across mounts and clients:
 
 ```tsx
 const { id, title, state, shares, updateState, actions } = useApp();
@@ -140,6 +169,11 @@ components, and state can flow through props or React context when needed. Do no
 create module-level mutable state, which would leak between app instances and
 multiple mounts. Do not mirror app or workspace values into refs or effects;
 reserve effects for external resources with explicit cleanup.
+
+Artifact apps have no durable app state. Keep their surface data in React or in
+an explicitly selected file or session. React state resets when the artifact
+surface remounts, including after a source revision replaces the compiled
+component.
 
 ### Workspace State
 
@@ -188,12 +222,15 @@ const sessions = useWorkspace((workspace) => workspace.sessions);
 ```
 
 Use this data to render live session status, durable child-session trees,
-available models, saved apps, visible panes, and active app-owned workers.
+available models, saved apps, visible panes, and, for a saved app, active
+app-owned workers.
 `sessions` contains top-level standard sessions; each recursive `children` array
 contains the session- and file-owned worker sessions rooted beneath it. `workers`
-is already scoped to the current app instance; metadata should identify app-specific work, not repeat
-ownership or carry prompts and results. Workers disappear when they finish, so
-this collection is active execution rather than history.
+is already scoped to the current saved app instance; artifact apps receive empty
+`workers` and `shares` arrays because they do not fabricate an instance owner.
+Worker metadata should identify app-specific work, not repeat ownership or carry
+prompts and results. Workers disappear when they finish, so this collection is
+active execution rather than history.
 
 `sessions` is the global summary catalog and may be large. Store session IDs in
 app state instead of copying session records, resolve those IDs from this live
@@ -253,15 +290,16 @@ pending workers appear in this hook's `workers` array and in any editor showing
 the same file. Call `actions.waitForSession(worker.sessionId)` immediately
 after spawning when the UI needs the final assistant response or completion
 status. Ephemeral worker completion is not retained as history. Use
-`actions.spawnWorker` instead when the result belongs in app state.
+the saved app's `actions.spawnWorker` instead when the result belongs in its
+durable app state.
 
 ### Actions
 
-The `actions` returned by `useApp` expose the host operations an app can perform:
+The complete saved-app action contract is:
 
 ```ts
 type AppActions = {
-  consumeShare(shareId: string): Promise<void>;
+  consumeShare(shareId: string): Promise<boolean>;
   createSession(input: SessionLaunch & { open?: boolean }): Promise<{ sessionId: string }>;
   spawnWorker(
     input: SessionLaunch & {
@@ -305,7 +343,7 @@ type SessionCompletion = {
 
 type AppShare = {
   id: string;
-  sourceAppId: string;
+  sourceAppId: string | null;
   targetAppId: string;
   mimeType: string;
   content: JSONType;
@@ -316,14 +354,21 @@ type WorkspaceFile =
   { type: "session"; sessionId: string; path: string } | { type: "machine"; path: string };
 ```
 
+In an artifact app, use `const actions = useAppActions()`. It exposes every
+operation above except `consumeShare`, `spawnWorker`, and `cancelWorker`. A saved
+app receives the complete contract from `useApp().actions`; `useAppActions()`
+remains available when a component needs only portable operations.
+
 #### App Shares
 
-Use `AppSharePicker` for sharing. Give it a MIME type and any small JSON content;
-the picker discovers compatible instances, persists the share, and opens the
-receiver on the current workspace surface. Standard types such as `text/plain`,
-`text/markdown`, and `text/uri-list` carry strings; custom types may carry any
-agreed JSON shape. `x-session-launch` carries a `SessionLaunch`, but sharing it
-does not create a session or execute the receiver.
+Any artifact or installed app may use `AppSharePicker` to send a share. Give it a
+MIME type and any small JSON content; the picker discovers compatible saved
+instances, persists the target-owned share, and opens the receiver on the current
+workspace surface. `sourceAppId` is provenance when the sender is saved and null
+when it is an artifact. Standard types such as `text/plain`, `text/markdown`, and
+`text/uri-list` carry strings; custom types may carry any agreed JSON shape.
+`x-session-launch` carries a `SessionLaunch`, but sharing it does not create a
+session or execute the receiver.
 
 Shares addressed to the mounted instance appear in `useApp().shares`, including
 when they were created while the app was closed. Import a share into the app's
@@ -339,10 +384,12 @@ save the returned ID and let the user open or close its pane. Use
 `deliverMessage`, `abortSession`, and `deleteSession` to manage a session the app
 owns or explicitly presents. `waitForSession` waits for a session's current
 execution, whether it is an ordinary session or a worker. Its optional timeout
-ends only the wait; use `abortSession` or `cancelWorker` when the app should stop
-the underlying work.
+ends only the wait; use `abortSession`, or a saved app's `cancelWorker`, when the
+app should stop the underlying work.
 
 #### App-Owned Workers
+
+App-owned workers require an installed saved app.
 
 Use `spawnWorker` when an execution is an app-owned implementation detail. Workers
 stay out of the session list and can update only their owning app. They are
@@ -398,7 +445,8 @@ Use the open, close, and toggle actions to publish a session or file beside the
 app. Publication belongs to the containing Main or Hyper surface, so app code
 never chooses a host.
 
-React Compiler runs during registration, so write render calculations and
-handlers directly; do not add `memo`, `useMemo`, or `useCallback` solely for
-render optimization. Keep render behavior deterministic, use stable keys and
-accessible labels, and call mutations only from user actions.
+React Compiler runs during artifact validation and installed-app registration,
+so write render calculations and handlers directly; do not add `memo`, `useMemo`,
+or `useCallback` solely for render optimization. Keep render behavior
+deterministic, use stable keys and accessible labels, and call mutations only
+from user actions.

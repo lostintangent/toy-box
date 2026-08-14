@@ -1,41 +1,102 @@
 ---
 name: create-toy-box-app
-description: Create, edit, install, uninstall, or repair Toy Box apps—saved React TSX surfaces that use the public app SDK to manage durable state, react to workspace state, open files, and launch ordinary sessions or app-owned workers. Use for any request to build, distribute, or revise a Toy Box app.
+description: Create, edit, promote, install, uninstall, or repair Toy Box apps—session-scoped .toy artifact apps and installed React TSX surfaces that use the public app SDK to compose workspace sessions, files, and panes. Use for requests to build or change an artifact app, session app, or installed Toy Box app.
 ---
 
 # Author Toy Box Apps
 
-A Toy Box app is a reusable, single-file React component (`app.tsx`) that runs
-inside the Toy Box app runtime. The runtime supplies a set of pre-installed
-libraries, a basic design system for visual continuity, and an SDK for composing
-workspace sessions, files, and panes.
+A Toy Box app is a single-file React component that runs inside the Toy Box app
+runtime. The runtime supplies pre-installed libraries, a design system for visual
+continuity, and an SDK for composing workspace sessions, files, and panes. It has
+two storage and ownership models:
 
-Author definitions with ordinary filesystem tools, then use Toy Box's app tools
-to activate definitions and manage instances. Do not inspect Toy Box source code
-or its database to discover the app contract, and never edit SQLite directly.
+- **Artifact apps** are `*.toy` files in the current session's files folder.
+  Each file is a stateless, session-owned artifact with no manifest,
+  registration, saved instance, pending shares, or app-owned workers.
+- An **installed app** is a reusable `app.tsx` plus `app.json` definition under
+  `~/.toy-box/apps/`. Its saved instances have durable state and global workspace
+  identity.
+
+Use ordinary filesystem tools to author either kind. Use
+`validate_artifact_app` for artifact apps and `register_app` for installed apps.
+These app files are authored extensions, not Toy Box repository changes. Do not
+invoke repository code-review skills or run repository build, lint, typecheck,
+or test commands; artifact validation and installed-app registration are the
+complete code-quality gates.
+Do not inspect Toy Box source code or its database to discover the app contract,
+and never edit SQLite directly.
 
 ## Mental Model
 
+- An **artifact app** is an ordinary session file rendered by the existing editor
+  pane. Its React state is mount-local and resets when the surface remounts.
 - A **definition** is trusted code, metadata, and one state contract stored on disk.
   Registering it validates and activates the current files. Revising it changes
   every instance that uses it.
 - An **instance** is a saved, reopenable use of a definition with its own title
   and small durable JSON state. One definition may have many instances.
-- A **share** is MIME-typed JSON content offered to another saved app. Definitions declare
-  what they accept; pending shares survive while the receiving app is closed and
-  do not execute until that app deliberately acts on them.
+- A **share** is MIME-typed JSON content any app surface can offer to a saved app.
+  Definitions declare what they accept; pending shares survive while the receiving
+  app is closed and do not execute until that app deliberately acts on them.
 - The **design system** combines inherited theme tokens, scoped Tailwind, and
   provided components for common controls, feedback, model selection, and
   file and location selection.
 - The **SDK** provides reactive app state and workspace data, the shared live-file
-  lifecycle, and actions over sessions, files, and panes. Durable app state is
-  shared across mounts and clients; interaction-only state stays local to the
-  mounted component.
+  lifecycle, and actions over sessions, files, and panes. Portable actions and
+  outgoing shares work in both app kinds; durable state, received shares, and
+  app-owned workers require a saved instance.
 - Ordinary sessions are durable and user-visible. Workers are hidden sessions
   owned by a session, app, or file; their owner governs them independently of
   whether they are ephemeral.
 
-## Definition Contract
+## Choose the App Kind
+
+Create an artifact app when the user asks for an artifact, session app,
+session-local app, stateless app, or a visual interactive result that belongs to
+this conversation. Create an installed app when the user asks for a reusable,
+global, bookmarked, distributable, or durably stateful app. If that distinction
+would materially change the result and the request does not establish it, ask.
+Installed app work requires `register_app`; if that tool is unavailable, do not
+leave a partially written definition.
+
+Never register a `.toy` file or create a JSON sidecar for it. Never represent an
+artifact app as an app instance. Multiple artifact apps are simply multiple
+uniquely named `.toy` files in the same session.
+
+## Author or Revise an Artifact App
+
+1. Before writing TSX, read
+   [references/runtime.md](references/runtime.md) completely. It is the
+   authoritative contract for available libraries, the design system, and which
+   SDK capabilities each app kind owns.
+2. Choose a concise relative path ending in `.toy`, then create or patch that
+   file inside the current session's files folder from the system instructions.
+   For a revision, read and preserve unrelated behavior in the existing file.
+3. Build one coherent surface. Use React state for interaction and mount-local
+   data. Use `useWorkspace`, `useFile`, and `useAppActions` for portable host
+   capabilities, and `AppSharePicker` to send content to compatible saved apps.
+   Do not use `useApp`, received shares, or app-owned worker actions; those require
+   a saved app instance. File-owned workers remain available through `useFile` for
+   session files the artifact presents.
+4. After every complete write, call `validate_artifact_app` with the path
+   relative to the session files folder:
+
+   ```json
+   { "path": "release-board.toy" }
+   ```
+
+   Validation reads the current file, derives stateless SDK types, typechecks,
+   and compiles it without registering or saving anything. On failure, patch the
+   source-positioned diagnostics and validate again. On success, the file is
+   ready to render through its ordinary session editor pane.
+
+5. Toy Box surfaces session artifacts automatically. Never call `open_file` for
+   a `.toy` file; that tool is only for machine files and would create a second,
+   non-executing pane for the same path. Exercise the artifact only when browser
+   controls are actually available because successful validation proves
+   compilation, not runtime behavior.
+
+## Installed Definition Contract
 
 An installed definition contains exactly two files:
 
@@ -86,7 +147,7 @@ Both the schema and each state value must fit under 64 KiB.
 `"text/plain"`, `"text/markdown"`, or the Toy Box-specific
 `"x-session-launch"`. Omit it when the app does not consume shared content.
 
-## Author or Revise
+## Author or Revise an Installed App
 
 1. Call `list_app_definitions` before choosing an ID. For a revision, read the
    existing `app.json` and `app.tsx`; use `list_apps` and `get_app` when
@@ -119,6 +180,39 @@ Both the schema and each state value must fit under 64 KiB.
    app-owned worker sessions but does not delete ordinary sessions it created.
    Open and exercise the app when possible because successful registration proves
    compilation, not runtime behavior.
+
+## Promote an Artifact App
+
+Promotion copies an existing session artifact into the installed-app lifecycle;
+it does not mutate the artifact into a new pane or record.
+
+1. Promotion requires the installed-app lifecycle tools.
+2. Read the selected `.toy` file and call `list_app_definitions` before choosing
+   a lowercase definition ID.
+3. Copy the source unchanged to `~/.toy-box/apps/<id>/app.tsx` unless the user
+   explicitly asks to add durable behavior.
+4. Create `~/.toy-box/apps/<id>/app.json`. A direct stateless promotion uses:
+
+   ```json
+   {
+     "title": "App title",
+     "icon": "Feather",
+     "color": "#8b5cf6",
+     "state": {
+       "schema": { "type": "null" },
+       "default": null
+     }
+   }
+   ```
+
+   Add optional metadata only when it is meaningful. If the user requests
+   durable app data, design a real state schema and adapt the TSX to `useApp`
+   instead of treating the promotion as a source-only copy.
+
+5. Call `register_app`, repair any diagnostics, and retry until registration
+   succeeds.
+6. Call `create_app` only when the user also wants a saved instance. Keep the
+   original `.toy` artifact unless the user explicitly asks to remove it.
 
 ## Install or Uninstall
 

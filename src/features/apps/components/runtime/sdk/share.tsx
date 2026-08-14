@@ -28,13 +28,14 @@ export function AppSharePicker({
   className?: string;
   disabled?: boolean;
 }) {
-  const { appState, workspace } = useAppHost();
+  const host = useAppHost();
+  const sourceAppId = host.savedApp?.state.store.state.id ?? null;
+  const { workspace } = host;
   const surface = useWorkspaceSurface();
-  const appId = useSelector(appState.store, (app) => app.id);
   const apps = useSelector(workspace, (state) => state.apps);
-  const targets = apps.filter((app) => app.id !== appId && app.accepts.includes(mimeType));
+  const targets = apps.filter((app) => app.id !== sourceAppId && app.accepts.includes(mimeType));
   const [open, setOpen] = useState(false);
-  const shareMutation = useMutation(appMutations.share({ appId, mimeType, content }));
+  const shareMutation = useMutation(appMutations.share({ sourceAppId, mimeType, content }));
   const sharingWith = shareMutation.isPending ? shareMutation.variables : null;
 
   function share(targetAppId: string) {

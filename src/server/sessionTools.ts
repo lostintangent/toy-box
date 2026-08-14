@@ -4,7 +4,7 @@
 
 import type { Tool } from "@github/copilot-sdk";
 import { automationTools } from "@automations/server/tools";
-import { appLifecycleTools, createAppStateTools } from "@apps/server/tools";
+import { appLifecycleTools, artifactAppTools, createAppStateTools } from "@apps/server/tools";
 import { editorTools, fileTools } from "@files/server/tools";
 import { inboxTools } from "@inbox/server/tools";
 import { workerTools } from "@workers/server/tools";
@@ -27,6 +27,7 @@ export function getSessionTools(sessionType: SessionType, appId?: string): Tool<
     ...lifecycleTools,
     ...(interactive ? sessionLayoutTools : []),
     ...(interactive ? fileTools : []),
+    ...(interactive ? artifactAppTools : []),
     ...coordinationTools,
     ...automationTools,
     ...createAppStateTools(sessionType === "worker" ? appId : undefined),

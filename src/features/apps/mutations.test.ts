@@ -73,7 +73,7 @@ describe("app mutation options", () => {
     } satisfies AppShare;
     await new MutationObserver(queryClient, {
       ...appMutations.share({
-        appId: installedApp.id,
+        sourceAppId: installedApp.id,
         mimeType: share.mimeType,
         content: share.content,
       }),

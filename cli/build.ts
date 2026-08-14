@@ -36,7 +36,10 @@ async function buildCli(): Promise<void> {
 const COMPILER_TYPE_PACKAGES = [
   "app-typescript",
   "csstype",
+  "framer-motion",
   "json-schema-to-ts",
+  "motion-dom",
+  "motion-utils",
   "ts-algebra",
 ] as const;
 

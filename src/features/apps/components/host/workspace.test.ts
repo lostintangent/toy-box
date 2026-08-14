@@ -267,6 +267,15 @@ describe("app workspace projection", () => {
     });
     expect(projection.defaultModel).toBe(defaultModel);
 
+    const artifactProjection = projectAppWorkspace({
+      ...source,
+      appId: undefined,
+    });
+    expect(artifactProjection.shares).toEqual([]);
+    expect(artifactProjection.workers).toEqual([]);
+    expect(artifactProjection.sessions).toEqual(projection.sessions);
+    expect(artifactProjection.apps).toEqual(projection.apps);
+
     expect(
       projectAppWorkspace(
         {

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { sessionFile } from "@files/model";
 import { evaluateAppBundle } from "../../components/host/bundle";
-import { compileAppDefinition } from "./index";
+import { compileAppDefinition, compileArtifactApp } from "./index";
 
 function definition(tsx: string) {
   return {
@@ -98,6 +99,28 @@ describe("app compiler", () => {
     expect(bundle.css).toContain("background-color: var(--background)");
     expect(bundle.css).toContain("background-color: #123456");
   }, 20_000);
+
+  test("exposes shared LazyMotion components to apps", async () => {
+    const bundle = await compileAppDefinition(
+      definition(`
+        import * as m from "motion/react-m";
+
+        const MotionArticle = m.article;
+
+        export default function MotionApp() {
+          return (
+            <MotionArticle layout="position" layoutId="card">
+              Animated card
+            </MotionArticle>
+          );
+        }
+      `),
+    );
+
+    expect(bundle.code).toContain(".Motion");
+    const { Component } = evaluateAppBundle("test-app", bundle);
+    expect(renderToStaticMarkup(createElement(Component))).toBe("<article>Animated card</article>");
+  });
 
   test("rejects imports outside the versioned app surface", async () => {
     for (const [moduleName, importedName] of [
@@ -242,6 +265,22 @@ describe("app compiler", () => {
     });
   });
 
+  test("keeps saved capabilities available to installed apps with null state", async () => {
+    await expect(
+      compileAppDefinition({
+        id: "stateless-app",
+        state: { schema: { type: "null" }, default: null },
+        tsx: `import { AppSharePicker, useApp } from "@toy-box/sdk";
+export default function App() {
+  const app = useApp();
+  return <AppSharePicker mimeType="text/plain" content={app.state} />;
+}`,
+      }),
+    ).resolves.toMatchObject({
+      code: expect.stringContaining("__TOYBOX_APP_REGISTER_V1__"),
+    });
+  });
+
   test("renders Bun React Compiler output", async () => {
     const bundle = await compileAppDefinition(
       definition(`
@@ -255,4 +294,88 @@ describe("app compiler", () => {
     expect(bundle.code).toContain(".ReactCompilerRuntime");
     expect(renderToStaticMarkup(createElement(Component))).toBe("<main>Compiled</main>");
   });
+});
+
+describe("artifact app compilation", () => {
+  test("compiles and caches stateless TSX by session file content", async () => {
+    const file = sessionFile("session-a", "board.toy");
+    const source = "export default function Board() { return <main>Board</main>; }";
+
+    const first = await compileArtifactApp(file, source);
+    const second = await compileArtifactApp(file, source);
+
+    expect(second).toEqual(first);
+    expect(second.bundle).toBe(first.bundle);
+    expect(first.scopeId).toMatch(/^artifact-[a-f0-9]{24}$/);
+    expect(first.bundle.code).toContain("__TOYBOX_APP_REGISTER_V1__");
+  });
+
+  test("gives identical source in different session files independent style scopes", async () => {
+    const source =
+      'export default function App() { return <main className="bg-background">Ready</main>; }';
+    const first = await compileArtifactApp(sessionFile("session-a", "first.toy"), source);
+    const second = await compileArtifactApp(sessionFile("session-a", "second.toy"), source);
+
+    expect(first.scopeId).not.toBe(second.scopeId);
+    expect(first.bundle.css).toContain(`[data-toybox-app="${first.scopeId}"]`);
+    expect(second.bundle.css).toContain(`[data-toybox-app="${second.scopeId}"]`);
+  });
+
+  test("exposes portable workspace actions without requiring a saved app", async () => {
+    await expect(
+      compileArtifactApp(
+        sessionFile("session-a", "actions.toy"),
+        `import { useAppActions } from "@toy-box/sdk";
+export default function App() {
+  const actions = useAppActions();
+  return <button onClick={() => void actions.createSession({ message: { content: "Start" } })}>Start</button>;
+}`,
+      ),
+    ).resolves.toMatchObject({
+      bundle: { code: expect.stringContaining("__TOYBOX_APP_REGISTER_V1__") },
+    });
+  });
+
+  test("does not retain a failed compilation for later corrected source", async () => {
+    const file = sessionFile("session-a", "repair.toy");
+
+    await expect(
+      compileArtifactApp(
+        file,
+        'import "unsupported"; export default function App() { return null; }',
+      ),
+    ).rejects.toThrow("Cannot find module 'unsupported'");
+
+    await expect(
+      compileArtifactApp(file, "export default function App() { return <main>Fixed</main>; }"),
+    ).resolves.toMatchObject({
+      bundle: { code: expect.stringContaining("__TOYBOX_APP_REGISTER_V1__") },
+    });
+  });
+
+  test("rejects useApp for artifact apps", async () => {
+    await expect(
+      compileArtifactApp(
+        sessionFile("session-a", "saved-only.toy"),
+        `import { useApp } from "@toy-box/sdk";
+export default function App() {
+  return <main>{useApp().title}</main>;
+}`,
+      ),
+    ).rejects.toThrow(/not callable/);
+  }, 10_000);
+
+  test("exposes the share picker to artifact apps", async () => {
+    await expect(
+      compileArtifactApp(
+        sessionFile("session-a", "share.toy"),
+        `import { AppSharePicker } from "@toy-box/sdk";
+export default function App() {
+  return <AppSharePicker mimeType="text/plain" content="Artifact" />;
+}`,
+      ),
+    ).resolves.toMatchObject({
+      bundle: { code: expect.stringContaining("__TOYBOX_APP_REGISTER_V1__") },
+    });
+  }, 10_000);
 });

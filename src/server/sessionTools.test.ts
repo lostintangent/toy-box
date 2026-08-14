@@ -30,6 +30,7 @@ describe("SDK tool catalog", () => {
       "close_session",
       "open_file",
       "close_file",
+      "validate_artifact_app",
       ...BASE_TOOLS.slice(2),
     ]);
     expect(getSessionTools("standard").every((tool) => tool.defer === "never")).toBe(true);
@@ -54,6 +55,27 @@ describe("SDK tool catalog", () => {
     expect(parameters?.safeParse({ task: "Review", name: "" }).success).toBe(false);
     expect(tool?.description).toContain("child worker session");
     expect(tool?.description).toContain("ephemeral children run headlessly");
+  });
+
+  test("interactive sessions can validate only current-session artifact apps", () => {
+    for (const sessionType of ["standard", "hyper"] satisfies SessionType[]) {
+      expect(toolNames(sessionType)).toContain("validate_artifact_app");
+    }
+    for (const sessionType of ["automation", "worker", "inbox"] satisfies SessionType[]) {
+      expect(toolNames(sessionType)).not.toContain("validate_artifact_app");
+    }
+
+    const tool = getSessionTools("standard").find(
+      (candidate) => candidate.name === "validate_artifact_app",
+    );
+    const parameters = tool?.parameters as ZodType | undefined;
+    expect(parameters?.safeParse({ path: "release-board.toy" }).success).toBe(true);
+    expect(parameters?.safeParse({ path: "release-board.tsx" }).success).toBe(false);
+    expect(
+      parameters?.safeParse({ path: "release-board.toy", sessionId: "other-session" }).success,
+    ).toBe(false);
+    expect(tool?.description).toContain("without registering or saving");
+    expect(tool?.description?.length).toBeLessThan(120);
   });
 
   test("only hyper sessions can create independent top-level sessions", () => {

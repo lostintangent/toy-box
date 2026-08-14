@@ -28,6 +28,8 @@ export type WorkerRequest = Pick<FileWorkerInput, "name" | "metadata"> & {
 };
 
 export type FileState = {
+  /** File address whose live content and persistence lifecycle this state owns. */
+  source: WorkspaceFile;
   /** Last known on-disk content; the renderer owns its editing buffer. */
   content: string | null;
   /** External file revision. Own saves do not advance it or reset renderer state. */
@@ -170,6 +172,7 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
   }, [watchUrl, fileId, read.isSuccess, queryClient]);
 
   return {
+    source: file,
     content,
     revision: read.data?.timestamp ?? 0,
     isReady: content !== null,

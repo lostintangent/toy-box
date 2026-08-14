@@ -30,7 +30,9 @@ describe("bundled SDK skills", () => {
     const root = await mkdtemp(join(tmpdir(), "toy-box-skills-"));
     temporaryRoots.push(root);
 
-    expect(getSessionSkillDirectories("standard", root)).toBeUndefined();
+    expect(getSessionSkillDirectories("standard", root)).toEqual([
+      join(root, "create-toy-box-app"),
+    ]);
     expect(getSessionSkillDirectories("worker", root)).toBeUndefined();
 
     const staleReference = join(root, "create-toy-box-app", "references", "sdk.md");
@@ -54,6 +56,13 @@ describe("bundled SDK skills", () => {
       "utf-8",
     );
     expect(appSkill).toContain("name: create-toy-box-app");
+    expect(appSkill).toContain("Artifact App");
+    expect(appSkill).toContain("`.toy`");
+    expect(appSkill).toContain("validate_artifact_app");
+    expect(appSkill).toContain("Promote");
+    expect(appSkill).toContain("Never call `open_file` for");
+    expect(appSkill).toContain("invoke repository code-review skills");
+    expect(appSkill).toContain("complete code-quality gates");
     expect(appSkill).toContain("single-file React component");
     expect(appSkill).toContain("workspace sessions, files, and panes");
     expect(appSkill).toContain("The **design system**");
@@ -75,17 +84,19 @@ describe("bundled SDK skills", () => {
     expect(appReference).toContain("Set `ephemeral: false`");
     expect(appReference).toContain("`zod` for app-local parsing");
     expect(appReference).toContain("useApp()");
+    expect(appReference).toContain("useAppActions()");
     expect(appReference).toContain("fully typed without a TS interface or local validator");
     expect(appReference).not.toContain("useApp(StateSchema)");
     expect(appReference).not.toContain("useAppState");
-    expect(appReference).not.toContain("useAppActions");
     expect(appReference).toContain("file-owned worker");
     expect(appReference).toContain("waitForSession");
     expect(appReference).not.toContain("waitForWorker");
     expect(appReference).toContain("owner-scoped tools");
     expect(appReference).toContain("already scoped to the");
     expect(appReference).toContain("global summary catalog");
-    expect(appReference).toContain("React Compiler runs during registration");
+    expect(appReference).toContain(
+      "React Compiler runs during artifact validation and installed-app registration",
+    );
     expect(appReference).toContain("useReducer");
     expect(appReference).not.toContain("@tanstack/store");
     expect(appReference).not.toContain("@tanstack/react-store");

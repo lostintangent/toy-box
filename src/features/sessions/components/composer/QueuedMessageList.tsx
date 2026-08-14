@@ -1,11 +1,14 @@
 import { useMutation } from "@tanstack/react-query";
 import { LoaderCircle, Pencil, X } from "lucide-react";
+import { AnimatePresence } from "motion/react";
+import * as m from "motion/react-m";
 import { Button } from "@/shared/components/ui/button";
 import { useLongPress } from "@/shared/hooks/useLongPress";
 import { cn } from "@/shared/utils";
 import type { QueuedMessage, QueuedUserMessage } from "../../model";
 import { notificationLabel } from "../../model/agentNotifications";
 import { sessionMutations } from "../../mutations";
+import { AttachmentThumbnail } from "../AttachmentThumbnail";
 
 const LONG_PRESS_DELAY_MS = 2_000;
 
@@ -20,28 +23,35 @@ export function QueuedMessageList({
 }) {
   const cancelMutation = useMutation(sessionMutations.cancelQueuedMessage(sessionId));
 
-  if (messages.length === 0) return null;
-
   return (
-    <div className="mb-3 space-y-2">
-      {messages.map((message) => (
-        <QueuedMessageRow
-          key={message.id}
-          sessionId={sessionId}
-          message={message}
-          cancelDisabled={cancelMutation.isPending}
-          isCancelling={cancelMutation.isPending && cancelMutation.variables === message.id}
-          onEdit={() => {
-            if (message.role !== "user") return;
-            cancelMutation.mutate(message.id, {
-              onSuccess: (cancelled) => {
-                if (cancelled) onEdit(message);
-              },
-            });
-          }}
-          onCancel={() => cancelMutation.mutate(message.id)}
-        />
-      ))}
+    <div className="relative mb-3 flex flex-col gap-2 empty:hidden">
+      <AnimatePresence initial={false} mode="popLayout">
+        {messages.map((message) => (
+          <m.div
+            key={message.id}
+            layout="position"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+          >
+            <QueuedMessageRow
+              sessionId={sessionId}
+              message={message}
+              cancelDisabled={cancelMutation.isPending}
+              isCancelling={cancelMutation.isPending && cancelMutation.variables === message.id}
+              onEdit={() => {
+                if (message.role !== "user") return;
+                cancelMutation.mutate(message.id, {
+                  onSuccess: (cancelled) => {
+                    if (cancelled) onEdit(message);
+                  },
+                });
+              }}
+              onCancel={() => cancelMutation.mutate(message.id)}
+            />
+          </m.div>
+        ))}
+      </AnimatePresence>
     </div>
   );
 }
@@ -66,6 +76,7 @@ function QueuedMessageRow({
     message.role === "user" &&
     (message.isSteering === true || steerMutation.isPending || steerMutation.data === true);
   const canSteer = message.role === "user" && !cancelDisabled && !isSteering;
+  const attachments = message.role === "user" ? (message.attachments ?? []) : [];
   const label =
     message.role === "agent_notification"
       ? notificationLabel(message.notification)
@@ -110,11 +121,22 @@ function QueuedMessageRow({
         )}
       </Button>
 
-      <span
-        className={cn("min-w-0 flex-1 truncate", message.role === "agent_notification" && "italic")}
-      >
-        {label}
-      </span>
+      <div className="min-w-0 flex-1">
+        <span className={cn("block truncate", message.role === "agent_notification" && "italic")}>
+          {label}
+        </span>
+        {attachments.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {attachments.map((attachment) => (
+              <AttachmentThumbnail
+                key={attachment.displayName}
+                attachment={attachment}
+                size="compact"
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
       {!isSteering && (
         <Button

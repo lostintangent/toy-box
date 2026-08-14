@@ -55,9 +55,13 @@ Pending describes worker lifecycle, not whether every intermediate file effect i
 - Markdown renders from its text content and supports direct editing.
 - HTML renders in a sandboxed iframe. A generated serve base lets relative scripts, styles, images, and links resolve within the source session's file storage.
 - SVG renders as a sanitized inline SVG DOM drawing surface. Standard SVG content persists; the background follows the user's theme, while selection chrome, history, viewport, active tool, and the dot grid remain client-local interaction state.
+- A session `.toy` file compiles as a stateless artifact app and mounts through the shared app runtime. It remains an editor pane and file-owned artifact; machine `.toy` files never execute.
 - Custom editors provide a persisted HTML viewer template for claimed extensions. Built-in editors keep priority, and unclaimed extensions fall back to Markdown.
 
-Each built-in renderer lives in its own kind directory. See the [SVG editor guide](components/editor/kinds/svg/AGENTS.md) for the drawing surface's native-document model, editor lifecycle, and interaction boundaries.
+Format-owned built-in renderers live in their own kind directories; `.toy`
+delegates to the Apps feature that owns its compiler and runtime. See the
+[SVG editor guide](components/editor/kinds/svg/AGENTS.md) for the drawing
+surface's native-document model, editor lifecycle, and interaction boundaries.
 
 Custom editor definitions live under `~/.toy-box/editors/` and hydrate through shared workspace state. Registration publishes the new definition so connected clients can resolve the renderer immediately. The viewer receives file content, its external revision, and pending workers through the Toy Box bridge, can spawn workers, and can emit replacement content only when the kind is editable. Own edits do not advance the external revision, allowing the viewer to retain its editing buffer while context-only renders update worker presence or editability.
 

@@ -146,7 +146,7 @@ async function initializeSchema(db: Bun.SQL, path: string): Promise<void> {
 
     CREATE TABLE IF NOT EXISTS app_shares (
       id            TEXT PRIMARY KEY,
-      source_app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+      source_app_id TEXT REFERENCES apps(id) ON DELETE SET NULL,
       target_app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
       mime_type     TEXT NOT NULL,
       content       TEXT NOT NULL CHECK (

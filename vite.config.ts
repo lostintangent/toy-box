@@ -21,6 +21,8 @@ export default defineConfig(({ mode }) => {
       },
     },
 
+    // These two libraries are only used on the server, and therefore,
+    // don't need to be optimized for EJS by Vite during development.
     optimizeDeps: {
       exclude: ["@tailwindcss/oxide", "app-typescript"],
     },

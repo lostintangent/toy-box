@@ -12,7 +12,7 @@ type AppWorkspaceSource = {
   sessions: SessionsState;
   models: readonly ModelInfo[];
   defaultModel: ModelConfiguration | null;
-  appId: string;
+  appId?: string;
   openPanes: readonly WorkspacePane[];
 };
 
@@ -66,7 +66,7 @@ export function projectAppWorkspace(
       updatedAt,
       accepts: definitions.get(definitionId)?.accepts ?? [],
     })),
-    shares: workspace.appShares.filter((share) => share.targetAppId === appId),
+    shares: appId ? workspace.appShares.filter((share) => share.targetAppId === appId) : [],
     models: models.map(({ id, name, supportedReasoningEfforts, defaultReasoningEffort }) => ({
       id,
       name,
@@ -78,9 +78,11 @@ export function projectAppWorkspace(
       .filter((pane) => pane.kind === "session")
       .map((pane) => pane.sessionId),
     openFiles: openPanes.filter((pane) => pane.kind === "editor").map((pane) => pane.file),
-    workers: workspace.workers
-      .filter((worker) => worker.type === "app" && worker.appId === appId)
-      .map(({ sessionId, name, metadata }) => ({ sessionId, name, metadata })),
+    workers: appId
+      ? workspace.workers
+          .filter((worker) => worker.type === "app" && worker.appId === appId)
+          .map(({ sessionId, name, metadata }) => ({ sessionId, name, metadata }))
+      : [],
   };
 
   return previous ? replaceEqualDeep(previous, next) : next;

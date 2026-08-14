@@ -1,7 +1,6 @@
-import { ImageIcon } from "lucide-react";
-import { Dialog, DialogContent, DialogTrigger } from "@/shared/components/ui/dialog";
 import { RelativeTime } from "@/shared/components/ui/relative-time";
-import { toDataUrl, type Attachment, type UserMessage as UserMessageType } from "../../../model";
+import type { UserMessage as UserMessageType } from "../../../model";
+import { AttachmentThumbnail } from "../../AttachmentThumbnail";
 
 export function UserMessage({ message }: { message: UserMessageType }) {
   const hasAttachments = message.attachments && message.attachments?.length > 0;
@@ -24,38 +23,6 @@ export function UserMessage({ message }: { message: UserMessageType }) {
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function AttachmentThumbnail({ attachment }: { attachment: Attachment }) {
-  const dataUrl = toDataUrl(attachment);
-  if (dataUrl) {
-    return (
-      <Dialog>
-        <DialogTrigger asChild>
-          <button className="rounded-md overflow-hidden border border-border hover:border-primary transition-colors">
-            <img src={dataUrl} alt={attachment.displayName} className="h-12 w-12 object-cover" />
-          </button>
-        </DialogTrigger>
-        <DialogContent
-          className="w-auto max-w-[90vw] p-0 border-0 bg-transparent"
-          showCloseButton={false}
-        >
-          <img
-            src={dataUrl}
-            alt={attachment.displayName}
-            className="max-h-[85vh] max-w-[90vw] rounded-lg"
-          />
-        </DialogContent>
-      </Dialog>
-    );
-  }
-
-  // Fallback for non-image or missing file
-  return (
-    <div className="shrink-0 h-12 w-12 rounded-md bg-muted flex items-center justify-center border border-border">
-      <ImageIcon className="h-5 w-5 text-muted-foreground" />
     </div>
   );
 }

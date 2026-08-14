@@ -1,3 +1,8 @@
+## 📅 v0.1.17 (08/14/26)
+
+- Added support for session-scoped apps
+- Queued messages now display attachments
+
 ## 📅 v0.1.16 (08/06/26)
 
 - The sidebar can now be collapsed while retaining access to common actions

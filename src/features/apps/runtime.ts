@@ -9,6 +9,7 @@ export const APP_DEPENDENCIES = {
   "react/jsx-dev-runtime": { runtime: "JsxDevRuntime" },
   "@toy-box/sdk": { runtime: "AppSdk" },
   "lucide-react": { runtime: "Icons" },
+  "motion/react-m": { runtime: "Motion", typePackage: "motion" },
   zod: { runtime: "Zod", typePackage: "zod" },
 } as const;
 

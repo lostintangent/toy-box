@@ -7,10 +7,7 @@ type EvaluatedAppBundle = {
   css: string;
 };
 
-export function evaluateAppBundle(
-  definitionId: string,
-  bundle: CompiledAppBundle,
-): EvaluatedAppBundle {
+export function evaluateAppBundle(sourceId: string, bundle: CompiledAppBundle): EvaluatedAppBundle {
   let Component: ComponentType | undefined;
   const globals = globalThis as typeof globalThis & Record<string, unknown>;
   globals[APP_RUNTIME_GLOBAL] = APP_RUNTIME_LIBRARIES;
@@ -19,8 +16,8 @@ export function evaluateAppBundle(
   };
 
   try {
-    // App definitions are trusted installed extensions. The server has
-    // bundled their allow-listed imports into this registration boundary.
+    // App sources are trusted extensions. The server has bundled their
+    // allow-listed imports into this registration boundary.
     // oxlint-disable-next-line typescript/no-implied-eval -- This is the intentional trusted-extension evaluation boundary.
     Function(bundle.code)();
   } finally {
@@ -28,6 +25,6 @@ export function evaluateAppBundle(
     delete globals[APP_RUNTIME_GLOBAL];
   }
 
-  if (!Component) throw new Error(`App definition "${definitionId}" has no default component.`);
+  if (!Component) throw new Error(`App source "${sourceId}" has no default component.`);
   return { Component, css: bundle.css };
 }

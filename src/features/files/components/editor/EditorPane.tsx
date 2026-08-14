@@ -19,7 +19,7 @@ type EditorPaneProps = {
 export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
   const { panePublications } = useWorkspaceSurface();
   const { file, title, mode } = pane;
-  const kind = useEditorKind(file.path);
+  const kind = useEditorKind(file);
   const { editable = true } = kind;
   const { workers, spawnWorker, ...fileState } = useFile(file, mode);
   const baseUri =

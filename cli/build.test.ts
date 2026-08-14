@@ -31,6 +31,18 @@ test("writes the app compiler's package-shaped transitive type library", async (
       await Bun.file(join(outputRoot, "node_modules/@types/react/package.json")).exists(),
     ).toBe(true);
     expect(await Bun.file(join(outputRoot, "node_modules/csstype/index.d.ts")).exists()).toBe(true);
+    expect(await Bun.file(join(outputRoot, "node_modules/motion/dist/react-m.d.ts")).exists()).toBe(
+      true,
+    );
+    expect(
+      await Bun.file(join(outputRoot, "node_modules/framer-motion/dist/m.d.ts")).exists(),
+    ).toBe(true);
+    expect(
+      await Bun.file(join(outputRoot, "node_modules/motion-dom/dist/index.d.ts")).exists(),
+    ).toBe(true);
+    expect(
+      await Bun.file(join(outputRoot, "node_modules/motion-utils/dist/index.d.ts")).exists(),
+    ).toBe(true);
     expect(await Bun.file(join(outputRoot, "node_modules/zod/index.d.cts")).exists()).toBe(true);
     expect(
       await Bun.file(join(outputRoot, "node_modules/ts-algebra/lib/index.d.ts")).exists(),
