@@ -1,4 +1,4 @@
-// Process-local registry of queued and running workers. Canonical session state
+// Process-local registry of pending workers. Canonical session state
 // remains the execution lifecycle authority.
 
 import { sharedMap } from "@/shared/server/processState";

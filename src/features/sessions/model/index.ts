@@ -134,14 +134,14 @@ export function toDataUrl(attachment: Attachment): string | undefined {
 }
 
 export type QueuedUserMessage = Omit<UserMessage, "timestamp"> & {
-  id: string;
+  clientId: string;
   model?: ModelConfiguration;
   /** Immediate delivery has been requested, but the canonical SDK user message has not arrived. */
   isSteering?: true;
 };
 
 type QueuedAgentNotificationMessage = Omit<AgentNotificationMessage, "timestamp"> & {
-  id: string;
+  clientId: string;
 };
 
 export type QueuedMessage = QueuedUserMessage | QueuedAgentNotificationMessage;
@@ -165,14 +165,13 @@ export type SessionEvent = (
       content: string;
       attachments?: Attachment[];
       timestamp?: string;
-      clientMessageId?: string;
-      /** This is the canonical SDK event for a queued message that was steered. */
-      isSteered?: true;
+      clientId?: string;
     }
   | {
       type: "agent_notification";
       notification: AgentNotification;
       timestamp?: string;
+      clientId?: string;
     }
   | {
       type: "assistant_message";
@@ -200,8 +199,7 @@ export type SessionEvent = (
   | { type: "todos_patch"; patches: TodoItemPatch[] }
   | { type: "session_title_changed"; title: string }
   | { type: "message_queued"; message: QueuedMessage }
-  | { type: "message_cancelled"; queuedMessageId: string }
-  | { type: "message_dequeued"; queuedMessageId: string }
+  | { type: "message_cancelled"; clientId: string }
   | { type: "model_changed"; model: ModelConfiguration; agentId?: string }
   | { type: "linked_session_added"; sessionId: string }
   | { type: "linked_session_removed"; sessionId: string }
@@ -212,7 +210,6 @@ export type SessionEvent = (
   | { type: "end"; reason: "idle" | "error" }
 ) & {
   eventId?: number;
-  turnId?: string;
 };
 
 export type SessionMetadataUpdate = {

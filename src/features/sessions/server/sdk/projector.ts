@@ -167,7 +167,6 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       // Skill loading uses synthetic user messages to give the agent access to the selected skill.
       if (event.data.source?.startsWith("skill-")) return [];
 
-      const isSteered = event.data.delivery === "steering" || event.data.delivery === "queued";
       const notification = decodeSdkAgentNotification(event.data.content);
       if (notification) {
         return [
@@ -185,7 +184,6 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
           content: event.data.content,
           timestamp: event.timestamp,
           attachments: fromSdkAttachments(event.data.attachments),
-          ...(isSteered ? { isSteered: true } : {}),
         },
       ];
     case "assistant.message":

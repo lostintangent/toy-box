@@ -1,7 +1,27 @@
 import { defineTool } from "@github/copilot-sdk";
 import { z } from "zod";
+import { sessionNameSchema } from "@sessions/model/protocol";
 import { modelConfigurationSchema } from "@sessions/model/modelConfiguration";
 import { SESSION_ID_PREFIX } from "@sessions/model/constants";
+
+const updateSessionTitleTool = defineTool("update_session_title", {
+  description:
+    "Updates this session's automatic title to match its current focus. " +
+    "Call after the initial focus is clear and again only when it materially changes. " +
+    "A title explicitly set by the user is preserved.",
+  parameters: z.object({
+    title: sessionNameSchema.describe("Concise 2-6 word title for the current focus"),
+  }),
+  skipPermission: true,
+  handler: async ({ title }, invocation) => {
+    const { updateSessionTitle } = await import("@sessions/server/state/registry");
+    return JSON.stringify({
+      applied: await updateSessionTitle(invocation.sessionId, title),
+    });
+  },
+});
+
+export const sessionTitleTools = [updateSessionTitleTool];
 
 const checkSessionStatus = defineTool("check_session_status", {
   description:

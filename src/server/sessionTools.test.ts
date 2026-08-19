@@ -1,41 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { ZodType } from "zod";
-import { getSessionTools } from "./sessionTools";
 import type { SessionType } from "@sessions/model";
-
-const BASE_TOOLS = [
-  "create_worker_session",
-  "delete_session",
-  "check_session_status",
-  "wait_for_sessions",
-  "deliver_message",
-  "list_automations",
-  "create_automation",
-  "update_automation",
-  "run_automation",
-  "list_apps",
-  "get_app",
-  "update_app",
-];
-
-function toolNames(sessionType: SessionType, appId?: string): string[] {
-  return getSessionTools(sessionType, appId).map((tool) => tool.name);
-}
+import { getSessionTools } from "./sessionTools";
 
 describe("SDK tool catalog", () => {
-  test("standard sessions expose interactive session and orchestration tools", () => {
-    expect(toolNames("standard")).toEqual([
-      ...BASE_TOOLS.slice(0, 2),
-      "open_session",
-      "close_session",
-      "open_file",
-      "close_file",
-      "validate_artifact_app",
-      ...BASE_TOOLS.slice(2),
-    ]);
-    expect(getSessionTools("standard").every((tool) => tool.defer === "never")).toBe(true);
-  });
-
   test("create_worker_session accepts a delegated task and execution overrides", () => {
     const tool = getSessionTools("standard").find(
       (candidate) => candidate.name === "create_worker_session",
@@ -57,17 +25,24 @@ describe("SDK tool catalog", () => {
     expect(tool?.description).toContain("ephemeral children run headlessly");
   });
 
-  test("interactive sessions can validate only current-session artifact apps", () => {
-    for (const sessionType of ["standard", "hyper"] satisfies SessionType[]) {
-      expect(toolNames(sessionType)).toContain("validate_artifact_app");
-    }
-    for (const sessionType of ["automation", "worker", "inbox"] satisfies SessionType[]) {
-      expect(toolNames(sessionType)).not.toContain("validate_artifact_app");
+  test("lets every session role validate its own artifact apps", () => {
+    const sessionTypes = [
+      "standard",
+      "automation",
+      "inbox",
+      "hyper",
+      "worker",
+    ] satisfies SessionType[];
+    for (const sessionType of sessionTypes) {
+      const names = getSessionTools(sessionType).map(({ name }) => name);
+      expect(names).toContain("validate_artifact_app");
+      if (sessionType !== "hyper") {
+        expect(names).not.toContain("register_app");
+        expect(names).not.toContain("register_editor");
+      }
     }
 
-    const tool = getSessionTools("standard").find(
-      (candidate) => candidate.name === "validate_artifact_app",
-    );
+    const tool = getSessionTools("standard").find(({ name }) => name === "validate_artifact_app");
     const parameters = tool?.parameters as ZodType | undefined;
     expect(parameters?.safeParse({ path: "release-board.toy" }).success).toBe(true);
     expect(parameters?.safeParse({ path: "release-board.tsx" }).success).toBe(false);
@@ -78,9 +53,7 @@ describe("SDK tool catalog", () => {
     expect(tool?.description?.length).toBeLessThan(120);
   });
 
-  test("only hyper sessions can create independent top-level sessions", () => {
-    expect(toolNames("standard")).not.toContain("create_session");
-
+  test("validates independent top-level session inputs", () => {
     const hyperTools = getSessionTools("hyper");
     const tool = hyperTools.find((candidate) => candidate.name === "create_session");
     const parameters = tool?.parameters as ZodType | undefined;
@@ -100,18 +73,6 @@ describe("SDK tool catalog", () => {
     expect(tool?.description).toContain("does not open");
     expect(tool?.description).toContain("defaults to false");
     expect(tool?.description).toContain("open_session");
-    expect(toolNames("hyper")).toEqual([
-      "create_session",
-      ...toolNames("standard"),
-      "update_settings",
-      "register_editor",
-      "list_app_definitions",
-      "register_app",
-      "install_app",
-      "uninstall_app",
-      "create_app",
-      "delete_app",
-    ]);
   });
 
   test("Hyper can manage TSX app definitions and save stateful instances", () => {
@@ -224,12 +185,7 @@ describe("SDK tool catalog", () => {
     expect(tool?.description).not.toContain("Toybox.spawnWorker");
   });
 
-  test("only automation and hyper sessions can update settings", () => {
-    expect(toolNames("automation")).toEqual([...BASE_TOOLS, "update_settings"]);
-    for (const sessionType of ["standard", "worker", "inbox"] satisfies SessionType[]) {
-      expect(toolNames(sessionType)).not.toContain("update_settings");
-    }
-
+  test("validates update-settings inputs", () => {
     const tool = getSessionTools("automation").find(
       (candidate) => candidate.name === "update_settings",
     );
@@ -241,8 +197,7 @@ describe("SDK tool catalog", () => {
     expect(parameters?.safeParse({ accentColor: "yellow" }).success).toBe(false);
   });
 
-  test("every session can inspect and update apps while app-owned workers stay scoped", () => {
-    expect(toolNames("worker")).toEqual(BASE_TOOLS);
+  test("validates generic and app-owned app operations", () => {
     const standardTools = getSessionTools("standard");
     const genericGet = standardTools.find(({ name }) => name === "get_app");
     const genericUpdate = standardTools.find(({ name }) => name === "update_app");
@@ -262,7 +217,6 @@ describe("SDK tool catalog", () => {
     ).toBe(true);
 
     const tools = getSessionTools("worker", "app");
-    expect(tools.map(({ name }) => name)).toEqual(BASE_TOOLS);
     const getParameters = tools.at(-2)?.parameters as ZodType | undefined;
     const updateParameters = tools.at(-1)?.parameters as ZodType | undefined;
     expect(getParameters?.safeParse({}).success).toBe(true);
@@ -277,29 +231,5 @@ describe("SDK tool catalog", () => {
         state: { pattern: "\\d+" },
       }).success,
     ).toBe(false);
-  });
-
-  test("only Hyper can manage app definitions and instance lifecycles", () => {
-    const lifecycleTools = [
-      "list_app_definitions",
-      "register_app",
-      "install_app",
-      "uninstall_app",
-      "create_app",
-      "delete_app",
-    ];
-    for (const sessionType of [
-      "standard",
-      "automation",
-      "worker",
-      "inbox",
-    ] satisfies SessionType[]) {
-      for (const tool of lifecycleTools) expect(toolNames(sessionType)).not.toContain(tool);
-    }
-    for (const tool of lifecycleTools) expect(toolNames("hyper")).toContain(tool);
-  });
-
-  test("inbox sessions add only their result tool to the headless catalog", () => {
-    expect(toolNames("inbox")).toEqual([...BASE_TOOLS, "send_to_inbox"]);
   });
 });

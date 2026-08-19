@@ -26,7 +26,7 @@ export type WorkspaceEvent =
       type: "session.upserted";
       session: SessionMetadataUpdate;
     }
-  | SimpleSessionUpdateEvents<"deleted" | "running" | "idle" | "unread">
+  | SimpleSessionUpdateEvents<"deleted" | "running" | "idle" | "unread" | "touched">
   | {
       type: "inbox.entry.upserted";
       entry: InboxEntry;

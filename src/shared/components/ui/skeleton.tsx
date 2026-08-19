@@ -1,8 +1,15 @@
+import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@/shared/utils";
 
-function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
+function Skeleton({
+  className,
+  asChild = false,
+  ...props
+}: React.ComponentProps<"div"> & { asChild?: boolean }) {
+  const Component = asChild ? Slot : "div";
+
   return (
-    <div
+    <Component
       data-slot="skeleton"
       className={cn("bg-accent animate-pulse rounded-md", className)}
       {...props}

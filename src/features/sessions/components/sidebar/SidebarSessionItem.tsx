@@ -7,13 +7,25 @@ import {
   SidebarListItemMenu,
   type SidebarListItemProps,
 } from "@/shared/components/sidebar/SidebarListItem";
-import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { SessionPreview, useSessionPreview } from "../SessionPreview";
+
+type SidebarSessionItemProps = SidebarListItemProps & {
+  sessionId: string;
+  activity: {
+    running: boolean;
+    unread: boolean;
+    hasDraftPrompt: boolean;
+  };
+  previewDisabled?: boolean;
+  titleContent?: ReactNode;
+};
 
 export function SidebarSessionItem({
   sessionId,
+  activity,
   previewDisabled = false,
   title,
+  titleContent,
   icon,
   time,
   badge,
@@ -28,11 +40,8 @@ export function SidebarSessionItem({
   onMouseEnter,
   onMouseLeave,
   ...props
-}: SidebarListItemProps & {
-  sessionId: string;
-  previewDisabled?: boolean;
-}) {
-  const { running, unread, hasDraftPrompt } = useWorkspaceSessionActivity(sessionId);
+}: SidebarSessionItemProps) {
+  const { running, unread, hasDraftPrompt } = activity;
   const preview = useSessionPreview(isActive || previewDisabled || disabled);
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
@@ -77,6 +86,7 @@ export function SidebarSessionItem({
           {...props}
           disabled={disabled}
           title={title}
+          titleContent={titleContent}
           icon={icon}
           time={time}
           badge={badge}

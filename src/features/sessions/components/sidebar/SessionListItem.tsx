@@ -1,8 +1,12 @@
 import { useState } from "react";
 import { Pencil, Pin, PinOff, Trash2 } from "lucide-react";
+import { useReducedMotionConfig } from "motion/react";
+import { Typewriter } from "motion-plus/react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/shared/components/ui/dropdown-menu";
 import { RelativeTime } from "@/shared/components/ui/relative-time";
+import { Skeleton } from "@/shared/components/ui/skeleton";
 import { DestructiveConfirmationDialog } from "@/shared/components/sidebar/DestructiveConfirmationDialog";
+import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { SidebarSessionItem } from "./SidebarSessionItem";
 import type { SessionMetadata } from "../../model";
 import { sessionMutations } from "../../mutations";
@@ -32,7 +36,9 @@ export function SessionListItem({
   isDraft = false,
 }: SessionListItemProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const activity = useWorkspaceSessionActivity(session.sessionId);
   const sessionLabel = session.summary || (isDraft ? "Draft session" : "New session");
+  const isTitleLoading = !isDraft && !session.summary && activity.running;
 
   const handleClick = (event: React.MouseEvent) => {
     onSelect(session.sessionId, event.metaKey || event.ctrlKey);
@@ -46,7 +52,9 @@ export function SessionListItem({
     <>
       <SidebarSessionItem
         sessionId={session.sessionId}
+        activity={activity}
         title={sessionLabel}
+        titleContent={<SessionListItemTitle title={sessionLabel} loading={isTitleLoading} />}
         icon={
           isPinned ? <Pin className="size-3.5 shrink-0 text-user-accent" aria-hidden /> : undefined
         }
@@ -103,5 +111,39 @@ export function SessionListItem({
         />
       )}
     </>
+  );
+}
+
+function SessionListItemTitle({ title, loading }: { title: string; loading: boolean }) {
+  const reducedMotion = useReducedMotionConfig();
+  const [initialTitle] = useState(title);
+  const [hasTitleChanged, setHasTitleChanged] = useState(false);
+
+  if (!hasTitleChanged && initialTitle !== title) {
+    setHasTitleChanged(true);
+  }
+
+  if (loading) {
+    return (
+      <>
+        <span className="sr-only">{title}</span>
+        <Skeleton asChild>
+          <span
+            aria-hidden
+            className="inline-block h-4 w-28 align-middle motion-reduce:animate-none"
+          />
+        </Skeleton>
+      </>
+    );
+  }
+
+  if (!hasTitleChanged || reducedMotion) {
+    return title;
+  }
+
+  return (
+    <Typewriter speed="fast" replace="all" cursorStyle={{ display: "none" }}>
+      {title}
+    </Typewriter>
   );
 }

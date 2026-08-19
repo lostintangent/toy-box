@@ -3,9 +3,8 @@
 // bus. It is the one live execution path shared by connected and headless
 // delivery.
 //
-// Stamp ownership is deliberately split: the event bus stamps eventId for
-// reconnect cursors, while the stream stamps turnId for turn-scoped reducer
-// behavior such as duplicate-user-message detection.
+// The event bus stamps eventId for reconnect cursors. Client-provided message
+// identity is correlated separately when the SDK echoes sent inputs.
 
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { encodeSdkAgentNotification } from "@sessions/server/sdk/agentNotificationCodec";
@@ -109,14 +108,7 @@ export class SessionStream {
   /** Underlying SDK handle used by runtime-owned session operations. */
   readonly sdkSession: CopilotSession;
 
-  #bus = createSessionEventBus({
-    capacity: MAX_REPLAY_EVENTS,
-    onNoSubscribers: () => {
-      if (this.#sessionState.queuedMessages.length === 0 && !this.#bus.hasReplayEvents) {
-        this.#dispose();
-      }
-    },
-  });
+  #bus = createSessionEventBus(MAX_REPLAY_EVENTS);
 
   readonly #completionWaiters = new Set<() => void>();
 
@@ -128,10 +120,9 @@ export class SessionStream {
   #sessionState: Session;
   #projectSdkEvent: ReturnType<typeof createSdkEventProjector>;
 
-  // Event sequencing
-  #currentTurnId: string | undefined;
-  readonly #turnSeed = crypto.randomUUID();
-  #nextTurnIndex = 0;
+  /** Toy Box client IDs awaiting their corresponding SDK user.message events.
+   *  Remove when the SDK accepts caller-provided message IDs. */
+  readonly #pendingClientIds: string[] = [];
   #isSendingQueuedMessage = false;
   // Claimed synchronously before #startTurn awaits so concurrent deliveries
   // cannot both open the stream's first turn.
@@ -140,9 +131,6 @@ export class SessionStream {
   #finished = false;
   #disposed = false;
   #completionResult: SessionCompletion | undefined;
-  // Repeated delivery of one message ID returns its original decision instead
-  // of starting or queueing it twice.
-  readonly #dispositions = new Map<string, Promise<MessageDisposition>>();
 
   private constructor(
     sessionId: string,
@@ -166,25 +154,17 @@ export class SessionStream {
     return this.#bus.subscribe(afterEventId, mode);
   }
 
-  /** Deliver a message ID once, starting the stream or queueing behind it. */
-  deliver(message: QueuedMessage): Promise<MessageDisposition> {
-    const existing = this.#dispositions.get(message.id);
-    if (existing) return existing;
+  /** Start the stream's first message or queue behind its active turn. */
+  async deliver(message: QueuedMessage): Promise<MessageDisposition> {
     if (this.#finished || this.#abortRequested) {
-      return Promise.reject(new SessionStreamFinishedError());
+      throw new SessionStreamFinishedError();
     }
 
     if (!this.#hasOpenedTurn) {
       this.#hasOpenedTurn = true;
-      const disposition = this.#startTurn(message, turnOpeningEvent(message)).then(
-        () => "started" as const,
-      );
-      this.#dispositions.set(message.id, disposition);
-      return disposition;
+      await this.#startTurn(message);
+      return "started";
     }
-
-    const disposition = Promise.resolve("queued" as const);
-    this.#dispositions.set(message.id, disposition);
 
     const coalesceKey = coalesceKeyForMessage(message);
     if (
@@ -199,18 +179,24 @@ export class SessionStream {
       });
     }
 
-    return disposition;
+    return "queued";
   }
 
-  async steerQueuedMessage(queuedMessageId: string): Promise<boolean> {
+  async steerQueuedMessage(clientId: string): Promise<boolean> {
     if (this.#abortRequested || this.#isSendingQueuedMessage) {
       return false;
     }
 
     const message = this.#sessionState.queuedMessages.find(
-      (candidate) => candidate.id === queuedMessageId,
+      (candidate) => candidate.clientId === clientId,
     );
-    if (message?.role !== "user" || message.isSteering) return false;
+    if (
+      message?.role !== "user" ||
+      message.isSteering ||
+      this.#pendingClientIds.includes(clientId)
+    ) {
+      return false;
+    }
 
     this.#isSendingQueuedMessage = true;
     this.#emit({
@@ -224,7 +210,9 @@ export class SessionStream {
     } catch (error) {
       if (
         !this.#abortRequested &&
-        this.#sessionState.queuedMessages.some(({ id }) => id === message.id)
+        this.#sessionState.queuedMessages.some(
+          ({ clientId: candidateId }) => candidateId === message.clientId,
+        )
       ) {
         this.#emit({ type: "message_queued", message });
       }
@@ -234,15 +222,23 @@ export class SessionStream {
     }
   }
 
-  cancelQueuedMessage(queuedMessageId: string): boolean {
+  cancelQueuedMessage(clientId: string): boolean {
     if (this.#finished) return false;
 
-    const message = this.#sessionState.queuedMessages.find(({ id }) => id === queuedMessageId);
-    if (!message || (message.role === "user" && message.isSteering)) return false;
+    const message = this.#sessionState.queuedMessages.find(
+      (candidate) => candidate.clientId === clientId,
+    );
+    if (
+      !message ||
+      this.#pendingClientIds.includes(clientId) ||
+      (message.role === "user" && message.isSteering)
+    ) {
+      return false;
+    }
 
     this.#emit({
       type: "message_cancelled",
-      queuedMessageId,
+      clientId,
     });
 
     return true;
@@ -338,9 +334,8 @@ export class SessionStream {
 
   // ── Turn execution ───────────────────────────────────────────────────
 
-  async #startTurn(message: QueuedMessage, openingEvent?: SessionEvent): Promise<void> {
+  async #startTurn(message: QueuedMessage): Promise<void> {
     this.#prepareForNewTurn();
-    if (openingEvent) this.#emit(openingEvent);
 
     try {
       const model = message.role === "user" ? message.model : undefined;
@@ -359,7 +354,6 @@ export class SessionStream {
   #prepareForNewTurn(): void {
     this.#bus.clearReplay();
 
-    this.#currentTurnId = this.#generateTurnId();
     this.#sessionState = prepareSessionForNextTurn(this.#sessionState);
 
     setSessionStatus(this.sessionId, "running");
@@ -400,7 +394,7 @@ export class SessionStream {
 
     const projectedEvents = this.#projectSdkEvent(sdkEvent);
     for (const sessionEvent of projectedEvents) {
-      this.#emit(sessionEvent, sdkEvent.type);
+      this.#emit(this.#correlateInputEvent(sessionEvent));
     }
   }
 
@@ -418,9 +412,6 @@ export class SessionStream {
 
     try {
       await this.#startTurn(queuedMessage);
-      if (!this.#finished && !this.#abortRequested) {
-        this.#emit({ type: "message_dequeued", queuedMessageId: queuedMessage.id });
-      }
     } catch {
       // #startTurn already finished the stream; this runs from a floating SDK handler.
     } finally {
@@ -430,47 +421,43 @@ export class SessionStream {
 
   // ── Event emission ───────────────────────────────────────────────────
 
-  #emit(event: SessionEvent, sourceEventType?: string): void {
-    const published = this.#bus.publish(this.#decorateTurn(event, sourceEventType));
+  #emit(event: SessionEvent): void {
+    const published = this.#bus.publish(event);
     this.#sessionState = applySessionEvent(this.#sessionState, published);
   }
 
-  #decorateTurn(event: SessionEvent, sourceEventType?: string): SessionEvent {
-    if (sourceEventType === "assistant.turn_start") {
-      // The SDK can emit multiple agent-loop turn starts for one sent prompt.
-      // Keep those segments distinct for downstream echo dedupe.
-      this.#currentTurnId = this.#generateTurnId();
-    } else if (!this.#currentTurnId) {
-      // Events arriving before any turn boundary (e.g. subscribing to a
-      // resumed session mid-turn) share a stable bootstrap turn id.
-      this.#currentTurnId = `${this.sessionId}:turn:bootstrap`;
-    }
-    return { ...event, turnId: this.#currentTurnId };
-  }
-
-  #generateTurnId(): string {
-    return `${this.sessionId}:turn:${this.#turnSeed}:${this.#nextTurnIndex++}`;
+  #correlateInputEvent(event: SessionEvent): SessionEvent {
+    if (event.type !== "user_message" && event.type !== "agent_notification") return event;
+    const clientId = this.#pendingClientIds.shift();
+    return clientId ? { ...event, clientId } : event;
   }
 
   // ── Internal helpers ─────────────────────────────────────────────────
 
-  #sendToSdk(message: QueuedMessage, mode?: "immediate"): Promise<string> {
-    return this.sdkSession.send({
-      prompt:
-        message.role === "agent_notification"
-          ? encodeSdkAgentNotification(message.notification)
-          : message.content,
-      attachments: toSdkAttachments(message.role === "user" ? message.attachments : undefined),
-      ...(mode ? { mode } : {}),
-    });
+  async #sendToSdk(message: QueuedMessage, mode?: "immediate"): Promise<void> {
+    this.#pendingClientIds.push(message.clientId);
+    try {
+      await this.sdkSession.send({
+        prompt:
+          message.role === "agent_notification"
+            ? encodeSdkAgentNotification(message.notification)
+            : message.content,
+        attachments: toSdkAttachments(message.role === "user" ? message.attachments : undefined),
+        ...(mode ? { mode } : {}),
+      });
+    } catch (error) {
+      const index = this.#pendingClientIds.indexOf(message.clientId);
+      if (index !== -1) this.#pendingClientIds.splice(index, 1);
+      throw error;
+    }
   }
 
   #dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
-    // Session deletion and unused-runtime cleanup can dispose without the
-    // domain finish transition. Mark the stream finished so a stale reference
-    // cannot emit a terminal event or accept a message after registry removal.
+    // Session deletion can dispose without the domain finish transition. Mark
+    // the stream finished so a stale reference cannot emit a terminal event or
+    // accept a message after registry removal.
     this.#finished = true;
 
     this.#sessionState = { ...this.#sessionState, queuedMessages: [] };
@@ -503,22 +490,6 @@ function coalesceKeyForMessage(message: QueuedMessage): string | undefined {
   return message.role === "agent_notification"
     ? notificationCoalesceKey(message.notification)
     : undefined;
-}
-
-function turnOpeningEvent(message: QueuedMessage): SessionEvent {
-  if (message.role === "agent_notification") {
-    return {
-      type: "agent_notification",
-      notification: message.notification,
-    };
-  }
-
-  return {
-    type: "user_message",
-    content: message.content,
-    attachments: message.attachments,
-    clientMessageId: message.id,
-  };
 }
 
 function completionResult(

@@ -58,13 +58,14 @@ function RootDocument({ children }: { children: ReactNode }) {
     "--user-accent": accentColor,
   };
 
+  // Motion+ uses full motion elements, which are incompatible with LazyMotion strict mode.
   return (
     <html lang="en" style={style}>
       <head>
         <HeadContent />
       </head>
       <body className="h-dvh overflow-hidden bg-background safe-top safe-x">
-        <LazyMotion features={domMax} strict>
+        <LazyMotion features={domMax}>
           <MotionConfig reducedMotion="user">
             <div className="h-full overflow-hidden">{children}</div>
           </MotionConfig>

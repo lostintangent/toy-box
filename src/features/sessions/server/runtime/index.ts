@@ -12,8 +12,9 @@ import type {
   SessionSnapshot,
 } from "@sessions/model";
 import * as sessionRegistry from "@sessions/server/state/registry";
-import { loadSessionSnapshot } from "@sessions/server/state/snapshots";
+import { loadSessionSnapshot, refreshSessionSnapshot } from "@sessions/server/state/snapshots";
 import { clearDraftPrompt } from "@workspace/server/state";
+import { emitSessionTouched } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
 import { SessionStream, SessionStreamFinishedError } from "./sessionStream";
 import type { SessionStreamSubscription } from "./eventBus";
@@ -101,15 +102,12 @@ export function getSessionRuntimeStatus(sessionId: string): {
   };
 }
 
-export function cancelQueuedMessage(sessionId: string, queuedMessageId: string): boolean {
-  return SessionStream.get(sessionId)?.cancelQueuedMessage(queuedMessageId) ?? false;
+export function cancelQueuedMessage(sessionId: string, clientId: string): boolean {
+  return SessionStream.get(sessionId)?.cancelQueuedMessage(clientId) ?? false;
 }
 
-export async function steerQueuedMessage(
-  sessionId: string,
-  queuedMessageId: string,
-): Promise<boolean> {
-  return SessionStream.get(sessionId)?.steerQueuedMessage(queuedMessageId) ?? false;
+export async function steerQueuedMessage(sessionId: string, clientId: string): Promise<boolean> {
+  return SessionStream.get(sessionId)?.steerQueuedMessage(clientId) ?? false;
 }
 
 export async function abortSession(sessionId: string): Promise<boolean> {
@@ -117,6 +115,30 @@ export async function abortSession(sessionId: string): Promise<boolean> {
   if (!stream) return false;
   await stream.abort();
   return true;
+}
+
+/** Discard one root user turn and every later conversation event while preserving files. */
+export async function rewindSession(
+  sessionId: string,
+  timestamp: string,
+): Promise<SessionSnapshot> {
+  await sessionRegistry.withSession(sessionId, async (session) => {
+    const { points } = await session.rpc.history.listRewindPoints();
+    const point = points.find((candidate) => candidate.timestamp === timestamp);
+    if (!point) throw new Error("That message is no longer available to rewind.");
+
+    const { eventsRemoved } = await session.rpc.history.rewind({
+      eventId: point.eventId,
+      mode: "conversation",
+    });
+    if (eventsRemoved === undefined) throw new Error("Session rewind failed.");
+  });
+
+  const snapshot = await refreshSessionSnapshot(sessionId);
+  // The SDK's snapshot_rewind event is ephemeral and idle sessions have no
+  // SessionStream, so notify other browser clients through the shared plane.
+  emitSessionTouched(sessionId);
+  return snapshot;
 }
 
 export async function createSessionArtifact(
@@ -189,7 +211,7 @@ export async function streamSession(
   }
 }
 
-type MessageInput = SessionMessage | { id?: string; notification: AgentNotification };
+type MessageInput = SessionMessage | { clientId?: string; notification: AgentNotification };
 
 type SessionCreationOptions = Omit<sessionRegistry.CreateSessionOptions, "model">;
 
@@ -286,18 +308,18 @@ async function createStreamForMessage(
 }
 
 function normalizeMessage(message: MessageInput): QueuedMessage {
-  const id = message.id ?? crypto.randomUUID();
+  const clientId = message.clientId ?? crypto.randomUUID();
 
   if ("notification" in message) {
     return {
-      id,
+      clientId,
       role: "agent_notification",
       notification: message.notification,
     };
   }
 
   return {
-    id,
+    clientId,
     role: "user",
     content: message.content,
     attachments: message.attachments,

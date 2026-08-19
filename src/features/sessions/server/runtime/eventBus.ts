@@ -24,8 +24,6 @@ type SessionEventBus = {
   replaySince(afterEventId?: number): SessionEvent[];
   clearReplay(): void;
   close(): void;
-  readonly hasReplayEvents: boolean;
-  readonly hasSubscribers: boolean;
   readonly hasActiveSubscribers: boolean;
 };
 
@@ -50,10 +48,7 @@ function nextEventId(): number {
   return lastIssuedEventId;
 }
 
-export function createSessionEventBus(options: {
-  capacity: number;
-  onNoSubscribers?: () => void;
-}): SessionEventBus {
+export function createSessionEventBus(capacity: number): SessionEventBus {
   const history: StampedSessionEvent[] = [];
   const subscribers = new Set<SessionSubscriber>();
   let closed = false;
@@ -76,7 +71,7 @@ export function createSessionEventBus(options: {
     subscriber.pendingEvents.push(event);
   }
 
-  function disconnectSubscriber(subscriber: SessionSubscriber, notifyWhenEmpty = true): void {
+  function disconnectSubscriber(subscriber: SessionSubscriber): void {
     if (subscriber.disconnected) return;
 
     subscriber.disconnected = true;
@@ -85,10 +80,6 @@ export function createSessionEventBus(options: {
       const resumePendingRead = subscriber.resumePendingRead;
       subscriber.resumePendingRead = undefined;
       resumePendingRead(undefined);
-    }
-
-    if (notifyWhenEmpty && subscribers.size === 0) {
-      options.onNoSubscribers?.();
     }
   }
 
@@ -142,8 +133,8 @@ export function createSessionEventBus(options: {
       if (closed) return published;
 
       history.push(published);
-      if (history.length > options.capacity) {
-        history.splice(0, history.length - options.capacity);
+      if (history.length > capacity) {
+        history.splice(0, history.length - capacity);
       }
 
       for (const subscriber of subscribers) {
@@ -179,16 +170,8 @@ export function createSessionEventBus(options: {
       closed = true;
 
       for (const subscriber of subscribers) {
-        disconnectSubscriber(subscriber, false);
+        disconnectSubscriber(subscriber);
       }
-    },
-
-    get hasReplayEvents() {
-      return history.length > 0;
-    },
-
-    get hasSubscribers() {
-      return subscribers.size > 0;
     },
 
     get hasActiveSubscribers() {

@@ -6,7 +6,8 @@ creating another source of transcript truth.
 
 ## Responsibilities
 
-- `registry.ts` owns SDK handles, single-flight resume, creation, rename, and complete deletion.
+- `registry.ts` owns SDK handles, single-flight resume, creation, explicit rename, automatic title
+  updates, and complete deletion.
   One deletion path releases the live runtime, SDK persistence, worktree, draft claim, cached
   snapshot, worker relationship, pin, and workspace projection before publishing the deletion.
 - `snapshots.ts` reconstructs idle state through the SDK projector and canonical reducer, then

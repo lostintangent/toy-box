@@ -1,4 +1,3 @@
-import { useHydrated } from "@tanstack/react-router";
 import { SidebarList as AnimatedSidebarList } from "@/shared/components/sidebar/SidebarList";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
@@ -42,7 +41,6 @@ export function SessionList({
   emptyMessage,
   draftSessions,
 }: SessionListProps) {
-  const hydrated = useHydrated();
   const pinnedSessionIds = useWorkspaceSelector((workspace) => workspace.settings.pinnedSessionIds);
   const updateSetting = useUpdateWorkspaceSetting();
   const pinnedSessionIdSet = new Set(pinnedSessionIds);
@@ -50,7 +48,7 @@ export function SessionList({
   const sessionGroups = groupSessions(
     [...sessions, ...draftSessions],
     pinnedSessionIds,
-    hydrated ? new Date() : undefined,
+    new Date(),
   );
 
   function handleSessionPinToggle(sessionId: string) {

@@ -30,7 +30,6 @@
 
 import { workspaceFileId, type WorkspaceFile } from "@files/model";
 import type { ModelConfiguration } from "./modelConfiguration";
-import { notificationCoalesceKey } from "./agentNotifications";
 import type {
   Message,
   QueuedMessage,
@@ -58,11 +57,10 @@ export type Session = {
   model?: ModelConfiguration;
   pendingToolCalls: Map<string, ToolCall>;
   pendingOptimisticUserMessage?: {
-    clientMessageId: string;
+    clientId: string;
     index: number;
   };
   lastSeenEventId?: number;
-  activeTurnId?: string;
 };
 
 // ============================================================================
@@ -159,31 +157,22 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
   ) {
     return;
   }
-
   if (event.eventId !== undefined) state.lastSeenEventId = event.eventId;
-  if (event.turnId !== undefined) state.activeTurnId = event.turnId;
 
   switch (event.type) {
     // ── Messages ──────────────────────────────────────────────────────
 
     case "user_message": {
-      if (event.clientMessageId) removeQueuedMessage(state, event.clientMessageId);
-      if (event.isSteered) removeMatchingSteeringMessage(state, event);
+      if (event.clientId) removeQueuedMessage(state, event.clientId);
       if (reconcileOptimisticUserMessage(state, event)) return;
-      if (isRedundantTurnStartEcho(state, event)) return;
 
-      appendMessage(state, {
-        role: "user",
-        content: event.content,
-        attachments: event.attachments,
-        timestamp: event.timestamp,
-      });
+      appendMessage(state, inputMessageFromEvent(event));
       // Only locally-synthesized events lack an eventId (the server stamps
       // one on everything it emits). Remember the optimistic message so the
-      // server's decorated echo reconciles it instead of duplicating it.
-      if (event.clientMessageId && event.eventId === undefined) {
+      // canonical SDK event reconciles it instead of duplicating it.
+      if (event.clientId && event.eventId === undefined) {
         state.pendingOptimisticUserMessage = {
-          clientMessageId: event.clientMessageId,
+          clientId: event.clientId,
           index: state.messages.length - 1,
         };
       }
@@ -191,13 +180,8 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     }
 
     case "agent_notification": {
-      if (isRedundantTurnStartEcho(state, event)) return;
-
-      appendMessage(state, {
-        role: "agent_notification",
-        notification: event.notification,
-        timestamp: event.timestamp,
-      });
+      if (event.clientId) removeQueuedMessage(state, event.clientId);
+      appendMessage(state, inputMessageFromEvent(event));
       return;
     }
 
@@ -236,9 +220,8 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       return;
     }
 
-    case "message_cancelled":
-    case "message_dequeued": {
-      removeQueuedMessage(state, event.queuedMessageId);
+    case "message_cancelled": {
+      removeQueuedMessage(state, event.clientId);
       return;
     }
 
@@ -538,41 +521,22 @@ function closeFile(state: Session, file: WorkspaceFile): void {
 // Message helpers
 // ============================================================================
 
-function isRedundantTurnStartEcho(
-  state: Session,
-  event: Extract<SessionEvent, { type: "user_message" | "agent_notification" }>,
-): boolean {
-  // A steered user message is a new user action even when its content and turn
-  // segment match the opening message.
-  if (
-    (event.type === "user_message" && event.isSteered) ||
-    !event.turnId ||
-    event.turnId !== state.activeTurnId
-  ) {
-    return false;
-  }
+type InputEvent = Extract<SessionEvent, { type: "user_message" | "agent_notification" }>;
+type InputMessage = Extract<Message, { role: "user" | "agent_notification" }>;
 
-  // This is not optimistic reconciliation. The runtime already emitted the
-  // canonical event that starts this turn; this only drops the later SDK echo
-  // when it matches that opening message.
-  for (let index = state.messages.length - 1; index >= 0; index--) {
-    const message = state.messages[index];
-    if (message.role === "assistant" && (message.content || message.toolCalls?.length))
-      return false;
-    if (message.role !== "assistant") return matchesInputEvent(message, event);
-  }
-  return false;
-}
-
-function matchesInputEvent(
-  message: Extract<Message, { role: "user" | "agent_notification" }>,
-  event: Extract<SessionEvent, { type: "user_message" | "agent_notification" }>,
-): boolean {
-  return message.role === "user"
-    ? event.type === "user_message" && message.content === event.content
-    : event.type === "agent_notification" &&
-        notificationCoalesceKey(message.notification) ===
-          notificationCoalesceKey(event.notification);
+function inputMessageFromEvent(event: InputEvent): InputMessage {
+  return event.type === "user_message"
+    ? {
+        role: "user",
+        content: event.content,
+        attachments: event.attachments,
+        timestamp: event.timestamp,
+      }
+    : {
+        role: "agent_notification",
+        notification: event.notification,
+        timestamp: event.timestamp,
+      };
 }
 
 /** Reconcile an incoming user_message with a previously optimistic one.
@@ -582,34 +546,10 @@ function reconcileOptimisticUserMessage(
   event: Extract<SessionEvent, { type: "user_message" }>,
 ): boolean {
   const pending = state.pendingOptimisticUserMessage;
-  if (!pending) return false;
+  if (!pending || event.clientId !== pending.clientId) return false;
 
-  const existing = state.messages[pending.index];
-  if (existing?.role !== "user") {
-    state.pendingOptimisticUserMessage = undefined;
-    return false;
-  }
-
-  if (event.clientMessageId !== pending.clientMessageId) return false;
-
-  const nextAttachments = event.attachments ?? existing.attachments;
-  const nextTimestamp = event.timestamp ?? existing.timestamp;
-  if (
-    existing.content !== event.content ||
-    existing.attachments !== nextAttachments ||
-    existing.timestamp !== nextTimestamp
-  ) {
-    replaceMessage(state, pending.index, {
-      role: "user",
-      content: event.content,
-      attachments: nextAttachments,
-      timestamp: nextTimestamp,
-    });
-  }
-
-  if (event.eventId !== undefined) {
-    state.pendingOptimisticUserMessage = undefined;
-  }
+  replaceMessage(state, pending.index, inputMessageFromEvent(event));
+  state.pendingOptimisticUserMessage = undefined;
   return true;
 }
 
@@ -742,28 +682,19 @@ function updateToolCall(
 // ============================================================================
 
 function upsertQueuedMessage(state: Session, message: QueuedMessage): void {
-  const index = state.queuedMessages.findIndex((candidate) => candidate.id === message.id);
+  const index = state.queuedMessages.findIndex(
+    (candidate) => candidate.clientId === message.clientId,
+  );
   state.queuedMessages =
     index === -1
       ? [...state.queuedMessages, message]
       : replaceAt(state.queuedMessages, index, message);
 }
 
-function removeMatchingSteeringMessage(
-  state: Session,
-  event: Extract<SessionEvent, { type: "user_message" }>,
-): void {
-  const message = state.queuedMessages.find(
-    (candidate) =>
-      candidate.role === "user" && candidate.isSteering && matchesInputEvent(candidate, event),
-  );
-  if (message) removeQueuedMessage(state, message.id);
-}
-
-function removeQueuedMessage(state: Session, queuedMessageId: string): void {
+function removeQueuedMessage(state: Session, clientId: string): void {
   if (state.queuedMessages.length === 0) return;
 
-  const index = state.queuedMessages.findIndex((message) => message.id === queuedMessageId);
+  const index = state.queuedMessages.findIndex((message) => message.clientId === clientId);
   if (index === -1) return;
   state.queuedMessages = [
     ...state.queuedMessages.slice(0, index),

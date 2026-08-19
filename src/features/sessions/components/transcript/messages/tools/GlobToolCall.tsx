@@ -2,11 +2,11 @@ import { Search } from "lucide-react";
 import type { ToolCallProps } from "./types";
 import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";
-import { useSessionCwd } from "../../../SessionCwdContext";
+import { useCurrentSession } from "../../../CurrentSessionContext";
 import { toRelativePath } from "@files/model/paths";
 
 export function GlobToolCall({ toolCall, ...props }: ToolCallProps) {
-  const cwd = useSessionCwd();
+  const { cwd } = useCurrentSession();
   const pattern =
     (toolCall.arguments.glob as string) ||
     (toolCall.arguments.pattern as string) ||

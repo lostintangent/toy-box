@@ -13,6 +13,7 @@ import {
   hyperLifecycleTools,
   lifecycleTools,
   sessionLayoutTools,
+  sessionTitleTools,
 } from "@sessions/server/tools";
 import { settingsTools } from "./settingsTools";
 import type { SessionType } from "@sessions/model";
@@ -25,9 +26,10 @@ export function getSessionTools(sessionType: SessionType, appId?: string): Tool<
     ...(sessionType === "hyper" ? hyperLifecycleTools : []),
     ...workerTools,
     ...lifecycleTools,
+    ...(sessionType === "standard" ? sessionTitleTools : []),
     ...(interactive ? sessionLayoutTools : []),
     ...(interactive ? fileTools : []),
-    ...(interactive ? artifactAppTools : []),
+    ...artifactAppTools,
     ...coordinationTools,
     ...automationTools,
     ...createAppStateTools(sessionType === "worker" ? appId : undefined),

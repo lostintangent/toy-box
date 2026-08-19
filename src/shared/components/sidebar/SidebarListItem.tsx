@@ -105,6 +105,7 @@ export function SidebarListItemLayout({
 
 export function SidebarListItemButton({
   title,
+  titleContent,
   icon,
   time,
   badge,
@@ -114,6 +115,7 @@ export function SidebarListItemButton({
   ...props
 }: Omit<SidebarListItemProps, "className" | "menuDisabled" | "menuItems"> & {
   isActive: boolean;
+  titleContent?: ReactNode;
 }) {
   return (
     <button
@@ -127,7 +129,7 @@ export function SidebarListItemButton({
       >
         <span>
           {icon}
-          <span className="shrink-0">{title}</span>
+          <span className="min-h-[1lh] shrink-0">{titleContent ?? title}</span>
         </span>
       </ScrollableFade>
       {(time || badge) && (

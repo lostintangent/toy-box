@@ -1,8 +1,8 @@
-// React Query helpers for durable session-list state.
+// React Query helpers for session-owned durable state.
 //
 // Workspace coordination and this durable session list occupy separate Query
-// entries. Workspace lifecycle events update the list only when they carry
-// session metadata or deletion; worktrees and worker ownership remain here.
+// entries. Workspace lifecycle events update or invalidate only the session
+// queries they identify; worktrees and worker ownership remain here.
 
 import type { QueryClient } from "@tanstack/react-query";
 import type { WorkspaceEvent } from "@workspace/model/events";
@@ -19,6 +19,16 @@ export function applyWorkspaceEventToSessionQueries(
       return;
     case "session.deleted":
       removeSessionFromState(queryClient, event.sessionId);
+      return;
+    case "session.touched":
+      void queryClient.invalidateQueries({
+        queryKey: sessionQueries.stateKey(),
+        exact: true,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionQueries.detail(event.sessionId).queryKey,
+        exact: true,
+      });
       return;
   }
 }

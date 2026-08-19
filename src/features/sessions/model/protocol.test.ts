@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   createDraftSessionInputSchema,
   deliverMessageInputSchema,
-  sessionLaunchSchema,
   listSkillsInputSchema,
+  queuedMessageInputSchema,
+  sessionLaunchSchema,
   streamSessionRequestSchema,
   waitForSessionInputSchema,
 } from "./protocol";
@@ -42,9 +43,9 @@ describe("session protocol", () => {
     expect(
       streamSessionRequestSchema.parse({
         sessionId: "session",
-        message: { id: "message", content: "hello" },
+        message: { clientId: "message", content: "hello" },
       }),
-    ).toMatchObject({ message: { id: "message", content: "hello" } });
+    ).toMatchObject({ message: { clientId: "message", content: "hello" } });
 
     expect(
       streamSessionRequestSchema.parse({
@@ -69,7 +70,7 @@ describe("session protocol", () => {
   });
 
   test("uses the same message shape for headless creation and delivery", () => {
-    const message = { id: "message", content: "hello", attachments: [attachment] };
+    const message = { clientId: "message", content: "hello", attachments: [attachment] };
 
     expect(
       sessionLaunchSchema.parse({
@@ -82,12 +83,16 @@ describe("session protocol", () => {
       directory: "/repo",
       useWorktree: true,
     });
-    expect(
-      sessionLaunchSchema.parse({ message, directory: "/repo", useWorktree: true }),
-    ).toMatchObject({ message, directory: "/repo", useWorktree: true });
     expect(deliverMessageInputSchema.parse({ sessionId: "session", message })).toMatchObject({
       sessionId: "session",
       message,
+    });
+  });
+
+  test("addresses queued messages by client ID", () => {
+    expect(queuedMessageInputSchema.parse({ sessionId: "session", clientId: "client-1" })).toEqual({
+      sessionId: "session",
+      clientId: "client-1",
     });
   });
 

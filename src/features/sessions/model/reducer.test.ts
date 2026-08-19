@@ -562,49 +562,34 @@ describe("sessionReducer", () => {
   });
 
   describe("queued messages", () => {
-    test("message_dequeued removes exactly one queue item without changing the transcript", () => {
+    test("a canonical user message removes its queue item and appends atomically", () => {
       const state = applySessionEvent(
         createInitialSession({
           queuedMessages: [
-            { id: "q1", role: "user", content: "first queued" },
-            { id: "q2", role: "user", content: "second queued" },
+            { clientId: "q1", role: "user", content: "first queued" },
+            { clientId: "q2", role: "user", content: "second queued" },
           ],
           messages: [{ role: "assistant", content: "ready" }],
         }),
         {
-          type: "message_dequeued",
-          queuedMessageId: "q2",
+          type: "user_message",
+          clientId: "q2",
+          content: "second queued",
+          timestamp: "2026-08-14T20:00:00.000Z",
         },
       );
 
-      expect(state.queuedMessages).toEqual([{ id: "q1", role: "user", content: "first queued" }]);
-      expect(state.messages).toEqual([{ role: "assistant", content: "ready" }]);
-    });
-
-    test("keeps an identical delivered steer distinct from the opening message", () => {
-      let state = createInitialSession({
-        messages: [{ role: "user", content: "same prompt" }],
-        queuedMessages: [{ id: "q1", role: "user", content: "same prompt", isSteering: true }],
-        activeTurnId: "turn-1",
-      });
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "same prompt",
-        isSteered: true,
-        turnId: "turn-1",
-      });
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-      state = applySessionEvent(state, { type: "delta", content: "Steering response." });
-      state = applySessionEvent(state, {
-        type: "assistant_message",
-        content: "Steering response.",
-      });
-
-      expect(state.queuedMessages).toEqual([]);
+      expect(state.queuedMessages).toEqual([
+        { clientId: "q1", role: "user", content: "first queued" },
+      ]);
       expect(state.messages).toEqual([
-        { role: "user", content: "same prompt" },
-        { role: "user", content: "same prompt", attachments: undefined, timestamp: undefined },
-        { role: "assistant", content: "Steering response." },
+        { role: "assistant", content: "ready" },
+        {
+          role: "user",
+          content: "second queued",
+          attachments: undefined,
+          timestamp: "2026-08-14T20:00:00.000Z",
+        },
       ]);
     });
 
@@ -613,40 +598,72 @@ describe("sessionReducer", () => {
 
       state = applySessionEvent(state, {
         type: "message_queued",
-        message: { id: "q1", role: "user", content: "follow up" },
+        message: { clientId: "q1", role: "user", content: "follow up" },
       });
 
       expect(state.queuedMessages).toHaveLength(1);
-      expect(state.queuedMessages[0]).toMatchObject({ id: "q1", content: "follow up" });
+      expect(state.queuedMessages[0]).toMatchObject({ clientId: "q1", content: "follow up" });
     });
 
     test("updates an existing queue entry when steering begins", () => {
       let state = createInitialSession({
-        queuedMessages: [{ id: "q1", role: "user", content: "follow up" }],
+        queuedMessages: [{ clientId: "q1", role: "user", content: "follow up" }],
       });
 
       state = applySessionEvent(state, {
         type: "message_queued",
-        message: { id: "q1", role: "user", content: "follow up", isSteering: true },
+        message: { clientId: "q1", role: "user", content: "follow up", isSteering: true },
       });
 
       expect(state.queuedMessages).toEqual([
-        { id: "q1", role: "user", content: "follow up", isSteering: true },
+        { clientId: "q1", role: "user", content: "follow up", isSteering: true },
       ]);
     });
 
     test("removes queued message on message_cancelled", () => {
       let state = createInitialSession({
         queuedMessages: [
-          { id: "q1", role: "user", content: "first" },
-          { id: "q2", role: "user", content: "second" },
+          { clientId: "q1", role: "user", content: "first" },
+          { clientId: "q2", role: "user", content: "second" },
         ],
       });
 
-      state = applySessionEvent(state, { type: "message_cancelled", queuedMessageId: "q1" });
+      state = applySessionEvent(state, { type: "message_cancelled", clientId: "q1" });
 
       expect(state.queuedMessages).toHaveLength(1);
-      expect(state.queuedMessages[0]).toMatchObject({ id: "q2", content: "second" });
+      expect(state.queuedMessages[0]).toMatchObject({ clientId: "q2", content: "second" });
+    });
+
+    test("a canonical agent notification removes its queue item by client ID", () => {
+      const notification = {
+        type: "file_edited",
+        file: { type: "session", sessionId: "s1", path: "plan.md" },
+      } as const;
+      const state = applySessionEvent(
+        createInitialSession({
+          queuedMessages: [
+            { clientId: "notify-1", role: "agent_notification", notification },
+            { clientId: "q1", role: "user", content: "keep queued" },
+          ],
+        }),
+        {
+          type: "agent_notification",
+          notification,
+          clientId: "notify-1",
+          timestamp: "2026-08-14T20:00:00.000Z",
+        },
+      );
+
+      expect(state.queuedMessages).toEqual([
+        { clientId: "q1", role: "user", content: "keep queued" },
+      ]);
+      expect(state.messages).toEqual([
+        {
+          role: "agent_notification",
+          notification,
+          timestamp: "2026-08-14T20:00:00.000Z",
+        },
+      ]);
     });
   });
 
@@ -657,7 +674,7 @@ describe("sessionReducer", () => {
           { role: "user", content: "Open the ocean session" },
           { role: "assistant", content: "Done." },
         ],
-        queuedMessages: [{ id: "queued-1", role: "user", content: "Now summarize it" }],
+        queuedMessages: [{ clientId: "queued-1", role: "user", content: "Now summarize it" }],
         todos: [{ id: "todo-1", title: "Inspect stream state", status: "in_progress" }],
         linkedSessionIds: ["session-1", "session-2"],
         status: "responding",
@@ -687,7 +704,7 @@ describe("sessionReducer", () => {
       expect(nextState.linkedSessionIds).toEqual(["session-1", "session-2"]);
       expect(nextState.model).toEqual({ name: "claude-sonnet-4.6" });
       expect(nextState.queuedMessages).toEqual([
-        { id: "queued-1", role: "user", content: "Now summarize it" },
+        { clientId: "queued-1", role: "user", content: "Now summarize it" },
       ]);
 
       expect(nextState.reasoningContent).toBe("");
@@ -780,13 +797,12 @@ describe("sessionReducer", () => {
   });
 
   describe("event replay & dedup", () => {
-    test("tracks event metadata across streamed events", () => {
+    test("tracks the replay cursor across streamed events", () => {
       const initial = createInitialSession();
       const afterThinking = applySessionEvent(initial, {
         type: "status",
         status: "thinking",
         eventId: 10,
-        turnId: "turn-1",
       });
       const afterToolStart = applySessionEvent(afterThinking, {
         type: "tool_start",
@@ -795,9 +811,7 @@ describe("sessionReducer", () => {
         arguments: { pattern: "*.ts" },
         eventId: 11,
       });
-
       expect(afterToolStart.lastSeenEventId).toBe(11);
-      expect(afterToolStart.activeTurnId).toBe("turn-1");
     });
 
     test("skips replayed events that are older than the current snapshot", () => {
@@ -828,7 +842,7 @@ describe("sessionReducer", () => {
       state = applySessionEvent(state, {
         type: "user_message",
         content: "optimistic",
-        clientMessageId: "client-1",
+        clientId: "client-1",
       });
       state = applySessionEvent(state, {
         type: "assistant_message",
@@ -843,55 +857,51 @@ describe("sessionReducer", () => {
       expect(state.lastSeenEventId).toBe(21);
     });
 
-    test("reconciles an optimistic opening message with its canonical server event", () => {
+    test("reconciles only the canonical event carrying the optimistic message's client ID", () => {
       let state = createInitialSession();
       state = applySessionEvent(state, {
         type: "user_message",
         content: "hello",
-        clientMessageId: "msg-1",
-      });
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientMessageId: "msg-1",
+        clientId: "msg-1",
         timestamp: "2026-02-09T00:00:00.000Z",
-        eventId: 10,
-        turnId: "turn-1",
       });
       state = applySessionEvent(state, {
         type: "user_message",
         content: "hello",
+        clientId: "msg-2",
+        eventId: 10,
+      });
+
+      expect(state.messages).toHaveLength(2);
+      expect(state.pendingOptimisticUserMessage).toEqual({ clientId: "msg-1", index: 0 });
+
+      state = applySessionEvent(state, {
+        type: "user_message",
+        content: "canonical hello",
+        attachments: [{ displayName: "canonical.png", mimeType: "image/png", base64: "c2VydmVy" }],
+        clientId: "msg-1",
+        timestamp: "2026-02-09T00:00:00.500Z",
         eventId: 11,
-        turnId: "turn-1",
       });
 
       expect(state.messages).toEqual([
         {
           role: "user",
+          content: "canonical hello",
+          attachments: [
+            { displayName: "canonical.png", mimeType: "image/png", base64: "c2VydmVy" },
+          ],
+          timestamp: "2026-02-09T00:00:00.500Z",
+        },
+        {
+          role: "user",
           content: "hello",
           attachments: undefined,
-          timestamp: "2026-02-09T00:00:00.000Z",
+          timestamp: undefined,
         },
       ]);
+
       expect(state.pendingOptimisticUserMessage).toBeUndefined();
-    });
-
-    test("does not reconcile an unrelated id-less user message as the opening echo", () => {
-      let state = createInitialSession();
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "opening prompt",
-        clientMessageId: "msg-1",
-      });
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "different message",
-      });
-
-      expect(state.messages.map((message) => message.role === "user" && message.content)).toEqual([
-        "opening prompt",
-        "different message",
-      ]);
     });
   });
 
@@ -1095,7 +1105,7 @@ describe("sessionReducer", () => {
     test("returns a new state while preserving unchanged branches", () => {
       const state = createInitialSession({
         messages: [{ role: "user", content: "hello" }],
-        queuedMessages: [{ id: "queued-1", role: "user", content: "next" }],
+        queuedMessages: [{ clientId: "queued-1", role: "user", content: "next" }],
       });
       const next = applySessionEvent(state, { type: "status", status: "thinking" });
 
@@ -1149,7 +1159,7 @@ describe("toSessionSnapshot", () => {
   test("maps live session state into the detail query snapshot shape", () => {
     const state = createInitialSession({
       messages: [{ role: "user", content: "hello" }],
-      queuedMessages: [{ id: "q1", role: "user", content: "next" }],
+      queuedMessages: [{ clientId: "q1", role: "user", content: "next" }],
       todos: [{ id: "t1", title: "todo", status: "pending" }],
       linkedSessionIds: ["linked-1"],
       artifacts: ["report.md"],

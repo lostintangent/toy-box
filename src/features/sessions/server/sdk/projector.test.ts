@@ -1288,7 +1288,7 @@ describe("projector", () => {
       ).toEqual([]);
     });
 
-    test("marks only non-idle user deliveries as steered", () => {
+    test("does not expose SDK delivery bookkeeping on canonical user messages", () => {
       const project = createStreamingContext();
       const deliveries = (["idle", "steering", "queued"] as const).map(
         (delivery) =>
@@ -1299,9 +1299,9 @@ describe("projector", () => {
       );
 
       expect(deliveries).toEqual([
-        expect.not.objectContaining({ isSteered: true }),
-        expect.objectContaining({ isSteered: true }),
-        expect.objectContaining({ isSteered: true }),
+        { type: "user_message", content: "idle", attachments: undefined, timestamp: undefined },
+        { type: "user_message", content: "steering", attachments: undefined, timestamp: undefined },
+        { type: "user_message", content: "queued", attachments: undefined, timestamp: undefined },
       ]);
     });
 

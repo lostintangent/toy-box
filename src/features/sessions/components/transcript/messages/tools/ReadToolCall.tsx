@@ -1,12 +1,12 @@
 import { FileText } from "lucide-react";
 import type { ToolCallProps } from "./types";
 import { toRelativePath } from "@files/model/paths";
-import { useSessionCwd } from "../../../SessionCwdContext";
+import { useCurrentSession } from "../../../CurrentSessionContext";
 import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";
 
 export function ReadToolCall({ toolCall, ...props }: ToolCallProps) {
-  const cwd = useSessionCwd();
+  const { cwd } = useCurrentSession();
   const path =
     (toolCall.arguments.path as string) ||
     (toolCall.arguments.filePath as string) ||

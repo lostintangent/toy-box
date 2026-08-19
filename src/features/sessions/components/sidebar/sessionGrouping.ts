@@ -19,7 +19,7 @@ const GROUP_LABELS: Record<SessionTimeGroupKey, string> = {
 export function groupSessions(
   sessions: SessionMetadata[],
   pinnedSessionIds: string[],
-  now?: Date,
+  now: Date,
 ): SessionGroup[] {
   const sortedSessions = [...sessions].sort(
     (left, right) => right.modifiedTime.getTime() - left.modifiedTime.getTime(),
@@ -36,11 +36,7 @@ export function groupSessions(
     ? [{ key: "pinned", label: "Pinned", sessions: pinnedSessions }]
     : [];
 
-  if (now) {
-    groups.push(...groupSessionsByTime(unpinnedSessions, now, hasPinnedGroup));
-  } else if (unpinnedSessions.length > 0) {
-    groups.push({ key: "sessions", sessions: unpinnedSessions });
-  }
+  groups.push(...groupSessionsByTime(unpinnedSessions, now, hasPinnedGroup));
 
   return groups;
 }

@@ -32,13 +32,14 @@ when assembling its read model.
 
 `queries.ts` is the declarative read API for the durable session list, one transcript snapshot,
 available models, and CWD-scoped skills. `mutations.ts` is the request/response operation API for
-creation, drafts, delivery, queue control, abort, rename, deletion, and worktree actions. It owns
-only the optimistic cache transitions that make those operations immediate and rolls them back
-when the request fails.
+creation, drafts, delivery, queue control, abort, rewind, rename, deletion, and worktree actions. It
+owns only the cache transitions that make those operations immediate and rolls optimistic changes
+back when the request fails.
 
-`queryCache.ts` applies shared workspace session events to the durable list query. The workspace
+`queryCache.ts` applies shared workspace session events to session-owned queries. The workspace
 event stream is a synchronization hint; the list query and session snapshot remain the recovery
-sources.
+sources. An idle conversation rewind refreshes the initiating client's snapshot and emits a
+`session.touched` hint so other clients refresh its detail and list metadata; it never rewinds files.
 
 `useSession.ts` owns one mounted session's browser lifecycle. It hydrates a cold snapshot,
 subscribes while visible, reduces ordered events, batches text deltas to animation frames, and
@@ -66,8 +67,8 @@ does not own session data or streaming behavior.
 `server/` is Toy Box's foundational session implementation:
 
 - [`runtime/`](server/runtime/AGENTS.md) is the public server capability for creation, delivery,
-  streaming, snapshots, completion, queue control, abort, and deletion. `SessionStream` remains its
-  live implementation detail.
+  streaming, snapshots, completion, queue control, abort, idle conversation rewind, and deletion.
+  `SessionStream` remains its live implementation detail.
 - [`sdk/`](server/sdk/AGENTS.md) isolates Copilot client operations, raw-event projection, history
   replay, attachments, notifications, skills, and system instructions.
 - [`state/`](server/state/AGENTS.md) owns SDK handles, session role resolution, snapshots, drafts,

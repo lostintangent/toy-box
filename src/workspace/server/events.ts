@@ -36,6 +36,10 @@ export function emitSessionNameUpdate(sessionId: string, name: string): void {
   });
 }
 
+export function emitSessionTouched(sessionId: string): void {
+  broadcast({ type: "session.touched", sessionId });
+}
+
 export function subscribeWorkspaceEvents(listener: WorkspaceEventListener): () => void {
   workspaceEventListeners.add(listener);
   return () => {

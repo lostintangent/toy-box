@@ -152,7 +152,7 @@ describe("workers", () => {
     await waitFor(() => expect(hasWorker(worker.sessionId)).toBe(false));
   });
 
-  test("serializes workers for the same file", async () => {
+  test("allows workers for the same file to execute concurrently", async () => {
     const first = deferred<SessionCompletion>();
     const second = deferred<SessionCompletion>();
     completions.push(first.promise, second.promise);
@@ -165,13 +165,11 @@ describe("workers", () => {
     onTestFinished(() => finishWorker(firstWorker.sessionId));
     onTestFinished(() => finishWorker(secondWorker.sessionId));
 
-    await waitFor(() => expect(spawnWorkerMock).toHaveBeenCalledTimes(1));
-    expect(spawnWorkerMock.mock.calls[0]![0].worker.sessionId).toBe(firstWorker.sessionId);
-
-    first.resolve({ status: "completed" });
     await waitFor(() => expect(spawnWorkerMock).toHaveBeenCalledTimes(2));
+    expect(spawnWorkerMock.mock.calls[0]![0].worker.sessionId).toBe(firstWorker.sessionId);
     expect(spawnWorkerMock.mock.calls[1]![0].worker.sessionId).toBe(secondWorker.sessionId);
 
+    first.resolve({ status: "completed" });
     second.resolve({ status: "completed" });
     await waitFor(() => expect(hasWorker(secondWorker.sessionId)).toBe(false));
   });
@@ -355,28 +353,30 @@ describe("workers", () => {
     expect(spawnWorkerMock).not.toHaveBeenCalled();
   });
 
-  test("removes queued work before its file queue admits it", async () => {
+  test("cancels one concurrent file worker without affecting its sibling", async () => {
     const first = deferred<SessionCompletion>();
-    completions.push(first.promise);
+    const second = deferred<SessionCompletion>();
+    completions.push(first.promise, second.promise);
 
     const firstWorker = await spawnWorker(input);
-    const queuedWorker = await spawnWorker({
+    const secondWorker = await spawnWorker({
       ...input,
       metadata: { placeholderId: "row-b" },
     });
     onTestFinished(() => finishWorker(firstWorker.sessionId));
-    onTestFinished(() => finishWorker(queuedWorker.sessionId));
-    await waitFor(() => expect(spawnWorkerMock).toHaveBeenCalledTimes(1));
+    onTestFinished(() => finishWorker(secondWorker.sessionId));
+    await waitFor(() => expect(spawnWorkerMock).toHaveBeenCalledTimes(2));
 
     await expect(
-      cancelWorker({ type: "file", file, workerSessionId: queuedWorker.sessionId }),
+      cancelWorker({ type: "file", file, workerSessionId: firstWorker.sessionId }),
     ).resolves.toBe(true);
-    expect(hasWorker(queuedWorker.sessionId)).toBe(false);
-    expect(cancelWorkerMock).toHaveBeenCalledWith(queuedWorker.sessionId);
+    expect(hasWorker(firstWorker.sessionId)).toBe(false);
+    expect(hasWorker(secondWorker.sessionId)).toBe(true);
+    expect(cancelWorkerMock).toHaveBeenCalledWith(firstWorker.sessionId);
 
     first.resolve({ status: "completed" });
-    await waitFor(() => expect(hasWorker(firstWorker.sessionId)).toBe(false));
-    expect(spawnWorkerMock).toHaveBeenCalledTimes(1);
+    second.resolve({ status: "completed" });
+    await waitFor(() => expect(hasWorker(secondWorker.sessionId)).toBe(false));
   });
 
   test("cancels admitted work and clears its file registration immediately", async () => {
@@ -443,7 +443,7 @@ describe("workers", () => {
     await waitFor(() => expect(log).toHaveBeenCalled());
   });
 
-  test("continues queued work after a worker fails", async () => {
+  test("allows concurrent work to complete when a sibling fails", async () => {
     const log = spyOn(console, "error").mockImplementation(() => {});
     onTestFinished(() => log.mockRestore());
     const secondCompletion = deferred<SessionCompletion>();
@@ -489,6 +489,8 @@ describe("worker prompt", () => {
 
     expect(prompt).toContain("/tmp/session/files/report.csv");
     expect(prompt).toContain("Read that exact file immediately before acting");
+    expect(prompt).toContain("reread it immediately before every write");
+    expect(prompt).toContain("never overwrite unrelated intervening changes");
     expect(prompt).toContain("do not leave the result only in your final response");
     expect(prompt).toContain("Append one CSV row.");
   });

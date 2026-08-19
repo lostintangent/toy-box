@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { notifyAgent } from "@sessions/server/functions";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
+import { invalidateWorkspaceStateQuery } from "@workspace/queries";
 import { workerMutations } from "@workers/mutations";
 import type { SpawnWorkerInput, Worker } from "@workers/model";
 import { fileMutations } from "./mutations";
@@ -136,12 +137,14 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
     }
     await flush({ notifyAgent: false });
     const { prompt, ...details } = request;
-    return spawn.mutateAsync({
+    const worker = await spawn.mutateAsync({
       ...details,
       type: "file",
       file,
       message: { content: prompt },
     });
+    await invalidateWorkspaceStateQuery(queryClient);
+    return worker;
   }
 
   async function cancelWorker(workerSessionId: string): Promise<void> {

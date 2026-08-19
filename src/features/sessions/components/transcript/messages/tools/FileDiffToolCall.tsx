@@ -3,7 +3,7 @@ import { Pencil } from "lucide-react";
 import type { ThemedToken } from "shiki/core";
 import type { ToolCallProps } from "./types";
 import { useToolCallDiff } from "../../editDiffs";
-import { useSessionCwd } from "../../../SessionCwdContext";
+import { useCurrentSession } from "../../../CurrentSessionContext";
 import { getToolCallFileDiffs, type DiffHunk, type FileDiff } from "../../../../model/fileDiffs";
 import { toRelativePath } from "@files/model/paths";
 import { ToolCallCard } from "./ToolCallCard";
@@ -404,7 +404,7 @@ async function highlightDiffLines(
   path: string,
   minIndent: number,
 ): Promise<DiffLine[]> {
-  const { getLangFromPath, highlightCode } = await import("./highlight");
+  const { getLangFromPath, highlightCode } = await import("@/shared/syntaxHighlight");
   const lang = getLangFromPath(path);
   const [oldHighlighted, newHighlighted] = await Promise.all([
     highlightCode(oldText, lang),
@@ -574,7 +574,7 @@ function getFileDiffToolCallLabel(
 }
 
 export function FileDiffToolCall({ toolCall, ...props }: ToolCallProps) {
-  const cwd = useSessionCwd();
+  const { cwd } = useCurrentSession();
   const fileDiffs = getToolCallFileDiffs(toolCall, cwd);
   const lineDiff = useToolCallDiff(toolCall.id);
   const patch = typeof toolCall.arguments.patch === "string" ? toolCall.arguments.patch : undefined;

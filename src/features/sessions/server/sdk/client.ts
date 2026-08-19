@@ -37,7 +37,8 @@ export async function createSession(
     ...toSdkSessionModelOptions(options.model),
     workingDirectory: options.directory,
     enableConfigDiscovery: true,
-    ...(skillDirectories ? { enableSkills: true, skillDirectories } : {}),
+    enableSkills: true,
+    skillDirectories,
     systemMessage: buildSessionSystemMessage(sessionId, options),
     onPermissionRequest: approveAll,
     tools: options.tools,
@@ -71,7 +72,8 @@ export async function resumeSession(
     requestCanvasRenderer: true,
     workingDirectory: options.directory,
     enableConfigDiscovery: true,
-    ...(skillDirectories ? { enableSkills: true, skillDirectories } : {}),
+    enableSkills: true,
+    skillDirectories,
     systemMessage: buildSessionSystemMessage(sessionId, options),
     onPermissionRequest: approveAll,
     tools: options.tools,
@@ -157,7 +159,7 @@ export async function listSkills(
   const client = await startCopilotClient();
   const result = await client.rpc.skills.discover({
     ...(cwd ? { projectPaths: [cwd] } : {}),
-    ...(skillDirectories ? { skillDirectories } : {}),
+    skillDirectories,
   });
   return toSessionSkills(result.skills);
 }
@@ -193,6 +195,12 @@ export function buildSessionSystemMessage(
     `This session's ID is: ${sessionId}.`,
     `This session's state folder is: ${sessionStateDirectory}. This session's files folder is: ${sessionFilesDirectory}. Unless otherwise specified, when the user asks you to create an artifact, spec, plan, or session document, write it under the files folder. Artifact paths in Toy Box notifications are relative to this files folder. If this session does not have a working directory, use this files folder as the default location for new files.`,
   );
+
+  if (sessionType === "standard") {
+    parts.push(
+      "Keep this session's title recognizable. Before completing the first turn, you MUST call `update_session_title` once with a concise 2-6 word title after understanding the user's initial intent. On later turns, call it again before responding only when the session's focus has changed materially, not for ordinary follow-ups or refinements. Do not mention routine title updates to the user.",
+    );
+  }
 
   if (sessionType === "inbox") {
     parts.push(

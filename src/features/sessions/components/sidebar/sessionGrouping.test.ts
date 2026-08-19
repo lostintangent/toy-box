@@ -147,18 +147,6 @@ describe("pinned session group", () => {
     ]);
   });
 
-  test("keeps the pinned partition stable before time-based hydration", () => {
-    const sessions = [
-      createSession("today", localDate(2026, 2, 20, 10)),
-      createSession("older", localDate(2026, 1, 28, 12)),
-    ];
-
-    expect(summarizeGroups(groupSessions(sessions, ["older"]))).toEqual([
-      { label: "Pinned", sessions: ["older"] },
-      { label: undefined, sessions: ["today"] },
-    ]);
-  });
-
   test("labels today's unpinned sessions only when a pinned group is present", () => {
     const now = localDate(2026, 2, 20, 14);
     const sessions = [

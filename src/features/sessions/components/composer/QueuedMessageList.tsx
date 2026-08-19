@@ -28,7 +28,7 @@ export function QueuedMessageList({
       <AnimatePresence initial={false} mode="popLayout">
         {messages.map((message) => (
           <m.div
-            key={message.id}
+            key={message.clientId}
             layout="position"
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
@@ -38,16 +38,18 @@ export function QueuedMessageList({
               sessionId={sessionId}
               message={message}
               cancelDisabled={cancelMutation.isPending}
-              isCancelling={cancelMutation.isPending && cancelMutation.variables === message.id}
+              isCancelling={
+                cancelMutation.isPending && cancelMutation.variables === message.clientId
+              }
               onEdit={() => {
                 if (message.role !== "user") return;
-                cancelMutation.mutate(message.id, {
+                cancelMutation.mutate(message.clientId, {
                   onSuccess: (cancelled) => {
                     if (cancelled) onEdit(message);
                   },
                 });
               }}
-              onCancel={() => cancelMutation.mutate(message.id)}
+              onCancel={() => cancelMutation.mutate(message.clientId)}
             />
           </m.div>
         ))}
@@ -84,7 +86,7 @@ function QueuedMessageRow({
         message.attachments?.map((attachment) => attachment.displayName).join(", ") ||
         "Attachment";
   const steer = () => {
-    if (canSteer) steerMutation.mutate(message.id);
+    if (canSteer) steerMutation.mutate(message.clientId);
   };
   const { isHolding, longPressProps } = useLongPress<HTMLDivElement>(
     canSteer ? steer : undefined,

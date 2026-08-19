@@ -25,9 +25,8 @@ export function AutomationListItem({
 }: AutomationListItemProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const runMutation = useMutation(automationMutations.run(automation.id));
-  const { running: isRunning, unread: hasUnreadActivity } = useWorkspaceSessionActivity(
-    automation.id,
-  );
+  const activity = useWorkspaceSessionActivity(automation.id);
+  const { running: isRunning, unread: hasUnreadActivity } = activity;
   const canOpenSession = Boolean(automation.lastRunAt) || isRunning || hasUnreadActivity;
 
   function handleRun() {
@@ -40,6 +39,7 @@ export function AutomationListItem({
     <>
       <SidebarSessionItem
         sessionId={automation.id}
+        activity={activity}
         title={automation.title}
         time={
           isRunning ? (

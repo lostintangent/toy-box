@@ -179,6 +179,34 @@ describe("session query cache", () => {
     expect(state.worktrees).toEqual({});
   });
 
+  test("touch invalidates the session list and affected detail", () => {
+    const queryClient = new QueryClient();
+    const sessionId = "toy-box-touched";
+    const otherSessionId = "toy-box-untouched";
+    seedState(queryClient, { sessions: [createSession(sessionId)] });
+    for (const id of [sessionId, otherSessionId]) {
+      queryClient.setQueryData(sessionQueries.detail(id).queryKey, {
+        id,
+        messages: [],
+        queuedMessages: [],
+        status: "idle",
+        reasoningContent: "",
+      });
+    }
+    applyWorkspaceEventToSessionQueries(queryClient, {
+      type: "session.touched",
+      sessionId,
+    });
+
+    expect(queryClient.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(true);
+    expect(
+      queryClient.getQueryState(sessionQueries.detail(sessionId).queryKey)?.isInvalidated,
+    ).toBe(true);
+    expect(
+      queryClient.getQueryState(sessionQueries.detail(otherSessionId).queryKey)?.isInvalidated,
+    ).toBe(false);
+  });
+
   test("automation insertion adds a missing session without replacing existing metadata", () => {
     const queryClient = new QueryClient();
     const existing = createSession("automation-session");

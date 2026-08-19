@@ -77,6 +77,7 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
     case "session.read":
       return reduceSessionInWorkspace(state, event.sessionId, event);
     case "session.upserted":
+    case "session.touched":
       return state;
     case "inbox.entry.upserted":
       return updateList(state, "inboxEntries", (entries) =>

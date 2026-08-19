@@ -128,7 +128,7 @@ export async function createSession(
       const file = await session.rpc.workspaces.readFile({ path: draft.artifactPath });
       await session.rpc.workspaces.createFile({ path: draft.artifactPath, content: file.content });
     }
-    if (name) await session.rpc.name.setAuto({ summary: name });
+    if (name) await session.rpc.name.set({ name });
     if (draft) await deleteDraftSession(sessionId);
   } catch (error) {
     if (session) {
@@ -252,6 +252,14 @@ export function evictCachedSessionIfStale(sessionId: string, error: unknown): bo
 export async function renameSession(sessionId: string, name: string): Promise<void> {
   await withSession(sessionId, (session) => session.rpc.name.set({ name }));
   emitSessionNameUpdate(sessionId, name);
+}
+
+/** Update an inferred title without replacing a name explicitly assigned by its creator or user. */
+export async function updateSessionTitle(sessionId: string, title: string): Promise<boolean> {
+  const result = await withSession(sessionId, (session) =>
+    session.rpc.name.setAuto({ summary: title }),
+  );
+  return result.applied;
 }
 
 // ── Deletion ───────────────────────────────────────────────────────────

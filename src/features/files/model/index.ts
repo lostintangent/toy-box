@@ -52,7 +52,7 @@ export type DirectoryListing = {
   files: DirectoryEntry[];
 };
 
-/** Stable identity for a workspace file: pane id, worker queue key, and notification coalesce key. */
+/** Stable identity for a workspace file: pane id, worker ownership, and notification coalesce key. */
 export function workspaceFileId(file: WorkspaceFile): string {
   return file.type === "session"
     ? `session:${file.sessionId}:${file.path}`

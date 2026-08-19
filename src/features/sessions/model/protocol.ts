@@ -23,8 +23,14 @@ export const listSkillsInputSchema = z.object({
   sessionType: sessionTypeSchema.optional(),
 });
 
+export const sessionNameSchema = z.string().trim().min(1).max(100);
+
 export const renameSessionInputSchema = sessionInputSchema.extend({
-  name: z.string().trim().min(1).max(100),
+  name: sessionNameSchema,
+});
+
+export const rewindSessionInputSchema = sessionInputSchema.extend({
+  timestamp: z.string().min(1),
 });
 
 export const createDraftSessionInputSchema = sessionInputSchema.extend({
@@ -49,7 +55,7 @@ export const sessionAttachmentsSchema = z.array(attachmentSchema).optional();
 
 export const sessionMessageSchema = z
   .object({
-    id: z.string().optional(),
+    clientId: z.string().optional(),
     content: z.string(),
     attachments: sessionAttachmentsSchema,
     model: modelConfigurationSchema.optional(),
@@ -103,7 +109,7 @@ export const notifyAgentInputSchema = sessionInputSchema.extend({
 });
 
 export const queuedMessageInputSchema = sessionInputSchema.extend({
-  queuedMessageId: z.string(),
+  clientId: z.string(),
 });
 
 export type SessionSubscriptionMode = z.infer<typeof sessionSubscriptionModeSchema>;

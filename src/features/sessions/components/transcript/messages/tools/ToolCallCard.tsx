@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { ChevronRight, Loader2, Wrench, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ToolCall } from "../../../../model";
+import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
 import { cn } from "@/shared/utils";
 
 type ToolCallCardProps = {
@@ -41,16 +42,21 @@ export function ToolCallCard({
   ) : null;
 
   return (
-    <div className="w-fit max-w-full text-sm">
+    <div className="w-fit min-w-0 max-w-full text-sm">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center gap-2 px-3 py-1 rounded-md hover:bg-muted/50 transition-colors text-left"
+        className="flex min-w-0 max-w-full items-center gap-2 rounded-md px-3 py-1 text-left transition-colors hover:bg-muted/50"
       >
         {/* Type icon */}
         {typeIcon}
 
         {/* Label */}
-        <span className="truncate text-xs text-muted-foreground">{label}</span>
+        <ScrollableFade
+          asChild
+          className="min-w-0 flex-1 whitespace-nowrap text-xs text-muted-foreground"
+        >
+          <span>{label}</span>
+        </ScrollableFade>
 
         {/* Status icon (spinner while active, X on failure) */}
         {statusIcon}

@@ -1,7 +1,6 @@
 // Server-only worker admission: validate the owner, register the pending worker,
-// apply owner-specific scheduling, and hand execution to the runtime supervisor.
+// and hand execution to the runtime supervisor.
 
-import { AsyncQueuer } from "@tanstack/pacer/async-queuer";
 import type { CancelWorkerInput, SpawnWorkerInput, Worker } from "../model";
 import {
   registerPendingSessionCompletion,
@@ -9,7 +8,6 @@ import {
 } from "@sessions/server/runtime";
 import * as supervisor from "./supervisor";
 import { WorkerCanceledError } from "./supervisor";
-import { sharedMap } from "@/shared/server/processState";
 import { finishWorker, getWorker, hasWorker, startWorker } from "./registry";
 import { getStateDatabase } from "@/server/database";
 import { AppDatabase } from "@apps/server/database";
@@ -17,8 +15,6 @@ import { resolveWorkspaceFile } from "@files/server/paths";
 import { workspaceFileId } from "@files/model";
 import { SESSION_ID_PREFIX } from "@sessions/model/constants";
 import type { SessionCompletion } from "@sessions/model";
-
-const workerQueues = sharedMap<AsyncQueuer<() => Promise<void>>>("worker-queues");
 
 export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId: string }> {
   const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
@@ -76,16 +72,14 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId:
 function admitWorker(worker: Worker, execute: () => Promise<SessionCompletion>): void {
   startWorker(worker);
   const receipt = registerPendingSessionCompletion(worker.sessionId);
-  const run = () => executeAdmittedWorker(worker.sessionId, receipt, execute);
-  if (worker.type === "file") enqueueWorker(workspaceFileId(worker.file), worker.sessionId, run);
-  else void run().catch(reportWorkerError);
+  void executeAdmittedWorker(worker.sessionId, receipt, execute).catch(reportWorkerError);
 }
 
 export async function cancelWorker(input: CancelWorkerInput): Promise<boolean> {
   if (!getRequestedWorker(input)) return false;
 
-  // Removing the registration dequeues workers that have not reached the runtime
-  // and immediately clears owner progress for workers being canceled.
+  // Clear owner progress immediately, including while the supervisor is still
+  // preparing the worker's runtime.
   finishWorker(input.workerSessionId);
   rejectWorkerCompletion(input.workerSessionId);
   await supervisor.cancelWorker(input.workerSessionId);
@@ -124,25 +118,6 @@ async function executeAdmittedWorker(
   } finally {
     finishWorker(sessionId);
   }
-}
-
-function enqueueWorker(queueKey: string, sessionId: string, execute: () => Promise<void>): void {
-  let queue = workerQueues.get(queueKey);
-  if (!queue) {
-    queue = new AsyncQueuer((run) => run(), {
-      concurrency: 1,
-      onError: reportWorkerError,
-      onSettled: (_run, settledQueue) => {
-        if (settledQueue.store.state.isIdle) workerQueues.delete(queueKey);
-      },
-    });
-    workerQueues.set(queueKey, queue);
-  }
-
-  queue.addItem(async () => {
-    if (hasWorker(sessionId)) await execute();
-    else rejectWorkerCompletion(sessionId);
-  });
 }
 
 function reportWorkerError(error: unknown): void {
@@ -186,7 +161,7 @@ ${prompt}`;
 
   return `You are a focused background worker for a file. The file is ${owner.absolutePath}.
 
-Read that exact file immediately before acting and persist the substantive result there. Modify that file in place without creating a copy. Preserve unrelated content, inspect other files only when the task requires context, and do not leave the result only in your final response.
+Read that exact file immediately before acting and persist the substantive result there. Modify that file in place without creating a copy. Other workers or the user may edit the file concurrently, so reread it immediately before every write, merge your intended change into the latest contents, and never overwrite unrelated intervening changes. Preserve unrelated content, inspect other files only when the task requires context, and do not leave the result only in your final response.
 
 Task from the editor:
 ${prompt}`;

@@ -244,12 +244,10 @@ export function useSession(
   const followUpMutation = useMutation({
     ...sessionMutations.deliverMessage(sessionId),
     onMutate: (message) => {
-      const state = sessionRef.current;
-      sessionRef.current = {
-        ...state,
-        queuedMessages: [...state.queuedMessages, { ...message, role: "user" }],
-      };
-      publishState();
+      applyEvent({
+        type: "message_queued",
+        message: { ...message, role: "user" },
+      });
     },
     onSuccess: (receipt) => {
       if (receipt.disposition === "started") {
@@ -260,21 +258,13 @@ export function useSession(
       }
     },
     onError: (_error, message) => {
-      const queue = sessionRef.current.queuedMessages;
-      const index = queue.findIndex((queuedMessage) => queuedMessage.id === message.id);
-      if (index !== -1) {
-        sessionRef.current = {
-          ...sessionRef.current,
-          queuedMessages: [...queue.slice(0, index), ...queue.slice(index + 1)],
-        };
-        publishState();
-      }
+      applyEvent({ type: "message_cancelled", clientId: message.clientId });
     },
   });
 
   const sendMessage = async (prompt: string, attachments: Attachment[] = []) => {
     if (!prompt.trim() && attachments.length === 0) return;
-    const clientMessageId = generateUUID();
+    const clientId = generateUUID();
     const messageAttachments = attachments.length > 0 ? attachments : undefined;
 
     // The session's own model always wins; otherwise this message makes the
@@ -285,7 +275,7 @@ export function useSession(
     // also closes the same-tick gap before that shared state reaches React.
     if (isSessionRunning || abortControllerRef.current) {
       followUpMutation.mutate({
-        id: clientMessageId,
+        clientId,
         content: prompt,
         attachments: messageAttachments,
         model,
@@ -308,16 +298,15 @@ export function useSession(
       type: "user_message",
       content: prompt,
       attachments: messageAttachments,
-      clientMessageId,
+      clientId,
       timestamp: new Date().toISOString(),
     });
-    applyEvent({ type: "status", status: "thinking" });
 
     const request: StreamSessionRequest = {
       sessionId,
       afterEventId: sessionRef.current.lastSeenEventId,
       message: {
-        id: clientMessageId,
+        clientId,
         content: prompt,
         attachments: messageAttachments,
         model,

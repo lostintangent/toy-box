@@ -23,6 +23,8 @@ The snapshot path reads those feature-owned facts once; the event path increment
 same flat materialized view. Features publish accepted changes through `server/events.ts`, while
 the central pure reducer owns only composition invariants—for example, removing projected shares
 and workers when an app disappears. It never performs a feature's persistence or lifecycle work.
+General invalidation hints such as `session.touched` remain reducer no-ops and instead prompt the
+owning feature cache to recover from its authoritative snapshot.
 Feature-specific Query factories may select from the shared cache, but must not create competing
 copies of the same server state.
 

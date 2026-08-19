@@ -29,7 +29,7 @@ export function ArtifactsList({
   if (pills.length === 0) return null;
 
   return (
-    <div className="mb-3 flex flex-wrap gap-1.5">
+    <div className="mb-3 flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
       {pills.map(({ key, file }) => (
         <ArtifactPill
           key={key}

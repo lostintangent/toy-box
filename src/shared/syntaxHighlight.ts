@@ -2,7 +2,6 @@ import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import type { HighlighterCore, ThemedToken } from "shiki/types";
 
-// Singleton highlighter instance
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 
 const SHIKI_THEMES = {
@@ -13,7 +12,6 @@ const SHIKI_THEMES = {
 type HighlightTheme = (typeof SHIKI_THEMES)[keyof typeof SHIKI_THEMES];
 const PREFERS_DARK_QUERY = "(prefers-color-scheme: dark)";
 
-// Language mapping from file extensions
 const EXT_TO_LANG: Record<string, string> = {
   ts: "typescript",
   tsx: "tsx",
@@ -37,7 +35,19 @@ const EXT_TO_LANG: Record<string, string> = {
   svelte: "svelte",
 };
 
-// Languages to bundle for diff rendering.
+const LANGUAGE_ALIASES: Record<string, string> = {
+  ts: "typescript",
+  js: "javascript",
+  md: "markdown",
+  py: "python",
+  yml: "yaml",
+  sh: "bash",
+  shell: "bash",
+  zsh: "bash",
+  plaintext: "text",
+  plain: "text",
+};
+
 const BUNDLED_LANGS = [
   "typescript",
   "tsx",
@@ -87,13 +97,12 @@ async function getHighlighter(): Promise<HighlighterCore> {
   return highlighterPromise;
 }
 
-/** Get language from file path */
 export function getLangFromPath(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() || "";
   return EXT_TO_LANG[ext] || "text";
 }
 
-type HighlightedLine = {
+export type HighlightedLine = {
   tokens: ThemedToken[];
 };
 
@@ -102,29 +111,23 @@ function getCurrentShikiTheme(): HighlightTheme {
   return window.matchMedia(PREFERS_DARK_QUERY).matches ? SHIKI_THEMES.dark : SHIKI_THEMES.light;
 }
 
-/**
- * Highlight code and return tokens per line.
- * Returns null if highlighting fails or language not supported.
- */
 export async function highlightCode(
   code: string,
-  lang: string,
+  language: string,
   theme: HighlightTheme = getCurrentShikiTheme(),
 ): Promise<HighlightedLine[] | null> {
   try {
     const highlighter = await getHighlighter();
-
-    // Fall back to text if language not loaded
-    const effectiveLang = BUNDLED_LANGS.includes(lang) ? lang : "text";
-
+    const normalizedLanguage = LANGUAGE_ALIASES[language.toLowerCase()] ?? language.toLowerCase();
+    const effectiveLanguage = BUNDLED_LANGS.includes(normalizedLanguage)
+      ? normalizedLanguage
+      : "text";
     const result = highlighter.codeToTokens(code, {
-      lang: effectiveLang,
+      lang: effectiveLanguage,
       theme,
     });
 
-    return result.tokens.map((lineTokens) => ({
-      tokens: lineTokens,
-    }));
+    return result.tokens.map((tokens) => ({ tokens }));
   } catch {
     return null;
   }

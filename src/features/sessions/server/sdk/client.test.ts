@@ -130,6 +130,7 @@ describe("SDK session system message", () => {
     ] satisfies SessionType[]) {
       expect(instructions(sessionType)).not.toContain("`create-toy-box-app`");
       expect(instructions(sessionType)).not.toContain("`create-toy-box-editor`");
+      expect(instructions(sessionType)).not.toContain("`create-toy-box-intent`");
     }
   });
 

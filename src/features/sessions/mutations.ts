@@ -9,6 +9,7 @@ import {
   deliverMessage,
   mergeSessionWorktree,
   renameSession,
+  rewindSession as requestSessionRewind,
   steerQueuedMessage,
 } from "./server/functions";
 import { sessionQueries } from "./queries";
@@ -22,13 +23,14 @@ import {
 import { applyWorkspaceEvent } from "@workspace/queries";
 import type { SessionLaunch, SessionMessage } from "./model";
 
-type DeliveredMessage = SessionMessage & { id: string };
+type DeliveredMessage = SessionMessage & { clientId: string };
 type CreateDraftSessionVariables = {
   sessionId: string;
   createdAt: number;
   artifact?: { path: string; content: string };
   hyper?: true;
 };
+
 export const sessionMutations = {
   createSession: () =>
     mutationOptions({
@@ -106,6 +108,13 @@ export const sessionMutations = {
         invalidateSession(client, sessionId),
     }),
 
+  rewindSession: (sessionId: string, timestamp: string) =>
+    mutationOptions({
+      mutationFn: () => requestSessionRewind({ data: { sessionId, timestamp } }),
+      onSuccess: (snapshot, _variables, _onMutateResult, { client }) =>
+        client.setQueryData(sessionQueries.detail(sessionId).queryKey, snapshot),
+    }),
+
   mergeWorktree: (sessionId: string) =>
     mutationOptions({
       mutationFn: () => mergeSessionWorktree({ data: { sessionId } }),
@@ -122,8 +131,7 @@ export const sessionMutations = {
 
   cancelQueuedMessage: (sessionId: string) =>
     mutationOptions({
-      mutationFn: (queuedMessageId: string) =>
-        cancelQueuedMessage({ data: { sessionId, queuedMessageId } }),
+      mutationFn: (clientId: string) => cancelQueuedMessage({ data: { sessionId, clientId } }),
       onSuccess: (changed, _variables, _onMutateResult, { client }) => {
         if (!changed) return invalidateSession(client, sessionId);
       },
@@ -131,8 +139,7 @@ export const sessionMutations = {
 
   steerQueuedMessage: (sessionId: string) =>
     mutationOptions({
-      mutationFn: (queuedMessageId: string) =>
-        steerQueuedMessage({ data: { sessionId, queuedMessageId } }),
+      mutationFn: (clientId: string) => steerQueuedMessage({ data: { sessionId, clientId } }),
       onSuccess: (changed, _variables, _onMutateResult, { client }) => {
         if (!changed) return invalidateSession(client, sessionId);
       },

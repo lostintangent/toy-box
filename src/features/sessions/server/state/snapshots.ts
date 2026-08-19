@@ -43,6 +43,12 @@ export async function loadSessionSnapshot(sessionId: string): Promise<SessionSna
   return snapshot;
 }
 
+/** Rebuild one idle snapshot from authoritative SDK history without changing retention. */
+export async function refreshSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
+  snapshotCache.delete(sessionId);
+  return loadSessionSnapshot(sessionId);
+}
+
 /**
  * Declare the sessions whose snapshots must stay warm, replacing any previous
  * declaration. Cold sessions are loaded and every retained session keeps its

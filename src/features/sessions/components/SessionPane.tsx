@@ -16,7 +16,7 @@ import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { useModels } from "../useModels";
 import { EditDiffsProvider, useEditDiffs } from "./transcript/editDiffs";
 import { SessionComposer } from "./composer/SessionComposer";
-import { SessionCwdProvider } from "./SessionCwdContext";
+import { CurrentSessionProvider, type SessionPaneMode } from "./CurrentSessionContext";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
 import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
@@ -36,7 +36,7 @@ type SessionPaneProps = {
   /** Mode defaults to active. Active panes own linked panes and artifact shortcuts. Overlays stay
    *  interactive but secondary; passive panes render live read-only state.
    *  Secondary modes default to compact presentation. */
-  mode?: "active" | "overlay" | "passive";
+  mode?: SessionPaneMode;
 };
 
 export function SessionPane({ sessionId, mode = "active", variant }: SessionPaneProps) {
@@ -251,7 +251,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
           <SessionMessagesSkeleton />
         ) : (
           <Suspense fallback={<SessionMessagesSkeleton />}>
-            <SessionCwdProvider value={effectiveDirectory}>
+            <CurrentSessionProvider value={{ sessionId, cwd: effectiveDirectory, mode }}>
               <EditDiffsProvider value={editDiffs.byToolCallId}>
                 <SessionMessageList
                   messages={messages}
@@ -261,7 +261,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
                   scrollToBottomRef={scrollToBottomRef}
                 />
               </EditDiffsProvider>
-            </SessionCwdProvider>
+            </CurrentSessionProvider>
           </Suspense>
         )}
       </div>

@@ -12,11 +12,11 @@ import * as realWorkspaceState from "@workspace/server/state";
 // fixture drive a SessionStream through two turns — explicit start, fixture
 // replay, queueing a follow-up, the idle→drain handoff, and the final
 // idle→finish teardown. The projector/reducer goldens lock the data pipeline;
-// this locks the runtime around it: event sequencing (eventId/turnId
-// decoration), buffering, global broadcast ordering, and teardown.
+// this locks the runtime around it: event sequencing, client ID correlation,
+// buffering, global broadcast ordering, and teardown.
 //
-// Nondeterministic ids (Date.now-seeded eventIds, timestamped turnIds) are
-// normalized to stable ordinals before asserting.
+// Nondeterministic Date.now-seeded eventIds are normalized to stable ordinals
+// before asserting.
 //
 // Module mocks cover each module's full surface and are restored after this
 // suite so the golden harness cannot alter later integration tests.
@@ -30,6 +30,7 @@ const unused = () => {
   throw new Error("not used in stream golden replay");
 };
 const settle = () => Bun.sleep(0);
+const INITIAL_PROMPT = "kick off the reviews";
 
 function emitMockWorkspaceEvent(event: WorkspaceEvent): void {
   for (const listener of workspaceEventListeners) {
@@ -102,16 +103,11 @@ describe("stream golden replay", () => {
   test("two-turn lifetime: fixture replay, queue drain, and finish", async () => {
     // ── Normalization for nondeterministic ids ─────────────────────────
     let baseEventId: number | undefined;
-    const turnIds = new Map<string, string>();
     const normalize = (event: SessionEvent): unknown => {
       const e = { ...event } as Record<string, unknown>;
       if (typeof e.eventId === "number") {
         baseEventId ??= e.eventId;
         e.eventId = e.eventId - baseEventId;
-      }
-      if (typeof e.turnId === "string") {
-        if (!turnIds.has(e.turnId)) turnIds.set(e.turnId, `turn-${turnIds.size}`);
-        e.turnId = turnIds.get(e.turnId);
       }
       return e;
     };
@@ -144,7 +140,7 @@ describe("stream golden replay", () => {
     })();
 
     // Turn 1: explicit start + full fixture replay through the SDK listener.
-    await stream.deliver({ id: "client-1", role: "user", content: "kick off the reviews" });
+    await stream.deliver({ clientId: "client-1", role: "user", content: INITIAL_PROMPT });
     for (const event of await loadSessionFixture("subagents")) {
       sdkHandler!(event);
     }
@@ -152,8 +148,12 @@ describe("stream golden replay", () => {
       sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "Wrapping up." } }),
     );
 
-    // Queue a follow-up, then end turn 1 → drain dequeues and sends turn 2.
-    await stream.deliver({ id: "queued-1", role: "user", content: "now fix the findings" });
+    // Queue a follow-up, then end turn 1 so the runtime sends turn 2.
+    await stream.deliver({
+      clientId: "queued-1",
+      role: "user",
+      content: "now fix the findings",
+    });
     sdkHandler!(sdkEvent({ type: "session.idle", data: {} }));
     await settle();
 
@@ -175,7 +175,7 @@ describe("stream golden replay", () => {
     // Each turn sent exactly its prompt to the SDK: the explicit start,
     // then the drained queue prompt.
     expect(sdkCalls).toEqual([
-      { send: { prompt: "kick off the reviews", attachments: undefined } },
+      { send: { prompt: INITIAL_PROMPT, attachments: undefined } },
       { send: { prompt: "now fix the findings", attachments: undefined } },
     ]);
     // Teardown sequence: idle announcement, end-of-stream marker to subscribers,
@@ -187,6 +187,18 @@ describe("stream golden replay", () => {
     ]);
     expect(received.at(-1)).toBe("<<SUBSCRIPTION-DONE>>");
     expect(SessionStream.isRunning(SESSION_ID)).toBe(false);
+
+    // The SDK input is authoritative: delivery itself emits no provisional
+    // transcript event, and the later SDK event receives the client's ID.
+    const firstUserEvent = received.find(
+      (event): event is Record<string, unknown> =>
+        typeof event === "object" &&
+        event !== null &&
+        "type" in event &&
+        event.type === "user_message",
+    );
+    expect(firstUserEvent).toMatchObject({ type: "user_message", clientId: "client-1" });
+    expect(firstUserEvent?.content).not.toBe(INITIAL_PROMPT);
 
     // Live mode converges on the same conversation shape as history replay:
     // every subagent's work grouped under its agent call.
@@ -210,7 +222,6 @@ describe("stream golden replay", () => {
         state.lastSeenEventId !== undefined && baseEventId !== undefined
           ? state.lastSeenEventId - baseEventId
           : state.lastSeenEventId,
-      activeTurnId: state.activeTurnId ? turnIds.get(state.activeTurnId) : state.activeTurnId,
     }).toMatchSnapshot();
   });
 
@@ -244,7 +255,7 @@ describe("stream golden replay", () => {
     };
 
     const runTurnOne = async ({ stream, emit }: DrivenStream) => {
-      await stream.deliver({ id: "client-1", role: "user", content: "kick off the reviews" });
+      await stream.deliver({ clientId: "client-1", role: "user", content: INITIAL_PROMPT });
       for (const event of fixture) {
         emit(event);
       }
@@ -253,7 +264,7 @@ describe("stream golden replay", () => {
 
     const runTurnTwo = async ({ stream, emit }: DrivenStream) => {
       const disposition = await stream.deliver({
-        id: "queued-1",
+        clientId: "queued-1",
         role: "user",
         content: "now fix the findings",
       });
@@ -277,7 +288,6 @@ describe("stream golden replay", () => {
       ...state,
       pendingToolCalls: [...state.pendingToolCalls.entries()],
       lastSeenEventId: undefined,
-      activeTurnId: undefined,
     });
 
     // Road 1: both turns on one uninterrupted stream.

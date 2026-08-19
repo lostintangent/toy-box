@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createSessionEventBus } from "./eventBus";
 import type { SessionEvent } from "@sessions/model";
 
@@ -7,7 +7,7 @@ function event(content: string): SessionEvent {
 }
 
 function createTestBus(capacity = 10) {
-  return createSessionEventBus({ capacity });
+  return createSessionEventBus(capacity);
 }
 
 async function nextValue<T>(iterator: AsyncIterator<T>): Promise<T> {
@@ -48,8 +48,6 @@ describe("session event bus replay and live delivery", () => {
     const bus = createTestBus();
     const passive = bus.subscribe(undefined, "passive");
 
-    expect(bus.hasReplayEvents).toBe(false);
-    expect(bus.hasSubscribers).toBe(true);
     expect(bus.hasActiveSubscribers).toBe(false);
 
     const subscription = bus.subscribe();
@@ -60,7 +58,6 @@ describe("session event bus replay and live delivery", () => {
     expect(await nextValue(subscription)).toEqual(live);
 
     await subscription.return();
-    expect(bus.hasSubscribers).toBe(true);
     expect(bus.hasActiveSubscribers).toBe(false);
 
     await passive.return();
@@ -77,7 +74,6 @@ describe("session event bus retention", () => {
     const four = bus.publish(event("four"));
 
     expect(bus.replaySince()).toEqual([two, three, four]);
-    expect(bus.hasReplayEvents).toBe(true);
   });
 
   test("returns defensive replay copies", () => {
@@ -102,7 +98,6 @@ describe("session event bus lifecycle", () => {
     const live = bus.publish(event("live"));
 
     expect(bus.replaySince()).toEqual([live]);
-    expect(bus.hasSubscribers).toBe(true);
     expect(await nextValue(subscription)).toEqual(old);
     expect(await nextValue(subscription)).toEqual(live);
 
@@ -117,15 +112,13 @@ describe("session event bus lifecycle", () => {
     const live = bus.publish(event("live"));
     bus.close();
 
-    expect(bus.hasSubscribers).toBe(false);
     expect(await nextValue(subscription)).toEqual(retained);
     expect(await nextValue(subscription)).toEqual(live);
     expect(await subscription.next()).toEqual({ done: true, value: undefined });
   });
 
-  test("return releases a pending read and notifies when the last subscriber leaves", async () => {
-    const onNoSubscribers = mock(() => {});
-    const bus = createSessionEventBus({ capacity: 10, onNoSubscribers });
+  test("return releases a pending read and remains idempotent", async () => {
+    const bus = createTestBus();
     const subscription = bus.subscribe();
     const pendingRead = subscription.next();
 
@@ -133,8 +126,6 @@ describe("session event bus lifecycle", () => {
     await subscription.return();
     bus.publish(event("ignored"));
 
-    expect(bus.hasSubscribers).toBe(false);
-    expect(onNoSubscribers).toHaveBeenCalledTimes(1);
     expect(await pendingRead).toEqual({ done: true, value: undefined });
     expect(await subscription.next()).toEqual({ done: true, value: undefined });
   });

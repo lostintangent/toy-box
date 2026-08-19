@@ -5,7 +5,7 @@ Golden tests protect the two pipelines behind a central Toy Box promise: Copilot
 Unit tests remain beside their source files to localize projector, reducer, runtime, and protocol failures. These project-level tests exercise the whole pipeline in its two consumption modes:
 
 - `history.golden.test.ts` feeds raw SDK events through history replay, the stateful projector, and the session reducer to produce the idle `Session` the server returns for a recorded session.
-- `stream.golden.test.ts` feeds raw SDK events through a two-delivery `SessionStream` lifetime, including projection, reduction, event and agent-loop segment identity, queue draining, shared updates, and teardown. Nondeterministic IDs are normalized to stable ordinals.
+- `stream.golden.test.ts` feeds raw SDK events through a two-delivery `SessionStream` lifetime, including projection, reduction, client-ID correlation, queue draining, shared updates, and teardown. Nondeterministic IDs are normalized to stable ordinals.
 
 Both modes assert named invariants before snapshotting their complete output. An invariant failure explains what contract broke; the snapshot diff shows where that pipeline changed. Shared conversation-shape invariants, including subagent grouping, must agree because both modes use the same projector and reducer. The stream suite separately proves that snapshot-seeded resume converges with uninterrupted streaming across deliveries.
 
