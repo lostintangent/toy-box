@@ -34,14 +34,6 @@ type HunkDraft = {
 
 const DEV_NULL = "/dev/null";
 
-function readStringArg(toolCall: ToolCall, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = toolCall.arguments[key];
-    if (typeof value === "string") return value;
-  }
-  return undefined;
-}
-
 function normalizeDiffPath(rawPath: string, cwd?: string): string {
   const tabIndex = rawPath.indexOf("\t");
   const path = tabIndex === -1 ? rawPath : rawPath.slice(0, tabIndex);
@@ -107,7 +99,7 @@ function pushFile(files: FileDiff[], file: FileDraft | undefined): void {
   });
 }
 
-export function parsePatch(patch: string, cwd?: string): FileDiff[] {
+export function parseUnifiedDiff(diff: string, cwd?: string): FileDiff[] {
   const files: FileDiff[] = [];
   let currentFile: FileDraft | undefined;
   let currentHunk: HunkDraft | undefined;
@@ -130,7 +122,7 @@ export function parsePatch(patch: string, cwd?: string): FileDiff[] {
     return currentFile;
   }
 
-  for (const line of patch.split("\n")) {
+  for (const line of diff.split("\n")) {
     if (currentHunk && !line.startsWith("\\ No newline at end of file")) {
       if (line.startsWith("+")) {
         const text = line.slice(1);
@@ -266,70 +258,18 @@ function statusFromApplyPatchVerb(verb: "Add" | "Update" | "Delete"): FileDiff["
   return "modified";
 }
 
-function getEditFileDiffs(toolCall: ToolCall): FileDiff[] {
-  const path = readStringArg(toolCall, "path", "filePath") ?? "Unknown file";
-  const oldText = readStringArg(toolCall, "old_str", "oldString") ?? "";
-  const newText = readStringArg(toolCall, "new_str", "newString") ?? "";
-  const hunks =
-    oldText || newText ? [{ oldText, newText, stats: computeDiffStats(oldText, newText) }] : [];
-  return [
-    {
-      path,
-      status: "modified",
-      hunks,
-    },
-  ];
-}
-
-function getPatchFileDiffs(toolCall: ToolCall, cwd?: string): FileDiff[] | undefined {
+function getCompletedFileDiffs(toolCall: ToolCall, cwd?: string): FileDiff[] | undefined {
   const details = toolCall.result?.details;
 
-  return toolCall.result?.success === true && details ? parsePatch(details, cwd) : undefined;
+  return toolCall.result?.success === true && details ? parseUnifiedDiff(details, cwd) : undefined;
 }
 
 export function getToolCallFileDiffs(toolCall: ToolCall, cwd?: string): FileDiff[] | undefined {
-  if (toolCall.name === "edit") {
-    return getEditFileDiffs(toolCall);
-  }
-
-  if (toolCall.name === "patch") {
-    return getPatchFileDiffs(toolCall, cwd);
+  if (toolCall.name === "edit" || toolCall.name === "patch") {
+    return getCompletedFileDiffs(toolCall, cwd);
   }
 
   return undefined;
-}
-
-/** Computes added/removed line counts by finding common prefix/suffix. */
-function computeDiffStats(oldText: string, newText: string): DiffStats {
-  if (!oldText && !newText) return { added: 0, removed: 0 };
-  if (!oldText) return { added: newText.split("\n").length, removed: 0 };
-  if (!newText) return { added: 0, removed: oldText.split("\n").length };
-
-  const oldLines = oldText.split("\n");
-  const newLines = newText.split("\n");
-
-  let prefixLen = 0;
-  while (
-    prefixLen < oldLines.length &&
-    prefixLen < newLines.length &&
-    oldLines[prefixLen] === newLines[prefixLen]
-  ) {
-    prefixLen++;
-  }
-
-  let suffixLen = 0;
-  while (
-    suffixLen < oldLines.length - prefixLen &&
-    suffixLen < newLines.length - prefixLen &&
-    oldLines[oldLines.length - 1 - suffixLen] === newLines[newLines.length - 1 - suffixLen]
-  ) {
-    suffixLen++;
-  }
-
-  const removedCount = oldLines.length - prefixLen - suffixLen;
-  const addedCount = newLines.length - prefixLen - suffixLen;
-
-  return { added: Math.max(0, addedCount), removed: Math.max(0, removedCount) };
 }
 
 export function computeFileDiffStats(fileDiffs: FileDiff[]): {

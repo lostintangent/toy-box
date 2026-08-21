@@ -196,8 +196,8 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
       }
     : undefined;
 
-  function handleSubmit(text: string, attachments: Attachment[]) {
-    void sendMessage(text, attachments);
+  function handleSubmit(text: string, attachments: Attachment[], immediate?: true) {
+    void sendMessage(text, attachments, immediate);
 
     // Force scroll to bottom after submitting a message
     scrollToBottomRef.current?.();

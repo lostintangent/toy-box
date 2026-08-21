@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Loader2, MessageCircle, X } from "lucide-react";
+import { CircleHelp, Loader2, MessageCircle, X } from "lucide-react";
 import { Presence as PresencePrimitive } from "radix-ui/internal";
-import { useWorkspaceSessionRunning } from "@workspace/hooks/state";
+import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { cn } from "@/shared/utils";
 import {
   CONTAINER_OVERLAY_BOUNDS,
@@ -16,7 +16,7 @@ import { SessionPane } from "./SessionPane";
 
 export function SessionOverlay({ sessionId }: { sessionId: string }) {
   const [isOpen, setIsOpen] = useState(false);
-  const isSessionRunning = useWorkspaceSessionRunning(sessionId);
+  const { running, waiting } = useWorkspaceSessionActivity(sessionId);
   const trigger = (
     <button
       type="button"
@@ -27,7 +27,9 @@ export function SessionOverlay({ sessionId }: { sessionId: string }) {
       aria-hidden={isOpen || undefined}
       tabIndex={isOpen ? -1 : undefined}
     >
-      {isSessionRunning ? (
+      {waiting ? (
+        <CircleHelp className={PANE_OVERLAY_ICON_CLASS} />
+      ) : running ? (
         <Loader2 className={cn(PANE_OVERLAY_ICON_CLASS, "animate-spin")} />
       ) : (
         <MessageCircle className={PANE_OVERLAY_ICON_CLASS} />

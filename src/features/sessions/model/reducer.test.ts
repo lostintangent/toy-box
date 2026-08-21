@@ -348,6 +348,80 @@ describe("sessionReducer", () => {
   });
 
   describe("tool calls", () => {
+    test("moves a root question through unanswered, pending, and answered states", () => {
+      const question = {
+        question: "Which database should I use?",
+        choices: ["SQLite", "PostgreSQL"],
+        allowFreeform: true,
+      };
+      let state = reduceEvents([
+        { type: "status", status: "thinking" },
+        {
+          type: "tool_start",
+          toolCallId: "question-1",
+          toolName: "ask_user",
+          arguments: { question: question.question, choices: question.choices },
+          question,
+        },
+      ]);
+
+      expect(assistantMessageAt(state, 0).toolCalls?.[0].question).toEqual({
+        ...question,
+        state: "unanswered",
+      });
+
+      state = applySessionEvent(state, {
+        type: "question_requested",
+        toolCallId: "question-1",
+        requestId: "request-1",
+        question,
+      });
+      expect(state.status).toBe("waiting");
+      expect(assistantMessageAt(state, 0).toolCalls?.[0].question).toEqual({
+        ...question,
+        state: "pending",
+        requestId: "request-1",
+      });
+
+      state = applySessionEvent(state, {
+        type: "question_resolved",
+        toolCallId: "question-1",
+        answer: "SQLite",
+      });
+      expect(state.status).toBe("thinking");
+      expect(assistantMessageAt(state, 0).toolCalls?.[0].question).toEqual({
+        ...question,
+        state: "answered",
+        answer: "SQLite",
+      });
+    });
+
+    test("makes a pending question read-only when the turn ends", () => {
+      const question = { question: "Continue?", choices: ["Yes", "No"], allowFreeform: true };
+      const state = reduceEvents([
+        {
+          type: "tool_start",
+          toolCallId: "question-1",
+          toolName: "ask_user",
+          arguments: { question: question.question, choices: question.choices },
+          question,
+        },
+        {
+          type: "question_requested",
+          toolCallId: "question-1",
+          requestId: "request-1",
+          question,
+        },
+        { type: "end", reason: "idle" },
+      ]);
+
+      expect(state.status).toBe("idle");
+      expect(assistantMessageAt(state, 0).toolCalls?.[0].question).toEqual({
+        ...question,
+        state: "unanswered",
+      });
+    });
+
     test("stores tool result details on completed tool calls", () => {
       const state = reduceEvents([
         {
@@ -605,18 +679,18 @@ describe("sessionReducer", () => {
       expect(state.queuedMessages[0]).toMatchObject({ clientId: "q1", content: "follow up" });
     });
 
-    test("updates an existing queue entry when steering begins", () => {
+    test("updates an existing queue entry when immediate delivery begins", () => {
       let state = createInitialSession({
         queuedMessages: [{ clientId: "q1", role: "user", content: "follow up" }],
       });
 
       state = applySessionEvent(state, {
         type: "message_queued",
-        message: { clientId: "q1", role: "user", content: "follow up", isSteering: true },
+        message: { clientId: "q1", role: "user", content: "follow up", immediate: true },
       });
 
       expect(state.queuedMessages).toEqual([
-        { clientId: "q1", role: "user", content: "follow up", isSteering: true },
+        { clientId: "q1", role: "user", content: "follow up", immediate: true },
       ]);
     });
 

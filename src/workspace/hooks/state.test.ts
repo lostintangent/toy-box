@@ -82,15 +82,37 @@ describe("workspace query selectors", () => {
       selectWorkspaceSessionActivity(workspace, "session-a"),
     );
 
-    expect(activity.data()).toEqual({ running: false, unread: false, hasDraftPrompt: false });
+    expect(activity.data()).toEqual({
+      running: false,
+      waiting: false,
+      unread: false,
+      hasDraftPrompt: false,
+    });
     expect(activity.updates()).toBe(0);
 
     updateWorkspace(queryClient, (workspace) => ({
       ...workspace,
       sessionStates: { "session-a": { status: "running" } },
     }));
-    expect(activity.data()).toEqual({ running: true, unread: false, hasDraftPrompt: false });
+    expect(activity.data()).toEqual({
+      running: true,
+      waiting: false,
+      unread: false,
+      hasDraftPrompt: false,
+    });
     expect(activity.updates()).toBe(1);
+
+    updateWorkspace(queryClient, (workspace) => ({
+      ...workspace,
+      sessionStates: { "session-a": { status: "waiting" } },
+    }));
+    expect(activity.data()).toEqual({
+      running: false,
+      waiting: true,
+      unread: false,
+      hasDraftPrompt: false,
+    });
+    expect(activity.updates()).toBe(2);
   });
 
   test("projects whether a session has a non-empty draft prompt", () => {

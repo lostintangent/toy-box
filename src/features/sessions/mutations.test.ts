@@ -80,6 +80,27 @@ describe("session mutation options", () => {
     expect(isSessionInvalidated(rejectedClient)).toBe(true);
   });
 
+  test("trusts accepted question answers and refreshes rejected requests", async () => {
+    const answer = {
+      requestId: "request-1",
+      answer: "SQLite",
+      wasFreeform: false,
+    };
+    const acceptedClient = createQueryClient();
+    await new MutationObserver(acceptedClient, {
+      ...sessionMutations.answerSessionQuestion(sessionId),
+      mutationFn: async () => true,
+    }).mutate(answer);
+    expect(isSessionInvalidated(acceptedClient)).toBe(false);
+
+    const rejectedClient = createQueryClient();
+    await new MutationObserver(rejectedClient, {
+      ...sessionMutations.answerSessionQuestion(sessionId),
+      mutationFn: async () => false,
+    }).mutate(answer);
+    expect(isSessionInvalidated(rejectedClient)).toBe(true);
+  });
+
   test("leaves session data alone after queue errors and refreshes after aborts", async () => {
     const failedClient = createQueryClient();
     const failedMutation = new MutationObserver(failedClient, {

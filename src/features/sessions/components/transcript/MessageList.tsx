@@ -230,7 +230,9 @@ function VirtualizedMessageList({
             })}
 
             {isStreaming && reasoningContent && <ReasoningDisplay content={reasoningContent} />}
-            {isStreaming && status !== "idle" && <StatusIndicator status={status} />}
+            {isStreaming && status !== "idle" && status !== "waiting" && (
+              <StatusIndicator status={status} />
+            )}
           </div>
         </div>
       </div>

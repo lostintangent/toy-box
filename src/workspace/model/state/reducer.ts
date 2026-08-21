@@ -32,7 +32,7 @@ export type WorkspaceEnvironment = {
  */
 export type WorkspaceSessionState =
   | { status: "draft"; createdAt: number; prompt?: DraftPrompt; artifactPath?: string }
-  | { status: "running" | "unread"; prompt?: DraftPrompt }
+  | { status: "running" | "waiting" | "unread"; prompt?: DraftPrompt }
   | { status: "idle"; prompt: DraftPrompt };
 
 export function createEmptyWorkspaceState(): WorkspaceState {
@@ -72,6 +72,7 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
       return setHyperSessionMembership(state, event.sessionId, false);
     case "session.prompt.drafted":
     case "session.running":
+    case "session.waiting":
     case "session.idle":
     case "session.unread":
     case "session.read":
@@ -164,6 +165,7 @@ export type WorkspaceSessionEvent = Extract<
       | "session.drafted"
       | "session.prompt.drafted"
       | "session.running"
+      | "session.waiting"
       | "session.idle"
       | "session.unread"
       | "session.read"
@@ -178,7 +180,7 @@ export function reduceWorkspaceSessionState(
 ): WorkspaceSessionState | undefined {
   switch (event.type) {
     case "session.drafted": {
-      if (state?.status === "running" || state?.status === "unread") {
+      if (isWorkspaceSessionLive(state?.status) || state?.status === "unread") {
         return state;
       }
       if (
@@ -199,9 +201,12 @@ export function reduceWorkspaceSessionState(
       if (state?.prompt && sameDraftPrompt(state.prompt, event.prompt)) return state;
       return state ? { ...state, prompt: event.prompt } : { status: "idle", prompt: event.prompt };
     case "session.running":
-      return state?.status === "running"
+    case "session.waiting": {
+      const status = event.type === "session.running" ? "running" : "waiting";
+      return state?.status === status
         ? state
-        : { status: "running", ...(state?.prompt ? { prompt: state.prompt } : {}) };
+        : { status, ...(state?.prompt ? { prompt: state.prompt } : {}) };
+    }
     case "session.idle":
       if (!state || state.status === "draft") return state;
       return idleSessionState(state.prompt);
@@ -216,8 +221,10 @@ export function reduceWorkspaceSessionState(
   }
 }
 
-export function isWorkspaceSessionRunning(state: WorkspaceSessionState | undefined): boolean {
-  return state?.status === "running";
+export function isWorkspaceSessionLive(
+  status: WorkspaceSessionState["status"] | undefined,
+): boolean {
+  return status === "running" || status === "waiting";
 }
 
 function reduceSessionInWorkspace(

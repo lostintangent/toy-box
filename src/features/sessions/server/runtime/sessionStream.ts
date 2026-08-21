@@ -22,15 +22,21 @@ import {
   areModelConfigurationsEqual,
   toSdkSetModelOptions,
 } from "@sessions/model/modelConfiguration";
-import type { SessionSubscriptionMode } from "@sessions/model/protocol";
+import type { SessionQuestionAnswer, SessionSubscriptionMode } from "@sessions/model/protocol";
 import {
   applySessionEvent,
   createInitialSession,
+  hasPendingSessionQuestion,
   prepareSessionForNextTurn,
   toSessionSnapshot,
   type Session,
 } from "@sessions/model/reducer";
-import type { QueuedMessage, SessionCompletion, SessionEvent } from "@sessions/model";
+import type {
+  QueuedMessage,
+  QueuedUserMessage,
+  SessionCompletion,
+  SessionEvent,
+} from "@sessions/model";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
 import { emitSessionNameUpdate } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
@@ -155,7 +161,7 @@ export class SessionStream {
   }
 
   /** Start the stream's first message or queue behind its active turn. */
-  async deliver(message: QueuedMessage): Promise<MessageDisposition> {
+  async deliver(message: QueuedMessage, immediate?: true): Promise<MessageDisposition> {
     if (this.#finished || this.#abortRequested) {
       throw new SessionStreamFinishedError();
     }
@@ -164,6 +170,11 @@ export class SessionStream {
       this.#hasOpenedTurn = true;
       await this.#startTurn(message);
       return "started";
+    }
+
+    if (immediate && message.role === "user" && !this.#isSendingQueuedMessage) {
+      await this.#sendQueuedMessageImmediately(message);
+      return "queued";
     }
 
     const coalesceKey = coalesceKeyForMessage(message);
@@ -192,34 +203,13 @@ export class SessionStream {
     );
     if (
       message?.role !== "user" ||
-      message.isSteering ||
+      message.immediate ||
       this.#pendingClientIds.includes(clientId)
     ) {
       return false;
     }
 
-    this.#isSendingQueuedMessage = true;
-    this.#emit({
-      type: "message_queued",
-      message: { ...message, isSteering: true },
-    });
-
-    try {
-      await this.#sendToSdk(message, "immediate");
-      return true;
-    } catch (error) {
-      if (
-        !this.#abortRequested &&
-        this.#sessionState.queuedMessages.some(
-          ({ clientId: candidateId }) => candidateId === message.clientId,
-        )
-      ) {
-        this.#emit({ type: "message_queued", message });
-      }
-      throw error;
-    } finally {
-      this.#isSendingQueuedMessage = false;
-    }
+    return this.#sendQueuedMessageImmediately(message);
   }
 
   cancelQueuedMessage(clientId: string): boolean {
@@ -231,7 +221,7 @@ export class SessionStream {
     if (
       !message ||
       this.#pendingClientIds.includes(clientId) ||
-      (message.role === "user" && message.isSteering)
+      (message.role === "user" && message.immediate)
     ) {
       return false;
     }
@@ -242,6 +232,26 @@ export class SessionStream {
     });
 
     return true;
+  }
+
+  async answerQuestion({
+    requestId,
+    answer,
+    wasFreeform,
+  }: SessionQuestionAnswer): Promise<boolean> {
+    if (
+      this.#finished ||
+      this.#abortRequested ||
+      !hasPendingSessionQuestion(this.#sessionState, requestId)
+    ) {
+      return false;
+    }
+
+    const result = await this.sdkSession.rpc.ui.handlePendingUserInput({
+      requestId,
+      response: { answer, wasFreeform },
+    });
+    return result.success;
   }
 
   /** Wait for this stream instance to complete, not future replacements with the same ID. */
@@ -406,7 +416,7 @@ export class SessionStream {
       this.finish();
       return;
     }
-    if (queuedMessage.role === "user" && queuedMessage.isSteering) return;
+    if (queuedMessage.role === "user" && queuedMessage.immediate) return;
 
     this.#isSendingQueuedMessage = true;
 
@@ -424,6 +434,11 @@ export class SessionStream {
   #emit(event: SessionEvent): void {
     const published = this.#bus.publish(event);
     this.#sessionState = applySessionEvent(this.#sessionState, published);
+    if (published.type === "question_requested") {
+      setSessionStatus(this.sessionId, "waiting");
+    } else if (published.type === "question_resolved") {
+      setSessionStatus(this.sessionId, "running");
+    }
   }
 
   #correlateInputEvent(event: SessionEvent): SessionEvent {
@@ -433,6 +448,31 @@ export class SessionStream {
   }
 
   // ── Internal helpers ─────────────────────────────────────────────────
+
+  async #sendQueuedMessageImmediately(message: QueuedUserMessage): Promise<boolean> {
+    this.#isSendingQueuedMessage = true;
+    this.#emit({
+      type: "message_queued",
+      message: { ...message, immediate: true },
+    });
+
+    try {
+      await this.#sendToSdk(message, "immediate");
+      return true;
+    } catch (error) {
+      if (
+        !this.#abortRequested &&
+        this.#sessionState.queuedMessages.some(
+          ({ clientId: candidateId }) => candidateId === message.clientId,
+        )
+      ) {
+        this.#emit({ type: "message_queued", message });
+      }
+      throw error;
+    } finally {
+      this.#isSendingQueuedMessage = false;
+    }
+  }
 
   async #sendToSdk(message: QueuedMessage, mode?: "immediate"): Promise<void> {
     this.#pendingClientIds.push(message.clientId);

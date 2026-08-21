@@ -4,7 +4,7 @@ import {
   updateWorkspaceSetting,
   workspaceQueries,
 } from "@workspace/queries";
-import { isWorkspaceSessionRunning, type WorkspaceState } from "@workspace/model/state/reducer";
+import type { WorkspaceState } from "@workspace/model/state/reducer";
 import type { Settings } from "../model/config/settings";
 import type { WorkspaceAction } from "../model/state/actions";
 
@@ -15,15 +15,16 @@ export function useWorkspaceSelector<T>(select: WorkspaceSelector<T>): T {
 }
 
 export function useWorkspaceSessionRunning(sessionId: string) {
-  return useWorkspaceSelector((workspace) =>
-    isWorkspaceSessionRunning(workspace.sessionStates[sessionId]),
+  return useWorkspaceSelector(
+    (workspace) => workspace.sessionStates[sessionId]?.status === "running",
   );
 }
 
 export function selectWorkspaceSessionActivity(workspace: WorkspaceState, sessionId: string) {
   const state = workspace.sessionStates[sessionId];
   return {
-    running: isWorkspaceSessionRunning(state),
+    running: state?.status === "running",
+    waiting: state?.status === "waiting",
     unread: state?.status === "unread",
     hasDraftPrompt: Boolean(state?.prompt?.text.trim()),
   };

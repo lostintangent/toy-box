@@ -12,8 +12,14 @@ import type {
   SessionEvent as SdkSessionEvent,
   ToolExecutionCompleteData,
 } from "@github/copilot-sdk";
+import { extname } from "node:path";
 import type { JSONType } from "zod";
-import type { SessionArtifactPatch, SessionEvent, ToolCall } from "@sessions/model";
+import type {
+  SessionArtifactPatch,
+  SessionEvent,
+  SessionQuestionBase,
+  ToolCall,
+} from "@sessions/model";
 import { workspaceFileSchema, type WorkspaceFile } from "@files/model";
 import { projectSessionArtifactPath } from "@files/server/paths";
 import { parsePatchTouchedFiles, type PatchTouchedFile } from "@sessions/model/fileDiffs";
@@ -55,6 +61,8 @@ const SDK_TURN_END_REASONS: Record<string, SessionEndReason | undefined> = {
   "session.error": "error",
   "session.idle": "idle",
 };
+
+const ARTIFACT_EXTENSIONS: readonly string[] = [".md", ".html", ".json", ".svg", ".intent", ".toy"];
 
 // How each tool call projects, keyed by CANONICAL name (post-alias — the
 // SDK's "task" resolves the "agent" policy). Tools not listed here are plain
@@ -108,10 +116,18 @@ const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
 // ============================================================================
 
 type SessionEndReason = Extract<SessionEvent, { type: "end" }>["reason"];
+type SdkQuestion = Pick<
+  Extract<SdkSessionEvent, { type: "user_input.requested" }>["data"],
+  "question" | "choices" | "allowFreeform"
+>;
 
 type ProjectionState = {
   sessionId: string;
   toolCallPolicies: Map<string, ToolCallProjectionPolicy>;
+  questionToolCall?: {
+    toolCallId: string;
+    requestId?: string;
+  };
 };
 
 // How a tool call's lifecycle should project, based on its name + arguments.
@@ -163,6 +179,9 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       // Subagent prompts are not root user turns — they're already visible as
       // the agent tool call's arguments.
       if (event.agentId) return [];
+
+      // System reminders are model-only context, not user-visible transcript messages.
+      if (event.data.source === "system") return [];
 
       // Skill loading uses synthetic user messages to give the agent access to the selected skill.
       if (event.data.source?.startsWith("skill-")) return [];
@@ -272,8 +291,11 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       const toolCallId = event.data.toolCallId;
       const agentId = event.agentId;
       const policy = resolveToolCallPolicy(toolName, args, state);
+      const question =
+        toolName === "ask_user" && !agentId ? toSessionQuestion(args as SdkQuestion) : undefined;
 
       if (policy) state.toolCallPolicies.set(toolCallId, policy);
+      if (question) state.questionToolCall = { toolCallId };
       if (policy?.kind === "omitted") return [];
       if (policy?.kind === "translated") return policy.projectOnStart ?? [];
 
@@ -284,6 +306,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
           toolCallId,
           ...(agentId ? { agentId } : {}),
           arguments: args,
+          ...(question ? { question } : {}),
         },
       ];
     }
@@ -292,15 +315,17 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       const { toolCallId } = data;
       const agentId = event.agentId;
       const policy = state.toolCallPolicies.get(toolCallId);
+      const result = readToolResultText(data);
+      const questionEvents = projectDurableQuestionResolution(toolCallId, result, state);
 
       if (policy?.kind === "omitted") {
         state.toolCallPolicies.delete(toolCallId);
-        return [];
+        return questionEvents;
       }
 
       if (policy?.kind === "translated") {
         state.toolCallPolicies.delete(toolCallId);
-        return policy.projectOnComplete?.(data) ?? [];
+        return [...questionEvents, ...(policy.projectOnComplete?.(data) ?? [])];
       }
 
       const toolEnd: SessionEvent = {
@@ -308,20 +333,53 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         toolCallId,
         ...(agentId ? { agentId } : {}),
         success: data.success,
-        result: readToolResultText(data),
+        result,
         details: data.result?.detailedContent,
       };
 
       if (policy?.kind === "augmented") {
         state.toolCallPolicies.delete(toolCallId);
-        return [toolEnd, ...(policy.projectOnComplete?.(data) ?? [])];
+        return [...questionEvents, toolEnd, ...(policy.projectOnComplete?.(data) ?? [])];
       }
 
       // Background tool calls can have a non-authoritative SDK completion event.
       // Skip it when another declared SDK event is the real completion source.
-      if (policy?.kind === "deferred") return [];
+      if (policy?.kind === "deferred") return questionEvents;
 
-      return [toolEnd];
+      return [...questionEvents, toolEnd];
+    }
+    case "user_input.requested": {
+      const toolCallId = event.data.toolCallId;
+      if (!toolCallId || event.agentId) return [];
+
+      state.questionToolCall = {
+        toolCallId,
+        requestId: event.data.requestId,
+      };
+
+      return [
+        {
+          type: "question_requested",
+          toolCallId,
+          requestId: event.data.requestId,
+          question: toSessionQuestion(event.data),
+        },
+      ];
+    }
+    case "user_input.completed": {
+      if (event.agentId) return [];
+      if (state.questionToolCall?.requestId !== event.data.requestId) return [];
+      if (event.data.answer === undefined) return [];
+
+      const { toolCallId } = state.questionToolCall;
+      state.questionToolCall = undefined;
+      return [
+        {
+          type: "question_resolved",
+          toolCallId,
+          answer: event.data.answer,
+        },
+      ];
     }
     default:
       return [];
@@ -493,8 +551,12 @@ function projectArtifactPatchEvents(files: PatchTouchedFile[]): SessionEvent[] {
 }
 
 function projectArtifactPatchEvent(patches: SessionArtifactPatch[]): SessionEvent[] {
-  if (patches.length === 0) return [];
-  return [{ type: "artifacts_patch", patches }];
+  const projectedPatches = patches.filter(
+    (patch) =>
+      patch.type === "delete" || ARTIFACT_EXTENSIONS.includes(extname(patch.path).toLowerCase()),
+  );
+  if (projectedPatches.length === 0) return [];
+  return [{ type: "artifacts_patch", patches: projectedPatches }];
 }
 
 function projectLinkedSessionEvent(
@@ -535,6 +597,51 @@ function readCreatedSessionResult(
   } catch {
     return undefined;
   }
+}
+
+function toSessionQuestion(question: SdkQuestion): SessionQuestionBase {
+  return {
+    question: question.question,
+    ...(question.choices?.length ? { choices: question.choices } : {}),
+    allowFreeform: question.allowFreeform ?? true,
+  };
+}
+
+function projectDurableQuestionResolution(
+  toolCallId: string,
+  result: string | undefined,
+  state: ProjectionState,
+): SessionEvent[] {
+  if (state.questionToolCall?.toolCallId !== toolCallId) return [];
+
+  state.questionToolCall = undefined;
+
+  const answer = readDurableQuestionAnswer(result);
+  if (!answer) return [];
+
+  return [
+    {
+      type: "question_resolved",
+      toolCallId,
+      answer,
+    },
+  ];
+}
+
+function readDurableQuestionAnswer(result: string | undefined): string | undefined {
+  if (!result) return undefined;
+
+  const selectedPrefix = "User selected: ";
+  if (result.startsWith(selectedPrefix)) {
+    return result.slice(selectedPrefix.length);
+  }
+
+  const respondedPrefix = "User responded: ";
+  if (result.startsWith(respondedPrefix)) {
+    return result.slice(respondedPrefix.length);
+  }
+
+  return undefined;
 }
 
 // ============================================================================

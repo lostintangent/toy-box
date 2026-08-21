@@ -1,5 +1,6 @@
 import type { MouseEvent, ReactNode } from "react";
 import {
+  CircleHelp,
   FolderOpen,
   Loader2,
   MessageCirclePlus,
@@ -12,7 +13,7 @@ import {
 import { Button } from "@/shared/components/ui/button";
 import { Toggle } from "@/shared/components/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
-import { useWorkspaceSelector, useWorkspaceSessionRunning } from "@workspace/hooks/state";
+import { useWorkspaceSelector, useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { cn } from "@/shared/utils";
 
 export type SidebarCreateOptions = {
@@ -175,12 +176,18 @@ export function SettingsButton({ onOpenSettings }: { onOpenSettings: () => void 
 }
 
 function HyperSessionStatus({ sessionId, isOpen }: { sessionId: string; isOpen: boolean }) {
-  const isRunning = useWorkspaceSessionRunning(sessionId);
+  const { running, waiting } = useWorkspaceSessionActivity(sessionId);
 
   return (
     <>
-      {isRunning && !isOpen ? <Loader2 className="animate-spin" /> : <MessageCirclePlus />}
-      {!isRunning && !isOpen && (
+      {waiting && !isOpen ? (
+        <CircleHelp />
+      ) : running && !isOpen ? (
+        <Loader2 className="animate-spin" />
+      ) : (
+        <MessageCirclePlus />
+      )}
+      {!running && !waiting && !isOpen && (
         <span className="absolute right-px top-px h-2.5 w-2.5 rounded-full bg-user-accent ring-2 ring-inset ring-background" />
       )}
     </>

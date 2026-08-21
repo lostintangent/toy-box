@@ -578,11 +578,16 @@ export function FileDiffToolCall({ toolCall, ...props }: ToolCallProps) {
   const fileDiffs = getToolCallFileDiffs(toolCall, cwd);
   const lineDiff = useToolCallDiff(toolCall.id);
   const patch = typeof toolCall.arguments.patch === "string" ? toolCall.arguments.patch : undefined;
+  const argumentsText =
+    Object.keys(toolCall.arguments).length > 0
+      ? JSON.stringify(toolCall.arguments, null, 2)
+      : undefined;
   const fallbackContent =
     toolCall.result === undefined
-      ? patch
+      ? (patch ?? argumentsText)
       : (toolCall.result.details ?? toolCall.result.content ?? patch);
-  const fallbackTitle = toolCall.result === undefined && patch ? "Patch" : "Result";
+  const fallbackTitle = toolCall.result === undefined ? (patch ? "Patch" : "Arguments") : "Result";
+  const expansionState = toolCall.result?.success === false ? "failed" : "default";
 
   const headerExtra = lineDiff && (
     <span className="text-xs shrink-0">
@@ -593,11 +598,12 @@ export function FileDiffToolCall({ toolCall, ...props }: ToolCallProps) {
 
   return (
     <ToolCallCard
+      key={expansionState}
       {...props}
       toolCall={toolCall}
       icon={Pencil}
       label={getFileDiffToolCallLabel(toolCall.name, fileDiffs, cwd)}
-      defaultExpanded={true}
+      defaultExpanded={expansionState !== "failed"}
       headerExtra={headerExtra}
       bodyClassName={fileDiffs?.length ? "p-0" : undefined}
     >

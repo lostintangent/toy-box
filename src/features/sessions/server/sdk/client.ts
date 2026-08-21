@@ -30,7 +30,7 @@ export async function createSession(
   const skillDirectories = getSessionSkillDirectories(options.sessionType);
   const client = await startCopilotClient();
 
-  return client.createSession({
+  const session = await client.createSession({
     sessionId,
     streaming: true,
     requestCanvasRenderer: true,
@@ -43,6 +43,8 @@ export async function createSession(
     onPermissionRequest: approveAll,
     tools: options.tools,
   });
+  await registerUserQuestionInterest(session, options.sessionType);
+  return session;
 }
 
 export async function createDraftSession(
@@ -67,7 +69,7 @@ export async function resumeSession(
 ): Promise<CopilotSession> {
   const skillDirectories = getSessionSkillDirectories(options.sessionType);
   const client = await startCopilotClient();
-  return client.resumeSession(sessionId, {
+  const session = await client.resumeSession(sessionId, {
     streaming: true,
     requestCanvasRenderer: true,
     workingDirectory: options.directory,
@@ -78,6 +80,19 @@ export async function resumeSession(
     onPermissionRequest: approveAll,
     tools: options.tools,
   });
+  await registerUserQuestionInterest(session, options.sessionType);
+  return session;
+}
+
+async function registerUserQuestionInterest(
+  session: CopilotSession,
+  sessionType: SessionType,
+): Promise<void> {
+  if (sessionType === "standard" || sessionType === "hyper") {
+    await session.rpc.eventLog.registerInterest({
+      eventType: "user_input.requested",
+    });
+  }
 }
 
 /** Delete a session from SDK persistence */

@@ -1,6 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
 import { workspaceQueries } from "@workspace/queries";
-import { isWorkspaceSessionRunning } from "@workspace/model/state/reducer";
 
 export const inboxQueries = {
   list: () =>
@@ -8,8 +7,8 @@ export const inboxQueries = {
       ...workspaceQueries.state(),
       select: (workspace) =>
         [...workspace.inboxEntries].sort((left, right) => {
-          const leftRunning = isWorkspaceSessionRunning(workspace.sessionStates[left.id]);
-          const rightRunning = isWorkspaceSessionRunning(workspace.sessionStates[right.id]);
+          const leftRunning = workspace.sessionStates[left.id]?.status === "running";
+          const rightRunning = workspace.sessionStates[right.id]?.status === "running";
           return (
             Number(rightRunning) - Number(leftRunning) ||
             right.createdAt.localeCompare(left.createdAt)

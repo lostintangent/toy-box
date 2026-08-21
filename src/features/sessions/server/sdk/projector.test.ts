@@ -56,9 +56,14 @@ const ARTIFACT_HTML_PATCH_PATH = `${homedir()}/.copilot/session-state/toy-box-se
 const HOME_RELATIVE_ARTIFACT_PATCH_PATH = ".copilot/session-state/toy-box-session/files/plan.html";
 const SESSION_STATE_PATCH_PATH = `${homedir()}/.copilot/session-state/toy-box-session/plan.md`;
 const OTHER_SESSION_ARTIFACT_PATH = `${homedir()}/.copilot/session-state/other-session/files/plan.md`;
+const NON_ARTIFACT_PATCH_PATH = `${homedir()}/.copilot/session-state/toy-box-session/files/run-tests.sh`;
 const ARTIFACT_PATCH_TEXT = `*** Begin Patch
 *** Add File: ${ARTIFACT_PATCH_PATH}
 +# Plan
+*** End Patch`;
+const NON_ARTIFACT_PATCH_TEXT = `*** Begin Patch
+*** Add File: ${NON_ARTIFACT_PATCH_PATH}
++bun test
 *** End Patch`;
 const HOME_RELATIVE_ARTIFACT_PATCH_TEXT = `*** Begin Patch
 *** Add File: ${HOME_RELATIVE_ARTIFACT_PATCH_PATH}
@@ -160,6 +165,35 @@ function toolExecutionComplete(
         : {}),
       ...(options.errorMessage !== undefined ? { error: { message: options.errorMessage } } : {}),
     },
+  });
+}
+
+function userInputRequested(
+  requestId: string,
+  toolCallId: string,
+  question: string,
+  choices?: string[],
+): SdkSessionEvent {
+  return sdkEvent({
+    type: "user_input.requested",
+    data: {
+      requestId,
+      toolCallId,
+      question,
+      choices,
+      allowFreeform: true,
+    },
+  });
+}
+
+function userInputCompleted(
+  requestId: string,
+  answer: string,
+  wasFreeform: boolean,
+): SdkSessionEvent {
+  return sdkEvent({
+    type: "user_input.completed",
+    data: { requestId, answer, wasFreeform },
   });
 }
 
@@ -412,6 +446,98 @@ describe("projector", () => {
           context,
         ),
       ).toEqual([]);
+    });
+  });
+
+  describe("streaming: user questions", () => {
+    test("projects a live question and suppresses duplicate durable resolution", () => {
+      const context = createStreamingContext();
+      const question = "Which database should I use?";
+      const choices = ["SQLite", "PostgreSQL"];
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("ask_user", "question-1", { question, choices }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_start",
+          toolName: "ask_user",
+          toolCallId: "question-1",
+          arguments: { question, choices },
+          question: { question, choices, allowFreeform: true },
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(userInputRequested("request-1", "question-1", question, choices), context),
+      ).toEqual([
+        {
+          type: "question_requested",
+          toolCallId: "question-1",
+          requestId: "request-1",
+          question: { question, choices, allowFreeform: true },
+        },
+      ]);
+
+      expect(projectSdkEvent(userInputCompleted("request-1", "SQLite", false), context)).toEqual([
+        {
+          type: "question_resolved",
+          toolCallId: "question-1",
+          answer: "SQLite",
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("question-1", {
+            resultContent: "User selected: SQLite",
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "tool_end",
+          toolCallId: "question-1",
+          success: true,
+          result: "User selected: SQLite",
+          details: undefined,
+        },
+      ]);
+    });
+
+    test("reconstructs selected and freeform answers from durable tool completion", () => {
+      for (const [toolCallId, result, answer] of [
+        ["question-choice", "User selected: SQLite", "SQLite"],
+        ["question-freeform", "User responded: Deploy after 5 PM", "Deploy after 5 PM"],
+      ] as const) {
+        const context = createStreamingContext();
+        projectSdkEvent(
+          toolExecutionStart("ask_user", toolCallId, {
+            question: "How should I proceed?",
+            choices: ["SQLite"],
+          }),
+          context,
+        );
+
+        expect(
+          projectSdkEvent(toolExecutionComplete(toolCallId, { resultContent: result }), context),
+        ).toEqual([
+          {
+            type: "question_resolved",
+            toolCallId,
+            answer,
+          },
+          {
+            type: "tool_end",
+            toolCallId,
+            success: true,
+            result,
+            details: undefined,
+          },
+        ]);
+      }
     });
   });
 
@@ -802,6 +928,27 @@ describe("projector", () => {
           context,
         ),
       ).toEqual([{ type: "artifacts_patch", patches: [{ type: "upsert", path: "plan.md" }] }]);
+    });
+
+    test("apply_patch does not project unsupported session files as artifacts", () => {
+      const context = createStreamingContext();
+
+      expect(
+        projectSdkEvent(
+          toolExecutionStart("apply_patch", "tool-patch-non-artifact", NON_ARTIFACT_PATCH_TEXT),
+          context,
+        ),
+      ).toEqual([]);
+
+      expect(
+        projectSdkEvent(
+          toolExecutionComplete("tool-patch-non-artifact", {
+            success: true,
+            resultContent: "Added 1 file(s)",
+          }),
+          context,
+        ),
+      ).toEqual([]);
     });
 
     test("apply_patch stays visible for root copilot session state files", () => {
@@ -1273,6 +1420,23 @@ describe("projector", () => {
       ).toEqual([]);
     });
 
+    test("drops user messages from the system source", () => {
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "user.message",
+            data: {
+              content: "",
+              transformedContent: "<system_reminder>Model-only context</system_reminder>",
+              source: "system",
+              delivery: "steering",
+            },
+          }),
+          createStreamingContext(),
+        ),
+      ).toEqual([]);
+    });
+
     test("drops user messages from skill sources without parsing their content", () => {
       expect(
         projectSdkEvent(
@@ -1513,23 +1677,44 @@ describe("projector", () => {
       ]);
     });
 
-    test("projects SDK workspace-file events into canonical artifacts", () => {
+    test("projects SDK workspace-file events for supported artifact extensions", () => {
       const context = createStreamingContext();
 
+      for (const path of [
+        "document.md",
+        "document.html",
+        "document.json",
+        "document.svg",
+        "document.intent",
+        "document.toy",
+      ]) {
+        expect(
+          projectSdkEvent(
+            sdkEvent({
+              type: "session.workspace_file_changed",
+              data: { operation: "update", path },
+            }),
+            context,
+          ),
+        ).toEqual([
+          {
+            type: "artifacts_patch",
+            patches: [{ type: "upsert", path }],
+          },
+        ]);
+      }
+    });
+
+    test("does not project SDK workspace-file events for unsupported artifact extensions", () => {
       expect(
         projectSdkEvent(
           sdkEvent({
             type: "session.workspace_file_changed",
-            data: { operation: "update", path: "document.md" },
+            data: { operation: "update", path: "run-tests.sh" },
           }),
-          context,
+          createStreamingContext(),
         ),
-      ).toEqual([
-        {
-          type: "artifacts_patch",
-          patches: [{ type: "upsert", path: "document.md" }],
-        },
-      ]);
+      ).toEqual([]);
     });
 
     test("projects subagent start model as a scoped model change", () => {

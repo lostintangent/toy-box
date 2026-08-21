@@ -9,6 +9,10 @@ import {
 } from "./index";
 import * as realSnapshotCache from "@sessions/server/state/snapshots";
 import * as realWorkspaceState from "@workspace/server/state";
+import {
+  deleteSessionState,
+  getSessionState as getWorkspaceSessionState,
+} from "@workspace/server/state/sessions";
 import * as realBroadcast from "@workspace/server/events";
 import { replaySdkHistory } from "@sessions/server/sdk/historyReplay";
 import { encodeSdkAgentNotification } from "@sessions/server/sdk/agentNotificationCodec";
@@ -427,6 +431,88 @@ describe("SessionStream lifecycle", () => {
   });
 });
 
+describe("SessionStream question answers", () => {
+  test("answers only the pending request owned by the live canonical state", async () => {
+    const sessionId = "session-question-answer";
+    cleanUpStreamAfterTest(sessionId);
+    onTestFinished(() => deleteSessionState(sessionId));
+
+    let isFirstAnswer = true;
+    const handlePendingUserInput = mock(async () => {
+      const success = isFirstAnswer;
+      isFirstAnswer = false;
+      return { success };
+    });
+    const { session, emitSdkEvent } = makeControllableSession({
+      rpc: {
+        ui: { handlePendingUserInput },
+      },
+    });
+    const stream = SessionStream.getOrCreate(sessionId, session);
+
+    expect(
+      await stream.answerQuestion({
+        requestId: "unknown-request",
+        answer: "SQLite",
+        wasFreeform: false,
+      }),
+    ).toBe(false);
+
+    emitSdkEvent("tool.execution_start", {
+      toolCallId: "question-1",
+      toolName: "ask_user",
+      arguments: {
+        question: "Which database should I use?",
+        choices: ["SQLite", "PostgreSQL"],
+      },
+    });
+    emitSdkEvent("user_input.requested", {
+      requestId: "request-1",
+      toolCallId: "question-1",
+      question: "Which database should I use?",
+      choices: ["SQLite", "PostgreSQL"],
+      allowFreeform: true,
+    });
+    expect(getWorkspaceSessionState(sessionId)?.status).toBe("waiting");
+
+    expect(
+      await stream.answerQuestion({
+        requestId: "request-1",
+        answer: "SQLite",
+        wasFreeform: false,
+      }),
+    ).toBe(true);
+    expect(handlePendingUserInput).toHaveBeenCalledWith({
+      requestId: "request-1",
+      response: { answer: "SQLite", wasFreeform: false },
+    });
+    expect(
+      await stream.answerQuestion({
+        requestId: "request-1",
+        answer: "PostgreSQL",
+        wasFreeform: false,
+      }),
+    ).toBe(false);
+    expect(handlePendingUserInput).toHaveBeenCalledTimes(2);
+    expect(getWorkspaceSessionState(sessionId)?.status).toBe("waiting");
+
+    emitSdkEvent("user_input.completed", {
+      requestId: "request-1",
+      answer: "SQLite",
+      wasFreeform: false,
+    });
+    expect(getWorkspaceSessionState(sessionId)?.status).toBe("running");
+    expect(
+      await stream.answerQuestion({
+        requestId: "request-1",
+        answer: "PostgreSQL",
+        wasFreeform: false,
+      }),
+    ).toBe(false);
+    expect(handlePendingUserInput).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("SessionStream abort", () => {
   test("aborts SDK work and finishes idle after its subscriber disconnects", async () => {
     const sessionId = "session-disconnected-abort";
@@ -603,7 +689,7 @@ describe("SessionStream queued messages", () => {
 
     const steering = stream.steerQueuedMessage("q1");
     expect(stream.getQueuedMessages()).toEqual([
-      { clientId: "q1", role: "user", content: "same prompt", isSteering: true },
+      { clientId: "q1", role: "user", content: "same prompt", immediate: true },
     ]);
     expect(stream.cancelQueuedMessage("q1")).toBe(false);
 
@@ -623,7 +709,7 @@ describe("SessionStream queued messages", () => {
       mode: "immediate",
     });
     expect(stream.getQueuedMessages()).toEqual([
-      { clientId: "q1", role: "user", content: "same prompt", isSteering: true },
+      { clientId: "q1", role: "user", content: "same prompt", immediate: true },
     ]);
     expect(
       stream.getSessionState().messages.filter((message) => message.role === "user"),
@@ -658,13 +744,13 @@ describe("SessionStream queued messages", () => {
     expect(await stream.steerQueuedMessage("steer-1")).toBe(true);
     expect(await stream.steerQueuedMessage("steer-2")).toBe(true);
     expect(stream.getQueuedMessages()).toEqual([
-      { clientId: "steer-1", role: "user", content: "first steer", isSteering: true },
-      { clientId: "steer-2", role: "user", content: "second steer", isSteering: true },
+      { clientId: "steer-1", role: "user", content: "first steer", immediate: true },
+      { clientId: "steer-2", role: "user", content: "second steer", immediate: true },
     ]);
 
     emitSdkEvent("user.message", { content: "canonical first", delivery: "steering" });
     expect(stream.getQueuedMessages()).toEqual([
-      { clientId: "steer-2", role: "user", content: "second steer", isSteering: true },
+      { clientId: "steer-2", role: "user", content: "second steer", immediate: true },
     ]);
     expect(stream.getReplayEventsSince().at(-1)).toMatchObject({
       type: "user_message",
@@ -1316,6 +1402,36 @@ describe("delivery receipts", () => {
     const completion = receipt.waitForCompletion();
     stream.finish();
     await expect(completion).resolves.toEqual({ status: "completed" });
+  });
+
+  test("delivers a message immediately into an active stream", async () => {
+    cleanUpStreamAfterTest("session-delivery-immediate");
+
+    const sendMock = mock(async () => "sent");
+    const { session } = makeControllableSession({ send: sendMock });
+    const stream = SessionStream.getOrCreate("session-delivery-immediate", session);
+    await stream.deliver(userMessage("Already running", "opening"));
+
+    const receipt = await deliverSessionMessage(
+      "session-delivery-immediate",
+      userMessage("Send this now", "immediate"),
+      { immediate: true },
+    );
+
+    expect(receipt.disposition).toBe("queued");
+    expect(sendMock).toHaveBeenLastCalledWith({
+      prompt: "Send this now",
+      attachments: undefined,
+      mode: "immediate",
+    });
+    expect(stream.getQueuedMessages()).toEqual([
+      {
+        clientId: "immediate",
+        role: "user",
+        content: "Send this now",
+        immediate: true,
+      },
+    ]);
   });
 
   test("returns a started receipt when the message opens an idle session turn", async () => {

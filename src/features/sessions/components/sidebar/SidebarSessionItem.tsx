@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactNode } from "react";
-import { Circle, Loader2, Pencil } from "lucide-react";
+import { Circle, CircleHelp, Loader2, Pencil } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
 import {
   SidebarListItemButton,
@@ -13,6 +13,7 @@ type SidebarSessionItemProps = SidebarListItemProps & {
   sessionId: string;
   activity: {
     running: boolean;
+    waiting: boolean;
     unread: boolean;
     hasDraftPrompt: boolean;
   };
@@ -41,7 +42,7 @@ export function SidebarSessionItem({
   onMouseLeave,
   ...props
 }: SidebarSessionItemProps) {
-  const { running, unread, hasDraftPrompt } = activity;
+  const { running, waiting, unread, hasDraftPrompt } = activity;
   const preview = useSessionPreview(isActive || previewDisabled || disabled);
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
@@ -68,6 +69,7 @@ export function SidebarSessionItem({
         <SidebarSessionItemAction
           title={title}
           running={running}
+          waiting={waiting}
           unread={unread && !isActive}
           hasDraftPrompt={hasDraftPrompt}
           menuDisabled={menuDisabled}
@@ -105,6 +107,7 @@ export function SidebarSessionItem({
 function SidebarSessionItemAction({
   title,
   running,
+  waiting,
   unread,
   hasDraftPrompt,
   menuDisabled,
@@ -112,30 +115,37 @@ function SidebarSessionItemAction({
 }: {
   title: string;
   running: boolean;
+  waiting: boolean;
   unread: boolean;
   hasDraftPrompt: boolean;
   menuDisabled: boolean;
   children: ReactNode;
 }) {
-  const status = running
+  const status = waiting
     ? {
-        ariaLabel: `${title} is running`,
-        tooltip: "Session is running",
-        icon: <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />,
+        ariaLabel: `${title} is waiting for input`,
+        tooltip: "Session is waiting for input",
+        icon: <CircleHelp className="h-4 w-4 text-muted-foreground" aria-hidden />,
       }
-    : unread
+    : running
       ? {
-          ariaLabel: `${title} has unread messages`,
-          tooltip: "Session has unread messages",
-          icon: <Circle className="h-2.5 w-2.5 fill-unread text-unread" aria-hidden />,
+          ariaLabel: `${title} is running`,
+          tooltip: "Session is running",
+          icon: <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />,
         }
-      : hasDraftPrompt
+      : unread
         ? {
-            ariaLabel: `${title} has a draft prompt`,
-            tooltip: "Session has a draft prompt",
-            icon: <Pencil className="h-4 w-4 text-muted-foreground" aria-hidden />,
+            ariaLabel: `${title} has unread messages`,
+            tooltip: "Session has unread messages",
+            icon: <Circle className="h-2.5 w-2.5 fill-unread text-unread" aria-hidden />,
           }
-        : null;
+        : hasDraftPrompt
+          ? {
+              ariaLabel: `${title} has a draft prompt`,
+              tooltip: "Session has a draft prompt",
+              icon: <Pencil className="h-4 w-4 text-muted-foreground" aria-hidden />,
+            }
+          : null;
 
   if (status) {
     return (

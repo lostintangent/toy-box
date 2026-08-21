@@ -112,7 +112,10 @@ function commitSessionPrompt(sessionId: string, text: string, origin: string): v
   if (prompt) broadcast({ type: "session.prompt.drafted", sessionId, prompt });
 }
 
-export function setSessionStatus(sessionId: string, status: "running" | "idle" | "unread"): void {
+export function setSessionStatus(
+  sessionId: string,
+  status: "running" | "waiting" | "idle" | "unread",
+): void {
   commitSessionEvent({ type: `session.${status}`, sessionId } as const);
 }
 

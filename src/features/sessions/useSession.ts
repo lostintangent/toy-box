@@ -24,7 +24,7 @@ import { streamSession } from "./server/functions";
 import { usePageVisibility } from "@/shared/hooks/usePageVisibility";
 import { generateUUID } from "@/shared/utils";
 import { applyWorkspaceEvent, dispatchWorkspaceAction } from "@workspace/queries";
-import type { WorkspaceSessionState } from "@workspace/model/state/reducer";
+import { isWorkspaceSessionLive, type WorkspaceSessionState } from "@workspace/model/state/reducer";
 
 interface SessionConfig {
   workspaceSessionStatus: WorkspaceSessionState["status"];
@@ -54,7 +54,7 @@ export function useSession(
   const queryClient = useQueryClient();
   const sessionQuery = sessionQueries.detail(sessionId);
   const isDraft = workspaceSessionStatus === "draft";
-  const isSessionRunning = workspaceSessionStatus === "running";
+  const isSessionLive = isWorkspaceSessionLive(workspaceSessionStatus);
   const isSessionUnread = workspaceSessionStatus === "unread";
   const isVisible = usePageVisibility();
 
@@ -262,7 +262,7 @@ export function useSession(
     },
   });
 
-  const sendMessage = async (prompt: string, attachments: Attachment[] = []) => {
+  const sendMessage = async (prompt: string, attachments: Attachment[] = [], immediate?: true) => {
     if (!prompt.trim() && attachments.length === 0) return;
     const clientId = generateUUID();
     const messageAttachments = attachments.length > 0 ? attachments : undefined;
@@ -273,12 +273,13 @@ export function useSession(
 
     // Server running state owns the send-vs-queue distinction. The controller
     // also closes the same-tick gap before that shared state reaches React.
-    if (isSessionRunning || abortControllerRef.current) {
+    if (isSessionLive || abortControllerRef.current) {
       followUpMutation.mutate({
         clientId,
         content: prompt,
         attachments: messageAttachments,
         model,
+        immediate,
       });
       return;
     }
@@ -392,7 +393,7 @@ export function useSession(
 
     if (isDraft || !isVisible || !hasLoadedSessionState) return;
 
-    if (isSessionRunning) {
+    if (isSessionLive) {
       void subscribeToSession(subscriptionMode);
       return;
     }
@@ -410,7 +411,7 @@ export function useSession(
   }, [
     hasLoadedSessionState,
     isDraft,
-    isSessionRunning,
+    isSessionLive,
     isSessionUnread,
     isVisible,
     sessionId,

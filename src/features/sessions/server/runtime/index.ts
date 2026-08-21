@@ -2,7 +2,7 @@
 // create or deliver; connected callers use one composite that subscribes while
 // optionally doing either. Every mutation acquires the same live runtime.
 
-import type { StreamSessionRequest } from "@sessions/model/protocol";
+import type { SessionQuestionAnswer, StreamSessionRequest } from "@sessions/model/protocol";
 import { sessionSeedFromSnapshot, toSessionSnapshot } from "@sessions/model/reducer";
 import type {
   AgentNotification,
@@ -117,6 +117,13 @@ export async function abortSession(sessionId: string): Promise<boolean> {
   return true;
 }
 
+export async function answerSessionQuestion(
+  sessionId: string,
+  answer: SessionQuestionAnswer,
+): Promise<boolean> {
+  return SessionStream.get(sessionId)?.answerQuestion(answer) ?? false;
+}
+
 /** Discard one root user turn and every later conversation event while preserving files. */
 export async function rewindSession(
   sessionId: string,
@@ -214,6 +221,8 @@ export async function streamSession(
 type MessageInput = SessionMessage | { clientId?: string; notification: AgentNotification };
 
 type SessionCreationOptions = Omit<sessionRegistry.CreateSessionOptions, "model">;
+type MessageDeliveryOptions = { immediate?: true };
+type DeliverOptions = MessageDeliveryOptions & { create?: SessionCreationOptions };
 
 /** Create a session through its required first message without subscribing. */
 export function createSession(
@@ -221,15 +230,23 @@ export function createSession(
   message: SessionMessage,
   options: SessionCreationOptions,
 ) {
-  return deliver(sessionId, message, options);
+  return deliver(sessionId, message, { create: options });
 }
 
 /** Deliver to an existing session without subscribing. */
-export function deliverSessionMessage(sessionId: string, message: MessageInput) {
-  return deliver(sessionId, message);
+export function deliverSessionMessage(
+  sessionId: string,
+  message: MessageInput,
+  options?: MessageDeliveryOptions,
+) {
+  return deliver(sessionId, message, options);
 }
 
-async function deliver(sessionId: string, message: MessageInput, create?: SessionCreationOptions) {
+async function deliver(
+  sessionId: string,
+  message: MessageInput,
+  { create, immediate }: DeliverOptions = {},
+) {
   const normalizedMessage = normalizeMessage(message);
   let retriedFinishedStream = false;
   let retriedStaleHandle = false;
@@ -237,7 +254,7 @@ async function deliver(sessionId: string, message: MessageInput, create?: Sessio
   for (;;) {
     try {
       const stream = await acquireSessionStream(sessionId, normalizedMessage, create);
-      const disposition = await stream.deliver(normalizedMessage);
+      const disposition = await stream.deliver(normalizedMessage, immediate);
       return {
         disposition,
         waitForCompletion: () => stream.waitForCompletion(),

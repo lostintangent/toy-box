@@ -43,7 +43,13 @@ export type TodoItemPatch =
   | { type: "update_all"; status: TodoStatus }
   | { type: "delete"; id: string };
 
-export type SessionStatus = "idle" | "thinking" | "compacting" | "reasoning" | "responding";
+export type SessionStatus =
+  | "idle"
+  | "waiting"
+  | "thinking"
+  | "compacting"
+  | "reasoning"
+  | "responding";
 
 /** The observable result of waiting for a session's current execution. */
 export type SessionCompletion = {
@@ -115,6 +121,19 @@ type SubAgent = {
   toolCalls?: ToolCall[];
 };
 
+export type SessionQuestionBase = {
+  question: string;
+  choices?: string[];
+  allowFreeform: boolean;
+};
+
+export type SessionQuestion = SessionQuestionBase &
+  (
+    | { state: "unanswered" }
+    | { state: "pending"; requestId: string }
+    | { state: "answered"; answer: string }
+  );
+
 export type ToolCall = {
   id: string;
   name: string;
@@ -125,6 +144,7 @@ export type ToolCall = {
     details?: string;
   };
   agent?: SubAgent;
+  question?: SessionQuestion;
 };
 
 /** Build a data URL from an attachment's base64 content and MIME type. */
@@ -137,7 +157,7 @@ export type QueuedUserMessage = Omit<UserMessage, "timestamp"> & {
   clientId: string;
   model?: ModelConfiguration;
   /** Immediate delivery has been requested, but the canonical SDK user message has not arrived. */
-  isSteering?: true;
+  immediate?: true;
 };
 
 type QueuedAgentNotificationMessage = Omit<AgentNotificationMessage, "timestamp"> & {
@@ -186,6 +206,7 @@ export type SessionEvent = (
       toolCallId: string;
       agentId?: string;
       arguments: { [key: string]: JSONType };
+      question?: SessionQuestionBase;
     }
   | {
       type: "tool_end";
@@ -194,6 +215,17 @@ export type SessionEvent = (
       success: boolean;
       result?: string;
       details?: string;
+    }
+  | {
+      type: "question_requested";
+      toolCallId: string;
+      requestId: string;
+      question: SessionQuestionBase;
+    }
+  | {
+      type: "question_resolved";
+      toolCallId: string;
+      answer: string;
     }
   | { type: "status"; status: SessionStatus }
   | { type: "todos_patch"; patches: TodoItemPatch[] }

@@ -175,7 +175,7 @@ export type WorkspaceFileState = {
 export type AppSession = {
   id: string;
   title: string;
-  status: "draft" | "running" | "idle" | "unread";
+  status: "draft" | "running" | "waiting" | "idle" | "unread";
   /**
    * How the session is governed: an ordinary conversation, a scheduled
    * automation's durable run session, or a member of the Hyper workspace.

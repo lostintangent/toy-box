@@ -5,6 +5,7 @@ import { BashToolCall } from "./BashToolCall";
 import { FileDiffToolCall } from "./FileDiffToolCall";
 import { DefaultToolCall } from "./DefaultToolCall";
 import { GlobToolCall } from "./GlobToolCall";
+import { QuestionToolCall } from "./QuestionToolCall";
 import { ReadToolCall } from "./ReadToolCall";
 import { SqlToolCall } from "./SqlToolCall";
 import { WebFetchToolCall } from "./WebFetchToolCall";
@@ -28,6 +29,10 @@ const TOOL_RENDERERS: Record<string, ComponentType<ToolCallProps>> = {
 };
 
 export function ToolCallMessage({ toolCall, isActive }: ToolCallMessageProps) {
+  if (toolCall.question) {
+    return <QuestionToolCall question={toolCall.question} />;
+  }
+
   const Renderer = TOOL_RENDERERS[toolCall.name] ?? DefaultToolCall;
   return <Renderer toolCall={toolCall} isActive={isActive} />;
 }

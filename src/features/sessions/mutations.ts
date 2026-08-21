@@ -1,5 +1,6 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import {
+  answerSessionQuestion,
   abortSession,
   applySessionWorktree,
   cancelQueuedMessage,
@@ -22,8 +23,9 @@ import {
 } from "./queryCache";
 import { applyWorkspaceEvent } from "@workspace/queries";
 import type { SessionLaunch, SessionMessage } from "./model";
+import type { SessionQuestionAnswer } from "./model/protocol";
 
-type DeliveredMessage = SessionMessage & { clientId: string };
+type MessageDelivery = SessionMessage & { clientId: string; immediate?: true };
 type CreateDraftSessionVariables = {
   sessionId: string;
   createdAt: number;
@@ -98,7 +100,17 @@ export const sessionMutations = {
 
   deliverMessage: (sessionId: string) =>
     mutationOptions({
-      mutationFn: (message: DeliveredMessage) => deliverMessage({ data: { sessionId, message } }),
+      mutationFn: ({ immediate, ...message }: MessageDelivery) =>
+        deliverMessage({ data: { sessionId, message, immediate } }),
+    }),
+
+  answerSessionQuestion: (sessionId: string) =>
+    mutationOptions({
+      mutationFn: (answer: SessionQuestionAnswer) =>
+        answerSessionQuestion({ data: { sessionId, ...answer } }),
+      onSuccess: (accepted, _variables, _onMutateResult, { client }) => {
+        if (!accepted) return invalidateSession(client, sessionId);
+      },
     }),
 
   abortSession: (sessionId: string) =>

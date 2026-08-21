@@ -35,6 +35,14 @@ describe("computeSessionDiffs", () => {
             result: {
               content: "ok",
               success: true,
+              details: `diff --git a/Users/lostintangent/Desktop/toy-box/docs/edit.md b/Users/lostintangent/Desktop/toy-box/docs/edit.md
+--- a/Users/lostintangent/Desktop/toy-box/docs/edit.md
++++ b/Users/lostintangent/Desktop/toy-box/docs/edit.md
+@@ -1,2 +1,3 @@
+ one
+-two
++three
++four`,
             },
           },
           {

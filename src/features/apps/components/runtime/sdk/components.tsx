@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { Circle, Loader2, PanelTop, Sparkles } from "lucide-react";
+import { Circle, CircleHelp, Loader2, PanelTop, Sparkles } from "lucide-react";
 import { ModelConfigurationPicker } from "@sessions/components/composer/ModelPicker";
 import { Badge } from "@/shared/components/ui/badge";
 import { Button } from "@/shared/components/ui/button";
@@ -91,6 +91,7 @@ export function AppSessionStatus({
   ...props
 }: Omit<ComponentProps<"span">, "children"> & { status: AppSession["status"] }) {
   const running = status === "running";
+  const waiting = status === "waiting";
   const finished = status === "unread";
   return (
     <Badge
@@ -100,20 +101,32 @@ export function AppSessionStatus({
         "gap-1.5",
         running
           ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
-          : finished
-            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-            : "text-muted-foreground",
+          : waiting
+            ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+            : finished
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "text-muted-foreground",
         className,
       )}
     >
       {running ? (
         <Loader2 aria-hidden="true" className="size-3 animate-spin" />
+      ) : waiting ? (
+        <CircleHelp aria-hidden="true" className="size-3" />
       ) : finished ? (
         <Sparkles aria-hidden="true" className="size-3" />
       ) : (
         <Circle aria-hidden="true" className="size-2.5" />
       )}
-      {running ? "Running" : finished ? "Finished" : status === "draft" ? "Draft" : "Idle"}
+      {running
+        ? "Running"
+        : waiting
+          ? "Waiting"
+          : finished
+            ? "Finished"
+            : status === "draft"
+              ? "Draft"
+              : "Idle"}
     </Badge>
   );
 }

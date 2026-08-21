@@ -36,6 +36,8 @@ import type {
   SessionArtifactPatch,
   SessionCanvas,
   SessionEvent,
+  SessionQuestion,
+  SessionQuestionBase,
   SessionSnapshot,
   SessionStatus,
   TodoItem,
@@ -120,6 +122,20 @@ export function toSessionSnapshot(
 export function sessionSeedFromSnapshot(snapshot: SessionSnapshot): Partial<Session> {
   const { id: _id, lastSeenEventId: _lastSeenEventId, ...seed } = snapshot;
   return seed;
+}
+
+export function hasPendingSessionQuestion(
+  session: Pick<Session, "messages">,
+  requestId: string,
+): boolean {
+  return session.messages.some(
+    (message) =>
+      message.role === "assistant" &&
+      message.toolCalls?.some(
+        (toolCall) =>
+          toolCall.question?.state === "pending" && toolCall.question.requestId === requestId,
+      ) === true,
+  );
 }
 
 /** Reduce one canonical event into a new Session. The switch mutates only this
@@ -293,6 +309,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
         id: event.toolCallId,
         name: event.toolName,
         arguments: event.arguments,
+        ...(event.question ? { question: { ...event.question, state: "unanswered" } } : {}),
       });
       applyPendingToolCallsToLastAssistant(state);
       return;
@@ -328,7 +345,40 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
       // Deferred completions can arrive after a message boundary has moved the
       // call out of pendingToolCalls. The shared updater resolves either form.
-      updateToolCall(state, event.toolCallId, (toolCall) => ({ ...toolCall, result }));
+      updateToolCall(state, event.toolCallId, (toolCall) => ({
+        ...toolCall,
+        result,
+      }));
+      return;
+    }
+
+    case "question_requested": {
+      updateToolCall(state, event.toolCallId, (toolCall) => ({
+        ...toolCall,
+        question: {
+          ...event.question,
+          state: "pending",
+          requestId: event.requestId,
+        },
+      }));
+      state.status = "waiting";
+      state.reasoningContent = "";
+      return;
+    }
+
+    case "question_resolved": {
+      updateToolCall(state, event.toolCallId, (toolCall) => {
+        if (!toolCall.question) return toolCall;
+        return {
+          ...toolCall,
+          question: {
+            ...toQuestionBase(toolCall.question),
+            state: "answered",
+            answer: event.answer,
+          },
+        };
+      });
+      state.status = "thinking";
       return;
     }
 
@@ -403,6 +453,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     // ── Lifecycle ─────────────────────────────────────────────────────
 
     case "end":
+      state.messages = markPendingQuestionUnanswered(state.messages);
       // Idempotent on purpose: clients can synthesize fallback end events for
       // event-less completions/transport failures, and replays can deliver one
       // after state is already final.
@@ -630,6 +681,32 @@ function appendAssistantDelta(state: Session, content: string): void {
 // ============================================================================
 // Tool call helpers
 // ============================================================================
+
+function toQuestionBase(question: SessionQuestion): SessionQuestionBase {
+  return {
+    question: question.question,
+    ...(question.choices ? { choices: question.choices } : {}),
+    allowFreeform: question.allowFreeform,
+  };
+}
+
+function markPendingQuestionUnanswered(messages: Message[]): Message[] {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
+    const message = messages[messageIndex];
+    if (message.role !== "assistant" || !message.toolCalls) continue;
+    for (const [toolCallIndex, toolCall] of message.toolCalls.entries()) {
+      if (toolCall.question?.state !== "pending") continue;
+      return replaceAt(messages, messageIndex, {
+        ...message,
+        toolCalls: replaceAt(message.toolCalls, toolCallIndex, {
+          ...toolCall,
+          question: { ...toQuestionBase(toolCall.question), state: "unanswered" },
+        }),
+      });
+    }
+  }
+  return messages;
+}
 
 function applyPendingToolCallsToLastAssistant(state: Session): void {
   const last = state.messages[state.messages.length - 1];

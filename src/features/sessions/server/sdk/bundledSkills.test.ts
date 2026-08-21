@@ -6,6 +6,10 @@ import appRuntimeReference from "@apps/server/skills/create-toy-box-app/referenc
 import appAuthoringSkill from "@apps/server/skills/create-toy-box-app/SKILL.md?raw";
 import editorRuntimeReference from "@files/server/skills/create-toy-box-editor/references/runtime.md?raw";
 import editorAuthoringSkill from "@files/server/skills/create-toy-box-editor/SKILL.md?raw";
+import intentExample from "@files/server/skills/create-toy-box-intent/references/example.intent?raw";
+import intentSchemaReference from "@files/server/skills/create-toy-box-intent/references/schema.md?raw";
+import intentAuthoringSkill from "@files/server/skills/create-toy-box-intent/SKILL.md?raw";
+import type { SessionType } from "@sessions/model";
 import { getSessionSkillDirectories, installBundledSkills } from "./bundledSkills";
 
 const temporaryRoots: string[] = [];
@@ -15,6 +19,11 @@ const bundledFiles = {
   "../../features/files/server/skills/create-toy-box-editor/SKILL.md": editorAuthoringSkill,
   "../../features/files/server/skills/create-toy-box-editor/references/runtime.md":
     editorRuntimeReference,
+  "../../features/files/server/skills/create-toy-box-intent/SKILL.md": intentAuthoringSkill,
+  "../../features/files/server/skills/create-toy-box-intent/references/schema.md":
+    intentSchemaReference,
+  "../../features/files/server/skills/create-toy-box-intent/references/example.intent":
+    intentExample,
   "../../features/example/server/skills/example-skill/SKILL.md":
     "---\nname: example-skill\ndescription: Test skill.\n---\n",
 };
@@ -26,14 +35,23 @@ afterEach(async () => {
 });
 
 describe("bundled SDK skills", () => {
-  test("materializes every bundled skill and exposes only role-owned directories", async () => {
+  test("materializes every bundled skill and exposes universal plus role-owned directories", async () => {
     const root = await mkdtemp(join(tmpdir(), "toy-box-skills-"));
     temporaryRoots.push(root);
 
-    expect(getSessionSkillDirectories("standard", root)).toEqual([
-      join(root, "create-toy-box-app"),
-    ]);
-    expect(getSessionSkillDirectories("worker", root)).toBeUndefined();
+    for (const sessionType of [
+      "standard",
+      "automation",
+      "inbox",
+      "hyper",
+      "worker",
+    ] satisfies SessionType[]) {
+      expect(getSessionSkillDirectories(sessionType, root)).toEqual([
+        join(root, "create-toy-box-app"),
+        join(root, "create-toy-box-intent"),
+        ...(sessionType === "hyper" ? [join(root, "create-toy-box-editor")] : []),
+      ]);
+    }
 
     const staleReference = join(root, "create-toy-box-app", "references", "sdk.md");
     await mkdir(join(root, "create-toy-box-app", "references"), { recursive: true });
@@ -43,18 +61,23 @@ describe("bundled SDK skills", () => {
     expect(await readFile(join(root, "example-skill", "SKILL.md"), "utf-8")).toContain(
       "name: example-skill",
     );
-
-    const directories = getSessionSkillDirectories("hyper", root);
-    expect(directories).toEqual([
-      join(root, "create-toy-box-app"),
-      join(root, "create-toy-box-editor"),
-    ]);
-
-    const appSkill = await readFile(join(directories![0]!, "SKILL.md"), "utf-8");
-    const appReference = await readFile(
-      join(directories![0]!, "references", "runtime.md"),
+    const intentSkill = await readFile(join(root, "create-toy-box-intent", "SKILL.md"), "utf-8");
+    expect(intentSkill).toContain("name: create-toy-box-intent");
+    expect(intentSkill).toContain("`start-work`");
+    expect(intentSkill).not.toContain("`plan-implementation`");
+    expect(
+      await readFile(join(root, "create-toy-box-intent", "references", "schema.md"), "utf-8"),
+    ).toContain("The `.intent` format");
+    const intentExample = await readFile(
+      join(root, "create-toy-box-intent", "references", "example.intent"),
       "utf-8",
     );
+    expect(intentExample).toContain('"title": "Let ordinary tools share message bodies"');
+    expect(intentExample).not.toContain('"version"');
+
+    const appDirectory = join(root, "create-toy-box-app");
+    const appSkill = await readFile(join(appDirectory, "SKILL.md"), "utf-8");
+    const appReference = await readFile(join(appDirectory, "references", "runtime.md"), "utf-8");
     expect(appSkill).toContain("name: create-toy-box-app");
     expect(appSkill).toContain("Artifact App");
     expect(appSkill).toContain("`.toy`");
@@ -101,9 +124,10 @@ describe("bundled SDK skills", () => {
     expect(appReference).not.toContain("@tanstack/store");
     expect(appReference).not.toContain("@tanstack/react-store");
 
-    const editorSkill = await readFile(join(directories![1]!, "SKILL.md"), "utf-8");
+    const editorDirectory = join(root, "create-toy-box-editor");
+    const editorSkill = await readFile(join(editorDirectory, "SKILL.md"), "utf-8");
     const editorReference = await readFile(
-      join(directories![1]!, "references", "runtime.md"),
+      join(editorDirectory, "references", "runtime.md"),
       "utf-8",
     );
     expect(editorSkill).toContain("name: create-toy-box-editor");

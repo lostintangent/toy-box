@@ -102,6 +102,7 @@ export type SessionLaunch = z.infer<typeof sessionLaunchSchema>;
 
 export const deliverMessageInputSchema = sessionInputSchema.extend({
   message: sessionMessageSchema,
+  immediate: z.literal(true).optional(),
 });
 
 export const notifyAgentInputSchema = sessionInputSchema.extend({
@@ -112,5 +113,16 @@ export const queuedMessageInputSchema = sessionInputSchema.extend({
   clientId: z.string(),
 });
 
+const sessionQuestionAnswerSchema = z.object({
+  requestId: z.string().min(1),
+  answer: z.string().trim().min(1),
+  wasFreeform: z.boolean(),
+});
+
+export const answerSessionQuestionInputSchema = sessionInputSchema.extend(
+  sessionQuestionAnswerSchema.shape,
+);
+
+export type SessionQuestionAnswer = z.infer<typeof sessionQuestionAnswerSchema>;
 export type SessionSubscriptionMode = z.infer<typeof sessionSubscriptionModeSchema>;
 export type StreamSessionRequest = z.infer<typeof streamSessionRequestSchema>;

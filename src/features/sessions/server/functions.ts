@@ -19,6 +19,7 @@ import {
 } from "@sessions/server/state/worktrees";
 import { getWorkerSessionParents } from "@workers/server/database";
 import {
+  answerSessionQuestion as answerRuntimeSessionQuestion,
   abortSession as abortRuntimeSession,
   cancelQueuedMessage as cancelRuntimeQueuedMessage,
   createSession as createRuntimeSession,
@@ -38,6 +39,7 @@ import type {
 } from "../model";
 import { SESSION_ID_PREFIX } from "../model/constants";
 import {
+  answerSessionQuestionInputSchema,
   sessionLaunchSchema,
   createDraftSessionInputSchema,
   deliverMessageInputSchema,
@@ -166,11 +168,13 @@ export const createDraftSession = createServerFn({ method: "POST" })
     sessionRegistry.createDraftSession(sessionId, options),
   );
 
-/** Deliver a follow-up message. The runtime decides whether it sends now or queues. */
+/** Deliver a follow-up message, optionally requesting immediate delivery. */
 export const deliverMessage = createServerFn({ method: "POST" })
   .validator(zodValidator(deliverMessageInputSchema))
   .handler(async ({ data }): Promise<{ disposition: "started" | "queued" }> => {
-    const receipt = await deliverSessionMessage(data.sessionId, data.message);
+    const receipt = await deliverSessionMessage(data.sessionId, data.message, {
+      immediate: data.immediate,
+    });
     clearDraftPrompt(data.sessionId);
     return { disposition: receipt.disposition };
   });
@@ -194,6 +198,13 @@ export const steerQueuedMessage = createServerFn({ method: "POST" })
   .validator(zodValidator(queuedMessageInputSchema))
   .handler(
     ({ data }): Promise<boolean> => steerRuntimeQueuedMessage(data.sessionId, data.clientId),
+  );
+
+export const answerSessionQuestion = createServerFn({ method: "POST" })
+  .validator(zodValidator(answerSessionQuestionInputSchema))
+  .handler(
+    ({ data: { sessionId, ...answer } }): Promise<boolean> =>
+      answerRuntimeSessionQuestion(sessionId, answer),
   );
 
 /** Abort the currently processing message in a session.

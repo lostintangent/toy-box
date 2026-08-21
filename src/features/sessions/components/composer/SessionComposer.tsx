@@ -47,7 +47,7 @@ import type { FileDiffSummary } from "../transcript/editDiffs";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { cn } from "@/shared/utils";
 
-type SessionComposerSubmit = (prompt: string, attachments: Attachment[]) => void;
+type SessionComposerSubmit = (prompt: string, attachments: Attachment[], immediate?: true) => void;
 
 type ComposerPromptBinding =
   | { sessionId: string }
@@ -154,7 +154,7 @@ type ComposerPromptProps = {
   hasAttachments: boolean;
   isStreaming: boolean;
   onStop?: () => void;
-  onSubmit: () => void;
+  onSubmit: (immediate?: true) => void;
   onRun?: () => void;
   onSend?: () => void;
   onPaste: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
@@ -191,6 +191,7 @@ function ComposerPrompt({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isSubmitDisabled = !prompt.trim() && !hasAttachments;
   const submitButtonVariant = isSubmitDisabled ? "ghost" : "accent";
+  const submitLabel = isStreaming ? "Queue message" : "Send message";
   const textareaSizeClass = isControlled ? "min-h-20 max-h-36" : "min-h-10 max-h-18";
 
   useImperativeHandle(
@@ -256,21 +257,53 @@ function ComposerPrompt({
             </Tooltip>
           )}
           {!isControlled ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <InputGroupButton
-                  type="submit"
-                  size="icon-xs"
-                  aria-label="Send message"
-                  disabled={isSubmitDisabled}
-                  variant={submitButtonVariant}
-                  suppressHydrationWarning
-                >
-                  <ArrowUp className="h-4 w-4" />
-                </InputGroupButton>
-              </TooltipTrigger>
-              <TooltipContent sideOffset={6}>Send message</TooltipContent>
-            </Tooltip>
+            <div className="flex">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <InputGroupButton
+                    type="submit"
+                    size="icon-xs"
+                    aria-label={submitLabel}
+                    disabled={isSubmitDisabled}
+                    variant={submitButtonVariant}
+                    suppressHydrationWarning
+                    className={isStreaming ? "rounded-e-none" : undefined}
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </InputGroupButton>
+                </TooltipTrigger>
+                <TooltipContent sideOffset={6}>{submitLabel}</TooltipContent>
+              </Tooltip>
+              {isStreaming && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <InputGroupButton
+                      size="icon-xs"
+                      aria-label="Message delivery options"
+                      disabled={isSubmitDisabled}
+                      variant={submitButtonVariant}
+                      suppressHydrationWarning
+                      className="w-4 rounded-s-none border-l border-background data-[state=open]:bg-user-accent/90"
+                    >
+                      <ChevronDown className="h-3 w-3" />
+                    </InputGroupButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    onCloseAutoFocus={(event) => event.preventDefault()}
+                  >
+                    <DropdownMenuItem onSelect={() => onSubmit()}>
+                      <ArrowUp />
+                      Queue message
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => onSubmit(true)}>
+                      <Play />
+                      Send immediately
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
           ) : (
             <div className="flex items-center rounded-[calc(var(--radius)-5px)]">
               <InputGroupButton
@@ -415,17 +448,17 @@ export function SessionComposer(props: SessionComposerProps) {
     }
   };
 
-  const submitWith = (submitter: SessionComposerSubmit | undefined) => {
+  const submitWith = (submitter: SessionComposerSubmit | undefined, immediate?: true) => {
     const prompt = promptHandle.current?.prompt.trim() ?? "";
     if ((!prompt && attachments.length === 0) || !submitter) return false;
-    submitter(prompt, attachments);
+    submitter(prompt, attachments, immediate);
     promptHandle.current?.setPrompt("");
     setAttachments([]);
     promptHandle.current?.focus();
     return true;
   };
 
-  const submit = () => submitWith(createsSession ? onRun : onSubmit);
+  const submit = (immediate?: true) => submitWith(createsSession ? onRun : onSubmit, immediate);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

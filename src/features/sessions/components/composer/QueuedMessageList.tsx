@@ -74,10 +74,10 @@ function QueuedMessageRow({
   onCancel: () => void;
 }) {
   const steerMutation = useMutation(sessionMutations.steerQueuedMessage(sessionId));
-  const isSteering =
+  const isSendingImmediately =
     message.role === "user" &&
-    (message.isSteering === true || steerMutation.isPending || steerMutation.data === true);
-  const canSteer = message.role === "user" && !cancelDisabled && !isSteering;
+    (message.immediate === true || steerMutation.isPending || steerMutation.data === true);
+  const canSteer = message.role === "user" && !cancelDisabled && !isSendingImmediately;
   const attachments = message.role === "user" ? (message.attachments ?? []) : [];
   const label =
     message.role === "agent_notification"
@@ -109,14 +109,14 @@ function QueuedMessageRow({
         type="button"
         variant="ghost"
         size="icon"
-        aria-label={isSteering ? "Sending queued message now" : "Edit queued message"}
+        aria-label={isSendingImmediately ? "Sending queued message now" : "Edit queued message"}
         aria-live="polite"
-        disabled={isSteering || cancelDisabled || message.role !== "user"}
+        disabled={isSendingImmediately || cancelDisabled || message.role !== "user"}
         data-long-press-ignore
         className="h-5 w-5 shrink-0 rounded-full"
         onClick={onEdit}
       >
-        {isSteering ? (
+        {isSendingImmediately ? (
           <LoaderCircle className="h-3 w-3 animate-spin" />
         ) : (
           <Pencil className="h-3 w-3" />
@@ -140,7 +140,7 @@ function QueuedMessageRow({
         )}
       </div>
 
-      {!isSteering && (
+      {!isSendingImmediately && (
         <Button
           type="button"
           variant="ghost"

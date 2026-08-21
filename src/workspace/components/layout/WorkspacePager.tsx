@@ -192,6 +192,7 @@ interface PagerDotProps {
 
 type PagerDotButtonProps = PagerDotProps & {
   isRunning?: boolean;
+  isWaiting?: boolean;
   isUnread?: boolean;
 };
 
@@ -209,9 +210,21 @@ function SessionPagerDot({
 }: Omit<PagerDotProps, "pane"> & {
   pane: Extract<WorkspacePane, { kind: "session" }>;
 }) {
-  const { running: isRunning, unread: isUnread } = useWorkspaceSessionActivity(pane.sessionId);
+  const {
+    running: isRunning,
+    waiting: isWaiting,
+    unread: isUnread,
+  } = useWorkspaceSessionActivity(pane.sessionId);
 
-  return <PagerDotButton pane={pane} {...props} isRunning={isRunning} isUnread={isUnread} />;
+  return (
+    <PagerDotButton
+      pane={pane}
+      {...props}
+      isRunning={isRunning}
+      isWaiting={isWaiting}
+      isUnread={isUnread}
+    />
+  );
 }
 
 function PagerDotButton({
@@ -220,22 +233,25 @@ function PagerDotButton({
   isAppearing,
   onPress,
   isRunning = false,
+  isWaiting = false,
   isUnread = false,
 }: PagerDotButtonProps) {
-  // Visual state priority: active > streaming > unread > pane kind
+  // Visual state priority: active > running > waiting > unread > pane kind
   const dotClass = isActive
     ? "bg-foreground h-3 w-3"
     : isRunning
       ? "bg-sky-500 h-2.5 w-2.5 animate-pulse"
-      : isUnread
-        ? "bg-unread h-2.5 w-2.5"
-        : pane.kind === "canvas"
-          ? "bg-violet-500 h-2.5 w-2.5"
-          : pane.kind === "app"
-            ? "bg-amber-500 h-2.5 w-2.5"
-            : pane.kind === "editor"
-              ? "bg-emerald-500 h-2.5 w-2.5"
-              : "bg-muted-foreground/40 h-2.5 w-2.5";
+      : isWaiting
+        ? "bg-amber-500 h-2.5 w-2.5"
+        : isUnread
+          ? "bg-unread h-2.5 w-2.5"
+          : pane.kind === "canvas"
+            ? "bg-violet-500 h-2.5 w-2.5"
+            : pane.kind === "app"
+              ? "bg-amber-500 h-2.5 w-2.5"
+              : pane.kind === "editor"
+                ? "bg-emerald-500 h-2.5 w-2.5"
+                : "bg-muted-foreground/40 h-2.5 w-2.5";
   const label =
     pane.kind === "inbox"
       ? "Inbox"

@@ -59,6 +59,15 @@ describe("resolveEditorKind", () => {
     expect(resolveEditorKind(machine("DATA.JSON"), [rival]).Renderer).toBe(kind.Renderer);
   });
 
+  test("resolves intent definitions to their built-in editor case-insensitively", () => {
+    const rival = { ...csvTable, name: "not-intent", extensions: ["intent"] };
+    const kind = resolveEditorKind(machine("change.intent"), []);
+
+    expect(kind).toMatchObject({ extensions: ["intent"] });
+    expect(kind.definition).toBeUndefined();
+    expect(resolveEditorKind(machine("CHANGE.INTENT"), [rival]).Renderer).toBe(kind.Renderer);
+  });
+
   test("an unclaimed extension falls back to a built-in, not a registered kind", () => {
     expect(resolveEditorKind(machine("notes.txt"), [csvTable]).definition).toBeUndefined();
   });

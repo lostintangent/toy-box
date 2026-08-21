@@ -70,14 +70,14 @@ describe("workspace session storage", () => {
     });
   });
 
-  test("expires old prompts without dropping active status", () => {
+  test("expires old prompts without dropping live status", () => {
     const sessionId = `workspace-expiring-prompt-${crypto.randomUUID()}`;
     onTestFinished(() => clean(sessionId));
 
     setSessionPrompt(sessionId, "old", "client-a", 1);
-    applySessionState({ type: "session.running", sessionId });
+    applySessionState({ type: "session.waiting", sessionId });
 
-    expect(getSessionState(sessionId, DAY_MS + 2)).toEqual({ status: "running" });
+    expect(getSessionState(sessionId, DAY_MS + 2)).toEqual({ status: "waiting" });
   });
 
   test("deletes one record to clear status and prompt together", () => {

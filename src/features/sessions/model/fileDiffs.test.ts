@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   computeFileDiffStats,
   getToolCallFileDiffs,
-  parsePatch,
   parsePatchTouchedFiles,
+  parseUnifiedDiff,
 } from "./fileDiffs";
 import type { ToolCall } from "./index";
 
@@ -11,7 +11,7 @@ const cwd = "/Users/lostintangent/Desktop/toy-box";
 
 describe("file diff parsing", () => {
   test("parses unified diffs as multi-file diffs", () => {
-    const fileDiffs = parsePatch(
+    const fileDiffs = parseUnifiedDiff(
       `
 diff --git a/Users/lostintangent/Desktop/toy-box/docs/notes.md b/Users/lostintangent/Desktop/toy-box/docs/notes.md
 index 0000000..0000000 100644
@@ -67,7 +67,7 @@ index 0000000..0000000
   });
 
   test("counts raw diff body markers when hunk text has repeated interior context", () => {
-    const fileDiffs = parsePatch(
+    const fileDiffs = parseUnifiedDiff(
       `diff --git a/Users/lostintangent/Desktop/toy-box/docs/repeated.md b/Users/lostintangent/Desktop/toy-box/docs/repeated.md
 --- a/Users/lostintangent/Desktop/toy-box/docs/repeated.md
 +++ b/Users/lostintangent/Desktop/toy-box/docs/repeated.md
@@ -102,7 +102,7 @@ index 0000000..0000000
   });
 
   test("treats header-looking lines inside unified diff hunks as content", () => {
-    const fileDiffs = parsePatch(
+    const fileDiffs = parseUnifiedDiff(
       `diff --git a/Users/lostintangent/Desktop/toy-box/docs/headings.md b/Users/lostintangent/Desktop/toy-box/docs/headings.md
 --- a/Users/lostintangent/Desktop/toy-box/docs/headings.md
 +++ b/Users/lostintangent/Desktop/toy-box/docs/headings.md
@@ -212,6 +212,40 @@ index 0000000..0000000
 
     expect(fileDiffs && computeFileDiffStats(fileDiffs).total).toEqual({
       added: 0,
+      removed: 2,
+    });
+  });
+
+  test("parses successful edit completion details with the unified diff parser", () => {
+    const toolCall: ToolCall = {
+      id: "edit-1",
+      name: "edit",
+      arguments: {
+        path: "/Users/lostintangent/Desktop/toy-box/docs/notes.md",
+        old_str: "first\nold one\nmiddle\nold two\nlast",
+        new_str: "first\nnew one\nmiddle\nnew two\nlast",
+      },
+      result: {
+        content: "Edited docs/notes.md",
+        success: true,
+        details: `diff --git a/Users/lostintangent/Desktop/toy-box/docs/notes.md b/Users/lostintangent/Desktop/toy-box/docs/notes.md
+--- a/Users/lostintangent/Desktop/toy-box/docs/notes.md
++++ b/Users/lostintangent/Desktop/toy-box/docs/notes.md
+@@ -1,5 +1,5 @@
+ first
+-old one
++new one
+ middle
+-old two
++new two
+ last`,
+      },
+    };
+
+    const fileDiffs = getToolCallFileDiffs(toolCall, cwd);
+
+    expect(fileDiffs && computeFileDiffStats(fileDiffs).total).toEqual({
+      added: 2,
       removed: 2,
     });
   });

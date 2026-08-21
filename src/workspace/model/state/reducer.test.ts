@@ -51,9 +51,12 @@ describe("workspace session state", () => {
     expect(transition(draft, { type: "session.idle", sessionId })).toBe(draft);
   });
 
-  test("makes running, unread, and idle mutually exclusive", () => {
+  test("makes running, waiting, unread, and idle mutually exclusive", () => {
     let state = transition(undefined, { type: "session.running", sessionId });
     expect(state).toEqual({ status: "running" });
+
+    state = transition(state, { type: "session.waiting", sessionId });
+    expect(state).toEqual({ status: "waiting" });
 
     state = transition(state, { type: "session.unread", sessionId });
     expect(state).toEqual({ status: "unread" });
@@ -79,6 +82,7 @@ describe("workspace session state", () => {
   test("canonicalizes idle sessions without prompts as missing", () => {
     expect(transition(undefined, { type: "session.idle", sessionId })).toBeUndefined();
     expect(transition({ status: "running" }, { type: "session.idle", sessionId })).toBeUndefined();
+    expect(transition({ status: "waiting" }, { type: "session.idle", sessionId })).toBeUndefined();
   });
 
   test("ignores stale draft events after a session starts running", () => {
@@ -90,6 +94,15 @@ describe("workspace session state", () => {
         createdAt: 1,
       }),
     ).toBe(running);
+
+    const waiting: WorkspaceSessionState = { status: "waiting" };
+    expect(
+      transition(waiting, {
+        type: "session.drafted",
+        sessionId,
+        createdAt: 1,
+      }),
+    ).toBe(waiting);
   });
 });
 

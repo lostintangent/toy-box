@@ -47,7 +47,7 @@ Keep these codecs narrow. Callers should not learn SDK wire shapes, and the proj
 
 `SessionType` configures a session's product role: `standard`, `automation`, `inbox`, `hyper`, or `worker`. It is not persisted on the SDK session. Creation resolves the type from context already in hand; cold resume derives it from the automation, Inbox, worker, or in-memory Hyper record that manages the session. No managing record means standard, and conflicting records are an invariant violation.
 
-All roles can create child workers that are durable by default or explicitly ephemeral, receive deletion, coordination, and automation tools, and can list, read, and revision-update saved apps. Reads include the active state schema; invalid writes fail before persistence, while conflicts return the current instance for merge-and-retry. App-owned workers receive owner-scoped variants that cannot address another app. Standard and Hyper sessions also receive interactive layout and file tools because they are directly presented in the workspace, plus `validate_artifact_app`, which compiles only a `.toy` file owned by the invoking session. Standard sessions alone can update their inferred title as focus changes; the SDK preserves any explicit creator- or user-assigned name. Hyper additionally receives independent top-level session creation, custom-editor registration, and installed app definition and instance lifecycle tools, while Hyper and automation sessions can update user settings through the shared workspace operation. Inbox receives `send_to_inbox`; automation, Inbox, and worker sessions do not receive UI-only open/close tools. Durable child workers link a pane; ephemeral children remain headless so their deletion cannot leave a dead pane. Top-level creation passes only explicitly supplied execution settings, performs no caller-state lookup, and links its new session only when requested.
+All roles can create child workers that are durable by default or explicitly ephemeral, receive deletion, coordination, automation, and current-session artifact-app validation tools, and can list, read, and revision-update saved apps. Reads include the active state schema; invalid writes fail before persistence, while conflicts return the current instance for merge-and-retry. App-owned workers receive owner-scoped variants that cannot address another app. Standard and Hyper sessions also receive interactive layout and file tools because they are directly presented in the workspace. Standard sessions alone can update their inferred title as focus changes; the SDK preserves any explicit creator- or user-assigned name. Hyper additionally receives independent top-level session creation, custom-editor registration, and installed app definition and instance lifecycle tools, while Hyper and automation sessions can update user settings through the shared workspace operation. Inbox receives `send_to_inbox`; automation, Inbox, and worker sessions do not receive UI-only open/close tools. Durable child workers link a pane; ephemeral children remain headless so their deletion cannot leave a dead pane. Top-level creation passes only explicitly supplied execution settings, performs no caller-state lookup, and links its new session only when requested.
 
 Session configuration follows the same role model:
 
@@ -57,13 +57,11 @@ Session configuration follows the same role model:
 - Feature-owned skills live as complete directories under each feature's
   `server/skills/`. The build embeds every file recursively, and startup replaces
   their generated copies under `~/.toy-box/skills/`. Adding, renaming, or
-  removing nested resources requires no installer changes, while
-  `SESSION_SKILLS` explicitly controls which roles receive each privileged skill.
-- Standard and Hyper receive the bundled `create-toy-box-app` skill on create
-  and resume for session artifact apps. Hyper also uses it for installed app
-  lifecycle requests and receives `create-toy-box-editor`. Role-owned bundled
-  skill directories participate in composer discovery alongside project and
-  personal skills. Skill descriptions own routing and their workflow and runtime
+  removing nested resources requires no installer changes.
+- Every role receives `create-toy-box-app` and `create-toy-box-intent` on create,
+  resume, and composer discovery. Hyper additionally receives
+  `create-toy-box-editor`; its installed-app and custom-editor tools remain
+  role-owned. Skill descriptions own routing and their workflow and runtime
   contracts; model-facing tools remain concise control-plane verbs.
 - Automation sessions learn that their stable session ID is also their automation ID and can treat artifact edits as feedback on the automation prompt.
 - Inbox sessions learn that their session ID is also the Inbox entry ID. They call `send_to_inbox` only when the initial task did not already produce a durable visible outcome, using one concise message and at most one artifact for results that cannot fit naturally in that message.

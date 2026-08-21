@@ -13,6 +13,7 @@ import {
   AppWindow,
   PenTool,
   Table,
+  Target,
   type LucideIcon,
 } from "lucide-react";
 import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
@@ -61,6 +62,10 @@ const JsonEditor = lazy(() =>
   import("./json/JsonEditor").then((module) => ({ default: module.JsonEditor })),
 );
 
+const IntentEditor = lazy(() =>
+  import("./intent/IntentEditor").then((module) => ({ default: module.IntentEditor })),
+);
+
 const ArtifactAppPane = lazy(() =>
   import("@apps/components/panes/ArtifactAppPane").then((module) => ({
     default: module.ArtifactAppPane,
@@ -95,6 +100,11 @@ const BUILTIN_EDITOR_KINDS: Record<string, EditorKind> = {
     extensions: ["json"],
     Renderer: JsonEditor,
     icon: Braces,
+  },
+  intent: {
+    extensions: ["intent"],
+    Renderer: IntentEditor,
+    icon: Target,
   },
 };
 

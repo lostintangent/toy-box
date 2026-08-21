@@ -9,9 +9,9 @@ import type { SessionType } from "@sessions/model";
 
 const SKILL_PATH_MARKER = "/skills/";
 const DEFAULT_SKILLS_ROOT = join(homedir(), ".toy-box", "skills");
-const SESSION_SKILLS: Partial<Record<SessionType, readonly string[]>> = {
-  standard: ["create-toy-box-app"],
-  hyper: ["create-toy-box-app", "create-toy-box-editor"],
+const UNIVERSAL_SKILLS = ["create-toy-box-app", "create-toy-box-intent"] as const;
+const ROLE_SKILLS: Partial<Record<SessionType, readonly string[]>> = {
+  hyper: ["create-toy-box-editor"],
 };
 
 /** Replace every bundled skill directory from its embedded files at server startup. */
@@ -46,9 +46,7 @@ export async function installBundledSkills(
 export function getSessionSkillDirectories(
   sessionType: SessionType,
   root = DEFAULT_SKILLS_ROOT,
-): string[] | undefined {
-  const skillNames = SESSION_SKILLS[sessionType];
-  if (!skillNames) return;
-
+): string[] {
+  const skillNames = [...UNIVERSAL_SKILLS, ...(ROLE_SKILLS[sessionType] ?? [])];
   return skillNames.map((name) => join(root, name));
 }
