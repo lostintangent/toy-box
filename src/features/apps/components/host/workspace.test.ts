@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionsState } from "@sessions/model";
-import type { ModelInfo } from "@sessions/model";
+import type { ModelCatalogInfo } from "@sessions/useModels";
 import { createEmptyWorkspaceState } from "@workspace/model/state/reducer";
 import { createLinkedSessionPane } from "@workspace/model/panes";
 import { projectAppWorkspace } from "./workspace";
@@ -140,16 +140,30 @@ describe("app workspace projection", () => {
       },
     };
 
-    const models: ModelInfo[] = [
+    const models: ModelCatalogInfo[] = [
       {
         id: "gpt-5",
         name: "GPT-5",
         capabilities: {
           supports: { vision: false, reasoningEffort: true },
-          limits: { max_context_window_tokens: 200_000 },
+          limits: {
+            max_context_window_tokens: 1_000_000,
+            max_prompt_tokens: 936_000,
+          },
         },
         supportedReasoningEfforts: ["low", "high"],
         defaultReasoningEffort: "high",
+        supportedContextTiers: [
+          { name: "default", tokenWindow: 264_000 },
+          { name: "future_tier", tokenWindow: 1_000_000 },
+        ],
+        billing: {
+          multiplier: 2,
+          tokenPrices: {
+            maxPromptTokens: 200_000,
+            longContext: { maxPromptTokens: 936_000 },
+          },
+        },
       },
     ];
     const openPanes = [createLinkedSessionPane("standard")];
@@ -249,6 +263,10 @@ describe("app workspace projection", () => {
           name: "GPT-5",
           supportedReasoningEfforts: ["low", "high"],
           defaultReasoningEffort: "high",
+          supportedContextTiers: [
+            { name: "default", tokenWindow: 264_000 },
+            { name: "future_tier", tokenWindow: 1_000_000 },
+          ],
         },
       ],
       defaultModel: {

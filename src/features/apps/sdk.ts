@@ -11,11 +11,12 @@ import type {
   SessionMessage,
   SessionWorktree,
 } from "@sessions/model";
-import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
+import type { ContextTier, ModelConfiguration } from "@sessions/model/modelConfiguration";
 
 export type {
   AppInstance,
   AppShare,
+  ContextTier,
   ModelConfiguration,
   SessionCompletion,
   SessionLaunch,
@@ -201,6 +202,8 @@ export type AppWorkspace = {
     name: string;
     supportedReasoningEfforts?: string[];
     defaultReasoningEffort?: string;
+    /** Ordered with the model's default tier first. */
+    supportedContextTiers?: ContextTier[];
   }>;
   defaultModel: ModelConfiguration | null;
   openSessionIds: string[];

@@ -6,18 +6,27 @@ import {
   normalizeModelConfiguration,
   parseSerializedModelConfiguration,
   resolveModelConfigurationForModel,
+  toSdkSessionModelOptions,
+  toSdkSetModelOptions,
+  type ContextTier,
 } from "./modelConfiguration";
 
-type ReasoningModel = Parameters<typeof getModelReasoningConfig>[0];
+type ModelOptions = Parameters<typeof getModelReasoningConfig>[0];
 
 function model(
   supportedReasoningEfforts: string[],
   defaultReasoningEffort?: string,
-): ReasoningModel {
+  supportedContextTiers: ContextTier[] = [],
+): ModelOptions {
   return {
     supportedReasoningEfforts,
     defaultReasoningEffort,
+    supportedContextTiers,
   };
+}
+
+function tier(name: string, tokenWindow = 200_000): ContextTier {
+  return { name, tokenWindow };
 }
 
 describe("model configuration", () => {
@@ -74,7 +83,57 @@ describe("model configuration", () => {
     expect(configuration).toEqual({ name: "gpt-5" });
   });
 
-  test("formats open-ended effort values for display", () => {
+  test("preserves, defaults, and removes open context-tier names", () => {
+    const configuration = { name: "gpt-5", reasoningEffort: "low" };
+    const contextModel = model(["low"], "low", [tier("default"), tier("future_tier", 1_000_000)]);
+
+    expect(
+      resolveModelConfigurationForModel(contextModel, {
+        ...configuration,
+        contextTier: "future_tier",
+      }),
+    ).toEqual({
+      ...configuration,
+      contextTier: "future_tier",
+    });
+
+    expect(
+      resolveModelConfigurationForModel(contextModel, {
+        ...configuration,
+        contextTier: "removed_tier",
+      }),
+    ).toEqual({
+      ...configuration,
+      contextTier: "default",
+    });
+
+    expect(
+      resolveModelConfigurationForModel(model(["low"], "low"), {
+        ...configuration,
+        contextTier: "future_tier",
+      }),
+    ).toEqual(configuration);
+  });
+
+  test("casts open option strings only when building SDK commands", () => {
+    const configuration = {
+      name: "gpt-5",
+      reasoningEffort: "max",
+      contextTier: "future_tier",
+    };
+
+    expect(toSdkSetModelOptions(configuration) as unknown).toEqual({
+      reasoningEffort: "max",
+      contextTier: "future_tier",
+    });
+    expect(toSdkSessionModelOptions(configuration) as unknown).toEqual({
+      model: "gpt-5",
+      reasoningEffort: "max",
+      contextTier: "future_tier",
+    });
+  });
+
+  test("formats open-ended reasoning efforts for display", () => {
     expect(formatReasoningEffort("xhigh")).toBe("Extra High");
     expect(formatReasoningEffort("max")).toBe("Max");
     expect(formatReasoningEffort("very_high")).toBe("Very High");
@@ -83,17 +142,30 @@ describe("model configuration", () => {
   test("normalizes a possibly stale configuration to the model catalog", () => {
     const configuration = normalizeModelConfiguration(
       [
-        { id: "gpt-5", supportedReasoningEfforts: ["low"], defaultReasoningEffort: "low" },
-        { id: "gpt-5.5", supportedReasoningEfforts: ["max"], defaultReasoningEffort: "max" },
+        {
+          id: "gpt-5",
+          supportedReasoningEfforts: ["low"],
+          defaultReasoningEffort: "low",
+          supportedContextTiers: [tier("default"), tier("future_tier", 1_000_000)],
+        },
+        {
+          id: "gpt-5.5",
+          supportedReasoningEfforts: ["max"],
+          defaultReasoningEffort: "max",
+        },
       ],
-      { name: "removed-model", reasoningEffort: "high", contextWindow: "long" } as Parameters<
-        typeof normalizeModelConfiguration
-      >[1],
+      {
+        name: "removed-model",
+        reasoningEffort: "high",
+        contextTier: "removed_tier",
+        contextWindow: "long",
+      } as Parameters<typeof normalizeModelConfiguration>[1],
     );
 
     expect(configuration as unknown).toEqual({
       name: "gpt-5",
       reasoningEffort: "low",
+      contextTier: "default",
       contextWindow: "long",
     });
   });
@@ -103,6 +175,7 @@ describe("model configuration", () => {
       JSON.stringify({
         name: "gpt-5",
         reasoningEffort: "high",
+        contextTier: "future_tier",
         contextWindow: "long",
       }),
     );
@@ -110,12 +183,14 @@ describe("model configuration", () => {
     expect(configuration as unknown).toEqual({
       name: "gpt-5",
       reasoningEffort: "high",
+      contextTier: "future_tier",
       contextWindow: "long",
     });
     expect(
       areModelConfigurationsEqual(configuration, {
         name: "gpt-5",
         reasoningEffort: "high",
+        contextTier: "future_tier",
         contextWindow: "long",
       } as typeof configuration),
     ).toBe(true);
@@ -123,7 +198,8 @@ describe("model configuration", () => {
       areModelConfigurationsEqual(configuration, {
         name: "gpt-5",
         reasoningEffort: "high",
-        contextWindow: "short",
+        contextTier: "default",
+        contextWindow: "long",
       } as typeof configuration),
     ).toBe(false);
   });

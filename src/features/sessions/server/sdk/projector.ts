@@ -232,7 +232,11 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
     case "session.compaction_start":
       return event.agentId ? [] : [{ type: "status", status: "compacting" }];
     case "session.start":
-      return projectSessionStart(event.data.selectedModel, event.data.reasoningEffort);
+      return projectSessionStart(
+        event.data.selectedModel,
+        event.data.reasoningEffort,
+        event.data.contextTier,
+      );
     case "session.model_change":
       return [
         {
@@ -240,6 +244,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
           model: {
             name: event.data.newModel,
             ...(event.data.reasoningEffort ? { reasoningEffort: event.data.reasoningEffort } : {}),
+            ...(event.data.contextTier != null ? { contextTier: event.data.contextTier } : {}),
           },
         },
       ];
@@ -423,6 +428,7 @@ function resolveToolCallPolicy(
 function projectSessionStart(
   model: string | undefined,
   reasoningEffort: string | undefined,
+  contextTier: string | null | undefined,
 ): SessionEvent[] {
   return model
     ? [
@@ -431,6 +437,7 @@ function projectSessionStart(
           model: {
             name: model,
             ...(reasoningEffort ? { reasoningEffort } : {}),
+            ...(contextTier != null ? { contextTier } : {}),
           },
         },
       ]

@@ -1,15 +1,15 @@
-import { findRecordsSection } from "./projection";
+import { allDecisions, findRecordsSection } from "./query/reading";
 import {
   parseIntent,
-  type IntentDefinition,
-  type MapSection,
+  type FlowExhibit,
+  type IntentDocument,
+  type PlanSection,
   type RecordsSection,
-  type SequenceSection,
 } from "./schema";
 
 /**
- * Shared Intent fixtures: one exploratory form covering every section
- * primitive, its exhibit and delivery variants, and the lookups tests use to
+ * Shared Intent fixtures: one exploratory document covering every section
+ * primitive, its exhibit and plan variants, and the lookups tests use to
  * reach an authored section without restating the document.
  */
 
@@ -21,59 +21,50 @@ export function fixtureInput() {
         id: "overview",
         title: "Change narrative",
         purpose: "Explain the user-facing and architectural direction.",
-        kind: "prose",
+        kind: "markdown",
         body: "Ordinary tool calls converge on shared presentation while genuine exceptions remain explicit.",
       },
       {
-        id: "domain-map",
-        title: "Domain map",
-        purpose: "Place changed concepts beside the adjacent domain needed to understand them.",
-        kind: "group",
-        layout: "columns",
-        sections: [
+        id: "concepts",
+        title: "Concepts",
+        purpose: "Name the values that participate in tool rendering.",
+        kind: "records",
+        view: "cards",
+        sourcePolicy: "code",
+        subject: "Concept",
+        fields: [{ id: "role", label: "Role", kind: "text" }],
+        items: [
           {
-            id: "concepts",
-            title: "Concepts",
-            purpose: "Name the values that participate in tool rendering.",
-            kind: "records",
-            view: "cards",
-            provenance: "code",
-            subject: "Concept",
-            fields: [{ id: "role", label: "Role", kind: "text" }],
-            items: [
-              {
-                id: "tool-call",
-                subject: "ToolCall",
-                change: "existing",
-                values: { role: "the canonical transcript fact" },
-                provenance: "model.ts#ToolCall",
-              },
-              {
-                id: "block",
-                subject: "Block",
-                change: "new",
-                values: { role: "one declared unit of body content" },
-              },
-            ],
+            id: "tool-call",
+            subject: "ToolCall",
+            change: "existing",
+            values: { role: "the canonical transcript fact" },
+            source: "model.ts#ToolCall",
           },
           {
-            id: "invariants",
-            title: "Invariants",
-            purpose: "Keep structural boundaries visible.",
-            kind: "records",
-            view: "cards",
-            provenance: "code",
-            subject: "Invariant",
-            fields: [],
-            items: [
-              {
-                id: "unknown-fallback",
-                subject: "Unknown tools continue rendering through a fallback.",
-                change: "preserved",
-                values: {},
-                provenance: "DefaultToolCall.tsx#DefaultToolCall",
-              },
-            ],
+            id: "block",
+            subject: "Block",
+            change: "new",
+            values: { role: "one declared unit of body content" },
+          },
+        ],
+      },
+      {
+        id: "invariants",
+        title: "Invariants",
+        purpose: "Keep structural boundaries visible.",
+        kind: "records",
+        view: "cards",
+        sourcePolicy: "code",
+        subject: "Invariant",
+        fields: [],
+        items: [
+          {
+            id: "unknown-fallback",
+            subject: "Unknown tools continue rendering through a fallback.",
+            change: "preserved",
+            values: {},
+            source: "DefaultToolCall.tsx#DefaultToolCall",
           },
         ],
       },
@@ -83,7 +74,7 @@ export function fixtureInput() {
         purpose: "Compare representative tool presentation through a finite vocabulary.",
         kind: "records",
         view: "table",
-        provenance: "code",
+        sourcePolicy: "code",
         subject: "Tool",
         fields: [
           {
@@ -118,14 +109,14 @@ export function fixtureInput() {
             subject: "bash",
             change: "existing",
             values: { shape: "multi", content: ["code", "text"] },
-            provenance: "BashToolCall.tsx#BashToolCall",
+            source: "BashToolCall.tsx#BashToolCall",
           },
           {
             id: "ordinary-tools",
             subject: "ordinary tools",
             change: "modified",
             values: { shape: "declared", content: ["shared"] },
-            provenance: "ToolCallMessage.tsx#ToolCallMessage",
+            source: "ToolCallMessage.tsx#ToolCallMessage",
           },
         ],
       },
@@ -135,7 +126,7 @@ export function fixtureInput() {
         purpose: "Show where presentation policy lives.",
         kind: "records",
         view: "cards",
-        provenance: "code",
+        sourcePolicy: "code",
         subject: "Surface",
         fields: [{ id: "owner", label: "Owner", kind: "text" }],
         items: [
@@ -144,102 +135,89 @@ export function fixtureInput() {
             subject: "unknown tools",
             change: "preserved",
             values: { owner: "generic fallback" },
-            provenance: "DefaultToolCall.tsx#DefaultToolCall",
+            source: "DefaultToolCall.tsx#DefaultToolCall",
           },
         ],
       },
       {
-        id: "shared-rendering-path",
+        id: "shared-rendering-flow-section",
         title: "Follow the shared rendering path",
         purpose: "Trace ordinary tools into the body shape while keeping the fallback visible.",
-        kind: "map",
-        layout: "network",
-        roots: ["ordinary-tools"],
-        kinds: ["realized-by", "preserves"],
+        kind: "exhibits",
+        sourcePolicy: "optional",
+        items: [sharedRenderingFlow()],
       },
       {
-        id: "design",
-        title: "Design review",
-        purpose: "Expose factual blockers and human-owned alternatives.",
-        kind: "group",
-        layout: "stack",
-        sections: [
+        id: "questions",
+        title: "Open questions",
+        purpose: "Resolve feasibility facts before recording dependent choices.",
+        kind: "questions",
+        items: [
           {
-            id: "questions",
-            title: "Open questions",
-            purpose: "Resolve feasibility facts before recording dependent choices.",
-            kind: "questions",
-            items: [
-              {
-                id: "diff-capability",
-                question: "Can the shared renderer preserve syntax-aware diffs?",
-                resolutionMethod: "investigate-code",
-                effect: "The answer determines whether a shared diff block is viable.",
-                affects: ["ordinary-tools"],
-              },
-            ],
+            id: "diff-capability",
+            question: "Can the shared renderer preserve syntax-aware diffs?",
+            answerMethod: "investigate-code",
+            impact: "The answer determines whether a shared diff block is viable.",
+            affects: ["ordinary-tools"],
           },
+        ],
+      },
+      {
+        id: "decisions",
+        title: "Design decisions",
+        purpose: "Record the human choice for structurally distinct rendering.",
+        kind: "decisions",
+        items: [
           {
-            id: "decisions",
-            title: "Design decisions",
-            purpose: "Record the human choice for structurally distinct rendering.",
-            kind: "decisions",
-            items: [
+            id: "diff-treatment",
+            question: "Is a diff ordinary content or a structural exception?",
+            options: [
               {
-                id: "diff-treatment",
-                question: "Is a diff ordinary content or a structural exception?",
-                options: [
+                id: "shared",
+                label: "Diff is shared content",
+                adds: [
                   {
-                    id: "shared",
-                    label: "Diff is shared content",
-                    adds: [
-                      {
-                        sectionId: "rendering-ownership",
-                        id: "shared-diff",
-                        subject: "edit results",
-                        change: "modified",
-                        values: { owner: "shared diff block" },
-                        provenance: "FileDiffToolCall.tsx#FileDiffToolCall",
-                      },
-                    ],
-                    relations: [
-                      {
-                        id: "ordinary-tools-use-shared-diff",
-                        from: "ordinary-tools",
-                        to: "shared-diff",
-                        kind: "realized-by",
-                      },
-                    ],
-                  },
-                  {
-                    id: "exception",
-                    label: "Diff remains an exception",
-                    tradeoff: "Rendering policy stays distributed.",
-                    adds: [
-                      {
-                        sectionId: "rendering-ownership",
-                        id: "bespoke-diff",
-                        subject: "edit results",
-                        change: "preserved",
-                        values: { owner: "bespoke diff renderer" },
-                        provenance: "FileDiffToolCall.tsx#FileDiffToolCall",
-                      },
-                    ],
-                  },
-                  {
-                    id: "defer",
-                    label: "Defer diff unification",
-                    rationale: "The decision itself remains part of the approved intent.",
-                    adds: [],
+                    sectionId: "rendering-ownership",
+                    id: "shared-diff",
+                    subject: "edit results",
+                    change: "modified",
+                    values: { owner: "shared diff block" },
+                    source: "FileDiffToolCall.tsx#FileDiffToolCall",
                   },
                 ],
-                chosen: null,
-                status: "open",
-                blocking: true,
-                dependsOn: ["diff-capability"],
-                affects: ["ordinary-tools"],
+                relationships: [
+                  {
+                    id: "ordinary-tools-use-shared-diff",
+                    from: "ordinary-tools",
+                    to: "shared-diff",
+                    kind: "realized-by",
+                  },
+                ],
+              },
+              {
+                id: "exception",
+                label: "Diff remains an exception",
+                tradeoff: "Rendering policy stays distributed.",
+                adds: [
+                  {
+                    sectionId: "rendering-ownership",
+                    id: "bespoke-diff",
+                    subject: "edit results",
+                    change: "preserved",
+                    values: { owner: "bespoke diff renderer" },
+                    source: "FileDiffToolCall.tsx#FileDiffToolCall",
+                  },
+                ],
+              },
+              {
+                id: "defer",
+                label: "Defer diff unification",
+                rationale: "The decision itself remains part of the settled spec.",
+                adds: [],
               },
             ],
+            dependsOn: ["diff-capability"],
+            affects: ["ordinary-tools"],
           },
         ],
       },
@@ -252,15 +230,6 @@ export function fixtureInput() {
         items: ["Changing which tool calls appear in the transcript."],
       },
     ],
-    relations: [
-      {
-        id: "ordinary-tools-preserve-fallback",
-        from: "ordinary-tools",
-        to: "fallback-owner",
-        kind: "preserves",
-        label: "keeps unknown-tool rendering",
-      },
-    ],
   };
 }
 
@@ -268,29 +237,81 @@ export function parse(value: unknown) {
   return parseIntent(JSON.stringify(value));
 }
 
-export function fixture(): IntentDefinition {
+export function fixture(): IntentDocument {
   const parsed = parse(fixtureInput());
   if (!parsed.ok) throw new Error(parsed.error);
   return parsed.value;
 }
 
-export function exhibitsFixture(): IntentDefinition {
+export function groundedFixture(): IntentDocument {
+  const document = fixture();
+  document.sections.unshift({
+    id: "research-findings",
+    title: "What the code says",
+    purpose: "Preserve the facts that materially shape the spec.",
+    collapsed: false,
+    kind: "findings",
+    sourcePolicy: "code",
+    items: [
+      {
+        id: "finding-shared-owner",
+        statement: "ToolCallMessage already owns the common tool-call frame and lifecycle.",
+        whyItMatters:
+          "Shared bodies can reuse that ownership instead of introducing a second frame.",
+        sources: ["ToolCallMessage.tsx#ToolCallMessage"],
+        exhibit: {
+          id: "current-rendering-ownership",
+          title: "Current rendering ownership",
+          kind: "tree",
+          type: "domain",
+          change: "existing",
+          source: "ToolCallMessage.tsx#ToolCallMessage",
+          roots: [
+            {
+              name: "ToolCallMessage",
+              children: [{ name: "Frame" }, { name: "Status" }, { name: "Actions" }],
+            },
+          ],
+        },
+      },
+      {
+        id: "finding-fallback",
+        statement: "Unknown tools already render through one generic fallback.",
+        sources: ["DefaultToolCall.tsx#DefaultToolCall"],
+      },
+    ],
+  });
+
+  recordsSection(document, "tool-corpus").items.find(
+    (item) => item.id === "ordinary-tools",
+  )!.basedOn = ["finding-shared-owner"];
+  flowExhibit(document, "shared-rendering-flow").basedOn = ["finding-shared-owner"];
+  document.sections.find((section) => section.kind === "decisions")!.items[0]!.basedOn = [
+    "finding-fallback",
+  ];
+
+  const parsed = parse(document);
+  if (!parsed.ok) throw new Error(parsed.error);
+  return parsed.value;
+}
+
+export function exhibitsFixture(): IntentDocument {
   const input = fixtureInput();
   const parsed = parse({
     ...input,
     sections: [
       ...input.sections,
       {
-        id: "exact-handoff",
-        title: "Exact handoff",
-        purpose: "Keep exact declarations and rollout steps beside the outcomes they realize.",
+        id: "technical-definitions",
+        title: "Technical definitions",
+        purpose: "Keep declared contracts beside the outcomes they realize.",
         kind: "exhibits",
-        provenance: "code",
+        sourcePolicy: "code",
         items: [
           {
             id: "body-declaration",
             title: "Declared body shape",
-            kind: "code",
+            kind: "pseudocode",
             change: "new",
             description: "The smallest declaration ordinary tools provide.",
             language: "typescript",
@@ -298,37 +319,16 @@ export function exhibitsFixture(): IntentDefinition {
           },
           {
             id: "renderer-rollout",
-            title: "Renderer rollout",
-            kind: "procedure",
+            title: "Renderer comparison contract",
+            kind: "pseudocode",
             change: "modified",
-            description: "Move one tool at a time without losing fallback rendering.",
-            provenance: "ToolCallMessage.tsx#ToolCallMessage",
-            steps: [
-              {
-                id: "declare",
-                instruction: "Declare the shared body for one ordinary tool.",
-                code: {
-                  language: "typescript",
-                  content: "const body = renderToolBody(call);",
-                },
-              },
-              {
-                id: "verify",
-                instruction: "Compare its transcript output with the bespoke renderer.",
-              },
-            ],
+            description: "Compare each migrated renderer without prescribing production source.",
+            source: "ToolCallMessage.tsx#ToolCallMessage",
+            language: "typescript",
+            content:
+              "const shared = renderToolBody(call);\nassertEquivalent(shared, renderBespokeBody(call));",
           },
         ],
-      },
-    ],
-    relations: [
-      ...input.relations,
-      {
-        id: "ordinary-tools-realized-by-body",
-        from: "ordinary-tools",
-        to: "body-declaration",
-        kind: "realized-by",
-        label: "uses this exact declaration",
       },
     ],
   });
@@ -336,9 +336,9 @@ export function exhibitsFixture(): IntentDefinition {
   return parsed.value;
 }
 
-export function sequencedFixture(): IntentDefinition {
+export function plannedFixture(): IntentDocument {
   const parsed = parse({
-    title: "Deliver a settled change",
+    title: "Execute a settled change",
     sections: [
       {
         id: "behavior",
@@ -346,7 +346,7 @@ export function sequencedFixture(): IntentDefinition {
         purpose: "Define the changed outcome.",
         kind: "records",
         view: "cards",
-        provenance: "optional",
+        sourcePolicy: "optional",
         subject: "Outcome",
         fields: [{ id: "result", label: "Result", kind: "text" }],
         items: [
@@ -360,20 +360,24 @@ export function sequencedFixture(): IntentDefinition {
       },
       {
         id: "implementation",
-        title: "Implementation work",
-        purpose: "Decompose the settled intent into independently verifiable work.",
-        kind: "sequence",
-        fields: [{ id: "done", label: "Done when", kind: "text" }],
-        items: [
+        title: "Execution plan",
+        purpose: "Decompose the settled spec into independently verifiable steps.",
+        kind: "plan",
+        fields: [],
+        steps: [
           {
-            id: "foundation-work",
+            id: "foundation-step",
             title: "Build the foundation",
-            values: { done: "The durable API is tested." },
+            doneWhen: "The durable API is tested.",
+            implements: ["durable-result"],
+            values: {},
           },
           {
-            id: "integration-work",
+            id: "integration-step",
             title: "Integrate the behavior",
-            values: { done: "The runtime uses the durable API." },
+            doneWhen: "The runtime uses the durable API.",
+            implements: ["changed-behavior"],
+            values: {},
           },
         ],
       },
@@ -399,49 +403,33 @@ export function sequencedFixture(): IntentDefinition {
                     values: { result: "Survives a restart." },
                   },
                 ],
-                relations: [
+                relationships: [
                   {
                     id: "changed-causes-durable",
                     from: "changed-behavior",
                     to: "durable-result",
                     kind: "causes",
                   },
+                ],
+              },
+              {
+                id: "ephemeral",
+                label: "Keep ephemeral state",
+                adds: [
                   {
-                    id: "durable-result-implemented-by-foundation",
-                    from: "durable-result",
-                    to: "foundation-work",
-                    kind: "implemented-by",
+                    sectionId: "behavior",
+                    id: "ephemeral-result",
+                    subject: "Ephemeral result",
+                    change: "preserved",
+                    values: { result: "Resets on restart." },
                   },
                 ],
               },
             ],
-            chosen: "durable",
-            status: "decided",
-            blocking: true,
+            choice: { optionId: "durable", status: "decided" },
             dependsOn: [],
           },
         ],
-      },
-    ],
-    relations: [
-      {
-        id: "changed-implemented-by-integration",
-        from: "changed-behavior",
-        to: "integration-work",
-        kind: "implemented-by",
-      },
-      {
-        id: "policy-implemented-by-integration",
-        from: "durability-policy",
-        to: "integration-work",
-        kind: "implemented-by",
-      },
-      {
-        id: "integration-depends-on-foundation",
-        from: "integration-work",
-        to: "foundation-work",
-        kind: "depends-on",
-        label: "requires the durable API",
       },
     ],
   });
@@ -449,88 +437,135 @@ export function sequencedFixture(): IntentDefinition {
   return parsed.value;
 }
 
-export function stagedSequenceFixture(): IntentDefinition {
-  const definition = sequencedFixture();
-  const delivery = sequence(definition, "implementation");
-  if (!("items" in delivery)) throw new Error("Expected flat sequence fixture");
-  const [foundation, integration] = delivery.items;
-  if (!foundation || !integration) throw new Error("Missing sequence work");
-  const { items: _items, ...common } = delivery;
-  const staged: SequenceSection = {
-    ...common,
-    stages: [
-      {
-        id: "foundation",
-        title: "Establish the durable boundary",
-        items: [foundation],
-      },
-      {
-        id: "integration",
-        title: "Move the runtime onto it",
-        items: [integration],
-      },
-    ],
+export function optionExhibitsFixture(): IntentDocument {
+  const document = plannedFixture();
+  const decision = allDecisions(document)[0];
+  if (!decision) throw new Error("Missing decision fixture");
+  delete decision.choice;
+
+  decision.options[0]!.exhibit = {
+    id: "durable-state-preview",
+    title: "Durable state preview",
+    kind: "html",
+    change: "new",
+    content: '<section aria-label="Durable state">Restored after restart</section>',
   };
-  definition.sections = definition.sections.map((section) =>
-    section.id === delivery.id ? staged : section,
-  );
-  const parsed = parse(definition);
+  decision.options[1]!.exhibit = {
+    id: "ephemeral-state-preview",
+    title: "Ephemeral state preview",
+    kind: "html",
+    change: "preserved",
+    content: '<section aria-label="Ephemeral state">Reset after restart</section>',
+  };
+
+  const executionPlan = plan(document, "implementation");
+  if (!("steps" in executionPlan)) throw new Error("Expected flat plan fixture");
+  executionPlan.steps[0]!.implements.push("durable-state-preview");
+
+  const parsed = parse(document);
   if (!parsed.ok) throw new Error(parsed.error);
   return parsed.value;
 }
 
-export function recordsSection(definition: IntentDefinition, id: string): RecordsSection {
-  const section = findRecordsSection(definition, id);
+export function phasedPlanFixture(): IntentDocument {
+  const document = plannedFixture();
+  const executionPlan = plan(document, "implementation");
+  if (!("steps" in executionPlan)) throw new Error("Expected flat plan fixture");
+  const [foundation, integration] = executionPlan.steps;
+  if (!foundation || !integration) throw new Error("Missing plan steps");
+  const { steps: _steps, ...common } = executionPlan;
+  const phased: PlanSection = {
+    ...common,
+    phases: [
+      {
+        id: "foundation",
+        title: "Establish the durable boundary",
+        steps: [foundation],
+      },
+      {
+        id: "integration",
+        title: "Move the runtime onto it",
+        steps: [integration],
+      },
+    ],
+  };
+  document.sections = document.sections.map((section) =>
+    section.id === executionPlan.id ? phased : section,
+  );
+  const parsed = parse(document);
+  if (!parsed.ok) throw new Error(parsed.error);
+  return parsed.value;
+}
+
+export function recordsSection(document: IntentDocument, id: string): RecordsSection {
+  const section = findRecordsSection(document, id);
   if (!section) throw new Error(`Missing records section ${id}`);
   return section;
 }
 
-export function sequence(definition: IntentDefinition, id: string): SequenceSection {
-  const section = definition.sections.find((candidate) => candidate.id === id);
-  if (!section || section.kind !== "sequence") throw new Error(`Missing sequence ${id}`);
+export function plan(document: IntentDocument, id: string): PlanSection {
+  const section = document.sections.find((candidate) => candidate.id === id);
+  if (!section || section.kind !== "plan") throw new Error(`Missing plan ${id}`);
   return section;
 }
 
-export function mapSection(definition: IntentDefinition, id: string): MapSection {
-  const section = definition.sections.find((candidate) => candidate.id === id);
-  if (!section || section.kind !== "map") throw new Error(`Missing map section ${id}`);
-  return section;
+export function flowExhibit(document: IntentDocument, id: string): FlowExhibit {
+  for (const section of document.sections) {
+    if (section.kind !== "exhibits") continue;
+    const exhibit = section.items.find((item) => item.id === id);
+    if (exhibit?.kind === "flow") return exhibit;
+  }
+  throw new Error(`Missing flow exhibit ${id}`);
 }
 
-export function sharedRenderingPathsMap(): MapSection {
+export function sharedRenderingFlow(): FlowExhibit {
   return {
-    id: "shared-rendering-routes",
+    id: "shared-rendering-flow",
     title: "See both rendering routes",
-    purpose: "Keep the fallback and shared body visibly joined to ordinary tools.",
-    kind: "map",
-    collapsed: false,
-    layout: "paths",
+    description: "Keep the fallback and shared body visibly joined to ordinary tools.",
+    change: "modified",
+    kind: "flow",
+    nodes: [{ entity: "ordinary-tools" }, { entity: "fallback-owner" }, { entity: "block" }],
+    connections: [
+      {
+        id: "ordinary-tools-preserve-fallback",
+        from: "ordinary-tools",
+        to: "fallback-owner",
+        label: "keeps unknown-tool rendering",
+      },
+      {
+        id: "ordinary-tools-use-block",
+        from: "ordinary-tools",
+        to: "block",
+        label: "uses one declared body block",
+      },
+    ],
     paths: [
       {
         id: "fallback-route",
         title: "Keep the fallback",
         purpose: "Ordinary tools retain the existing specialized escape hatch.",
-        root: "ordinary-tools",
-        relations: ["ordinary-tools-preserve-fallback"],
+        start: "ordinary-tools",
+        connectionIds: ["ordinary-tools-preserve-fallback"],
       },
       {
         id: "shared-body-route",
         title: "Use the shared body",
         purpose: "The active choice moves ordinary tools onto shared rendering.",
-        root: "ordinary-tools",
-        relations: ["ordinary-tools-use-shared-diff"],
+        start: "ordinary-tools",
+        connectionIds: ["ordinary-tools-use-block"],
       },
     ],
     regions: [
       {
         id: "ordinary-entry",
         title: "Ordinary tools",
-        entities: ["ordinary-tools"],
+        nodeIds: ["ordinary-tools"],
       },
       {
         id: "rendering-results",
         title: "Rendering results",
-        entities: ["fallback-owner", "shared-diff"],
+        nodeIds: ["fallback-owner", "block"],
       },
     ],
   };

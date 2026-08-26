@@ -3,23 +3,29 @@ import { Button } from "@/shared/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/components/ui/dropdown-menu";
-import type { ModelConfiguration } from "../../model/modelConfiguration";
+import type { ModelConfiguration, ModelOptionInfo } from "../../model/modelConfiguration";
 import {
   formatReasoningEffort,
+  getModelContextTierConfig,
   getModelReasoningConfig,
   resolveModelConfigurationForModel,
 } from "../../model/modelConfiguration";
 
-type ModelPickerInfo = {
+type ModelPickerInfo = ModelOptionInfo & {
   id: string;
   name: string;
-  supportedReasoningEfforts?: readonly string[];
-  defaultReasoningEffort?: string;
 };
+
+const TOKEN_WINDOW_FORMATTER = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 2,
+});
 
 function ModelPicker({
   models,
@@ -56,31 +62,41 @@ function ModelPicker({
   );
 }
 
-function ReasoningEffortPicker({
+function ModelOptionsPicker({
   model,
-  selectedReasoningEffort,
-  onReasoningEffortChange,
+  value,
+  onValueChange,
 }: {
   model?: ModelPickerInfo;
-  selectedReasoningEffort?: string;
-  onReasoningEffortChange: (reasoningEffort: string | undefined) => void;
+  value: ModelConfiguration;
+  onValueChange: (value: ModelConfiguration) => void;
 }) {
-  const { supportedReasoningEfforts, reasoningEffort: displayedReasoningEffort } =
-    getModelReasoningConfig(model, selectedReasoningEffort);
-  if (supportedReasoningEfforts.length === 0 || !displayedReasoningEffort) return null;
+  const { supportedReasoningEfforts, reasoningEffort } = getModelReasoningConfig(
+    model,
+    value.reasoningEffort,
+  );
+  if (supportedReasoningEfforts.length === 0 || !reasoningEffort) return null;
+
+  const { supportedContextTiers, contextTier } = getModelContextTierConfig(
+    model,
+    value.contextTier,
+  );
 
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-xs">
-          {formatReasoningEffort(displayedReasoningEffort)}
+          {formatReasoningEffort(reasoningEffort)}
           <ChevronDown className="h-3 w-3 opacity-50" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          Reasoning effort
+        </DropdownMenuLabel>
         <DropdownMenuRadioGroup
-          value={displayedReasoningEffort}
-          onValueChange={onReasoningEffortChange}
+          value={reasoningEffort}
+          onValueChange={(selected) => onValueChange({ ...value, reasoningEffort: selected })}
         >
           {supportedReasoningEfforts.map((effort) => (
             <DropdownMenuRadioItem key={effort} value={effort} className="text-xs">
@@ -88,6 +104,25 @@ function ReasoningEffortPicker({
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
+
+        {supportedContextTiers.length > 0 && contextTier && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs text-muted-foreground">
+              Context window
+            </DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={contextTier}
+              onValueChange={(selected) => onValueChange({ ...value, contextTier: selected })}
+            >
+              {supportedContextTiers.map(({ name, tokenWindow }) => (
+                <DropdownMenuRadioItem key={name} value={name} className="text-xs">
+                  {TOKEN_WINDOW_FORMATTER.format(tokenWindow)}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -118,14 +153,7 @@ export function ModelConfigurationPicker({
           )
         }
       />
-      <ReasoningEffortPicker
-        model={selectedModel}
-        selectedReasoningEffort={value.reasoningEffort}
-        onReasoningEffortChange={(reasoningEffort) => {
-          const { reasoningEffort: _currentReasoningEffort, ...rest } = value;
-          onValueChange({ ...rest, ...(reasoningEffort ? { reasoningEffort } : {}) });
-        }}
-      />
+      <ModelOptionsPicker model={selectedModel} value={value} onValueChange={onValueChange} />
     </>
   );
 }

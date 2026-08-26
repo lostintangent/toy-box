@@ -3,14 +3,14 @@ import type { SessionsState } from "@sessions/model";
 import { selectNonWorkerSessions } from "@sessions/queries";
 import type { WorkspaceState } from "@workspace/model/state/reducer";
 import type { WorkspacePane } from "@workspace/model/panes";
-import type { ModelInfo } from "@sessions/model";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
+import type { ModelCatalogInfo } from "@sessions/useModels";
 import type { AppSession, AppWorkspace } from "@apps/sdk";
 
 type AppWorkspaceSource = {
   workspace: WorkspaceState;
   sessions: SessionsState;
-  models: readonly ModelInfo[];
+  models: readonly ModelCatalogInfo[];
   defaultModel: ModelConfiguration | null;
   appId?: string;
   openPanes: readonly WorkspacePane[];
@@ -67,12 +67,15 @@ export function projectAppWorkspace(
       accepts: definitions.get(definitionId)?.accepts ?? [],
     })),
     shares: appId ? workspace.appShares.filter((share) => share.targetAppId === appId) : [],
-    models: models.map(({ id, name, supportedReasoningEfforts, defaultReasoningEffort }) => ({
-      id,
-      name,
-      supportedReasoningEfforts,
-      defaultReasoningEffort,
-    })),
+    models: models.map(
+      ({ id, name, supportedReasoningEfforts, defaultReasoningEffort, supportedContextTiers }) => ({
+        id,
+        name,
+        supportedReasoningEfforts,
+        defaultReasoningEffort,
+        supportedContextTiers: supportedContextTiers && [...supportedContextTiers],
+      }),
+    ),
     defaultModel,
     openSessionIds: openPanes
       .filter((pane) => pane.kind === "session")

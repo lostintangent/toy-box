@@ -50,23 +50,6 @@ export default defineConfig(({ mode }) => {
           publicDir: ".output/server/public",
         },
         serveStatic: isProduction,
-        rollupConfig: {
-          onwarn(warning, defaultHandler) {
-            if (
-              warning.code === "MODULE_LEVEL_DIRECTIVE" &&
-              warning.message.includes("use client")
-            ) {
-              return;
-            }
-            if (
-              warning.plugin === "unwasm" &&
-              warning.message.includes("Failed to load the WebAssembly module")
-            ) {
-              return;
-            }
-            defaultHandler(warning);
-          },
-        },
       }),
       tanstackStart({ router: { virtualRouteConfig: "./src/routes.ts" } }),
       viteReact(),

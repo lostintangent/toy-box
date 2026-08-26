@@ -1239,7 +1239,7 @@ describe("toSessionSnapshot", () => {
       artifacts: ["report.md"],
       status: "responding",
       reasoningContent: "thinking...",
-      model: { name: "gpt-5.5" },
+      model: { name: "gpt-5.5", contextTier: "future_tier" },
     });
     state.lastSeenEventId = 42;
 
@@ -1247,7 +1247,7 @@ describe("toSessionSnapshot", () => {
       id: "session-1",
       messages: state.messages,
       queuedMessages: state.queuedMessages,
-      model: { name: "gpt-5.5" },
+      model: { name: "gpt-5.5", contextTier: "future_tier" },
       todos: state.todos,
       linkedSessionIds: ["linked-1"],
       artifacts: ["report.md"],
@@ -1299,7 +1299,7 @@ describe("sessionSeedFromSnapshot", () => {
         patches: [{ type: "upsert", path: "summary.md" }],
       },
       { type: "linked_session_added", sessionId: "toy-box-child" },
-      { type: "model_changed", model: { name: "gpt-5" } },
+      { type: "model_changed", model: { name: "gpt-5", contextTier: "future_tier" } },
       { type: "end", reason: "idle" },
     ];
 

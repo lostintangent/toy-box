@@ -982,7 +982,7 @@ describe("SessionStream model selection", () => {
     cleanUpStreamAfterTest("session-model-change");
 
     const setModelMock = mock(
-      async (_model: string, _options?: { reasoningEffort?: string }) => {},
+      async (_model: string, _options?: { reasoningEffort?: string; contextTier?: string }) => {},
     );
     const fakeSession = makeFakeSession({ setModel: setModelMock });
 
@@ -993,18 +993,30 @@ describe("SessionStream model selection", () => {
       clientId: "model-turn",
       role: "user",
       content: "Use this model",
-      model: { name: "gpt-5.5", reasoningEffort: "high" },
+      model: {
+        name: "gpt-5.5",
+        reasoningEffort: "high",
+        contextTier: "future_tier",
+      },
     });
 
-    expect(setModelMock).toHaveBeenCalledWith("gpt-5.5", { reasoningEffort: "high" });
+    expect(setModelMock).toHaveBeenCalledWith("gpt-5.5", {
+      reasoningEffort: "high",
+      contextTier: "future_tier",
+    });
     expect(stream.getSessionState().model).toEqual({
       name: "gpt-5.5",
       reasoningEffort: "high",
+      contextTier: "future_tier",
     });
     expect(await nextStreamEvent(events)).toEqual(
       expect.objectContaining({
         type: "model_changed",
-        model: { name: "gpt-5.5", reasoningEffort: "high" },
+        model: {
+          name: "gpt-5.5",
+          reasoningEffort: "high",
+          contextTier: "future_tier",
+        },
       }),
     );
     await events.return();

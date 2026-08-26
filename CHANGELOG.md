@@ -1,9 +1,13 @@
+## 📅 v0.1.19 (08/26/26)
+
+- Add support for configuring the context window
+- The artifacts list is now scoped to common file types
+
 ## 📅 v0.1.18 (08/21/26)
 
 - Introduced the concept of "intent board" artifacts
 - Added support for user input questions
 - Qeueued messages can now be sent immediately
-- The artifacts list is now scoped to common file types
 
 ## 📅 v0.1.17 (08/14/26)
 

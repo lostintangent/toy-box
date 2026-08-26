@@ -1,31 +1,79 @@
-import { Fragment, useId, type ReactNode } from "react";
-import { ChevronRight, Info, Loader2, RefreshCw } from "lucide-react";
+import { useId, type ReactNode } from "react";
+import {
+  ChevronRight,
+  Info,
+  Loader2,
+  MoreHorizontal,
+  RefreshCw,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/shared/components/ui/dropdown-menu";
 import { Separator } from "@/shared/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
 import { cn } from "@/shared/utils";
-import type { Change, Decision, IntentRelation, Provenance } from "../model/index";
-import { intentRichTextSegments } from "../model/richText";
+import type { Change, DecisionStatus, OptionRelationship } from "../model/index";
 
 const TAG_CLASS =
   "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none";
 
-const CHANGE_PRESENTATION: Record<Change, { label: string; className: string }> = {
-  existing: { label: "Already here", className: "bg-zinc-500/10 text-zinc-400" },
-  new: { label: "New", className: "bg-emerald-500/10 text-emerald-400" },
-  modified: { label: "Changing", className: "bg-amber-500/10 text-amber-400" },
-  preserved: { label: "Keeping", className: "bg-sky-500/10 text-sky-400" },
-  removed: { label: "Removing", className: "bg-rose-500/10 text-rose-400" },
-  renamed: { label: "Renaming", className: "bg-violet-500/10 text-violet-400" },
-  split: { label: "Splitting", className: "bg-violet-500/10 text-violet-400" },
-  relocated: { label: "Moving", className: "bg-violet-500/10 text-violet-400" },
+const CHANGE_PRESENTATION: Record<
+  Change,
+  { label: string; backgroundClassName: string; textClassName: string }
+> = {
+  existing: {
+    label: "Already here",
+    backgroundClassName: "bg-zinc-500/10",
+    textClassName: "text-zinc-400",
+  },
+  new: {
+    label: "New",
+    backgroundClassName: "bg-emerald-500/10",
+    textClassName: "text-emerald-400",
+  },
+  modified: {
+    label: "Changing",
+    backgroundClassName: "bg-amber-500/10",
+    textClassName: "text-amber-400",
+  },
+  preserved: {
+    label: "Keeping",
+    backgroundClassName: "bg-sky-500/10",
+    textClassName: "text-sky-400",
+  },
+  removed: {
+    label: "Removing",
+    backgroundClassName: "bg-rose-500/10",
+    textClassName: "text-rose-400",
+  },
+  renamed: {
+    label: "Renaming",
+    backgroundClassName: "bg-violet-500/10",
+    textClassName: "text-violet-400",
+  },
+  split: {
+    label: "Splitting",
+    backgroundClassName: "bg-violet-500/10",
+    textClassName: "text-violet-400",
+  },
+  relocated: {
+    label: "Moving",
+    backgroundClassName: "bg-violet-500/10",
+    textClassName: "text-violet-400",
+  },
 };
 
-const RELATION_LABEL: Record<IntentRelation["kind"], string> = {
+const RELATIONSHIP_LABEL: Record<OptionRelationship["kind"], string> = {
   precedes: "happens before",
   "depends-on": "needs",
   causes: "leads to",
   "realized-by": "comes to life through",
-  "implemented-by": "delivered by",
   preserves: "keeps",
 };
 
@@ -36,11 +84,11 @@ const DECISION_STATUS_LABEL = {
   open: "Open",
 } as const;
 
-export function intentRelationLabel(relation: IntentRelation): string {
-  return relation.label ?? RELATION_LABEL[relation.kind];
+export function optionRelationshipLabel(relationship: OptionRelationship): string {
+  return relationship.label ?? RELATIONSHIP_LABEL[relationship.kind];
 }
 
-export function decisionStatusLabel(status: Decision["status"] | "inactive" | undefined): string {
+export function decisionStatusLabel(status: DecisionStatus | "inactive" | undefined): string {
   return DECISION_STATUS_LABEL[status ?? "open"];
 }
 
@@ -62,57 +110,101 @@ export function Tag({
   );
 }
 
-export function ChangeTag({ change, provenance }: { change: Change; provenance?: Provenance }) {
+export function SectionViewControl<View extends string>({
+  title,
+  view,
+  options,
+  className,
+  onViewChange,
+}: {
+  title: string;
+  view: View;
+  options: readonly {
+    value: View;
+    description: string;
+    title: string;
+    Icon: LucideIcon;
+  }[];
+  className?: string;
+  onViewChange: (view: View) => void;
+}) {
+  return (
+    <div className={cn("flex justify-end", className)}>
+      <div
+        role="group"
+        aria-label={`${title} view`}
+        className="inline-flex rounded-md border border-border/70 bg-muted/20 p-0.5"
+      >
+        {options.map(({ value, description, title: optionTitle, Icon }) => (
+          <button
+            key={value}
+            type="button"
+            aria-label={`Show ${title} as ${description}`}
+            aria-pressed={view === value}
+            title={optionTitle}
+            onClick={() => onViewChange(value)}
+            className={cn(
+              "inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground",
+              view === value && "bg-background text-foreground shadow-xs",
+            )}
+          >
+            <Icon aria-hidden className="size-3" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function changeTextClassName(change: Change): string {
+  return CHANGE_PRESENTATION[change].textClassName;
+}
+
+export function ChangeTag({
+  change,
+  source,
+  label,
+}: {
+  change: Change;
+  source?: string;
+  label?: string;
+}) {
   const presentation = CHANGE_PRESENTATION[change];
+  const effectiveLabel = label ?? presentation.label;
   const tag = (
     <span
-      tabIndex={provenance ? 0 : undefined}
-      aria-label={provenance ? `${presentation.label}. Source: ${provenance}` : undefined}
+      tabIndex={source ? 0 : undefined}
+      aria-label={source ? `${effectiveLabel}. Source: ${source}` : undefined}
       className={cn(
         TAG_CLASS,
-        presentation.className,
-        provenance &&
+        presentation.backgroundClassName,
+        presentation.textClassName,
+        source &&
           "cursor-help focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
       )}
     >
-      {presentation.label}
+      {effectiveLabel}
     </span>
   );
 
-  if (!provenance) return tag;
+  if (!source) return tag;
   return (
     <Tooltip>
       <TooltipTrigger asChild>{tag}</TooltipTrigger>
       <TooltipContent sideOffset={6} className="max-w-80 break-all font-mono text-[10px]">
-        {provenance}
+        {source}
       </TooltipContent>
     </Tooltip>
   );
 }
 
-export function IntentRichText({ text }: { text: string }) {
-  return (
-    <>
-      {intentRichTextSegments(text).map((segment) => {
-        const key = `${segment.kind}:${segment.offset}`;
-        if (segment.kind === "strong") {
-          return <strong key={key}>{segment.text}</strong>;
-        }
-        if (segment.kind === "code") {
-          return (
-            <code
-              key={key}
-              className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.9em] text-foreground"
-            >
-              {segment.text}
-            </code>
-          );
-        }
-        return <Fragment key={key}>{segment.text}</Fragment>;
-      })}
-    </>
-  );
-}
+type SectionActions = {
+  regenerate?: {
+    busy: boolean;
+    onSelect?: () => void;
+  };
+  onDelete?: () => void;
+};
 
 export function SectionPanel({
   id,
@@ -120,7 +212,7 @@ export function SectionPanel({
   purpose,
   count,
   open,
-  refresh,
+  actions,
   children,
   onOpenChange,
 }: {
@@ -129,7 +221,7 @@ export function SectionPanel({
   purpose: string;
   count: number;
   open: boolean;
-  refresh?: { busy: boolean; onClick?: () => void };
+  actions?: SectionActions;
   children: ReactNode;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -155,9 +247,9 @@ export function SectionPanel({
         </button>
         <PurposeTooltip title={title} purpose={purpose} />
         <span className="min-w-0 flex-1" />
-        {open && refresh && (
+        {actions && (
           <>
-            <RefreshButton title={title} busy={refresh.busy} onClick={refresh.onClick} />
+            <SectionActionsMenu title={title} {...actions} />
             <Separator orientation="vertical" className="h-4! bg-border/70" />
           </>
         )}
@@ -200,26 +292,55 @@ export function ItemCount({ count }: { count: number }) {
   );
 }
 
-export function RefreshButton({
+export function SectionActionsMenu({
   title,
-  busy,
-  onClick,
+  regenerate,
+  onDelete,
 }: {
   title: string;
-  busy: boolean;
-  onClick?: () => void;
-}) {
+} & SectionActions) {
+  const busy = regenerate?.busy ?? false;
+
   return (
-    <button
-      type="button"
-      aria-label={`Refresh ${title}`}
-      title={`Refresh ${title}`}
-      disabled={!onClick || busy}
-      onClick={onClick}
-      className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-    >
-      {busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-    </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Actions for ${title}`}
+          aria-busy={busy || undefined}
+          title={`Actions for ${title}`}
+          className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          {busy ? (
+            <Loader2 aria-hidden className="size-3.5 animate-spin" />
+          ) : (
+            <MoreHorizontal aria-hidden className="size-3.5" />
+          )}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {regenerate && (
+          <>
+            <DropdownMenuItem
+              disabled={!regenerate.onSelect || busy}
+              onSelect={regenerate.onSelect}
+            >
+              <RefreshCw aria-hidden className="size-3.5" />
+              Regenerate section
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        <DropdownMenuItem
+          disabled={!onDelete || busy}
+          onSelect={onDelete}
+          className="text-destructive focus:text-destructive"
+        >
+          <Trash2 aria-hidden className="size-3.5" />
+          Delete section
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

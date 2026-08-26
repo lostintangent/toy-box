@@ -94,10 +94,18 @@ const OTHER_SESSION_ARTIFACT_PATCH_TEXT = `*** Begin Patch
 +# Plan
 *** End Patch`;
 
-function modelChange(newModel: string, reasoningEffort?: string): SdkSessionEvent {
+function modelChange(
+  newModel: string,
+  reasoningEffort?: string | null,
+  contextTier?: string | null,
+): SdkSessionEvent {
   return sdkEvent({
     type: "session.model_change",
-    data: { newModel, ...(reasoningEffort ? { reasoningEffort } : {}) },
+    data: {
+      newModel,
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+      ...(contextTier !== undefined ? { contextTier } : {}),
+    },
   });
 }
 
@@ -1650,6 +1658,7 @@ describe("projector", () => {
               startTime: "2026-06-10T20:29:43.232Z",
               selectedModel: "gpt-5.5",
               reasoningEffort: "xhigh",
+              contextTier: "future_tier",
             },
           }),
           context,
@@ -1657,7 +1666,11 @@ describe("projector", () => {
       ).toEqual([
         {
           type: "model_changed",
-          model: { name: "gpt-5.5", reasoningEffort: "xhigh" },
+          model: {
+            name: "gpt-5.5",
+            reasoningEffort: "xhigh",
+            contextTier: "future_tier",
+          },
         },
       ]);
 
@@ -1665,10 +1678,21 @@ describe("projector", () => {
         { type: "model_changed", model: { name: "claude-sonnet-4.6" } },
       ]);
 
-      expect(projectSdkEvent(modelChange("gpt-5", "high"), context)).toEqual([
+      expect(projectSdkEvent(modelChange("gpt-5", "high", "future_tier"), context)).toEqual([
         {
           type: "model_changed",
-          model: { name: "gpt-5", reasoningEffort: "high" },
+          model: {
+            name: "gpt-5",
+            reasoningEffort: "high",
+            contextTier: "future_tier",
+          },
+        },
+      ]);
+
+      expect(projectSdkEvent(modelChange("gpt-5", null, null), context)).toEqual([
+        {
+          type: "model_changed",
+          model: { name: "gpt-5" },
         },
       ]);
 

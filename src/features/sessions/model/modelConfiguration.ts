@@ -10,6 +10,12 @@ export const modelConfigurationSchema = z
       .min(1)
       .optional()
       .describe("Reasoning effort for models that support it"),
+    contextTier: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Context tier for models that support it"),
   })
   // Preserve future JSON-valued SDK/catalog knobs so adding one only needs
   // its boundary behavior and picker updated.
@@ -17,24 +23,38 @@ export const modelConfigurationSchema = z
 
 export type ModelConfiguration = z.infer<typeof modelConfigurationSchema>;
 
-type ReasoningModelInfo = {
+export type ContextTier = {
+  name: string;
+  tokenWindow: number;
+};
+
+export type ModelOptionInfo = {
   supportedReasoningEfforts?: readonly string[];
   defaultReasoningEffort?: string;
+  /** Ordered with the model's default tier first. */
+  supportedContextTiers?: readonly ContextTier[];
 };
-type ModelCatalogInfo = ReasoningModelInfo & { id: string };
+type ModelCatalogInfo = ModelOptionInfo & { id: string };
 type SdkSetModelOptions = NonNullable<Parameters<CopilotSession["setModel"]>[1]>;
-type SdkSessionModelOptions = Pick<SdkSessionConfig, "model" | "reasoningEffort">;
+type SdkSessionModelOptions = Pick<SdkSessionConfig, "model" | "reasoningEffort" | "contextTier">;
 
-/** The SDK's public type is narrower than the generated protocol and live
- *  model metadata, so keep the cast in one boundary helper. */
+/** The SDK's public option unions are narrower than live metadata, so keep
+ *  open-string casts in these boundary helpers. */
 function toSdkReasoningEffort(reasoningEffort?: string): SdkSessionConfig["reasoningEffort"] {
   return reasoningEffort as SdkSessionConfig["reasoningEffort"];
+}
+
+function toSdkContextTier(contextTier?: string): SdkSessionConfig["contextTier"] {
+  return contextTier as SdkSessionConfig["contextTier"];
 }
 
 export function toSdkSetModelOptions(configuration?: ModelConfiguration): SdkSetModelOptions {
   return {
     ...(configuration?.reasoningEffort
       ? { reasoningEffort: toSdkReasoningEffort(configuration.reasoningEffort) }
+      : {}),
+    ...(configuration?.contextTier
+      ? { contextTier: toSdkContextTier(configuration.contextTier) }
       : {}),
   };
 }
@@ -78,14 +98,23 @@ export function areModelConfigurationsEqual(
 }
 
 export function resolveModelConfigurationForModel(
-  model: ReasoningModelInfo | undefined,
+  model: ModelOptionInfo | undefined,
   configuration: ModelConfiguration,
 ): ModelConfiguration {
-  const { reasoningEffort: _currentReasoningEffort, ...rest } = configuration;
-  const reasoningEffort = resolveModelReasoningEffort(model, configuration.reasoningEffort);
+  const {
+    reasoningEffort: _currentReasoningEffort,
+    contextTier: _currentContextTier,
+    ...rest
+  } = configuration;
+  const reasoningEffort = getModelReasoningConfig(
+    model,
+    configuration.reasoningEffort,
+  ).reasoningEffort;
+  const contextTier = getModelContextTierConfig(model, configuration.contextTier).contextTier;
   return {
     ...rest,
     ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(contextTier ? { contextTier } : {}),
   };
 }
 
@@ -102,15 +131,8 @@ export function normalizeModelConfiguration(
   });
 }
 
-function resolveModelReasoningEffort(
-  model: ReasoningModelInfo | undefined,
-  requestedReasoningEffort: string | undefined,
-): string | undefined {
-  return getModelReasoningConfig(model, requestedReasoningEffort).reasoningEffort;
-}
-
 export function getModelReasoningConfig(
-  model: ReasoningModelInfo | undefined,
+  model: ModelOptionInfo | undefined,
   requestedReasoningEffort: string | undefined,
 ) {
   const supportedReasoningEfforts = model?.supportedReasoningEfforts ?? [];
@@ -122,6 +144,21 @@ export function getModelReasoningConfig(
   return {
     supportedReasoningEfforts,
     reasoningEffort,
+  };
+}
+
+export function getModelContextTierConfig(
+  model: ModelOptionInfo | undefined,
+  requestedContextTier: string | undefined,
+) {
+  const supportedContextTiers = model?.supportedContextTiers ?? [];
+  const contextTier =
+    supportedContextTiers.find(({ name }) => name === requestedContextTier)?.name ??
+    supportedContextTiers[0]?.name;
+
+  return {
+    supportedContextTiers,
+    contextTier,
   };
 }
 

@@ -233,7 +233,7 @@ function selectReasoningEffort(context: VoiceComposerContext, reasoningEffort: s
   if (!configuration || !model) {
     return { ok: false, error: "No model is selected yet." };
   }
-  const supported: string[] = [...(model.supportedReasoningEfforts ?? [])];
+  const supported: readonly string[] = model.supportedReasoningEfforts ?? [];
   if (supported.length === 0) {
     return {
       ok: false,

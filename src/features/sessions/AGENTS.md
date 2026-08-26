@@ -17,8 +17,8 @@ ordinary sessions rather than introducing another transcript or execution model.
   agent guidance.
 - `fileDiffs.ts` parses edit and patch tool-call results for both SDK artifact projection and
   transcript presentation.
-- `modelConfiguration.ts` owns the validated model and reasoning configuration shared by
-  sessions and their managed workflows.
+- `modelConfiguration.ts` owns the validated model, reasoning-effort, and context-tier
+  configuration shared by sessions and their managed workflows.
 - `reducer.ts` is the one pure transition function shared by live server execution, persisted
   history replay, and browser streaming.
 - `constants.ts` contains stable persisted identity and path conventions.

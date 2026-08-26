@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export * from "./editors";
+export * from "./html";
 
 // A workspace file is one address for a file surfaced in the workspace: an
 // artifact under a session's files directory, or a real file on the host machine.

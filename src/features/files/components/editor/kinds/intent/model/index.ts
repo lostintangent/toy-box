@@ -1,7 +1,8 @@
 /**
- * The public Intent domain model: one strict `.intent` schema, the projections
- * that read an authored graph, and the delivery sequence derived from it. Editor
- * surfaces consume this facade; internal modules import their source owner.
+ * The public Intent domain model: one flexible `IntentDocument`, its findings,
+ * derived effective spec, and the optional execution plan that makes the spec
+ * executable. Editor surfaces consume this facade; internal modules import their
+ * source owner.
  */
 
 export {
@@ -9,64 +10,95 @@ export {
   parseIntent,
   serializeIntent,
   type Change,
-  type ExhibitsSection,
-  type IntentDefinition,
-  type IntentEntityId,
-  type IntentExhibit,
-  type IntentExhibitUpdate,
-  type IntentField,
+  type MarkdownSection,
+  type ListSection,
+  type Finding,
+  type FindingUpdate,
+  type FindingsSection,
   type IntentRecord,
   type IntentRecordUpdate,
-  type IntentRelation,
-  type IntentSection,
-  type LeafSection,
-  type MapSection,
   type OptionAddition,
-  type ProcedureStep,
-  type Provenance,
-  type Question,
-  type Decision,
   type RecordsSection,
   type RecordsView,
-  type SequenceSection,
-  type WorkItem,
-  type WorkItemUpdate,
+  type FlowNode,
+  type FlowConnection,
+  type FlowPath,
+  type FlowRegion,
+  type FlowExhibit,
+  type TreeChange,
+  type FileTreeEntry,
+  type DomainTreeEntry,
+  type TreeExhibit,
+  type IntentExhibit,
+  type IntentExhibitUpdate,
+  type ExhibitsSection,
+  type DefinitionSection,
+  type Question,
+  type DecisionOption,
+  type DecisionChoice,
+  type DecisionStatus,
+  type Decision,
+  type ResolutionSection,
+  type SpecSection,
+  type PlanPhase,
+  type PlanSection,
+  type PlanStep,
+  type PlanStepStatus,
+  type PlanStepUpdate,
+  type IntentDocument,
+  type IntentEntityId,
+  type IntentField,
+  type OptionRelationship,
+  type SourcePolicy,
+  type IntentSection,
+  type IntentTab,
 } from "./schema";
 
 export {
   allDecisions,
+  allFindings,
   allQuestions,
-  effectiveRelations,
+  activeOptionRelationships,
+  decisionOriginForRecord,
+  decisionStatus,
   fieldValueText,
   findExhibitsSection,
+  findFindingsSection,
   findIntentEntity,
   findRecordsSection,
   intentEntities,
+  entitiesGroundedByFinding,
+  findingsForEntity,
   projectedRecords,
-  recordDecisionOrigin,
   recordLabel,
   recordReadingFields,
+  resolveIntentTabs,
+  selectedDecisionOption,
   selectedAdditions,
   type IntentEntity,
+  type ActiveOptionRelationship,
   type ProjectedRecord,
-} from "./projection";
+  type ResolvedIntentTab,
+} from "./query/reading";
 
 export {
-  intentMapGraph,
-  intentMapRelations,
-  relationshipMapRelations,
-  type IntentMapGraph,
-  type IntentMapGraphNode,
-  type IntentMapGraphPath,
-} from "./maps";
+  entityFlowConnections,
+  flowGraph,
+  flowNodeId,
+  flowPathSelectionAfterInspection,
+  specState,
+  unresolvedDependencies,
+  type EntityFlowConnection,
+  type FlowGraph,
+  type FlowGraphNode,
+  type SpecState,
+} from "./spec";
 
 export {
-  deliveryProjection,
-  executionReadiness,
-  implementationObligations,
-  type DeliveryWorkUnit,
-} from "./delivery";
-
-export { reviewReadiness, unresolvedDependencies } from "./workflow";
-
-export { sectionCanRefresh, sectionItemCount } from "./display";
+  planSections,
+  planState,
+  planStatus,
+  planSteps,
+  type PlanState,
+  type PlanStatus,
+} from "./plan";

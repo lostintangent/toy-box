@@ -20,7 +20,6 @@ async function buildCli(): Promise<void> {
       compile: {
         target: "bun-darwin-arm64",
         outfile: join(projectRoot, "toy-box"),
-        // @ts-expect-error Bun 1.4 supports executable assets; bun-types 1.3 does not yet.
         assets: [join(projectRoot, ".output/server/public"), appTypeLibrary],
       },
     });

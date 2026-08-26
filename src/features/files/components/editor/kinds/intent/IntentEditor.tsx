@@ -1,73 +1,99 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
+  Check,
+  ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
   Loader2,
   PanelRightOpen,
-  Sparkles,
+  Play,
+  SearchCheck,
   TableOfContents,
   TriangleAlert,
   X,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/shared/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
 import { cn } from "@/shared/utils";
 import type { EditorProps } from "../index";
 import {
-  executionReadiness,
+  findFindingsSection,
   findRecordsSection,
   findIntentEntity,
   parseIntent,
+  planSections,
+  planState,
   recordLabel,
-  sectionCanRefresh,
-  sectionItemCount,
+  resolveIntentTabs,
+  specState,
   serializeIntent,
-  type IntentDefinition,
+  type Finding,
+  type FindingUpdate,
+  type IntentDocument,
   type IntentEntityId,
   type IntentExhibit,
   type IntentExhibitUpdate,
   type IntentRecord,
   type IntentRecordUpdate,
   type OptionAddition,
+  type PlanStep,
+  type PlanStepUpdate,
   type RecordsView,
-  type WorkItem,
-  type WorkItemUpdate,
+  type ResolvedIntentTab,
 } from "./model/index";
-import { compareIntentToSavedVersion, saveIntentVersion } from "./model/checkpoints";
 import {
-  chooseOption,
-  clearDecision,
+  canRegenerateSection,
+  selectDecisionOption,
+  clearDecisionChoice,
   recordDecision,
-  removeNewSharedItem,
+  removeExhibit,
+  removeFinding,
+  removeSection,
+  removeRecord,
   reopenDecision,
   reopenQuestion,
-  setAllIntentSectionsCollapsed,
-  setIntentRecordsView,
-  setIntentSectionCollapsed,
-  updateIntentExhibit,
-  updateIntentRecord,
-  updateIntentWork,
-} from "./model/transitions";
-import { IntentEntityInspector } from "./EntityInspector";
+  setRecordsView,
+  setSectionCollapsed,
+  setSectionsCollapsed,
+  updateExhibit,
+  updateFinding,
+  updateRecord,
+  updatePlanStep,
+} from "./model/edit";
+import { IntentEntityInspector } from "./inspector";
 import {
-  IntentMapSection,
+  countSectionItems,
+  IntentPlanSection,
   IntentSectionContent,
-  IntentSequenceSection,
   SectionPanel,
 } from "./sections";
-import { IntentVersionControl } from "./VersionControl";
 
 const INTENT_ACTION_NAMES = {
-  "refresh-section": "Refresh a section",
+  "regenerate-section": "Regenerate a section",
   "investigate-question": "Answer an open question",
-  "explain-item": "Explain an item",
-  "start-work": "Start the work",
+  "explain-record": "Explain a record",
+  "execute-plan": "Execute the plan",
+  "review-outcome": "Review the outcome",
 } as const;
 
 type IntentAction = keyof typeof INTENT_ACTION_NAMES;
-type IntentWorkerAction = { action: IntentAction; target?: string };
-type RemovalUndo = { definition: IntentDefinition; sectionId: string; label: string };
+type IntentWorkerAction =
+  | { action: "regenerate-section"; sectionId: string }
+  | { action: "investigate-question"; questionId: string }
+  | { action: "explain-record"; recordId: string }
+  | { action: "execute-plan" }
+  | { action: "review-outcome" };
+type RemovalUndo = {
+  previousDocument: IntentDocument;
+  label: string;
+};
 
 const CONTENTS_CLOSE_DELAY_MS = 120;
 
@@ -76,19 +102,19 @@ function intentSectionElementId(sectionId: string): string {
 }
 
 function intentSectionIsOpen(
-  canMutate: boolean,
+  editable: boolean,
   sectionOpenById: Readonly<Record<string, boolean>>,
   sectionId: string,
   collapsed: boolean,
 ): boolean {
-  return canMutate ? !collapsed : (sectionOpenById[sectionId] ?? !collapsed);
+  return editable ? !collapsed : (sectionOpenById[sectionId] ?? !collapsed);
 }
 
 function IntentTableOfContents({
   sections,
   onNavigate,
 }: {
-  sections: IntentDefinition["sections"];
+  sections: IntentDocument["sections"];
   onNavigate: (sectionId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -184,16 +210,72 @@ function IntentTableOfContents({
   );
 }
 
+function IntentTabPicker({
+  tabs,
+  activeTab,
+  onSelect,
+}: {
+  tabs: ResolvedIntentTab[];
+  activeTab: ResolvedIntentTab;
+  onSelect: (sectionId: string) => void;
+}) {
+  if (tabs.length < 2) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Intent tab: ${activeTab.title}`}
+          className="inline-flex h-8 max-w-52 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <span className="truncate">{activeTab.title}</span>
+          <ChevronDown aria-hidden className="size-3 shrink-0 opacity-60" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="min-w-40"
+        onCloseAutoFocus={(event) => event.preventDefault()}
+      >
+        {tabs.map((tab) => {
+          const anchor = tab.sections[0];
+          if (!anchor) return null;
+          const active = tab === activeTab;
+          return (
+            <DropdownMenuItem
+              key={anchor.id}
+              aria-current={active ? "page" : undefined}
+              className="text-xs"
+              onSelect={() => onSelect(anchor.id)}
+            >
+              <span className="min-w-0 flex-1 truncate">{tab.title}</span>
+              {active && <Check aria-hidden className="ml-auto size-3.5" />}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function isIntentAction(value: unknown): value is IntentAction {
   return typeof value === "string" && Object.hasOwn(INTENT_ACTION_NAMES, value);
 }
 
-function intentActionKey(action: IntentAction, target?: string): string {
-  return target ? `${action}:${target}` : action;
+function intentActionTarget(request: IntentWorkerAction): string | undefined {
+  if (request.action === "regenerate-section") return request.sectionId;
+  if (request.action === "investigate-question") return request.questionId;
+  if (request.action === "explain-record") return request.recordId;
 }
 
-function intentActionName({ action, target }: IntentWorkerAction): string {
-  const name = INTENT_ACTION_NAMES[action];
+function intentActionKey(request: IntentWorkerAction): string {
+  const target = intentActionTarget(request);
+  return target ? `${request.action}:${target}` : request.action;
+}
+
+function intentActionName(request: IntentWorkerAction): string {
+  const name = INTENT_ACTION_NAMES[request.action];
+  const target = intentActionTarget(request);
   return target ? `${name}: ${target}`.slice(0, 100) : name;
 }
 
@@ -202,32 +284,45 @@ function intentWorkerAction(value: unknown): IntentWorkerAction | undefined {
   const intent = Reflect.get(value, "intent");
   if (typeof intent !== "object" || intent === null || Array.isArray(intent)) return;
   const action = Reflect.get(intent, "action");
-  const target = Reflect.get(intent, "target");
-  if (!isIntentAction(action) || (target !== undefined && typeof target !== "string")) return;
-  return { action, ...(target !== undefined ? { target } : {}) };
+  if (!isIntentAction(action)) return;
+  if (action === "execute-plan" || action === "review-outcome") return { action };
+  if (action === "regenerate-section") {
+    const sectionId = Reflect.get(intent, "sectionId");
+    return typeof sectionId === "string" ? { action, sectionId } : undefined;
+  }
+  if (action === "investigate-question") {
+    const questionId = Reflect.get(intent, "questionId");
+    return typeof questionId === "string" ? { action, questionId } : undefined;
+  }
+  const recordId = Reflect.get(intent, "recordId");
+  return typeof recordId === "string" ? { action, recordId } : undefined;
 }
 
 function pendingIntentActions(workers: EditorProps["pendingWorkers"]): Set<string> {
   const actions = new Set<string>();
   for (const worker of workers) {
     const intent = intentWorkerAction(worker.metadata);
-    if (intent) actions.add(intentActionKey(intent.action, intent.target));
+    if (intent) actions.add(intentActionKey(intent));
   }
   return actions;
 }
 
-function workerPrompt({ action, target }: IntentWorkerAction): string {
+export function intentWorkerPrompt(request: IntentWorkerAction): string {
+  if (request.action === "execute-plan") {
+    return "Use the registered `execute-toy-box-intent` skill to execute or resume this intent's plan.";
+  }
+  if (request.action === "review-outcome") {
+    return "Use the registered `execute-toy-box-intent` skill's post-execution workflow to review this completed intent's outcome.";
+  }
   const targetInstruction =
-    target === undefined
-      ? ""
-      : action === "refresh-section"
-        ? ` for section "${target}"`
-        : action === "investigate-question"
-          ? ` for question "${target}"`
-          : action === "explain-item"
-            ? ` for item "${target}"`
-            : "";
-  return `Use the registered \`create-toy-box-intent\` skill's \`${action}\` file-worker workflow${targetInstruction}.`;
+    request.action === "regenerate-section"
+      ? ` for section "${request.sectionId}"`
+      : request.action === "investigate-question"
+        ? ` for question "${request.questionId}"`
+        : request.action === "explain-record"
+          ? ` for record "${request.recordId}"`
+          : "";
+  return `Use the registered \`create-toy-box-intent\` skill's \`${request.action}\` editor-action workflow${targetInstruction}.`;
 }
 
 export function IntentEditor({
@@ -246,6 +341,7 @@ export function IntentEditor({
   const [removalUndo, setRemovalUndo] = useState<RemovalUndo>();
   const [sectionOpenById, setSectionOpenById] = useState<Readonly<Record<string, boolean>>>({});
   const [recordsViewById, setRecordsViewById] = useState<Readonly<Record<string, RecordsView>>>({});
+  const [selectedTabSectionId, setSelectedTabSectionId] = useState<string>();
   const [selectedEntityId, setSelectedEntityId] = useState<IntentEntityId>();
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [submittingActions, setSubmittingActions] = useState<ReadonlySet<string>>(() => new Set());
@@ -257,13 +353,13 @@ export function IntentEditor({
       }
       return spawnWorker({
         name: intentActionName(request),
-        prompt: workerPrompt(request),
+        prompt: intentWorkerPrompt(request),
         metadata: { intent: request },
       });
     },
     onError: () => setSpawnFailed(true),
     onSettled: (_data, _error, request) => {
-      const key = intentActionKey(request.action, request.target);
+      const key = intentActionKey(request);
       setSubmittingActions((current) => {
         if (!current.has(key)) return current;
         const next = new Set(current);
@@ -293,105 +389,186 @@ export function IntentEditor({
     );
   }
 
-  const definition = parsed.value;
-  const execution = executionReadiness(definition);
-  const { openQuestions, blockingDecisions, approvable } = execution.review;
-  const blockerCount = openQuestions.length + blockingDecisions.length;
-  const startPending = pending.has("start-work");
-  const canMutate = editable;
+  const intent = parsed.value;
+  const spec = specState(intent);
+  const plan = planState(planSections(intent), spec);
+  const { openQuestions, unresolvedDecisions, settled } = spec;
+  const specBlockerCount = openQuestions.length + unresolvedDecisions.length;
+  const executionPending = pending.has("execute-plan");
+  const reviewPending = pending.has("review-outcome");
+  const planWorkerPending = executionPending || reviewPending;
   const canRunWorker = editable && Boolean(spawnWorker);
-  const canStart = canRunWorker && execution.ready && !startPending;
-  const versionComparison = compareIntentToSavedVersion(definition);
-  const allSectionsCollapsed = definition.sections.every(
-    (section) => !intentSectionIsOpen(canMutate, sectionOpenById, section.id, section.collapsed),
+  const planComplete = Boolean(plan?.fullyPlanned && plan.status === "complete");
+  const canStartExecution = Boolean(canRunWorker && plan?.canExecute && !planWorkerPending);
+  const canReviewOutcome = canRunWorker && planComplete && !planWorkerPending;
+  const reviewAction = reviewPending ? "Outcome review in progress" : "Review outcome";
+  const executionAction = reviewPending
+    ? "Outcome review in progress"
+    : executionPending
+      ? "Plan execution in progress"
+      : !settled
+        ? `${specBlockerCount} thing${specBlockerCount === 1 ? "" : "s"} to settle before executing`
+        : !plan?.fullyPlanned
+          ? "Plan needs attention"
+          : plan.status === "in-progress"
+            ? "Resume execution"
+            : "Execute plan";
+  const tabs = resolveIntentTabs(intent);
+  const activeTab = tabs.find((tab) =>
+    tab.sections.some((section) => section.id === selectedTabSectionId),
+  ) ??
+    tabs[0] ?? { title: intent.title, sections: intent.sections };
+  const visibleSections = activeTab.sections;
+  const firstVisiblePlanSectionId = visibleSections.find((section) => section.kind === "plan")?.id;
+  const allSectionsCollapsed = visibleSections.every(
+    (section) => !intentSectionIsOpen(editable, sectionOpenById, section.id, section.collapsed),
   );
   const disclosureAction = allSectionsCollapsed ? "Expand all" : "Collapse all";
-  const selectedEntity = selectedEntityId
-    ? findIntentEntity(definition, selectedEntityId)
-    : undefined;
+  const selectedEntity = selectedEntityId ? findIntentEntity(intent, selectedEntityId) : undefined;
+  const selectedExhibitCanBeRemoved =
+    editable &&
+    selectedEntity?.type === "exhibit" &&
+    selectedEntity.owner.kind === "section" &&
+    removeExhibit(intent, selectedEntity.owner.section.id, selectedEntity.id) !== intent;
+  const selectedFindingCanBeRemoved =
+    editable &&
+    selectedEntity?.type === "finding" &&
+    removeFinding(intent, selectedEntity.section.id, selectedEntity.id) !== intent;
 
-  function persist(next: IntentDefinition) {
-    if (next === definition) return;
+  function persist(next: IntentDocument) {
+    if (next === intent) return;
     setBuffer({ revision: file.revision, parsed: { ok: true, value: next } });
     file.save(serializeIntent(next));
     void file.flush();
   }
 
-  function commit(next: IntentDefinition) {
-    if (next === definition) return;
-    setRemovalUndo(undefined);
+  function commit(next: IntentDocument, undo?: RemovalUndo) {
+    if (next === intent) return;
+    setRemovalUndo(undo);
     persist(next);
   }
 
-  function removeItem(sectionId: string, itemId: string) {
-    const section = findRecordsSection(definition, sectionId);
-    const item = section?.items.find((candidate) => candidate.id === itemId);
-    if (!item || item.change !== "new") return;
-    const next = removeNewSharedItem(definition, sectionId, itemId);
-    if (next === definition) return;
-    setRemovalUndo({ definition, sectionId, label: recordLabel(item) });
-    persist(next);
+  function deleteRecord(sectionId: string, recordId: string) {
+    const section = findRecordsSection(intent, sectionId);
+    const record = section?.items.find((candidate) => candidate.id === recordId);
+    if (!record || record.change !== "new") return;
+    const next = removeRecord(intent, sectionId, recordId);
+    if (next === intent) return;
+    commit(next, { previousDocument: intent, label: recordLabel(record) });
+  }
+
+  function deleteSection(sectionId: string) {
+    const entity = findIntentEntity(intent, sectionId);
+    if (entity?.type !== "section") return;
+    const next = removeSection(intent, sectionId);
+    if (next === intent) return;
+    commit(next, { previousDocument: intent, label: `${entity.label} section` });
+  }
+
+  function deleteExhibit(sectionId: string, exhibitId: string) {
+    const entity = findIntentEntity(intent, exhibitId);
+    if (
+      entity?.type !== "exhibit" ||
+      entity.owner.kind !== "section" ||
+      entity.owner.section.id !== sectionId ||
+      entity.exhibit.change !== "new"
+    ) {
+      return;
+    }
+    const next = removeExhibit(intent, sectionId, exhibitId);
+    if (next === intent) return;
+    setInspectorOpen(false);
+    setSelectedEntityId(undefined);
+    commit(next, { previousDocument: intent, label: entity.label });
+  }
+
+  function deleteFinding(sectionId: string, findingId: string) {
+    const section = findFindingsSection(intent, sectionId);
+    const finding = section?.items.find((candidate) => candidate.id === findingId);
+    if (!finding) return;
+    const next = removeFinding(intent, sectionId, findingId);
+    if (next === intent) return;
+    setInspectorOpen(false);
+    setSelectedEntityId(undefined);
+    commit(next, { previousDocument: intent, label: `finding: ${finding.statement}` });
   }
 
   function undoRemoval() {
     if (!removalUndo) return;
-    const previous = removalUndo.definition;
-    setRemovalUndo(undefined);
-    persist(previous);
+    commit(removalUndo.previousDocument);
   }
 
-  function updateRecord(
+  function saveRecord(
     recordId: string,
     update: IntentRecordUpdate,
     original: IntentRecord | OptionAddition,
   ): string | undefined {
-    const current = findIntentEntity(definition, recordId);
+    const current = findIntentEntity(intent, recordId);
     if (current?.type !== "record") {
-      return "This item is no longer part of the intent.";
+      return "This record is no longer part of the intent.";
     }
     if (JSON.stringify(current.record) !== JSON.stringify(original)) {
-      return "This item changed while you were editing. Cancel and reopen it to use the latest version.";
+      return "This record changed while you were editing. Cancel and reopen it to use the latest version.";
     }
-    const next = updateIntentRecord(definition, recordId, update);
-    if (next === definition) return "This item is no longer part of the intent.";
+    const next = updateRecord(intent, recordId, update);
+    if (next === intent) return "This record is no longer part of the intent.";
     const validated = parseIntent(serializeIntent(next));
     if (!validated.ok) return validated.error;
     commit(validated.value);
   }
 
-  function updateExhibit(
+  function saveExhibit(
     exhibitId: string,
     update: IntentExhibitUpdate,
     original: IntentExhibit,
   ): string | undefined {
-    const current = findIntentEntity(definition, exhibitId);
+    const current = findIntentEntity(intent, exhibitId);
     if (current?.type !== "exhibit") {
-      return "This exact detail is no longer part of the intent.";
+      return "This exhibit is no longer part of the intent.";
     }
     if (JSON.stringify(current.exhibit) !== JSON.stringify(original)) {
-      return "This exact detail changed while you were editing. Cancel and reopen it to use the latest version.";
+      return "This exhibit changed while you were editing. Cancel and reopen it to use the latest version.";
     }
-    const next = updateIntentExhibit(definition, exhibitId, update);
-    if (next === definition) return "This exact detail is no longer part of the intent.";
+    const next = updateExhibit(intent, exhibitId, update);
+    if (next === intent) return "This exhibit is no longer part of the intent.";
     const validated = parseIntent(serializeIntent(next));
     if (!validated.ok) return validated.error;
     commit(validated.value);
   }
 
-  function updateWork(
-    itemId: string,
-    update: WorkItemUpdate,
-    original: WorkItem,
+  function saveFinding(
+    findingId: string,
+    update: FindingUpdate,
+    original: Finding,
   ): string | undefined {
-    const current = findIntentEntity(definition, itemId);
-    if (current?.type !== "work") {
-      return "This work item is no longer part of the intent.";
+    const current = findIntentEntity(intent, findingId);
+    if (current?.type !== "finding") {
+      return "This finding is no longer part of the intent.";
     }
-    if (JSON.stringify(current.work) !== JSON.stringify(original)) {
-      return "This work item changed while you were editing. Cancel and reopen it to use the latest version.";
+    if (JSON.stringify(current.finding) !== JSON.stringify(original)) {
+      return "This finding changed while you were editing. Cancel and reopen it to use the latest version.";
     }
-    const next = updateIntentWork(definition, itemId, update);
-    if (next === definition) return "This work item is no longer part of the intent.";
+    const next = updateFinding(intent, findingId, update);
+    if (next === intent) return "This finding is no longer part of the intent.";
+    const validated = parseIntent(serializeIntent(next));
+    if (!validated.ok) return validated.error;
+    commit(validated.value);
+  }
+
+  function savePlanStep(
+    stepId: string,
+    update: PlanStepUpdate,
+    original: PlanStep,
+  ): string | undefined {
+    const current = findIntentEntity(intent, stepId);
+    if (current?.type !== "plan-step") {
+      return "This plan step is no longer part of the intent.";
+    }
+    if (JSON.stringify(current.step) !== JSON.stringify(original)) {
+      return "This plan step changed while you were editing. Cancel and reopen it to use the latest version.";
+    }
+    const next = updatePlanStep(intent, stepId, update);
+    if (next === intent) return "This plan step is no longer part of the intent.";
     const validated = parseIntent(serializeIntent(next));
     if (!validated.ok) return validated.error;
     commit(validated.value);
@@ -408,18 +585,25 @@ export function IntentEditor({
   }
 
   function setAllSectionsOpen(open: boolean) {
-    if (canMutate) {
-      persist(setAllIntentSectionsCollapsed(definition, !open));
+    if (editable) {
+      persist(
+        setSectionsCollapsed(
+          intent,
+          visibleSections.map((section) => section.id),
+          !open,
+        ),
+      );
       return;
     }
-    setSectionOpenById(
-      Object.fromEntries(definition.sections.map((section) => [section.id, open])),
-    );
+    setSectionOpenById((current) => ({
+      ...current,
+      ...Object.fromEntries(visibleSections.map((section) => [section.id, open])),
+    }));
   }
 
   function setSectionOpen(sectionId: string, open: boolean) {
-    if (canMutate) {
-      persist(setIntentSectionCollapsed(definition, sectionId, !open));
+    if (editable) {
+      persist(setSectionCollapsed(intent, sectionId, !open));
       return;
     }
     setSectionOpenById((current) =>
@@ -428,8 +612,8 @@ export function IntentEditor({
   }
 
   function changeRecordsView(sectionId: string, view: RecordsView) {
-    if (canMutate) {
-      persist(setIntentRecordsView(definition, sectionId, view));
+    if (editable) {
+      persist(setRecordsView(intent, sectionId, view));
       return;
     }
     setRecordsViewById((current) =>
@@ -438,9 +622,9 @@ export function IntentEditor({
   }
 
   function navigateToSection(sectionId: string) {
-    const section = definition.sections.find((candidate) => candidate.id === sectionId);
+    const section = intent.sections.find((candidate) => candidate.id === sectionId);
     if (!section) return;
-    if (!intentSectionIsOpen(canMutate, sectionOpenById, section.id, section.collapsed)) {
+    if (!intentSectionIsOpen(editable, sectionOpenById, section.id, section.collapsed)) {
       setSectionOpen(section.id, true);
     }
     document
@@ -448,9 +632,8 @@ export function IntentEditor({
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function dispatch(action: IntentAction, target?: string) {
-    const request = { action, ...(target ? { target } : {}) };
-    const key = intentActionKey(action, target);
+  function dispatch(request: IntentWorkerAction) {
+    const key = intentActionKey(request);
     if (!spawnWorker || pending.has(key)) return;
     setSpawnFailed(false);
     setSubmittingActions((current) => new Set(current).add(key));
@@ -461,9 +644,10 @@ export function IntentEditor({
     <div className="h-full overflow-auto bg-background">
       <div className={cn("mx-auto max-w-6xl space-y-3.5", variant === "compact" ? "p-3" : "p-5")}>
         <header className="px-1 pb-1">
-          <h1 className="text-lg font-semibold">{definition.title}</h1>
+          <h1 className="text-lg font-semibold">{intent.title}</h1>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <IntentTableOfContents sections={definition.sections} onNavigate={navigateToSection} />
+            <IntentTabPicker tabs={tabs} activeTab={activeTab} onSelect={setSelectedTabSectionId} />
+            <IntentTableOfContents sections={visibleSections} onNavigate={navigateToSection} />
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -481,55 +665,57 @@ export function IntentEditor({
               </TooltipTrigger>
               <TooltipContent sideOffset={6}>{disclosureAction}</TooltipContent>
             </Tooltip>
-            <IntentVersionControl
-              comparison={versionComparison}
-              focusedEntityId={selectedEntityId}
-              onInspect={inspectEntity}
-              onSaveVersion={
-                canMutate
-                  ? () => commit(saveIntentVersion(definition, new Date().toISOString()))
-                  : undefined
-              }
-            />
-            <button
-              type="button"
-              disabled={!canStart}
-              onClick={() => dispatch("start-work")}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold",
-                canStart
-                  ? "bg-primary text-primary-foreground hover:opacity-90"
-                  : "cursor-not-allowed bg-muted text-muted-foreground",
-              )}
-            >
-              {startPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+            {plan &&
+              (planComplete ? (
+                <>
+                  <Check
+                    role="img"
+                    aria-label="Plan complete"
+                    className="size-4 text-emerald-400"
+                  />
+                  {canRunWorker && (
+                    <button
+                      type="button"
+                      aria-label={reviewAction}
+                      title={reviewAction}
+                      disabled={!canReviewOutcome}
+                      onClick={() => dispatch({ action: "review-outcome" })}
+                      className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {reviewPending ? (
+                        <Loader2 aria-hidden className="size-3.5 animate-spin" />
+                      ) : (
+                        <SearchCheck aria-hidden className="size-3.5" />
+                      )}
+                    </button>
+                  )}
+                </>
               ) : (
-                <Sparkles className="size-3.5" />
-              )}
-              {startPending
-                ? "Starting the work..."
-                : !approvable
-                  ? `${blockerCount} thing${blockerCount === 1 ? "" : "s"} to settle before starting`
-                  : execution.delivery.present && !execution.delivery.complete
-                    ? "Sequence needs attention"
-                    : "Start work"}
-            </button>
-            {blockerCount > 0 && (
-              <span
-                className={cn(
-                  "ml-auto text-[11px] font-medium",
-                  blockerCount > 0 ? "text-rose-400" : "text-emerald-400",
-                )}
-              >
+                <button
+                  type="button"
+                  aria-label={executionAction}
+                  title={executionAction}
+                  disabled={!canStartExecution}
+                  onClick={() => dispatch({ action: "execute-plan" })}
+                  className="inline-flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {planWorkerPending ? (
+                    <Loader2 aria-hidden className="size-3.5 animate-spin" />
+                  ) : (
+                    <Play aria-hidden className="size-3.5 fill-current" />
+                  )}
+                </button>
+              ))}
+            {specBlockerCount > 0 && (
+              <span className="ml-auto text-[11px] font-medium text-rose-400">
                 {openQuestions.length > 0
                   ? `${openQuestions.length} question${openQuestions.length === 1 ? "" : "s"}`
                   : ""}
-                {openQuestions.length > 0 && blockingDecisions.length > 0 ? " and " : ""}
-                {blockingDecisions.length > 0
-                  ? `${blockingDecisions.length} choice${blockingDecisions.length === 1 ? "" : "s"}`
+                {openQuestions.length > 0 && unresolvedDecisions.length > 0 ? " and " : ""}
+                {unresolvedDecisions.length > 0
+                  ? `${unresolvedDecisions.length} choice${unresolvedDecisions.length === 1 ? "" : "s"}`
                   : ""}
-                {` still ${blockerCount === 1 ? "needs" : "need"} you`}
+                {` still ${specBlockerCount === 1 ? "needs" : "need"} you`}
               </span>
             )}
             {selectedEntity && (
@@ -560,97 +746,123 @@ export function IntentEditor({
           </div>
           {spawnFailed && (
             <p role="alert" className="mt-2 text-xs text-destructive">
-              Unable to start this work. Try again.
+              Unable to start that worker. Try again.
             </p>
           )}
         </header>
 
-        {definition.sections.map((section) => {
-          const refreshable = sectionCanRefresh(section);
+        {removalUndo && (
+          <div
+            role="status"
+            className="mx-1 flex items-center gap-2 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-[10.5px] text-muted-foreground"
+          >
+            <span className="min-w-0 flex-1 truncate">
+              Removed {removalUndo.label} from intent.
+            </span>
+            <button
+              type="button"
+              onClick={undoRemoval}
+              className="shrink-0 font-medium text-foreground hover:underline"
+            >
+              Undo
+            </button>
+          </div>
+        )}
+
+        {visibleSections.map((section) => {
+          const regenerable = canRegenerateSection(section);
           return (
             <SectionPanel
               key={section.id}
               id={intentSectionElementId(section.id)}
               title={section.title}
               purpose={section.purpose}
-              count={sectionItemCount(definition, section)}
-              open={intentSectionIsOpen(canMutate, sectionOpenById, section.id, section.collapsed)}
+              count={countSectionItems(intent, section)}
+              open={intentSectionIsOpen(editable, sectionOpenById, section.id, section.collapsed)}
               onOpenChange={(open) => setSectionOpen(section.id, open)}
-              refresh={
-                refreshable
+              actions={
+                editable || regenerable
                   ? {
-                      busy: pending.has(`refresh-section:${section.id}`),
-                      onClick: canRunWorker
-                        ? () => dispatch("refresh-section", section.id)
+                      regenerate: regenerable
+                        ? {
+                            busy: pending.has(`regenerate-section:${section.id}`),
+                            onSelect: canRunWorker
+                              ? () =>
+                                  dispatch({ action: "regenerate-section", sectionId: section.id })
+                              : undefined,
+                          }
                         : undefined,
+                      onDelete:
+                        editable && intent.sections.length > 1
+                          ? () => deleteSection(section.id)
+                          : undefined,
                     }
                   : undefined
               }
             >
-              {section.kind === "map" ? (
-                <IntentMapSection
-                  definition={definition}
-                  section={section}
-                  focusedEntityId={selectedEntityId}
-                  onInspect={inspectEntity}
-                />
-              ) : (
-                <IntentSectionContent
-                  definition={definition}
-                  section={section}
-                  editable={canMutate}
-                  baseUri={baseUri}
-                  pending={pending}
-                  undoRemoval={removalUndo}
-                  focusedEntityId={selectedEntityId}
-                  recordsViewById={canMutate ? undefined : recordsViewById}
-                  renderSequence={(sequence) => (
-                    <IntentSequenceSection
-                      definition={definition}
-                      section={sequence}
+              <IntentSectionContent
+                document={intent}
+                section={section}
+                editable={editable}
+                baseUri={baseUri}
+                pending={pending}
+                focusedEntityId={selectedEntityId}
+                recordsViewById={editable ? undefined : recordsViewById}
+                renderPlan={(planSection) =>
+                  plan ? (
+                    <IntentPlanSection
+                      spec={spec}
+                      plan={plan}
+                      section={planSection}
+                      showPlanSummary={planSection.id === firstVisiblePlanSectionId}
                       focusedEntityId={selectedEntityId}
                       onInspect={inspectEntity}
                     />
-                  )}
-                  onInspect={inspectEntity}
-                  onRefresh={
-                    canRunWorker ? (sectionId) => dispatch("refresh-section", sectionId) : undefined
-                  }
-                  onExplain={
-                    canRunWorker ? (itemId) => dispatch("explain-item", itemId) : undefined
-                  }
-                  onRemove={canMutate ? removeItem : undefined}
-                  onUndoRemoval={canMutate ? undoRemoval : undefined}
-                  onInvestigate={
-                    canRunWorker
-                      ? (questionId) => dispatch("investigate-question", questionId)
-                      : undefined
-                  }
-                  onChoose={(decisionId, optionId) =>
-                    commit(chooseOption(definition, decisionId, optionId))
-                  }
-                  onRecord={(decisionId) => commit(recordDecision(definition, decisionId))}
-                  onReopenDecision={(decisionId) => commit(reopenDecision(definition, decisionId))}
-                  onClear={(decisionId) => commit(clearDecision(definition, decisionId))}
-                  onReopenQuestion={(questionId) => commit(reopenQuestion(definition, questionId))}
-                  onRecordsViewChange={changeRecordsView}
-                />
-              )}
+                  ) : null
+                }
+                onInspect={inspectEntity}
+                onExplainRecord={
+                  canRunWorker
+                    ? (recordId) => dispatch({ action: "explain-record", recordId })
+                    : undefined
+                }
+                onRemoveRecord={editable ? deleteRecord : undefined}
+                onInvestigateQuestion={
+                  canRunWorker
+                    ? (questionId) => dispatch({ action: "investigate-question", questionId })
+                    : undefined
+                }
+                onSelectDecisionOption={(decisionId, optionId) =>
+                  commit(selectDecisionOption(intent, decisionId, optionId))
+                }
+                onRecordDecision={(decisionId) => commit(recordDecision(intent, decisionId))}
+                onReopenDecision={(decisionId) => commit(reopenDecision(intent, decisionId))}
+                onClearDecisionChoice={(decisionId) =>
+                  commit(clearDecisionChoice(intent, decisionId))
+                }
+                onReopenQuestion={(questionId) => commit(reopenQuestion(intent, questionId))}
+                onRecordsViewChange={changeRecordsView}
+              />
             </SectionPanel>
           );
         })}
       </div>
       <IntentEntityInspector
-        definition={definition}
+        document={intent}
         baseUri={baseUri}
         entity={inspectorOpen ? selectedEntity : undefined}
         pending={pending}
         onClose={() => setInspectorOpen(false)}
         onInspect={inspectEntity}
-        onExplain={canRunWorker ? (itemId) => dispatch("explain-item", itemId) : undefined}
-        onUpdateExhibit={canMutate ? updateExhibit : undefined}
-        onUpdateRecord={canMutate ? updateRecord : undefined}
-        onUpdateWork={canMutate ? updateWork : undefined}
+        onExplainRecord={
+          canRunWorker ? (recordId) => dispatch({ action: "explain-record", recordId }) : undefined
+        }
+        onRemoveExhibit={selectedExhibitCanBeRemoved ? deleteExhibit : undefined}
+        onRemoveFinding={selectedFindingCanBeRemoved ? deleteFinding : undefined}
+        onUpdateExhibit={editable ? saveExhibit : undefined}
+        onUpdateFinding={editable ? saveFinding : undefined}
+        onUpdateRecord={editable ? saveRecord : undefined}
+        onUpdatePlanStep={editable ? savePlanStep : undefined}
       />
     </div>
   );

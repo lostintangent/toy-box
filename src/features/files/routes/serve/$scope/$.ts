@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { HTML_SANDBOX_CONTENT_SECURITY_POLICY } from "@files/model";
 import { resolveFileRequest } from "@files/server/request";
 
 type ServeRouteParams = {
@@ -39,8 +40,7 @@ export const Route = createFileRoute("/api/serve/$scope/$")({
           return new Response(Bun.file(absolutePath), {
             headers: {
               "Cache-Control": "no-store",
-              "Content-Security-Policy":
-                "sandbox allow-downloads allow-forms allow-modals allow-popups allow-scripts allow-top-navigation-by-user-activation",
+              "Content-Security-Policy": HTML_SANDBOX_CONTENT_SECURITY_POLICY,
               "Content-Type": getContentType(absolutePath),
               "X-Content-Type-Options": "nosniff",
             },

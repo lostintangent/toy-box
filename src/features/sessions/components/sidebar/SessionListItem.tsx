@@ -84,10 +84,7 @@ export function SessionListItem({
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
-              onSelect={(event) => {
-                event.preventDefault();
-                setDeleteOpen(true);
-              }}
+              onSelect={() => setDeleteOpen(true)}
             >
               <Trash2 className="h-3.5 w-3.5" />
               Delete session

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { HTML_SANDBOX_PERMISSIONS } from "@files/model";
 import type { EditorProps } from "../index";
 import {
   injectBaseHref,
@@ -45,7 +46,7 @@ export function HtmlEditor({ title, mode, baseUri, file }: EditorProps) {
       onLoad={(event) => syncEditMode(event.currentTarget, canEdit)}
       className="h-full w-full border-0 bg-background"
       referrerPolicy="no-referrer"
-      sandbox="allow-downloads allow-forms allow-modals allow-popups allow-scripts allow-top-navigation-by-user-activation"
+      sandbox={HTML_SANDBOX_PERMISSIONS}
     />
   );
 }

@@ -17,6 +17,8 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+        env:
+          MOTION_TOKEN: ${{ secrets.MOTION_TOKEN }}
 
       - name: Check
         run: bun check

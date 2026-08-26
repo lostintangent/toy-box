@@ -58,8 +58,10 @@ Session configuration follows the same role model:
   `server/skills/`. The build embeds every file recursively, and startup replaces
   their generated copies under `~/.toy-box/skills/`. Adding, renaming, or
   removing nested resources requires no installer changes.
-- Every role receives `create-toy-box-app` and `create-toy-box-intent` on create,
-  resume, and composer discovery. Hyper additionally receives
+- Every role receives `create-toy-box-app`, `create-toy-box-intent`, and
+  `execute-toy-box-intent` on create, resume, and composer discovery. Intent
+  authoring and execution are separate capabilities so ordinary authoring does
+  not load the side-effectful execution workflow. Hyper additionally receives
   `create-toy-box-editor`; its installed-app and custom-editor tools remain
   role-owned. Skill descriptions own routing and their workflow and runtime
   contracts; model-facing tools remain concise control-plane verbs.

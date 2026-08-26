@@ -1,0 +1,1 @@
+export { IntentFindingsContent } from "./content";

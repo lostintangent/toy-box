@@ -1,5 +1,6 @@
 export { IntentSectionContent } from "./content";
-export { IntentExhibitCard } from "./exhibits";
-export { IntentMapSection } from "./map";
-export { IntentSequenceSection } from "./sequence";
-export { ChangeTag, intentRelationLabel, SectionPanel } from "./shared";
+export { exhibitKindLabel, IntentExhibitCard, IntentFlowExhibit } from "./definition";
+export { IntentFindingsContent } from "./findings";
+export { IntentPlanSection } from "./plan";
+export { countSectionItems } from "./presentation";
+export { ChangeTag, optionRelationshipLabel, SectionPanel } from "./shared";

@@ -25,4 +25,23 @@ describe("history replay", () => {
       { role: "assistant", content: "Done." },
     ]);
   });
+
+  test("replays open context-tier strings through the shared model projection", () => {
+    const state = replaySdkHistory("history-replay-model", [
+      sdkEvent({
+        type: "session.start",
+        data: {
+          selectedModel: "gpt-5",
+          reasoningEffort: "max",
+          contextTier: "future_tier",
+        },
+      }),
+    ]);
+
+    expect(state.model).toEqual({
+      name: "gpt-5",
+      reasoningEffort: "max",
+      contextTier: "future_tier",
+    });
+  });
 });

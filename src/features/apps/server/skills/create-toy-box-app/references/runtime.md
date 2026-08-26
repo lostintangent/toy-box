@@ -207,6 +207,11 @@ type AppWorkspace = {
     name: string;
     supportedReasoningEfforts?: string[];
     defaultReasoningEffort?: string;
+    /** Ordered with the model's default tier first. */
+    supportedContextTiers?: Array<{
+      name: string;
+      tokenWindow: number;
+    }>;
   }>;
   defaultModel: ModelConfiguration | null;
   openSessionIds: string[];

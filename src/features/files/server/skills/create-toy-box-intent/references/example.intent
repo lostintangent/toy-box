@@ -2,10 +2,64 @@
   "title": "Let ordinary tools share message bodies",
   "sections": [
     {
+      "id": "research-findings",
+      "title": "Where tool rendering already lives",
+      "purpose": "Preserve the current ownership and rendering facts that shape the shared-body boundary.",
+      "kind": "findings",
+      "collapsed": true,
+      "sourcePolicy": "code",
+      "items": [
+        {
+          "id": "finding-card-owner",
+          "statement": "ToolCallMessage already owns the common card frame, status, disclosure, and actions.",
+          "whyItMatters": "A shared body can remain content inside that lifecycle instead of creating a second card owner.",
+          "sources": [
+            "src/features/sessions/components/transcript/messages/tools/ToolCallMessage.tsx#ToolCallMessage"
+          ],
+          "exhibit": {
+            "id": "current-card-ownership",
+            "title": "Current card ownership",
+            "kind": "tree",
+            "type": "domain",
+            "change": "existing",
+            "source": "src/features/sessions/components/transcript/messages/tools/ToolCallMessage.tsx#ToolCallMessage",
+            "roots": [
+              {
+                "name": "ToolCallMessage",
+                "children": [
+                  { "name": "Frame" },
+                  { "name": "Status and disclosure" },
+                  { "name": "Actions" },
+                  { "name": "Tool-specific body" }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "finding-duplicate-bodies",
+          "statement": "Shell commands and file reads each rebuild body presentation inside tool-specific components.",
+          "whyItMatters": "They are concrete ordinary cases for one declared body vocabulary.",
+          "sources": [
+            "src/features/sessions/components/transcript/messages/tools/BashToolCall.tsx#BashToolCall",
+            "src/features/sessions/components/transcript/messages/tools/ReadToolCall.tsx#ReadToolCall"
+          ]
+        },
+        {
+          "id": "finding-rich-diff",
+          "statement": "File edits depend on a dedicated syntax-aware diff presentation.",
+          "whyItMatters": "Consolidation must deliberately preserve that richness or keep the renderer specialized.",
+          "sources": [
+            "src/features/sessions/components/transcript/messages/tools/FileDiffToolCall.tsx#FileDiffToolCall"
+          ]
+        }
+      ]
+    },
+    {
       "id": "direction",
       "title": "The idea",
       "purpose": "Explain how the shared body fits the existing card owner and where specialization remains.",
-      "kind": "prose",
+      "kind": "markdown",
       "collapsed": false,
       "body": "ToolCallMessage keeps owning the card frame, status, disclosure, and actions. An ordinary tool stops rebuilding that surrounding presentation and instead describes its body as text, code, or a rich diff for the card to render; only a genuinely different interaction or nesting model keeps a custom React path."
     },
@@ -16,7 +70,7 @@
       "kind": "records",
       "collapsed": false,
       "view": "table",
-      "provenance": "code",
+      "sourcePolicy": "code",
       "subject": "Tool result",
       "fields": [
         {
@@ -58,7 +112,8 @@
             "body": "code",
             "result": "The command and its output keep syntax-aware formatting inside the ordinary tool card."
           },
-          "provenance": "src/features/sessions/components/transcript/messages/tools/BashToolCall.tsx#BashToolCall"
+          "source": "src/features/sessions/components/transcript/messages/tools/BashToolCall.tsx#BashToolCall",
+          "basedOn": ["finding-duplicate-bodies"]
         },
         {
           "id": "read-result",
@@ -68,7 +123,8 @@
             "body": "code",
             "result": "The path and returned source keep their current readable code presentation."
           },
-          "provenance": "src/features/sessions/components/transcript/messages/tools/ReadToolCall.tsx#ReadToolCall"
+          "source": "src/features/sessions/components/transcript/messages/tools/ReadToolCall.tsx#ReadToolCall",
+          "basedOn": ["finding-duplicate-bodies"]
         },
         {
           "id": "special-results",
@@ -78,7 +134,8 @@
             "body": "custom",
             "result": "Fallback JSON and nested activity keep their current specialized paths."
           },
-          "provenance": "src/features/sessions/components/transcript/messages/tools/ToolCallMessage.tsx#ToolCallMessage"
+          "source": "src/features/sessions/components/transcript/messages/tools/ToolCallMessage.tsx#ToolCallMessage",
+          "basedOn": ["finding-card-owner"]
         }
       ]
     },
@@ -108,24 +165,19 @@
                     "body": "diff",
                     "result": "Added and removed lines stay syntax-aware inside the ordinary tool card."
                   },
-                  "provenance": "src/features/sessions/components/transcript/messages/tools/FileDiffToolCall.tsx#FileDiffToolCall"
+                  "source": "src/features/sessions/components/transcript/messages/tools/FileDiffToolCall.tsx#FileDiffToolCall"
                 }
               ],
-              "relations": [
-                {
-                  "id": "edit-result-uses-tool-body",
-                  "from": "edit-result",
-                  "to": "tool-body-type",
-                  "kind": "realized-by",
-                  "label": "uses the same body shape"
-                },
-                {
-                  "id": "edit-result-implemented-by-adapters",
-                  "from": "edit-result",
-                  "to": "move-ordinary-tools-work",
-                  "kind": "implemented-by"
-                }
-              ]
+              "exhibit": {
+                "id": "tool-body-type",
+                "title": "Shared tool body",
+                "kind": "pseudocode",
+                "change": "new",
+                "description": "This option makes a rich diff one portable body kind while ToolCallMessage keeps card ownership.",
+                "language": "typescript",
+                "content": "type ToolBody =\n  | { kind: \"text\"; value: string }\n  | { kind: \"code\"; language?: string; value: string }\n  | { kind: \"diff\"; value: FileDiff };\n",
+                "basedOn": ["finding-card-owner", "finding-duplicate-bodies"]
+              }
             },
             {
               "id": "custom-diff",
@@ -142,147 +194,170 @@
                     "body": "custom",
                     "result": "The existing syntax-aware diff renderer remains a separate structural path."
                   },
-                  "provenance": "src/features/sessions/components/transcript/messages/tools/FileDiffToolCall.tsx#FileDiffToolCall"
+                  "source": "src/features/sessions/components/transcript/messages/tools/FileDiffToolCall.tsx#FileDiffToolCall"
                 }
               ],
-              "relations": []
+              "exhibit": {
+                "id": "custom-diff-renderer",
+                "title": "Bespoke diff rendering",
+                "kind": "pseudocode",
+                "change": "preserved",
+                "description": "This option keeps the diff outside the shared body vocabulary.",
+                "source": "src/features/sessions/components/transcript/messages/tools/FileDiffToolCall.tsx#FileDiffToolCall",
+                "language": "tsx",
+                "content": "function renderEditResult(diff: FileDiff) {\n  return <FileDiffToolCall diff={diff} />;\n}\n",
+                "basedOn": ["finding-rich-diff"]
+              }
             }
           ],
-          "chosen": "shared-diff",
-          "status": "decided",
-          "blocking": true,
+          "choice": {
+            "optionId": "shared-diff",
+            "status": "decided"
+          },
           "dependsOn": [],
           "affects": [
-            "ordinary-cases",
-            "tool-body-type"
-          ]
+            "bash-result",
+            "read-result",
+            "special-results"
+          ],
+          "basedOn": ["finding-rich-diff"]
         }
       ]
     },
     {
-      "id": "exact-shape",
-      "title": "The exact shape",
-      "purpose": "Keep the small shared type beside the behavior it makes possible.",
+      "id": "shared-contract",
+      "title": "The shared contract",
+      "purpose": "Define the resulting ownership and rendering paths around the selected body contract.",
       "kind": "exhibits",
       "collapsed": false,
-      "provenance": "optional",
+      "sourcePolicy": "optional",
       "items": [
         {
-          "id": "tool-body-type",
-          "title": "Shared tool body",
-          "kind": "code",
-          "change": "new",
-          "description": "Each ordinary result supplies content; ToolCallMessage still owns how it appears inside the existing card.",
-          "language": "typescript",
-          "content": "type ToolBody =\n  | { kind: \"text\"; value: string }\n  | { kind: \"code\"; language?: string; value: string }\n  | { kind: \"diff\"; value: FileDiff };\n"
-        }
-      ]
-    },
-    {
-      "id": "rendering-handoff",
-      "title": "Trace who renders what",
-      "purpose": "Watch ordinary tools converge on one shared body while the specialized escape hatch remains visibly separate.",
-      "kind": "map",
-      "collapsed": false,
-      "layout": "paths",
-      "paths": [
-        {
-          "id": "the-shared-direction",
-          "title": "The shared direction",
-          "purpose": "The chosen direction establishes one ordinary body while leaving genuine exceptions alone.",
-          "root": "direction",
-          "relations": [
-            "direction-uses-tool-body",
-            "direction-preserves-special-results"
+          "id": "target-files",
+          "title": "Resulting file ownership",
+          "kind": "tree",
+          "type": "files",
+          "change": "modified",
+          "description": "The shared body lands beside the card that renders it, while adapter coverage stays with the tool messages.",
+          "roots": [
+            {
+              "kind": "folder",
+              "name": "src/features/sessions/components/transcript/messages/tools",
+              "change": "modified",
+              "children": [
+                {
+                  "kind": "file",
+                  "name": "ToolCallMessage.tsx",
+                  "change": "modified"
+                },
+                {
+                  "kind": "file",
+                  "name": "ToolBody.tsx",
+                  "change": "new"
+                },
+                {
+                  "kind": "file",
+                  "name": "types.ts",
+                  "change": "modified"
+                },
+                {
+                  "kind": "file",
+                  "name": "DefaultToolCall.tsx",
+                  "change": "removed"
+                }
+              ]
+            },
+            {
+              "kind": "folder",
+              "name": "src/features/sessions/model",
+              "children": [
+                {
+                  "kind": "file",
+                  "name": "toolBodies.test.ts",
+                  "change": "new"
+                }
+              ]
+            }
           ]
         },
         {
-          "id": "shell-commands-share-it",
-          "title": "Shell commands share it",
-          "purpose": "The shell adapter declares the same portable content shape.",
-          "root": "bash-result",
-          "relations": [
-            "bash-uses-tool-body"
+          "id": "rendering-handoff-flow",
+          "title": "How ordinary bodies converge",
+          "change": "modified",
+          "kind": "flow",
+          "nodes": [
+            {
+              "entity": "direction"
+            },
+            {
+              "entity": "tool-body-type"
+            },
+            {
+              "entity": "bash-result"
+            },
+            {
+              "entity": "special-results"
+            },
+            {
+              "entity": "edit-result"
+            }
+          ],
+          "connections": [
+            {
+              "id": "direction-uses-tool-body",
+              "from": "direction",
+              "to": "tool-body-type",
+              "label": "takes this shape"
+            },
+            {
+              "id": "bash-uses-tool-body",
+              "from": "bash-result",
+              "to": "tool-body-type",
+              "label": "declares one of these bodies"
+            },
+            {
+              "id": "direction-preserves-special-results",
+              "from": "direction",
+              "to": "special-results",
+              "label": "leaves specialized rendering alone"
+            },
+            {
+              "id": "edit-result-uses-tool-body",
+              "from": "edit-result",
+              "to": "tool-body-type",
+              "label": "uses the same body shape"
+            }
+          ],
+          "paths": [
+            {
+              "id": "the-shared-direction",
+              "title": "The shared direction",
+              "purpose": "The chosen direction establishes one ordinary body while leaving genuine exceptions alone.",
+              "start": "direction",
+              "connectionIds": [
+                "direction-uses-tool-body",
+                "direction-preserves-special-results"
+              ]
+            },
+            {
+              "id": "shell-commands-share-it",
+              "title": "Shell commands share it",
+              "purpose": "The shell adapter declares the same portable content shape.",
+              "start": "bash-result",
+              "connectionIds": [
+                "bash-uses-tool-body"
+              ]
+            },
+            {
+              "id": "edit-results-share-it",
+              "title": "Edit results share it",
+              "purpose": "The edit adapter reaches the same body without owning another renderer.",
+              "start": "edit-result",
+              "connectionIds": [
+                "edit-result-uses-tool-body"
+              ]
+            }
           ]
-        },
-        {
-          "id": "edit-results-share-it",
-          "title": "Edit results share it",
-          "purpose": "The edit adapter reaches the same body without owning another renderer.",
-          "root": "edit-result",
-          "relations": [
-            "edit-result-uses-tool-body"
-          ]
-        }
-      ],
-      "regions": [
-        {
-          "id": "the-direction",
-          "title": "The direction",
-          "entities": [
-            "direction"
-          ]
-        },
-        {
-          "id": "ordinary-tools",
-          "title": "Ordinary tools",
-          "entities": [
-            "bash-result",
-            "edit-result"
-          ]
-        },
-        {
-          "id": "rendering-boundaries",
-          "title": "Rendering boundaries",
-          "entities": [
-            "tool-body-type",
-            "special-results"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "delivery-work",
-      "title": "How we'll land it",
-      "purpose": "Keep the independently verifiable pieces that drive the delivery reading.",
-      "kind": "sequence",
-      "collapsed": true,
-      "fields": [
-        {
-          "id": "home",
-          "label": "Where it lands",
-          "kind": "text"
-        },
-        {
-          "id": "done",
-          "label": "Done when",
-          "kind": "text"
-        }
-      ],
-      "items": [
-        {
-          "id": "define-tool-body-work",
-          "title": "Define the shared body contract",
-          "values": {
-            "home": "ToolCallMessage and its shared body model",
-            "done": "Text, code, and rich diff bodies render inside the existing card without moving card ownership."
-          }
-        },
-        {
-          "id": "move-ordinary-tools-work",
-          "title": "Move ordinary tools onto shared bodies",
-          "values": {
-            "home": "Shell, read, and edit tool adapters",
-            "done": "Each ordinary tool supplies content through the shared contract and keeps its existing readable result."
-          }
-        },
-        {
-          "id": "protect-specialized-tools-work",
-          "title": "Keep specialized renderers specialized",
-          "values": {
-            "home": "Fallback and recursive sub-agent rendering",
-            "done": "Unknown tools and nested activity retain their bespoke interactions while ordinary tools use the shared path."
-          }
         }
       ]
     },
@@ -298,79 +373,60 @@
         "Tool-call status labels and transitions.",
         "The nested activity shown for sub-agents."
       ]
-    }
-  ],
-  "relations": [
-    {
-      "id": "direction-uses-tool-body",
-      "from": "direction",
-      "to": "tool-body-type",
-      "kind": "realized-by",
-      "label": "takes this shape"
     },
     {
-      "id": "bash-uses-tool-body",
-      "from": "bash-result",
-      "to": "tool-body-type",
-      "kind": "realized-by",
-      "label": "declares one of these bodies"
-    },
-    {
-      "id": "direction-preserves-special-results",
-      "from": "direction",
-      "to": "special-results",
-      "kind": "preserves",
-      "label": "leaves specialized rendering alone"
-    },
-    {
-      "id": "direction-implemented-by-body-contract",
-      "from": "direction",
-      "to": "define-tool-body-work",
-      "kind": "implemented-by"
-    },
-    {
-      "id": "tool-body-implemented-by-body-contract",
-      "from": "tool-body-type",
-      "to": "define-tool-body-work",
-      "kind": "implemented-by"
-    },
-    {
-      "id": "diff-choice-implemented-by-body-contract",
-      "from": "diff-treatment",
-      "to": "define-tool-body-work",
-      "kind": "implemented-by"
-    },
-    {
-      "id": "bash-result-implemented-by-adapters",
-      "from": "bash-result",
-      "to": "move-ordinary-tools-work",
-      "kind": "implemented-by"
-    },
-    {
-      "id": "read-result-implemented-by-adapters",
-      "from": "read-result",
-      "to": "move-ordinary-tools-work",
-      "kind": "implemented-by"
-    },
-    {
-      "id": "special-results-implemented-by-safety",
-      "from": "special-results",
-      "to": "protect-specialized-tools-work",
-      "kind": "implemented-by"
-    },
-    {
-      "id": "ordinary-tools-depends-on-body-contract",
-      "from": "move-ordinary-tools-work",
-      "to": "define-tool-body-work",
-      "kind": "depends-on",
-      "label": "needs the shared content vocabulary and card boundary"
-    },
-    {
-      "id": "specialized-safety-depends-on-adapters",
-      "from": "protect-specialized-tools-work",
-      "to": "move-ordinary-tools-work",
-      "kind": "depends-on",
-      "label": "needs the ordinary path moved before its exceptions can be proved"
+      "id": "execution-plan",
+      "title": "How we'll land it",
+      "purpose": "Keep the independently verifiable steps that execute the settled spec.",
+      "kind": "plan",
+      "collapsed": true,
+      "fields": [
+        {
+          "id": "home",
+          "label": "Where it lands",
+          "kind": "text"
+        }
+      ],
+      "steps": [
+        {
+          "id": "define-tool-body-step",
+          "title": "Define the shared body contract",
+          "doneWhen": "Text, code, and rich diff bodies render inside the existing card without moving card ownership.",
+          "implements": [
+            "direction",
+            "tool-body-type",
+            "target-files",
+            "rendering-handoff-flow"
+          ],
+          "values": {
+            "home": "ToolCallMessage and its shared body model"
+          }
+        },
+        {
+          "id": "move-ordinary-tools-step",
+          "title": "Move ordinary tools onto shared bodies",
+          "doneWhen": "Each ordinary tool supplies content through the shared contract and keeps its existing readable result.",
+          "implements": [
+            "bash-result",
+            "read-result",
+            "edit-result"
+          ],
+          "values": {
+            "home": "Shell, read, and edit tool adapters"
+          }
+        },
+        {
+          "id": "protect-specialized-tools-step",
+          "title": "Keep specialized renderers specialized",
+          "doneWhen": "Unknown tools and nested activity retain their bespoke interactions while ordinary tools use the shared path.",
+          "implements": [
+            "special-results"
+          ],
+          "values": {
+            "home": "Fallback and recursive sub-agent rendering"
+          }
+        }
+      ]
     }
   ]
 }
