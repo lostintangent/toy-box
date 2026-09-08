@@ -99,7 +99,7 @@ research state because the document cannot infer whether investigation found
 every relevant fact.
 
 A finding may attach one supporting exhibit when a flow, tree, pseudocode,
-image, or HTML rendering communicates the evidence better than prose.
+image, or prototype communicates the evidence better than prose.
 That exhibit must describe `existing` reality and remains local evidence, not an
 independently addressable spec requirement. Records, authoritative spec
 exhibits, and decisions may own optional `basedOn` references to findings. These
@@ -116,8 +116,9 @@ model.
 ### Definition
 
 Records define repeated, individually addressable requirements or context with
-task-local fields and a persisted table/cards presentation. Exhibits define one
-authoritative visual or structured requirement:
+task-local fields and a persisted table/cards presentation. Exhibits are
+inspectable visual or structured demonstrations. In a definition section, each
+is authoritative context or a requirement according to its change:
 
 - `pseudocode` captures an interface, schema, protocol, configuration shape, or
   algorithm whose structure matters without prescribing final implementation
@@ -125,10 +126,12 @@ authoritative visual or structured requirement:
 - `tree` captures one or more rooted `files` or `domain` hierarchies. Entries
   may be `new`, `modified`, or `removed`, but remain local to the exhibit.
 - `image` references a local or remote visual and requires alternative text.
-- `html` embeds authoritative HTML/SVG or references an existing rendered file;
-  both use the shared sandboxed document boundary.
-- `flow` captures an authoritative directed behavior or control flow. It owns
-  its nodes, connections, named paths, and optional regions as one exhibit.
+- `prototype` captures a rendered interface, interaction, or spatial behavior
+  whose experience matters without prescribing production implementation. Its
+  inline HTML/SVG or referenced document uses the shared sandboxed boundary.
+- `flow` captures authoritative directed topology such as a workflow, control
+  or data flow, causal path, route, ownership transfer, or handoff. It owns its
+  nodes, connections, named paths, and optional regions as one exhibit.
 
 A flow node is either `{ entity }`, which reuses a shared spec entity by stable
 ID, or a local `{ id, title, description?, change? }` waypoint meaningful only

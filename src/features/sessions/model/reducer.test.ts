@@ -114,31 +114,31 @@ describe("sessionReducer", () => {
       expect(state.status).toBe("responding");
     });
 
-    test("agent notifications create visible turn boundaries", () => {
-      const notification = {
+    test("system messages create visible turn boundaries", () => {
+      const content = {
         type: "file_edited",
-        file: { type: "session", sessionId: "s1", path: "plan.md" },
+        file: { kind: "session", sessionId: "s1", path: "plan.md" },
       } as const;
       const state = reduceEvents([
-        { type: "agent_notification", notification },
+        { type: "system_message", content },
         { type: "status", status: "thinking" },
         { type: "assistant_message", content: "I reviewed the edit." },
-        { type: "agent_notification", notification },
+        { type: "system_message", content },
         { type: "status", status: "thinking" },
         { type: "assistant_message", content: "I reviewed the update." },
       ]);
 
       expect(state.messages).toEqual([
-        { role: "agent_notification", notification, timestamp: undefined },
+        { role: "system", content, timestamp: undefined },
         { role: "assistant", content: "I reviewed the edit." },
-        { role: "agent_notification", notification, timestamp: undefined },
+        { role: "system", content, timestamp: undefined },
         { role: "assistant", content: "I reviewed the update." },
       ]);
       expect(state.status).toBe("responding");
     });
 
     test("opened files track the machine files the agent opens and closes", () => {
-      const file = { type: "machine", path: "/repo/src/foo.ts" } as const;
+      const file = { kind: "machine", path: "/repo/src/foo.ts" } as const;
 
       const opened = reduceEvents([
         { type: "file_opened", file },
@@ -708,22 +708,22 @@ describe("sessionReducer", () => {
       expect(state.queuedMessages[0]).toMatchObject({ clientId: "q2", content: "second" });
     });
 
-    test("a canonical agent notification removes its queue item by client ID", () => {
-      const notification = {
+    test("a canonical system message removes its queue item by client ID", () => {
+      const content = {
         type: "file_edited",
-        file: { type: "session", sessionId: "s1", path: "plan.md" },
+        file: { kind: "session", sessionId: "s1", path: "plan.md" },
       } as const;
       const state = applySessionEvent(
         createInitialSession({
           queuedMessages: [
-            { clientId: "notify-1", role: "agent_notification", notification },
+            { clientId: "system-1", role: "system", content },
             { clientId: "q1", role: "user", content: "keep queued" },
           ],
         }),
         {
-          type: "agent_notification",
-          notification,
-          clientId: "notify-1",
+          type: "system_message",
+          content,
+          clientId: "system-1",
           timestamp: "2026-08-14T20:00:00.000Z",
         },
       );
@@ -733,8 +733,8 @@ describe("sessionReducer", () => {
       ]);
       expect(state.messages).toEqual([
         {
-          role: "agent_notification",
-          notification,
+          role: "system",
+          content,
           timestamp: "2026-08-14T20:00:00.000Z",
         },
       ]);

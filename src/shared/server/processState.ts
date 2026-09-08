@@ -15,3 +15,7 @@ export function sharedSet<T>(name: string): Set<T> {
 export function sharedMap<T>(name: string): Map<string, T> {
   return getProcessValue(name, () => new Map<string, T>());
 }
+
+export function sharedWeakMap<Key extends WeakKey, Value>(name: string): WeakMap<Key, Value> {
+  return getProcessValue(name, () => new WeakMap<Key, Value>());
+}

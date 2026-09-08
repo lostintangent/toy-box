@@ -290,9 +290,9 @@ accepted belongs in a decision option rather than another status axis.
 
 ## Exhibits
 
-Exhibits preserve an authoritative definition, topology, hierarchy, visual
-evidence, or rendered document. Each should own one coherent contract whose form
-materially constrains what reviewers understand or agree to.
+Exhibits are visual or structured demonstrations that reviewers can inspect and
+reference. Each owns one coherent shape whose form materially constrains what
+reviewers understand or agree to.
 
 ### Section and common fields
 
@@ -317,8 +317,8 @@ ExhibitCommon = {
 
 ### Exhibit ownership
 
-An exhibit's authoritative owner determines its source, grounding, and
-activation:
+An exhibit's owner and `change` determine its source, grounding, activation, and
+semantic role:
 
 | Owner            | Source and grounding                                                                                                | Semantic role                                                                                                           |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -347,9 +347,10 @@ omitted language renders as plain text.
 
 ### Flows
 
-A flow owns one authoritative directed topology. It may reuse shared intent
-entities without copying them and may add local waypoints whose meaning exists
-only inside the flow.
+A flow owns one authoritative directed topology, such as a workflow, control or
+data flow, causal path, route, ownership transfer, or handoff. It may reuse
+shared intent entities without copying them and may add local waypoints whose
+meaning exists only inside the flow.
 
 ```jsonc
 FlowNode =
@@ -494,30 +495,34 @@ use `http` or `https`; absolute filesystem paths, backslashes, and other schemes
 are invalid. `altText` is required and conveys the visual meaning independently
 of the title. Use `description` as an optional caption.
 
-### HTML
+### Prototypes
 
 ```jsonc
-HtmlExhibit =
+PrototypeExhibit =
   | ExhibitCommon & {
-      "kind": "html",
+      "kind": "prototype",
       "uri": "./relative/prototype.html" | "https://example.com/prototype"
     }
   | ExhibitCommon & {
-      "kind": "html",
+      "kind": "prototype",
       "content": "non-empty HTML or raw SVG"
     }
 ```
 
-Supply exactly one of `uri` or `content`. Use embedded content when the intent
-owns a new prototype or rendered definition; use a URI when an existing local
-or remote document remains authoritative. URI rules match images. Relative
-resources inside embedded content resolve from the intent file's directory.
-Both variants render through Toy Box's sandboxed HTML boundary, and remote
-servers may still refuse framing.
+A prototype captures a rendered interface, interaction, or spatial behavior
+whose experience belongs in the intent without prescribing production
+implementation. HTML or SVG is its backing representation, not its semantic
+kind.
 
-Use an image for a referenced visual, including an SVG file. Use HTML when the
-rendered document itself belongs in the intent, including embedded SVG, or when
-an interactive document must render in an iframe.
+Supply exactly one of `uri` or `content`. Use embedded content when the intent
+owns the prototype; use a URI when an existing local or remote prototype remains
+authoritative. URI rules match images. Relative resources inside embedded
+content resolve from the intent file's directory. Both variants render through
+Toy Box's sandboxed HTML boundary, and remote servers may still refuse framing.
+
+Use an image for a static visual reference, including an SVG file. Use a
+prototype when the rendered layout or behavior is itself part of the contract,
+including interactive documents and inline SVG experiences.
 
 ## Questions
 

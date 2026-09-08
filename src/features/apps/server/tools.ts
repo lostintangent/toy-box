@@ -1,4 +1,4 @@
-import { defineTool } from "@github/copilot-sdk";
+import { defineTool, type Tool } from "@github/copilot-sdk";
 import { z } from "zod";
 import {
   artifactAppPathSchema,
@@ -168,7 +168,8 @@ const deleteAppTool = defineTool("delete_app", {
   },
 });
 
-export function createAppStateTools(appId?: string) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createAppStateTools(appId?: string): Tool<any>[] {
   if (!appId) return [listAppsTool, getAppTool, updateAppTool];
 
   return [

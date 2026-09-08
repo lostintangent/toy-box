@@ -261,14 +261,14 @@ function fixture(): IntentDocument {
             {
               id: "rendering-prototype",
               title: "Rendering prototype",
-              kind: "html",
+              kind: "prototype",
               change: "new",
               uri: "./prototype/index.html",
             },
             {
               id: "embedded-rendering-prototype",
               title: "Embedded rendering prototype",
-              kind: "html",
+              kind: "prototype",
               change: "new",
               content:
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>',
@@ -455,6 +455,7 @@ test("renders pseudocode, tree, URI-backed, and embedded exhibits without flatte
   expect(markup).toContain(
     'src="https://toybox.test/api/serve/session/specs/prototype/index.html"',
   );
+  expect(markup).toContain('<span class="sr-only">Prototype</span>');
   expect(markup).toContain('title="Rendering prototype"');
   expect(markup).toMatch(/src[Dd]oc="&lt;head&gt;/);
   expect(markup).toContain("data-toybox-file-base");
@@ -603,14 +604,14 @@ test("renders option-owned exhibits beside every alternative before a choice", (
   decision.options[0]!.exhibit = {
     id: "declared-block-preview",
     title: "Declared blocks preview",
-    kind: "html",
+    kind: "prototype",
     change: "new",
     content: '<main aria-label="Declared blocks">Shared content</main>',
   };
   decision.options[1]!.exhibit = {
     id: "deferred-model-preview",
     title: "Deferred model preview",
-    kind: "html",
+    kind: "prototype",
     change: "preserved",
     content: '<main aria-label="Deferred model">Bespoke content</main>',
   };

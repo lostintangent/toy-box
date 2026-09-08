@@ -60,6 +60,11 @@ export function AutomationDialog(props: AutomationDialogProps) {
   const selectedModel = form.model ?? (mode === "create" ? defaultModel : null);
   const formModel = models.find((model) => model.id === selectedModel?.name);
   const formReasoningEfforts = formModel?.supportedReasoningEfforts ?? [];
+  const modelOptions = models.map((model) => ({ value: model.id, label: model.name }));
+  const reasoningEffortOptions = formReasoningEfforts.map((effort) => ({
+    value: effort,
+    label: formatReasoningEffort(effort),
+  }));
   const hasReasoningEffortOptions = formReasoningEfforts.length > 0;
   const selectedReasoningEffort = selectedModel?.reasoningEffort;
   const cronError = getCronValidationError(form.cron);
@@ -127,6 +132,7 @@ export function AutomationDialog(props: AutomationDialogProps) {
                 {(id) =>
                   selectedModel ? (
                     <Select
+                      items={modelOptions}
                       value={selectedModel.name}
                       onValueChange={(modelId) => {
                         const modelInfo = models.find((candidate) => candidate.id === modelId);
@@ -142,9 +148,9 @@ export function AutomationDialog(props: AutomationDialogProps) {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {models.map((model) => (
-                          <SelectItem key={model.id} value={model.id}>
-                            {model.name}
+                        {modelOptions.map((model) => (
+                          <SelectItem key={model.value} value={model.value}>
+                            {model.label}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -158,6 +164,7 @@ export function AutomationDialog(props: AutomationDialogProps) {
                 <AutomationField label="Reasoning effort">
                   {(id) => (
                     <Select
+                      items={reasoningEffortOptions}
                       value={selectedReasoningEffort}
                       onValueChange={(reasoningEffort) =>
                         updateForm({
@@ -169,9 +176,9 @@ export function AutomationDialog(props: AutomationDialogProps) {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {formReasoningEfforts.map((effort) => (
-                          <SelectItem key={effort} value={effort}>
-                            {formatReasoningEffort(effort)}
+                        {reasoningEffortOptions.map((effort) => (
+                          <SelectItem key={effort.value} value={effort.value}>
+                            {effort.label}
                           </SelectItem>
                         ))}
                       </SelectContent>

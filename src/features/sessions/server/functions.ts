@@ -17,7 +17,6 @@ import {
   getAllSessionWorktrees,
   mergeSessionWorktree as mergeWorktree,
 } from "@sessions/server/state/worktrees";
-import { getWorkerSessionParents } from "@workers/server/database";
 import {
   answerSessionQuestion as answerRuntimeSessionQuestion,
   abortSession as abortRuntimeSession,
@@ -30,13 +29,7 @@ import {
   streamSession as streamSessionEvents,
   waitForSession as waitForRuntimeSession,
 } from "@sessions/server/runtime";
-import type {
-  ModelInfo,
-  SessionCompletion,
-  SessionSkill,
-  SessionSnapshot,
-  SessionsState,
-} from "../model";
+import type { ModelInfo, SessionCompletion, SessionSkill, SessionSnapshot } from "../model";
 import { SESSION_ID_PREFIX } from "../model/constants";
 import {
   answerSessionQuestionInputSchema,
@@ -44,7 +37,7 @@ import {
   createDraftSessionInputSchema,
   deliverMessageInputSchema,
   listSkillsInputSchema,
-  notifyAgentInputSchema,
+  sendSystemMessageInputSchema,
   queuedMessageInputSchema,
   renameSessionInputSchema,
   rewindSessionInputSchema,
@@ -52,6 +45,7 @@ import {
   streamSessionRequestSchema,
   waitForSessionInputSchema,
 } from "../model/protocol";
+import { readSessionCatalog } from "@/server/managedSessions";
 
 const REALTIME_MODEL = "gpt-realtime";
 
@@ -60,28 +54,8 @@ const withSessionId = createMiddleware({ type: "function" }).validator(
 );
 
 /** Fetch durable session list metadata in a single round-trip. */
-export const getSessionsState = createServerFn({ method: "GET" }).handler(
-  async (): Promise<SessionsState> => {
-    // Worker registration precedes SDK session creation, while SDK deletion
-    // precedes unregistering. Reading ownership on both sides of the SDK list
-    // therefore closes both races and gives list projections complete worker
-    // ownership without discarding metadata needed by linked panes.
-    const workerSessionParentsBefore = await getWorkerSessionParents();
-    const [allSessions, worktrees] = await Promise.all([
-      listSdkSessions(),
-      getAllSessionWorktrees(),
-    ]);
-    const workerSessionParentsAfter = await getWorkerSessionParents();
-
-    return {
-      sessions: allSessions,
-      worktrees,
-      workerSessionParents: {
-        ...workerSessionParentsBefore,
-        ...workerSessionParentsAfter,
-      },
-    };
-  },
+export const getSessionsState = createServerFn({ method: "GET" }).handler(() =>
+  readSessionCatalog(() => Promise.all([listSdkSessions(), getAllSessionWorktrees()])),
 );
 
 export const listModels = createServerFn({ method: "GET" }).handler(
@@ -100,7 +74,9 @@ export const createVoiceToken = createServerFn({ method: "POST" }).handler(
       import("@tanstack/ai"),
       import("@tanstack/ai-openai"),
     ]);
-    return realtimeToken({ adapter: openaiRealtimeToken({ model: REALTIME_MODEL }) });
+    return realtimeToken({
+      adapter: openaiRealtimeToken({ model: REALTIME_MODEL }),
+    });
   },
 );
 
@@ -179,14 +155,12 @@ export const deliverMessage = createServerFn({ method: "POST" })
     return { disposition: receipt.disposition };
   });
 
-/** Notify a session's agent over the side channel. Active sessions queue it
- *  (coalescing equivalents); idle historical sessions are resumed and processed. */
-export const notifyAgent = createServerFn({ method: "POST" })
-  .validator(zodValidator(notifyAgentInputSchema))
+/** Deliver a system message. Active Sessions queue equivalent messages together;
+ *  idle historical Sessions resume and process them. */
+export const sendSystemMessage = createServerFn({ method: "POST" })
+  .validator(zodValidator(sendSystemMessageInputSchema))
   .handler(async ({ data }): Promise<void> => {
-    await deliverSessionMessage(data.sessionId, {
-      notification: data.notification,
-    });
+    await deliverSessionMessage(data.sessionId, { systemMessage: data.message });
   });
 
 export const cancelQueuedMessage = createServerFn({ method: "POST" })

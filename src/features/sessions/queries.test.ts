@@ -3,7 +3,7 @@ import { workspaceQueries } from "@workspace/queries";
 import { selectNonWorkerSessions, sessionQueries, skillQueries } from "./queries";
 
 describe("session list projection", () => {
-  test("excludes every classified worker while preserving its canonical metadata", () => {
+  test("excludes managed worker sessions while preserving canonical metadata", () => {
     const standard = {
       sessionId: "standard",
       startTime: new Date(0),

@@ -5,12 +5,13 @@ import {
   useRef,
   useState,
   type MutableRefObject,
+  type ReactNode,
 } from "react";
-import { ArrowDown, Bot } from "lucide-react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import type { Message, SessionStatus } from "../../model";
-import { Button } from "@/shared/components/ui/button";
 import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
+import { ScrollToBottomButton } from "@/shared/components/ui/scroll-to-bottom-button";
+import { TranscriptPlaceholder } from "./TranscriptPlaceholder";
 import { Message as SessionMessage } from "./messages/Message";
 import { ReasoningDisplay, StatusIndicator } from "./SessionStatus";
 import {
@@ -36,32 +37,20 @@ export function SessionMessageList({
   status,
   reasoningContent,
   scrollToBottomRef,
+  activity,
 }: {
   messages: Message[];
   isStreaming: boolean;
   status: SessionStatus;
   reasoningContent: string;
   scrollToBottomRef: MutableRefObject<(() => void) | null>;
+  activity?: ReactNode;
 }) {
-  if (messages.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center bg-muted/50 p-8">
-        <div className="text-center space-y-4">
-          <Bot className="h-16 w-16 mx-auto text-muted-foreground/50" />
-          <div className="space-y-2">
-            <h3 className="text-lg font-semibold text-foreground">What would you like to build?</h3>
-            <p className="text-sm text-muted-foreground max-w-sm">
-              Ask a question or describe your idea below
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (messages.length === 0) return <TranscriptPlaceholder />;
 
   return (
     <StickToBottom
-      className="h-full bg-muted/50 relative"
+      className="h-full bg-panel relative"
       resize={isStreaming ? "smooth" : "instant"}
       initial={false}
     >
@@ -71,6 +60,7 @@ export function SessionMessageList({
         status={status}
         reasoningContent={reasoningContent}
         scrollToBottomRef={scrollToBottomRef}
+        activity={activity}
       />
       <ScrollToBottomButton />
     </StickToBottom>
@@ -83,12 +73,14 @@ function VirtualizedMessageList({
   status,
   reasoningContent,
   scrollToBottomRef,
+  activity,
 }: {
   messages: Message[];
   isStreaming: boolean;
   status: SessionStatus;
   reasoningContent: string;
   scrollToBottomRef: MutableRefObject<(() => void) | null>;
+  activity?: ReactNode;
 }) {
   const {
     contentRef: stickToBottomContentRef,
@@ -200,59 +192,41 @@ function VirtualizedMessageList({
   }, [isAtBottom, scrollRef, scrollToBottom, startIndex]);
 
   return (
-    <ScrollableFade asChild axis="vertical" className="h-full w-full">
-      <div ref={scrollRef} style={{ scrollbarGutter: "stable both-edges" }}>
-        <div ref={stickToBottomContentRef} className="@container space-y-4 overflow-x-hidden p-4">
-          <div
-            ref={contentRef}
-            className="space-y-3"
-            data-message-window-start-index={startIndex}
-            style={{ opacity: 0 }}
-          >
-            {hasEarlierMessages && (
-              <div ref={historySentinelRef} className="h-px" aria-hidden="true" />
-            )}
+    <ScrollableFade ref={scrollRef} axis="vertical" rootClassName="size-full">
+      <div ref={stickToBottomContentRef} className="@container space-y-4 overflow-x-hidden p-4">
+        <div
+          ref={contentRef}
+          className="space-y-3"
+          data-message-window-start-index={startIndex}
+          style={{ opacity: 0 }}
+        >
+          {hasEarlierMessages && (
+            <div ref={historySentinelRef} className="h-px" aria-hidden="true" />
+          )}
 
-            {messages.slice(startIndex).map((message, index) => {
-              const absoluteIndex = startIndex + index;
-              if (!isRenderableMessage(message)) return null;
+          {messages.slice(startIndex).map((message, index) => {
+            const absoluteIndex = startIndex + index;
+            if (!isRenderableMessage(message)) return null;
 
-              const isLast = absoluteIndex === messages.length - 1;
-              return (
-                <div
-                  // eslint-disable-next-line react/no-array-index-key -- messages append in order and streaming updates replace content in place
-                  key={`${message.role}-${absoluteIndex}`}
-                  data-message-index={absoluteIndex}
-                >
-                  <SessionMessage message={message} isStreaming={isStreaming} isLast={isLast} />
-                </div>
-              );
-            })}
+            const isLast = absoluteIndex === messages.length - 1;
+            return (
+              <div
+                // eslint-disable-next-line react/no-array-index-key -- messages append in order and streaming updates replace content in place
+                key={`${message.role}-${absoluteIndex}`}
+                data-message-index={absoluteIndex}
+              >
+                <SessionMessage message={message} isStreaming={isStreaming} isLast={isLast} />
+              </div>
+            );
+          })}
 
-            {isStreaming && reasoningContent && <ReasoningDisplay content={reasoningContent} />}
-            {isStreaming && status !== "idle" && status !== "waiting" && (
-              <StatusIndicator status={status} />
-            )}
-          </div>
+          {isStreaming && reasoningContent && <ReasoningDisplay content={reasoningContent} />}
+          {isStreaming && status !== "idle" && status !== "waiting" && (
+            <StatusIndicator status={status} />
+          )}
+          {activity}
         </div>
       </div>
     </ScrollableFade>
-  );
-}
-
-function ScrollToBottomButton() {
-  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
-
-  if (isAtBottom) return null;
-
-  return (
-    <Button
-      variant="secondary"
-      className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full shadow-lg bg-background"
-      onClick={() => scrollToBottom()}
-    >
-      <ArrowDown className="h-4 w-4" />
-      Scroll down
-    </Button>
   );
 }

@@ -90,50 +90,52 @@ export function SvgPaneActions({
   return (
     <PaneActions>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label={`SVG zoom: ${zoomPercentage}%`}
-            title="SVG zoom"
-            className={cn(
-              "flex shrink-0 items-center gap-1 text-xs transition-colors",
-              variant === "normal"
-                ? PANE_OVERLAY_BUTTON_CLASS
-                : "rounded-md px-2 py-1.5 hover:bg-muted",
-            )}
-          >
-            <span>{zoomPercentage}%</span>
-            {showCopySuccess ? (
-              <Check className="size-3 text-green-500" />
-            ) : (
-              <ChevronDown className="size-3 opacity-60" />
-            )}
-          </button>
+        <DropdownMenuTrigger
+          render={
+            <button
+              type="button"
+              aria-label={`SVG zoom: ${zoomPercentage}%`}
+              title="SVG zoom"
+              className={cn(
+                "flex shrink-0 items-center gap-1 text-xs transition-colors",
+                variant === "normal"
+                  ? PANE_OVERLAY_BUTTON_CLASS
+                  : "rounded-md px-2 py-1.5 hover:bg-muted",
+              )}
+            />
+          }
+        >
+          <span>{zoomPercentage}%</span>
+          {showCopySuccess ? (
+            <Check className="size-3 text-green-500" />
+          ) : (
+            <ChevronDown className="size-3 opacity-60" />
+          )}
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
-          <DropdownMenuItem onSelect={store.actions.zoomIn} disabled={gestureActive}>
+        <DropdownMenuContent align="end" finalFocus={false}>
+          <DropdownMenuItem onClick={store.actions.zoomIn} disabled={gestureActive}>
             <Plus />
             Zoom in
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={store.actions.zoomOut} disabled={gestureActive}>
+          <DropdownMenuItem onClick={store.actions.zoomOut} disabled={gestureActive}>
             <Minus />
             Zoom out
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={store.actions.fitContent} disabled={isEmpty || gestureActive}>
+          <DropdownMenuItem onClick={store.actions.fitContent} disabled={isEmpty || gestureActive}>
             <Maximize2 />
             Zoom to fit
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={chooseImage} disabled={readOnly}>
+          <DropdownMenuItem onClick={chooseImage} disabled={readOnly}>
             <ImagePlus />
             Insert image
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => void copyDocumentAsImage()} disabled={isEmpty}>
+          <DropdownMenuItem onClick={() => void copyDocumentAsImage()} disabled={isEmpty}>
             <Copy />
             Copy as image
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={store.actions.clear} disabled={readOnly || isEmpty}>
+          <DropdownMenuItem onClick={store.actions.clear} disabled={readOnly || isEmpty}>
             <Trash2 />
             Clear SVG
           </DropdownMenuItem>

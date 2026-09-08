@@ -1,37 +1,61 @@
 # Workers
 
-Workers are ordinary managed sessions whose lifecycle belongs to another resource. They let sessions delegate work, files run concurrent background edits, and apps run hidden implementation work without creating another execution model.
+Workers are anonymous, owner-bound collaborators backed by ordinary Sessions. They let a session
+delegate work, a file run concurrent background edits, or an app run private implementation work
+without introducing another execution model.
 
-## Domain model
+A Worker is not a persistent Agent: it has no portable identity, experiences, mention handle, or
+cross-host membership. It is not an independent Session either: its owner controls its
+capabilities, visibility, and teardown.
 
-Every worker has one immutable owner and one independent lifetime:
+## Model
 
-- A session-owned worker inherits context from its parent. It is durable by default and is deleted with the parent.
-- A file-owned worker belongs to one session file, runs concurrently with its siblings, and is always ephemeral.
-- An app-owned worker belongs to one saved app, runs concurrently with its siblings, and is ephemeral by default.
+A Worker is one backing Session plus an immutable owner and lifetime. Both share one ID. An optional
+name and metadata describe local work; they do not create an identity.
 
-Ownership determines admission, visibility, inherited context, capability scope, and recursive teardown. `ephemeral` determines only whether the supervised session is deleted after its current execution. `model/` owns these concepts, the file/app RPC schemas, and ownership helpers. File/app inputs cross an RPC trust boundary, so their TypeScript types are inferred from those schemas. Session ownership is injected from a validated tool invocation and remains an internal TypeScript type.
+- A session-owned Worker inherits its parent's model and workspace context unless overridden. It is
+  retained by default and opens as a linked child.
+- A file-owned Worker belongs to one session file and is always ephemeral.
+- An app-owned Worker belongs to one saved app, receives app-scoped tools, and is ephemeral by
+  default.
 
-## Admission and supervision
+`ephemeral` is the complete lifetime policy: delete after the current execution when true; retain for
+follow-up until explicit or owner deletion when false. Worktree isolation is orthogonal. Sessions
+owns the worktree; Worker lifetime decides whether its Session and worktree survive completion.
 
-`server/functions.ts` is the validated browser ingress for file- and app-owned spawn and cancel commands. `server/tools.ts` owns the distinct `create_worker_session` tool contract; it validates the agent's task and execution options, injects the invoking session as owner, and calls the trusted worker lifecycle directly.
+`model/` owns the Worker value, ownership helpers, and schemas for untrusted file and app commands.
+`server/tools.ts` owns `spawn_worker`; the application session catalog only selects which roles
+receive it. The tool injects its invoking session as a trusted owner.
 
-Admission verifies the owner before publishing a pending worker, then begins file and app work immediately. Cancellation verifies that owner, removes pending visibility at once, rejects completion waiters, and delegates any starting or live execution to the supervisor.
+## Algebra
 
-The supervisor composes the ordinary session runtime with worker policy. It inherits parent context and model when applicable, closes cancellation races before a stream exists, returns an exact completion receipt, and deletes ephemeral sessions after execution. Startup deletes ephemeral worker sessions abandoned by a prior process rather than pretending their execution can resume.
+Workers owns three operations:
 
-`server/database.ts` persists worker ownership so session type, recursive deletion, app cleanup, and startup recovery survive restarts. `server/registry.ts` owns the process-local pending projection and publishes `worker.started` and `worker.finished`. App deletion asks Workers for one `deleteWorkersForApp` operation; Apps does not coordinate the registry, database, supervisor, or session teardown itself.
+- **Spawn** validates or injects the owner, publishes active work, and creates the backing Session.
+- **Cancel** verifies external ownership, clears active work, rejects waiters, and stops startup or
+  execution.
+- **Delete** removes ephemeral work after completion and recursively removes work with its owner.
 
-## Client synchronization
+All ingress converges in `server/admission.ts`; `server/supervisor.ts` composes Session creation with
+inheritance, worktree choice, cancellation guards, exact completion, and cleanup. The supervisor
+persists Worker ownership before creating the backing Session; failed creation rolls it back through
+the ordinary Session teardown path. Startup deletes ephemeral Workers abandoned by an earlier process.
 
-`workerMutations` is the request/response client API. File and app owners submit spawn and cancel commands through mutations; workflows retain only their real prerequisites, such as flushing a file or app state before spawning. `WorkersMenu` owns its cancellation observer so pending UI is local to the row that initiated it.
+Waiting remains a Session operation. Admission registers completion before publishing
+`worker.started`, and the Session runtime retains the settlement briefly, so a fast ephemeral Worker
+cannot disappear before `waitForSession` observes its result.
 
-Workers deliberately have no separate `queries.ts`. The live registry is one projection in the canonical workspace snapshot, and its events flow through the same workspace SSE reducer between snapshots. Files and apps select their owned workers from that cache. Creating a second worker query would duplicate identity and recovery authority without providing an independent resource to fetch.
+## Boundaries
 
-## Boundaries and invariants
+`server/database.ts` persists ownership and lifetime for classification, deletion, and recovery.
+`server/registry.ts` contains only active work and publishes `worker.started` and `worker.finished` to
+the workspace stream. Workers has no query cache: the workspace snapshot is the client projection.
+`components/WorkersMenu.tsx` owns activity, Session preview, and cancellation UI; Files and Apps only
+select their owned Workers and mount it.
 
-- [`../files/AGENTS.md`](../files/AGENTS.md) owns file content, save flushing, and renderer integration. Workers owns admission, execution, cancellation, and worker visibility.
-- The [Sessions runtime](../sessions/server/runtime/AGENTS.md) owns session execution, streaming, and exact completion. Workers composes those mechanics with ownership and retention policy.
-- [Sessions](../sessions/AGENTS.md) owns generic session teardown, while [Workspace](../../workspace/AGENTS.md) owns snapshot and event composition. Workers owns its durable records and process registry.
-- The [Sessions SDK boundary](../sessions/server/sdk/AGENTS.md) owns role-based tool selection and session instructions. Workers owns the child-worker tool contract and handler.
-- One worker ID identifies its pending registry entry, managed session, completion waiters, and durable ownership row. Never introduce a second worker execution or status model.
+- Sessions owns execution, history, streaming, completion, and worktrees.
+- The central Session projector translates `spawn_worker` completion into the generic linked-session
+  event so live and replayed transcripts retain one interpretation path.
+- Files and Apps initiate and present work but do not coordinate Worker lifecycle internals.
+- Sessions and Apps request owner cleanup through Workers-owned operations.
+- Agents owns persistent identity, experiences, and membership; neither feature wraps the other.

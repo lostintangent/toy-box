@@ -36,6 +36,8 @@ Toy Box currently assumes one trusted, coordinating server process for one owner
 Each guide explains one capability end to end, including adjacent callers and consumers when its implementation spans folders. Read them in order for a first architecture pass; for a targeted change, start with the guide whose responsibility matches it. A guide's location marks the subsystem's semantic core, not its complete boundary.
 
 - [`src/features/sessions/AGENTS.md`](src/features/sessions/AGENTS.md): the foundational session model, runtime, registry, SDK projection, browser lifecycle, and presentation
+- [`src/features/agents/AGENTS.md`](src/features/agents/AGENTS.md): persistent teammate identity, experiences, membership, private-session supervision, and host adapters
+- [`src/features/channels/AGENTS.md`](src/features/channels/AGENTS.md): durable shared message buses, membership cursors, delivery policy, artifacts, and channel presentation
 - [`src/workspace/AGENTS.md`](src/workspace/AGENTS.md): aggregate workspace state, synchronization, pane identity, and layout composition
 - [`src/features/automations/AGENTS.md`](src/features/automations/AGENTS.md): dependable recurring work by scheduling ordinary managed sessions
 - [`src/features/inbox/AGENTS.md`](src/features/inbox/AGENTS.md): durable background results presented through ordinary managed sessions
@@ -71,7 +73,7 @@ For model examples, see [`src/features/sessions/server/sdk/projector.ts`](src/fe
 
 ## Definition of Done
 
-- For code changes, use the `review` skill on the changed files and their relevant domain, boundary, lifecycle, and consumer context before final validation.
+- Use the `review` skill when its trigger contract applies; it is not a blanket requirement for every code change.
 - Run `bun check` and fix any formatting, lint, or typecheck issues.
 - Run `bun test` and fix any failing tests.
 - For significant changes, dogfood the change with the `dogfood` skill.

@@ -1,8 +1,8 @@
 import { useFocusedPaneAtom } from "@workspace/hooks/layout/surface";
-import { useEditorDisplay } from "@files/components/editor/kinds";
+import { useWorkspaceSelector } from "@workspace/hooks/state";
+import { ArtifactPill } from "@files/components/ArtifactPill";
 import { createEditorPaneId } from "@workspace/model/panes";
-import { sessionFile, type SessionFile } from "@files/model";
-import { cn } from "@/shared/utils";
+import { sessionFile } from "@files/model";
 
 // Pills for a session's artifacts. Clicking one focuses the artifact's pane
 // (via the surface's focus atom): the desktop grid maximizes it and the pager
@@ -16,6 +16,16 @@ export function ArtifactsList({
   artifacts: string[];
 }) {
   const focusedPaneAtom = useFocusedPaneAtom();
+  const activeArtifactPaths = useWorkspaceSelector((workspace) =>
+    artifacts.filter((path) =>
+      workspace.workers.some(
+        (worker) =>
+          worker.type === "file" &&
+          worker.file.sessionId === sourceSessionId &&
+          worker.file.path === path,
+      ),
+    ),
+  );
   const occurrences = new Map<string, number>();
   const pills = artifacts.map((path) => {
     const occurrence = occurrences.get(path) ?? 0;
@@ -34,27 +44,10 @@ export function ArtifactsList({
         <ArtifactPill
           key={key}
           file={file}
+          busy={activeArtifactPaths.includes(file.path)}
           onSelect={() => focusedPaneAtom.set(createEditorPaneId(file))}
         />
       ))}
     </div>
-  );
-}
-
-function ArtifactPill({ file, onSelect }: { file: SessionFile; onSelect: () => void }) {
-  const { name, Icon } = useEditorDisplay(file);
-  return (
-    <button
-      type="button"
-      title={file.path}
-      className={cn(
-        "inline-flex max-w-full items-center gap-1.5 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground",
-        "cursor-pointer hover:bg-muted hover:text-foreground",
-      )}
-      onClick={onSelect}
-    >
-      <Icon className="h-3.5 w-3.5 shrink-0" />
-      <span className="max-w-48 truncate">{name}</span>
-    </button>
   );
 }

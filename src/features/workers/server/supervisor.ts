@@ -3,7 +3,7 @@
 
 import { workerParentSessionId, type Worker } from "../model";
 import type { SessionCompletion, SessionLaunch } from "@sessions/model";
-import { getEphemeralWorkerSessionIds } from "./database";
+import { getEphemeralWorkerSessionIds, registerWorkerSession } from "./database";
 import { sharedMap, sharedSet } from "@/shared/server/processState";
 import {
   abortSession,
@@ -57,13 +57,15 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<WorkerReceip
     throwIfWorkerCanceled(sessionId);
     const model = input.message.model ?? parentSnapshot?.model;
 
+    await registerWorkerSession(worker);
     receipt = await createSession(
       sessionId,
       { ...input.message, model },
       {
         directory: input.directory ?? parentContext?.workingDirectory,
         initialContext: parentContext,
-        worker,
+        sessionType: "worker",
+        parentSessionId,
         useWorktree: input.useWorktree ?? false,
         ...(worker.name === undefined ? {} : { name: worker.name }),
       },
@@ -80,7 +82,7 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<WorkerReceip
     }
   }
 
-  const completion = superviseWorker(
+  const completion = completeWorkerExecution(
     sessionId,
     worker.ephemeral,
     receipt.waitForCompletion,
@@ -127,7 +129,7 @@ export function ensureWorkersSwept(): Promise<void> {
   return sweep;
 }
 
-async function superviseWorker(
+async function completeWorkerExecution(
   sessionId: string,
   ephemeral: boolean,
   waitForCompletion: () => Promise<SessionCompletion>,

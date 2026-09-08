@@ -7,14 +7,14 @@ export * from "./html";
 // artifact under a session's files directory, or a real file on the host machine.
 
 export const sessionFileSchema = z.object({
-  type: z.literal("session"),
+  kind: z.literal("session"),
   sessionId: z.string().min(1),
   path: z.string().min(1),
 });
 
-export const workspaceFileSchema = z.discriminatedUnion("type", [
+export const workspaceFileSchema = z.discriminatedUnion("kind", [
   sessionFileSchema,
-  z.object({ type: z.literal("machine"), path: z.string().min(1) }),
+  z.object({ kind: z.literal("machine"), path: z.string().min(1) }),
 ]);
 
 export const workspaceFileInputSchema = z.object({ file: workspaceFileSchema });
@@ -30,7 +30,7 @@ export const createFileInputSchema = z.object({
 
 export const listDirectoryInputSchema = z.object({
   path: z.string().optional(),
-  showHidden: z.boolean().optional(),
+  showDotfiles: z.boolean().optional(),
 });
 
 export type WorkspaceFile = z.infer<typeof workspaceFileSchema>;
@@ -53,36 +53,36 @@ export type DirectoryListing = {
   files: DirectoryEntry[];
 };
 
-/** Stable identity for a workspace file: pane id, worker ownership, and notification coalesce key. */
+/** Stable identity for a workspace file: pane id, worker ownership, and system-message coalescing. */
 export function workspaceFileId(file: WorkspaceFile): string {
-  return file.type === "session"
+  return file.kind === "session"
     ? `session:${file.sessionId}:${file.path}`
     : `machine:${file.path}`;
 }
 
-/** The session that owns a file, for edit notifications and default-mode policy. */
+/** The session that owns a file, for edit system messages and default-mode policy. */
 export function ownerSessionId(file: WorkspaceFile): string | undefined {
-  return file.type === "session" ? file.sessionId : undefined;
+  return file.kind === "session" ? file.sessionId : undefined;
 }
 
 /** Split a file into its route scope segment and relative splat. Session URLs stay bare. */
 export function encodeFileRoute(file: WorkspaceFile): { scope: string; path: string } {
-  return file.type === "session"
+  return file.kind === "session"
     ? { scope: file.sessionId, path: file.path }
     : { scope: "machine", path: file.path.replace(/^\/+/, "") };
 }
 
 /** Reconstruct a file from a route scope segment and splat (the inverse of encodeFileRoute). */
 export function decodeFileRoute(scope: string, path: string): WorkspaceFile {
-  return scope === "machine" ? { type: "machine", path: `/${path}` } : sessionFile(scope, path);
+  return scope === "machine" ? { kind: "machine", path: `/${path}` } : sessionFile(scope, path);
 }
 
 /** A session file (an artifact): a path beneath a session's own files directory. */
 export function sessionFile(sessionId: string, path: string): SessionFile {
-  return { type: "session", sessionId, path };
+  return { kind: "session", sessionId, path };
 }
 
 /** A machine file: a real file on the host, addressed by its absolute path. */
-export function machineFile(path: string): Extract<WorkspaceFile, { type: "machine" }> {
-  return { type: "machine", path };
+export function machineFile(path: string): Extract<WorkspaceFile, { kind: "machine" }> {
+  return { kind: "machine", path };
 }

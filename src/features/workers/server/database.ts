@@ -1,4 +1,4 @@
-// Durable ownership and lifetime policy for worker sessions.
+// Persisted ownership and lifetime policy for worker sessions.
 //
 // The SDK owns session history. This table identifies sessions managed as workers,
 // keeps them out of the ordinary session list, and tells supervisors which

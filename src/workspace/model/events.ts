@@ -4,6 +4,8 @@ import type { CustomEditorKind } from "@files/model";
 import type { InboxEntry } from "@inbox/model";
 import type { SessionMetadataUpdate } from "@sessions/model";
 import type { WorkerEvent } from "@workers/model";
+import type { AgentEvent } from "@agents/model";
+import type { Channel } from "@channels/model";
 import type { Settings } from "./config/settings";
 import type { WorkspaceAction } from "./state/actions";
 
@@ -11,6 +13,9 @@ import type { WorkspaceAction } from "./state/actions";
 export type WorkspaceEvent =
   | WorkspaceAction
   | WorkerEvent
+  | AgentEvent
+  | { type: "channel.upserted"; channel: Channel }
+  | { type: "channel.deleted"; channelId: string }
   | {
       type: "session.drafted";
       sessionId: string;

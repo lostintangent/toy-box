@@ -11,7 +11,7 @@ import {
 const KEYBOARD_STEP = 16;
 
 /** The sidebar draws its own trailing resize rule, and its width includes it. */
-export const SIDEBAR_BORDER = 2;
+export const SIDEBAR_BORDER = 1;
 
 /**
  * The width a collapsed sidebar holds: the rail's single action between two
@@ -105,7 +105,7 @@ export function SidebarResizer({
         data-sidebar
         style={style}
         className={cn(
-          "shrink-0 border-r-2",
+          "shrink-0 border-r",
           !isDragging && "transition-[width] duration-300 ease-layout",
         )}
       >
@@ -127,7 +127,7 @@ export function SidebarResizer({
 
 /**
  * The sidebar's trailing edge. It reads as the sidebar's border until it is
- * hovered or dragged, so both layouts show the same two-pixel rule while its
+ * hovered or dragged, so both layouts show the same one-pixel rule while its
  * desktop-only grab area is slightly wider than the shared pane handles.
  */
 function SidebarEdge({
@@ -196,7 +196,7 @@ function SidebarEdge({
       onKeyDown={handleKeyDown}
       className={cn(
         RESIZE_HANDLE_RULE,
-        "z-10 -ml-0.5 w-0.5 shrink-0 cursor-col-resize touch-none select-none after:w-1.5",
+        "z-10 -ml-px shrink-0 cursor-col-resize touch-none select-none after:w-1.5",
         "hover:bg-[image:var(--resize-accent-y)]",
         isDragging && accentGradient,
         hidden && "hidden",

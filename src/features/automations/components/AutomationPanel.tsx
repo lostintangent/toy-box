@@ -13,64 +13,51 @@ type AutomationPanelProps = {
   onExpandedChange: (expanded: boolean) => void;
   openSessionIds: string[];
   onSessionOpen: (sessionId: string) => void;
+  onCreate: () => void;
 };
-
-type AutomationDialogState = { mode: "create" } | { mode: "edit"; automationId: string };
 
 export function AutomationPanel({
   isExpanded,
   onExpandedChange,
   openSessionIds,
   onSessionOpen,
+  onCreate,
 }: AutomationPanelProps) {
   const { data: automations } = useSuspenseQuery(automationQueries.list());
-  const [dialogState, setDialogState] = useState<AutomationDialogState | null>(null);
-
-  function closeDialog() {
-    setDialogState(null);
-  }
-
-  function openCreateDialog() {
-    setDialogState({ mode: "create" });
-  }
-
-  function openEditDialog(automationId: string) {
-    setDialogState({ mode: "edit", automationId });
-  }
+  const [editAutomationId, setEditAutomationId] = useState<string>();
+  if (automations.length === 0) return null;
 
   function handleExpandedChange(expanded: boolean) {
-    if (!expanded) closeDialog();
+    if (!expanded) setEditAutomationId(undefined);
     onExpandedChange(expanded);
   }
 
-  const dialogAutomationId = dialogState?.mode === "edit" ? dialogState.automationId : null;
-  const dialogTargetAutomation =
-    automations.find((automation) => automation.id === dialogAutomationId) ?? null;
+  const editing = automations.find((automation) => automation.id === editAutomationId);
 
   return (
     <>
       <SidebarPanel
         title="Automations"
-        count={automations.length}
         isExpanded={isExpanded}
         onExpandedChange={handleExpandedChange}
         action={
           <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-6 w-6"
-                aria-label="Add automation"
-                onClick={openCreateDialog}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent sideOffset={6}>Add automation</TooltipContent>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6"
+                  aria-label="Create automation"
+                  onClick={onCreate}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              }
+            />
+            <TooltipContent sideOffset={6}>Create automation</TooltipContent>
           </Tooltip>
         }
-        emptyMessage="No automations yet."
       >
         {automations.map((automation) => {
           const isSelected = openSessionIds.includes(automation.id);
@@ -80,29 +67,22 @@ export function AutomationPanel({
               automation={automation}
               isSelected={isSelected}
               onOpenSession={onSessionOpen}
-              onEdit={() => openEditDialog(automation.id)}
+              onEdit={() => setEditAutomationId(automation.id)}
             />
           );
         })}
       </SidebarPanel>
 
-      {dialogState?.mode === "create" ? (
+      {editing && (
         <AutomationDialog
-          mode="create"
-          onOpenChange={(open) => {
-            if (!open) closeDialog();
-          }}
-        />
-      ) : dialogTargetAutomation ? (
-        <AutomationDialog
-          key={dialogTargetAutomation.id}
+          key={editing.id}
           mode="edit"
-          automation={dialogTargetAutomation}
+          automation={editing}
           onOpenChange={(open) => {
-            if (!open) closeDialog();
+            if (!open) setEditAutomationId(undefined);
           }}
         />
-      ) : null}
+      )}
     </>
   );
 }

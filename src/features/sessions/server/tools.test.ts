@@ -22,8 +22,7 @@ mock.module("@sessions/server/state/registry", () => ({
   updateSessionTitle: updateSessionTitleMock,
 }));
 
-const { getSessionTools } = await import("@/server/sessionTools");
-const { sessionTitleTools } = await import("./tools");
+const { hyperLifecycleTools, sessionTitleTools } = await import("./tools");
 
 afterAll(() => {
   mock.module("@sessions/server/runtime", () => realStreamModule);
@@ -54,7 +53,7 @@ describe("SDK session title tool", () => {
 
 describe("SDK lifecycle tools", () => {
   test("create_session creates a standard session without inherited defaults or a worker owner", async () => {
-    const tool = getSessionTools("hyper").find((candidate) => candidate.name === "create_session");
+    const tool = hyperLifecycleTools.find((candidate) => candidate.name === "create_session");
 
     const result = await tool?.handler?.(
       { prompt: "Start a durable investigation" },
@@ -80,7 +79,7 @@ describe("SDK lifecycle tools", () => {
   });
 
   test("create_session honors explicit execution options and can open the new session", async () => {
-    const tool = getSessionTools("hyper").find((candidate) => candidate.name === "create_session");
+    const tool = hyperLifecycleTools.find((candidate) => candidate.name === "create_session");
     const model = { name: "claude-sonnet-4.5" };
 
     const result = await tool?.handler?.(

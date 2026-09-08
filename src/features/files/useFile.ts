@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
-import { notifyAgent } from "@sessions/server/functions";
+import { sendSystemMessage } from "@sessions/server/functions";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { invalidateWorkspaceStateQuery } from "@workspace/queries";
 import { workerMutations } from "@workers/mutations";
@@ -19,7 +19,7 @@ import { fileQueries } from "./queries";
 
 const SAVE_DEBOUNCE_MS = 2_000;
 const SAVE_SETTLE_MS = 1_000;
-const FILE_EDIT_NOTIFICATION_DEBOUNCE_MS = 8_000;
+const FILE_EDIT_SYSTEM_MESSAGE_DEBOUNCE_MS = 8_000;
 
 type FileFlushOptions = { notifyAgent?: boolean };
 
@@ -52,7 +52,7 @@ type WorkspaceFileState = FileState & {
 
 export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): WorkspaceFileState {
   const queryClient = useQueryClient();
-  const scheduleAgentNotification = useFileEditNotification({
+  const scheduleFileEditSystemMessage = useFileEditSystemMessage({
     enabled: mode === "shared",
     file,
   });
@@ -81,7 +81,7 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
     onSuccess: (result, { notifyAgent }) => {
       lastWrittenTimestampRef.current = result.timestamp;
       setWatchError(null);
-      if (notifyAgent) scheduleAgentNotification();
+      if (notifyAgent) scheduleFileEditSystemMessage();
     },
     onSettled: () => {
       setShowSaveIndicator(true);
@@ -132,7 +132,7 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
   // Spawn a renderer-authored worker for this file, flushing pending edits first so
   // the worker reads the user's latest content.
   async function spawnWorker(request: WorkerRequest): Promise<{ sessionId: string }> {
-    if (file.type !== "session") {
+    if (file.kind !== "session") {
       throw new Error("Background workers aren't available for this file.");
     }
     await flush({ notifyAgent: false });
@@ -148,7 +148,7 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
   }
 
   async function cancelWorker(workerSessionId: string): Promise<void> {
-    if (file.type !== "session") return;
+    if (file.kind !== "session") return;
     await cancel.mutateAsync({ type: "file", file, workerSessionId });
   }
 
@@ -191,13 +191,13 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
     save,
     flush,
     workers,
-    spawnWorker: file.type === "session" ? spawnWorker : undefined,
+    spawnWorker: file.kind === "session" ? spawnWorker : undefined,
     cancelWorker,
   };
 }
 
-/** Debounced side-channel that nudges the owning agent after the user edits a shared file. */
-function useFileEditNotification({
+/** Tell the owning Session about shared edits after the file itself is durable. */
+function useFileEditSystemMessage({
   enabled,
   file,
 }: {
@@ -205,21 +205,21 @@ function useFileEditNotification({
   file: WorkspaceFile;
 }): () => void {
   const owner = ownerSessionId(file);
-  const notificationTask = useDebouncer(
+  const systemMessageTask = useDebouncer(
     () => {
       if (!owner) return;
-      void notifyAgent({
-        data: { sessionId: owner, notification: { type: "file_edited", file } },
+      void sendSystemMessage({
+        data: { sessionId: owner, message: { type: "file_edited", file } },
       }).catch((error) => {
-        console.error("Failed to notify agent about file edit:", error);
+        console.error("Failed to deliver file edit system message:", error);
       });
     },
     {
       enabled: enabled && owner !== undefined,
-      wait: FILE_EDIT_NOTIFICATION_DEBOUNCE_MS,
+      wait: FILE_EDIT_SYSTEM_MESSAGE_DEBOUNCE_MS,
       onUnmount: (debouncer) => debouncer.flush(),
     },
   );
 
-  return notificationTask.maybeExecute;
+  return systemMessageTask.maybeExecute;
 }

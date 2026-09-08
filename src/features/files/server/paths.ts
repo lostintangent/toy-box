@@ -5,7 +5,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { SESSION_STATE_PATH } from "@sessions/model/constants";
-import type { WorkspaceFile } from "../model";
+import { machineFile, sessionFile, type WorkspaceFile } from "../model";
 
 const SESSION_FILES_DIRECTORY = "files";
 
@@ -33,9 +33,24 @@ export function resolveSessionArtifactPath(sessionId: string, artifactPath: stri
 
 /** Resolve any workspace file — a session artifact or a machine file — to an absolute path. */
 export function resolveWorkspaceFile(file: WorkspaceFile): string | null {
-  return file.type === "session"
+  return file.kind === "session"
     ? resolveSessionArtifactPath(file.sessionId, file.path)
     : resolveMachineFilePath(file.path);
+}
+
+/** Preserve Session ownership when turning an absolute host path into a file address. */
+export function workspaceFileFromAbsolutePath(path: string): WorkspaceFile {
+  const absolutePath = resolve(path);
+  const sessionStateRoot = getSessionStateRoot();
+  if (isPathInsideRoot(sessionStateRoot, absolutePath)) {
+    const [sessionId, directory, ...artifactPath] = relative(sessionStateRoot, absolutePath).split(
+      sep,
+    );
+    if (sessionId && directory === SESSION_FILES_DIRECTORY && artifactPath.length > 0) {
+      return sessionFile(sessionId, artifactPath.join("/"));
+    }
+  }
+  return machineFile(absolutePath);
 }
 
 /** A machine file resolves to its own absolute path. One trusted owner, so no sandbox root. */
@@ -50,14 +65,8 @@ export function projectSessionArtifactPath(
 ): string | undefined {
   const absolutePath = resolveSdkSessionStatePath(path);
   if (!absolutePath) return undefined;
-
-  const sessionRoot = resolveSessionRoot(sessionId);
-  if (!sessionRoot) return undefined;
-
-  const filesRoot = resolve(sessionRoot, SESSION_FILES_DIRECTORY);
-  return isPathInsideRoot(filesRoot, absolutePath)
-    ? relativeArtifactPath(filesRoot, absolutePath)
-    : undefined;
+  const file = workspaceFileFromAbsolutePath(absolutePath);
+  return file.kind === "session" && file.sessionId === sessionId ? file.path : undefined;
 }
 
 function getSessionStateRoot(): string {
@@ -87,10 +96,6 @@ function resolveSdkSessionStatePath(path: string | undefined): string | null {
 
 function isSessionStateRelativePath(path: string): boolean {
   return path === SESSION_STATE_PATH || path.startsWith(`${SESSION_STATE_PATH}/`);
-}
-
-function relativeArtifactPath(filesRoot: string, absolutePath: string): string {
-  return relative(filesRoot, absolutePath).split(sep).join("/");
 }
 
 function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {

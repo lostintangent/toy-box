@@ -143,7 +143,7 @@ export function resolveEditorKind(
   customKinds: CustomEditorKind[],
 ): EditorKind {
   const extension = extensionOf(file.path);
-  if (file.type === "session" && ARTIFACT_APP_EDITOR_KIND.extensions.includes(extension)) {
+  if (file.kind === "session" && ARTIFACT_APP_EDITOR_KIND.extensions.includes(extension)) {
     return ARTIFACT_APP_EDITOR_KIND;
   }
   for (const kind of Object.values(BUILTIN_EDITOR_KINDS)) {

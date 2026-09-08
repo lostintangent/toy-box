@@ -16,7 +16,7 @@ import {
 import { sessionFile } from "@files/model";
 import { sessionMutations } from "@sessions/mutations";
 import { selectNonWorkerSessions, sessionQueries } from "@sessions/queries";
-import type { Attachment } from "@sessions/model";
+import type { SessionMessage } from "@sessions/model";
 import type { InboxEntry } from "../model";
 import { inboxMutations } from "../mutations";
 import { inboxQueries } from "../queries";
@@ -86,25 +86,24 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
     if (!isLinked) onFocusPane?.(pane.id);
   }
 
-  function handleRun(text: string, attachments: Attachment[]) {
-    const launch = createLaunchInput(text, attachments);
+  function handleRun(message: SessionMessage) {
+    const launch = createLaunchInput(message);
     void dispatchTaskMutation
       .mutateAsync(launch)
       .catch(() => restorePrompt(launch.message.content));
   }
 
-  function handleSend(text: string, attachments: Attachment[]) {
-    const launch = createLaunchInput(text, attachments);
+  function handleSend(message: SessionMessage) {
+    const launch = createLaunchInput(message);
     void createSessionMutation
       .mutateAsync(launch)
       .catch(() => restorePrompt(launch.message.content));
   }
 
-  function createLaunchInput(text: string, attachments: Attachment[]) {
+  function createLaunchInput(message: SessionMessage) {
     return {
       message: {
-        content: text,
-        attachments: attachments.length > 0 ? attachments : undefined,
+        ...message,
         model: defaultModel ?? undefined,
       },
       directory,

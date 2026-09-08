@@ -138,7 +138,7 @@ export function AppSessionToggle({
   variant,
   size = "sm",
   ...props
-}: Omit<ComponentProps<typeof Button>, "asChild" | "aria-pressed" | "onClick" | "type"> & {
+}: Omit<ComponentProps<typeof Button>, "aria-pressed" | "onClick" | "type"> & {
   sessionId: string;
 }) {
   const { workspace, actions } = useAppHost();
@@ -187,6 +187,7 @@ export function AppSessionPreview({
       align={align}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      nativeButton={false}
     >
       <span {...props} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
         {children}

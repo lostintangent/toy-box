@@ -4,16 +4,18 @@ Files are browsable workspace resources that become live, editable surfaces. Age
 
 ## Domain model
 
-An editor addresses one `WorkspaceFile` — either a `session` file (an _artifact_: a path beneath a session's own files directory) or a `machine` file (an absolute path on the host that the agent opened via `open_file`). The file on disk is the source of truth; Toy Box does not copy its content into pane or shared workspace state.
+An editor addresses one `WorkspaceFile`, whose `kind` is either `session` (an _artifact_: a path beneath a session's own files directory) or `machine` (an absolute path on the host that the agent opened via `open_file`). The file on disk is the source of truth; Toy Box does not copy its content into pane or shared workspace state.
 
 - Session files (artifacts) resolve beneath that session's durable files directory. An Inbox entry and its managed session share one ID, so its artifact resolves as that session's file.
 - Machine files resolve to their own absolute path.
 
 Clients never encode physical storage. Read, write, watch, serve, and worker operations all carry the same `WorkspaceFile` address, and one server resolver (`resolveWorkspaceFile`) selects the absolute path.
+When an Agent shares an absolute path with a Channel, Files performs the inverse classification once
+so a path beneath Session storage remains a Session file rather than becoming a machine file.
 
-The pane carries one of three modes: `read`, `edit`, or `shared`. Read keeps content presentation-only while still allowing Markdown comments. Edit persists user changes without agent notification. Shared persists changes and notifies the owning session's agent. Ordinary session files open in edit mode, automation files open in read mode, and Inbox files open in shared mode with follow-up conversation through the managed session overlay.
+The pane carries one of three modes: `read`, `edit`, or `shared`. Read keeps content presentation-only while still allowing Markdown comments. Edit persists user changes without notifying the agent. Shared persists changes and notifies the owning session's agent. Ordinary session files open in edit mode, automation files open in read mode, and Inbox files open in shared mode with follow-up conversation through the managed session overlay.
 
-An SDK canvas is not an editor pane. It is an SDK-provided URL surface with its own identity and revision, so it does not participate in file read, write, watch, serve, or edit-notification behavior. The built-in SVG drawing surface is distinct: its standard `.svg` file is an ordinary editable file and uses the full file lifecycle.
+An SDK canvas is not an editor pane. It is an SDK-provided URL surface with its own identity and revision, so it does not participate in file read, write, watch, serve, or edit-message behavior. The built-in SVG drawing surface is distinct: its standard `.svg` file is an ordinary editable file and uses the full file lifecycle.
 
 ## File operations
 
@@ -34,17 +36,31 @@ The route scope is a session id for an artifact or the literal `machine` for a h
 
 The file-mode browser can optionally restrict selection and creation by extension. It can create an empty machine file in any visible directory and returns its absolute path through the same completion callback used to select an existing file. Creation is exclusive, so an existing entry is never replaced; once selected, the new file enters the ordinary `WorkspaceFile` lifecycle above.
 
-Shared edits schedule a debounced `file_edited` notification through the ordinary session delivery path. The file is written first; the notification is a side channel that tells the agent to reread durable state, not a second copy of the content.
+Shared edits schedule a debounced `file_edited` system message through the ordinary Session delivery path. The file is written first; the message tells the agent to reread durable state rather than copying the content.
 
 ## Background collaboration
 
-`EditorPane` gives every renderer pending workers plus an optional `spawnWorker` capability for session files. It closes over the file address, flushes pending editor changes, and sends a renderer-authored prompt plus an optional friendly name and opaque metadata through a short RPC. Workspace state projects pending workers back to connected clients by file address; renderers interpret their own metadata without teaching the host another workflow. This association remains process-local because it is published before the worker session runtime exists; it should become durable only if file admission itself gains restart recovery.
+`EditorPane` gives every renderer pending workers plus optional `spawnWorker` capability for session
+files. Worker requests carry a renderer-authored prompt plus optional friendly name and opaque
+metadata. Workspace state projects pending workers back to connected clients by file address;
+renderers interpret their own metadata without teaching the host another workflow. Worker association
+remains process-local because it is published before the worker session runtime exists.
 
 An accepted spawn reconciles the workspace snapshot before resolving, so a renderer's local mutation state hands off directly to the authoritative worker projection.
 
 Workers for one resolved file can progress concurrently. The watched file remains their shared source of truth: each worker must reread it immediately before every write and merge its intended change around intervening edits. The [Workers feature](../workers/AGENTS.md) owns this admission policy and its started/finished projection; cancelling admitted work delegates to its race-safe supervisor without affecting siblings. Consumers may monitor the worker through the general session-completion API and receive its final assistant response, but ephemeral completion is not retained as history. File workers are always ephemeral, stay out of Inbox and the normal session list, and disappear after finishing; a startup sweep deletes ephemeral workers abandoned by a process restart. Source deletion finishes outstanding associations and recursively tears down its worker tree. The watched file remains the durable result.
 
-Markdown layers inline comments on this primitive. Comment additions, edits, and deletions persist without sending `file_edited` notifications; new comments and replies additionally spawn a worker. Its renderer authors the complete Documint response prompt, supplies a friendly worker name, and records only the stable thread ID as worker metadata. That metadata becomes anchored presence while the worker is pending; the worker changes the body, replies in the persisted thread, or does both according to the comment. Custom editors use the same capability through `Toybox.spawnWorker({ name?, prompt, metadata? })` and receive their pending worker list in the idempotent `onRender` context.
+Markdown layers inline comments on this primitive and composes the Agents feature at that renderer
+boundary. Comment additions, edits, and deletions persist without sending `file_edited` system messages.
+Documint receives the persistent Agent roster and owns its mention completion; a new comment or reply
+invokes each selected Agent ID after the renderer flushes the file. Each Agent gets one durable, private
+membership per file, while the current prompt carries the addressed thread. An unaddressed comment
+retains the anonymous Worker path, and an explicit @Copilot mention can combine that Worker with named
+Agents. The renderer authors one complete Documint response prompt for either path. The responder changes
+the body, replies in the persisted thread, or does both according to the comment; the file stays the
+public source of truth. Custom editors continue to use the Worker capability through
+`Toybox.spawnWorker({ name?, prompt, metadata? })` and receive pending workers in the idempotent
+`onRender` context.
 
 The pane, rather than an individual renderer, owns worker inspection and cancellation. While associations are pending, it declares a worker count through `PaneStatus`; the session overlay declares its trigger into that same host-owned slot, while save and editor-mode controls use `PaneActions`. The desktop grid presents status as lower-right overlay controls, while pagers place it in their header. `WorkspacePaneView` scopes both slots around the leaf pane and overlay, so neither receives or positions DOM targets. The compact worker menu lists friendly names and status icons. A running worker can open the existing passive `SessionPreview`; starting entries remain visible before their SDK sessions exist. Each entry can cancel starting or running work through the pane-owned file address. This keeps session IDs, preview placement, cancellation, and read semantics out of custom iframe APIs.
 
@@ -80,5 +96,5 @@ Inbox entries store at most one artifact filename and own its directory. `InboxP
 - [`useFile.ts`](useFile.ts) owns client file lifecycle; [`components/editor/EditorPane.tsx`](components/editor/EditorPane.tsx) dispatches to format-specific renderers.
 - [`server/functions.ts`](server/functions.ts) owns validated filesystem RPC ingress, while the rest of `server/` owns operations and path resolution. `routes/` owns the watch and serve HTTP adapters because browser-native streaming and relative-resource loading need those transports.
 - [`../inbox/AGENTS.md`](../inbox/AGENTS.md) owns Inbox rows and result lifecycle. This feature owns custom-editor definitions, persistence, and registration; [Sessions](../sessions/AGENTS.md) owns session-file teardown.
-- The [Sessions SDK boundary](../sessions/server/sdk/AGENTS.md) owns projecting agent file activity into events and encoding edit notifications across SDK history; [`server/tools.ts`](server/tools.ts) owns file-specific agent ingress.
+- The [Sessions SDK boundary](../sessions/server/sdk/AGENTS.md) owns projecting agent file activity into events and encoding system messages across SDK history; [`server/tools.ts`](server/tools.ts) owns file-specific agent ingress.
 - Keep one file as the source of truth, one server path resolver for every operation, and one `useFile` lifecycle per mounted pane.

@@ -1,5 +1,5 @@
 type SseStart<T> = (
-  send: (event: T) => void,
+  send: (event: T, id?: number) => void,
   close: () => void,
 ) => void | VoidFunction | Promise<void | VoidFunction>;
 
@@ -35,9 +35,13 @@ export function createSseResponse<T>(request: Request, start: SseStart<T>): Resp
       };
 
       const onAbort = () => close(true);
-      const send = (event: T) => {
+      const send = (event: T, id?: number) => {
         if (closed) return;
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        controller.enqueue(
+          encoder.encode(
+            `${id === undefined ? "" : `id: ${id}\n`}data: ${JSON.stringify(event)}\n\n`,
+          ),
+        );
       };
 
       // Install cancellation before route setup runs; setup may await imports or

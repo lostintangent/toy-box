@@ -2,17 +2,19 @@ import type { SessionContext, SessionMetadata } from "@github/copilot-sdk";
 import type { JSONType } from "zod";
 import type { WorkspaceFile } from "@files/model";
 import type { ModelConfiguration } from "./modelConfiguration";
-import type { AgentNotification } from "./agentNotifications";
+import type { SessionSystemMessage } from "./systemMessages";
 import type { Attachment, SessionType } from "./protocol";
+import type { AgentMention } from "@agents/model";
 
 export type { ModelInfo, SessionContext, SessionMetadata } from "@github/copilot-sdk";
-export type { AgentNotification } from "./agentNotifications";
+export type { SessionSystemMessage } from "./systemMessages";
 export type { Attachment, SessionLaunch, SessionMessage, SessionType } from "./protocol";
 
 export type SessionSkill = {
   name: string;
   description: string;
   type: "project" | "global";
+  path?: string;
 };
 
 export type SessionWorktree = {
@@ -99,9 +101,9 @@ export type UserMessage = {
   timestamp?: string;
 };
 
-export type AgentNotificationMessage = {
-  role: "agent_notification";
-  notification: AgentNotification;
+export type SystemMessage = {
+  role: "system";
+  content: SessionSystemMessage;
   timestamp?: string;
 };
 
@@ -112,7 +114,7 @@ export type AssistantMessage = {
   timestamp?: string;
 };
 
-export type Message = UserMessage | AgentNotificationMessage | AssistantMessage;
+export type Message = UserMessage | SystemMessage | AssistantMessage;
 
 type SubAgent = {
   content?: string;
@@ -156,15 +158,19 @@ export function toDataUrl(attachment: Attachment): string | undefined {
 export type QueuedUserMessage = Omit<UserMessage, "timestamp"> & {
   clientId: string;
   model?: ModelConfiguration;
+  /** Structured execution policy for Agents operationally mentioned in this message. */
+  agentMentions?: AgentMention[];
   /** Immediate delivery has been requested, but the canonical SDK user message has not arrived. */
   immediate?: true;
 };
 
-type QueuedAgentNotificationMessage = Omit<AgentNotificationMessage, "timestamp"> & {
+type QueuedSystemMessage = Omit<SystemMessage, "timestamp"> & {
   clientId: string;
+  /** Immediate delivery has been requested, but the canonical SDK input has not arrived. */
+  immediate?: true;
 };
 
-export type QueuedMessage = QueuedUserMessage | QueuedAgentNotificationMessage;
+export type QueuedMessage = QueuedUserMessage | QueuedSystemMessage;
 
 export type DraftPrompt = {
   text: string;
@@ -188,8 +194,8 @@ export type SessionEvent = (
       clientId?: string;
     }
   | {
-      type: "agent_notification";
-      notification: AgentNotification;
+      type: "system_message";
+      content: SessionSystemMessage;
       timestamp?: string;
       clientId?: string;
     }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { homedir } from "node:os";
 import type { JSONType } from "zod";
-import { encodeSdkAgentNotification } from "@sessions/server/sdk/agentNotificationCodec";
+import { toSdkSystemMessage } from "@sessions/server/sdk/systemMessageCodec";
 import {
   createSdkEventProjector,
   getSdkSessionName,
@@ -27,6 +27,7 @@ function sdkEvent(event: unknown): SdkSessionEvent {
 
 // Every tool name resolved by the omitted-tool policy.
 const OMITTED_TOOL_NAMES = [
+  "skill",
   "read_agent",
   "check_session_status",
   "wait_for_sessions",
@@ -1137,12 +1138,12 @@ describe("projector", () => {
       ]);
     });
 
-    test("create_worker_session projects a linked session only after successful completion", () => {
+    test("spawn_worker projects a linked session only after successful completion", () => {
       const context = createStreamingContext();
 
       expect(
         projectSdkEvent(
-          toolExecutionStart("create_worker_session", "tool-create-session", {
+          toolExecutionStart("spawn_worker", "tool-spawn-worker", {
             task: "Review the auth flow",
           }),
           context,
@@ -1150,12 +1151,12 @@ describe("projector", () => {
       ).toEqual([]);
 
       expect(
-        projectSdkEvent(toolExecutionProgress("tool-create-session", "Creating"), context),
+        projectSdkEvent(toolExecutionProgress("tool-spawn-worker", "Creating"), context),
       ).toEqual([]);
 
       expect(
         projectSdkEvent(
-          toolExecutionComplete("tool-create-session", {
+          toolExecutionComplete("tool-spawn-worker", {
             success: true,
             resultContent: JSON.stringify({ sessionId: "toy-box-created-1", opened: true }),
           }),
@@ -1460,6 +1461,60 @@ describe("projector", () => {
       ).toEqual([]);
     });
 
+    test("projects invoked skills as completed calls containing the skill path", () => {
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "skill.invoked",
+            id: "skill-event-1",
+            agentId: "call-agent-1",
+            data: {
+              name: "review",
+              path: "/repo/.agents/skills/review/SKILL.md",
+              content: "Review instructions",
+              trigger: "agent-invoked",
+            },
+          }),
+          createStreamingContext(),
+        ),
+      ).toEqual([
+        {
+          type: "tool_start",
+          toolName: "skill",
+          toolCallId: "skill-event-1",
+          agentId: "call-agent-1",
+          arguments: {
+            skill: "review",
+            path: "/repo/.agents/skills/review/SKILL.md",
+          },
+        },
+        {
+          type: "tool_end",
+          toolCallId: "skill-event-1",
+          agentId: "call-agent-1",
+          success: true,
+        },
+      ]);
+    });
+
+    test("keeps context-loaded skills out of the transcript", () => {
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "skill.invoked",
+            id: "skill-event-1",
+            data: {
+              name: "review",
+              path: "/repo/.agents/skills/review/SKILL.md",
+              content: "Review instructions",
+              trigger: "context-load",
+            },
+          }),
+          createStreamingContext(),
+        ),
+      ).toEqual([]);
+    });
+
     test("does not expose SDK delivery bookkeeping on canonical user messages", () => {
       const project = createStreamingContext();
       const deliveries = (["idle", "steering", "queued"] as const).map(
@@ -1479,7 +1534,7 @@ describe("projector", () => {
 
     test("open_file and close_file project durable file visibility events", () => {
       const context = createStreamingContext();
-      const file = { type: "machine", path: "/repo/src/foo.ts" } as const;
+      const file = { kind: "machine", path: "/repo/src/foo.ts" } as const;
 
       expect(
         projectSdkEvent(toolExecutionStart("open_file", "call-open", { path: file.path }), context),
@@ -1506,11 +1561,11 @@ describe("projector", () => {
       ).toEqual([{ type: "file_closed", file }]);
     });
 
-    test("decodes notification user message prompts at the SDK boundary", () => {
-      const content = encodeSdkAgentNotification({
+    test("decodes system messages at the SDK boundary", () => {
+      const content = toSdkSystemMessage({
         type: "file_edited",
-        file: { type: "session", sessionId: "session-1", path: "plan.md" },
-      });
+        file: { kind: "session", sessionId: "session-1", path: "plan.md" },
+      }).displayPrompt;
 
       expect(
         projectSdkEvent(
@@ -1526,10 +1581,10 @@ describe("projector", () => {
         ),
       ).toEqual([
         {
-          type: "agent_notification",
-          notification: {
+          type: "system_message",
+          content: {
             type: "file_edited",
-            file: { type: "session", sessionId: "session-1", path: "plan.md" },
+            file: { kind: "session", sessionId: "session-1", path: "plan.md" },
           },
           timestamp: "2026-01-01T00:00:00.000Z",
         },

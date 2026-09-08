@@ -3,7 +3,7 @@
 
 import { sharedMap } from "@/shared/server/processState";
 import { broadcast } from "@workspace/server/events";
-import { workerReferencesSession, type Worker } from "../model";
+import { workerParentSessionId, workerReferencesSession, type Worker } from "../model";
 
 const workers = sharedMap<Worker>("workers");
 
@@ -33,6 +33,11 @@ export function finishWorker(sessionId: string): void {
 
 export function finishWorkersForSession(sessionId: string): string[] {
   return finishWorkers((worker) => workerReferencesSession(worker, sessionId));
+}
+
+/** Finish work owned by a session without treating that session's own Worker as its child. */
+export function finishWorkersOwnedBySession(sessionId: string): string[] {
+  return finishWorkers((worker) => workerParentSessionId(worker) === sessionId);
 }
 
 export function finishWorkersForApp(appId: string): string[] {

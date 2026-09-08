@@ -1,12 +1,12 @@
 {
   "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "new-york",
+  "style": "base-vega",
   "rsc": false,
   "tsx": true,
   "tailwind": {
     "config": "",
     "prefix": "",
-    "css": "src/styles.css",
+    "css": "src/routes/styles.css",
     "baseColor": "neutral",
     "cssVariables": true
   },

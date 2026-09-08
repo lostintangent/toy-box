@@ -25,7 +25,7 @@ History replay creates a fresh projector, feeds the stored SDK events in order, 
 
 ## Session process and handles
 
-`client.ts` owns one process-wide `CopilotClient`, started during server boot or by the first operation that reaches it. It creates, resumes, lists, and deletes SDK sessions, exposes models, discovers skills for a meaningful working directory or host scope, and normalizes persisted working-directory context. Bun development resolves the installed platform package's native Copilot CLI; a compiled Toy Box binary resolves the globally installed executable.
+`client.ts` owns one process-wide `CopilotClient`, started during server boot or by the first operation that reaches it. It creates, resumes, lists, and deletes SDK sessions, exposes models, discovers skills for a meaningful working directory or host scope, and normalizes persisted working-directory context. Development and compiled Toy Box binaries both resolve the user's installed Copilot CLI from `PATH`.
 
 Composer skills are server-wide discovery data, not session transcript state. The client caches them by effective working directory; SDK `session.skills_loaded` notifications remain outside canonical projection because they are transient echoes of session-level discovery rather than durable history.
 
@@ -38,22 +38,33 @@ The SDK requires a working directory. Toy Box uses the user's meaningful working
 Small codecs keep values symmetric across the boundary:
 
 - Attachments map between Toy Box data URLs and SDK blob references.
-- Agent notifications encode into ordinary persisted user-message content and decode back into semantic notification events.
+- System messages use SDK `prompt` for model-facing instructions and `displayPrompt` for a compact,
+  durable encoding that projects back into semantic `system_message` events.
 - Model configuration maps one domain value into SDK create-session and set-model options.
 
 Keep these codecs narrow. Callers should not learn SDK wire shapes, and the projector should not compensate for values that outbound code could encode consistently.
 
 ## Session roles, instructions, and tools
 
-`SessionType` configures a session's product role: `standard`, `automation`, `inbox`, `hyper`, or `worker`. It is not persisted on the SDK session. Creation resolves the type from context already in hand; cold resume derives it from the automation, Inbox, worker, or in-memory Hyper record that manages the session. No managing record means standard, and conflicting records are an invariant violation.
+`SessionType` configures a session's product role: `standard`, `automation`, `inbox`, `hyper`,
+`worker`, or `agent`. It is not persisted on the SDK session. Creation resolves the type from context
+already in hand; cold resume derives it from the Automation, Inbox, Worker, Agent membership, or
+in-memory Hyper record that manages the session. No managing record means standard, and conflicting
+records are an invariant violation.
 
-All roles can create child workers that are durable by default or explicitly ephemeral, receive deletion, coordination, automation, and current-session artifact-app validation tools, and can list, read, and revision-update saved apps. Reads include the active state schema; invalid writes fail before persistence, while conflicts return the current instance for merge-and-retry. App-owned workers receive owner-scoped variants that cannot address another app. Standard and Hyper sessions also receive interactive layout and file tools because they are directly presented in the workspace. Standard sessions alone can update their inferred title as focus changes; the SDK preserves any explicit creator- or user-assigned name. Hyper additionally receives independent top-level session creation, custom-editor registration, and installed app definition and instance lifecycle tools, while Hyper and automation sessions can update user settings through the shared workspace operation. Inbox receives `send_to_inbox`; automation, Inbox, and worker sessions do not receive UI-only open/close tools. Durable child workers link a pane; ephemeral children remain headless so their deletion cannot leave a dead pane. Top-level creation passes only explicitly supplied execution settings, performs no caller-state lookup, and links its new session only when requested.
+The application-level session catalog composes feature-owned tools and instructions by role; this
+boundary encodes that configuration with universal Session resources during SDK creation and resume. Standard
+and Hyper sessions receive interactive workspace tools, while managed roles receive only the
+capabilities appropriate to their owner. App-owned Workers receive app-scoped state tools. The
+[Workers](../../../workers/AGENTS.md) and [Agents](../../../agents/AGENTS.md) guides own their
+membership and lifetime policies.
 
 Session configuration follows the same role model:
 
 - Every session receives its meaningful working directory when one exists.
-- Newly created sessions receive their creation model configuration when one was selected explicitly.
-- Standard, Hyper, worker, and automation sessions learn their durable session files location and can receive file-edit notifications.
+- Created and resumed sessions receive an effective model configuration when their owner supplies one.
+- Standard, Hyper, worker, and automation sessions learn their durable session files location and
+  can receive file-edit system messages.
 - Feature-owned skills live as complete directories under each feature's
   `server/skills/`. The build embeds every file recursively, and startup replaces
   their generated copies under `~/.toy-box/skills/`. Adding, renaming, or

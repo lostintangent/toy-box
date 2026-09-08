@@ -2,8 +2,19 @@
 // presence is the complete host discriminator.
 
 import { useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Image, ArrowUp, ChevronDown, Play, Square, X } from "lucide-react";
-import { Button } from "@/shared/components/ui/button";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowUp, ChevronDown, Play, Square } from "lucide-react";
+import { AgentPicker } from "@agents/components/AgentPicker";
+import { agentPickerSuggestions } from "@agents/components/agentPickerSuggestions";
+import { AgentInvitationChips } from "@agents/components/AgentInvitationChips";
+import { useAgentMentionInput } from "@agents/components/useAgentMentionInput";
+import {
+  findMentionedAgents,
+  type Agent,
+  type AgentExecutionMode,
+  type AgentMention,
+} from "@agents/model";
+import { agentQueries } from "@agents/queries";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,11 +31,10 @@ import {
 } from "@/shared/components/ui/input-group";
 import type { ModelConfiguration } from "../../model/modelConfiguration";
 import {
-  toDataUrl,
-  type Attachment,
   type ModelInfo,
   type QueuedMessage,
   type QueuedUserMessage,
+  type SessionMessage,
   type SessionSkill,
   type TodoItem,
 } from "../../model";
@@ -40,14 +50,15 @@ import { SkillPicker } from "./SkillPicker";
 import { ArtifactsList } from "./ArtifactsList";
 import { VoiceButton } from "./VoiceButton";
 import { QueuedMessageList } from "./QueuedMessageList";
+import { AttachImageButton, ImageAttachments } from "./ImageAttachments";
+import { useImageAttachments } from "./useImageAttachments";
 import type { VoiceComposerContext } from "./useVoiceComposer";
+import { TypingEffect } from "./typing-effect/TypingEffect";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useDraftPrompt } from "../../useDraftPrompt";
 import type { FileDiffSummary } from "../transcript/editDiffs";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { cn } from "@/shared/utils";
-
-type SessionComposerSubmit = (prompt: string, attachments: Attachment[], immediate?: true) => void;
 
 type ComposerPromptBinding =
   | { sessionId: string }
@@ -57,7 +68,7 @@ type ComposerPromptBinding =
     };
 
 type SessionComposerCommonProps = {
-  onSubmit: SessionComposerSubmit;
+  onSubmit: (message: SessionMessage, options?: { immediate?: true }) => void;
   isStreaming?: boolean;
   onStop?: () => void;
   models: ModelInfo[];
@@ -73,6 +84,10 @@ type SessionComposerCommonProps = {
   /** Context that grounds a voice call in the current session. */
   sessionName?: string;
   lastMessage?: string;
+  /** Persistent Agents are operational mentions only in ordinary and Hyper sessions. */
+  enableAgentMentions?: boolean;
+  /** Whether newly mentioned agents may begin in an isolated Git worktree. */
+  canUseAgentWorktrees?: boolean;
 };
 
 type SessionComposerProps = SessionComposerCommonProps &
@@ -89,7 +104,7 @@ type SessionComposerProps = SessionComposerCommonProps &
         prompt: string;
         onPromptChange: (prompt: string) => void;
         /** Runs a newly composed task under Inbox ownership. */
-        onRun: SessionComposerSubmit;
+        onRun: SessionComposerCommonProps["onSubmit"];
       }
   );
 
@@ -102,49 +117,12 @@ function ModelConfigurationSkeleton() {
   );
 }
 
-function AttachmentPreview({
-  attachments,
-  onRemove,
-}: {
-  attachments: Attachment[];
-  onRemove: (index: number) => void;
-}) {
-  if (attachments.length === 0) return null;
-
-  return (
-    <div className="mb-2 flex flex-wrap gap-1.5">
-      {attachments.map((attachment, index) => (
-        <div
-          key={attachment.base64}
-          className="inline-flex items-center gap-1.5 rounded-md border bg-muted/50 p-1.5"
-        >
-          <img
-            src={toDataUrl(attachment)}
-            alt={attachment.displayName}
-            className="h-8 w-8 rounded object-cover"
-          />
-          <span className="text-xs text-muted-foreground truncate max-w-25">
-            {attachment.displayName}
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={`Remove ${attachment.displayName}`}
-            className="h-5 w-5 rounded-full"
-            onClick={() => onRemove(index)}
-          >
-            <X className="h-3 w-3" />
-          </Button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 type ComposerPromptHandle = {
   prompt: string;
+  agentMentions: AgentMention[];
   setPrompt: (prompt: string) => void;
+  restoreAgentInvitations: (mentions: AgentMention[]) => void;
+  clearAgentInvitations: () => void;
   focus: () => void;
 };
 
@@ -163,6 +141,8 @@ type ComposerPromptProps = {
   // Parent-owned slots retain their element identity while draft text changes.
   leadingControls: React.ReactNode;
   voiceControl: React.ReactNode;
+  enableAgentMentions: boolean;
+  canUseAgentWorktrees: boolean;
 };
 
 function ComposerPrompt({
@@ -179,6 +159,8 @@ function ComposerPrompt({
   showGlobalSkillBadges,
   leadingControls,
   voiceControl,
+  enableAgentMentions,
+  canUseAgentWorktrees,
 }: ComposerPromptProps) {
   const isControlled = "prompt" in binding;
   const sessionId = isControlled ? undefined : binding.sessionId;
@@ -189,27 +171,73 @@ function ComposerPrompt({
   const prompt = isControlled ? binding.prompt : draft.prompt;
   const onPromptChange = isControlled ? binding.onPromptChange : draft.setPrompt;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { data: agents = [] } = useQuery({
+    ...agentQueries.list(),
+    enabled: enableAgentMentions,
+  });
+  const membershipHost = {
+    kind: "session" as const,
+    sessionId: sessionId ?? "disabled-session",
+  };
+  const { data: memberships = [] } = useQuery({
+    ...agentQueries.membershipList(membershipHost),
+    enabled: enableAgentMentions && sessionId !== undefined,
+  });
+  const [worktreeAgentIds, setWorktreeAgentIds] = useState<Set<string>>(() => new Set());
+  const mentionedAgents = findMentionedAgents(prompt, agents);
+  const memberAgentIds = new Set(memberships.map(({ agentId }) => agentId));
+  const invitations: { agent: Agent; executionMode: AgentExecutionMode }[] = [];
+  const agentMentions: AgentMention[] = [];
+  for (const agent of mentionedAgents) {
+    if (memberAgentIds.has(agent.id)) {
+      agentMentions.push({ agentId: agent.id });
+      continue;
+    }
+    const executionMode =
+      canUseAgentWorktrees && worktreeAgentIds.has(agent.id) ? "worktree" : "shared";
+    invitations.push({ agent, executionMode });
+    agentMentions.push({
+      agentId: agent.id,
+      ...(executionMode === "worktree" ? { initialExecutionMode: "worktree" } : {}),
+    });
+  }
+  const mention = useAgentMentionInput({
+    value: prompt,
+    onValueChange: onPromptChange,
+    textareaRef,
+    enabled: enableAgentMentions,
+    suggestionsFor: (query) =>
+      agentPickerSuggestions({ query, agents, memberships, hostKind: "session" }),
+  });
   const isSubmitDisabled = !prompt.trim() && !hasAttachments;
   const submitButtonVariant = isSubmitDisabled ? "ghost" : "accent";
   const submitLabel = isStreaming ? "Queue message" : "Send message";
-  const textareaSizeClass = isControlled ? "min-h-20 max-h-36" : "min-h-10 max-h-18";
+  const textareaMaxHeightClass = isControlled ? "max-h-36" : "max-h-18";
 
-  useImperativeHandle(
-    promptHandle,
-    () => ({
-      prompt,
-      setPrompt: onPromptChange,
-      focus: () => textareaRef.current?.focus(),
-    }),
-    [onPromptChange, prompt],
-  );
+  useImperativeHandle(promptHandle, () => ({
+    prompt,
+    agentMentions,
+    setPrompt: onPromptChange,
+    restoreAgentInvitations: (agentMentions) =>
+      setWorktreeAgentIds(
+        new Set(
+          agentMentions
+            .filter(({ initialExecutionMode }) => initialExecutionMode === "worktree")
+            .map(({ agentId }) => agentId),
+        ),
+      ),
+    clearAgentInvitations: () => setWorktreeAgentIds(new Set()),
+    focus: () => textareaRef.current?.focus(),
+  }));
 
   function handleSkillSelect(skill: SessionSkill) {
     onPromptChange(`/${skill.name} `);
+    mention.close();
     textareaRef.current?.focus();
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (mention.handleKeyDown(event)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       onSubmit();
@@ -224,79 +252,106 @@ function ComposerPrompt({
         showGlobalSkillBadges={showGlobalSkillBadges}
         onSelect={handleSkillSelect}
       />
+      {mention.isOpen && (
+        <AgentPicker
+          suggestions={mention.suggestions}
+          activeIndex={mention.activeIndex}
+          onActiveIndexChange={mention.setActiveIndex}
+          onSelect={mention.selectSuggestion}
+          error={mention.error}
+        />
+      )}
       <InputGroupTextarea
         ref={textareaRef}
         value={prompt}
-        onChange={(event) => onPromptChange(event.target.value)}
+        onChange={mention.handleChange}
+        onSelect={mention.handleSelect}
         onKeyDown={handleKeyDown}
         onPaste={onPaste}
         placeholder="Ask a question or describe your idea..."
-        className={cn(textareaSizeClass, "overflow-y-auto py-2 text-sm")}
+        className={cn(textareaMaxHeightClass, "min-h-14 overflow-y-auto py-2 text-sm")}
         rows={1}
       />
 
-      <InputGroupAddon align="block-end" className="justify-between pt-0 pb-2">
-        <div className="flex items-center gap-1">{leadingControls}</div>
+      <AgentInvitationChips
+        invitations={invitations}
+        canUseWorktrees={canUseAgentWorktrees}
+        onExecutionModeChange={(agentId, mode) =>
+          setWorktreeAgentIds((current) => {
+            const next = new Set(current);
+            if (mode === "worktree") next.add(agentId);
+            else next.delete(agentId);
+            return next;
+          })
+        }
+      />
 
-        <div className="flex items-center gap-0.5">
+      <InputGroupAddon align="block-end" className="relative justify-between pt-0 pb-2">
+        <TypingEffect value={prompt} />
+        <div className="relative flex items-center gap-1">{leadingControls}</div>
+
+        <div className="relative flex items-center gap-0.5">
           {voiceControl}
           {isStreaming && onStop && (
             <Tooltip>
-              <TooltipTrigger asChild>
-                <InputGroupButton
-                  size="icon-xs"
-                  aria-label="Stop turn"
-                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={onStop}
-                  suppressHydrationWarning
-                >
-                  <Square className="h-4 w-4" />
-                </InputGroupButton>
-              </TooltipTrigger>
+              <TooltipTrigger
+                render={
+                  <InputGroupButton
+                    size="icon-xs"
+                    aria-label="Stop turn"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={onStop}
+                    suppressHydrationWarning
+                  >
+                    <Square className="h-4 w-4" />
+                  </InputGroupButton>
+                }
+              />
               <TooltipContent sideOffset={6}>Stop turn</TooltipContent>
             </Tooltip>
           )}
           {!isControlled ? (
             <div className="flex">
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <InputGroupButton
-                    type="submit"
-                    size="icon-xs"
-                    aria-label={submitLabel}
-                    disabled={isSubmitDisabled}
-                    variant={submitButtonVariant}
-                    suppressHydrationWarning
-                    className={isStreaming ? "rounded-e-none" : undefined}
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </InputGroupButton>
-                </TooltipTrigger>
+                <TooltipTrigger
+                  render={
+                    <InputGroupButton
+                      type="submit"
+                      size="icon-xs"
+                      aria-label={submitLabel}
+                      disabled={isSubmitDisabled}
+                      variant={submitButtonVariant}
+                      suppressHydrationWarning
+                      className={isStreaming ? "rounded-e-none" : undefined}
+                    >
+                      <ArrowUp className="h-4 w-4" />
+                    </InputGroupButton>
+                  }
+                />
                 <TooltipContent sideOffset={6}>{submitLabel}</TooltipContent>
               </Tooltip>
               {isStreaming && (
                 <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <InputGroupButton
-                      size="icon-xs"
-                      aria-label="Message delivery options"
-                      disabled={isSubmitDisabled}
-                      variant={submitButtonVariant}
-                      suppressHydrationWarning
-                      className="w-4 rounded-s-none border-l border-background data-[state=open]:bg-user-accent/90"
-                    >
-                      <ChevronDown className="h-3 w-3" />
-                    </InputGroupButton>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    onCloseAutoFocus={(event) => event.preventDefault()}
+                  <DropdownMenuTrigger
+                    render={
+                      <InputGroupButton
+                        size="icon-xs"
+                        aria-label="Message delivery options"
+                        disabled={isSubmitDisabled}
+                        variant={submitButtonVariant}
+                        suppressHydrationWarning
+                        className="w-4 rounded-s-none border-l border-background data-[popup-open]:bg-user-accent/90"
+                      />
+                    }
                   >
-                    <DropdownMenuItem onSelect={() => onSubmit()}>
+                    <ChevronDown className="h-3 w-3" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" finalFocus={false}>
+                    <DropdownMenuItem onClick={() => onSubmit()}>
                       <ArrowUp />
                       Queue message
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => onSubmit(true)}>
+                    <DropdownMenuItem onClick={() => onSubmit(true)}>
                       <Play />
                       Send immediately
                     </DropdownMenuItem>
@@ -318,25 +373,27 @@ function ComposerPrompt({
                 <Play className="h-4 w-4" />
               </InputGroupButton>
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <InputGroupButton
-                    size="icon-xs"
-                    aria-label="Run options"
-                    disabled={isSubmitDisabled}
-                    variant={submitButtonVariant}
-                    suppressHydrationWarning
-                    className="w-4 rounded-s-none data-[state=open]:bg-user-accent/90"
-                  >
-                    <ChevronDown className="h-3 w-3" />
-                  </InputGroupButton>
+                <DropdownMenuTrigger
+                  render={
+                    <InputGroupButton
+                      size="icon-xs"
+                      aria-label="Run options"
+                      disabled={isSubmitDisabled}
+                      variant={submitButtonVariant}
+                      suppressHydrationWarning
+                      className="w-4 rounded-s-none data-[popup-open]:bg-user-accent/90"
+                    />
+                  }
+                >
+                  <ChevronDown className="h-3 w-3" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="end"
                   // Let submission's textarea focus stand instead of
                   // returning focus to the chevron trigger.
-                  onCloseAutoFocus={(event) => event.preventDefault()}
+                  finalFocus={false}
                 >
-                  <DropdownMenuItem onSelect={onRun}>
+                  <DropdownMenuItem onClick={onRun}>
                     <Play />
                     <div className="flex flex-col">
                       <span>Run</span>
@@ -345,7 +402,7 @@ function ComposerPrompt({
                       </span>
                     </div>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={onSend}>
+                  <DropdownMenuItem onClick={onSend}>
                     <ArrowUp />
                     <div className="flex flex-col">
                       <span>Send</span>
@@ -383,9 +440,10 @@ export function SessionComposer(props: SessionComposerProps) {
     queuedMessages = [],
     sessionName,
     lastMessage,
+    enableAgentMentions = false,
+    canUseAgentWorktrees = false,
   } = props;
   const promptHandle = useRef<ComposerPromptHandle>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const { isMobile } = useViewport();
   const environment = useWorkspaceSelector((workspace) => workspace.environment);
   const createsSession = sessionId === undefined;
@@ -397,8 +455,17 @@ export function SessionComposer(props: SessionComposerProps) {
         }
       : { sessionId };
 
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
+  const {
+    attachments,
+    isDragging,
+    handlePaste,
+    fileInputProps,
+    openPicker,
+    dropTargetProps,
+    clearAttachments,
+    replaceAttachments,
+    removeAttachment,
+  } = useImageAttachments();
 
   useEffect(() => {
     if (!isMobile) promptHandle.current?.focus();
@@ -406,54 +473,29 @@ export function SessionComposer(props: SessionComposerProps) {
 
   const handleEditQueuedMessage = (message: QueuedUserMessage) => {
     promptHandle.current?.setPrompt(message.content);
-    setAttachments(message.attachments ?? []);
+    promptHandle.current?.restoreAgentInvitations(message.agentMentions ?? []);
+    replaceAttachments(message.attachments ?? []);
     promptHandle.current?.focus();
   };
 
-  const processImageFile = (file: File, fallbackName = "image.png") => {
-    if (!file.type.startsWith("image/")) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const base64 = dataUrl.split(",")[1];
-      if (!base64) return;
-
-      setAttachments((prev) => [
-        ...prev,
-        {
-          displayName: file.name || fallbackName,
-          base64,
-          mimeType: file.type,
-        },
-      ]);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) processImageFile(file);
-    e.target.value = "";
-  };
-
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    for (const item of e.clipboardData?.items ?? []) {
-      if (item.type.startsWith("image/")) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (file) processImageFile(file, "pasted-image.png");
-        return;
-      }
-    }
-  };
-
-  const submitWith = (submitter: SessionComposerSubmit | undefined, immediate?: true) => {
+  const submitWith = (
+    submitter: SessionComposerCommonProps["onSubmit"] | undefined,
+    immediate?: true,
+  ) => {
     const prompt = promptHandle.current?.prompt.trim() ?? "";
     if ((!prompt && attachments.length === 0) || !submitter) return false;
-    submitter(prompt, attachments, immediate);
+    const agentMentions = promptHandle.current?.agentMentions ?? [];
+    submitter(
+      {
+        content: prompt,
+        attachments: attachments.length > 0 ? attachments : undefined,
+        agentMentions: agentMentions.length > 0 ? agentMentions : undefined,
+      },
+      immediate ? { immediate } : undefined,
+    );
     promptHandle.current?.setPrompt("");
-    setAttachments([]);
+    promptHandle.current?.clearAgentInvitations();
+    clearAttachments();
     promptHandle.current?.focus();
     return true;
   };
@@ -463,19 +505,6 @@ export function SessionComposer(props: SessionComposerProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     submit();
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    const relatedTarget = e.relatedTarget as Node | null;
-    if (!relatedTarget || !e.currentTarget.contains(relatedTarget)) setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) processImageFile(file, "dropped-image.png");
   };
 
   // The voice tools read this through a ref, so every call sees current composer state.
@@ -492,26 +521,8 @@ export function SessionComposer(props: SessionComposerProps) {
   };
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      onDragEnter={(e) => {
-        e.preventDefault();
-        setIsDragging(true);
-      }}
-      onDragLeave={handleDragLeave}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={handleDrop}
-      className="w-full"
-      suppressHydrationWarning
-    >
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleFileChange}
-        suppressHydrationWarning
-      />
+    <form onSubmit={handleSubmit} {...dropTargetProps} className="w-full" suppressHydrationWarning>
+      <input {...fileInputProps} suppressHydrationWarning />
 
       {sessionId && <ArtifactsList sourceSessionId={sessionId} artifacts={artifacts} />}
 
@@ -523,10 +534,7 @@ export function SessionComposer(props: SessionComposerProps) {
         />
       )}
 
-      <AttachmentPreview
-        attachments={attachments}
-        onRemove={(index) => setAttachments((current) => current.filter((_, i) => i !== index))}
-      />
+      <ImageAttachments attachments={attachments} onRemove={removeAttachment} />
 
       <div className="relative">
         {isDragging && (
@@ -547,21 +555,11 @@ export function SessionComposer(props: SessionComposerProps) {
             onPaste={handlePaste}
             skills={skills}
             showGlobalSkillBadges={showGlobalSkillBadges}
+            enableAgentMentions={enableAgentMentions}
+            canUseAgentWorktrees={canUseAgentWorktrees}
             leadingControls={
               <>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <InputGroupButton
-                      size="icon-xs"
-                      aria-label="Attach image"
-                      onClick={() => fileInputRef.current?.click()}
-                      suppressHydrationWarning
-                    >
-                      <Image className="h-4 w-4" />
-                    </InputGroupButton>
-                  </TooltipTrigger>
-                  <TooltipContent sideOffset={6}>Attach image</TooltipContent>
-                </Tooltip>
+                <AttachImageButton onClick={openPicker} />
 
                 {locationPicker && <SessionLocationPicker {...locationPicker} />}
 

@@ -2,7 +2,7 @@
 
 A session is Toy Box's core compute primitive: an addressable agent process that can outlive the browser that started it, receive queued messages, and serve multiple subscribers and callers. Its durable identity, SDK history, workspace, and owned resources survive individual executions; `SessionStream` is the one live incarnation currently processing that session's mailbox. This resembles the Erlang/Elixir process model as an architectural analogy, not as an implementation claim about isolation or fault tolerance.
 
-The end user directly supervises an ordinary session. Scenario-specific supervisors instead govern managed sessions for workers, Automations, Inbox, Hyper, and future workflows. Every waiter uses the same session completion mechanism; a supervisor is distinguished by lifecycle authority, not a special kind of wait. It owns admission, concurrency, context, cancellation, recovery, and what to retain, delete, record, or publish when execution ends. The runtime supplies the common process mechanics and exact execution receipts without defining a generic supervisor abstraction.
+The end user directly supervises an ordinary session. Managed features instead govern sessions they own. Every waiter uses the same session completion mechanism; a supervisor is distinguished by lifecycle authority, not a special kind of wait. It owns admission, concurrency, context, cancellation, recovery, and what to retain, delete, record, or publish when execution ends. The runtime supplies the common process mechanics and exact execution receipts without defining a generic supervisor abstraction.
 
 ```mermaid
 flowchart TB
@@ -11,16 +11,10 @@ flowchart TB
     Caller[App, session, or other caller] --> Streaming
     Caller --> Waiting
 
-    subgraph Supervisors[Scenario-specific supervisors]
-        Worker[Worker admission]
-        Automation[Automation scheduler]
-        Inbox[Inbox dispatcher]
-        Managed[Hyper and future workflows]
+    subgraph Supervisors[Managed feature]
+        Owner[Scenario owner]
         Policy[Ownership, concurrency, recovery, and terminal policy]
-        Worker --> Policy
-        Automation --> Policy
-        Inbox --> Policy
-        Managed --> Policy
+        Owner --> Policy
     end
 
     Policy --> Operations
@@ -53,18 +47,20 @@ Control is a category, not one runtime method. Abort, queue steering, and queue 
 
 Once a session has turn-bearing history, resume is not a separate operation. Delivering to an idle session resumes its persisted SDK session; delivering to an active session queues. Callers do not choose whether a new turn starts or a message enters the active mailbox, though an active user delivery may request immediate dispatch.
 
-`streamSession` is the connected composite: it subscribes before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can start a draft's first turn or create a session with its required first message, deliver to an existing session, or subscribe without delivering. Headless callers use `createSession`, `deliverSessionMessage`, and `waitForSession` directly. Scenario supervisors compose those operations with their own policy; for example, worker admission and supervision live in the [Workers feature](../../../workers/AGENTS.md), not in the generic runtime.
+`streamSession` is the connected composite: it subscribes before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can start a draft's first turn or create a session with its required first message, deliver to an existing session, or subscribe without delivering. Headless callers use `createSession`, `deliverSessionMessage`, and `waitForSession` directly. Scenario supervisors compose those operations with their own policy.
 
 ## Live execution
 
 `SessionStream` names the live runtime for one session, not the event stream a client reads. It owns the SDK handle, canonical state, queued messages, completion waiters, and replayable event bus for that execution lifetime.
 
-A worker does not add another execution mode to `SessionStream`. Its durable record names one session, file, or app owner and an independent `ephemeral` lifetime. The worker supervisor composes ordinary session creation with optional inherited context, an exact completion receipt, a cancellation guard that closes the race before the stream exists, and deletion after execution when ephemeral. `create_worker_session` creates a durable session-owned child by default but can make one ephemeral. File workers are always ephemeral; app workers default to ephemeral but may remain available for multi-turn coordination. Hyper's `create_session` creates an ordinary standard session with no worker owner or caller-state lookup. Startup sweeps ephemeral workers abandoned by a previous process and does not resume their execution.
+A managed feature may announce work before its live stream exists. `registerPendingSessionCompletion` reserves ID-based completion before publication and retains its settlement briefly, so a caller cannot miss an execution that starts, finishes, and is deleted quickly. The [Workers feature](../../../workers/AGENTS.md) owns the admission and lifetime policy that uses this capability.
 
-Inbox dispatch, automation scheduling, and worker admission supervise sessions because their terminal policies differ: Inbox preserves reported results, Automations record run metadata, and workers apply an explicit lifetime. The runtime centralizes execution and exact completion; scenario-specific policy stays with the scenario rather than entering an enum, strategy interface, or alternate execution model.
+Managed features supervise sessions because their terminal policies differ. The runtime centralizes execution and exact completion; scenario-specific policy stays with its owner rather than entering an enum, strategy interface, or alternate execution model.
 
-1. Acquisition is single-flight. A caller joins an existing stream, shares an in-progress creation, creates a new SDK session, or resumes an idle session from its reduced snapshot and SDK handle.
-2. Connected callers subscribe before delivery. Every logical message has a unique client ID; `SessionStream.deliver` synchronously claims the first turn or emits `message_queued` behind active execution. Only queued user messages can be steered, and steering marks that same queue entry while awaiting delivery so reloads preserve its state. The runtime records sent client IDs in order and adds each one to the corresponding canonical SDK input event after the projector has filtered subagent and skill inputs. That event removes a queued input, reconciles browser optimism when present, and otherwise appends normally.
+1. Acquisition is single-flight. Before a new execution borrows an SDK handle, the registry refreshes
+   configuration when its application-supplied lifetime requires it. Active delivery never refreshes
+   that handle; direct system messages and host mentions use this same boundary. A caller joins an existing stream, shares an in-progress creation, creates a new SDK session, or resumes an idle session from its reduced snapshot and SDK handle.
+2. Connected callers subscribe before delivery. Every logical message has a unique client ID; `SessionStream.deliver` synchronously claims the first turn or emits `message_queued` behind active execution. Only queued user messages can be steered, and steering marks that same queue entry while awaiting delivery so reloads preserve its state. The runtime associates each SDK-assigned message ID with its client ID and adds it to the corresponding canonical SDK input event after the projector has filtered subagent and skill inputs. That event removes a queued input, reconciles browser optimism when present, and otherwise appends normally.
 3. The SDK projector translates raw events into canonical `SessionEvent`s. The event bus stamps a process-monotonic `eventId`, and the shared reducer returns the next immutable `Session`.
 4. When the SDK session reports idle, the runtime drains the next queued message through the same path. `assistant.turn_end` ends only an agent-loop segment and does not drain the queue. With no queued work, the runtime finishes the execution.
 5. Finishing publishes one terminal `end`, caches the resulting clean state, selects idle or unread from the active subscriptions, and then disposes the live runtime. Disposing is private resource release: it closes the event bus, resolves waiters, removes the SDK listener, and releases the registry entry. Aborting interrupts SDK work and then finishes; session deletion removes the live runtime without publishing ordinary idle/unread state.

@@ -310,17 +310,17 @@ const imageExhibit = z
   })
   .strict();
 
-const referencedHtmlExhibit = z
+const referencedPrototypeExhibit = z
   .object({
     ...uriExhibitFields,
-    kind: z.literal("html"),
+    kind: z.literal("prototype"),
   })
   .strict();
 
-const embeddedHtmlExhibit = z
+const embeddedPrototypeExhibit = z
   .object({
     ...exhibitFields,
-    kind: z.literal("html"),
+    kind: z.literal("prototype"),
     content: verbatimText,
   })
   .strict();
@@ -330,8 +330,8 @@ const intentExhibit = z.union([
   flowExhibit,
   treeExhibit,
   imageExhibit,
-  referencedHtmlExhibit,
-  embeddedHtmlExhibit,
+  referencedPrototypeExhibit,
+  embeddedPrototypeExhibit,
 ]);
 
 const question = z

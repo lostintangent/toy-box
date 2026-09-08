@@ -51,9 +51,9 @@ describe("app compiler", () => {
           const id = createId();
           const label = useMemo(() => "React " + React.version, []);
           const increment = useCallback(() => setCount((value) => value + 1), []);
-          const [file, setFile] = useState<Extract<WorkspaceFile, { type: "machine" }> | null>(null);
+          const [file, setFile] = useState<Extract<WorkspaceFile, { kind: "machine" }> | null>(null);
           const activeFile = useFile(
-            { type: "session", sessionId: "session", path: "notes.md" },
+            { kind: "session", sessionId: "session", path: "notes.md" },
             "shared",
           );
           const app = useApp();
@@ -193,7 +193,7 @@ describe("app compiler", () => {
         definition(`
           import { useApp } from "@toy-box/sdk";
           export default function TestApp() {
-            useApp().actions.openFile({ type: "session", path: "notes.md" });
+            useApp().actions.openFile({ kind: "session", path: "notes.md" });
             return <main />;
           }
         `),

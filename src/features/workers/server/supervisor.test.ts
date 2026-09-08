@@ -28,7 +28,7 @@ const fileWorker = {
   type: "file",
   sessionId: "toy-box-worker",
   ephemeral: true,
-  file: { type: "session", sessionId: "toy-box-parent", path: "report.md" },
+  file: { kind: "session", sessionId: "toy-box-parent", path: "report.md" },
 } as const;
 const sessionWorker = {
   type: "session",
@@ -45,15 +45,22 @@ const appWorker = {
 
 let workerIsLive: boolean;
 let workerCompletion: ReturnType<typeof deferred<Completion>>;
+const admissionCalls: string[] = [];
 
-const createSessionMock = mock(async (..._args: CreateArguments) => ({
-  disposition: "started" as const,
-  waitForCompletion: () => workerCompletion.promise,
-}));
+const createSessionMock = mock(async (..._args: CreateArguments) => {
+  admissionCalls.push("create");
+  return {
+    disposition: "started" as const,
+    waitForCompletion: () => workerCompletion.promise,
+  };
+});
 const deleteSessionIfExistsMock = mock(async (_sessionId: string) => true);
 const getSessionSnapshotMock = mock(async () => parentSnapshot);
 const readSessionContextMock = mock(async () => parentContext);
 const getEphemeralWorkerSessionIdsMock = mock(async (): Promise<string[]> => []);
+const registerWorkerSessionMock = mock(async () => {
+  admissionCalls.push("register");
+});
 const abortSessionMock = mock(async () => false);
 
 mock.module("@sessions/server/runtime", () => ({
@@ -67,6 +74,7 @@ mock.module("@sessions/server/runtime", () => ({
 mock.module("@workers/server/database", () => ({
   ...realWorkerStateModule,
   getEphemeralWorkerSessionIds: getEphemeralWorkerSessionIdsMock,
+  registerWorkerSession: registerWorkerSessionMock,
 }));
 
 const { cancelWorker, spawnWorker, sweepAbandonedWorkers, WorkerCanceledError } =
@@ -81,13 +89,25 @@ afterAll(() => {
 beforeEach(() => {
   workerIsLive = false;
   workerCompletion = deferred<Completion>();
+  admissionCalls.length = 0;
   createSessionMock.mockClear();
+  createSessionMock.mockImplementation(async () => {
+    admissionCalls.push("create");
+    return {
+      disposition: "started",
+      waitForCompletion: () => workerCompletion.promise,
+    };
+  });
   deleteSessionIfExistsMock.mockClear();
   deleteSessionIfExistsMock.mockImplementation(async () => true);
   getSessionSnapshotMock.mockClear();
   readSessionContextMock.mockClear();
   getEphemeralWorkerSessionIdsMock.mockClear();
   getEphemeralWorkerSessionIdsMock.mockImplementation(async () => []);
+  registerWorkerSessionMock.mockClear();
+  registerWorkerSessionMock.mockImplementation(async () => {
+    admissionCalls.push("register");
+  });
   abortSessionMock.mockClear();
   abortSessionMock.mockImplementation(async () => {
     if (!workerIsLive) return false;
@@ -114,11 +134,14 @@ describe("spawnWorker", () => {
       {
         directory: parentContext.workingDirectory,
         initialContext: parentContext,
-        worker,
+        sessionType: "worker",
+        parentSessionId: "toy-box-parent",
         useWorktree: false,
         name: "Focused job",
       },
     );
+    expect(registerWorkerSessionMock).toHaveBeenCalledWith(worker);
+    expect(admissionCalls.slice(0, 2)).toEqual(["register", "create"]);
     expect(getSessionSnapshotMock).toHaveBeenCalledWith("toy-box-parent");
     expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
 
@@ -178,7 +201,8 @@ describe("spawnWorker", () => {
       {
         directory: undefined,
         initialContext: undefined,
-        worker: appWorker,
+        sessionType: "worker",
+        parentSessionId: undefined,
         useWorktree: false,
       },
     );
@@ -212,13 +236,14 @@ describe("spawnWorker", () => {
       response: "Findings.",
     });
     expect(createSessionMock.mock.calls[0]![2]).toMatchObject({
-      worker: sessionWorker,
+      sessionType: "worker",
+      parentSessionId: "toy-box-parent",
       useWorktree: true,
     });
     expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
   });
 
-  test("retains an app-owned worker when its lifetime is durable", async () => {
+  test("retains an app-owned worker when it is not ephemeral", async () => {
     const worker = { ...appWorker, ephemeral: false };
     const receipt = await spawnWorker({
       worker,
@@ -227,7 +252,6 @@ describe("spawnWorker", () => {
     workerCompletion.resolve({ status: "completed" });
 
     await receipt.waitForCompletion();
-    expect(createSessionMock.mock.calls[0]![2]).toMatchObject({ worker });
     expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
   });
 

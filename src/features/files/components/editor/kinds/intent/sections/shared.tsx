@@ -190,7 +190,7 @@ export function ChangeTag({
   if (!source) return tag;
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{tag}</TooltipTrigger>
+      <TooltipTrigger render={tag} />
       <TooltipContent sideOffset={6} className="max-w-80 break-all font-mono text-[10px]">
         {source}
       </TooltipContent>
@@ -265,15 +265,17 @@ export function SectionPanel({
 export function PurposeTooltip({ title, purpose }: { title: string; purpose: string }) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          aria-label={`About ${title}: ${purpose}`}
-          className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Info aria-hidden className="size-3" />
-        </button>
-      </TooltipTrigger>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`About ${title}: ${purpose}`}
+            className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Info aria-hidden className="size-3" />
+          </button>
+        }
+      />
       <TooltipContent sideOffset={6} className="max-w-72">
         {purpose}
       </TooltipContent>
@@ -303,39 +305,34 @@ export function SectionActionsMenu({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={`Actions for ${title}`}
-          aria-busy={busy || undefined}
-          title={`Actions for ${title}`}
-          className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          {busy ? (
-            <Loader2 aria-hidden className="size-3.5 animate-spin" />
-          ) : (
-            <MoreHorizontal aria-hidden className="size-3.5" />
-          )}
-        </button>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Actions for ${title}`}
+            aria-busy={busy || undefined}
+            title={`Actions for ${title}`}
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          />
+        }
+      >
+        {busy ? (
+          <Loader2 aria-hidden className="size-3.5 animate-spin" />
+        ) : (
+          <MoreHorizontal aria-hidden className="size-3.5" />
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {regenerate && (
           <>
-            <DropdownMenuItem
-              disabled={!regenerate.onSelect || busy}
-              onSelect={regenerate.onSelect}
-            >
+            <DropdownMenuItem disabled={!regenerate.onSelect || busy} onClick={regenerate.onSelect}>
               <RefreshCw aria-hidden className="size-3.5" />
               Regenerate section
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </>
         )}
-        <DropdownMenuItem
-          disabled={!onDelete || busy}
-          onSelect={onDelete}
-          className="text-destructive focus:text-destructive"
-        >
+        <DropdownMenuItem disabled={!onDelete || busy} onClick={onDelete} variant="destructive">
           <Trash2 aria-hidden className="size-3.5" />
           Delete section
         </DropdownMenuItem>

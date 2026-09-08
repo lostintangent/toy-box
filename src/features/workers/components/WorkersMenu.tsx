@@ -2,7 +2,12 @@ import { useMutation } from "@tanstack/react-query";
 import { Clock3, Loader2, Square, Trash2 } from "lucide-react";
 import { InputGroupButton } from "@/shared/components/ui/input-group";
 import { MetadataBadge } from "@/shared/components/ui/metadata-badge";
-import { Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui/popover";
+import {
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/shared/components/ui/popover";
 import { cn } from "@/shared/utils";
 import { workerMutations } from "../mutations";
 import type { Worker } from "../model";
@@ -43,29 +48,23 @@ export function WorkersMenu({
       </button>
     ) : (
       <MetadataBadge
-        asChild
+        render={<button type="button" aria-label={label} title={label} />}
         className="min-w-5 cursor-pointer select-none self-center justify-center tabular-nums hover:bg-secondary/80"
       >
-        <button type="button" aria-label={label} title={label}>
-          {workers.length}
-        </button>
+        {workers.length}
       </MetadataBadge>
     );
 
   return (
     <Popover modal>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent
-        side="top"
-        align="end"
-        className="w-64 p-1"
-        onCloseAutoFocus={(event) => event.preventDefault()}
-      >
+      <PopoverTrigger render={trigger} />
+      <PopoverContent side="top" align="end" className="w-64 p-1" finalFocus={false}>
         <div role="list" aria-label="Active workers">
           {workers.map((worker, index) => (
             <WorkerItem key={worker.sessionId} worker={worker} index={index} />
           ))}
         </div>
+        <PopoverClose className="sr-only">Close active workers</PopoverClose>
       </PopoverContent>
     </Popover>
   );
@@ -94,7 +93,7 @@ function WorkerItem({
   }
 
   return (
-    <SessionPreview sessionId={worker.sessionId} {...preview}>
+    <SessionPreview sessionId={worker.sessionId} nativeButton={false} {...preview}>
       <div
         role="listitem"
         onMouseEnter={preview.onMouseEnter}

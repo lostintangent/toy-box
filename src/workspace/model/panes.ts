@@ -1,6 +1,5 @@
 import { isAutomationId } from "@automations/model";
 import {
-  machineFile,
   ownerSessionId,
   sessionFile,
   type WorkspaceFile,
@@ -26,6 +25,7 @@ type InboxWorkspacePane = typeof INBOX_PANE;
 export type WorkspacePane =
   | InboxWorkspacePane
   | AppWorkspacePane
+  | ChannelWorkspacePane
   | {
       kind: "session";
       id: string;
@@ -54,6 +54,12 @@ export type AppWorkspacePane = {
   appId: string;
 };
 
+export type ChannelWorkspacePane = {
+  kind: "channel";
+  id: string;
+  channelId: string;
+};
+
 /** The browser-local pane graph, keyed by the pane that published each edge. */
 export type PanePublications = Readonly<Record<string, readonly WorkspacePane[]>>;
 
@@ -71,6 +77,14 @@ export function createAppPane(appId: string): AppWorkspacePane {
     kind: "app",
     id: `app:${appId}`,
     appId,
+  };
+}
+
+export function createChannelPane(channelId: string): ChannelWorkspacePane {
+  return {
+    kind: "channel",
+    id: `channel:${channelId}`,
+    channelId,
   };
 }
 
@@ -136,6 +150,7 @@ export function paneSourceSessionId(pane: WorkspacePane): string | undefined {
   switch (pane.kind) {
     case "inbox":
     case "app":
+    case "channel":
       return undefined;
     case "session":
       return pane.sessionId;
@@ -148,13 +163,16 @@ export function paneSourceSessionId(pane: WorkspacePane): string | undefined {
 
 export function deriveWorkspaceRootPanes(
   selectedSessionIds: string[],
-  openFilePaths: readonly string[] = [],
+  openFiles: readonly WorkspaceFile[] = [],
   openAppIds: readonly string[] = [],
+  openChannelIds: readonly string[] = [],
 ): WorkspacePane[] {
+  // Selected work surfaces remain primary; files only augment them.
   const candidates: WorkspacePane[] = [
     ...selectedSessionIds.map((sessionId) => createSessionPane(sessionId, false)),
-    ...openFilePaths.map((path) => createEditorPane(machineFile(path))),
     ...openAppIds.map(createAppPane),
+    ...openChannelIds.map(createChannelPane),
+    ...openFiles.map((file) => createEditorPane(file)),
   ];
   const paneIds = new Set<string>();
   const roots = candidates

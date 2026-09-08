@@ -14,8 +14,9 @@ import {
   getSessionDirectory,
   readSessionContext,
   resumeSession as sdkResumeSession,
+  setSessionWorkingDirectory as sdkSetSessionWorkingDirectory,
 } from "../sdk/client";
-import { getSessionTools } from "@/server/sessionTools";
+import { getSessionConfiguration } from "@/server/sessionTools";
 import {
   emitSessionDelete,
   emitSessionNameUpdate,
@@ -29,20 +30,17 @@ import {
 import { createSessionWorktree, deleteSessionWorktree } from "./worktrees";
 import { deleteDraftSession, getDraftSession, persistDraftSession } from "./drafts";
 import {
-  getWorkerAppId,
-  getWorkerSessionIdsForParent,
-  registerWorkerSession,
-  unregisterWorkerSession,
-} from "@workers/server/database";
+  deleteOwnedSessions,
+  detachManagedSession,
+  resolveSessionType,
+} from "@/server/managedSessions";
 import { sharedMap } from "@/shared/server/processState";
 import { hasHyperSession } from "@workspace/server/state/hyperSessions";
-import { resolveSessionType } from "./sessionType";
-import { workerParentSessionId } from "@workers/model";
 import type { SessionType, SessionWorktree } from "@sessions/model";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
-import type { Worker } from "@workers/model";
 
-const cachedSessions = sharedMap<CopilotSession>("active-sessions");
+type CachedSession = { session: CopilotSession; refreshOnExecution: boolean };
+const cachedSessions = sharedMap<CachedSession>("configured-sessions");
 // In-flight resumes share one SDK handle per session ID.
 const pendingResumes = sharedMap<Promise<CopilotSession>>("pending-session-resumes");
 
@@ -53,7 +51,7 @@ export type CreateSessionOptions = {
   sessionType?: SessionType;
   useWorktree?: boolean;
   initialContext?: SessionContext;
-  worker?: Worker;
+  parentSessionId?: string;
 };
 
 // ── Creation ──────────────────────────────────────────────────────────
@@ -81,22 +79,16 @@ export async function createSession(
   options?: CreateSessionOptions,
 ): Promise<{ session: CopilotSession; artifactPath?: string }> {
   const requested = options ?? {};
-  const sessionType =
-    options?.sessionType ??
-    (requested.worker ? "worker" : hasHyperSession(sessionId) ? "hyper" : "standard");
-  const worker = requested.worker;
+  const sessionType = options?.sessionType ?? (hasHyperSession(sessionId) ? "hyper" : "standard");
   const model = requested.model;
   const name = requested.name;
   const directory = requested.directory;
   const useWorktree = requested.useWorktree;
-  const parentSessionId = worker ? workerParentSessionId(worker) : undefined;
-  if ((sessionType === "worker") !== Boolean(worker)) {
-    throw new Error("Worker session creation requires exactly one worker owner.");
-  }
-  if (worker && worker.sessionId !== sessionId) {
-    throw new Error("Worker session creation requires matching session IDs.");
-  }
   const draft = await getDraftSession(sessionId);
+  const { refreshOnExecution, ...sessionConfiguration } = await getSessionConfiguration(
+    sessionId,
+    sessionType,
+  );
   const { executionDirectory, displayContext, worktree } = await prepareSessionCreation(sessionId, {
     directory,
     useWorktree,
@@ -107,10 +99,8 @@ export async function createSession(
   // (e.g. automations with no cwd), fall back to the user's home directory
   // so the SDK has a valid path without leaking the server's cwd.
   let session: CopilotSession | undefined;
+  let sessionContext = displayContext;
   try {
-    if (worker) {
-      await registerWorkerSession(worker);
-    }
     // Drafts temporarily use this same-ID create path. TODO: Resume the draft
     // directly when the Copilot SDK can resume a zero-turn session; today it
     // persists the workspace but no event history, so resume reports not found.
@@ -118,15 +108,24 @@ export async function createSession(
       model,
       directory: executionDirectory ?? homedir(),
       sessionType,
-      tools: getSessionTools(sessionType, worker?.type === "app" ? worker.appId : undefined),
+      ...sessionConfiguration,
       artifactPath: draft?.artifactPath,
     });
+    if (draft && executionDirectory) {
+      // Same-ID draft promotion no longer updates the SDK's persisted workspace metadata.
+      sessionContext = await sdkSetSessionWorkingDirectory(session, executionDirectory);
+    }
     if (draft?.artifactPath) {
       // Empty draft sessions persist their workspace but have no resumable
       // event log. Re-record the existing file after the first turn starts so
       // ordinary history projection owns artifact discovery from here on.
-      const file = await session.rpc.workspaces.readFile({ path: draft.artifactPath });
-      await session.rpc.workspaces.createFile({ path: draft.artifactPath, content: file.content });
+      const file = await session.rpc.workspaces.readFile({
+        path: draft.artifactPath,
+      });
+      await session.rpc.workspaces.createFile({
+        path: draft.artifactPath,
+        content: file.content,
+      });
     }
     if (name) await session.rpc.name.set({ name });
     if (draft) await deleteDraftSession(sessionId);
@@ -135,14 +134,11 @@ export async function createSession(
       if (draft) await session.disconnect().catch(console.error);
       else await sdkDeleteSession(sessionId).catch(console.error);
     }
-    if (worker) {
-      await unregisterWorkerSession(sessionId).catch(console.error);
-    }
     if (worktree) await deleteSessionWorktree(sessionId).catch(console.error);
     throw error;
   }
   const now = new Date().toISOString();
-  cachedSessions.set(sessionId, session);
+  cachedSessions.set(sessionId, { session, refreshOnExecution });
 
   // Emit immediately so the session appears in the list right away.
   // This display context can come from an inherited workspace or a
@@ -154,9 +150,9 @@ export async function createSession(
     modifiedTime: now,
     summary: name ?? "",
     isRemote: false,
-    context: displayContext,
+    context: sessionContext,
     worktree,
-    parentSessionId,
+    parentSessionId: requested.parentSessionId,
     sessionType,
   });
 
@@ -164,7 +160,7 @@ export async function createSession(
   // session.start event once it's written to disk. Skip for directory-less
   // sessions — their events.jsonl contains the homedir fallback, not a
   // meaningful location the user chose.
-  if (executionDirectory) {
+  if (!draft && executionDirectory) {
     void readSessionContext(sessionId).then((context) => {
       if (context) {
         emitSessionUpsert({ sessionId, context });
@@ -185,26 +181,37 @@ export async function createSession(
  * This does not probe the session. Short SDK calls should use
  * withSession so stale-handle retry stays centralized.
  */
-export function getSession(sessionId: string): Promise<CopilotSession> {
+export function getSession(
+  sessionId: string,
+  { forExecution = false }: { forExecution?: boolean } = {},
+): Promise<CopilotSession> {
   const cached = cachedSessions.get(sessionId);
-  if (cached) return Promise.resolve(cached);
+  if (cached && !(forExecution && cached.refreshOnExecution))
+    return Promise.resolve(cached.session);
 
   const pending = pendingResumes.get(sessionId);
   if (pending) return pending;
 
   const resume = (async () => {
+    if (cached) {
+      cachedSessions.delete(sessionId);
+      await cached.session.disconnect();
+    }
     const [workspaceDirectory, sessionType] = await Promise.all([
       getSessionDirectory(sessionId),
       resolveSessionType(sessionId),
     ]);
-    const appId = sessionType === "worker" ? await getWorkerAppId(sessionId) : undefined;
+    const { refreshOnExecution, ...sessionConfiguration } = await getSessionConfiguration(
+      sessionId,
+      sessionType,
+    );
     const directory = workspaceDirectory ?? homedir();
     const session = await sdkResumeSession(sessionId, {
       directory,
       sessionType,
-      tools: getSessionTools(sessionType, appId),
+      ...sessionConfiguration,
     });
-    cachedSessions.set(sessionId, session);
+    cachedSessions.set(sessionId, { session, refreshOnExecution });
     return session;
   })().finally(() => {
     pendingResumes.delete(sessionId);
@@ -264,13 +271,9 @@ export async function updateSessionTitle(sessionId: string, title: string): Prom
 
 // ── Deletion ───────────────────────────────────────────────────────────
 
-/** Delete a session and the complete tree of workers it owns. */
+/** Delete a session and the complete tree of managed sessions it owns. */
 export async function deleteSession(sessionId: string): Promise<void> {
-  const workerSessionIds = await getWorkerSessionIdsForParent(sessionId);
-  for (const workerSessionId of workerSessionIds) {
-    await deleteSession(workerSessionId);
-  }
-
+  await deleteOwnedSessions(sessionId, deleteSession);
   await deleteSingleSession(sessionId);
 }
 
@@ -298,13 +301,12 @@ async function removeDeletedSessionState(sessionId: string): Promise<void> {
 
   const cached = cachedSessions.get(sessionId);
   if (cached) {
-    await cached.disconnect();
+    await cached.session.disconnect();
     cachedSessions.delete(sessionId);
   }
-
   await deleteSessionWorktree(sessionId);
   await deleteDraftSession(sessionId);
-  await unregisterWorkerSession(sessionId);
+  await detachManagedSession(sessionId);
   await unpinSession(sessionId);
   deleteSessionWorkspaceState(sessionId);
   await evictDeletedSessionSnapshot(sessionId);
@@ -375,7 +377,7 @@ async function prepareSessionCreation(
   };
 }
 
-function isSessionNotFoundError(error: unknown): boolean {
+export function isSessionNotFoundError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
   return (

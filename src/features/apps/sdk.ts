@@ -50,7 +50,6 @@ export declare function AppEmptyState(
 export declare function AppAlert(props: ComponentProps<"div">): ReactElement;
 
 type AppButtonProps = ComponentProps<"button"> & {
-  asChild?: boolean;
   variant?:
     | "default"
     | "accent"
@@ -66,7 +65,7 @@ type AppButtonProps = ComponentProps<"button"> & {
 export declare function AppButton(props: AppButtonProps): ReactElement;
 
 export declare function AppSessionToggle(
-  props: Omit<AppButtonProps, "asChild" | "aria-pressed" | "onClick" | "type"> & {
+  props: Omit<AppButtonProps, "aria-pressed" | "onClick" | "type"> & {
     sessionId: string;
   },
 ): ReactElement;
@@ -95,7 +94,6 @@ export declare function AppTextarea(
 
 export declare function AppBadge(
   props: ComponentProps<"span"> & {
-    asChild?: boolean;
     variant?: "default" | "secondary" | "destructive" | "outline" | "ghost" | "link" | null;
   },
 ): ReactElement;
@@ -105,8 +103,8 @@ export declare function AppSessionStatus(
 ): ReactElement;
 
 export declare function AppFilePicker(props: {
-  value?: Extract<WorkspaceFile, { type: "machine" }> | null;
-  onValueChange: (value: Extract<WorkspaceFile, { type: "machine" }>) => void;
+  value?: Extract<WorkspaceFile, { kind: "machine" }> | null;
+  onValueChange: (value: Extract<WorkspaceFile, { kind: "machine" }>) => void;
   extensions?: readonly string[];
   className?: string;
 }): ReactElement;

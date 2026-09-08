@@ -274,7 +274,7 @@ export function removeFinding(
 
 function hasSameExhibitForm(exhibit: IntentExhibit, update: IntentExhibitUpdate): boolean {
   if (exhibit.kind !== update.kind) return false;
-  if (exhibit.kind === "html" && update.kind === "html") {
+  if (exhibit.kind === "prototype" && update.kind === "prototype") {
     return "content" in exhibit === "content" in update;
   }
   if (exhibit.kind === "tree" && update.kind === "tree") return exhibit.type === update.type;

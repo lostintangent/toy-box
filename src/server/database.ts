@@ -2,33 +2,55 @@
 //
 // Opens a single SQLite connection at ~/.toy-box/toy-box.sqlite and creates
 // the current feature tables on startup. Each feature owns the meaning and
-// lifecycle of its rows; this module owns only the connection and schema.
+// lifecycle, and schema of its rows; this module owns the connection and schema ordering.
 
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { initializeAgentSchema } from "@agents/server/schema";
+import { initializeChannelSchema } from "@channels/server/schema";
 import { SMALL_JSON_MAX_BYTES } from "@/shared/smallJson";
+import { sharedMap, sharedWeakMap } from "@/shared/server/processState";
+import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 
-let dbPromise: Promise<Bun.SQL> | undefined;
+const databases = sharedMap<Promise<Bun.SQL>>("state-databases");
+const transactionQueues = sharedWeakMap<Bun.SQL, SerialTaskQueue>("state-transaction-queues");
 
 export function getStateDatabase(): Promise<Bun.SQL>;
 export function getStateDatabase(options: { createIfMissing: false }): Promise<Bun.SQL | null>;
 export function getStateDatabase(
   options: { createIfMissing?: false } = {},
 ): Promise<Bun.SQL | null> {
-  if (!dbPromise) {
+  let database = databases.get("default");
+  if (!database) {
     const path = resolveDefaultPath();
     if (options.createIfMissing === false && !existsSync(path)) {
       return Promise.resolve(null);
     }
 
-    dbPromise = (async () => {
+    database = (async () => {
       const db = createRuntimeDatabase(path);
       await initializeSchema(db, path);
       return db;
     })();
+    databases.set("default", database);
   }
-  return dbPromise;
+  return database;
+}
+
+/** Bun's SQLite adapter uses one connection and does not queue overlapping
+ * `begin` calls. Serialize application transactions per connection so
+ * independent background completions cannot accidentally nest them. */
+export async function inStateTransaction<Result>(
+  db: Bun.SQL,
+  operation: (transaction: Bun.SQL) => Promise<Result>,
+): Promise<Result> {
+  let queue = transactionQueues.get(db);
+  if (!queue) {
+    queue = new SerialTaskQueue();
+    transactionQueues.set(db, queue);
+  }
+  return queue.enqueue(() => db.begin("IMMEDIATE", operation));
 }
 
 function resolveDefaultPath(): string {
@@ -159,6 +181,11 @@ async function initializeSchema(db: Bun.SQL, path: string): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_app_shares_target_app_id
       ON app_shares(target_app_id, created_at);
   `);
+
+  // Feature schemas are composed here so one connection still owns ordering
+  // and transaction behavior without owning each feature's persistence model.
+  await initializeAgentSchema(db);
+  await initializeChannelSchema(db);
 }
 
 /** Create a standalone database connection for tests that need isolated state. */

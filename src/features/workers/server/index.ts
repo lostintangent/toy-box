@@ -1,2 +1,2 @@
-export { deleteWorkersForApp } from "./cleanup";
-export { spawnWorker } from "./supervisor";
+export { deleteWorkersForApp, deleteWorkersForSession } from "./cleanup";
+export { spawnSessionWorker } from "./admission";

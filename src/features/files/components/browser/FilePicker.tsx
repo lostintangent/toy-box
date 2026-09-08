@@ -6,7 +6,7 @@ import { machineFile, type WorkspaceFile } from "../../model";
 import { fileName, getPathDirname } from "../../model/paths";
 import { FileBrowserDialog } from "./FileBrowserDialog";
 
-type MachineFile = Extract<WorkspaceFile, { type: "machine" }>;
+type MachineFile = Extract<WorkspaceFile, { kind: "machine" }>;
 
 type FilePickerProps = {
   value?: MachineFile | null;

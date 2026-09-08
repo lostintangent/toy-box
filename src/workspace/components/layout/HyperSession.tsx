@@ -60,22 +60,24 @@ function TrafficLight({
 }) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          aria-label={label}
-          onClick={onClick}
-          onPointerDown={(event) => event.stopPropagation()}
-          className={cn(
-            "group/light flex h-3 w-3 items-center justify-center rounded-full border border-black/10",
-            className,
-          )}
-        >
-          <span className="opacity-0 transition-opacity group-hover/light:opacity-80">
-            {children}
-          </span>
-        </button>
-      </TooltipTrigger>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            onClick={onClick}
+            onPointerDown={(event) => event.stopPropagation()}
+            className={cn(
+              "group/light flex h-3 w-3 items-center justify-center rounded-full border border-black/10",
+              className,
+            )}
+          >
+            <span className="opacity-0 transition-opacity group-hover/light:opacity-80">
+              {children}
+            </span>
+          </button>
+        }
+      />
       <TooltipContent sideOffset={6}>{label}</TooltipContent>
     </Tooltip>
   );

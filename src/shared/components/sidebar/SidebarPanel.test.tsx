@@ -6,7 +6,6 @@ test("renders one controlled collapsible panel with a vertically fading body", (
   const expanded = renderToStaticMarkup(
     <SidebarPanel
       title="Apps"
-      count={2}
       isExpanded
       onExpandedChange={() => {}}
       action={<button type="button">Add</button>}
@@ -19,7 +18,6 @@ test("renders one controlled collapsible panel with a vertically fading body", (
   const collapsed = renderToStaticMarkup(
     <SidebarPanel
       title="Apps"
-      count={0}
       isExpanded={false}
       onExpandedChange={() => {}}
       emptyMessage="No apps"

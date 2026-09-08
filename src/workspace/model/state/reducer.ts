@@ -53,6 +53,11 @@ export function createEmptyWorkspaceState(): WorkspaceState {
 
 export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEvent): WorkspaceState {
   switch (event.type) {
+    case "agent.changed":
+    case "agent.membership.changed":
+    case "channel.upserted":
+    case "channel.deleted":
+      return state;
     case "settings.changed":
       return areSettingsEqual(state.settings, event.settings)
         ? state

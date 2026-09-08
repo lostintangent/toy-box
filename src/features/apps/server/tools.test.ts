@@ -17,7 +17,7 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-const { getSessionTools } = await import("@/server/sessionTools");
+const { artifactAppTools, createAppStateTools } = await import("./tools");
 
 afterAll(() => {
   mock.module("@/server/database", () => realDatabaseModule);
@@ -48,7 +48,7 @@ test("app-owned state tools read and update only their owning app", async () => 
     toolName: "get_app",
     arguments: {},
   };
-  const tools = getSessionTools("worker", owned.id);
+  const tools = createAppStateTools(owned.id);
   const getApp = tools.find(({ name }) => name === "get_app");
   const updateApp = tools.find(({ name }) => name === "update_app");
 
@@ -100,7 +100,7 @@ test("artifact validation compiles the invoking session's current .toy file", as
   onTestFinished(() => rm(sessionRoot, { recursive: true, force: true }));
   await mkdir(dirname(artifactPath), { recursive: true });
 
-  const tool = getSessionTools("standard").find(({ name }) => name === "validate_artifact_app");
+  const tool = artifactAppTools.find(({ name }) => name === "validate_artifact_app");
   const invocation: ToolInvocation = {
     sessionId,
     toolCallId: "tool-artifact",

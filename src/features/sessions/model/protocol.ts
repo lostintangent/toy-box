@@ -3,10 +3,18 @@
 // the boundary cannot drift.
 
 import { z } from "zod";
+import { agentMentionSchema } from "@agents/model";
 import { modelConfigurationSchema } from "./modelConfiguration";
-import { agentNotificationSchema } from "./agentNotifications";
+import { sessionSystemMessageSchema } from "./systemMessages";
 
-export const sessionTypeSchema = z.enum(["standard", "automation", "inbox", "hyper", "worker"]);
+export const sessionTypeSchema = z.enum([
+  "standard",
+  "automation",
+  "inbox",
+  "hyper",
+  "worker",
+  "agent",
+]);
 
 export type SessionType = z.infer<typeof sessionTypeSchema>;
 
@@ -43,7 +51,7 @@ export const createDraftSessionInputSchema = sessionInputSchema.extend({
   hyper: z.literal(true).optional(),
 });
 
-const attachmentSchema = z.object({
+export const attachmentSchema = z.object({
   displayName: z.string(),
   mimeType: z.string(),
   base64: z.string(),
@@ -51,14 +59,15 @@ const attachmentSchema = z.object({
 
 export type Attachment = z.infer<typeof attachmentSchema>;
 
-export const sessionAttachmentsSchema = z.array(attachmentSchema).optional();
+export const messageAttachmentsSchema = z.array(attachmentSchema);
 
 export const sessionMessageSchema = z
   .object({
     clientId: z.string().optional(),
     content: z.string(),
-    attachments: sessionAttachmentsSchema,
+    attachments: messageAttachmentsSchema.optional(),
     model: modelConfigurationSchema.optional(),
+    agentMentions: z.array(agentMentionSchema).max(50).optional(),
   })
   .refine(
     (message) => message.content.trim().length > 0 || (message.attachments?.length ?? 0) > 0,
@@ -105,8 +114,8 @@ export const deliverMessageInputSchema = sessionInputSchema.extend({
   immediate: z.literal(true).optional(),
 });
 
-export const notifyAgentInputSchema = sessionInputSchema.extend({
-  notification: agentNotificationSchema,
+export const sendSystemMessageInputSchema = sessionInputSchema.extend({
+  message: sessionSystemMessageSchema,
 });
 
 export const queuedMessageInputSchema = sessionInputSchema.extend({

@@ -3,7 +3,7 @@ import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import { workspaceFileId, type WorkspaceFile } from "./model";
 import { fileMutations } from "./mutations";
 
-const file: WorkspaceFile = { type: "machine", path: "/repo/notes.md" };
+const file: WorkspaceFile = { kind: "machine", path: "/repo/notes.md" };
 const fileId = workspaceFileId(file);
 
 describe("file mutation options", () => {

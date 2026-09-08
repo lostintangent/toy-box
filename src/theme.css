@@ -9,8 +9,11 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary-background: color-mix(in oklab, var(--muted) 50%, transparent);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  /* Opaque equivalent of bg-muted/50 over the application background. */
+  --color-panel: color-mix(in srgb, var(--muted) 50%, var(--background));
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -25,7 +28,6 @@
   --color-diff-removed-bg-strong: var(--diff-removed-bg-strong);
   --color-diff-modified-old-bg: var(--diff-modified-old-bg);
   --color-diff-modified-new-bg: var(--diff-modified-new-bg);
-  --color-terminal-bg: var(--terminal-bg);
   --color-user-accent: var(--user-accent);
   --color-user-accent-foreground: contrast-color(var(--user-accent));
   --color-unread: var(--unread);

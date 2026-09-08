@@ -462,28 +462,28 @@ test("builds an exhibit editor without flattening pseudocode definitions", () =>
   expect(imageMarkup).toContain('value="./architecture.svg"');
   expect(imageMarkup).toContain(">Alternative text</span>");
 
-  const html: IntentExhibit = {
+  const prototype: IntentExhibit = {
     id: "interactive-prototype",
     title: "Interactive prototype",
-    kind: "html",
+    kind: "prototype",
     change: "new",
     uri: "./prototype.html",
   };
-  const htmlMarkup = renderToStaticMarkup(
+  const prototypeMarkup = renderToStaticMarkup(
     <IntentExhibitEditor
       sourcePolicy={sourcePolicy}
-      exhibit={html}
+      exhibit={prototype}
       onSave={() => undefined}
       onCancel={() => {}}
     />,
   );
-  expect(htmlMarkup).toContain(">HTML URI</span>");
-  expect(htmlMarkup).toContain('value="./prototype.html"');
+  expect(prototypeMarkup).toContain(">Prototype URI</span>");
+  expect(prototypeMarkup).toContain('value="./prototype.html"');
 
   const inlineSvg: IntentExhibit = {
-    id: "embedded-architecture",
-    title: "Embedded architecture",
-    kind: "html",
+    id: "spatial-prototype",
+    title: "Spatial layout prototype",
+    kind: "prototype",
     change: "new",
     content: '<svg viewBox="0 0 10 10"></svg>',
   };
@@ -495,7 +495,7 @@ test("builds an exhibit editor without flattening pseudocode definitions", () =>
       onCancel={() => {}}
     />,
   );
-  expect(inlineSvgMarkup).toContain(">HTML content</span>");
+  expect(inlineSvgMarkup).toContain(">Prototype markup</span>");
   expect(inlineSvgMarkup).toContain("&lt;svg viewBox=&quot;0 0 10 10&quot;&gt;");
 
   const files: IntentExhibit = {

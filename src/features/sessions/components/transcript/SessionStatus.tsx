@@ -29,7 +29,10 @@ export function StatusIndicator({ status }: { status: SessionStatus }) {
 
 export function ReasoningDisplay({ content }: { content: string }) {
   return (
-    <StickToBottom className="rounded-lg bg-muted/50 border border-border/50" resize="smooth">
+    <StickToBottom
+      className="rounded-lg border border-border/50 bg-secondary-background"
+      resize="smooth"
+    >
       <StickToBottom.Content className="p-3" scrollClassName="!h-auto max-h-32">
         <Streamdown
           isAnimating={true}

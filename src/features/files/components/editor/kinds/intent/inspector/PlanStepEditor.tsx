@@ -103,6 +103,7 @@ export function PlanStepEditor({
       <LabeledEditorField label="Status">
         {(id) => (
           <Select
+            items={PLAN_STEP_STATUS_OPTIONS}
             value={draft.status ?? "not-started"}
             onValueChange={(status: PlanStepStatusOption) => {
               setError(undefined);

@@ -7,7 +7,7 @@
 // identity is correlated separately when the SDK echoes sent inputs.
 
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import { encodeSdkAgentNotification } from "@sessions/server/sdk/agentNotificationCodec";
+import { toSdkSystemMessage } from "@sessions/server/sdk/systemMessageCodec";
 import { toSdkAttachments } from "@sessions/server/sdk/attachments";
 import {
   createSdkEventProjector,
@@ -17,7 +17,7 @@ import {
 import { evictCachedSessionIfStale } from "@sessions/server/state/registry";
 import { cacheSnapshot, loadSessionSnapshot } from "@sessions/server/state/snapshots";
 import { setSessionStatus } from "@workspace/server/state";
-import { notificationCoalesceKey } from "@sessions/model/agentNotifications";
+import { systemMessageCoalesceKey } from "@sessions/model/systemMessages";
 import {
   areModelConfigurationsEqual,
   toSdkSetModelOptions,
@@ -44,6 +44,9 @@ import { createSessionEventBus, type SessionStreamSubscription } from "./eventBu
 
 type MessageDisposition = "started" | "queued";
 type StreamEndReason = Extract<SessionEvent, { type: "end" }>["reason"];
+type SessionStreamHooks = {
+  onUserMessageStarted?: (message: QueuedUserMessage) => void;
+};
 
 // Replay retention cap. A client reconnecting across a gap larger than this
 // silently misses the trimmed events; the client heals by refetching the
@@ -69,13 +72,14 @@ export class SessionStream {
     sessionId: string,
     session: CopilotSession,
     initialState?: Partial<Session>,
+    hooks?: SessionStreamHooks,
   ): SessionStream {
     const existing = SessionStream.streams.get(sessionId);
     if (existing) {
       return existing;
     }
 
-    const stream = new SessionStream(sessionId, session, initialState);
+    const stream = new SessionStream(sessionId, session, initialState, hooks);
     SessionStream.streams.set(sessionId, stream);
     return stream;
   }
@@ -126,9 +130,8 @@ export class SessionStream {
   #sessionState: Session;
   #projectSdkEvent: ReturnType<typeof createSdkEventProjector>;
 
-  /** Toy Box client IDs awaiting their corresponding SDK user.message events.
-   *  Remove when the SDK accepts caller-provided message IDs. */
-  readonly #pendingClientIds: string[] = [];
+  /** Associates each Toy Box client message with its SDK-assigned message ID. */
+  readonly #sdkMessageIdsByClientId = new Map<string, string>();
   #isSendingQueuedMessage = false;
   // Claimed synchronously before #startTurn awaits so concurrent deliveries
   // cannot both open the stream's first turn.
@@ -137,16 +140,19 @@ export class SessionStream {
   #finished = false;
   #disposed = false;
   #completionResult: SessionCompletion | undefined;
+  readonly #hooks: SessionStreamHooks;
 
   private constructor(
     sessionId: string,
     sdkSession: CopilotSession,
     initialState?: Partial<Session>,
+    hooks: SessionStreamHooks = {},
   ) {
     this.sessionId = sessionId;
     this.sdkSession = sdkSession;
     this.#sessionState = createInitialSession(initialState);
     this.#projectSdkEvent = createSdkEventProjector(sessionId);
+    this.#hooks = hooks;
 
     this.#unsubscribeSdk = sdkSession.on((event) => this.#handleSdkEvent(event));
   }
@@ -172,7 +178,7 @@ export class SessionStream {
       return "started";
     }
 
-    if (immediate && message.role === "user" && !this.#isSendingQueuedMessage) {
+    if (immediate && !this.#isSendingQueuedMessage) {
       await this.#sendQueuedMessageImmediately(message);
       return "queued";
     }
@@ -204,7 +210,7 @@ export class SessionStream {
     if (
       message?.role !== "user" ||
       message.immediate ||
-      this.#pendingClientIds.includes(clientId)
+      this.#sdkMessageIdsByClientId.has(clientId)
     ) {
       return false;
     }
@@ -218,11 +224,7 @@ export class SessionStream {
     const message = this.#sessionState.queuedMessages.find(
       (candidate) => candidate.clientId === clientId,
     );
-    if (
-      !message ||
-      this.#pendingClientIds.includes(clientId) ||
-      (message.role === "user" && message.immediate)
-    ) {
+    if (!message || this.#sdkMessageIdsByClientId.has(clientId) || message.immediate) {
       return false;
     }
 
@@ -354,6 +356,7 @@ export class SessionStream {
       }
 
       await this.#sendToSdk(message);
+      this.#notifyUserMessageStarted(message);
     } catch (error) {
       evictCachedSessionIfStale(this.sessionId, error);
       this.finish("error");
@@ -402,9 +405,10 @@ export class SessionStream {
       return;
     }
 
+    const sdkMessageId = sdkEvent.type === "user.message" ? sdkEvent.data.messageId : undefined;
     const projectedEvents = this.#projectSdkEvent(sdkEvent);
     for (const sessionEvent of projectedEvents) {
-      this.#emit(this.#correlateInputEvent(sessionEvent));
+      this.#emit(this.#correlateInputEvent(sessionEvent, sdkMessageId));
     }
   }
 
@@ -416,7 +420,7 @@ export class SessionStream {
       this.finish();
       return;
     }
-    if (queuedMessage.role === "user" && queuedMessage.immediate) return;
+    if (queuedMessage.immediate) return;
 
     this.#isSendingQueuedMessage = true;
 
@@ -441,15 +445,21 @@ export class SessionStream {
     }
   }
 
-  #correlateInputEvent(event: SessionEvent): SessionEvent {
-    if (event.type !== "user_message" && event.type !== "agent_notification") return event;
-    const clientId = this.#pendingClientIds.shift();
-    return clientId ? { ...event, clientId } : event;
+  #correlateInputEvent(event: SessionEvent, sdkMessageId?: string): SessionEvent {
+    if (event.type !== "user_message" && event.type !== "system_message") return event;
+    if (!sdkMessageId) return event;
+
+    for (const [clientId, pendingSdkMessageId] of this.#sdkMessageIdsByClientId) {
+      if (pendingSdkMessageId !== sdkMessageId) continue;
+      this.#sdkMessageIdsByClientId.delete(clientId);
+      return { ...event, clientId };
+    }
+    return event;
   }
 
   // ── Internal helpers ─────────────────────────────────────────────────
 
-  async #sendQueuedMessageImmediately(message: QueuedUserMessage): Promise<boolean> {
+  async #sendQueuedMessageImmediately(message: QueuedMessage): Promise<boolean> {
     this.#isSendingQueuedMessage = true;
     this.#emit({
       type: "message_queued",
@@ -458,6 +468,7 @@ export class SessionStream {
 
     try {
       await this.#sendToSdk(message, "immediate");
+      this.#notifyUserMessageStarted(message);
       return true;
     } catch (error) {
       if (
@@ -475,20 +486,21 @@ export class SessionStream {
   }
 
   async #sendToSdk(message: QueuedMessage, mode?: "immediate"): Promise<void> {
-    this.#pendingClientIds.push(message.clientId);
+    const sdkMessageId = await this.sdkSession.send({
+      ...(message.role === "system"
+        ? toSdkSystemMessage(message.content)
+        : { prompt: message.content, attachments: toSdkAttachments(message.attachments) }),
+      ...(mode ? { mode } : {}),
+    });
+    this.#sdkMessageIdsByClientId.set(message.clientId, sdkMessageId);
+  }
+
+  #notifyUserMessageStarted(message: QueuedMessage): void {
+    if (message.role !== "user") return;
     try {
-      await this.sdkSession.send({
-        prompt:
-          message.role === "agent_notification"
-            ? encodeSdkAgentNotification(message.notification)
-            : message.content,
-        attachments: toSdkAttachments(message.role === "user" ? message.attachments : undefined),
-        ...(mode ? { mode } : {}),
-      });
+      this.#hooks.onUserMessageStarted?.(message);
     } catch (error) {
-      const index = this.#pendingClientIds.indexOf(message.clientId);
-      if (index !== -1) this.#pendingClientIds.splice(index, 1);
-      throw error;
+      console.error(`Session ${this.sessionId} message-start hook failed:`, error);
     }
   }
 
@@ -527,9 +539,7 @@ export class SessionStreamFinishedError extends Error {
 }
 
 function coalesceKeyForMessage(message: QueuedMessage): string | undefined {
-  return message.role === "agent_notification"
-    ? notificationCoalesceKey(message.notification)
-    : undefined;
+  return message.role === "system" ? systemMessageCoalesceKey(message.content) : undefined;
 }
 
 function completionResult(

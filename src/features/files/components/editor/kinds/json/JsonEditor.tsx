@@ -54,49 +54,48 @@ export function JsonEditor({ mode, variant, file, pendingWorkers, spawnWorker }:
             ? (actions) => (
                 <PaneActions>
                   <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        type="button"
-                        aria-label="JSON view options"
-                        title="View options"
-                        className={cn(
-                          "flex shrink-0 items-center gap-1 text-xs transition-colors",
-                          variant === "normal"
-                            ? PANE_OVERLAY_BUTTON_CLASS
-                            : "rounded-md px-2 py-1.5 hover:bg-muted",
-                        )}
-                      >
-                        <Braces className="size-3.5" />
-                        {actions.copied ? (
-                          <Check className="size-3 text-green-500" />
-                        ) : (
-                          <ChevronDown className="size-3 opacity-60" />
-                        )}
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="end"
-                      onCloseAutoFocus={(event) => event.preventDefault()}
-                    >
-                      <DropdownMenuItem disabled={!actions.canUndo} onSelect={actions.undo}>
+                    <DropdownMenuTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label="JSON view options"
+                          title="View options"
+                          className={cn(
+                            "flex shrink-0 items-center gap-1 text-xs transition-colors",
+                            variant === "normal"
+                              ? PANE_OVERLAY_BUTTON_CLASS
+                              : "rounded-md px-2 py-1.5 hover:bg-muted",
+                          )}
+                        >
+                          <Braces className="size-3.5" />
+                          {actions.copied ? (
+                            <Check className="size-3 text-green-500" />
+                          ) : (
+                            <ChevronDown className="size-3 opacity-60" />
+                          )}
+                        </button>
+                      }
+                    />
+                    <DropdownMenuContent align="end" finalFocus={false}>
+                      <DropdownMenuItem disabled={!actions.canUndo} onClick={actions.undo}>
                         <Undo2 />
                         Undo
                       </DropdownMenuItem>
-                      <DropdownMenuItem disabled={!actions.canRedo} onSelect={actions.redo}>
+                      <DropdownMenuItem disabled={!actions.canRedo} onClick={actions.redo}>
                         <Redo2 />
                         Redo
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem onSelect={actions.expandAll}>
+                      <DropdownMenuItem onClick={actions.expandAll}>
                         <ChevronsUpDown />
                         Expand all
                       </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={actions.collapseAll}>
+                      <DropdownMenuItem onClick={actions.collapseAll}>
                         <ChevronsDownUp />
                         Collapse all
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem onSelect={() => void actions.copyJson()}>
+                      <DropdownMenuItem onClick={() => void actions.copyJson()}>
                         <Copy />
                         Copy JSON
                       </DropdownMenuItem>

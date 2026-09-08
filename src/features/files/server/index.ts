@@ -52,7 +52,7 @@ export async function createFile({ directory, name }: CreateFileInput): Promise<
 /** List a directory's immediate subdirectories and files (defaults to CWD). */
 export async function listDirectory({
   path,
-  showHidden,
+  showDotfiles,
 }: ListDirectoryInput): Promise<DirectoryListing> {
   const requested = path ?? process.cwd();
   const targetPath =
@@ -70,7 +70,7 @@ export async function listDirectory({
   // A symlink's Dirent describes the link, so follow it to classify its target.
   const classified = await Promise.all(
     entries
-      .filter((entry) => showHidden || !entry.name.startsWith("."))
+      .filter((entry) => showDotfiles || !entry.name.startsWith("."))
       .map(async (entry) => {
         const path = resolve(targetPath, entry.name);
         const target = entry.isSymbolicLink() ? await stat(path).catch(() => null) : entry;

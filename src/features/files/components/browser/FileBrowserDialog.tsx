@@ -29,7 +29,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/components/ui/dialog";
-import { ScrollArea } from "@/shared/components/ui/scroll-area";
+import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
+import { Skeleton } from "@/shared/components/ui/skeleton";
 import { cn } from "@/shared/utils";
 import { fileMutations } from "../../mutations";
 import type { DirectoryEntry, DirectoryListing } from "../../model";
@@ -72,15 +73,20 @@ export function FileBrowserDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={changeOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen, eventDetails) => {
+        if (!nextOpen && eventDetails.reason === "escape-key" && creatingFileIn) {
+          eventDetails.cancel();
+          setCreatingFileIn(undefined);
+          return;
+        }
+        changeOpen(nextOpen);
+      }}
+    >
       <DialogContent
         showCloseButton={false}
         className="flex max-h-[80vh] flex-col gap-3 p-4 sm:max-w-lg"
-        onEscapeKeyDown={(event) => {
-          if (!creatingFileIn) return;
-          event.preventDefault();
-          setCreatingFileIn(undefined);
-        }}
       >
         <DialogHeader>
           <DialogTitle className="text-sm">{title}</DialogTitle>
@@ -101,7 +107,7 @@ export function FileBrowserDialog({
 
 // Config shared by every node in the tree, so the recursion stays prop-light.
 type TreeContextValue = {
-  showHidden: boolean;
+  showDotfiles: boolean;
   extensions?: readonly string[];
   onOpenFile?: (path: string) => void;
   selectedPath?: string;
@@ -136,14 +142,14 @@ function FileBrowser({
   onSelectDirectory?: (path: string) => void;
 }) {
   const [root, setRoot] = useState(initialPath);
-  const [showHidden, setShowHidden] = useState(false);
+  const [showDotfiles, setShowDotfiles] = useState(true);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined);
   const {
     data: listing,
     error,
     isPending,
     isPlaceholderData,
-  } = useQuery(fileQueries.browse(root, showHidden));
+  } = useQuery(fileQueries.browse(root, showDotfiles));
 
   const errorMessage = error ? "Failed to load directory contents." : undefined;
 
@@ -162,7 +168,7 @@ function FileBrowser({
   }
 
   const context: TreeContextValue = {
-    showHidden,
+    showDotfiles,
     extensions: onOpenFile ? extensions : undefined,
     onOpenFile,
     selectedPath: onSelectDirectory ? chosenPath : undefined,
@@ -205,12 +211,10 @@ function FileBrowser({
           </div>
         </div>
       )}
-      <ScrollArea className="h-96 min-h-0 rounded-md border">
+      <ScrollableFade axis="vertical" rootClassName="h-96 min-h-0 rounded-md border bg-panel">
         <div className="p-1" aria-busy={isPlaceholderData} inert={isPlaceholderData}>
           {isPending ? (
-            <Centered>
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </Centered>
+            <FileBrowserLoading />
           ) : errorMessage ? (
             <Centered>
               <AlertCircle className="h-5 w-5 text-muted-foreground" />
@@ -242,16 +246,16 @@ function FileBrowser({
             </>
           ) : null}
         </div>
-      </ScrollArea>
+      </ScrollableFade>
       <DialogFooter className="flex-row items-center justify-between gap-2 sm:justify-between">
         <Button
           variant="ghost"
           size="sm"
           className="gap-1.5 text-xs text-muted-foreground"
-          onClick={() => setShowHidden((current) => !current)}
+          onClick={() => setShowDotfiles((current) => !current)}
         >
-          {showHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-          {showHidden ? "Hide" : "Show"} hidden
+          {showDotfiles ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+          {showDotfiles ? "Hide" : "Show"} dotfiles
         </Button>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={onCancel}>
@@ -269,6 +273,24 @@ function FileBrowser({
         </div>
       </DialogFooter>
     </TreeContext.Provider>
+  );
+}
+
+const FILE_BROWSER_LOADING_WIDTHS = ["w-32", "w-48", "w-40", "w-24", "w-44", "w-36"] as const;
+
+function FileBrowserLoading() {
+  return (
+    <div aria-hidden="true">
+      {FILE_BROWSER_LOADING_WIDTHS.map((width) => (
+        <div key={width} className="flex items-center gap-1 rounded-sm pr-2 pl-2">
+          <span className="w-4 shrink-0" />
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 py-1">
+            <Skeleton className="size-4 shrink-0 rounded-sm" />
+            <Skeleton className={cn("h-4", width)} />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -298,7 +320,7 @@ function DirectoryChildren({ listing, depth }: { listing: DirectoryListing; dept
 
 function DirectoryNode({ entry, depth }: { entry: DirectoryEntry; depth: number }) {
   const {
-    showHidden,
+    showDotfiles,
     onOpenFile,
     onSelect,
     selectedPath,
@@ -308,7 +330,7 @@ function DirectoryNode({ entry, depth }: { entry: DirectoryEntry; depth: number 
   } = useTree();
   const [expanded, setExpanded] = useState(false);
   const { data: listing, isPending } = useQuery({
-    ...fileQueries.browse(entry.path, showHidden),
+    ...fileQueries.browse(entry.path, showDotfiles),
     enabled: expanded,
   });
   const toggle = () => setExpanded((current) => !current);

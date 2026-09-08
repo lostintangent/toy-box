@@ -6,9 +6,9 @@ import { Button } from "@/shared/components/ui/button";
 import { useLongPress } from "@/shared/hooks/useLongPress";
 import { cn } from "@/shared/utils";
 import type { QueuedMessage, QueuedUserMessage } from "../../model";
-import { notificationLabel } from "../../model/agentNotifications";
+import { systemMessageLabel } from "../../model/systemMessages";
 import { sessionMutations } from "../../mutations";
-import { AttachmentThumbnail } from "../AttachmentThumbnail";
+import { AttachmentGallery } from "../AttachmentGallery";
 
 const LONG_PRESS_DELAY_MS = 2_000;
 
@@ -75,13 +75,13 @@ function QueuedMessageRow({
 }) {
   const steerMutation = useMutation(sessionMutations.steerQueuedMessage(sessionId));
   const isSendingImmediately =
-    message.role === "user" &&
-    (message.immediate === true || steerMutation.isPending || steerMutation.data === true);
+    message.immediate === true ||
+    (message.role === "user" && (steerMutation.isPending || steerMutation.data === true));
   const canSteer = message.role === "user" && !cancelDisabled && !isSendingImmediately;
   const attachments = message.role === "user" ? (message.attachments ?? []) : [];
   const label =
-    message.role === "agent_notification"
-      ? notificationLabel(message.notification)
+    message.role === "system"
+      ? systemMessageLabel(message.content)
       : message.content.trim() ||
         message.attachments?.map((attachment) => attachment.displayName).join(", ") ||
         "Attachment";
@@ -99,11 +99,13 @@ function QueuedMessageRow({
       role="group"
       aria-label={`Queued message: ${label}`}
       className={cn(
-        "relative flex touch-manipulation items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm text-muted-foreground transition-colors",
+        "relative flex touch-manipulation items-center gap-2 rounded-lg bg-secondary-background px-3 py-2 text-sm text-muted-foreground transition-colors",
         canSteer && "cursor-pointer",
         isHolding && "select-none bg-user-accent/30",
       )}
-      style={{ transitionDuration: isHolding ? `${LONG_PRESS_DELAY_MS}ms` : "150ms" }}
+      style={{
+        transitionDuration: isHolding ? `${LONG_PRESS_DELAY_MS}ms` : "150ms",
+      }}
     >
       <Button
         type="button"
@@ -124,18 +126,10 @@ function QueuedMessageRow({
       </Button>
 
       <div className="min-w-0 flex-1">
-        <span className={cn("block truncate", message.role === "agent_notification" && "italic")}>
-          {label}
-        </span>
+        <span className={cn("block truncate", message.role === "system" && "italic")}>{label}</span>
         {attachments.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
-            {attachments.map((attachment) => (
-              <AttachmentThumbnail
-                key={attachment.displayName}
-                attachment={attachment}
-                size="compact"
-              />
-            ))}
+            <AttachmentGallery attachments={attachments} size="compact" />
           </div>
         )}
       </div>

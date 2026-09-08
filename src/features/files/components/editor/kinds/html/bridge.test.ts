@@ -11,7 +11,7 @@ import {
 describe("HTML artifact documents", () => {
   test("creates an origin-qualified, directory-rooted base URI for relative embeds", () => {
     const baseUri = createFileBaseUri(
-      { type: "session", sessionId: "toy-box-session", path: "plan.md" },
+      { kind: "session", sessionId: "toy-box-session", path: "plan.md" },
       "http://localhost:3100",
     );
 

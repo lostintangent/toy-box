@@ -38,17 +38,26 @@ import {
   deriveVisibleWorkspacePanes,
   deriveWorkspaceRootPanes,
   INBOX_PANE,
-  isEditorPane,
   MAX_WORKSPACE_PANES,
   type WorkspacePane,
 } from "@workspace/model/panes";
-import { machineFile } from "@files/model";
-import { parseLayoutPrefs, resolveLayoutPrefs } from "@workspace/model/config/layoutPrefs";
-import { useLayoutCookie } from "@workspace/hooks/layout/useLayoutCookie";
+import {
+  machineFile,
+  workspaceFileId,
+  workspaceFileSchema,
+  type WorkspaceFile,
+} from "@files/model";
+import {
+  readWorkspaceLayout,
+  serializeWorkspaceLayout,
+  type SidebarPanels,
+} from "@workspace/model/config/layoutPrefs";
 import { sessionMutations } from "@sessions/mutations";
 import { SESSION_ID_PREFIX } from "@sessions/model/constants";
 import type { SessionsState } from "@sessions/model";
 import { selectNonWorkerSessions, sessionQueries } from "@sessions/queries";
+import { channelQueries } from "@channels/queries";
+import { agentQueries } from "@agents/queries";
 const Terminal = lazy(() =>
   import("@terminal/components/Terminal").then((m) => ({ default: m.Terminal })),
 );
@@ -56,44 +65,53 @@ const Terminal = lazy(() =>
 const searchSchema = z
   .object({
     sessions: z.array(z.string()).optional(),
-    files: z.array(z.string()).optional(),
+    files: z.array(workspaceFileSchema).optional(),
     apps: z.array(z.string()).optional(),
+    channels: z.array(z.string()).optional(),
   })
-  .transform(({ sessions = [], files = [], apps = [] }) => {
-    const roots = deriveWorkspaceRootPanes(sessions, files, apps);
+  .transform(({ sessions = [], files = [], apps = [], channels = [] }) => {
+    const roots = deriveWorkspaceRootPanes(sessions, files, apps, channels);
     const normalizedSessions = roots.flatMap((pane) =>
       pane.kind === "session" ? [pane.sessionId] : [],
     );
-    const normalizedFiles = roots.flatMap((pane) =>
-      pane.kind === "editor" ? [pane.file.path] : [],
-    );
+    const normalizedFiles = roots.flatMap((pane) => (pane.kind === "editor" ? [pane.file] : []));
     const normalizedApps = roots.flatMap((pane) => (pane.kind === "app" ? [pane.appId] : []));
+    const normalizedChannels = roots.flatMap((pane) =>
+      pane.kind === "channel" ? [pane.channelId] : [],
+    );
     return {
       sessions: normalizedSessions.length > 0 ? normalizedSessions : undefined,
       files: normalizedFiles.length > 0 ? normalizedFiles : undefined,
       apps: normalizedApps.length > 0 ? normalizedApps : undefined,
+      channels: normalizedChannels.length > 0 ? normalizedChannels : undefined,
     };
   });
+
+type WorkspaceSearch = z.output<typeof searchSchema>;
 
 export const Route = createFileRoute("/")({
   validateSearch: zodValidator(searchSchema),
   loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData(sessionQueries.state());
-    return loadLayoutPrefs();
+    await Promise.all([
+      context.queryClient.ensureQueryData(sessionQueries.state()),
+      context.queryClient.ensureQueryData(channelQueries.list()),
+      context.queryClient.ensureQueryData(agentQueries.list()),
+    ]);
+    return loadWorkspaceLayout();
   },
   component: WorkspacePage,
 });
 
-const readLayoutCookieHeader = createIsomorphicFn()
+const readCookieHeader = createIsomorphicFn()
   .client(() => document.cookie)
   .server(async () => {
     const { getRequestHeader } = await import("@tanstack/react-start/server");
     return getRequestHeader("cookie") ?? getRequestHeader("Cookie");
   });
 
-async function loadLayoutPrefs() {
-  const cookieHeader = await readLayoutCookieHeader();
-  return resolveLayoutPrefs(parseLayoutPrefs(cookieHeader));
+async function loadWorkspaceLayout() {
+  const cookieHeader = await readCookieHeader();
+  return readWorkspaceLayout(cookieHeader);
 }
 
 type HyperLayoutState = Pick<HyperSessionState, "open" | "position">;
@@ -126,98 +144,126 @@ function WorkspacePage() {
     select: (search) => search.apps ?? [],
     structuralSharing: true,
   });
-  const {
-    sidebarWidth: initialSidebarWidth,
-    terminalSize: initialTerminalSize,
-    sidebarCollapsed: initialSidebarCollapsed,
-    terminalOpen: initialTerminalOpen,
-    appsExpanded: initialAppsExpanded,
-    automationsExpanded: initialAutomationsExpanded,
-    hyperOpen: initialHyperOpen,
-    hyperPosition: initialHyperPosition,
-    mobileInboxOpen: initialMobileInboxOpen,
-  } = Route.useLoaderData();
+  const selectedChannelIds = Route.useSearch({
+    select: (search) => search.channels ?? [],
+    structuralSharing: true,
+  });
+  const openFiles = Route.useSearch({
+    select: (search) => search.files ?? [],
+    structuralSharing: true,
+  });
+  const initialLayout = Route.useLoaderData();
   const { isMobile: isMobileLayout, hydrated } = useViewport();
-  const [isMobileInboxOpen, setIsMobileInboxOpen] = useState(initialMobileInboxOpen);
+
+  function updateWorkspaceRoot<Key extends keyof WorkspaceSearch>(
+    key: Key,
+    update: (current: NonNullable<WorkspaceSearch[Key]>) => NonNullable<WorkspaceSearch[Key]>,
+    options?: { replaceWorkspace?: boolean; replaceHistory?: boolean },
+  ) {
+    return navigate({
+      to: "/",
+      search: (prev) => {
+        const current = (prev[key] ?? []) as NonNullable<WorkspaceSearch[Key]>;
+        const next = update(current);
+        const search = options?.replaceWorkspace
+          ? {
+              ...prev,
+              sessions: undefined,
+              files: undefined,
+              apps: undefined,
+              channels: undefined,
+            }
+          : prev;
+        return { ...search, [key]: next.length > 0 ? next : undefined };
+      },
+      replace: options?.replaceHistory,
+    });
+  }
 
   function updateSelectedSessionIds(
     nextSelectedSessionIds: string[],
     options?: { replaceWorkspace?: boolean },
   ) {
-    void navigate({
-      to: "/",
-      search: (prev) => ({
-        ...prev,
-        sessions: nextSelectedSessionIds.length > 0 ? nextSelectedSessionIds : undefined,
-        // A focus reset (single-click select, plain new, inbox) replaces the whole
-        // workspace, so it drops open files and apps too; an augment preserves them.
-        files: options?.replaceWorkspace ? undefined : prev.files,
-        apps: options?.replaceWorkspace ? undefined : prev.apps,
-      }),
-    });
+    // A focus reset replaces the whole workspace; an augment preserves its other roots.
+    void updateWorkspaceRoot("sessions", () => nextSelectedSessionIds, options);
   }
 
-  // Browser-opened files are machine paths in the URL, beside the selected
-  // sessions, so they survive a reload and can be shared. Both derive into root
-  // panes below.
-  function openFile(path: string) {
+  // Browser-opened files live in the URL beside the selected sessions, so they
+  // survive a reload and can be shared. Both derive into root panes below.
+  function openWorkspaceFile(file: WorkspaceFile) {
     // Opening a file augments the workspace, so — like a modifier-click on a
     // session — it's ignored when the four-pane surface is full (which keeps the
-    // URL within its cap); re-opening an already-open file just re-focuses it.
-    if (!openFilePaths.includes(path) && openPanes.length >= MAX_WORKSPACE_PANES) return;
-    void navigate({
-      to: "/",
-      search: (prev) => {
-        const files = prev.files ?? [];
-        return files.includes(path) ? prev : { ...prev, files: [...files, path] };
-      },
-      replace: true,
-    });
+    // URL within its cap); re-opening an already-open file is idempotent.
+    const id = workspaceFileId(file);
+    if (
+      !openFiles.some((open) => workspaceFileId(open) === id) &&
+      openPanes.length >= MAX_WORKSPACE_PANES
+    )
+      return;
+    const navigation = updateWorkspaceRoot(
+      "files",
+      (files) => (files.some((open) => workspaceFileId(open) === id) ? files : [...files, file]),
+      { replaceHistory: true },
+    );
     // The desktop grid shows the new file as a cell; the mobile pager has to be
     // slid over to the workspace track and paged to it.
     if (isMobileLayout) {
-      setIsMobileInboxOpen(true);
-      focusWorkspaceSurfacePane("main", createEditorPaneId(machineFile(path)));
+      void navigation.then(() => focusWorkspaceSurfacePane("main", createEditorPaneId(file)));
     }
   }
 
-  function closeFile(path: string) {
-    void navigate({
-      to: "/",
-      search: (prev) => {
-        const files = (prev.files ?? []).filter((open) => open !== path);
-        return { ...prev, files: files.length > 0 ? files : undefined };
-      },
-      replace: true,
+  function openFile(path: string) {
+    openWorkspaceFile(machineFile(path));
+  }
+
+  function closeWorkspaceRoot(key: "apps" | "channels", id: string) {
+    void updateWorkspaceRoot(key, (current) => current.filter((open) => open !== id), {
+      replaceHistory: true,
     });
   }
 
-  function closeApp(appId: string) {
-    void navigate({
-      to: "/",
-      search: (prev) => {
-        const apps = (prev.apps ?? []).filter((open) => open !== appId);
-        return { ...prev, apps: apps.length > 0 ? apps : undefined };
-      },
-      replace: true,
-    });
+  function closeFile(file: WorkspaceFile) {
+    const id = workspaceFileId(file);
+    void updateWorkspaceRoot(
+      "files",
+      (current) => current.filter((open) => workspaceFileId(open) !== id),
+      { replaceHistory: true },
+    );
+  }
+
+  function toggleFile(file: WorkspaceFile) {
+    if (openFiles.some((open) => workspaceFileId(open) === workspaceFileId(file))) {
+      closeFile(file);
+    } else {
+      openWorkspaceFile(file);
+    }
   }
 
   const primarySelectedSessionId = selectedSessionIds[0];
   const panePublications = useSelector(workspaceSurfaces.main.panePublications);
   const hyperPanePublications = useSelector(workspaceSurfaces.hyper.panePublications);
-  const openFilePaths = Route.useSearch({
-    select: (search) => search.files ?? [],
-    structuralSharing: true,
-  });
-  const rootPanes = deriveWorkspaceRootPanes(selectedSessionIds, openFilePaths, selectedAppIds);
-  const rootEditorPaneIds = new Set(rootPanes.filter(isEditorPane).map((pane) => pane.id));
+  const rootPanes = deriveWorkspaceRootPanes(
+    selectedSessionIds,
+    openFiles,
+    selectedAppIds,
+    selectedChannelIds,
+  );
+  const rootPaneIds = new Set(rootPanes.map((pane) => pane.id));
   const resolvePaneClose = (pane: WorkspacePane): (() => void) | undefined => {
-    if (isEditorPane(pane) && rootEditorPaneIds.has(pane.id)) {
-      return () => closeFile(pane.file.path);
+    if (!rootPaneIds.has(pane.id)) return undefined;
+    switch (pane.kind) {
+      case "session":
+        return () => handleCloseVisibleSession(pane.sessionId);
+      case "editor":
+        return () => closeFile(pane.file);
+      case "app":
+        return () => closeWorkspaceRoot("apps", pane.appId);
+      case "channel":
+        return () => closeWorkspaceRoot("channels", pane.channelId);
+      case "inbox":
+      case "canvas":
+        return undefined;
     }
-    if (pane.kind === "app") return () => closeApp(pane.appId);
-    return undefined;
   };
   const reachablePaneIds = deriveReachablePaneIds(rootPanes, panePublications);
   const openPanes = deriveVisibleWorkspacePanes({
@@ -238,17 +284,15 @@ function WorkspacePage() {
   );
   const updateSetting = useUpdateWorkspaceSetting();
 
-  const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
-  const [terminalSize, setTerminalSize] = useState(initialTerminalSize);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(initialSidebarCollapsed);
-
-  // Terminal state - synced with cookie (SSR-safe)
-  const [isTerminalOpen, setIsTerminalOpen] = useState(initialTerminalOpen);
-  const [isAppsExpanded, setIsAppsExpanded] = useState(initialAppsExpanded);
-  const [isAutomationsExpanded, setIsAutomationsExpanded] = useState(initialAutomationsExpanded);
+  // Layout state is restored from and persisted to the workspace layout cookie.
+  const [sidebarWidth, setSidebarWidth] = useState(initialLayout.sidebarWidth);
+  const [terminalSize, setTerminalSize] = useState(initialLayout.terminalSize);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(initialLayout.sidebarCollapsed);
+  const [isTerminalOpen, setIsTerminalOpen] = useState(initialLayout.terminalOpen);
+  const [sidebarPanels, setSidebarPanels] = useState<SidebarPanels>(initialLayout.panels);
   const terminalPanelRef = useRef<ImperativePanelHandle>(null);
   const shouldRenderMobileTerminalShell = import.meta.env.SSR
-    ? initialTerminalOpen
+    ? initialLayout.terminalOpen
     : isTerminalOpen;
 
   const { data: sessionList, isLoading: isSessionsLoading } = useQuery({
@@ -257,6 +301,7 @@ function WorkspacePage() {
   });
   const sessions = sessionList?.sessions;
   const worktreeSessionIds = sessionList?.worktreeSessionIds ?? [];
+  const { data: channels = [] } = useQuery(channelQueries.list());
   const { apps, automationSessionIds, hyperSessionIds, inboxSessionIds } = useWorkspaceSelector(
     (workspace) => ({
       apps: workspace.apps,
@@ -282,7 +327,6 @@ function WorkspacePage() {
 
   function handleSessionSelect(sessionId: string, toggleInWorkspace = false) {
     if (!toggleInWorkspace || isMobileLayout) {
-      if (isMobileLayout) setIsMobileInboxOpen(false);
       updateSelectedSessionIds([sessionId], { replaceWorkspace: true });
       return;
     }
@@ -296,39 +340,36 @@ function WorkspacePage() {
     updateSelectedSessionIds([...selectedSessionIds, sessionId]);
   }
 
-  function handleAppOpen(appId: string, toggleInWorkspace = false) {
+  function handleWorkspaceRootOpen(
+    key: "apps" | "channels",
+    id: string,
+    selectedIds: string[],
+    toggleInWorkspace = false,
+  ) {
     if (!toggleInWorkspace || isMobileLayout) {
-      if (isMobileLayout) setIsMobileInboxOpen(false);
-      void navigate({
-        to: "/",
-        search: (prev) => ({
-          ...prev,
-          sessions: undefined,
-          files: undefined,
-          apps: [appId],
-        }),
-      });
+      void updateWorkspaceRoot(key, () => [id], { replaceWorkspace: true });
       return;
     }
 
-    if (selectedAppIds.includes(appId)) {
-      closeApp(appId);
+    if (selectedIds.includes(id)) {
+      closeWorkspaceRoot(key, id);
       return;
     }
     if (openPanes.length >= MAX_WORKSPACE_PANES) return;
-    void navigate({
-      to: "/",
-      search: (prev) => ({
-        ...prev,
-        apps: [...(prev.apps ?? []), appId],
-      }),
-    });
+    void updateWorkspaceRoot(key, (current) => [...current, id]);
+  }
+
+  function handleAppOpen(appId: string, toggleInWorkspace = false) {
+    handleWorkspaceRootOpen("apps", appId, selectedAppIds, toggleInWorkspace);
+  }
+
+  function handleChannelOpen(channelId: string, toggleInWorkspace = false) {
+    handleWorkspaceRootOpen("channels", channelId, selectedChannelIds, toggleInWorkspace);
   }
 
   // Create a durable draft, optionally with an initial artifact or alongside the workspace.
   const handleCreateSession: SidebarProps["onCreateSession"] = (options = {}) => {
     const id = createDraft(options.artifact ? { artifact: options.artifact } : undefined);
-    if (isMobileLayout) setIsMobileInboxOpen(false);
 
     if (options.addToWorkspace && openPanes.length > 0 && openPanes.length < MAX_WORKSPACE_PANES) {
       // Add to the workspace.
@@ -392,6 +433,25 @@ function WorkspacePage() {
     });
   }, [apps, navigate, selectedAppIds]);
 
+  // Channels are durable URL roots, parallel to sessions and apps.
+  useEffect(() => {
+    if (selectedChannelIds.length === 0) return;
+    const availableChannelIds = new Set(channels.map((channel) => channel.id));
+    const validChannelIds = selectedChannelIds.filter((channelId) =>
+      availableChannelIds.has(channelId),
+    );
+    if (validChannelIds.length === selectedChannelIds.length) return;
+
+    void navigate({
+      to: "/",
+      search: (prev) => ({
+        ...prev,
+        channels: validChannelIds.length > 0 ? validChannelIds : undefined,
+      }),
+      replace: true,
+    });
+  }, [channels, navigate, selectedChannelIds]);
+
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [isTerminalDragging, setIsTerminalDragging] = useState(false);
@@ -417,14 +477,6 @@ function WorkspacePage() {
   useEffect(() => {
     terminalSizeRef.current = terminalSize;
   }, [terminalSize]);
-
-  useLayoutCookie("sidebarCollapsed", isSidebarCollapsed);
-  useLayoutCookie("sidebarWidth", sidebarWidth);
-  useLayoutCookie("terminalOpen", isTerminalOpen);
-  useLayoutCookie("terminalSize", terminalSize);
-  useLayoutCookie("appsExpanded", isAppsExpanded);
-  useLayoutCookie("automationsExpanded", isAutomationsExpanded);
-  useLayoutCookie("mobileInboxOpen", hydrated && isMobileLayout ? isMobileInboxOpen : undefined);
 
   function handleTerminalResize(size: number) {
     if (size > 0) {
@@ -491,7 +543,6 @@ function WorkspacePage() {
 
   function handleSessionDelete(sessionIdToDelete: string) {
     if (selectedSessionIds.includes(sessionIdToDelete)) {
-      if (isMobileLayout) setIsMobileInboxOpen(false);
       updateSelectedSessionIds(selectedSessionIds.filter((id) => id !== sessionIdToDelete));
     }
   }
@@ -519,8 +570,8 @@ function WorkspacePage() {
 
   const hyperSessionId = hyperSessionIds[0];
   const restoredHyperSession = restoreHyperSessionState(hyperSessionId, {
-    position: initialHyperPosition,
-    open: initialHyperOpen,
+    position: initialLayout.hyperPosition,
+    open: initialLayout.hyperOpen,
   });
 
   const hyper = useHyperSession({
@@ -532,8 +583,18 @@ function WorkspacePage() {
   const hyperSession = hyper.state;
   const { getOrCreateSessionId: getOrCreateHyperSessionId, toggle: toggleHyperSession } = hyper;
 
-  useLayoutCookie("hyperOpen", hyper.isOpen);
-  useLayoutCookie("hyperPosition", hyperSession?.position);
+  const layoutCookie = serializeWorkspaceLayout({
+    sidebarWidth,
+    terminalSize,
+    sidebarCollapsed: isSidebarCollapsed,
+    terminalOpen: isTerminalOpen,
+    panels: sidebarPanels,
+    hyperOpen: hyper.isOpen,
+    hyperPosition: hyperSession?.position ?? initialLayout.hyperPosition,
+  });
+  useEffect(() => {
+    document.cookie = layoutCookie;
+  }, [layoutCookie]);
 
   // The hyper session has no floating deck on mobile; opening it there means
   // selecting it into the main view — the same URL navigation any list session
@@ -543,7 +604,6 @@ function WorkspacePage() {
       toggleHyperSession();
       return;
     }
-    setIsMobileInboxOpen(false);
     updateSelectedSessionIds([getOrCreateHyperSessionId()], { replaceWorkspace: true });
   }
 
@@ -563,13 +623,11 @@ function WorkspacePage() {
 
   function openAppInMainSurface(appId: string) {
     if (!selectedAppIds.includes(appId)) {
-      void navigate({
-        to: "/",
-        search: (prev) =>
-          openPanes.length >= MAX_WORKSPACE_PANES
-            ? { ...prev, sessions: undefined, files: undefined, apps: [appId] }
-            : { ...prev, apps: [...(prev.apps ?? []), appId] },
-      });
+      void updateWorkspaceRoot(
+        "apps",
+        (current) => (openPanes.length >= MAX_WORKSPACE_PANES ? [appId] : [...current, appId]),
+        { replaceWorkspace: openPanes.length >= MAX_WORKSPACE_PANES },
+      );
     }
     focusWorkspaceSurfacePane("main", createAppPane(appId).id);
   }
@@ -592,11 +650,14 @@ function WorkspacePage() {
   }, [hyperPanePublications, hyperSession]);
 
   const hasWorkspaceRoot =
-    selectedSessionIds.length > 0 || selectedAppIds.length > 0 || openFilePaths.length > 0;
-  const isInboxOpen = !hasWorkspaceRoot && (!isMobileLayout || isMobileInboxOpen);
+    selectedSessionIds.length > 0 ||
+    selectedAppIds.length > 0 ||
+    selectedChannelIds.length > 0 ||
+    openFiles.length > 0;
+  const isInboxOpen = !hasWorkspaceRoot && (!isMobileLayout || isSidebarCollapsed);
 
   function handleOpenInbox() {
-    if (isMobileLayout) setIsMobileInboxOpen(true);
+    if (isMobileLayout) setIsSidebarCollapsed(true);
     if (hasWorkspaceRoot) {
       updateSelectedSessionIds([], { replaceWorkspace: true });
     }
@@ -604,26 +665,15 @@ function WorkspacePage() {
 
   function handleMobileWorkspaceBack() {
     workspaceSurfaces.main.panePublications.actions.clearLinkedPanes(INBOX_PANE.id);
-    setIsMobileInboxOpen(false);
+    setIsSidebarCollapsed(false);
     if (hasWorkspaceRoot) {
       updateSelectedSessionIds([], { replaceWorkspace: true });
     }
   }
 
-  const baseMobileView = hasWorkspaceRoot
-    ? "workspace"
-    : isMobileInboxOpen
-      ? "workspace"
-      : "sidebar";
+  const baseMobileView = hasWorkspaceRoot || isSidebarCollapsed ? "workspace" : "sidebar";
   const mobileView = isTerminalOpen ? "terminal" : baseMobileView;
   const mobileTrackIndex = baseMobileView === "sidebar" ? 0 : 1;
-  const mobileContainerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (mobileContainerRef.current) {
-      mobileContainerRef.current.scrollLeft = 0;
-    }
-  }, [baseMobileView]);
-
   const terminalBodySkeleton = (
     <div className="relative flex-1 min-h-0 p-2 pb-0">
       <div className="h-5 w-72 max-w-full rounded-md bg-foreground/5 animate-pulse" />
@@ -638,7 +688,25 @@ function WorkspacePage() {
     </ClientOnly>
   );
 
-  // Shared sidebar props for both mobile and desktop
+  function handlePanelExpanded(panel: keyof SidebarPanels, expanded: boolean) {
+    setSidebarPanels((current) =>
+      isMobileLayout
+        ? expanded
+          ? { [panel]: true }
+          : {}
+        : { ...current, [panel]: expanded ? true : undefined },
+    );
+  }
+
+  const mobileSidebarPanels: SidebarPanels = sidebarPanels.channels
+    ? { channels: true }
+    : sidebarPanels.apps
+      ? { apps: true }
+      : sidebarPanels.automations
+        ? { automations: true }
+        : {};
+
+  // Shared sidebar props for both mobile and desktop.
   const sidebarProps = {
     filter,
     onFilterChange: setFilter,
@@ -653,14 +721,14 @@ function WorkspacePage() {
     worktreeSessionIds,
     emptyMessage: deferredFilter ? "No sessions match your filter" : undefined,
     draftSessions: listedDrafts,
-    isAppsExpanded,
-    onAppsExpandedChange: setIsAppsExpanded,
-    isAutomationsExpanded,
-    onAutomationsExpandedChange: setIsAutomationsExpanded,
+    panels: sidebarPanels,
+    onPanelExpanded: handlePanelExpanded,
     onCreateSession: handleCreateSession,
     openAppIds: selectedAppIds,
     onAppOpen: handleAppOpen,
     onAppOpenInHyper: handleAppOpenInHyper,
+    openChannelIds: selectedChannelIds,
+    onChannelOpen: handleChannelOpen,
     onToggleHyper: toggleHyper,
     isHyperOpen,
     onOpenInbox: handleOpenInbox,
@@ -672,19 +740,19 @@ function WorkspacePage() {
 
   // Mobile layout - three views: sidebar, workspace, terminal
   const mobileLayout = (
-    <div ref={mobileContainerRef} className="relative h-full md:hidden overflow-hidden">
+    <div className="relative h-full overflow-clip md:hidden">
       {/* Slide track - shifts between sidebar and workspace */}
       <div
-        className={`flex h-full w-full ${hydrated ? "transition-transform duration-300 ease-in-out" : ""}`}
-        style={{ transform: `translateX(-${mobileTrackIndex * 100}%)` }}
+        className={`flex h-full w-[200%] ${hydrated ? "transition-transform duration-300 ease-in-out" : ""}`}
+        style={{ transform: `translateX(-${mobileTrackIndex * 50}%)` }}
       >
         {/* Sidebar */}
-        <div className="h-full w-full shrink-0">
-          <Sidebar {...sidebarProps} />
+        <div className="h-full w-1/2 shrink-0">
+          <Sidebar {...sidebarProps} panels={mobileSidebarPanels} />
         </div>
 
         {/* Workspace View */}
-        <div className="h-full w-full shrink-0">
+        <div className="h-full w-1/2 shrink-0">
           {baseMobileView === "workspace" && (
             <WorkspacePager
               panes={openPanes}
@@ -733,11 +801,7 @@ function WorkspacePage() {
             {/* Main workspace */}
             <ResizablePanel order={1} defaultSize={isTerminalOpen ? 100 - terminalSize : 100}>
               <div className="h-full overflow-hidden relative">
-                <WorkspaceGrid
-                  panes={openPanes}
-                  onCloseSession={handleCloseVisibleSession}
-                  resolvePaneClose={resolvePaneClose}
-                />
+                <WorkspaceGrid panes={openPanes} resolvePaneClose={resolvePaneClose} />
               </div>
             </ResizablePanel>
 
@@ -790,7 +854,13 @@ function WorkspacePage() {
 
   return (
     <>
-      <WorkspaceSurfaceProvider surface="main" panes={openPanes} onOpenApp={openAppInMainSurface}>
+      <WorkspaceSurfaceProvider
+        surface="main"
+        panes={openPanes}
+        onOpenApp={openAppInMainSurface}
+        onOpenFile={openFile}
+        onToggleFile={toggleFile}
+      >
         <div className="h-full overflow-hidden">
           {!hydrated ? (
             <>

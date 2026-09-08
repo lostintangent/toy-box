@@ -8,9 +8,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { SessionSkill, SessionType } from "@sessions/model";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
-import { toSdkSessionModelOptions } from "@sessions/model/modelConfiguration";
+import { toSdkSessionModelOptions, toSdkSetModelOptions } from "@sessions/model/modelConfiguration";
 import { SESSION_ID_PREFIX, SESSION_STATE_PATH } from "@sessions/model/constants";
-import { SDK_AGENT_NOTIFICATION_INSTRUCTIONS } from "@sessions/server/sdk/agentNotificationCodec";
 import { toSessionSkills } from "@sessions/server/sdk/skills";
 import { getSessionSkillDirectories } from "@sessions/server/sdk/bundledSkills";
 import { sharedMap } from "@/shared/server/processState";
@@ -25,6 +24,8 @@ export async function createSession(
     tools?: Tool<any>[];
     sessionType: SessionType;
     artifactPath?: string;
+    additionalInstructions?: string;
+    disableMemory?: boolean;
   },
 ): Promise<CopilotSession> {
   const skillDirectories = getSessionSkillDirectories(options.sessionType);
@@ -39,12 +40,32 @@ export async function createSession(
     enableConfigDiscovery: true,
     enableSkills: true,
     skillDirectories,
-    systemMessage: buildSessionSystemMessage(sessionId, options),
+    systemMessage: buildSessionSystemPrompt(sessionId, options),
     onPermissionRequest: approveAll,
     tools: options.tools,
+    ...(options.disableMemory ? { memory: { enabled: false } } : {}),
   });
   await registerUserQuestionInterest(session, options.sessionType);
   return session;
+}
+
+/** Persist a promoted draft's location and return the SDK-resolved git context. */
+export async function setSessionWorkingDirectory(
+  session: CopilotSession,
+  workingDirectory: string,
+): Promise<SessionContext> {
+  await session.rpc.metadata.setWorkingDirectory({ workingDirectory });
+  const snapshot = await session.rpc.metadata.snapshot();
+  if (!snapshot.workspace) {
+    throw new Error("SDK session has no workspace after setting its working directory.");
+  }
+
+  return {
+    workingDirectory: snapshot.workingDirectory,
+    ...(snapshot.workspace.git_root ? { gitRoot: snapshot.workspace.git_root } : {}),
+    ...(snapshot.workspace.repository ? { repository: snapshot.workspace.repository } : {}),
+    ...(snapshot.workspace.branch ? { branch: snapshot.workspace.branch } : {}),
+  };
 }
 
 export async function createDraftSession(
@@ -65,21 +86,36 @@ export async function createDraftSession(
 
 export async function resumeSession(
   sessionId: string,
-  options: { directory: string; sessionType: SessionType; tools?: Tool<any>[] },
+  options: {
+    model?: ModelConfiguration;
+    directory: string;
+    sessionType: SessionType;
+    tools?: Tool<any>[];
+    additionalInstructions?: string;
+    disableMemory?: boolean;
+  },
 ): Promise<CopilotSession> {
   const skillDirectories = getSessionSkillDirectories(options.sessionType);
   const client = await startCopilotClient();
   const session = await client.resumeSession(sessionId, {
     streaming: true,
     requestCanvasRenderer: true,
+    ...toSdkSessionModelOptions(options.model),
     workingDirectory: options.directory,
     enableConfigDiscovery: true,
     enableSkills: true,
     skillDirectories,
-    systemMessage: buildSessionSystemMessage(sessionId, options),
+    systemMessage: buildSessionSystemPrompt(sessionId, options),
     onPermissionRequest: approveAll,
     tools: options.tools,
+    ...(options.disableMemory ? { memory: { enabled: false } } : {}),
   });
+  // The current SDK restores the persisted model on resume even when the
+  // resume request carries a model override. Apply the effective host choice
+  // through the SDK's explicit switching contract before the next message.
+  if (options.model) {
+    await session.setModel(options.model.name, toSdkSetModelOptions(options.model));
+  }
   await registerUserQuestionInterest(session, options.sessionType);
   return session;
 }
@@ -152,12 +188,16 @@ export async function readSessionContext(sessionId: string): Promise<SessionCont
  * fallback sessions remain application-level user scope and return undefined.
  */
 export async function getSessionDirectory(sessionId: string): Promise<string | undefined> {
-  const client = await startCopilotClient();
-  const metadata = await client.getSessionMetadata(sessionId);
-  const context = metadata?.context
-    ? normalizeSessionContext(metadata.context)
-    : await readSessionContext(sessionId);
-  return context?.workingDirectory;
+  return (await getSessionContext(sessionId))?.workingDirectory;
+}
+
+/** Read persisted Git context, falling back to the SDK workspace metadata
+ * available before a new Session has flushed its first event. */
+export async function getSessionContext(sessionId: string): Promise<SessionContext | undefined> {
+  const persisted = await readSessionContext(sessionId);
+  if (persisted) return persisted;
+  const metadata = await (await startCopilotClient()).getSessionMetadata(sessionId);
+  return metadata?.context ? normalizeSessionContext(metadata.context) : undefined;
 }
 
 export async function listModels() {
@@ -181,21 +221,21 @@ export async function listSkills(
 
 // ── Session configuration ─────────────────────────────────────────────
 
-export function buildSessionSystemMessage(
+export function buildSessionSystemPrompt(
   sessionId: string,
   options: {
     directory?: string;
     model?: ModelConfiguration;
-    sessionType: SessionType;
     artifactPath?: string;
+    additionalInstructions?: string;
   },
 ) {
-  const { artifactPath, directory, model, sessionType } = options;
+  const { additionalInstructions, artifactPath, directory, model } = options;
 
   const parts: string[] = [];
 
   if (model) {
-    parts.push(`This session was created with model configuration: ${JSON.stringify(model)}.`);
+    parts.push(`This session is using model configuration: ${JSON.stringify(model)}.`);
   }
 
   if (directory) {
@@ -208,21 +248,8 @@ export function buildSessionSystemMessage(
   const sessionFilesDirectory = `${sessionStateDirectory}/files`;
   parts.push(
     `This session's ID is: ${sessionId}.`,
-    `This session's state folder is: ${sessionStateDirectory}. This session's files folder is: ${sessionFilesDirectory}. Unless otherwise specified, when the user asks you to create an artifact, spec, plan, or session document, write it under the files folder. Artifact paths in Toy Box notifications are relative to this files folder. If this session does not have a working directory, use this files folder as the default location for new files.`,
+    `This session's state folder is: ${sessionStateDirectory}. This session's files folder is: ${sessionFilesDirectory}. Unless otherwise specified, when the user asks you to create an artifact, spec, plan, or session document, write it under the files folder. If this session does not have a working directory, use this files folder as the default location for new files.`,
   );
-
-  if (sessionType === "standard") {
-    parts.push(
-      "Keep this session's title recognizable. Before completing the first turn, you MUST call `update_session_title` once with a concise 2-6 word title after understanding the user's initial intent. On later turns, call it again before responding only when the session's focus has changed materially, not for ordinary follow-ups or refinements. Do not mention routine title updates to the user.",
-    );
-  }
-
-  if (sessionType === "inbox") {
-    parts.push(
-      `This session is running a background task managed by the Toy Box inbox, and its session ID is also its inbox entry ID. Before finishing its initial task, ensure useful work leaves a durable, user-visible outcome. If the task naturally created or changed something durable outside this session—such as files in the user's working directory or an automation—do not duplicate it with an inbox result.`,
-      "If the initial task did not otherwise produce a durable outcome, you MUST call `send_to_inbox` exactly once. Keep its message to 1 sentence that concisely summarizes the useful result (e.g. either an answer to a question or a recognizable title for a generated artifact). If satisfying the user's request requires a longer result—such as a research report, a spec/plan, or other generated content that is more than a simple answer—include an `artifact` with its filename and complete contents in that same call. Only include an artifact when the request requires it: if the complete useful result fits in the message, omit it. Never use the inbox for routine progress updates. After the initial inbox result has been delivered, respond to follow-up turns normally and do not call `send_to_inbox` again.",
-    );
-  }
 
   if (artifactPath) {
     parts.push(
@@ -230,23 +257,10 @@ export function buildSessionSystemMessage(
     );
   }
 
-  if (sessionType === "automation") {
-    parts.push(
-      "This is an automation session: its session ID is also its automation ID. Use the automation tools when the task requires inspecting or changing that automation.",
-      "Treat user edits to this run's artifacts as feedback on the automation prompt. When the intent is clear, update the automation accordingly.",
-    );
-  }
-
-  if (sessionType === "hyper") {
-    parts.push(
-      "This is Toy Box's Hyper session, a global floating session window for observing other sessions, managing the Toy Box environment, answering questions, and performing tasks.",
-    );
-  }
+  if (additionalInstructions) parts.push(additionalInstructions);
 
   parts.push(
     'Toy Box renders files ending in `.svg` as rich, directly editable drawing artifacts. When creating a whiteboard, drawing, or spatial diagram, write standard static SVG with an `xmlns`, a meaningful `viewBox`, and ordinary SVG elements such as `<g>`, `<path>`, `<rect>`, `<ellipse>`, `<line>`, `<text>`, and `<image>`; gradients, filters, masks, patterns, markers, and transforms are supported. Give logical objects unique, descriptive IDs and wrap multi-part objects in `<g id="...">` so Toy Box can select, move, resize, and rotate them as one unit. Keep the file self-contained when practical. The editor supplies its own theme-derived background and dot grid, so do not add a background unless it is meaningful document content. Editable SVG artifacts must not contain doctypes, scripts, `<foreignObject>`, event-handler attributes, imported or executable CSS, or unsafe resource protocols.',
-    `If needed, you can discover other sessions by grepping the files at ~/${SESSION_STATE_PATH}/${SESSION_ID_PREFIX}*/events.jsonl — each parent directory name is a session ID and the events.jsonl contains the full session history including user messages. Do NOT use a database to look up sessions; always grep these files directly.`,
-    SDK_AGENT_NOTIFICATION_INSTRUCTIONS,
   );
 
   return {
@@ -254,6 +268,8 @@ export function buildSessionSystemMessage(
     content: parts.join("\n\n"),
   };
 }
+
+export const SESSION_HISTORY_DISCOVERY_INSTRUCTIONS = `If needed, you can discover other sessions by grepping the files at ~/${SESSION_STATE_PATH}/${SESSION_ID_PREFIX}*/events.jsonl — each parent directory name is a session ID and the events.jsonl contains the full session history including user messages. Do NOT use a database to look up sessions; always grep these files directly.`;
 
 // ── Client process ────────────────────────────────────────────────────
 
@@ -284,13 +300,8 @@ export function startCopilotClient(): Promise<CopilotClient> {
   return promise;
 }
 
-/** Use the installed native CLI in Bun development and the global executable
- *  in a compiled production binary. */
+/** Resolve the user's installed Copilot CLI. */
 function resolveCopilotCliPath(): string {
-  if (import.meta.env.DEV) {
-    return Bun.resolveSync(`@github/copilot-${process.platform}-${process.arch}`, process.cwd());
-  }
-
   try {
     const copilotBin = Bun.which("copilot");
     if (copilotBin) {

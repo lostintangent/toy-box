@@ -4,6 +4,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { domMax, LazyMotion, MotionConfig } from "motion/react";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { workspaceQueries } from "@workspace/queries";
+import { TooltipProvider } from "@/shared/components/ui/tooltip";
 
 import appCss from "./styles.css?url";
 
@@ -65,11 +66,13 @@ function RootDocument({ children }: { children: ReactNode }) {
         <HeadContent />
       </head>
       <body className="h-dvh overflow-hidden bg-background safe-top safe-x">
-        <LazyMotion features={domMax}>
-          <MotionConfig reducedMotion="user">
-            <div className="h-full overflow-hidden">{children}</div>
-          </MotionConfig>
-        </LazyMotion>
+        <TooltipProvider>
+          <LazyMotion features={domMax}>
+            <MotionConfig reducedMotion="user">
+              <div className="h-full overflow-hidden">{children}</div>
+            </MotionConfig>
+          </LazyMotion>
+        </TooltipProvider>
         <Scripts />
       </body>
     </html>

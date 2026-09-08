@@ -42,6 +42,8 @@ Automation events synchronize durable definition and schedule metadata through t
 
 - The [Sessions runtime](../sessions/server/runtime/AGENTS.md) owns delivery, execution, completion, and transcript streaming. Automation code schedules sessions and waits for their completion; it does not reproduce the runtime.
 - [`../../server/database.ts`](../../server/database.ts) owns the shared database connection, [Sessions](../sessions/AGENTS.md) owns managed session teardown, and [Workspace](../../workspace/AGENTS.md) owns the aggregate client projection. `AutomationDatabase` owns only automation rows and schedule metadata.
-- The [Sessions SDK boundary](../sessions/server/sdk/AGENTS.md) owns automation-specific instructions. `server/tools.ts` and `server/functions.ts` share the model schemas, and tools call the same validated operations as the UI.
+- `server/tools.ts` owns the automation's model-facing tools and role instructions. Application
+  composition supplies them to the [Sessions SDK boundary](../sessions/server/sdk/AGENTS.md), and
+  tools call the same validated operations as the UI.
 - One automation ID identifies the definition, its managed session, and its client status. Preserve that single identity across every layer.
 - Prevent overlap before delivery and advance schedules before dispatch. Session status remains authoritative even if automation metadata persistence fails.

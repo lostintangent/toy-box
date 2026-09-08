@@ -1,10 +1,10 @@
-import type { ReactNode } from "react";
+import { Children, type ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
 import { SidebarList } from "./SidebarList";
 import { cn } from "@/shared/utils";
 
 export function SidebarPanel({
   title,
-  count,
   isExpanded,
   onExpandedChange,
   action,
@@ -12,13 +12,14 @@ export function SidebarPanel({
   children,
 }: {
   title: string;
-  count: number;
   isExpanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   action?: ReactNode;
-  emptyMessage: string;
+  emptyMessage?: string;
   children: ReactNode;
 }) {
+  const count = Children.toArray(children).length;
+
   return (
     <section className="min-w-0 overflow-hidden border-t">
       <div
@@ -32,15 +33,22 @@ export function SidebarPanel({
           aria-label={`${isExpanded ? "Collapse" : "Expand"} ${title.toLowerCase()}`}
           aria-expanded={isExpanded}
           onClick={() => onExpandedChange(!isExpanded)}
-          className="min-w-0 flex-1 cursor-pointer text-left"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
         >
+          <ChevronRight
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0 text-foreground transition-transform duration-200 ease-out motion-reduce:transition-none",
+              isExpanded && "rotate-90",
+            )}
+          />
           <span className="section-heading">
             {title}
             {count > 0 ? ` (${count})` : ""}
           </span>
         </button>
 
-        {isExpanded && action}
+        {action}
       </div>
 
       <div
@@ -59,8 +67,12 @@ export function SidebarPanel({
             )}
           >
             <SidebarList
-              className="max-h-56 bg-muted/50 px-3 py-2"
-              emptyState={<p className="px-2 py-3 text-xs text-muted-foreground">{emptyMessage}</p>}
+              className="h-auto max-h-56 px-3 py-2"
+              emptyState={
+                emptyMessage && (
+                  <p className="px-2 py-3 text-xs text-muted-foreground">{emptyMessage}</p>
+                )
+              }
             >
               {children}
             </SidebarList>

@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
+import type { SessionMessage } from "../model";
 import type { ModelConfiguration } from "../model/modelConfiguration";
-import type { Attachment } from "../model";
 import { getRecentDirectories } from "../model/recentDirectories";
 import { sessionMutations } from "../mutations";
 import { sessionQueries, skillQueries } from "../queries";
@@ -16,10 +16,11 @@ import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { useModels } from "../useModels";
 import { EditDiffsProvider, useEditDiffs } from "./transcript/editDiffs";
 import { SessionComposer } from "./composer/SessionComposer";
+import { SessionAgentStatus } from "./SessionAgentStatus";
 import { CurrentSessionProvider, type SessionPaneMode } from "./CurrentSessionContext";
-import { Skeleton } from "@/shared/components/ui/skeleton";
 import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
 import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
+import { TranscriptSkeleton } from "./transcript/TranscriptSkeleton";
 
 const SessionMessageList = lazy(() =>
   import("./transcript/MessageList").then((module) => ({
@@ -53,6 +54,11 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
   const isHyper = useWorkspaceSelector((workspace) =>
     workspace.hyperSessionIds.includes(sessionId),
   );
+  const isManagedWorkflow = useWorkspaceSelector(
+    (workspace) =>
+      workspace.automations.some(({ id }) => id === sessionId) ||
+      workspace.inboxEntries.some(({ id }) => id === sessionId),
+  );
   const isDraft = workspaceSessionStatus === "draft";
   const { models, defaultModel, setDefaultModel } = useModels();
   // In the "compact" variant (the pager) the session surfaces its location picker
@@ -74,10 +80,15 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
     select: (state) => ({
       metadata: state.sessions.find((session) => session.sessionId === sessionId),
       worktree: state.worktrees[sessionId],
+      isWorkerSession: Object.hasOwn(state.workerSessionParents, sessionId),
       recentDirectory: isDraft ? getRecentDirectories(state.sessions)[0]?.cwd : undefined,
     }),
   });
   const sessionMetadata = sessionRecord?.metadata;
+  const supportsAgentMentions =
+    isDraft ||
+    isHyper ||
+    (!isSessionRecordLoading && !isManagedWorkflow && !sessionRecord?.isWorkerSession);
   const sessionContext = sessionMetadata?.context;
   const selectedDirectory = sessionContext?.workingDirectory;
   const selectedRepository = sessionContext?.repository;
@@ -196,8 +207,8 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
       }
     : undefined;
 
-  function handleSubmit(text: string, attachments: Attachment[], immediate?: true) {
-    void sendMessage(text, attachments, immediate);
+  function handleSubmit(message: SessionMessage, options?: { immediate?: true }) {
+    void sendMessage(message, options);
 
     // Force scroll to bottom after submitting a message
     scrollToBottomRef.current?.();
@@ -241,16 +252,16 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
 
       <div className="flex-1 overflow-hidden">
         {isSessionNotFound ? (
-          <div className="h-full flex flex-col items-center justify-center bg-muted/50 p-4 text-center">
+          <div className="h-full flex flex-col items-center justify-center bg-panel p-4 text-center">
             <p className="text-muted-foreground mb-2">Session not found</p>
             <p className="text-sm text-muted-foreground/70">
               This session may have been deleted or is no longer available.
             </p>
           </div>
         ) : isLoadingSessionState ? (
-          <SessionMessagesSkeleton />
+          <TranscriptSkeleton />
         ) : (
-          <Suspense fallback={<SessionMessagesSkeleton />}>
+          <Suspense fallback={<TranscriptSkeleton />}>
             <CurrentSessionProvider value={{ sessionId, cwd: effectiveDirectory, mode }}>
               <EditDiffsProvider value={editDiffs.byToolCallId}>
                 <SessionMessageList
@@ -259,6 +270,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
                   status={status}
                   reasoningContent={reasoningContent}
                   scrollToBottomRef={scrollToBottomRef}
+                  activity={<SessionAgentStatus sessionId={sessionId} />}
                 />
               </EditDiffsProvider>
             </CurrentSessionProvider>
@@ -267,7 +279,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
       </div>
 
       {!isPassive && !isSessionNotFound && (
-        <div className="px-4 pt-4 md:pb-4 border-t bg-background shrink-0">
+        <div className="shrink-0 border-t bg-background px-4 pt-4 md:pb-4">
           <SessionComposer
             sessionId={sessionId}
             onSubmit={handleSubmit}
@@ -285,45 +297,11 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
             queuedMessages={queuedMessages}
             sessionName={sessionMetadata?.summary}
             lastMessage={lastVoiceMessage}
+            enableAgentMentions={supportsAgentMentions}
+            canUseAgentWorktrees={Boolean(isDraft ? effectiveDirectory : selectedGitRoot)}
           />
         </div>
       )}
-    </div>
-  );
-}
-
-function SessionMessagesSkeleton() {
-  return (
-    <div className="h-full space-y-4 p-4 bg-muted/50">
-      <div className="flex justify-end">
-        <Skeleton className="h-10 w-48 rounded-lg" />
-      </div>
-      <div className="flex justify-start">
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-64" />
-          <Skeleton className="h-4 w-56" />
-          <Skeleton className="h-4 w-48" />
-        </div>
-      </div>
-      <div className="flex justify-end">
-        <Skeleton className="h-10 w-36 rounded-lg" />
-      </div>
-      <div className="flex justify-start">
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-72" />
-          <Skeleton className="h-4 w-64" />
-        </div>
-      </div>
-      <div className="flex justify-end">
-        <Skeleton className="h-10 w-52 rounded-lg" />
-      </div>
-      <div className="flex justify-start">
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-60" />
-          <Skeleton className="h-4 w-52" />
-          <Skeleton className="h-4 w-44" />
-        </div>
-      </div>
     </div>
   );
 }

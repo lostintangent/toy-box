@@ -2,6 +2,7 @@ import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { Button } from "@/shared/components/ui/button";
 import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,6 +10,12 @@ import {
 } from "@/shared/components/ui/dropdown-menu";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { cn } from "@/shared/utils";
+
+export type SidebarListItemStatus = {
+  ariaLabel: string;
+  tooltip: string;
+  icon: ReactNode;
+};
 
 export type SidebarListItemProps = Omit<
   ComponentProps<"button">,
@@ -20,6 +27,7 @@ export type SidebarListItemProps = Omit<
   badge?: ReactNode;
   menuItems: ReactNode;
   menuDisabled?: boolean;
+  status?: SidebarListItemStatus;
   isActive?: boolean;
   className?: string;
   buttonClassName?: string;
@@ -33,6 +41,7 @@ export function SidebarListItem({
   badge,
   menuItems,
   menuDisabled = false,
+  status,
   isActive = false,
   className,
   buttonClassName,
@@ -44,9 +53,9 @@ export function SidebarListItem({
       isActive={isActive}
       className={className}
       action={
-        <SidebarListItemMenu title={title} disabled={menuDisabled}>
+        <SidebarListItemAction title={title} status={status} menuDisabled={menuDisabled}>
           {menuItems}
-        </SidebarListItemMenu>
+        </SidebarListItemAction>
       }
     >
       <SidebarListItemButton
@@ -113,7 +122,7 @@ export function SidebarListItemButton({
   buttonClassName,
   titleClassName,
   ...props
-}: Omit<SidebarListItemProps, "className" | "menuDisabled" | "menuItems"> & {
+}: Omit<SidebarListItemProps, "className" | "menuDisabled" | "menuItems" | "status"> & {
   isActive: boolean;
   titleContent?: ReactNode;
 }) {
@@ -123,14 +132,9 @@ export function SidebarListItemButton({
       aria-current={isActive ? "page" : undefined}
       className={cn("mr-2 min-w-0 flex-1 text-left", buttonClassName)}
     >
-      <ScrollableFade
-        asChild
-        className={cn("flex items-center gap-1.5 whitespace-nowrap", titleClassName)}
-      >
-        <span>
-          {icon}
-          <span className="min-h-[1lh] shrink-0">{titleContent ?? title}</span>
-        </span>
+      <ScrollableFade className={cn("flex items-center gap-1.5 whitespace-nowrap", titleClassName)}>
+        {icon}
+        <span className="min-h-[1lh] shrink-0">{titleContent ?? title}</span>
       </ScrollableFade>
       {(time || badge) && (
         <span className="mt-1 flex min-w-0 items-center gap-1.5">
@@ -146,7 +150,44 @@ export function SidebarListItemButton({
   );
 }
 
-export function SidebarListItemMenu({
+export function SidebarListItemAction({
+  title,
+  status,
+  menuDisabled,
+  children,
+}: {
+  title: string;
+  status?: SidebarListItemStatus;
+  menuDisabled: boolean;
+  children: ReactNode;
+}) {
+  if (status) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <div
+              role="status"
+              className="ml-2 flex h-8 w-8 shrink-0 items-center justify-center"
+              aria-label={status.ariaLabel}
+            >
+              {status.icon}
+            </div>
+          }
+        />
+        <TooltipContent sideOffset={6}>{status.tooltip}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <SidebarListItemMenu title={title} disabled={menuDisabled}>
+      {children}
+    </SidebarListItemMenu>
+  );
+}
+
+function SidebarListItemMenu({
   title,
   disabled,
   children,
@@ -157,16 +198,18 @@ export function SidebarListItemMenu({
 }) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={disabled}
-          className="ml-2 h-8 w-8 shrink-0"
-          aria-label={`Actions for ${title}`}
-        >
-          <MoreHorizontal className="h-4 w-4" />
-        </Button>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={disabled}
+            className="ml-2 h-8 w-8 shrink-0"
+            aria-label={`Actions for ${title}`}
+          />
+        }
+      >
+        <MoreHorizontal className="h-4 w-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">{children}</DropdownMenuContent>
     </DropdownMenu>

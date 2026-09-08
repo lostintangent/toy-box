@@ -8,6 +8,7 @@ import { GlobToolCall } from "./GlobToolCall";
 import { QuestionToolCall } from "./QuestionToolCall";
 import { ReadToolCall } from "./ReadToolCall";
 import { SqlToolCall } from "./SqlToolCall";
+import { SkillToolCall } from "./SkillToolCall";
 import { WebFetchToolCall } from "./WebFetchToolCall";
 import type { ToolCallProps } from "./types";
 
@@ -26,6 +27,7 @@ const TOOL_RENDERERS: Record<string, ComponentType<ToolCallProps>> = {
   fetch: WebFetchToolCall,
   sql: SqlToolCall,
   agent: AgentToolCall,
+  skill: SkillToolCall,
 };
 
 export function ToolCallMessage({ toolCall, isActive }: ToolCallMessageProps) {

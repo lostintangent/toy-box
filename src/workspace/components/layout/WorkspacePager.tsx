@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { useAtom } from "@tanstack/react-store";
 import { ArrowLeft, X } from "lucide-react";
@@ -6,7 +6,7 @@ import { Button } from "@/shared/components/ui/button";
 import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { useFocusedPaneAtom } from "@workspace/hooks/layout/surface";
 import { cn } from "@/shared/utils";
-import { isEditorPane, paneSourceSessionId, type WorkspacePane } from "@workspace/model/panes";
+import { paneSourceSessionId, type WorkspacePane } from "@workspace/model/panes";
 import { WorkspacePaneView } from "../panes/WorkspacePaneView";
 import { SessionOverlay } from "@sessions/components/SessionOverlay";
 
@@ -34,21 +34,20 @@ export function WorkspacePager({
   const [focusedPaneId, setFocusedPaneId] = useAtom(useFocusedPaneAtom());
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const [statusSlot, setStatusSlot] = useState<HTMLDivElement | null>(null);
-  const paneIds = panes.map((pane) => pane.id);
-  const fallbackPaneId = panes[0]?.id ?? primaryPaneId;
-  const resolvedPrimaryPaneId = paneIds.includes(primaryPaneId) ? primaryPaneId : fallbackPaneId;
+  const [initialPaneIds] = useState<ReadonlySet<string>>(
+    () => new Set(panes.map((pane) => pane.id)),
+  );
 
   // The focused pane is the active page when it's one of ours; otherwise fall
   // back to the primary root pane. Focus clears centrally when its pane departs
   // (see WorkspaceSurfaceProvider), so a fresh selection lands on its own pane.
-  const effectiveActivePaneId =
-    focusedPaneId !== null && paneIds.includes(focusedPaneId)
-      ? focusedPaneId
-      : resolvedPrimaryPaneId;
-  const appearingPaneIds = useAppearingPanes(paneIds);
-
-  const activePane = panes.find((pane) => pane.id === effectiveActivePaneId);
-  const closeActivePane = activePane ? resolvePaneClose?.(activePane) : undefined;
+  const primaryPane = panes.find((pane) => pane.id === primaryPaneId) ?? panes[0];
+  const activePane =
+    (focusedPaneId === null ? undefined : panes.find((pane) => pane.id === focusedPaneId)) ??
+    primaryPane;
+  const activePaneId = activePane?.id ?? primaryPaneId;
+  const closeActivePane =
+    activePane && activePane.id !== primaryPane?.id ? resolvePaneClose?.(activePane) : undefined;
 
   // The pager's toolbar: an optional mobile back button, the dot strip, and
   // slots the active pane fills with transient status and persistent actions.
@@ -75,8 +74,8 @@ export function WorkspacePager({
         <div className="pointer-events-none absolute inset-x-0 flex justify-center">
           <PagerDots
             panes={panes}
-            activePaneId={effectiveActivePaneId}
-            appearingPaneIds={appearingPaneIds}
+            activePaneId={activePaneId}
+            initialPaneIds={initialPaneIds}
             onDotPress={setFocusedPaneId}
             onPointerDown={stopDrag}
           />
@@ -113,7 +112,7 @@ export function WorkspacePager({
       {renderedToolbar}
       <div className="relative min-h-0 flex-1">
         {panes.map((pane) => {
-          const isActive = pane.id === effectiveActivePaneId;
+          const isActive = pane.id === activePaneId;
           const associatedSessionId = paneSourceSessionId(pane);
           const hasSourceSessionPane =
             associatedSessionId !== undefined &&
@@ -133,6 +132,7 @@ export function WorkspacePager({
               <WorkspacePaneView
                 pane={pane}
                 variant="compact"
+                isVisible={isActive}
                 slots={{
                   actions: isActive ? actionsSlot : null,
                   status: isActive ? statusSlot : null,
@@ -152,7 +152,7 @@ export function WorkspacePager({
 interface PagerDotsProps {
   panes: WorkspacePane[];
   activePaneId: string;
-  appearingPaneIds: ReadonlySet<string>;
+  initialPaneIds: ReadonlySet<string>;
   onDotPress: (paneId: string) => void;
   onPointerDown?: (event: ReactPointerEvent) => void;
 }
@@ -160,14 +160,13 @@ interface PagerDotsProps {
 function PagerDots({
   panes,
   activePaneId,
-  appearingPaneIds,
+  initialPaneIds,
   onDotPress,
   onPointerDown,
 }: PagerDotsProps) {
   return (
     <div
       className="pointer-events-auto flex items-center justify-center gap-1 rounded-full bg-muted/60 px-1.5 py-1 md:px-1 md:py-0.5"
-      role="tablist"
       onPointerDown={onPointerDown}
     >
       {panes.map((pane) => (
@@ -175,7 +174,7 @@ function PagerDots({
           key={pane.id}
           pane={pane}
           isActive={pane.id === activePaneId}
-          isAppearing={appearingPaneIds.has(pane.id)}
+          animateEntry={!initialPaneIds.has(pane.id)}
           onPress={onDotPress}
         />
       ))}
@@ -186,7 +185,7 @@ function PagerDots({
 interface PagerDotProps {
   pane: WorkspacePane;
   isActive: boolean;
-  isAppearing: boolean;
+  animateEntry: boolean;
   onPress: (paneId: string) => void;
 }
 
@@ -230,44 +229,32 @@ function SessionPagerDot({
 function PagerDotButton({
   pane,
   isActive,
-  isAppearing,
+  animateEntry,
   onPress,
   isRunning = false,
   isWaiting = false,
   isUnread = false,
 }: PagerDotButtonProps) {
+  const presentation = getPagerDotPresentation(pane);
   // Visual state priority: active > running > waiting > unread > pane kind
   const dotClass = isActive
     ? "bg-foreground h-3 w-3"
-    : isRunning
-      ? "bg-sky-500 h-2.5 w-2.5 animate-pulse"
-      : isWaiting
-        ? "bg-amber-500 h-2.5 w-2.5"
-        : isUnread
-          ? "bg-unread h-2.5 w-2.5"
-          : pane.kind === "canvas"
-            ? "bg-violet-500 h-2.5 w-2.5"
-            : pane.kind === "app"
-              ? "bg-amber-500 h-2.5 w-2.5"
-              : pane.kind === "editor"
-                ? "bg-emerald-500 h-2.5 w-2.5"
-                : "bg-muted-foreground/40 h-2.5 w-2.5";
-  const label =
-    pane.kind === "inbox"
-      ? "Inbox"
-      : pane.kind === "canvas"
-        ? `Canvas ${pane.canvas.title || pane.canvas.canvasId}`
-        : pane.kind === "app"
-          ? "App"
-          : isEditorPane(pane)
-            ? pane.title
-            : "Session";
+    : cn(
+        "h-2.5 w-2.5",
+        isRunning
+          ? "bg-sky-500 animate-pulse"
+          : isWaiting
+            ? "bg-amber-500"
+            : isUnread
+              ? "bg-unread"
+              : presentation.colorClassName,
+      );
 
   return (
     <button
-      role="tab"
-      aria-selected={isActive}
-      aria-label={`${label} ${isActive ? "(active)" : ""}`}
+      type="button"
+      aria-label={presentation.label}
+      aria-current={isActive ? "page" : undefined}
       className="flex items-center justify-center h-5 w-5 md:h-4 md:w-4 touch-manipulation"
       onClick={() => onPress(pane.id)}
     >
@@ -275,40 +262,32 @@ function PagerDotButton({
         className={cn(
           "rounded-full transition-all duration-200",
           dotClass,
-          isAppearing && "animate-in fade-in zoom-in-50 duration-300",
+          animateEntry && "animate-in fade-in zoom-in-50 duration-300",
         )}
       />
     </button>
   );
 }
 
-/**
- * Tracks which panes appeared after the initial render. Returns pane IDs that
- * auto-clear after the dot entry animation window.
- */
-function useAppearingPanes(ids: string[]): ReadonlySet<string> {
-  const knownIdsRef = useRef<Set<string> | null>(null);
-  const [appearingIds, setAppearingIds] = useState<ReadonlySet<string>>(() => new Set());
-
-  // Seed on first render — these are not "new"
-  if (knownIdsRef.current === null) {
-    knownIdsRef.current = new Set(ids);
+function getPagerDotPresentation(pane: WorkspacePane): {
+  label: string;
+  colorClassName: string;
+} {
+  switch (pane.kind) {
+    case "inbox":
+      return { label: "Inbox", colorClassName: "bg-muted-foreground/40" };
+    case "app":
+      return { label: "App", colorClassName: "bg-amber-500" };
+    case "channel":
+      return { label: "Channel", colorClassName: "bg-cyan-500" };
+    case "session":
+      return { label: "Session", colorClassName: "bg-muted-foreground/40" };
+    case "canvas":
+      return {
+        label: `Canvas ${pane.canvas.title || pane.canvas.canvasId}`,
+        colorClassName: "bg-violet-500",
+      };
+    case "editor":
+      return { label: pane.title, colorClassName: "bg-emerald-500" };
   }
-
-  useEffect(() => {
-    const known = knownIdsRef.current!;
-    const justAppearedIds = ids.filter((id) => !known.has(id));
-
-    for (const id of ids) {
-      known.add(id);
-    }
-
-    if (justAppearedIds.length === 0) return;
-
-    setAppearingIds(new Set(justAppearedIds));
-    const timer = setTimeout(() => setAppearingIds(new Set()), 300);
-    return () => clearTimeout(timer);
-  }, [ids]);
-
-  return appearingIds;
 }

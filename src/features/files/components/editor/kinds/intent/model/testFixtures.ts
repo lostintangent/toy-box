@@ -446,14 +446,14 @@ export function optionExhibitsFixture(): IntentDocument {
   decision.options[0]!.exhibit = {
     id: "durable-state-preview",
     title: "Durable state preview",
-    kind: "html",
+    kind: "prototype",
     change: "new",
     content: '<section aria-label="Durable state">Restored after restart</section>',
   };
   decision.options[1]!.exhibit = {
     id: "ephemeral-state-preview",
     title: "Ephemeral state preview",
-    kind: "html",
+    kind: "prototype",
     change: "preserved",
     content: '<section aria-label="Ephemeral state">Reset after restart</section>',
   };

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "shadcn/tailwind.css";
 @import "../theme.css";
 
 @plugin "@tailwindcss/typography";
@@ -47,48 +48,6 @@
 @utility section-heading {
   @apply text-2xs font-semibold text-foreground/70 uppercase;
   letter-spacing: 0.08em;
-}
-
-@layer utilities {
-  .scrollable-fade {
-    --scroll-fade-size: 2rem;
-    --scroll-fade-start-size: 0px;
-    --scroll-fade-end-size: 0px;
-
-    scrollbar-width: none;
-    mask-mode: alpha;
-    mask-position: 0 0;
-    mask-repeat: no-repeat;
-    mask-size: 100% 100%;
-
-    &[data-scrollable-fade="horizontal"] {
-      mask-image: linear-gradient(
-        to right,
-        transparent 0,
-        #fff var(--scroll-fade-start-size),
-        #fff calc(100% - var(--scroll-fade-end-size)),
-        transparent 100%
-      );
-    }
-
-    &[data-scrollable-fade="vertical"] {
-      mask-image: linear-gradient(
-        to bottom,
-        transparent 0,
-        #fff var(--scroll-fade-start-size),
-        #fff calc(100% - var(--scroll-fade-end-size)),
-        transparent 100%
-      );
-    }
-
-    &[data-scroll-fade-start] {
-      --scroll-fade-start-size: var(--scroll-fade-size);
-    }
-
-    &[data-scroll-fade-end] {
-      --scroll-fade-end-size: var(--scroll-fade-size);
-    }
-  }
 }
 
 /* Safe area utilities for iOS Dynamic Island / notch / home indicator */
@@ -149,8 +108,6 @@ code {
   --diff-modified-old-bg: oklch(0.577 0.245 27.325 / 10%);
   --diff-modified-new-bg: oklch(0.527 0.194 149.214 / 10%);
 
-  --terminal-bg: #ffffff;
-
   /* Unread-activity indicator (session + automation list dots). blue-500. */
   --unread: oklch(0.623 0.214 259.815);
 }
@@ -172,7 +129,7 @@ code {
     --accent: oklch(0.269 0 0);
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
+    --border: oklch(0.3 0 0);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
 
@@ -184,8 +141,6 @@ code {
     --diff-removed-bg-strong: oklch(0.704 0.191 22.216 / 30%);
     --diff-modified-old-bg: oklch(0.704 0.191 22.216 / 10%);
     --diff-modified-new-bg: oklch(0.65 0.18 149.579 / 10%);
-
-    --terminal-bg: #1e1e1e;
 
     /* blue-400 for stronger contrast on dark surfaces. */
     --unread: oklch(0.707 0.165 254.624);

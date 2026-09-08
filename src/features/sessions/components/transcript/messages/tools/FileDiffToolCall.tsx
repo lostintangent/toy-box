@@ -384,7 +384,7 @@ function DiffLineRenderer({ line }: { line: DiffLine }) {
 
 function DiffView({ diffLines }: { diffLines: DiffLine[] }) {
   return (
-    <pre className="text-xs p-2 rounded overflow-x-auto max-h-64 font-mono bg-muted/50">
+    <pre className="max-h-64 overflow-x-auto rounded bg-secondary-background p-2 font-mono text-xs">
       <div className="inline-block min-w-full">
         {diffLines.map((line, index) => (
           // eslint-disable-next-line react/no-array-index-key -- diff rows are a positional rendering of one computed diff

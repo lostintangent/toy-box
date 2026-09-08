@@ -51,6 +51,7 @@ describe("bundled SDK skills", () => {
       automation: universal,
       inbox: universal,
       worker: universal,
+      agent: universal,
       hyper: [...universal, "create-toy-box-editor"],
     } satisfies Record<SessionType, readonly string[]>;
 

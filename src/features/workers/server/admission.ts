@@ -14,7 +14,15 @@ import { AppDatabase } from "@apps/server/database";
 import { resolveWorkspaceFile } from "@files/server/paths";
 import { workspaceFileId } from "@files/model";
 import { SESSION_ID_PREFIX } from "@sessions/model/constants";
-import type { SessionCompletion } from "@sessions/model";
+import type { SessionLaunch } from "@sessions/model";
+
+type SessionWorkerInput = SessionLaunch & {
+  parentSessionId: string;
+  name?: Worker["name"];
+  ephemeral?: boolean;
+};
+
+type WorkerSessionReceipt = Awaited<ReturnType<typeof supervisor.spawnWorker>>;
 
 export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId: string }> {
   const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
@@ -30,8 +38,8 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId:
       throw new Error("Invalid file path.");
     }
     const worker: Worker = { ...details, type: "file", file: input.file, ephemeral: true };
-    admitWorker(worker, () =>
-      executeWorker(
+    void admitWorker(worker, () =>
+      spawnWorkerSession(
         input,
         {
           ...input.message,
@@ -52,10 +60,10 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId:
       appId: input.appId,
       ephemeral: input.ephemeral ?? true,
     };
-    admitWorker(worker, async () => {
+    void admitWorker(worker, async () => {
       const app = await apps.get(input.appId);
       if (!app) throw new Error("The app was deleted before its worker started.");
-      return executeWorker(
+      return spawnWorkerSession(
         input,
         {
           ...input.message,
@@ -69,45 +77,73 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId:
   return { sessionId };
 }
 
-function admitWorker(worker: Worker, execute: () => Promise<SessionCompletion>): void {
-  startWorker(worker);
+/** Spawn a worker whose trusted owner is injected by the invoking session tool. */
+export async function spawnSessionWorker(
+  input: SessionWorkerInput,
+): Promise<{ sessionId: string }> {
+  const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
+  const worker: Worker = {
+    type: "session",
+    sessionId,
+    parentSessionId: input.parentSessionId,
+    ephemeral: input.ephemeral ?? false,
+    ...(input.name === undefined ? {} : { name: input.name }),
+  };
+
+  await admitWorker(worker, () => spawnWorkerSession(input, input.message, worker));
+  return { sessionId };
+}
+
+function admitWorker(
+  worker: Worker,
+  spawn: () => Promise<WorkerSessionReceipt>,
+): Promise<WorkerSessionReceipt> {
   const receipt = registerPendingSessionCompletion(worker.sessionId);
-  void executeAdmittedWorker(worker.sessionId, receipt, execute).catch(reportWorkerError);
+  // Publish only after waiting by ID is safe. Workspace observers can react
+  // synchronously to worker.started before the backing Session exists.
+  startWorker(worker);
+  const workerSession = spawn();
+  void completeAdmittedWorker(worker.sessionId, receipt, workerSession).catch(reportWorkerError);
+  return workerSession;
 }
 
 export async function cancelWorker(input: CancelWorkerInput): Promise<boolean> {
   if (!getRequestedWorker(input)) return false;
 
-  // Clear owner progress immediately, including while the supervisor is still
-  // preparing the worker's runtime.
-  finishWorker(input.workerSessionId);
-  rejectWorkerCompletion(input.workerSessionId);
-  await supervisor.cancelWorker(input.workerSessionId);
+  await cancelAdmittedWorker(input.workerSessionId);
   return true;
 }
 
-async function executeWorker(
-  input: SpawnWorkerInput,
-  message: SpawnWorkerInput["message"],
+/** Cancel trusted work after its owner has already been resolved. */
+export async function cancelAdmittedWorker(sessionId: string): Promise<boolean> {
+  // Clear owner progress immediately, including while the supervisor is still
+  // preparing the worker's runtime.
+  finishWorker(sessionId);
+  rejectWorkerCompletion(sessionId);
+  return supervisor.cancelWorker(sessionId);
+}
+
+async function spawnWorkerSession(
+  input: Pick<SessionLaunch, "directory" | "useWorktree">,
+  message: SessionLaunch["message"],
   worker: Worker,
-): Promise<SessionCompletion> {
+): Promise<WorkerSessionReceipt> {
   if (!hasWorker(worker.sessionId)) throw new WorkerCanceledError(worker.sessionId);
-  const receipt = await supervisor.spawnWorker({
+  return supervisor.spawnWorker({
     worker,
     message,
     directory: input.directory,
     useWorktree: input.useWorktree,
   });
-  return receipt.waitForCompletion();
 }
 
-async function executeAdmittedWorker(
+async function completeAdmittedWorker(
   sessionId: string,
   receipt: ReturnType<typeof registerPendingSessionCompletion>,
-  execute: () => Promise<SessionCompletion>,
+  workerSession: Promise<WorkerSessionReceipt>,
 ): Promise<void> {
   try {
-    const completion = await execute();
+    const completion = await (await workerSession).waitForCompletion();
     receipt.resolve(completion);
     if (completion.status !== "completed") {
       throw new Error("The worker did not complete.");

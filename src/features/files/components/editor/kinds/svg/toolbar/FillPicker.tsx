@@ -54,19 +54,21 @@ export function FillPicker({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={`Fill style ${currentStyle}`}
-          className={cn(
-            "flex items-center gap-1 p-1 rounded transition-colors",
-            disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-foreground/10",
-          )}
-        >
-          <FillIcon fillStyle={currentStyle} color={currentColor} size={16} />
-          <ChevronDown size={12} className="opacity-50" />
-        </button>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={`Fill style ${currentStyle}`}
+            className={cn(
+              "flex items-center gap-1 p-1 rounded transition-colors",
+              disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-foreground/10",
+            )}
+          />
+        }
+      >
+        <FillIcon fillStyle={currentStyle} color={currentColor} size={16} />
+        <ChevronDown size={12} className="opacity-50" />
       </DropdownMenuTrigger>
       {!disabled && (
         <DropdownMenuContent align="start" className="p-2 w-[180px]">

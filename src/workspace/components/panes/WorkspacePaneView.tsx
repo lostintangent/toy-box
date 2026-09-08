@@ -6,6 +6,7 @@ import type { WorkspacePane } from "@workspace/model/panes";
 import { PaneSlotsProvider, type PaneSlots } from "./shell/PaneSlots";
 import { CanvasPane } from "@sessions/components/CanvasPane";
 import { SessionPane } from "@sessions/components/SessionPane";
+import { ChannelPane } from "@channels/components/ChannelPane";
 
 export type PaneVariant = "normal" | "compact";
 
@@ -13,6 +14,7 @@ type WorkspacePaneViewProps = {
   pane: WorkspacePane;
   slots: PaneSlots;
   variant?: PaneVariant;
+  isVisible?: boolean;
   children?: ReactNode;
   onFocusPane?: (paneId: string) => void;
 };
@@ -22,6 +24,7 @@ export function WorkspacePaneView({
   pane,
   slots,
   variant = "normal",
+  isVisible = true,
   children,
   onFocusPane,
 }: WorkspacePaneViewProps) {
@@ -36,6 +39,9 @@ export function WorkspacePaneView({
       break;
     case "session":
       content = <SessionPane sessionId={pane.sessionId} variant={variant} />;
+      break;
+    case "channel":
+      content = <ChannelPane channelId={pane.channelId} isVisible={isVisible} variant={variant} />;
       break;
     case "canvas":
       content = <CanvasPane canvas={pane.canvas} />;

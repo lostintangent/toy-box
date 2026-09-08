@@ -218,37 +218,41 @@ export function SvgToolbar({
 
       <div className="flex items-center gap-0.5">
         <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={store.actions.undo}
-              disabled={readOnly || !canUndo}
-              aria-label="Undo"
-              className={cn(
-                "p-1 rounded transition-colors shrink-0",
-                !readOnly && canUndo ? "hover:bg-foreground/10" : "opacity-40 cursor-not-allowed",
-              )}
-            >
-              <Undo2 size={14} />
-            </button>
-          </TooltipTrigger>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={store.actions.undo}
+                disabled={readOnly || !canUndo}
+                aria-label="Undo"
+                className={cn(
+                  "p-1 rounded transition-colors shrink-0",
+                  !readOnly && canUndo ? "hover:bg-foreground/10" : "opacity-40 cursor-not-allowed",
+                )}
+              >
+                <Undo2 size={14} />
+              </button>
+            }
+          />
           <TooltipContent>Undo (Ctrl+Z)</TooltipContent>
         </Tooltip>
         <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={store.actions.redo}
-              disabled={readOnly || !canRedo}
-              aria-label="Redo"
-              className={cn(
-                "p-1 rounded transition-colors shrink-0",
-                !readOnly && canRedo ? "hover:bg-foreground/10" : "opacity-40 cursor-not-allowed",
-              )}
-            >
-              <Redo2 size={14} />
-            </button>
-          </TooltipTrigger>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={store.actions.redo}
+                disabled={readOnly || !canRedo}
+                aria-label="Redo"
+                className={cn(
+                  "p-1 rounded transition-colors shrink-0",
+                  !readOnly && canRedo ? "hover:bg-foreground/10" : "opacity-40 cursor-not-allowed",
+                )}
+              >
+                <Redo2 size={14} />
+              </button>
+            }
+          />
           <TooltipContent>Redo (Ctrl+Shift+Z)</TooltipContent>
         </Tooltip>
       </div>
@@ -268,26 +272,28 @@ type ToolButtonProps = {
 function ToolButton({ active, onClick, icon, tooltip, muted, disabled }: ToolButtonProps) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={onClick}
-          disabled={disabled}
-          aria-label={tooltip}
-          className={cn(
-            "shrink-0 rounded p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-            disabled
-              ? undefined
-              : active
-                ? "bg-accent text-accent-foreground"
-                : muted
-                  ? "bg-foreground/10 text-muted-foreground"
-                  : "hover:bg-foreground/10",
-          )}
-        >
-          {icon}
-        </button>
-      </TooltipTrigger>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            aria-label={tooltip}
+            className={cn(
+              "shrink-0 rounded p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+              disabled
+                ? undefined
+                : active
+                  ? "bg-accent text-accent-foreground"
+                  : muted
+                    ? "bg-foreground/10 text-muted-foreground"
+                    : "hover:bg-foreground/10",
+            )}
+          >
+            {icon}
+          </button>
+        }
+      />
       <TooltipContent>{tooltip}</TooltipContent>
     </Tooltip>
   );
@@ -306,22 +312,24 @@ type ColorPickerProps = {
 function ColorPicker({ color, onColorChange, disabled }: ColorPickerProps) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={`Stroke color ${color}`}
-          className={cn(
-            "flex items-center gap-1 p-1 rounded transition-colors",
-            disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-foreground/10",
-          )}
-        >
-          <div
-            className="w-4 h-4 rounded border border-foreground/20"
-            style={{ backgroundColor: color }}
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={`Stroke color ${color}`}
+            className={cn(
+              "flex items-center gap-1 p-1 rounded transition-colors",
+              disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-foreground/10",
+            )}
           />
-          <ChevronDown size={12} className="opacity-50" />
-        </button>
+        }
+      >
+        <div
+          className="w-4 h-4 rounded border border-foreground/20"
+          style={{ backgroundColor: color }}
+        />
+        <ChevronDown size={12} className="opacity-50" />
       </DropdownMenuTrigger>
       {!disabled && (
         <DropdownMenuContent align="start" className="p-2">
@@ -360,19 +368,21 @@ type SizeSelectorProps = {
 function SizeSelector({ size, sizes, onSizeChange, label, disabled }: SizeSelectorProps) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={`${label} ${size}px`}
-          className={cn(
-            "flex items-center gap-1 px-1.5 py-1 rounded transition-colors text-xs min-w-[40px] justify-between",
-            disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-foreground/10",
-          )}
-        >
-          <span>{size}</span>
-          <ChevronDown size={12} className="opacity-50" />
-        </button>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={`${label} ${size}px`}
+            className={cn(
+              "flex items-center gap-1 px-1.5 py-1 rounded transition-colors text-xs min-w-[40px] justify-between",
+              disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-foreground/10",
+            )}
+          />
+        }
+      >
+        <span>{size}</span>
+        <ChevronDown size={12} className="opacity-50" />
       </DropdownMenuTrigger>
       {!disabled && (
         <DropdownMenuContent align="start">
@@ -405,28 +415,32 @@ function ShapePicker({ active, shape, onActivate, muted, disabled }: ShapePicker
   return (
     <DropdownMenu>
       <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              disabled={disabled}
-              aria-label={`Shape tool: ${currentShape.label}`}
-              onClick={() => onActivate(shape)}
-              className={cn(
-                "flex shrink-0 items-center gap-0.5 rounded p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                disabled
-                  ? undefined
-                  : active
-                    ? "bg-accent text-accent-foreground"
-                    : muted
-                      ? "bg-foreground/10 text-muted-foreground"
-                      : "hover:bg-foreground/10",
-              )}
-            >
-              {currentShape.icon}
-              <ChevronDown size={10} className="opacity-50" />
-            </button>
-          </DropdownMenuTrigger>
+        <TooltipTrigger
+          render={
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-label={`Shape tool: ${currentShape.label}`}
+                  onClick={() => onActivate(shape)}
+                  className={cn(
+                    "flex shrink-0 items-center gap-0.5 rounded p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                    disabled
+                      ? undefined
+                      : active
+                        ? "bg-accent text-accent-foreground"
+                        : muted
+                          ? "bg-foreground/10 text-muted-foreground"
+                          : "hover:bg-foreground/10",
+                  )}
+                />
+              }
+            />
+          }
+        >
+          {currentShape.icon}
+          <ChevronDown size={10} className="opacity-50" />
         </TooltipTrigger>
         <TooltipContent>Shape tool ({currentShape.label})</TooltipContent>
       </Tooltip>

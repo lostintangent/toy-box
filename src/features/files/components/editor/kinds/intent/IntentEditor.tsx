@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui/popover";
+import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
 import { cn } from "@/shared/utils";
 import type { EditorProps } from "../index";
@@ -164,27 +165,27 @@ function IntentTableOfContents({
 
   return (
     <Popover open={open} onOpenChange={changeOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label="Table of contents"
-          onPointerEnter={openFromPointer}
-          onPointerLeave={scheduleClose}
-          className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <TableOfContents aria-hidden className="size-3.5" />
-        </button>
-      </PopoverTrigger>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            aria-label="Table of contents"
+            onPointerEnter={openFromPointer}
+            onPointerLeave={scheduleClose}
+            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <TableOfContents aria-hidden className="size-3.5" />
+          </button>
+        }
+      />
       <PopoverContent
         align="start"
         sideOffset={4}
         className="w-64 p-1.5"
         onPointerEnter={cancelClose}
         onPointerLeave={scheduleClose}
-        onOpenAutoFocus={(event) => {
-          if (openedByPointerRef.current) event.preventDefault();
-        }}
-        onCloseAutoFocus={(event) => event.preventDefault()}
+        initialFocus={() => !openedByPointerRef.current}
+        finalFocus={false}
       >
         <nav aria-label="Intent sections">
           <ol className="space-y-0.5">
@@ -222,21 +223,19 @@ function IntentTabPicker({
   if (tabs.length < 2) return null;
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={`Intent tab: ${activeTab.title}`}
-          className="inline-flex h-8 max-w-52 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <span className="truncate">{activeTab.title}</span>
-          <ChevronDown aria-hidden className="size-3 shrink-0 opacity-60" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="min-w-40"
-        onCloseAutoFocus={(event) => event.preventDefault()}
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Intent tab: ${activeTab.title}`}
+            className="inline-flex h-8 max-w-52 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+          />
+        }
       >
+        <span className="truncate">{activeTab.title}</span>
+        <ChevronDown aria-hidden className="size-3 shrink-0 opacity-60" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-40" finalFocus={false}>
         {tabs.map((tab) => {
           const anchor = tab.sections[0];
           if (!anchor) return null;
@@ -246,7 +245,7 @@ function IntentTabPicker({
               key={anchor.id}
               aria-current={active ? "page" : undefined}
               className="text-xs"
-              onSelect={() => onSelect(anchor.id)}
+              onClick={() => onSelect(anchor.id)}
             >
               <span className="min-w-0 flex-1 truncate">{tab.title}</span>
               {active && <Check aria-hidden className="ml-auto size-3.5" />}
@@ -641,7 +640,7 @@ export function IntentEditor({
   }
 
   return (
-    <div className="h-full overflow-auto bg-background">
+    <ScrollableFade axis="vertical" rootClassName="h-full bg-background">
       <div className={cn("mx-auto max-w-6xl space-y-3.5", variant === "compact" ? "p-3" : "p-5")}>
         <header className="px-1 pb-1">
           <h1 className="text-lg font-semibold">{intent.title}</h1>
@@ -649,20 +648,22 @@ export function IntentEditor({
             <IntentTabPicker tabs={tabs} activeTab={activeTab} onSelect={setSelectedTabSectionId} />
             <IntentTableOfContents sections={visibleSections} onNavigate={navigateToSection} />
             <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={disclosureAction}
-                  onClick={() => setAllSectionsOpen(allSectionsCollapsed)}
-                  className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  {allSectionsCollapsed ? (
-                    <ChevronsUpDown aria-hidden className="size-3.5" />
-                  ) : (
-                    <ChevronsDownUp aria-hidden className="size-3.5" />
-                  )}
-                </button>
-              </TooltipTrigger>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={disclosureAction}
+                    onClick={() => setAllSectionsOpen(allSectionsCollapsed)}
+                    className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    {allSectionsCollapsed ? (
+                      <ChevronsUpDown aria-hidden className="size-3.5" />
+                    ) : (
+                      <ChevronsDownUp aria-hidden className="size-3.5" />
+                    )}
+                  </button>
+                }
+              />
               <TooltipContent sideOffset={6}>{disclosureAction}</TooltipContent>
             </Tooltip>
             {plan &&
@@ -864,6 +865,6 @@ export function IntentEditor({
         onUpdateRecord={editable ? saveRecord : undefined}
         onUpdatePlanStep={editable ? savePlanStep : undefined}
       />
-    </div>
+    </ScrollableFade>
   );
 }

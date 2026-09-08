@@ -39,24 +39,26 @@ export function SidebarFooter({
           className="h-4! w-px! bg-muted-foreground/50! mx-1 translate-y-px"
         />
         <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={onOpenInbox}
-              className="relative font-bold text-foreground transition-colors hover:text-primary"
-              aria-label={
-                showInboxUnreadIndicator ? `${appTitle}, unread inbox activity` : appTitle
-              }
-            >
-              {appTitle}
-              {showInboxUnreadIndicator && (
-                <span
-                  className="absolute -right-1 top-1.5 h-1.5 w-1.5 rounded-full bg-unread "
-                  aria-hidden="true"
-                />
-              )}
-            </button>
-          </TooltipTrigger>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={onOpenInbox}
+                className="relative font-bold text-foreground transition-colors hover:text-primary"
+                aria-label={
+                  showInboxUnreadIndicator ? `${appTitle}, unread inbox activity` : appTitle
+                }
+              >
+                {appTitle}
+                {showInboxUnreadIndicator && (
+                  <span
+                    className="absolute -right-1 top-1.5 h-1.5 w-1.5 rounded-full bg-unread "
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            }
+          />
           <TooltipContent sideOffset={6}>Open inbox</TooltipContent>
         </Tooltip>
       </div>

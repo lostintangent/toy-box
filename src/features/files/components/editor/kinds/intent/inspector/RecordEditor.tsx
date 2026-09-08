@@ -52,6 +52,10 @@ export function IntentRecordEditor({
     "sectionId" in record
       ? INTENT_CHANGES.filter((change) => change !== "existing")
       : INTENT_CHANGES;
+  const changeOptions = allowedChanges.map((value) => ({
+    value,
+    label: CHANGE_EDITOR_LABELS[value],
+  }));
 
   function updateField(fieldId: string, value: string | string[]) {
     setError(undefined);
@@ -89,6 +93,7 @@ export function IntentRecordEditor({
       <LabeledEditorField label="Change">
         {(id) => (
           <Select
+            items={changeOptions}
             value={draft.change}
             onValueChange={(change: Change) => {
               setError(undefined);
@@ -99,9 +104,9 @@ export function IntentRecordEditor({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {allowedChanges.map((change) => (
-                <SelectItem key={change} value={change}>
-                  {CHANGE_EDITOR_LABELS[change]}
+              {changeOptions.map((change) => (
+                <SelectItem key={change.value} value={change.value}>
+                  {change.label}
                 </SelectItem>
               ))}
             </SelectContent>

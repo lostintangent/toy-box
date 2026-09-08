@@ -5,6 +5,8 @@ import {
   updateSettings as requestSettingsUpdate,
 } from "./server/functions";
 import { applyWorkspaceEventToSessionQueries } from "@sessions/queryCache";
+import { applyAgentEvent } from "@agents/queryCache";
+import { applyChannelListEvent } from "@channels/queryCache";
 import { areSettingsEqual, type Settings } from "./model/config/settings";
 import type { WorkspaceEvent } from "./model/events";
 import type { WorkspaceAction } from "./model/state/actions";
@@ -31,6 +33,8 @@ export const workspaceQueries = {
 export function applyWorkspaceEvent(queryClient: QueryClient, event: WorkspaceEvent): void {
   recordWorkspaceQueryEvent(queryClient, event);
   applyWorkspaceEventToSessionQueries(queryClient, event);
+  applyAgentEvent(queryClient, event);
+  applyChannelListEvent(queryClient, event);
   queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), (state) =>
     state ? reduceWorkspaceState(state, event) : state,
   );

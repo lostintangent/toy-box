@@ -20,7 +20,6 @@ import { paneSourceSessionId, type WorkspacePane } from "@workspace/model/panes"
  *  the shared focus value drives maximize and restore. */
 export interface WorkspaceGridProps {
   panes: WorkspacePane[];
-  onCloseSession: (sessionId: string) => void;
   resolvePaneClose: (pane: WorkspacePane) => (() => void) | undefined;
 }
 
@@ -88,6 +87,22 @@ export function applyWorkspaceGridCountChange(
   return nextLayout;
 }
 
+export function resolveGridSessionOverlayId(
+  pane: WorkspacePane,
+  panes: readonly WorkspacePane[],
+  isMaximized: boolean,
+): string | undefined {
+  if (pane.kind === "session") return undefined;
+
+  const sourceSessionId = paneSourceSessionId(pane);
+  if (sourceSessionId === undefined) return undefined;
+
+  const sourceSessionIsVisible = panes.some(
+    (candidate) => candidate.kind === "session" && candidate.sessionId === sourceSessionId,
+  );
+  return isMaximized || !sourceSessionIsVisible ? sourceSessionId : undefined;
+}
+
 type PanelGroupRef = RefObject<ImperativePanelGroupHandle | null>;
 
 function readPanelGroupLayout(
@@ -122,13 +137,13 @@ function applyWorkspaceGridLayout(
   rowGroupRef.current?.setLayout(layout.rows);
 }
 
-export function WorkspaceGrid({ panes, onCloseSession, resolvePaneClose }: WorkspaceGridProps) {
+export function WorkspaceGrid({ panes, resolvePaneClose }: WorkspaceGridProps) {
   const count = panes.length;
   const [isDragging, setIsDragging] = useState(false);
   const [focusedPaneId, setFocusedPaneId] = useAtom(useFocusedPaneAtom());
 
   // Group defaults are fixed at mount; later count changes apply a complete layout.
-  const [initialLayout] = useState(() => defaultWorkspaceGridLayout(panes.length));
+  const [initialLayout] = useState(() => defaultWorkspaceGridLayout(count));
 
   const rowGroupRef = useRef<ImperativePanelGroupHandle>(null);
   const topGroupRef = useRef<ImperativePanelGroupHandle>(null);
@@ -139,7 +154,7 @@ export function WorkspaceGrid({ panes, onCloseSession, resolvePaneClose }: Works
   const transitionClass = !isDragging ? "transition-[flex-grow] duration-300 ease-layout" : "";
   const isResizeLocked = focusedPaneId !== null;
 
-  function handleMinimize() {
+  function restoreLayout() {
     const saved = savedLayoutRef.current;
     savedLayoutRef.current = null;
 
@@ -147,19 +162,19 @@ export function WorkspaceGrid({ panes, onCloseSession, resolvePaneClose }: Works
       rowGroupRef,
       topGroupRef,
       bottomGroupRef,
-      saved ?? defaultWorkspaceGridLayout(panes.length),
+      saved ?? defaultWorkspaceGridLayout(count),
     );
     setFocusedPaneId(null);
   }
 
-  useHotkey("Escape", handleMinimize, { enabled: focusedPaneId !== null });
+  useHotkey("Escape", restoreLayout, { enabled: focusedPaneId !== null });
 
-  function renderResizeHandle(cellNumber: number) {
+  function renderResizeHandle(requiredPaneCount: number) {
     return (
       <ResizableHandle
         disabled={isResizeLocked}
         onDragging={setIsDragging}
-        className={cn((count <= cellNumber || isResizeLocked) && "hidden")}
+        className={cn((count < requiredPaneCount || isResizeLocked) && "hidden")}
       />
     );
   }
@@ -230,15 +245,10 @@ export function WorkspaceGrid({ panes, onCloseSession, resolvePaneClose }: Works
     );
   }, [count, focusedPaneId, initialLayout, setFocusedPaneId]);
 
-  function renderCell(index: number, showControls: boolean) {
+  function renderCell(index: number) {
     const pane = panes[index];
     if (!pane) return null;
-    const sourceSessionId = paneSourceSessionId(pane);
-    const hasSourceSessionPane =
-      sourceSessionId !== undefined &&
-      panes.some(
-        (candidate) => candidate.kind === "session" && candidate.sessionId === sourceSessionId,
-      );
+    const isMaximized = focusedPaneId === pane.id;
 
     const onClosePane = resolvePaneClose(pane);
 
@@ -246,13 +256,12 @@ export function WorkspaceGrid({ panes, onCloseSession, resolvePaneClose }: Works
       <WorkspaceGridCell
         key={pane.id}
         pane={pane}
-        onCloseSession={onCloseSession}
         onClosePane={onClosePane}
-        showControls={showControls}
-        isMaximized={focusedPaneId === pane.id}
-        onFocusPane={setFocusedPaneId}
-        onMinimize={handleMinimize}
-        hasSourceSessionPane={hasSourceSessionPane}
+        showWindowControls={count > 1}
+        sessionOverlayId={resolveGridSessionOverlayId(pane, panes, isMaximized)}
+        isMaximized={isMaximized}
+        onMaximize={() => setFocusedPaneId(pane.id)}
+        onRestore={restoreLayout}
       />
     );
   }
@@ -266,22 +275,22 @@ export function WorkspaceGrid({ panes, onCloseSession, resolvePaneClose }: Works
             minSize={0}
             className={transitionClass}
           >
-            {renderCell(0, count > 1)}
+            {renderCell(0)}
           </ResizablePanel>
 
-          {renderResizeHandle(1)}
+          {renderResizeHandle(2)}
 
           <ResizablePanel
             defaultSize={initialLayout.top[1]}
             minSize={0}
             className={transitionClass}
           >
-            {renderCell(1, true)}
+            {renderCell(1)}
           </ResizablePanel>
         </ResizablePanelGroup>
       </ResizablePanel>
 
-      {renderResizeHandle(2)}
+      {renderResizeHandle(3)}
 
       <ResizablePanel defaultSize={initialLayout.rows[1]} minSize={0} className={transitionClass}>
         <ResizablePanelGroup ref={bottomGroupRef} direction="horizontal">
@@ -290,17 +299,17 @@ export function WorkspaceGrid({ panes, onCloseSession, resolvePaneClose }: Works
             minSize={0}
             className={transitionClass}
           >
-            {renderCell(2, true)}
+            {renderCell(2)}
           </ResizablePanel>
 
-          {renderResizeHandle(3)}
+          {renderResizeHandle(4)}
 
           <ResizablePanel
             defaultSize={initialLayout.bottom[1]}
             minSize={0}
             className={transitionClass}
           >
-            {renderCell(3, true)}
+            {renderCell(3)}
           </ResizablePanel>
         </ResizablePanelGroup>
       </ResizablePanel>
@@ -310,43 +319,32 @@ export function WorkspaceGrid({ panes, onCloseSession, resolvePaneClose }: Works
 
 interface WorkspaceGridCellProps {
   pane: WorkspacePane;
-  onCloseSession: (sessionId: string) => void;
   onClosePane?: () => void;
-  hasSourceSessionPane: boolean;
-  showControls: boolean;
+  showWindowControls: boolean;
+  sessionOverlayId?: string;
   isMaximized: boolean;
-  onFocusPane: (paneId: string) => void;
-  onMinimize: () => void;
+  onMaximize: () => void;
+  onRestore: () => void;
 }
 
 function WorkspaceGridCell({
   pane,
-  onCloseSession,
   onClosePane,
-  hasSourceSessionPane,
-  showControls,
+  showWindowControls,
+  sessionOverlayId,
   isMaximized,
-  onFocusPane,
-  onMinimize,
+  onMaximize,
+  onRestore,
 }: WorkspaceGridCellProps) {
   // The cell hosts pane-declared chrome in targets it owns and positions.
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const [statusSlot, setStatusSlot] = useState<HTMLDivElement | null>(null);
-  const btnClass = PANE_OVERLAY_BUTTON_CLASS;
-  const iconClass = PANE_OVERLAY_ICON_CLASS;
-  const showControlsPersistently = isMaximized;
-  const associatedSessionId = paneSourceSessionId(pane);
-  const shouldRenderSessionOverlay =
-    associatedSessionId !== undefined &&
-    pane.kind !== "session" &&
-    (isMaximized || !hasSourceSessionPane);
 
   return (
     <div
       className={cn(
-        "h-full w-full relative group bg-background transition-shadow",
-        showControls && !isMaximized && "border-r border-b border-border",
-        showControls && "[--toybox-pane-actions-inset:5rem]",
+        "h-full w-full relative group bg-background",
+        showWindowControls && "[--toybox-pane-actions-inset:5rem]",
       )}
     >
       {pane.kind === "session" && pane.isLinkedOnly && (
@@ -356,54 +354,45 @@ function WorkspaceGridCell({
         />
       )}
 
-      {showControls && (
-        <div
-          className={cn(
-            "absolute top-3 right-3 z-20 flex gap-1 transition-opacity duration-200",
-            showControlsPersistently
-              ? "opacity-100"
-              : "opacity-0 delay-150 focus-within:opacity-100 focus-within:delay-0 group-hover:opacity-100 group-hover:delay-0 has-[[data-state=open]]:opacity-100 has-[[data-state=open]]:delay-0",
-          )}
-        >
-          {/* The pane declares its own actions here (e.g. an artifact's saving
-              indicator + mode menu), before the grid's own window controls. */}
-          <div ref={setActionsSlot} className="contents" />
-          {isMaximized ? (
-            <button onClick={onMinimize} className={btnClass} aria-label="Minimize">
-              <Minimize2 className={iconClass} />
+      <div
+        className={cn(
+          "absolute top-3 right-3 z-20 flex gap-1 transition-opacity duration-200",
+          isMaximized
+            ? "opacity-100"
+            : "opacity-0 delay-150 focus-within:opacity-100 focus-within:delay-0 group-hover:opacity-100 group-hover:delay-0 has-[[data-popup-open]]:opacity-100 has-[[data-popup-open]]:delay-0",
+        )}
+      >
+        {/* The pane declares its own actions here, before any window controls. */}
+        <div ref={setActionsSlot} className="contents" />
+        {showWindowControls &&
+          (isMaximized ? (
+            <button onClick={onRestore} className={PANE_OVERLAY_BUTTON_CLASS} aria-label="Minimize">
+              <Minimize2 className={PANE_OVERLAY_ICON_CLASS} />
             </button>
           ) : (
             <>
               <button
-                onClick={() => onFocusPane(pane.id)}
-                className={btnClass}
+                onClick={onMaximize}
+                className={PANE_OVERLAY_BUTTON_CLASS}
                 aria-label="Maximize"
               >
-                <Maximize2 className={iconClass} />
+                <Maximize2 className={PANE_OVERLAY_ICON_CLASS} />
               </button>
-              {pane.kind === "session" && !pane.isLinkedOnly && (
-                <button
-                  onClick={() => onCloseSession(pane.sessionId)}
-                  className={btnClass}
-                  aria-label="Remove"
-                >
-                  <X className={iconClass} />
-                </button>
-              )}
               {onClosePane && (
-                <button onClick={onClosePane} className={btnClass} aria-label="Close">
-                  <X className={iconClass} />
+                <button
+                  onClick={onClosePane}
+                  className={PANE_OVERLAY_BUTTON_CLASS}
+                  aria-label="Close"
+                >
+                  <X className={PANE_OVERLAY_ICON_CLASS} />
                 </button>
               )}
             </>
-          )}
-        </div>
-      )}
+          ))}
+      </div>
 
       <WorkspacePaneView pane={pane} slots={{ actions: actionsSlot, status: statusSlot }}>
-        {shouldRenderSessionOverlay && (
-          <SessionOverlay key={associatedSessionId} sessionId={associatedSessionId} />
-        )}
+        {sessionOverlayId && <SessionOverlay key={sessionOverlayId} sessionId={sessionOverlayId} />}
       </WorkspacePaneView>
       <div
         ref={setStatusSlot}

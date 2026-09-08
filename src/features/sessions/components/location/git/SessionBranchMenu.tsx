@@ -2,6 +2,7 @@ import { FileOutput, GitBranch, GitFork, GitMerge, Loader2 } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -47,44 +48,48 @@ export function SessionBranchMenu({
 
   return (
     <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className={cn(
-            "h-6 max-w-52 gap-1 rounded-md border-0 bg-transparent px-1 text-xs font-medium text-muted-foreground",
-            "hover:bg-transparent hover:text-foreground disabled:pointer-events-none disabled:opacity-70",
-            className,
-          )}
-          aria-label={location?.description ?? "Branch menu"}
-        >
-          <SessionLocationIcon
-            kind={location?.kind}
-            isWorktree={isWorktreeMode}
-            className="h-3 w-3 shrink-0"
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={cn(
+              "h-6 max-w-52 gap-1 rounded-md border-0 bg-transparent px-1 text-xs font-medium text-muted-foreground",
+              "hover:bg-transparent hover:text-foreground disabled:pointer-events-none disabled:opacity-70",
+              className,
+            )}
+            aria-label={location?.description ?? "Branch menu"}
           />
-          <span className="truncate">{location?.label ?? "unknown"}</span>
-        </Button>
+        }
+      >
+        <SessionLocationIcon
+          kind={location?.kind}
+          isWorktree={isWorktreeMode}
+          className="h-3 w-3 shrink-0"
+        />
+        <span className="truncate">{location?.label ?? "unknown"}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuLabel className="text-xs">
-          {isWorktreeMode ? "Worktree Branch" : "Branch"}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem disabled className="text-xs gap-2 py-1.5">
-          {isWorktreeMode ? (
-            <GitFork className="h-3.5 w-3.5 shrink-0" />
-          ) : (
-            <GitBranch className="h-3.5 w-3.5 shrink-0" />
-          )}
-          <span className="truncate">{worktreeBranch ?? branch ?? "unknown"}</span>
-        </DropdownMenuItem>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="text-xs">
+            {isWorktreeMode ? "Worktree Branch" : "Branch"}
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem disabled className="text-xs gap-2 py-1.5">
+            {isWorktreeMode ? (
+              <GitFork className="h-3.5 w-3.5 shrink-0" />
+            ) : (
+              <GitBranch className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <span className="truncate">{worktreeBranch ?? branch ?? "unknown"}</span>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           className="text-xs gap-2"
           disabled={!isWorktreeMode || isPending}
-          onSelect={() => onMerge?.()}
+          onClick={() => onMerge?.()}
         >
           {isPending ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
@@ -96,7 +101,7 @@ export function SessionBranchMenu({
         <DropdownMenuItem
           className="text-xs gap-2"
           disabled={!isWorktreeMode || isPending}
-          onSelect={() => onApply?.()}
+          onClick={() => onApply?.()}
         >
           {isPending ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />

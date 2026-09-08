@@ -49,22 +49,24 @@ export function AppSharePicker({
 
   return (
     <DropdownMenu modal={false} open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className={cn("h-7 gap-1 px-2 text-xs", className)}
-          disabled={disabled || sharingWith !== null}
-        >
-          {sharingWith ? (
-            <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-          ) : (
-            <Share2 aria-hidden="true" className="size-3.5" />
-          )}
-          {label}
-          <ChevronDown aria-hidden="true" className="size-3 opacity-50" />
-        </Button>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={cn("h-7 gap-1 px-2 text-xs", className)}
+            disabled={disabled || sharingWith !== null}
+          />
+        }
+      >
+        {sharingWith ? (
+          <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+        ) : (
+          <Share2 aria-hidden="true" className="size-3.5" />
+        )}
+        {label}
+        <ChevronDown aria-hidden="true" className="size-3 opacity-50" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         {targets.length === 0 ? (
@@ -74,10 +76,8 @@ export function AppSharePicker({
             <DropdownMenuItem
               key={target.id}
               disabled={sharingWith !== null}
-              onSelect={(event) => {
-                event.preventDefault();
-                share(target.id);
-              }}
+              closeOnClick={false}
+              onClick={() => share(target.id)}
             >
               {target.title}
               {sharingWith === target.id ? (

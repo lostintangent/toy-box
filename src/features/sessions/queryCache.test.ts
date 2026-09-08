@@ -44,6 +44,7 @@ describe("session query cache", () => {
         sessionId,
         startTime: new Date(100).toISOString(),
         modifiedTime: new Date(200).toISOString(),
+        sessionType: "standard",
       },
     });
     applyWorkspaceEventToSessionQueries(queryClient, {
@@ -52,6 +53,7 @@ describe("session query cache", () => {
         sessionId,
         startTime: new Date(100).toISOString(),
         modifiedTime: new Date(200).toISOString(),
+        sessionType: "standard",
       },
     });
 
@@ -110,6 +112,29 @@ describe("session query cache", () => {
     });
 
     expect(readState(queryClient).workerSessionParents).toEqual({ [sessionId]: null });
+  });
+
+  test("does not admit private Agent sessions to the list", () => {
+    const queryClient = new QueryClient();
+
+    upsertSessionInState(queryClient, {
+      sessionId: "private-agent-session",
+      sessionType: "agent",
+      worktree: { branch: "agent", baseBranch: "main", path: "/tmp/agent" },
+    });
+
+    expect(readState(queryClient)).toEqual(createEmptySessionsState());
+  });
+
+  test("does not synthesize a missing session from an unclassified metadata patch", () => {
+    const queryClient = new QueryClient();
+
+    upsertSessionInState(queryClient, {
+      sessionId: "unprojected-session",
+      summary: "Partial update",
+    });
+
+    expect(readState(queryClient)).toEqual(createEmptySessionsState());
   });
 
   test("upsert preserves summary when omitted", () => {

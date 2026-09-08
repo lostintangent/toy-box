@@ -1,9 +1,12 @@
-import { useState, type ReactNode } from "react";
+import { lazy, Suspense, useState, type ReactElement } from "react";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui/popover";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { VIEWPORT_OVERLAY_BOUNDS } from "@workspace/components/overlayWindow";
-import { SessionPane } from "./SessionPane";
+
+const PreviewSessionPane = lazy(() =>
+  import("./SessionPane").then(({ SessionPane }) => ({ default: SessionPane })),
+);
 
 export function useSessionPreview(disabled = false) {
   const { isMobile } = useViewport();
@@ -35,33 +38,39 @@ export function SessionPreview({
   open,
   side = "right",
   align = "start",
+  sideOffset = 5,
   onMouseEnter,
   onMouseLeave,
+  nativeButton = true,
   children,
 }: {
   sessionId: string;
   open: boolean;
   side?: "top" | "right" | "bottom" | "left";
   align?: "start" | "center" | "end";
+  sideOffset?: number;
   onMouseEnter: (event: React.MouseEvent) => void;
   onMouseLeave: () => void;
-  children: ReactNode;
+  nativeButton?: boolean;
+  children: ReactElement;
 }) {
   return (
     <Popover open={open}>
-      <PopoverTrigger asChild>{children}</PopoverTrigger>
+      <PopoverTrigger nativeButton={nativeButton} render={children} />
       <PopoverContent
         side={side}
         align={align}
-        sideOffset={5}
-        className="hidden p-0 md:block"
+        sideOffset={sideOffset}
+        className="hidden overflow-hidden p-0 md:block"
         style={VIEWPORT_OVERLAY_BOUNDS}
-        onOpenAutoFocus={(event) => event.preventDefault()}
-        onCloseAutoFocus={(event) => event.preventDefault()}
+        initialFocus={false}
+        finalFocus={false}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
       >
-        <SessionPane key={sessionId} sessionId={sessionId} mode="passive" />
+        <Suspense>
+          <PreviewSessionPane key={sessionId} sessionId={sessionId} mode="passive" />
+        </Suspense>
       </PopoverContent>
     </Popover>
   );

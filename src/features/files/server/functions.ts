@@ -8,6 +8,7 @@ import {
   workspaceFileInputSchema,
   writeFileInputSchema,
 } from "../model";
+import { mentionFileAgentInputSchema } from "../model/agentMention";
 import * as files from "./index";
 
 export const readFile = createServerFn({ method: "GET" })
@@ -25,3 +26,10 @@ export const createFile = createServerFn({ method: "POST" })
 export const listDirectory = createServerFn({ method: "GET" })
   .validator(zodValidator(listDirectoryInputSchema))
   .handler(({ data }) => files.listDirectory(data));
+
+export const mentionFileAgent = createServerFn({ method: "POST" })
+  .validator(zodValidator(mentionFileAgentInputSchema))
+  .handler(async ({ data }): Promise<void> => {
+    const { mentionFileAgent: mention } = await import("./agentHost");
+    await mention(data);
+  });

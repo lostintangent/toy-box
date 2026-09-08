@@ -45,19 +45,21 @@ function SidebarAction({
 }) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant={variant}
-          size="icon"
-          className={cn(SIDEBAR_ACTION_SIZE, className)}
-          onClick={onClick}
-          aria-label={label}
-          suppressHydrationWarning
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant={variant}
+            size="icon"
+            className={cn(SIDEBAR_ACTION_SIZE, className)}
+            onClick={onClick}
+            aria-label={label}
+            suppressHydrationWarning
+          >
+            {children}
+          </Button>
+        }
+      />
       <TooltipContent sideOffset={6}>{label}</TooltipContent>
     </Tooltip>
   );
@@ -148,20 +150,22 @@ export function TerminalToggle({
 }) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <Toggle
-          pressed={isTerminalOpen}
-          onPressedChange={() => onToggleTerminal()}
-          size="sm"
-          className={cn(
-            SIDEBAR_ACTION_SIZE,
-            "min-w-6 p-0 hover:bg-accent hover:text-accent-foreground",
-          )}
-          aria-label="Toggle terminal"
-        >
-          <SquareTerminal />
-        </Toggle>
-      </TooltipTrigger>
+      <TooltipTrigger
+        render={
+          <Toggle
+            pressed={isTerminalOpen}
+            onPressedChange={() => onToggleTerminal()}
+            size="sm"
+            className={cn(
+              SIDEBAR_ACTION_SIZE,
+              "min-w-6 p-0 hover:bg-accent hover:text-accent-foreground",
+            )}
+            aria-label="Toggle terminal"
+          >
+            <SquareTerminal />
+          </Toggle>
+        }
+      />
       <TooltipContent sideOffset={6}>Toggle terminal</TooltipContent>
     </Tooltip>
   );

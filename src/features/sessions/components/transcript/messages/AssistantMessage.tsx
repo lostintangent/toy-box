@@ -1,6 +1,7 @@
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import type { AssistantMessage as AssistantMessageType, ToolCall } from "../../../model";
+import { transcriptLinkComponents, transcriptRehypePlugins } from "./TranscriptFileLink";
 import { ToolCallMessage } from "./tools/ToolCallMessage";
 
 // ============================================================================
@@ -32,6 +33,8 @@ export function AssistantMessage({
             <Streamdown
               isAnimating={isLast && isStreaming}
               plugins={{ code }}
+              components={transcriptLinkComponents}
+              rehypePlugins={transcriptRehypePlugins}
               className="text-sm [&_p]:my-2 [&_pre]:my-2 [&_ul]:my-2 [&_ol]:my-2"
             >
               {message.content}

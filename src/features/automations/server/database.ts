@@ -5,6 +5,7 @@ import {
   type Automation,
   type AutomationOptions,
 } from "../model";
+import { inStateTransaction } from "@/server/database";
 
 const DUE_AUTOMATION_RETRY_DELAY_MS = 60_000;
 
@@ -83,7 +84,7 @@ export class AutomationDatabase {
     const now = new Date();
     const nowIso = now.toISOString();
     const fallbackNextRunAt = new Date(now.getTime() + DUE_AUTOMATION_RETRY_DELAY_MS).toISOString();
-    return this.db.begin("IMMEDIATE", async (db) => {
+    return inStateTransaction(this.db, async (db) => {
       const rows = await db<AutomationRow[]>`
         SELECT * FROM automations WHERE next_run_at <= ${nowIso} ORDER BY next_run_at ASC
       `;

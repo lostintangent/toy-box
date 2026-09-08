@@ -57,11 +57,13 @@ export function TodoPopup({ todos, isStreaming }: { todos?: TodoItem[]; isStream
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <InputGroupButton size="icon-xs" aria-label="View todos">
-          <ListTodo className="h-4 w-4" />
-        </InputGroupButton>
-      </PopoverTrigger>
+      <PopoverTrigger
+        render={
+          <InputGroupButton size="icon-xs" aria-label="View todos">
+            <ListTodo className="h-4 w-4" />
+          </InputGroupButton>
+        }
+      />
       <PopoverContent className="w-80 p-0" align="start">
         <div className="text-sm">
           <div className="flex items-center gap-2 border-b px-3 py-2">

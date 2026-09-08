@@ -23,7 +23,7 @@ import type {
 import { workspaceFileSchema, type WorkspaceFile } from "@files/model";
 import { projectSessionArtifactPath } from "@files/server/paths";
 import { parsePatchTouchedFiles, type PatchTouchedFile } from "@sessions/model/fileDiffs";
-import { decodeSdkAgentNotification } from "@sessions/server/sdk/agentNotificationCodec";
+import { fromSdkSystemMessage } from "@sessions/server/sdk/systemMessageCodec";
 import { fromSdkAttachments } from "./attachments";
 import { parseTodoSql } from "./todoParser";
 
@@ -70,6 +70,7 @@ const ARTIFACT_EXTENSIONS: readonly string[] = [".md", ".html", ".json", ".svg",
 // decide per call from the tool arguments (factories live in the "Tool call
 // policy resolution" section below).
 const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
+  skill: { kind: "omitted" },
   read_agent: { kind: "omitted" },
   check_session_status: { kind: "omitted" },
   wait_for_sessions: { kind: "omitted" },
@@ -94,7 +95,7 @@ const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
       projectFileVisibility(data, (file) => ({ type: "file_closed", file })),
   },
   create_session: { kind: "translated", projectOnComplete: projectCreatedSession },
-  create_worker_session: { kind: "translated", projectOnComplete: projectCreatedSession },
+  spawn_worker: { kind: "translated", projectOnComplete: projectCreatedSession },
   open_session: (args) => ({
     kind: "translated",
     projectOnStart: projectLinkedSessionEvent(args, "linked_session_added"),
@@ -186,12 +187,12 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       // Skill loading uses synthetic user messages to give the agent access to the selected skill.
       if (event.data.source?.startsWith("skill-")) return [];
 
-      const notification = decodeSdkAgentNotification(event.data.content);
-      if (notification) {
+      const systemMessage = fromSdkSystemMessage(event.data.content);
+      if (systemMessage) {
         return [
           {
-            type: "agent_notification",
-            notification,
+            type: "system_message",
+            content: systemMessage,
             timestamp: event.timestamp,
           },
         ];
@@ -224,6 +225,30 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       const content = event.data.deltaContent;
       const agentId = event.agentId;
       return content ? [{ type: "reasoning", content, ...(agentId ? { agentId } : {}) }] : [];
+    }
+    case "skill.invoked": {
+      if (event.data.trigger === "context-load") return [];
+
+      const toolCallId = event.id;
+      const agentId = event.agentId;
+      return [
+        {
+          type: "tool_start",
+          toolName: "skill",
+          toolCallId,
+          ...(agentId ? { agentId } : {}),
+          arguments: {
+            skill: event.data.name,
+            path: event.data.path,
+          },
+        },
+        {
+          type: "tool_end",
+          toolCallId,
+          ...(agentId ? { agentId } : {}),
+          success: true,
+        },
+      ];
     }
     case "assistant.turn_start":
       return event.agentId ? [] : [{ type: "status", status: "thinking" }];

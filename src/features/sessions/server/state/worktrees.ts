@@ -38,6 +38,11 @@ export async function createSessionWorktree(
   return { worktree, sourceGitRoot, sourceRepository };
 }
 
+/** Whether a directory can back a managed session worktree. */
+export async function canCreateSessionWorktree(directory: string): Promise<boolean> {
+  return Boolean(await detectGitRoot(directory));
+}
+
 /** Get every session worktree for session-list hydration. */
 export async function getAllSessionWorktrees(): Promise<Record<string, SessionWorktree>> {
   const db = await getStateDatabase({ createIfMissing: false });

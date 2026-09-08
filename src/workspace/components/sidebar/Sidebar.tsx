@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AutomationPanel } from "@automations/components/AutomationPanel";
+import { AutomationDialog } from "@automations/components/AutomationDialog";
 import { cn } from "@/shared/utils";
 import type { SessionMetadata } from "@sessions/model";
 import { AppsPanel } from "@apps/components/AppsPanel";
@@ -16,6 +17,9 @@ import {
 } from "./SidebarActions";
 import { SessionList } from "@sessions/components/sidebar/SessionList";
 import { FileBrowserDialog } from "@files/components/browser/FileBrowserDialog";
+import { ChannelsPanel } from "@channels/components/ChannelsPanel";
+import { CreateChannelDialog } from "@channels/components/CreateChannelDialog";
+import type { SidebarPanels } from "@workspace/model/config/layoutPrefs";
 
 /**
  * Crossfade one of the sidebar's two layouts. Whichever layout is leaving clears
@@ -45,15 +49,15 @@ export type SidebarProps = {
   emptyMessage?: string;
   draftSessions: SessionMetadata[];
 
-  isAutomationsExpanded: boolean;
-  onAutomationsExpandedChange: (expanded: boolean) => void;
-  isAppsExpanded: boolean;
-  onAppsExpandedChange: (expanded: boolean) => void;
+  panels: SidebarPanels;
+  onPanelExpanded: (panel: keyof SidebarPanels, expanded: boolean) => void;
 
   onCreateSession: (options?: SidebarCreateOptions) => void;
   openAppIds: string[];
   onAppOpen: (appId: string, toggleInWorkspace: boolean) => void;
   onAppOpenInHyper: (appId: string) => void;
+  openChannelIds: string[];
+  onChannelOpen: (channelId: string, toggleInWorkspace: boolean) => void;
   onToggleHyper: () => void;
   isHyperOpen: boolean;
   onOpenInbox: () => void;
@@ -99,15 +103,15 @@ export function Sidebar({
   emptyMessage,
   draftSessions,
 
-  isAutomationsExpanded,
-  onAutomationsExpandedChange,
-  isAppsExpanded,
-  onAppsExpandedChange,
+  panels,
+  onPanelExpanded,
 
   onCreateSession,
   openAppIds,
   onAppOpen,
   onAppOpenInHyper,
+  openChannelIds,
+  onChannelOpen,
   onToggleHyper,
   isHyperOpen,
   onOpenInbox,
@@ -121,6 +125,8 @@ export function Sidebar({
 }: SidebarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [browseOpen, setBrowseOpen] = useState(false);
+  const [createAutomationOpen, setCreateAutomationOpen] = useState(false);
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
 
   // Only a collapsible sidebar pins the collapse toggle and settings actions
   // outside its two layouts, and only it has a rail for them to head and foot.
@@ -164,11 +170,13 @@ export function Sidebar({
           onShowExternalSessionsChange={onShowExternalSessionsChange}
           sessionCount={sessions.length}
           onCreateSession={onCreateSession}
+          onCreateAutomation={() => setCreateAutomationOpen(true)}
+          onCreateChannel={() => setCreateChannelOpen(true)}
         />
 
-        <div className="min-h-0 min-w-0 flex flex-col bg-muted/50">
+        <div className="min-h-0 min-w-0 flex flex-col bg-panel">
           <SessionList
-            className="min-h-0 flex-1 px-3 py-2"
+            className="px-3 py-2"
             sessions={sessions}
             isLoading={isSessionsLoading}
             onSessionSelect={onSessionSelect}
@@ -180,19 +188,28 @@ export function Sidebar({
             draftSessions={draftSessions}
           />
 
+          <ChannelsPanel
+            isExpanded={panels.channels ?? false}
+            onExpandedChange={(expanded) => onPanelExpanded("channels", expanded)}
+            openChannelIds={openChannelIds}
+            onChannelOpen={onChannelOpen}
+            onCreate={() => setCreateChannelOpen(true)}
+          />
+
           <AppsPanel
-            isExpanded={isAppsExpanded}
-            onExpandedChange={onAppsExpandedChange}
+            isExpanded={panels.apps ?? false}
+            onExpandedChange={(expanded) => onPanelExpanded("apps", expanded)}
             openAppIds={openAppIds}
             onAppOpen={onAppOpen}
             onAppOpenInHyper={onAppOpenInHyper}
           />
 
           <AutomationPanel
-            isExpanded={isAutomationsExpanded}
-            onExpandedChange={onAutomationsExpandedChange}
+            isExpanded={panels.automations ?? false}
+            onExpandedChange={(expanded) => onPanelExpanded("automations", expanded)}
             openSessionIds={openSessionIds}
             onSessionOpen={(sessionId) => onSessionSelect(sessionId, false)}
+            onCreate={() => setCreateAutomationOpen(true)}
           />
         </div>
 
@@ -247,6 +264,17 @@ export function Sidebar({
         title="Open a file"
         onOpenFile={onOpenFile}
       />
+
+      {createAutomationOpen && (
+        <AutomationDialog mode="create" onOpenChange={setCreateAutomationOpen} />
+      )}
+
+      {createChannelOpen && (
+        <CreateChannelDialog
+          onOpenChange={setCreateChannelOpen}
+          onCreated={(channelId) => onChannelOpen(channelId, false)}
+        />
+      )}
     </>
   );
 }

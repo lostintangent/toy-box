@@ -48,6 +48,10 @@ export function IntentExhibitEditor({
   const allowedChanges = allowExisting
     ? INTENT_CHANGES
     : INTENT_CHANGES.filter((change) => change !== "existing");
+  const changeOptions = allowedChanges.map((value) => ({
+    value,
+    label: CHANGE_EDITOR_LABELS[value],
+  }));
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -74,6 +78,7 @@ export function IntentExhibitEditor({
       <LabeledEditorField label="Change">
         {(id) => (
           <Select
+            items={changeOptions}
             value={draft.change}
             onValueChange={(change: Change) => {
               setError(undefined);
@@ -84,9 +89,9 @@ export function IntentExhibitEditor({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {allowedChanges.map((change) => (
-                <SelectItem key={change} value={change}>
-                  {CHANGE_EDITOR_LABELS[change]}
+              {changeOptions.map((change) => (
+                <SelectItem key={change.value} value={change.value}>
+                  {change.label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -152,8 +157,8 @@ export function IntentExhibitEditor({
           Flow nodes, connections, paths, and regions are edited together by regenerating their
           owning definition. Direct edits preserve that authored structure.
         </p>
-      ) : draft.kind === "html" && "content" in draft ? (
-        <LabeledEditorField label="HTML content">
+      ) : draft.kind === "prototype" && "content" in draft ? (
+        <LabeledEditorField label="Prototype markup">
           {(id) => (
             <Textarea
               id={id}
@@ -161,7 +166,7 @@ export function IntentExhibitEditor({
               onChange={(event) => {
                 setError(undefined);
                 setDraft((current) =>
-                  current.kind === "html" && "content" in current
+                  current.kind === "prototype" && "content" in current
                     ? { ...current, content: event.target.value }
                     : current,
                 );
@@ -174,7 +179,7 @@ export function IntentExhibitEditor({
           )}
         </LabeledEditorField>
       ) : (
-        <LabeledEditorField label={draft.kind === "image" ? "Image URI" : "HTML URI"}>
+        <LabeledEditorField label={draft.kind === "image" ? "Image URI" : "Prototype URI"}>
           {(id) => (
             <Input
               id={id}
@@ -182,7 +187,7 @@ export function IntentExhibitEditor({
               onChange={(event) => {
                 setError(undefined);
                 setDraft((current) =>
-                  current.kind === "image" || (current.kind === "html" && "uri" in current)
+                  current.kind === "image" || (current.kind === "prototype" && "uri" in current)
                     ? { ...current, uri: event.target.value }
                     : current,
                 );
@@ -566,6 +571,7 @@ function TreeChangeSelect({
 }) {
   return (
     <Select
+      items={TREE_CHANGE_LABEL}
       value={change ?? "unchanged"}
       onValueChange={(next: TreeChange | "unchanged") =>
         onChange(next === "unchanged" ? undefined : next)
@@ -673,16 +679,16 @@ function normalizeExhibit(draft: IntentExhibitUpdate): IntentExhibitUpdate {
       ...(draft.regions ? { regions: draft.regions } : {}),
     };
   }
-  if (draft.kind === "html") {
+  if (draft.kind === "prototype") {
     return "uri" in draft
       ? {
           ...common,
-          kind: "html",
+          kind: "prototype",
           uri: draft.uri.trim(),
         }
       : {
           ...common,
-          kind: "html",
+          kind: "prototype",
           content: draft.content,
         };
   }

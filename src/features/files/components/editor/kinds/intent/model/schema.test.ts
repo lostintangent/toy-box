@@ -821,7 +821,7 @@ describe("intent schema", () => {
     expect(parse(missingSource)).toMatchObject({ ok: false });
   });
 
-  test("accepts URI-backed images and URI or inline HTML exhibits", () => {
+  test("accepts URI-backed images and URI or inline prototypes", () => {
     const document = exhibitsFixture();
     const section = findExhibitsSection(document, "technical-definitions")!;
     section.items.push({
@@ -835,14 +835,14 @@ describe("intent schema", () => {
     section.items.push({
       id: "interactive-prototype",
       title: "Interactive prototype",
-      kind: "html",
+      kind: "prototype",
       change: "new",
       uri: "./prototype.html",
     });
     section.items.push({
-      id: "embedded-architecture",
-      title: "Embedded architecture",
-      kind: "html",
+      id: "spatial-prototype",
+      title: "Spatial layout prototype",
+      kind: "prototype",
       change: "new",
       content:
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>',
@@ -854,9 +854,11 @@ describe("intent schema", () => {
     image.uri = "https://example.com/architecture.png";
     expect(parse(document)).toMatchObject({ ok: true });
 
-    const html = section.items.at(-2)!;
-    if (html.kind !== "html" || !("uri" in html)) throw new Error("Missing HTML URI exhibit");
-    html.uri = "https://example.com/prototype";
+    const prototype = section.items.at(-2)!;
+    if (prototype.kind !== "prototype" || !("uri" in prototype)) {
+      throw new Error("Missing prototype URI exhibit");
+    }
+    prototype.uri = "https://example.com/prototype";
     expect(parse(document)).toMatchObject({ ok: true });
 
     for (const uri of [
@@ -867,7 +869,7 @@ describe("intent schema", () => {
       "data:image/png;base64,AA==",
       "javascript:alert(1)",
     ]) {
-      html.uri = uri;
+      prototype.uri = uri;
       expect(parse(document)).toMatchObject({ ok: false });
     }
   });
@@ -888,13 +890,13 @@ describe("intent schema", () => {
     expect(parse(document)).toMatchObject({ ok: false });
   });
 
-  test("requires exactly one non-empty HTML content or URI", () => {
+  test("requires exactly one non-empty prototype content or URI", () => {
     const bothSources = exhibitsFixture();
     const bothSection = findExhibitsSection(bothSources, "technical-definitions")!;
     bothSection.items.push({
       id: "embedded-prototype",
       title: "Embedded prototype",
-      kind: "html",
+      kind: "prototype",
       change: "new",
       content: "<main>Prototype</main>",
     });
@@ -906,7 +908,7 @@ describe("intent schema", () => {
     missingSection.items.push({
       id: "linked-prototype",
       title: "Linked prototype",
-      kind: "html",
+      kind: "prototype",
       change: "new",
       uri: "./prototype.html",
     });
@@ -917,7 +919,7 @@ describe("intent schema", () => {
     findExhibitsSection(blankContent, "technical-definitions")!.items.push({
       id: "blank-prototype",
       title: "Blank prototype",
-      kind: "html",
+      kind: "prototype",
       change: "new",
       content: " \n ",
     });

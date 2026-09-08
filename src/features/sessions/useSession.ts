@@ -16,7 +16,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ModelConfiguration } from "./model/modelConfiguration";
 import { applySessionEvent, createInitialSession, toSessionSnapshot } from "./model/reducer";
-import type { Attachment, SessionEvent, SessionSnapshot } from "./model";
+import type { SessionEvent, SessionMessage, SessionSnapshot } from "./model";
 import type { SessionSubscriptionMode, StreamSessionRequest } from "./model/protocol";
 import { sessionMutations } from "./mutations";
 import { sessionQueries } from "./queries";
@@ -262,23 +262,26 @@ export function useSession(
     },
   });
 
-  const sendMessage = async (prompt: string, attachments: Attachment[] = [], immediate?: true) => {
-    if (!prompt.trim() && attachments.length === 0) return;
+  const sendMessage = async (input: SessionMessage, { immediate }: { immediate?: true } = {}) => {
+    if (!input.content.trim() && !input.attachments?.length) return;
     const clientId = generateUUID();
-    const messageAttachments = attachments.length > 0 ? attachments : undefined;
 
     // The session's own model always wins; otherwise this message makes the
     // browser selection the session's effective model.
     const model = sessionRef.current.model ?? defaultModel;
+    const message = {
+      ...input,
+      clientId,
+      attachments: input.attachments?.length ? input.attachments : undefined,
+      agentMentions: input.agentMentions?.length ? input.agentMentions : undefined,
+      model,
+    } satisfies SessionMessage & { clientId: string };
 
     // Server running state owns the send-vs-queue distinction. The controller
     // also closes the same-tick gap before that shared state reaches React.
     if (isSessionLive || abortControllerRef.current) {
       followUpMutation.mutate({
-        clientId,
-        content: prompt,
-        attachments: messageAttachments,
-        model,
+        ...message,
         immediate,
       });
       return;
@@ -297,8 +300,8 @@ export function useSession(
     }
     applyEvent({
       type: "user_message",
-      content: prompt,
-      attachments: messageAttachments,
+      content: message.content,
+      attachments: message.attachments,
       clientId,
       timestamp: new Date().toISOString(),
     });
@@ -306,12 +309,7 @@ export function useSession(
     const request: StreamSessionRequest = {
       sessionId,
       afterEventId: sessionRef.current.lastSeenEventId,
-      message: {
-        clientId,
-        content: prompt,
-        attachments: messageAttachments,
-        model,
-      },
+      message,
       location: isDraft
         ? {
             directory: sessionDirectory,

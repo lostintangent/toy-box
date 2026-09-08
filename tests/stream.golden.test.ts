@@ -31,6 +31,8 @@ const unused = () => {
 };
 const settle = () => Bun.sleep(0);
 const INITIAL_PROMPT = "kick off the reviews";
+const INITIAL_SDK_MESSAGE_ID = "sdk-initial";
+const FOLLOWUP_SDK_MESSAGE_ID = "sdk-followup";
 
 function emitMockWorkspaceEvent(event: WorkspaceEvent): void {
   for (const listener of workspaceEventListeners) {
@@ -40,6 +42,12 @@ function emitMockWorkspaceEvent(event: WorkspaceEvent): void {
 
 function sdkEvent(event: unknown): SdkSessionEvent {
   return event as SdkSessionEvent;
+}
+
+function identifyUserMessage(event: SdkSessionEvent, messageId: string): SdkSessionEvent {
+  return event.type === "user.message"
+    ? sdkEvent({ ...event, data: { ...event.data, messageId } })
+    : event;
 }
 
 mock.module("@sessions/server/state/registry", () => ({
@@ -121,6 +129,9 @@ describe("stream golden replay", () => {
       },
       send: async (message: unknown) => {
         sdkCalls.push({ send: message });
+        return (message as { prompt: string }).prompt === INITIAL_PROMPT
+          ? INITIAL_SDK_MESSAGE_ID
+          : FOLLOWUP_SDK_MESSAGE_ID;
       },
       setModel: async (model: string, options: unknown) => {
         sdkCalls.push({ setModel: [model, options] });
@@ -142,7 +153,7 @@ describe("stream golden replay", () => {
     // Turn 1: explicit start + full fixture replay through the SDK listener.
     await stream.deliver({ clientId: "client-1", role: "user", content: INITIAL_PROMPT });
     for (const event of await loadSessionFixture("subagents")) {
-      sdkHandler!(event);
+      sdkHandler!(identifyUserMessage(event, INITIAL_SDK_MESSAGE_ID));
     }
     sdkHandler!(
       sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "Wrapping up." } }),
@@ -161,7 +172,11 @@ describe("stream golden replay", () => {
     sdkHandler!(
       sdkEvent({
         type: "user.message",
-        data: { content: "now fix the findings", delivery: "idle" },
+        data: {
+          messageId: FOLLOWUP_SDK_MESSAGE_ID,
+          content: "now fix the findings",
+          delivery: "idle",
+        },
       }),
     );
     sdkHandler!(sdkEvent({ type: "assistant.turn_start", data: {} }));
@@ -244,7 +259,8 @@ describe("stream golden replay", () => {
           handler = h;
           return () => {};
         },
-        send: async () => {},
+        send: async (message: { prompt: string }) =>
+          message.prompt === INITIAL_PROMPT ? INITIAL_SDK_MESSAGE_ID : FOLLOWUP_SDK_MESSAGE_ID,
         setModel: async () => {},
       } as unknown as CopilotSession;
 
@@ -257,7 +273,7 @@ describe("stream golden replay", () => {
     const runTurnOne = async ({ stream, emit }: DrivenStream) => {
       await stream.deliver({ clientId: "client-1", role: "user", content: INITIAL_PROMPT });
       for (const event of fixture) {
-        emit(event);
+        emit(identifyUserMessage(event, INITIAL_SDK_MESSAGE_ID));
       }
       emit(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "Wrapping up." } }));
     };
@@ -275,7 +291,11 @@ describe("stream golden replay", () => {
       emit(
         sdkEvent({
           type: "user.message",
-          data: { content: "now fix the findings", delivery: "idle" },
+          data: {
+            messageId: FOLLOWUP_SDK_MESSAGE_ID,
+            content: "now fix the findings",
+            delivery: "idle",
+          },
         }),
       );
       emit(sdkEvent({ type: "assistant.turn_start", data: {} }));

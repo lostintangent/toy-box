@@ -5,7 +5,7 @@ import { toSessionSkills } from "./skills";
 function sdkSkill(
   name: string,
   source: SkillSource,
-  overrides: Partial<{ userInvocable: boolean; enabled: boolean }> = {},
+  overrides: Partial<{ userInvocable: boolean; enabled: boolean; path: string }> = {},
 ) {
   return {
     name,
@@ -22,12 +22,17 @@ describe("skill projection", () => {
     expect(
       toSessionSkills([
         sdkSkill("personal", "personal-agents"),
-        sdkSkill("local", "project"),
+        sdkSkill("local", "project", { path: "/repo/.agents/skills/local/SKILL.md" }),
         sdkSkill("bundled", "builtin"),
         sdkSkill("parent", "inherited"),
       ]),
     ).toEqual([
-      { name: "local", description: "local description", type: "project" },
+      {
+        name: "local",
+        description: "local description",
+        type: "project",
+        path: "/repo/.agents/skills/local/SKILL.md",
+      },
       { name: "parent", description: "parent description", type: "project" },
       { name: "personal", description: "personal description", type: "global" },
       { name: "bundled", description: "bundled description", type: "global" },

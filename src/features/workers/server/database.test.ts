@@ -71,7 +71,7 @@ describe("worker ownership", () => {
       type: "file",
       sessionId: "toy-box-worker-c",
       ephemeral: true,
-      file: { type: "session", sessionId: "toy-box-parent-a", path: "notes.md" },
+      file: { kind: "session", sessionId: "toy-box-parent-a", path: "notes.md" },
     });
 
     expect(await getWorkerSessionIdsForParent("toy-box-parent-a")).toEqual([
@@ -125,7 +125,7 @@ describe("worker ownership", () => {
       type: "file",
       sessionId: "toy-box-file-worker",
       ephemeral: true,
-      file: { type: "session", sessionId: "toy-box-parent", path: "notes.md" },
+      file: { kind: "session", sessionId: "toy-box-parent", path: "notes.md" },
     });
     await registerWorkerSession({
       type: "app",

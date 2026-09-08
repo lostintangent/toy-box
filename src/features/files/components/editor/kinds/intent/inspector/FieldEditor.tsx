@@ -53,7 +53,14 @@ export function IntentFieldInput({
     return (
       <LabeledEditorField label={field.label}>
         {(id) => (
-          <Select value={selected[0]} onValueChange={(optionId) => onChange(optionId)}>
+          <Select
+            items={field.options.map((option) => ({
+              value: option.id,
+              label: option.label,
+            }))}
+            value={selected[0]}
+            onValueChange={(optionId) => onChange(optionId)}
+          >
             <SelectTrigger id={id} className="w-full">
               <SelectValue placeholder={`Choose ${field.label.toLowerCase()}`} />
             </SelectTrigger>

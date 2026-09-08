@@ -58,19 +58,16 @@ export function AutomationListItem({
         }
         menuItems={
           <>
-            <DropdownMenuItem disabled={runMutation.isPending} onSelect={handleRun}>
+            <DropdownMenuItem disabled={runMutation.isPending} onClick={handleRun}>
               <Play className="h-3.5 w-3.5" />
               Run automation
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={onEdit}>
+            <DropdownMenuItem onClick={onEdit}>
               <Pencil className="h-3.5 w-3.5" />
               Edit automation
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={() => setDeleteOpen(true)}
-            >
+            <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
               <Trash2 className="h-3.5 w-3.5" />
               Delete automation
             </DropdownMenuItem>

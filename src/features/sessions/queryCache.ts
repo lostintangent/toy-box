@@ -2,12 +2,12 @@
 //
 // Workspace coordination and this durable session list occupy separate Query
 // entries. Workspace lifecycle events update or invalidate only the session
-// queries they identify; worktrees and worker ownership remain here.
+// queries they identify; worktrees and managed-session ownership remain here.
 
 import type { QueryClient } from "@tanstack/react-query";
 import type { WorkspaceEvent } from "@workspace/model/events";
 import type { SessionMetadata, SessionMetadataUpdate, SessionsState } from "./model";
-import { createEmptySessionsState, sessionQueries } from "./queries";
+import { createEmptySessionsState, projectsSessionListMetadata, sessionQueries } from "./queries";
 
 export function applyWorkspaceEventToSessionQueries(
   queryClient: QueryClient,
@@ -80,9 +80,15 @@ export function upsertSessionInState(
   sessionUpdate: SessionMetadataUpdate,
 ): void {
   updateSessionsState(queryClient, (state) => {
+    if (sessionUpdate.sessionType && !projectsSessionListMetadata(sessionUpdate.sessionType)) {
+      return state;
+    }
     const sessionIndex = state.sessions.findIndex(
       (session) => session.sessionId === sessionUpdate.sessionId,
     );
+    // Partial title/context updates may patch a projected Session, but only a
+    // role-classified creation update has enough information to admit one.
+    if (sessionIndex === -1 && !sessionUpdate.sessionType) return state;
     const existing = sessionIndex === -1 ? undefined : state.sessions[sessionIndex];
     const session = mergeSessionMetadata(existing, sessionUpdate);
 
@@ -90,15 +96,20 @@ export function upsertSessionInState(
     if (sessionIndex !== -1) sessions[sessionIndex] = session;
 
     const worktrees = sessionUpdate.worktree
-      ? { ...state.worktrees, [sessionUpdate.sessionId]: sessionUpdate.worktree }
+      ? {
+          ...state.worktrees,
+          [sessionUpdate.sessionId]: sessionUpdate.worktree,
+        }
       : state.worktrees;
     const parentSessionId = sessionUpdate.parentSessionId ?? null;
     const workerSessionParents =
       sessionUpdate.sessionType === "worker" &&
       state.workerSessionParents[sessionUpdate.sessionId] !== parentSessionId
-        ? { ...state.workerSessionParents, [sessionUpdate.sessionId]: parentSessionId }
+        ? {
+            ...state.workerSessionParents,
+            [sessionUpdate.sessionId]: parentSessionId,
+          }
         : state.workerSessionParents;
-
     return {
       ...state,
       sessions,

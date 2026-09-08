@@ -10,12 +10,12 @@ function invocation(): ToolInvocation {
 
 test("open_file resolves an absolute path to a machine workspace file", () => {
   const result = openFile.handler?.({ path: "/repo/src/foo.ts" }, invocation());
-  expect(JSON.parse(String(result))).toEqual({ type: "machine", path: "/repo/src/foo.ts" });
+  expect(JSON.parse(String(result))).toEqual({ kind: "machine", path: "/repo/src/foo.ts" });
 });
 
 test("close_file resolves an absolute path to a machine workspace file", () => {
   const result = closeFile.handler?.({ path: "/repo/src/foo.ts" }, invocation());
-  expect(JSON.parse(String(result))).toEqual({ type: "machine", path: "/repo/src/foo.ts" });
+  expect(JSON.parse(String(result))).toEqual({ kind: "machine", path: "/repo/src/foo.ts" });
 });
 
 test("open_file rejects a relative path", () => {

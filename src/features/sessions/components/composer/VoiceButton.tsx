@@ -12,28 +12,30 @@ export function VoiceButton({ context }: { context: VoiceComposerContext }) {
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <InputGroupButton
-          type="button"
-          size="icon-xs"
-          aria-label={label}
-          aria-pressed={isConnected}
-          onClick={() => void (isConnected ? disconnect() : connect())}
-          disabled={isConnecting}
-          suppressHydrationWarning
-          className={cn(
-            isConnected && "text-destructive hover:text-destructive hover:bg-destructive/10",
-          )}
-        >
-          {isConnecting ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : isConnected ? (
-            <PhoneOff className="h-4 w-4" />
-          ) : (
-            <Mic className="h-4 w-4" />
-          )}
-        </InputGroupButton>
-      </TooltipTrigger>
+      <TooltipTrigger
+        render={
+          <InputGroupButton
+            type="button"
+            size="icon-xs"
+            aria-label={label}
+            aria-pressed={isConnected}
+            onClick={() => void (isConnected ? disconnect() : connect())}
+            disabled={isConnecting}
+            suppressHydrationWarning
+            className={cn(
+              isConnected && "text-destructive hover:text-destructive hover:bg-destructive/10",
+            )}
+          >
+            {isConnecting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : isConnected ? (
+              <PhoneOff className="h-4 w-4" />
+            ) : (
+              <Mic className="h-4 w-4" />
+            )}
+          </InputGroupButton>
+        }
+      />
       <TooltipContent sideOffset={6}>{label}</TooltipContent>
     </Tooltip>
   );

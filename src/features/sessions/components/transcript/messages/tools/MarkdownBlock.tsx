@@ -13,7 +13,7 @@ export function MarkdownBlock({ title, maxHeight = "max-h-48", children }: Markd
   return (
     <div>
       {title && <div className="text-xs text-muted-foreground mb-1">{title}</div>}
-      <div className={`text-xs bg-muted/50 p-2 rounded overflow-x-auto ${maxHeight}`}>
+      <div className={`bg-secondary-background text-xs p-2 rounded overflow-x-auto ${maxHeight}`}>
         <Streamdown plugins={{ code }} className="[&_p]:my-1 [&_pre]:my-1 [&_ul]:my-1 [&_ol]:my-1">
           {children}
         </Streamdown>

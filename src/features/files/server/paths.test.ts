@@ -5,6 +5,7 @@ import {
   projectSessionArtifactPath,
   resolveSessionArtifactPath,
   resolveWorkspaceFile,
+  workspaceFileFromAbsolutePath,
 } from "./paths";
 
 describe("artifact paths", () => {
@@ -78,17 +79,33 @@ describe("artifact paths", () => {
   });
 
   describe("workspace files", () => {
+    test("classifies absolute Session artifacts without losing their owner", () => {
+      expect(
+        workspaceFileFromAbsolutePath(
+          resolve(homedir(), ".copilot/session-state/toy-box-session/files/nested/report.md"),
+        ),
+      ).toEqual({
+        kind: "session",
+        sessionId: "toy-box-session",
+        path: "nested/report.md",
+      });
+      expect(workspaceFileFromAbsolutePath("/repo/src/foo.ts")).toEqual({
+        kind: "machine",
+        path: "/repo/src/foo.ts",
+      });
+    });
+
     test("resolves a session file under its session files folder", () => {
       expect(
-        resolveWorkspaceFile({ type: "session", sessionId: "toy-box-session", path: "report.md" }),
+        resolveWorkspaceFile({ kind: "session", sessionId: "toy-box-session", path: "report.md" }),
       ).toBe(resolve(homedir(), ".copilot/session-state/toy-box-session/files/report.md"));
     });
 
     test("resolves a machine file to its own absolute path and rejects relative paths", () => {
-      expect(resolveWorkspaceFile({ type: "machine", path: "/repo/src/foo.ts" })).toBe(
+      expect(resolveWorkspaceFile({ kind: "machine", path: "/repo/src/foo.ts" })).toBe(
         "/repo/src/foo.ts",
       );
-      expect(resolveWorkspaceFile({ type: "machine", path: "repo/src/foo.ts" })).toBeNull();
+      expect(resolveWorkspaceFile({ kind: "machine", path: "repo/src/foo.ts" })).toBeNull();
     });
   });
 });

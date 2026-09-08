@@ -1,7 +1,7 @@
 import type { Message as SessionMessage } from "../../../model";
 import { AssistantMessage } from "./AssistantMessage";
-import { UserMessage } from "./UserMessage";
-import { AgentNotificationMessage } from "./AgentNotificationMessage";
+import { SessionUserMessage } from "./SessionUserMessage";
+import { SystemMessage } from "./SystemMessage";
 
 type MessageProps = {
   message: SessionMessage;
@@ -10,9 +10,7 @@ type MessageProps = {
 };
 
 export function Message({ message, isStreaming, isLast }: MessageProps) {
-  if (message.role === "user") return <UserMessage message={message} />;
-  if (message.role === "agent_notification") {
-    return <AgentNotificationMessage message={message} />;
-  }
+  if (message.role === "user") return <SessionUserMessage message={message} />;
+  if (message.role === "system") return <SystemMessage message={message} />;
   return <AssistantMessage message={message} isStreaming={isStreaming} isLast={isLast} />;
 }

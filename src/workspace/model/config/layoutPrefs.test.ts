@@ -1,61 +1,70 @@
 import { describe, expect, test } from "bun:test";
-import { parseLayoutPrefs, resolveLayoutPrefs, serializeLayoutCookie } from "./layoutPrefs";
+import { readWorkspaceLayout, serializeWorkspaceLayout } from "./layoutPrefs";
 
-describe("layout prefs", () => {
-  test("parses every layout cookie, including a single hyper position", () => {
-    const cookieHeader = [
-      "toybox_sidebar_width=320",
-      "toybox_terminal_size=42",
-      "toybox_sidebar_collapsed=true",
-      "toybox_terminal_open=true",
-      "toybox_apps_expanded=false",
-      "toybox_automations_expanded=false",
-      "toybox_hyper_open=true",
-      "toybox_hyper_pos=120,80",
-      "toybox_mobile_inbox_open=true",
-    ].join("; ");
+const defaultLayout = {
+  sidebarWidth: 280,
+  terminalSize: 30,
+  sidebarCollapsed: false,
+  terminalOpen: false,
+  panels: {},
+  hyperOpen: false,
+  hyperPosition: { x: 24, y: 24 },
+};
 
-    expect(parseLayoutPrefs(cookieHeader)).toEqual({
+function cookieFor(value: unknown): string {
+  return `toybox_layout=${encodeURIComponent(JSON.stringify(value))}`;
+}
+
+function cookieValue(cookie: string): unknown {
+  const value = cookie.slice(cookie.indexOf("=") + 1, cookie.indexOf(";"));
+  return JSON.parse(decodeURIComponent(value));
+}
+
+describe("workspace layout", () => {
+  test("uses product defaults when no preferences are stored", () => {
+    expect(readWorkspaceLayout()).toEqual(defaultLayout);
+    expect(cookieValue(serializeWorkspaceLayout(defaultLayout))).toEqual({});
+  });
+
+  test("round-trips one cookie containing only non-default preferences", () => {
+    const cookie = serializeWorkspaceLayout({
+      ...defaultLayout,
       sidebarWidth: 320,
       terminalSize: 42,
       sidebarCollapsed: true,
       terminalOpen: true,
-      appsExpanded: false,
-      automationsExpanded: false,
+      panels: { channels: true },
       hyperOpen: true,
       hyperPosition: { x: 120, y: 80 },
-      mobileInboxOpen: true,
+    });
+
+    expect(cookieValue(cookie)).toEqual({
+      sidebarWidth: 320,
+      terminalSize: 42,
+      sidebarCollapsed: true,
+      terminalOpen: true,
+      panels: { channels: true },
+      hyperOpen: true,
+      hyperPosition: { x: 120, y: 80 },
+    });
+    expect(readWorkspaceLayout(`other=value; ${cookie}`)).toEqual({
+      sidebarWidth: 320,
+      terminalSize: 42,
+      sidebarCollapsed: true,
+      terminalOpen: true,
+      panels: { channels: true },
+      hyperOpen: true,
+      hyperPosition: { x: 120, y: 80 },
     });
   });
 
-  test("defaults layout preferences when cookies are missing", () => {
-    const resolved = resolveLayoutPrefs({});
-    expect(resolved.appsExpanded).toBe(true);
-    expect(resolved.automationsExpanded).toBe(true);
-    expect(resolved.hyperOpen).toBe(false);
-    expect(resolved.hyperPosition).toEqual({ x: 24, y: 24 });
-    expect(resolved.mobileInboxOpen).toBe(false);
-  });
-
-  test("preserves explicit automations expanded preference", () => {
-    const resolved = resolveLayoutPrefs({ automationsExpanded: false });
-    expect(resolved.automationsExpanded).toBe(false);
-  });
-
-  test("clamps out-of-range sizes on read", () => {
-    expect(parseLayoutPrefs("toybox_sidebar_width=9999").sidebarWidth).toBe(480);
-    expect(parseLayoutPrefs("toybox_terminal_size=999").terminalSize).toBe(80);
-  });
-
-  test("ignores a malformed hyper position cookie", () => {
-    expect(parseLayoutPrefs("toybox_hyper_pos=nope").hyperPosition).toBeUndefined();
-  });
-
-  test("serializes a pref to its cookie via the registry codec", () => {
-    const cookie = serializeLayoutCookie("hyperPosition", { x: 120, y: 80 });
-    expect(cookie).toContain("toybox_hyper_pos=120,80");
-    expect(cookie).toContain("Path=/");
-    expect(cookie).toContain("Max-Age=31536000");
-    expect(cookie).toContain("SameSite=Lax");
+  test("validates stored layout and clamps dimensions", () => {
+    expect(readWorkspaceLayout(cookieFor({ sidebarWidth: 9999, terminalSize: 999 }))).toMatchObject(
+      {
+        sidebarWidth: 480,
+        terminalSize: 80,
+      },
+    );
+    expect(readWorkspaceLayout("toybox_layout=%")).toEqual(defaultLayout);
   });
 });

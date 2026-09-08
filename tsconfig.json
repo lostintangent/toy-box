@@ -27,6 +27,8 @@
       "@files/*": ["./src/features/files/*"],
       "@inbox/*": ["./src/features/inbox/*"],
       "@sessions/*": ["./src/features/sessions/*"],
+      "@agents/*": ["./src/features/agents/*"],
+      "@channels/*": ["./src/features/channels/*"],
       "@terminal/*": ["./src/features/terminal/*"],
       "@workers/*": ["./src/features/workers/*"],
       "@workspace/*": ["./src/workspace/*"]

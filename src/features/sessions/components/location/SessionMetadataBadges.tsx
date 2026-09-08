@@ -30,16 +30,18 @@ export function SessionMetadataBadges({
     <div className={cn("flex min-w-0 items-center gap-1.5", className)}>
       {location && (
         <Tooltip>
-          <TooltipTrigger asChild>
-            <MetadataBadge className="max-w-44" aria-label={location.description}>
-              <SessionLocationIcon
-                kind={location.kind}
-                isWorktree={isWorktree}
-                className="h-3 w-3 shrink-0"
-              />
-              <span className="truncate">{location.label}</span>
-            </MetadataBadge>
-          </TooltipTrigger>
+          <TooltipTrigger
+            render={
+              <MetadataBadge className="max-w-44" aria-label={location.description}>
+                <SessionLocationIcon
+                  kind={location.kind}
+                  isWorktree={isWorktree}
+                  className="h-3 w-3 shrink-0"
+                />
+                <span className="truncate">{location.label}</span>
+              </MetadataBadge>
+            }
+          />
           <TooltipContent sideOffset={6} className="max-w-96 break-all">
             {location.tooltip}
           </TooltipContent>

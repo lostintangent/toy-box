@@ -4,6 +4,12 @@ import { sessionNameSchema } from "@sessions/model/protocol";
 import { modelConfigurationSchema } from "@sessions/model/modelConfiguration";
 import { SESSION_ID_PREFIX } from "@sessions/model/constants";
 
+export const STANDARD_SESSION_INSTRUCTIONS =
+  "Keep this session's title recognizable. Before completing the first turn, you MUST call `update_session_title` once with a concise 2-6 word title after understanding the user's initial intent. On later turns, call it again before responding only when the session's focus has changed materially, not for ordinary follow-ups or refinements. Do not mention routine title updates to the user.";
+
+export const HYPER_SESSION_INSTRUCTIONS =
+  "This is Toy Box's Hyper session, a global floating session window for observing other sessions, managing the Toy Box environment, answering questions, and performing tasks.";
+
 const updateSessionTitleTool = defineTool("update_session_title", {
   description:
     "Updates this session's automatic title to match its current focus. " +
@@ -177,3 +183,18 @@ const deleteSessionTool = defineTool("delete_session", {
 export const hyperLifecycleTools = [createSessionTool];
 export const lifecycleTools = [deleteSessionTool];
 export const sessionLayoutTools = [openSession, closeSession];
+
+const sendSessionResponseTool = defineTool("send_session_response", {
+  description:
+    "Publishes a useful Markdown response with this Agent's attribution in its host Session and ends the current turn. Finish any private work before calling.",
+  parameters: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),
+  skipPermission: true,
+  isTerminal: true,
+  handler: async ({ message }, invocation) => {
+    const { sendAgentResponse } = await import("./agentHost");
+    await sendAgentResponse(invocation.sessionId, message);
+    return "Response published.";
+  },
+});
+
+export const sessionAgentTools = [sendSessionResponseTool];

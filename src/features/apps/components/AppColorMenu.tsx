@@ -51,23 +51,26 @@ export function AppColorMenu({
           ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild onSelect={(event) => event.preventDefault()}>
-          <label>
-            <ColorSwatch color={color} />
-            Custom…
-            <input
-              type="color"
-              value={color}
-              disabled={disabled}
-              aria-label="Custom app color"
-              className="absolute inset-0 size-full cursor-pointer opacity-0"
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                if (isHexColor(value)) onColorChange(value);
-              }}
-            />
-          </label>
-        </DropdownMenuItem>
+        <DropdownMenuItem
+          closeOnClick={false}
+          render={
+            <label>
+              <ColorSwatch color={color} />
+              Custom…
+              <input
+                type="color"
+                value={color}
+                disabled={disabled}
+                aria-label="Custom app color"
+                className="absolute inset-0 size-full cursor-pointer opacity-0"
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  if (isHexColor(value)) onColorChange(value);
+                }}
+              />
+            </label>
+          }
+        />
       </DropdownMenuSubContent>
     </DropdownMenuSub>
   );

@@ -72,7 +72,7 @@ export function TerminalShell({ onClose, children }: TerminalShellProps) {
   }
 
   return (
-    <div className="relative flex h-full flex-col bg-terminal-bg group">
+    <div className="relative flex h-full flex-col bg-background group">
       {/* Mobile back button bar */}
       <div className="p-2 pt-0 border-b bg-background md:hidden shrink-0 flex items-center justify-between gap-2">
         <Button variant="ghost" size="sm" onClick={handleClose} className="gap-2">
@@ -152,7 +152,7 @@ export function TerminalShell({ onClose, children }: TerminalShellProps) {
         <X className="h-4 w-4 text-muted-foreground hover:text-foreground" />
       </button>
 
-      <div className="flex-1 min-h-0">{children}</div>
+      <div className="flex-1 min-h-0 bg-panel">{children}</div>
     </div>
   );
 }

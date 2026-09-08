@@ -7,6 +7,7 @@ type SdkSkillMetadata = {
   source: SkillSource;
   userInvocable: boolean;
   enabled: boolean;
+  path?: string;
 };
 
 /** Normalize enabled, user-invocable SDK skills into Toy Box's two scope types. */
@@ -17,6 +18,7 @@ export function toSessionSkills(skills: readonly SdkSkillMetadata[]): SessionSki
       name: skill.name,
       description: skill.description,
       type: skill.source === "project" || skill.source === "inherited" ? "project" : "global",
+      ...(skill.path ? { path: skill.path } : {}),
     }))
     .sort((left, right) => {
       if (left.type === right.type) return 0;

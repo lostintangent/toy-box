@@ -8,11 +8,11 @@ import {
 } from ".";
 
 const sessionFile: WorkspaceFile = {
-  type: "session",
+  kind: "session",
   sessionId: "toy-box-session",
   path: "plan.md",
 };
-const machineFile: WorkspaceFile = { type: "machine", path: "/repo/src/foo.ts" };
+const machineFile: WorkspaceFile = { kind: "machine", path: "/repo/src/foo.ts" };
 
 describe("workspace files", () => {
   test("identity distinguishes session and machine files", () => {

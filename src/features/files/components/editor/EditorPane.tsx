@@ -28,7 +28,7 @@ export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      {file.type === "session" && workers.length > 0 && (
+      {file.kind === "session" && workers.length > 0 && (
         <PaneStatus>
           <WorkersMenu workers={workers} variant={variant} />
         </PaneStatus>

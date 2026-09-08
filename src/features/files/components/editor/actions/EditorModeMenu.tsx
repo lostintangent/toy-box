@@ -70,47 +70,45 @@ export function EditorModeMenu({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        {showLabel ? (
-          <Button
-            type="button"
-            variant="ghost"
-            aria-label={`Editor mode: ${option.label}`}
-            title={option.description}
-            className="h-auto rounded-full p-0 hover:bg-transparent"
-          >
-            <MetadataBadge
-              className={cn(
-                "h-6 md:h-5 cursor-pointer select-none rounded-full border bg-transparent px-2 md:px-1.5 text-xs transition-colors hover:bg-muted",
-                option.badgeClassName,
-                className,
-              )}
+      <DropdownMenuTrigger
+        render={
+          showLabel ? (
+            <Button
+              type="button"
+              variant="ghost"
+              aria-label={`Editor mode: ${option.label}`}
+              title={option.description}
+              className="h-auto rounded-full p-0 hover:bg-transparent"
             >
-              <Icon className={cn("h-3 w-3 shrink-0", option.iconClassName, iconClassName)} />
-              <span>{option.label}</span>
-            </MetadataBadge>
-          </Button>
-        ) : (
-          <button
-            type="button"
-            aria-label={`Editor mode: ${option.label}`}
-            title={option.description}
-            className={cn(className, option.badgeClassName)}
-          >
-            <Icon className={cn(iconClassName, option.iconClassName)} />
-          </button>
-        )}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        className="w-max min-w-max"
-        onCloseAutoFocus={(event) => event.preventDefault()}
-      >
+              <MetadataBadge
+                className={cn(
+                  "h-6 md:h-5 cursor-pointer select-none rounded-full border bg-transparent px-2 md:px-1.5 text-xs transition-colors hover:bg-muted",
+                  option.badgeClassName,
+                  className,
+                )}
+              >
+                <Icon className={cn("h-3 w-3 shrink-0", option.iconClassName, iconClassName)} />
+                <span>{option.label}</span>
+              </MetadataBadge>
+            </Button>
+          ) : (
+            <button
+              type="button"
+              aria-label={`Editor mode: ${option.label}`}
+              title={option.description}
+              className={cn(className, option.badgeClassName)}
+            >
+              <Icon className={cn(iconClassName, option.iconClassName)} />
+            </button>
+          )
+        }
+      />
+      <DropdownMenuContent align="end" className="w-max min-w-max" finalFocus={false}>
         {ARTIFACT_MODE_OPTIONS.map(({ value, label, description, Icon: OptionIcon }) => (
           <DropdownMenuItem
             key={value}
             className={cn("gap-2 text-xs", mode === value && "bg-accent text-accent-foreground")}
-            onSelect={() => onModeChange(value)}
+            onClick={() => onModeChange(value)}
           >
             <OptionIcon
               className={cn(

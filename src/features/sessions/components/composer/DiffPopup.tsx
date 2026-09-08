@@ -10,16 +10,18 @@ export function DiffPopup({ total, byFile }: { total: DiffStats; byFile: FileDif
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <InputGroupButton
-          size="xs"
-          aria-label="View diff stats"
-          className="gap-1 font-mono text-xs"
-        >
-          <span className="text-diff-added">+{added}</span>
-          <span className="text-diff-removed">-{removed}</span>
-        </InputGroupButton>
-      </PopoverTrigger>
+      <PopoverTrigger
+        render={
+          <InputGroupButton
+            size="xs"
+            aria-label="View diff stats"
+            className="gap-1 font-mono text-xs"
+          >
+            <span className="text-diff-added">+{added}</span>
+            <span className="text-diff-removed">-{removed}</span>
+          </InputGroupButton>
+        }
+      />
       <PopoverContent className="w-72 p-0" align="start">
         <div className="text-sm">
           <div className="flex items-center gap-2 px-3 py-2 border-b">

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CircleHelp, Loader2, MessageCircle, X } from "lucide-react";
-import { Presence as PresencePrimitive } from "radix-ui/internal";
+import { AnimatePresence } from "motion/react";
+import * as m from "motion/react-m";
 import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { cn } from "@/shared/utils";
 import {
@@ -43,37 +44,38 @@ export function SessionOverlay({ sessionId }: { sessionId: string }) {
           is revealed the moment the surface fades and collapses on close,
           rather than popping in a frame later. It is inert while covered. */}
       <PaneStatus>{trigger}</PaneStatus>
-      {/* Presence keeps the surface mounted while its close animation plays and
-          unmounts it on animationend — the data-[state] classes drive the
-          enter/exit, so no manual mount/animation bookkeeping is needed here. */}
-      <PresencePrimitive.Presence present={isOpen}>
-        <div
-          data-state={isOpen ? "open" : "closed"}
-          className={cn(
-            "absolute right-3 bottom-3 z-30",
-            SESSION_OVERLAY_BASE_CLASS,
-            // Grow out of / collapse back into the trigger button in the
-            // bottom-right corner. fill-mode-forwards holds the collapsed end
-            // state so it never flashes back to visible before unmounting;
-            // pointer-events-none lets the revealed button be clicked mid-close.
-            "origin-bottom-right duration-200",
-            "data-[state=open]:animate-in data-[state=open]:duration-300 data-[state=open]:fade-in-0 data-[state=open]:zoom-in-90 data-[state=open]:slide-in-from-bottom-2",
-            "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-90 data-[state=closed]:slide-out-to-bottom-2 data-[state=closed]:fill-mode-forwards data-[state=closed]:pointer-events-none",
-          )}
-          style={CONTAINER_OVERLAY_BOUNDS}
-        >
-          <button
-            type="button"
-            onClick={() => setIsOpen(false)}
-            className={cn("absolute top-3 right-3 z-10", PANE_OVERLAY_BUTTON_CLASS)}
-            aria-label="Close session overlay"
-            title="Close session overlay"
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <m.div
+            key="session-overlay"
+            initial={{ opacity: 0, scale: 0.9, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0, transition: { duration: 0.3 } }}
+            exit={{
+              opacity: 0,
+              scale: 0.9,
+              y: 8,
+              pointerEvents: "none",
+              transition: { duration: 0.2 },
+            }}
+            className={cn(
+              "absolute right-3 bottom-3 z-30 origin-bottom-right",
+              SESSION_OVERLAY_BASE_CLASS,
+            )}
+            style={CONTAINER_OVERLAY_BOUNDS}
           >
-            <X className={PANE_OVERLAY_ICON_CLASS} />
-          </button>
-          <SessionPane key={sessionId} sessionId={sessionId} mode="overlay" />
-        </div>
-      </PresencePrimitive.Presence>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className={cn("absolute top-3 right-3 z-10", PANE_OVERLAY_BUTTON_CLASS)}
+              aria-label="Close session overlay"
+              title="Close session overlay"
+            >
+              <X className={PANE_OVERLAY_ICON_CLASS} />
+            </button>
+            <SessionPane key={sessionId} sessionId={sessionId} mode="overlay" />
+          </m.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

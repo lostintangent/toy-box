@@ -1,116 +1,75 @@
-import type { ComponentPropsWithoutRef } from "react";
-import { Slot } from "@radix-ui/react-slot";
+import { ScrollArea } from "@base-ui/react/scroll-area";
+import { forwardRef, type ComponentPropsWithoutRef, type ForwardedRef } from "react";
 import { cn } from "@/shared/utils";
 
 export type ScrollableFadeAxis = "horizontal" | "vertical";
 
+const fadeClassName =
+  "scroll-fade-8 [--scroll-fade-reveal:2rem] [animation-timing-function:linear]";
+
 type ScrollableFadeProps = ComponentPropsWithoutRef<"div"> & {
   axis?: ScrollableFadeAxis;
-  asChild?: boolean;
+  rootClassName?: string;
 };
 
-type ScrollableMeasurements = Pick<
-  HTMLElement,
-  "clientHeight" | "clientWidth" | "scrollHeight" | "scrollLeft" | "scrollTop" | "scrollWidth"
->;
+export const ScrollableFade = forwardRef<HTMLElement, ScrollableFadeProps>(function ScrollableFade(
+  { axis = "horizontal", className, rootClassName, children, style, ...props },
+  forwardedRef,
+) {
+  const horizontal = axis === "horizontal";
 
-const SCROLL_END_TOLERANCE = 1;
-
-export function ScrollableFade({
-  axis = "horizontal",
-  asChild = false,
-  className,
-  ...props
-}: ScrollableFadeProps) {
-  const Component = asChild ? Slot : "div";
-
-  function ref(element: HTMLElement | null) {
-    if (!element) return;
-    return observeScrollableFade(element, axis);
+  if (horizontal) {
+    return (
+      <span
+        {...props}
+        ref={forwardedRef as ForwardedRef<HTMLSpanElement>}
+        data-slot="scrollable-fade"
+        data-scrollable-fade="horizontal"
+        className={cn(
+          fadeClassName,
+          "scroll-fade-x no-scrollbar block min-w-0 w-full max-w-full overflow-x-scroll overflow-y-hidden",
+          rootClassName,
+          className,
+        )}
+        style={style}
+      >
+        {children}
+      </span>
+    );
   }
 
   return (
-    <Component
-      {...props}
-      ref={ref}
-      data-slot="scrollable-fade"
-      data-scrollable-fade={axis}
-      className={cn(
-        "scrollable-fade",
-        axis === "horizontal" ? "overflow-x-auto" : "overflow-y-auto",
-        className,
-      )}
-    />
+    <ScrollArea.Root data-slot="scrollable-fade-root" className={cn("relative", rootClassName)}>
+      <ScrollArea.Viewport
+        {...props}
+        ref={forwardedRef as ForwardedRef<HTMLDivElement>}
+        data-slot="scrollable-fade"
+        data-scrollable-fade="vertical"
+        className={cn(
+          fadeClassName,
+          "scroll-fade-y focus-visible:ring-ring/50 block rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1",
+          "h-full w-full",
+          className,
+        )}
+        style={{
+          overflowX: "hidden",
+          overflowY: "scroll",
+          ...style,
+        }}
+      >
+        <ScrollArea.Content className="w-full" style={{ minWidth: "100%", width: "100%" }}>
+          {children}
+        </ScrollArea.Content>
+      </ScrollArea.Viewport>
+      <ScrollArea.Scrollbar
+        data-slot="scrollable-fade-scrollbar"
+        className="pointer-events-none w-2.5 touch-none border-l border-l-transparent p-px opacity-0 transition-[color,opacity] select-none data-[hovering]:pointer-events-auto data-[hovering]:opacity-100 data-[scrolling]:opacity-100"
+      >
+        <ScrollArea.Thumb
+          data-slot="scrollable-fade-thumb"
+          className="bg-border relative block w-full rounded-full"
+        />
+      </ScrollArea.Scrollbar>
+    </ScrollArea.Root>
   );
-}
-
-function observeScrollableFade(element: HTMLElement, axis: ScrollableFadeAxis) {
-  let animationFrame: number | null = null;
-  let active = true;
-
-  function scheduleUpdate() {
-    if (animationFrame !== null) return;
-    animationFrame = requestAnimationFrame(() => {
-      animationFrame = null;
-      updateScrollableFade(element, axis);
-    });
-  }
-
-  element.addEventListener("scroll", scheduleUpdate, { passive: true });
-  element.addEventListener("pointerenter", scheduleUpdate);
-  element.addEventListener("load", scheduleUpdate, true);
-
-  const resizeObserver =
-    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleUpdate);
-  resizeObserver?.observe(element);
-
-  const mutationObserver =
-    typeof MutationObserver === "undefined" ? null : new MutationObserver(scheduleUpdate);
-  mutationObserver?.observe(element, {
-    childList: true,
-    characterData: true,
-    subtree: true,
-  });
-
-  const fonts = document.fonts;
-  fonts?.addEventListener("loadingdone", scheduleUpdate);
-
-  updateScrollableFade(element, axis);
-  void fonts?.ready.then(() => {
-    if (active) scheduleUpdate();
-  });
-
-  return () => {
-    active = false;
-
-    element.removeEventListener("scroll", scheduleUpdate);
-    element.removeEventListener("pointerenter", scheduleUpdate);
-    element.removeEventListener("load", scheduleUpdate, true);
-    fonts?.removeEventListener("loadingdone", scheduleUpdate);
-
-    resizeObserver?.disconnect();
-    mutationObserver?.disconnect();
-
-    if (animationFrame !== null) cancelAnimationFrame(animationFrame);
-  };
-}
-
-function updateScrollableFade(element: HTMLElement, axis: ScrollableFadeAxis) {
-  const { start, end } = getScrollableFadeEdges(element, axis);
-  element.toggleAttribute("data-scroll-fade-start", start);
-  element.toggleAttribute("data-scroll-fade-end", end);
-}
-
-export function getScrollableFadeEdges(
-  element: ScrollableMeasurements,
-  axis: ScrollableFadeAxis = "horizontal",
-) {
-  const offset = axis === "horizontal" ? element.scrollLeft : element.scrollTop;
-  const viewportSize = axis === "horizontal" ? element.clientWidth : element.clientHeight;
-  const scrollSize = axis === "horizontal" ? element.scrollWidth : element.scrollHeight;
-
-  return {
-    start: offset > 0,
-    end: offset + viewportSize < scrollSize - SCROLL_END_TOLERANCE,
-  };
-}
+});

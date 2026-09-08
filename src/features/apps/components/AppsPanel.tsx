@@ -52,28 +52,29 @@ export function AppsPanel({
     <>
       <SidebarPanel
         title="Apps"
-        count={apps.length}
         isExpanded={isExpanded}
         onExpandedChange={onExpandedChange}
         action={
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-6 w-6"
-                aria-label="Add app"
-                title="Add app"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6"
+                  aria-label="Add app"
+                  title="Add app"
+                />
+              }
+            >
+              <Plus className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {definitions.map((definition) => (
                 <div key={definition.id} className="flex items-center">
                   <DropdownMenuItem
                     className="min-w-0 flex-1"
-                    onSelect={() => setCreateDefinitionId(definition.id)}
+                    onClick={() => setCreateDefinitionId(definition.id)}
                   >
                     <DefinitionIcon definition={definition} />
                     <span className="truncate">{definition.title}</span>
@@ -82,14 +83,14 @@ export function AppsPanel({
                     className="size-8 shrink-0 justify-center p-0 text-muted-foreground focus:text-destructive"
                     aria-label={`Uninstall ${definition.title}`}
                     title={`Uninstall ${definition.title}`}
-                    onSelect={() => setUninstallDefinitionId(definition.id)}
+                    onClick={() => setUninstallDefinitionId(definition.id)}
                   >
                     <Trash2 />
                   </DropdownMenuItem>
                 </div>
               ))}
               {definitions.length > 0 && <DropdownMenuSeparator />}
-              <DropdownMenuItem onSelect={() => setInstallOpen(true)}>
+              <DropdownMenuItem onClick={() => setInstallOpen(true)}>
                 <Download />
                 Install from Gist…
               </DropdownMenuItem>
@@ -197,12 +198,12 @@ function AppListItem({
         }
         menuItems={
           <>
-            <DropdownMenuItem onSelect={onOpenInHyper}>
+            <DropdownMenuItem onClick={onOpenInHyper}>
               <MessageCirclePlus />
               Open in Hyper
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => setDialog("rename")}>
+            <DropdownMenuItem onClick={() => setDialog("rename")}>
               <Pencil />
               Rename app
             </DropdownMenuItem>
@@ -212,10 +213,7 @@ function AppListItem({
               onColorChange={(color) => colorMutation.mutate({ color })}
             />
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={() => setDialog("delete")}
-            >
+            <DropdownMenuItem variant="destructive" onClick={() => setDialog("delete")}>
               <Trash2 />
               Delete app
             </DropdownMenuItem>

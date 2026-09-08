@@ -1,7 +1,36 @@
 // Markdown comment threads are stored inside the artifact, so this kind
-// owns the complete protocol that tells a worker how to respond.
+// owns the complete protocol that tells any background responder how to act.
 
-import type { CommentThread } from "@lostintangent/documint";
+import type { CommentChange, CommentThread } from "@lostintangent/documint";
+
+export const COPILOT_DOCUMENT_USER_ID = "copilot";
+
+type ArtifactCommentResponsePlan = {
+  agentIds: string[];
+  prompt: string;
+  spawnWorker: boolean;
+  threadId: string;
+};
+
+/** Route one new comment to every explicitly mentioned persistent Agent.
+ * Unaddressed comments retain the anonymous Worker behavior; @Copilot may be
+ * combined with named Agents when the user deliberately asks for both. */
+export function planArtifactCommentResponse(
+  change: CommentChange,
+  availableAgentIds: Iterable<string>,
+  now: Date,
+): ArtifactCommentResponsePlan | undefined {
+  if (change.kind !== "added") return undefined;
+  const available = new Set(availableAgentIds);
+  const agentIds = [...new Set(change.mentionedUserIds.filter((userId) => available.has(userId)))];
+  return {
+    agentIds,
+    prompt: buildArtifactCommentPrompt(change.thread, now),
+    spawnWorker:
+      agentIds.length === 0 || change.mentionedUserIds.includes(COPILOT_DOCUMENT_USER_ID),
+    threadId: change.threadId,
+  };
+}
 
 export function buildArtifactCommentPrompt(thread: CommentThread, now: Date): string {
   const latestComment = thread.comments.at(-1)!.body;

@@ -1,7 +1,6 @@
 import { defineConfig, lazyPlugins } from "vite-plus";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
-import babel from "@rolldown/plugin-babel";
-import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react";
+import viteReact from "@vitejs/plugin-react";
 import { nitro } from "nitro/vite";
 import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
@@ -52,8 +51,7 @@ export default defineConfig(({ mode }) => {
         serveStatic: isProduction,
       }),
       tanstackStart({ router: { virtualRouteConfig: "./src/routes.ts" } }),
-      viteReact(),
-      babel({ presets: [reactCompilerPreset()] }),
+      viteReact({ compiler: true }),
     ]),
 
     fmt: {

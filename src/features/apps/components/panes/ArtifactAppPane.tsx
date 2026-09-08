@@ -9,7 +9,7 @@ import { AppErrorBoundary, AppHost, AppMessage, appErrorMessage } from "../host/
 /** Renders a stateless session `.toy` file through the shared app host. */
 export function ArtifactAppPane({ title, file }: EditorProps) {
   const { source } = file;
-  if (source.type !== "session") {
+  if (source.kind !== "session") {
     return (
       <AppMessage
         title="Artifact app unavailable"

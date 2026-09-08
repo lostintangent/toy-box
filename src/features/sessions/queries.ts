@@ -39,7 +39,21 @@ export function createEmptySessionsState(): SessionsState {
   };
 }
 
-/** Exclude managed workers from ordinary session lists. */
+const projectsSessionListMetadataByType = {
+  standard: true,
+  automation: true,
+  inbox: true,
+  hyper: true,
+  worker: true,
+  agent: false,
+} satisfies Record<SessionType, boolean>;
+
+/** Whether this role is deliberately addressable through shared Session metadata. */
+export function projectsSessionListMetadata(sessionType: SessionType): boolean {
+  return projectsSessionListMetadataByType[sessionType];
+}
+
+/** Exclude Worker backing Sessions while preserving their metadata for owning surfaces. */
 export function selectNonWorkerSessions(state: SessionsState): SessionsState["sessions"] {
   if (Object.keys(state.workerSessionParents).length === 0) return state.sessions;
   return state.sessions.filter(

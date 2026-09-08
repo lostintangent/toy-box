@@ -23,7 +23,10 @@ async function statWatchedFile(absolutePath: string): Promise<FileWatchEvent> {
   }
 }
 
-async function createWatchResponse(params: WatchRouteParams, request: Request): Promise<Response> {
+export async function createWatchResponse(
+  params: WatchRouteParams,
+  request: Request,
+): Promise<Response> {
   const { scope, _splat } = params;
   const resolution = await resolveFileRequest(scope, _splat);
   if ("error" in resolution) return resolution.error;
@@ -39,6 +42,11 @@ async function createWatchResponse(params: WatchRouteParams, request: Request): 
       const { watch } = await import("node:fs");
       watcher = watch(absolutePath, changeEvents.maybeExecute);
       watcher.on("error", close);
+      // Close the read-then-watch gap: a write can land after the client's
+      // snapshot read but before this watcher is installed. Register first,
+      // then publish the current revision so either this snapshot or a later
+      // watch event makes the client converge.
+      send(await statWatchedFile(absolutePath));
     } catch {
       close();
     }

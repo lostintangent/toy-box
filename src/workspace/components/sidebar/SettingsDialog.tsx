@@ -11,6 +11,13 @@ import {
 import { isAccentColor, isSessionFeatureScope } from "@workspace/model/config/settings";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
 
+const AUTO_FOCUS_ARTIFACT_OPTIONS = {
+  always: "Always",
+  sessions: "Sessions",
+  automations: "Automations",
+  never: "Never",
+} as const;
+
 export function SettingsDialog({
   open,
   onOpenChange,
@@ -37,6 +44,7 @@ export function SettingsDialog({
               Accent color
             </label>
             <Select
+              items={AUTO_FOCUS_ARTIFACT_OPTIONS}
               value={autoFocusArtifacts}
               onValueChange={(value) => {
                 if (isSessionFeatureScope(value)) {
@@ -48,10 +56,11 @@ export function SettingsDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="always">Always</SelectItem>
-                <SelectItem value="sessions">Sessions</SelectItem>
-                <SelectItem value="automations">Automations</SelectItem>
-                <SelectItem value="never">Never</SelectItem>
+                {Object.entries(AUTO_FOCUS_ARTIFACT_OPTIONS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <div className="relative flex h-9 items-center gap-2 rounded-md border border-input bg-transparent px-3 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
@@ -97,7 +106,7 @@ export function SettingsDialog({
               id="use-worktree"
               checked={useWorktree}
               onCheckedChange={(checked) => {
-                updateSetting("useWorktree", checked === true);
+                updateSetting("useWorktree", checked);
               }}
             />
             <label htmlFor="use-worktree" className="text-sm font-medium text-foreground">

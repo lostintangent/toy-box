@@ -1,3 +1,11 @@
+## 📅 v0.1.20 (09/08/26)
+
+- Introduced the notion of agents and channels
+- Added an "ink cloud" to draft sessions and an ink-splatter typing effect to the session composer
+- The skill picker and skill tool call now allow opening the `SKILL.md` directly in an editor pane
+- Artifact pills in a session now show when a file has active workers running
+- _(Engineering)_ Migrate shared interface primitives from Radix UI to Base UI
+
 ## 📅 v0.1.19 (08/26/26)
 
 - Add support for configuring the context window

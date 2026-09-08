@@ -10,14 +10,14 @@ type FileSnapshot = Awaited<ReturnType<typeof readFile>>;
 
 export const fileQueries = {
   all: () => ["files"] as const,
-  browseKey: (path: string | undefined, showHidden: boolean) =>
-    [...fileQueries.all(), "browse", path ?? null, showHidden] as const,
+  browseKey: (path: string | undefined, showDotfiles: boolean) =>
+    [...fileQueries.all(), "browse", path ?? null, showDotfiles] as const,
   detailKey: (fileId: string) => [...fileQueries.all(), fileId] as const,
 
-  browse: (path: string | undefined, showHidden: boolean) =>
+  browse: (path: string | undefined, showDotfiles: boolean) =>
     queryOptions({
-      queryKey: fileQueries.browseKey(path, showHidden),
-      queryFn: () => listDirectory({ data: { path, showHidden } }),
+      queryKey: fileQueries.browseKey(path, showDotfiles),
+      queryFn: () => listDirectory({ data: { path, showDotfiles } }),
       placeholderData: keepPreviousData,
       retry: false,
     }),

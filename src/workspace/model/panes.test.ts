@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createEditorPane,
   createAppPane,
+  createChannelPane,
   createCanvasPaneId,
   createLinkedCanvasPane,
   createLinkedPanes,
@@ -53,15 +54,17 @@ describe("workspace pane derivation", () => {
     expect(deriveWorkspaceRootPanes(["A"])).toEqual([selectedSessionPane("A")]);
   });
 
-  test("appends user-opened files as root panes after selected sessions", () => {
+  test("appends user-opened files as root panes without losing their identity", () => {
     const path = "/repo/notes.md";
     const file = machineFile(path);
-    expect(deriveWorkspaceRootPanes(["A"], [path])).toEqual([
+    const artifact = sessionFile("B", "plan.md");
+    expect(deriveWorkspaceRootPanes(["A"], [file, artifact])).toEqual([
       selectedSessionPane("A"),
       createEditorPane(file),
+      createEditorPane(artifact),
     ]);
     // Files present with no session replace the Inbox fallback.
-    expect(deriveWorkspaceRootPanes([], [path])).toEqual([createEditorPane(file)]);
+    expect(deriveWorkspaceRootPanes([], [file])).toEqual([createEditorPane(file)]);
   });
 
   test("adds saved apps as durable root panes without assigning a source session", () => {
@@ -74,12 +77,32 @@ describe("workspace pane derivation", () => {
     ]);
   });
 
+  test("keeps selected surfaces ahead of the files opened from them", () => {
+    const path = "/repo/notes.md";
+    const editorPane = createEditorPane(machineFile(path));
+
+    expect(deriveWorkspaceRootPanes([], [machineFile(path)], ["app-a"])).toEqual([
+      createAppPane("app-a"),
+      editorPane,
+    ]);
+    expect(deriveWorkspaceRootPanes([], [machineFile(path)], [], ["channel-a"])).toEqual([
+      createChannelPane("channel-a"),
+      editorPane,
+    ]);
+  });
+
   test("deduplicates roots and enforces one combined workspace cap", () => {
-    expect(deriveWorkspaceRootPanes(["A", "A", "B"], ["/one.md", "/two.md"], ["app-a"])).toEqual([
+    expect(
+      deriveWorkspaceRootPanes(
+        ["A", "A", "B"],
+        [machineFile("/one.md"), machineFile("/two.md")],
+        ["app-a"],
+      ),
+    ).toEqual([
       selectedSessionPane("A"),
       selectedSessionPane("B"),
+      createAppPane("app-a"),
       createEditorPane(machineFile("/one.md")),
-      createEditorPane(machineFile("/two.md")),
     ]);
   });
 

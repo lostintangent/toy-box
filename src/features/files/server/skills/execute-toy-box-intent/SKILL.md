@@ -1,6 +1,7 @@
 ---
 name: execute-toy-box-intent
 description: "Execute, resume, or review the settled implementation plan in a Toy Box `.intent` document. Advance durable plan-step status and publish execution results for `metadata.intent.action: execute-plan`; inspect the completed outcome and append only warranted follow-up work for `metadata.intent.action: review-outcome`."
+user-invocable: false
 ---
 
 # Execute and Review a Toy Box Intent Plan

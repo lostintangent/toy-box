@@ -55,7 +55,8 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-const { spawnWorker, buildWorkerPrompt, cancelWorker } = await import("./admission");
+const { spawnWorker, spawnSessionWorker, buildWorkerPrompt, cancelWorker } =
+  await import("./admission");
 const { finishWorker, hasWorker } = await import("./registry");
 const { subscribeWorkspaceEvents } = await import("@workspace/server/events");
 
@@ -91,8 +92,13 @@ describe("workers", () => {
     const completion = deferred<SessionCompletion>();
     completions.push(completion.promise);
     const events: WorkspaceEvent[] = [];
+    let eventWait: Promise<SessionCompletion> | undefined;
     const unsubscribe = subscribeWorkspaceEvents((event) => {
-      if (event.type.startsWith("worker.")) events.push(event);
+      if (!event.type.startsWith("worker.")) return;
+      events.push(event);
+      if (event.type === "worker.started") {
+        eventWait = waitForSession(event.worker.sessionId);
+      }
     });
     onTestFinished(unsubscribe);
 
@@ -131,8 +137,41 @@ describe("workers", () => {
     expect(spawnWorkerMock.mock.calls[0]![0].message.content).toContain(import.meta.path);
 
     completion.resolve({ status: "completed" });
+    await expect(eventWait).resolves.toEqual({ status: "completed" });
     await waitFor(() => expect(hasWorker(sessionId)).toBe(false));
     expect(events.at(-1)).toEqual({ type: "worker.finished", sessionId });
+  });
+
+  test("admits a session-owned worker through the same completion lifecycle", async () => {
+    const completion = deferred<SessionCompletion>();
+    completions.push(completion.promise);
+
+    const worker = await spawnSessionWorker({
+      parentSessionId: "toy-box-parent",
+      name: "Reviewer",
+      ephemeral: true,
+      message: { content: "Review the change." },
+      directory: "/repo",
+      useWorktree: true,
+    });
+    onTestFinished(() => finishWorker(worker.sessionId));
+
+    expect(spawnWorkerMock).toHaveBeenCalledWith({
+      worker: {
+        type: "session",
+        sessionId: worker.sessionId,
+        parentSessionId: "toy-box-parent",
+        name: "Reviewer",
+        ephemeral: true,
+      },
+      message: { content: "Review the change." },
+      directory: "/repo",
+      useWorktree: true,
+    });
+
+    const wait = waitForSession(worker.sessionId);
+    completion.resolve({ status: "completed", response: "Looks good." });
+    await expect(wait).resolves.toEqual({ status: "completed", response: "Looks good." });
   });
 
   test("shares an admitted worker's session completion with every waiter", async () => {

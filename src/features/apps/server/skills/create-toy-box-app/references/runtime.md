@@ -97,7 +97,7 @@ These components accept their corresponding native element props and
   and returns a machine `WorkspaceFile` that can be passed directly to the file
   and pane actions. Pass dot-prefixed `extensions` such as `[".md", ".mdx"]`
   to show and create only those file types. Use
-  `type MachineFile = Extract<WorkspaceFile, { type: "machine" }>` when storing
+  `type MachineFile = Extract<WorkspaceFile, { kind: "machine" }>` when storing
   that narrower value.
 - Use `AppSharePicker` to offer content to another saved app. Pass
   `{ mimeType, content, label?, className?, disabled? }`; it discovers compatible
@@ -356,7 +356,7 @@ type AppShare = {
 };
 
 type WorkspaceFile =
-  { type: "session"; sessionId: string; path: string } | { type: "machine"; path: string };
+  { kind: "session"; sessionId: string; path: string } | { kind: "machine"; path: string };
 ```
 
 In an artifact app, use `const actions = useAppActions()`. It exposes every

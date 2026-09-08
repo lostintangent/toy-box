@@ -2,8 +2,9 @@
 
 Workspace is Toy Box's application composition layer. It owns two sibling capabilities:
 
-- the shared projection and update plane that composes authoritative facts from Sessions, Inbox,
-  Automations, Workers, Files, and Apps without becoming another source of truth; and
+- the shared projection and update plane that composes authoritative facts from Sessions, Agents,
+  Channels, Inbox, Automations, Workers, Files, and Apps without becoming another source of truth;
+  and
 - the browser-local shell that composes feature-owned panes into the desktop, mobile, and Hyper
   layouts.
 
@@ -40,31 +41,34 @@ narrow reactive selectors and the two client command hooks; it does not copy ser
 
 [`hooks/useWorkspaceSync.ts`](hooks/useWorkspaceSync.ts) is the single browser sink for the
 at-most-once workspace SSE stream. On initial connection or reconnect it refreshes the aggregate
-snapshot and durable session list, then applies subsequent events to their owning Query caches.
-Events announce accepted changes; they are synchronization hints, not durable truth or a replay
-log.
+snapshot plus durable Session, Agent, and Channel queries, then applies subsequent events to their
+owning Query caches. Events announce accepted changes; they are synchronization hints, not durable
+truth or a replay log.
 
 [`server/functions.ts`](server/functions.ts) validates remote ingress for hydration, shared
 workspace actions, and settings updates, then delegates to the plain operations in
 [`server/index.ts`](server/index.ts). That module assembles the cross-feature snapshot and owns
-Workspace-level orchestration. [`server/state/`](server/state) owns only workspace-wide
-coordination: sparse shared session activity, Hyper membership, settings, and environment
-capabilities. [`server/events.ts`](server/events.ts) owns the process-local fan-out behind the
-shared SSE route. Shared SQLite connection management stays in [`../server/`](../server), while
-each feature owns its records and lifecycle.
+Workspace-level orchestration. [`server/tools.ts`](server/tools.ts) exposes Workspace-owned settings
+updates to model sessions. [`server/state/`](server/state) owns only workspace-wide coordination:
+sparse shared session activity, Hyper membership, settings, and environment capabilities.
+[`server/events.ts`](server/events.ts) owns the process-local fan-out behind the shared SSE route.
+Shared SQLite connection management stays in [`../server/`](../server), while each feature owns its
+records and lifecycle.
 
 Browser-local pane topology, focus, layout, and client identity are deliberately absent from the
 server projection.
 
 ## Pane model
 
-`WorkspacePane` is the shared presentation value for five kinds of content:
+`WorkspacePane` is the shared presentation value for six kinds of content:
 
 - Inbox is the stable fallback when no root pane is selected.
 - A session pane is sourced by its own session ID.
 - An editor pane presents a session artifact or machine file.
 - A canvas pane presents an SDK-provided URL associated with its source session.
 - An app pane presents one durable app instance and is not inherently session-backed.
+- A channel pane presents one durable shared bus. Its artifacts retain their Files-owned identity
+  when toggled as ordinary root editor panes rather than published as linked panes.
 
 A session `.toy` artifact app remains an editor pane. Reusing the app compiler
 and mounted runtime does not add another pane kind or transfer ownership from its
@@ -72,10 +76,10 @@ source file.
 
 Each pane has a stable ID that represents mounted identity. [`model/panes.ts`](model/panes.ts) owns
 identity, source relationships, reachability, ordering, and focus policy as pure functions. Root
-sessions, files, and apps are deduplicated and capped at four panes. Active session, Inbox, and app
-panes can publish linked panes through a browser-local graph owned by their workspace surface. That
-graph contains composition only; it never copies transcripts, file content, Inbox rows, or app
-state.
+sessions, files, apps, and channels are deduplicated and capped at four panes. Active session,
+Inbox, and app panes can publish linked panes through a browser-local graph owned by their workspace
+surface. That graph contains composition only; it never copies transcripts, Channel messages, file
+content, Inbox rows, or app state.
 
 `SessionPane` has three interaction modes:
 
@@ -98,6 +102,10 @@ maximize and restore behavior.
 used by mobile and Hyper. It keeps inactive pages mounted so paging preserves scroll and local
 surface state, and portals the active pane's controls into its toolbar.
 
+One sparse browser cookie retains non-default `WorkspaceLayout` values across reloads and SSR.
+`sidebarCollapsed` is the shared visibility fact: it produces the desktop rail or reveals the
+mobile workspace, whose no-root fallback is Inbox.
+
 [`components/layout/HyperSession.tsx`](components/layout/HyperSession.tsx) is an independent
 mini-workspace around a managed session. It has its own roots, focus, and publication graph while
 reusing the ordinary pager and pane components. Promotion preserves the transcript and live
@@ -117,9 +125,10 @@ is the reusable follow-up surface for session-backed output shown without its so
 - [`components/panes/WorkspacePaneView.tsx`](components/panes/WorkspacePaneView.tsx) is the single
   host-to-feature adapter. Feature components own content behavior; Workspace owns placement,
   focus, and chrome.
-- [Sessions](../features/sessions/AGENTS.md), [Inbox](../features/inbox/AGENTS.md),
-  [Files](../features/files/AGENTS.md), and [Apps](../features/apps/AGENTS.md) own the data and
-  behavior rendered in their panes.
+- [Sessions](../features/sessions/AGENTS.md), [Channels](../features/channels/AGENTS.md),
+  [Inbox](../features/inbox/AGENTS.md), [Files](../features/files/AGENTS.md), and
+  [Apps](../features/apps/AGENTS.md) own the data and behavior rendered in their panes. Agents owns
+  the reusable identity and membership UI composed inside Session and Channel panes.
 - [Terminal](../features/terminal/AGENTS.md) owns its PTY and connection lifecycle; the main route
   owns only its drawer visibility, size, and mobile or desktop placement.
 

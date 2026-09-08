@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiInboxRouteImport } from './features/inbox/routes/inbox'
 import { Route as ApiWorkspaceRouteImport } from './routes/api/workspace'
+import { Route as ApiChannelsChannelIdRouteImport } from './features/channels/routes/channels/$channelId'
 import { Route as ApiServeScopeSplatRouteImport } from './features/files/routes/serve/$scope/$'
 import { Route as ApiWatchScopeSplatRouteImport } from './features/files/routes/watch/$scope/$'
 
@@ -30,6 +31,11 @@ const ApiWorkspaceRoute = ApiWorkspaceRouteImport.update({
   path: '/api/workspace',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiChannelsChannelIdRoute = ApiChannelsChannelIdRouteImport.update({
+  id: '/api/channels/$channelId',
+  path: '/api/channels/$channelId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiServeScopeSplatRoute = ApiServeScopeSplatRouteImport.update({
   id: '/api/serve/$scope/$',
   path: '/api/serve/$scope/$',
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/inbox': typeof ApiInboxRoute
   '/api/workspace': typeof ApiWorkspaceRoute
+  '/api/channels/$channelId': typeof ApiChannelsChannelIdRoute
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/watch/$scope/$': typeof ApiWatchScopeSplatRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/inbox': typeof ApiInboxRoute
   '/api/workspace': typeof ApiWorkspaceRoute
+  '/api/channels/$channelId': typeof ApiChannelsChannelIdRoute
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/watch/$scope/$': typeof ApiWatchScopeSplatRoute
 }
@@ -60,6 +68,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/api/inbox': typeof ApiInboxRoute
   '/api/workspace': typeof ApiWorkspaceRoute
+  '/api/channels/$channelId': typeof ApiChannelsChannelIdRoute
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/watch/$scope/$': typeof ApiWatchScopeSplatRoute
 }
@@ -69,6 +78,7 @@ export interface FileRouteTypes {
     | '/'
     | '/api/inbox'
     | '/api/workspace'
+    | '/api/channels/$channelId'
     | '/api/serve/$scope/$'
     | '/api/watch/$scope/$'
   fileRoutesByTo: FileRoutesByTo
@@ -76,6 +86,7 @@ export interface FileRouteTypes {
     | '/'
     | '/api/inbox'
     | '/api/workspace'
+    | '/api/channels/$channelId'
     | '/api/serve/$scope/$'
     | '/api/watch/$scope/$'
   id:
@@ -83,6 +94,7 @@ export interface FileRouteTypes {
     | '/'
     | '/api/inbox'
     | '/api/workspace'
+    | '/api/channels/$channelId'
     | '/api/serve/$scope/$'
     | '/api/watch/$scope/$'
   fileRoutesById: FileRoutesById
@@ -91,6 +103,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiInboxRoute: typeof ApiInboxRoute
   ApiWorkspaceRoute: typeof ApiWorkspaceRoute
+  ApiChannelsChannelIdRoute: typeof ApiChannelsChannelIdRoute
   ApiServeScopeSplatRoute: typeof ApiServeScopeSplatRoute
   ApiWatchScopeSplatRoute: typeof ApiWatchScopeSplatRoute
 }
@@ -118,6 +131,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWorkspaceRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/channels/$channelId': {
+      id: '/api/channels/$channelId'
+      path: '/api/channels/$channelId'
+      fullPath: '/api/channels/$channelId'
+      preLoaderRoute: typeof ApiChannelsChannelIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/serve/$scope/$': {
       id: '/api/serve/$scope/$'
       path: '/api/serve/$scope/$'
@@ -139,6 +159,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiInboxRoute: ApiInboxRoute,
   ApiWorkspaceRoute: ApiWorkspaceRoute,
+  ApiChannelsChannelIdRoute: ApiChannelsChannelIdRoute,
   ApiServeScopeSplatRoute: ApiServeScopeSplatRoute,
   ApiWatchScopeSplatRoute: ApiWatchScopeSplatRoute,
 }

@@ -9,7 +9,7 @@ import {
   resolveEditorAutoFocus,
   type WorkspacePane,
 } from "@workspace/model/panes";
-import { sessionFile } from "@files/model";
+import { sessionFile, type WorkspaceFile } from "@files/model";
 
 // Store identities follow the browser workspace, not a host mount; Hyper may
 // unmount while minimized.
@@ -32,6 +32,8 @@ const { StoreProvider, useStoreContext: useWorkspaceSurface } = createStoreConte
   (typeof workspaceSurfaces)[WorkspaceSurface] & {
     panes: readonly WorkspacePane[];
     openApp: (appId: string) => void;
+    openFile?: (path: string) => void;
+    toggleFile?: (file: WorkspaceFile) => void;
   }
 >();
 export { useWorkspaceSurface };
@@ -49,11 +51,15 @@ export function WorkspaceSurfaceProvider({
   surface,
   panes,
   onOpenApp,
+  onOpenFile,
+  onToggleFile,
   children,
 }: {
   surface: WorkspaceSurface;
   panes: WorkspacePane[];
   onOpenApp: (appId: string) => void;
+  onOpenFile?: (path: string) => void;
+  onToggleFile?: (file: WorkspaceFile) => void;
   children: ReactNode;
 }) {
   const workspaceSurface = workspaceSurfaces[surface];
@@ -97,7 +103,15 @@ export function WorkspaceSurfaceProvider({
   }, [autoFocusArtifacts, draftEditorPaneIds, panes, workspaceSurface.focusedPaneAtom]);
 
   return (
-    <StoreProvider value={{ ...workspaceSurface, panes, openApp: onOpenApp }}>
+    <StoreProvider
+      value={{
+        ...workspaceSurface,
+        panes,
+        openApp: onOpenApp,
+        openFile: onOpenFile,
+        toggleFile: onToggleFile,
+      }}
+    >
       {children}
     </StoreProvider>
   );

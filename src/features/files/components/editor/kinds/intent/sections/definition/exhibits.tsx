@@ -4,11 +4,11 @@ import {
   Boxes,
   Code2,
   File,
-  FileCode2,
   Folder,
   Image as ImageIcon,
   ListTree,
   PanelRightOpen,
+  PanelsTopLeft,
   Waypoints,
   type LucideIcon,
 } from "lucide-react";
@@ -38,7 +38,7 @@ const EXHIBIT_KIND_PRESENTATION: Record<
   flow: { label: "Flow", Icon: Waypoints, className: "text-sky-400" },
   tree: { label: "Tree", Icon: ListTree, className: "text-cyan-400" },
   image: { label: "Image", Icon: ImageIcon, className: "text-emerald-400" },
-  html: { label: "HTML", Icon: FileCode2, className: "text-amber-400" },
+  prototype: { label: "Prototype", Icon: PanelsTopLeft, className: "text-amber-400" },
 };
 
 const TREE_CHANGE_LABEL: Record<TreeChange, string> = {

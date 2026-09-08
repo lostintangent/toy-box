@@ -5,38 +5,97 @@ import {
   type DocumentUser,
   type EditorTheme,
 } from "@lostintangent/documint";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { JSONType } from "zod";
+import { agentHandleFromName } from "@agents/model";
+import { fileMutations } from "@files/mutations";
+import { agentQueries } from "@agents/queries";
 import type { EditorProps } from "../index";
 import { usePreferredColorScheme } from "@/shared/hooks/usePreferredColorScheme";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
-import { buildArtifactCommentPrompt } from "./comments";
+import { COPILOT_DOCUMENT_USER_ID, planArtifactCommentResponse } from "./comments";
 
 const COPILOT_USER = {
-  id: "copilot",
+  id: COPILOT_DOCUMENT_USER_ID,
   username: "copilot",
   fullName: "Copilot",
 } satisfies DocumentUser;
-const DOCUMINT_USERS = [COPILOT_USER];
-
 /** Rich Markdown editing with live external diffs and inline Copilot responses. */
 export function MarkdownEditor({ mode, file, pendingWorkers, spawnWorker }: EditorProps) {
   const theme = useDocumintTheme();
-  const presence: DocumentPresence[] = pendingWorkers.flatMap((worker) => {
-    const threadId = artifactCommentThreadId(worker.metadata);
-    return threadId ? [{ userId: COPILOT_USER.id, cursor: { threadId }, color: "#8b5cf6" }] : [];
-  });
+  const fileHost =
+    file.source.kind === "session"
+      ? {
+          kind: "file" as const,
+          sessionId: file.source.sessionId,
+          path: file.source.path,
+        }
+      : undefined;
+  const agentsQuery = useQuery({ ...agentQueries.list(), enabled: fileHost !== undefined });
+  const mentionAgent = useMutation(fileMutations.mentionAgent());
+  const agents = fileHost ? (agentsQuery.data ?? []) : [];
+  const users: DocumentUser[] = [
+    COPILOT_USER,
+    ...agents.map((agent) => ({
+      id: agent.id,
+      username: agentHandleFromName(agent.name),
+      fullName: agent.name,
+    })),
+  ];
+  const presence: DocumentPresence[] = [
+    ...pendingWorkers.flatMap((worker) => {
+      const threadId = artifactCommentThreadId(worker.metadata);
+      return threadId
+        ? [
+            {
+              userId: COPILOT_USER.id,
+              cursor: { threadId },
+              color: "#8b5cf6",
+              status: "Copilot is working…",
+            },
+          ]
+        : [];
+    }),
+  ];
 
   async function handleCommentChanged(change: CommentChange) {
-    if (change.kind !== "added" || !spawnWorker) {
+    const plan = planArtifactCommentResponse(
+      change,
+      agents.map(({ id }) => id),
+      new Date(),
+    );
+    if (!plan) {
       await file.flush({ notifyAgent: false });
       return;
     }
 
-    await spawnWorker({
-      name: "Respond to comment",
-      prompt: buildArtifactCommentPrompt(change.thread, new Date()),
-      metadata: { threadId: change.threadId },
-    });
+    const responses: Promise<unknown>[] = [];
+    if (fileHost) {
+      await file.flush({ notifyAgent: false });
+      responses.push(
+        ...plan.agentIds.map((agentId) =>
+          mentionAgent.mutateAsync({
+            host: fileHost,
+            agentId,
+            prompt: plan.prompt,
+          }),
+        ),
+      );
+    }
+    if (plan.spawnWorker && spawnWorker) {
+      responses.push(
+        spawnWorker({
+          name: "Respond to comment",
+          prompt: plan.prompt,
+          metadata: { threadId: plan.threadId },
+        }),
+      );
+    }
+    if (responses.length === 0) {
+      await file.flush({ notifyAgent: false });
+      return;
+    }
+    await Promise.all(responses);
   }
 
   return (
@@ -45,7 +104,7 @@ export function MarkdownEditor({ mode, file, pendingWorkers, spawnWorker }: Edit
       onCommentChanged={handleCommentChanged}
       onContentChanged={file.save}
       readOnly={mode === "read"}
-      users={DOCUMINT_USERS}
+      users={users}
       presence={presence}
       showDiffs={mode !== "edit"}
       theme={theme}

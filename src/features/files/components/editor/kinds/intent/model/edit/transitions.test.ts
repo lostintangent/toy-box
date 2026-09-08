@@ -240,7 +240,7 @@ describe("intent transitions", () => {
     const document = optionExhibitsFixture();
     const edited = updateExhibit(document, "durable-state-preview", {
       title: "Restarted state preview",
-      kind: "html",
+      kind: "prototype",
       change: "new",
       content: '<section aria-label="Durable state">Restored with the active pane</section>',
     });
@@ -251,7 +251,9 @@ describe("intent transitions", () => {
     });
     const editedExhibit = allDecisions(edited)[0]!.options[0]!.exhibit;
     expect(
-      editedExhibit?.kind === "html" && "content" in editedExhibit ? editedExhibit.content : "",
+      editedExhibit?.kind === "prototype" && "content" in editedExhibit
+        ? editedExhibit.content
+        : "",
     ).toContain("active pane");
     expect(findIntentEntity(edited, "durable-state-preview")).toMatchObject({
       label: "Restarted state preview",
@@ -281,14 +283,14 @@ describe("intent transitions", () => {
     section.items.push({
       id: "embedded-prototype",
       title: "Embedded prototype",
-      kind: "html",
+      kind: "prototype",
       change: "new",
       content: "<main>Prototype</main>",
     });
     expect(
       updateExhibit(document, "embedded-prototype", {
         title: "Referenced prototype",
-        kind: "html",
+        kind: "prototype",
         change: "new",
         uri: "./prototype.html",
       }),

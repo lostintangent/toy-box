@@ -195,7 +195,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       return;
     }
 
-    case "agent_notification": {
+    case "system_message": {
       if (event.clientId) removeQueuedMessage(state, event.clientId);
       appendMessage(state, inputMessageFromEvent(event));
       return;
@@ -572,8 +572,8 @@ function closeFile(state: Session, file: WorkspaceFile): void {
 // Message helpers
 // ============================================================================
 
-type InputEvent = Extract<SessionEvent, { type: "user_message" | "agent_notification" }>;
-type InputMessage = Extract<Message, { role: "user" | "agent_notification" }>;
+type InputEvent = Extract<SessionEvent, { type: "user_message" | "system_message" }>;
+type InputMessage = Extract<Message, { role: "user" | "system" }>;
 
 function inputMessageFromEvent(event: InputEvent): InputMessage {
   return event.type === "user_message"
@@ -584,8 +584,8 @@ function inputMessageFromEvent(event: InputEvent): InputMessage {
         timestamp: event.timestamp,
       }
     : {
-        role: "agent_notification",
-        notification: event.notification,
+        role: "system",
+        content: event.content,
         timestamp: event.timestamp,
       };
 }

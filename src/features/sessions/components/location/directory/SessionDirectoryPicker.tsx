@@ -119,22 +119,24 @@ function EditableSessionDirectoryPicker({
   return (
     <>
       <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen} modal={false}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "h-6 max-w-52 gap-1 rounded-md border-0 bg-transparent px-1 text-xs font-medium text-muted-foreground",
-              "hover:bg-transparent hover:text-foreground",
-              className,
-            )}
-            aria-label={selectedLocation?.description ?? "Select working directory"}
-          >
-            <SessionLocationIcon kind={selectedLocation?.kind} className="h-3 w-3 shrink-0" />
-            <span className="truncate">{selectedLocation?.label ?? "Select directory"}</span>
-            <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
-          </Button>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-6 max-w-52 gap-1 rounded-md border-0 bg-transparent px-1 text-xs font-medium text-muted-foreground",
+                "hover:bg-transparent hover:text-foreground",
+                className,
+              )}
+              aria-label={selectedLocation?.description ?? "Select working directory"}
+            />
+          }
+        >
+          <SessionLocationIcon kind={selectedLocation?.kind} className="h-3 w-3 shrink-0" />
+          <span className="truncate">{selectedLocation?.label ?? "Select directory"}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-72">
           <div className="flex items-center justify-between px-2 py-1.5">
@@ -173,7 +175,7 @@ function EditableSessionDirectoryPicker({
                   <DropdownMenuItem
                     key={directory.cwd}
                     className="gap-2 py-1.5"
-                    onSelect={() => onValueChange(isSelected ? null : directory.cwd)}
+                    onClick={() => onValueChange(isSelected ? null : directory.cwd)}
                   >
                     <Check className={cn("h-3.5 w-3.5 shrink-0", !isSelected && "opacity-0")} />
                     <SessionLocationIcon kind={location.kind} className="h-3.5 w-3.5 shrink-0" />
@@ -193,13 +195,7 @@ function EditableSessionDirectoryPicker({
             )}
           </div>
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="text-xs"
-            onSelect={(event) => {
-              event.preventDefault();
-              handlePickDirectory();
-            }}
-          >
+          <DropdownMenuItem className="text-xs" closeOnClick={false} onClick={handlePickDirectory}>
             <FolderOpen className="h-3.5 w-3.5" />
             Choose Directory...
           </DropdownMenuItem>

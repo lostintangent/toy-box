@@ -2,9 +2,9 @@
 
 Toy Box is a self-hosted agent server for running agentic tasks from anywhere. It includes an easy-to-use web app for starting, observing, and controlling sessions from both your desktop and phone while keeping all connected clients synchronized.
 
-Beyond simple session management, Toy Box provides several helpful workflows that make everyday tasks simpler: scheduled automations, editable artifacts, child session orchestration, generative apps, and an inbox for asynchronous tasks, and an integrated terminal.
+Beyond simple session management, Toy Box provides several helpful workflows that make everyday tasks simpler: group agent channels, scheduled automations, editable artifacts, child session orchestration, generative apps, and an [inbox for asynchronous tasks](#inbox-webhook).
 
-<img width="1000" src="https://github.com/user-attachments/assets/7964dab2-ca7c-4bc4-8e00-cbb85afa9c8b" />
+<img width="1000" src="https://i.ibb.co/rKzGz0xg/image.png" />
 
 ## Features
 
@@ -12,10 +12,11 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
 - **Rich composer:** Choose the model and reasoning effort, attach images, invoke skills, dictate by voice, and start sessions in a working directory or isolated Git worktree.
 - **Multi-pane workspace:** Open up to four sessions, local files, artifacts, apps, terminals, or agent-provided canvases together, with live previews and an adaptive mobile layout.
 - **Multi-agent orchestration:** Delegate parallel work to child sessions and use the floating Hyper workspace for a dedicated orchestration thread.
+- **Agent channels:** Create persistent teammates with distinct personas and durable experience, then bring them together in shared channels to collaborate through messages, reactions, screenshots, and artifacts.
 - **Collaborative artifacts:** Browse and edit Markdown, HTML, JSON, and SVG alongside the agent, or use structured intent boards to review and launch consequential work.
 - **Toy Box apps:** Build session-scoped `.toy` React artifacts or install reusable, stateful apps from trusted GitHub Gists. Apps can compose sessions, files, panes, workers, and shared content.
 - **Scheduled automations:** Configure recurring prompts that automate routine work and produce reviewable artifacts such as reports, analyses, and news digests.
-- **Inbox and webhooks:** Dispatch background tasks from Toy Box, webpages, mobile voice capture, or any HTTP client, then review concise results and editable artifacts in one place.
+- **Inbox and webhook:** Dispatch asynchronous tasks from Toy Box, webpages, mobile voice capture, or any HTTP client, then review concise results and editable artifacts in one place.
 
 ## Getting Started
 

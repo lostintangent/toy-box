@@ -4,7 +4,6 @@ import { useReducedMotionConfig } from "motion/react";
 import { Typewriter } from "motion-plus/react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/shared/components/ui/dropdown-menu";
 import { RelativeTime } from "@/shared/components/ui/relative-time";
-import { Skeleton } from "@/shared/components/ui/skeleton";
 import { DestructiveConfirmationDialog } from "@/shared/components/sidebar/DestructiveConfirmationDialog";
 import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { SidebarSessionItem } from "./SidebarSessionItem";
@@ -72,20 +71,17 @@ export function SessionListItem({
         menuItems={
           <>
             {onPinToggle && (
-              <DropdownMenuItem onSelect={onPinToggle}>
+              <DropdownMenuItem onClick={onPinToggle}>
                 {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
                 {isPinned ? "Unpin session" : "Pin session"}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem disabled={!onRename} onSelect={onRename}>
+            <DropdownMenuItem disabled={!onRename} onClick={onRename}>
               <Pencil className="h-3.5 w-3.5" />
               Rename session
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={() => setDeleteOpen(true)}
-            >
+            <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
               <Trash2 className="h-3.5 w-3.5" />
               Delete session
             </DropdownMenuItem>
@@ -124,12 +120,11 @@ function SessionListItemTitle({ title, loading }: { title: string; loading: bool
     return (
       <>
         <span className="sr-only">{title}</span>
-        <Skeleton asChild>
-          <span
-            aria-hidden
-            className="inline-block h-4 w-28 align-middle motion-reduce:animate-none"
-          />
-        </Skeleton>
+        <span
+          data-slot="skeleton"
+          aria-hidden
+          className="inline-block h-4 w-28 animate-pulse rounded-md bg-accent align-middle motion-reduce:animate-none"
+        />
       </>
     );
   }

@@ -6,6 +6,10 @@ import {
   updateAutomationInputSchema,
 } from "../model";
 
+export const AUTOMATION_SESSION_INSTRUCTIONS = `This is an automation session: its session ID is also its automation ID. Use the automation tools when the task requires inspecting or changing that automation.
+
+Treat user edits to this run's artifacts as feedback on the automation prompt. When the intent is clear, update the automation accordingly.`;
+
 const listAutomationsTool = defineTool("list_automations", {
   description:
     "Lists all available automations. " +
@@ -13,7 +17,7 @@ const listAutomationsTool = defineTool("list_automations", {
   parameters: z.object({}),
   skipPermission: true,
   handler: async () => {
-    const { listAutomations } = await import("./functions");
+    const { listAutomations } = await import("./index");
     const automations = await listAutomations();
 
     return JSON.stringify({
@@ -29,8 +33,8 @@ const createAutomationTool = defineTool("create_automation", {
   parameters: automationOptionsSchema,
   skipPermission: true,
   handler: async (input) => {
-    const { createAutomation } = await import("./functions");
-    const automation = await createAutomation({ data: input });
+    const { createAutomation } = await import("./index");
+    const automation = await createAutomation(input);
     return JSON.stringify({ automation });
   },
 });
@@ -43,8 +47,9 @@ const updateAutomationTool = defineTool("update_automation", {
   parameters: updateAutomationInputSchema,
   skipPermission: true,
   handler: async ({ automationId, ...input }) => {
-    const { updateAutomation } = await import("./functions");
-    const automation = await updateAutomation({ data: { automationId, ...input } });
+    const { updateAutomation } = await import("./index");
+    const automation = await updateAutomation(automationId, input);
+    if (!automation) throw new Error("Automation not found");
     return JSON.stringify({ automation });
   },
 });
@@ -57,8 +62,8 @@ const runAutomationTool = defineTool("run_automation", {
   parameters: automationIdInputSchema,
   skipPermission: true,
   handler: async ({ automationId }) => {
-    const { runAutomation } = await import("./functions");
-    const result = await runAutomation({ data: { automationId } });
+    const { runAutomation } = await import("./index");
+    const result = await runAutomation(automationId);
     return JSON.stringify({ sessionId: result.sessionId, started: result.started });
   },
 });
