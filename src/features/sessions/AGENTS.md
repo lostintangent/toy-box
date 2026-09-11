@@ -110,9 +110,9 @@ remain outside the feature because they compose multiple domains rather than def
   owns the connected stream lifecycle.
 - Managed features may govern a session's lifecycle, but they do not redefine session execution,
   transcript state, SDK projection, registry, or UI primitives.
-- The application marks Agent configuration for refresh between executions. Single-flight runtime
-  acquisition releases the idle SDK handle and rebuilds its configuration before execution; active
-  delivery keeps its existing handle. Callers do not coordinate configuration refresh. This preserves
-  durable history, workspace identity, and worktree state.
+- The application rebuilds Agent configuration for comparison between executions. Single-flight
+  runtime acquisition replaces the idle SDK handle only when that effective configuration changed;
+  active delivery keeps its existing handle. Callers do not coordinate configuration refresh. This
+  preserves durable history, workspace identity, and worktree state.
 - Generic workspace composition may render and arrange a session, but it must not copy session
   state into layout state.

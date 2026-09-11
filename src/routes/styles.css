@@ -110,6 +110,9 @@ code {
 
   /* Unread-activity indicator (session + automation list dots). blue-500. */
   --unread: oklch(0.623 0.214 259.815);
+
+  /* Agents' ink, alongside the user's --user-accent. cyan-500, the avatar tint. */
+  --agent-accent: oklch(0.715 0.143 215.221);
 }
 
 @media (prefers-color-scheme: dark) {

@@ -20,7 +20,23 @@ test("renders the shared row content, active state, title fade, and menu afforda
   expect(markup).toContain("Badge");
   expect(markup).toContain('aria-current="page"');
   expect(markup).toContain('data-scrollable-fade="horizontal"');
+  expect(markup).toMatch(/data-scrollable-fade="horizontal" class="[^"]*\btext-sm\b/);
   expect(markup).toContain('aria-label="Actions for Regex Playground"');
+});
+
+test("merges title styles over the shared text size", () => {
+  const markup = renderToStaticMarkup(
+    <SidebarListItem
+      title="Large title"
+      menuItems={<span>Rename</span>}
+      titleClassName="text-base font-medium"
+    />,
+  );
+  const titleClassName = markup.match(/data-scrollable-fade="horizontal" class="([^"]+)"/)?.[1];
+
+  expect(titleClassName).toContain("text-base");
+  expect(titleClassName).toContain("font-medium");
+  expect(titleClassName).not.toContain("text-sm");
 });
 
 test("shows an item status in place of its menu", () => {

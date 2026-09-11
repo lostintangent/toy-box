@@ -11,8 +11,8 @@ export function useChannel(channelId: string, isVisible: boolean) {
   const queryClient = useQueryClient();
   const pageIsVisible = usePageVisibility();
   const detail = useQuery(channelQueries.detail(channelId));
-  const channels = useQuery(channelQueries.list());
-  const channel = channels.data?.find(({ id }) => id === channelId);
+  const list = useQuery(channelQueries.list());
+  const channel = list.data?.channels.find(({ id }) => id === channelId);
   const hasSnapshot = detail.data !== undefined;
   const { mutate: markRead } = useMutation(channelMutations.markRead());
   const latestSequence = channel?.latestSequence ?? 0;
@@ -44,5 +44,5 @@ export function useChannel(channelId: string, isVisible: boolean) {
     return () => source.close();
   }, [channelId, hasSnapshot, isVisible, pageIsVisible, queryClient]);
 
-  return { channel, snapshot: detail.data, error: detail.error ?? channels.error };
+  return { channel, snapshot: detail.data, error: detail.error ?? list.error };
 }

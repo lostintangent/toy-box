@@ -26,6 +26,11 @@ export type Channel = {
   updatedAt: string;
 };
 
+export type ChannelList = {
+  channels: Channel[];
+  memberships: AgentMembership[];
+};
+
 export type ChannelMember = AgentMembership & {
   host: { kind: "channel"; channelId: string };
   seenThrough: number;

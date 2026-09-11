@@ -1,6 +1,7 @@
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { LayoutGrid, Table2, X } from "lucide-react";
 import { cn } from "@/shared/utils";
+import { IntentMarkdownText } from "../../MarkdownText";
 import {
   fieldValueText,
   projectedRecords,
@@ -55,7 +56,7 @@ function ChoiceTag({ field, optionId }: { field: ChoiceField; optionId: string }
 
 function FieldValue({ field, value }: { field: IntentField; value: string | string[] }) {
   if (field.kind === "text") {
-    return <span>{fieldValueText(field, value)}</span>;
+    return <IntentMarkdownText>{fieldValueText(field, value)}</IntentMarkdownText>;
   }
 
   const optionIds = Array.isArray(value) ? value : [value];
@@ -311,9 +312,9 @@ function RecordsCards({
               <RecordMeta entry={entry} onRemove={onRemove} />
             </div>
             {bodyField ? (
-              <p className="mt-2 text-[11px] leading-relaxed text-foreground/90">
+              <div className="mt-2 text-[11px] leading-relaxed text-foreground/90">
                 <FieldValue field={bodyField} value={entry.item.values[bodyField.id]} />
-              </p>
+              </div>
             ) : (
               section.fields.length > 0 && (
                 <dl className="mt-2 space-y-1.5 text-[10.5px]">

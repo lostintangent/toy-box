@@ -11,7 +11,7 @@ import { getWorkerAppId } from "@workers/server/database";
 import { workerTools } from "@workers/server/tools";
 import { createAgentTool, getAgentMembershipTools, listAgentsTool } from "@agents/server/tools";
 import type { AgentHost } from "@agents/model";
-import { channelAgentTools, channelTools } from "@channels/server/tools";
+import { channelAgentTools, channelTools, joinedChannelTools } from "@channels/server/tools";
 import {
   coordinationTools,
   HYPER_SESSION_INSTRUCTIONS,
@@ -63,7 +63,9 @@ export function getSessionTools(
     ...(sessionType === "hyper" ? editorTools : []),
     ...(sessionType === "inbox" ? inboxTools : []),
     ...(sessionType === "agent" && agentHost === "channel" ? channelAgentTools : []),
-    ...(sessionType === "agent" && agentHost === "session" ? sessionAgentTools : []),
+    ...(sessionType === "agent" && agentHost === "session"
+      ? [...sessionAgentTools, ...joinedChannelTools]
+      : []),
     ...agentTools,
   ];
 }
@@ -73,7 +75,7 @@ export async function getSessionConfiguration(sessionId: string, sessionType: Se
   const appId = sessionType === "worker" ? await getWorkerAppId(sessionId) : undefined;
   if (sessionType !== "agent")
     return {
-      refreshOnExecution: false,
+      configurationKey: undefined,
       tools: getSessionTools(sessionType, appId),
       additionalInstructions: await getSessionInstructions(sessionType),
     };
@@ -88,10 +90,11 @@ export async function getSessionConfiguration(sessionId: string, sessionType: Se
   const host = await getAgentHostAdapter(membership.host);
   const hostInstructions = await host.getInstructions(agent, membership);
   const model = agent.model ?? (await getWorkspaceDefaultModel());
+  const additionalInstructions = runtime.buildAgentSystemInstructions(agent, hostInstructions);
   return {
     tools: getSessionTools(sessionType, appId, kind),
-    additionalInstructions: runtime.buildAgentSystemInstructions(agent, hostInstructions),
-    refreshOnExecution: true,
+    additionalInstructions,
+    configurationKey: JSON.stringify([kind, model, additionalInstructions]),
     disableMemory: true as const,
     ...(model ? { model } : {}),
   };

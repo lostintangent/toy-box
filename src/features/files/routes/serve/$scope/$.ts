@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { HTML_SANDBOX_CONTENT_SECURITY_POLICY } from "@files/model";
+import { HTML_SANDBOX_CONTENT_SECURITY_POLICY } from "@/shared/embeddedHtml";
 import { resolveFileRequest } from "@files/server/request";
 
 type ServeRouteParams = {

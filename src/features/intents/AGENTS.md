@@ -1,6 +1,6 @@
-# Intent editor
+# Intents
 
-This directory owns the `.intent` object model and editor. An `IntentDocument`
+This feature owns the `.intent` object model, editor, and agent workflows. An `IntentDocument`
 is one strict, flexible sequence of sections. Findings preserve the settled
 facts that shape a change; description, definition, and resolution sections form
 the effective spec; zero or more top-level plan sections form the optional plan
@@ -51,8 +51,11 @@ review that either leaves it complete or appends ordered follow-up work.
   build on query reading; plan state consumes spec state; editing composes these
   pure capabilities at the write boundary; validation orchestrates their rules;
   and schema closes parsing. Reverse schema imports are type-only.
+- `actions.ts` owns the host-neutral editor action vocabulary and stable action
+  identity.
 - `IntentEditor.tsx` owns the document shell, browser-local tab selection,
-  section order, undo snapshot, persistence orchestration, and editor actions.
+  section order, undo snapshot, serialized document commits, and editor actions
+  through a host-neutral content and action contract.
 - `sections/` owns presentation behind `sections/index.ts`. `content.tsx`
   dispatches the taxonomy; `findings/` renders compact
   statements with evidence disclosed on demand; `description/` renders Markdown
@@ -66,6 +69,10 @@ review that either leaves it complete or appends ordered follow-up work.
   `FindingEditor.tsx`, `RecordEditor.tsx`, `ExhibitEditor.tsx`, and
   `PlanStepEditor.tsx` own their distinct forms; `FieldEditor.tsx` owns only
   their genuinely shared controls.
+- [`../files/components/editor/kinds/intent/IntentEditor.tsx`](../files/components/editor/kinds/intent/IntentEditor.tsx)
+  is the Files adapter. It maps file content, revisions, persistence, and
+  worker metadata into the editor contract; this feature does not depend on
+  Files or Workers.
 
 Rendering may ask the model for projections, but it must not reimplement spec
 state, plan state, flow traversal, implementation coverage, repair, or ordering.
@@ -250,6 +257,6 @@ plan becomes executable again without a separate review state.
   option. Repair all references before the next document is observable.
 
 When this model changes, update the bundled authoring skill, schema reference,
-and worked example in `src/features/files/server/skills/create-toy-box-intent/`.
+and worked example in `src/features/intents/server/skills/create-toy-box-intent/`.
 When plan execution changes, update the separate
-`src/features/files/server/skills/execute-toy-box-intent/` skill as well.
+`src/features/intents/server/skills/execute-toy-box-intent/` skill as well.

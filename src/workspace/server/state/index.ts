@@ -4,7 +4,6 @@ import type { Settings } from "../../model/config/settings";
 import type { WorkspaceAction } from "../../model/state/actions";
 import type { DraftSession } from "@sessions/model";
 import { finishWorkersForSession, getWorkers } from "@workers/server/registry";
-import { DRAFT_PROMPT_SERVER_ORIGIN } from "@sessions/model/constants";
 import { normalizeSettings } from "../../model/config/settings";
 import {
   reduceWorkspaceSessionState,
@@ -14,7 +13,7 @@ import {
 import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 import { broadcast } from "@workspace/server/events";
 import { addHyperSession, deleteHyperState, getHyperSessionIds } from "./hyperSessions";
-import { applySessionState, getSessionState, getSessionStates, setSessionPrompt } from "./sessions";
+import { applySessionState, getSessionStates, setSessionPrompt } from "./sessions";
 import { getDraftSessions } from "@sessions/server/state/drafts";
 import { getSettings, persistSettings } from "./settings";
 
@@ -106,7 +105,7 @@ function commitSessionEvent(event: WorkspaceSessionEvent): boolean {
   return true;
 }
 
-/** Derive the canonical prompt (server timestamp, text dedupe), then broadcast iff it changed. */
+/** Derive the canonical prompt with a server timestamp, then broadcast iff it changed. */
 function commitSessionPrompt(sessionId: string, text: string, origin: string): void {
   const prompt = setSessionPrompt(sessionId, text, origin);
   if (prompt) broadcast({ type: "session.prompt.drafted", sessionId, prompt });
@@ -117,11 +116,6 @@ export function setSessionStatus(
   status: "running" | "waiting" | "idle" | "unread",
 ): void {
   commitSessionEvent({ type: `session.${status}`, sessionId } as const);
-}
-
-export function clearDraftPrompt(sessionId: string): void {
-  if (!getSessionState(sessionId)?.prompt?.text) return;
-  commitSessionPrompt(sessionId, "", DRAFT_PROMPT_SERVER_ORIGIN);
 }
 
 export function applyWorkspaceAction(action: WorkspaceAction): void {

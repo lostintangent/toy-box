@@ -39,7 +39,7 @@ import { hasHyperSession } from "@workspace/server/state/hyperSessions";
 import type { SessionType, SessionWorktree } from "@sessions/model";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
 
-type CachedSession = { session: CopilotSession; refreshOnExecution: boolean };
+type CachedSession = { session: CopilotSession; configurationKey?: string };
 const cachedSessions = sharedMap<CachedSession>("configured-sessions");
 // In-flight resumes share one SDK handle per session ID.
 const pendingResumes = sharedMap<Promise<CopilotSession>>("pending-session-resumes");
@@ -85,7 +85,7 @@ export async function createSession(
   const directory = requested.directory;
   const useWorktree = requested.useWorktree;
   const draft = await getDraftSession(sessionId);
-  const { refreshOnExecution, ...sessionConfiguration } = await getSessionConfiguration(
+  const { configurationKey, ...sessionConfiguration } = await getSessionConfiguration(
     sessionId,
     sessionType,
   );
@@ -138,7 +138,7 @@ export async function createSession(
     throw error;
   }
   const now = new Date().toISOString();
-  cachedSessions.set(sessionId, { session, refreshOnExecution });
+  cachedSessions.set(sessionId, { session, configurationKey });
 
   // Emit immediately so the session appears in the list right away.
   // This display context can come from an inherited workspace or a
@@ -186,32 +186,32 @@ export function getSession(
   { forExecution = false }: { forExecution?: boolean } = {},
 ): Promise<CopilotSession> {
   const cached = cachedSessions.get(sessionId);
-  if (cached && !(forExecution && cached.refreshOnExecution))
+  if (cached && (!forExecution || cached.configurationKey === undefined))
     return Promise.resolve(cached.session);
 
   const pending = pendingResumes.get(sessionId);
   if (pending) return pending;
 
   const resume = (async () => {
+    const sessionType = await resolveSessionType(sessionId);
+    const { configurationKey, ...sessionConfiguration } = await getSessionConfiguration(
+      sessionId,
+      sessionType,
+    );
+    if (cached && cached.configurationKey === configurationKey) return cached.session;
+
     if (cached) {
       cachedSessions.delete(sessionId);
       await cached.session.disconnect();
     }
-    const [workspaceDirectory, sessionType] = await Promise.all([
-      getSessionDirectory(sessionId),
-      resolveSessionType(sessionId),
-    ]);
-    const { refreshOnExecution, ...sessionConfiguration } = await getSessionConfiguration(
-      sessionId,
-      sessionType,
-    );
+    const workspaceDirectory = await getSessionDirectory(sessionId);
     const directory = workspaceDirectory ?? homedir();
     const session = await sdkResumeSession(sessionId, {
       directory,
       sessionType,
       ...sessionConfiguration,
     });
-    cachedSessions.set(sessionId, { session, refreshOnExecution });
+    cachedSessions.set(sessionId, { session, configurationKey });
     return session;
   })().finally(() => {
     pendingResumes.delete(sessionId);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import exampleIntent from "@files/server/skills/create-toy-box-intent/references/example.intent?raw";
+import exampleIntent from "@intents/server/skills/create-toy-box-intent/references/example.intent?raw";
 import {
   parseIntent,
   serializeIntent,
@@ -651,7 +651,7 @@ describe("intent schema", () => {
       type: "files",
       change: "modified",
       description: "Make the resulting ownership visible in the spec.",
-      source: "src/features/files/components/editor/kinds/intent/IntentEditor.tsx",
+      source: "src/features/intents/IntentEditor.tsx",
       roots: [
         {
           kind: "folder",

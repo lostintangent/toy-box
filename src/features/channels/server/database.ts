@@ -1,8 +1,10 @@
+import type { AgentMembership } from "@agents/model";
 import { AgentDatabase } from "@agents/server/database";
 import {
   channelReactionSchema,
   type Channel,
   type ChannelArtifact,
+  type ChannelList,
   type ChannelMember,
   type ChannelMessage,
   type ChannelReaction,
@@ -21,9 +23,33 @@ const CHANNEL_ID_PREFIX = "toy-box-channel-";
 export class ChannelDatabase {
   constructor(private readonly db: Bun.SQL) {}
 
-  async listChannels(): Promise<Channel[]> {
+  async listChannels(): Promise<ChannelList> {
+    const [channels, memberships] = await Promise.all([
+      this.db<ChannelRow[]>`SELECT * FROM channels ORDER BY updated_at DESC, id`,
+      this.db<ChannelMembershipRow[]>`
+        SELECT
+          membership.host_id AS channel_id, membership.agent_id,
+          membership.session_id, membership.execution_mode
+        FROM agent_memberships AS membership
+        JOIN channels AS channel ON channel.id = membership.host_id
+        WHERE membership.host_kind = 'channel'
+        ORDER BY membership.host_id, membership.session_id
+      `,
+    ]);
+    return {
+      channels: channels.map(channelFromRow),
+      memberships: memberships.map(membershipFromRow),
+    };
+  }
+
+  async listAgentChannels(agentId: string): Promise<Channel[]> {
     const rows = await this.db<ChannelRow[]>`
-      SELECT * FROM channels ORDER BY updated_at DESC, id
+      SELECT channel.*
+      FROM channels AS channel
+      JOIN agent_memberships AS membership
+        ON membership.host_kind = 'channel' AND membership.host_id = channel.id
+      WHERE membership.agent_id = ${agentId}
+      ORDER BY channel.updated_at DESC, channel.id
     `;
     return rows.map(channelFromRow);
   }
@@ -388,6 +414,8 @@ type ChannelMemberRow = {
   seen_through: number;
 };
 
+type ChannelMembershipRow = Omit<ChannelMemberRow, "seen_through">;
+
 type ChannelMessageRow = {
   id: string;
   channel_id: string;
@@ -428,6 +456,15 @@ function memberFromRow(row: ChannelMemberRow): ChannelMember {
     sessionId: row.session_id,
     executionMode: row.execution_mode,
     seenThrough: row.seen_through,
+  };
+}
+
+function membershipFromRow(row: ChannelMembershipRow): AgentMembership {
+  return {
+    host: { kind: "channel", channelId: row.channel_id },
+    agentId: row.agent_id,
+    sessionId: row.session_id,
+    executionMode: row.execution_mode,
   };
 }
 

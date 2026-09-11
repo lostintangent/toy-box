@@ -8,6 +8,7 @@ import {
   type IntentDocument,
   type IntentEntityId,
 } from "../../model/index";
+import { IntentMarkdownText } from "../../MarkdownText";
 import { IntentExhibitCard } from "../definition";
 
 /** Source-backed discoveries that explain why the spec has its authored shape. */
@@ -48,9 +49,9 @@ export function IntentFindingsContent({
               <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-sky-500/10 text-sky-400">
                 <Lightbulb aria-hidden className="size-3" />
               </span>
-              <h4 className="min-w-0 flex-1 text-[12px] font-medium leading-relaxed text-foreground/90">
-                {finding.statement}
-              </h4>
+              <div className="min-w-0 flex-1 text-[12px] font-medium leading-relaxed text-foreground/90">
+                <IntentMarkdownText>{finding.statement}</IntentMarkdownText>
+              </div>
               {onInspect && (
                 <button
                   type="button"

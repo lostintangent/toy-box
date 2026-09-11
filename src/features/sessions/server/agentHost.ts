@@ -73,6 +73,8 @@ export const sessionAgentHost: AgentHostAdapter = {
 
 Work independently using the visible briefing in the current prompt, your private transcript, and your experiences.
 
+You may inspect Channels you belong to. When the user asks you to act in one, use continue_in_channel so that Channel membership performs the work in its own context.
+
 Use send_session_response to publish a useful contribution with your own attribution and end your turn. Your final private reply is not published. If you have nothing useful to add, use finish_agent_turn.`;
   },
 };

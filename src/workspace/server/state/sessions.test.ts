@@ -39,15 +39,20 @@ describe("workspace session storage", () => {
     });
   });
 
-  test("refreshes unchanged prompt text silently", () => {
+  test("applies the latest client value and ignores its repeated update", () => {
     const sessionId = `workspace-prompt-${crypto.randomUUID()}`;
     onTestFinished(() => clean(sessionId));
 
     expect(setSessionPrompt(sessionId, "hello", "client-a", 1)).not.toBeNull();
-    expect(setSessionPrompt(sessionId, "hello", "client-b", 2)).toBeNull();
-    expect(getSessionState(sessionId, 2)).toEqual({
+    expect(setSessionPrompt(sessionId, "hello", "client-a", 2)).toBeNull();
+    expect(setSessionPrompt(sessionId, "hello", "client-b", 3)).toEqual({
+      text: "hello",
+      origin: "client-b",
+      updatedAt: 3,
+    });
+    expect(getSessionState(sessionId, 3)).toEqual({
       status: "idle",
-      prompt: { text: "hello", origin: "client-a", updatedAt: 2 },
+      prompt: { text: "hello", origin: "client-b", updatedAt: 3 },
     });
   });
 

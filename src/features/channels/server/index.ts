@@ -6,11 +6,13 @@ import {
   type AgentMention,
 } from "@agents/model";
 import { getAgent, listAgents } from "@agents/server";
+import { resolveAgentMembership } from "@agents/server/runtime";
 import { mentionAgent } from "@agents/server/supervisor";
 import type {
   Channel,
   ChannelArtifact,
   ChannelEvent,
+  ChannelList,
   ChannelMember,
   ChannelMessage,
   ChannelMessageSender,
@@ -22,7 +24,11 @@ import type {
 } from "@channels/model";
 import { resolveChannelAudience } from "@channels/model";
 import { resolveWorkspaceFile, workspaceFileFromAbsolutePath } from "@files/server/paths";
-import { deleteSessionIfExists, readSessionContext } from "@sessions/server/runtime";
+import {
+  deleteSessionIfExists,
+  readSessionContext,
+  waitForSession,
+} from "@sessions/server/runtime";
 import { getStateDatabase } from "@/server/database";
 import { broadcast } from "@workspace/server/events";
 import { ChannelDatabase } from "./database";
@@ -39,7 +45,7 @@ type ChannelAgentContext = {
   agent: Agent;
 };
 
-export async function listChannels(): Promise<Channel[]> {
+export async function listChannels(): Promise<ChannelList> {
   return new ChannelDatabase(await getStateDatabase()).listChannels();
 }
 
@@ -169,6 +175,38 @@ export async function readChannelForSession(channelId: string, afterSequence = 0
   return readChannel(database, channel, afterSequence);
 }
 
+export async function listJoinedChannelsForAgent(sessionId: string): Promise<Channel[]> {
+  const agentId = await requireSessionAgentId(sessionId);
+  return new ChannelDatabase(await getStateDatabase()).listAgentChannels(agentId);
+}
+
+export async function readJoinedChannelForAgent(
+  sessionId: string,
+  channelId: string,
+  afterSequence = 0,
+) {
+  const database = new ChannelDatabase(await getStateDatabase());
+  const { channel } = await requireJoinedChannel(database, sessionId, channelId);
+  return readChannel(database, channel, afterSequence);
+}
+
+export async function continueAgentInChannel(
+  sessionId: string,
+  channelId: string,
+  content: string,
+) {
+  const database = new ChannelDatabase(await getStateDatabase());
+  const { channel, member } = await requireJoinedChannel(database, sessionId, channelId);
+  await mentionAgent({
+    host: member.host,
+    agentId: member.agentId,
+    message: { systemMessage: { type: "agent_handoff", content } },
+    directory: channel.directory,
+    hostLabel: channel.title,
+  });
+  return waitForSession(member.sessionId);
+}
+
 export async function readChannelForAgent(sessionId: string) {
   const database = new ChannelDatabase(await getStateDatabase());
   const context = await requireChannelAgentContext(database, sessionId);
@@ -193,6 +231,30 @@ async function readChannel(database: ChannelDatabase, channel: Channel, afterSeq
     artifacts: artifacts.map(publicChannelArtifact),
     hasMore: readThrough < channel.latestSequence,
   };
+}
+
+async function requireSessionAgentId(sessionId: string): Promise<string> {
+  const resolved = await resolveAgentMembership(sessionId);
+  if (resolved?.membership.host.kind !== "session") {
+    throw new Error("This Agent does not belong to a Session host.");
+  }
+  return resolved.agent.id;
+}
+
+async function requireJoinedChannel(
+  database: ChannelDatabase,
+  sessionId: string,
+  channelId: string,
+) {
+  const agentId = await requireSessionAgentId(sessionId);
+  const [channel, members] = await Promise.all([
+    database.getChannel(channelId),
+    database.listMembers(channelId),
+  ]);
+  if (!channel) throw new Error("Channel not found.");
+  const member = members.find((member) => member.agentId === agentId);
+  if (!member) throw new Error("This Agent is not a member of this Channel.");
+  return { channel, member };
 }
 
 /** Public roster facts intentionally omit every member's private session and unread cursor. */

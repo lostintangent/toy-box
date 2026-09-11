@@ -66,7 +66,7 @@ function makeSession() {
 }
 
 describe("Session-owned configuration lifetime", () => {
-  test("Agents refresh only between executions, including direct system messages", async () => {
+  test("Agents refresh changed configuration only between executions", async () => {
     const { sessionId, agent, agents, create, resume, handles } = await setup(true);
     const receipt = await createSession(
       sessionId,
@@ -90,15 +90,23 @@ describe("Session-owned configuration lifetime", () => {
       persona: "Evolved persona",
       avatar: { mark: "M5 12h14M12 5v14", color: "#7c3aed" },
     });
-    await agents.manageExperience(agent.id, { action: "add", content: "Prefer evidence." });
-    await agents.updateAgent({ agentId: agent.id, model: { name: "model-two" } });
+    await agents.manageExperience(agent.id, {
+      action: "add",
+      content: "Prefer evidence.",
+    });
+    await agents.updateAgent({
+      agentId: agent.id,
+      model: { name: "model-two" },
+    });
     await deliverSessionMessage(sessionId, { content: "Continue" }, { immediate: true });
     expect(resume).not.toHaveBeenCalled();
     expect(handles[0]!.disconnect).not.toHaveBeenCalled();
 
     // Ordinary Session completion needs neither an Agent acknowledgment nor an avatar.
     SessionStream.get(sessionId)!.finish();
-    expect(await receipt.waitForCompletion()).toMatchObject({ status: "completed" });
+    expect(await receipt.waitForCompletion()).toMatchObject({
+      status: "completed",
+    });
     await Promise.all([
       deliverSessionMessage(sessionId, {
         systemMessage: {
@@ -119,6 +127,12 @@ describe("Session-owned configuration lifetime", () => {
     expect(configuration.additionalInstructions).toContain("#7c3aed self-authored mark");
     expect(configuration.additionalInstructions).toContain("Prefer evidence.");
     expect(handles[1]!.send).toHaveBeenCalledTimes(2);
+
+    SessionStream.get(sessionId)!.finish();
+    await deliverSessionMessage(sessionId, { content: "One more" });
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(handles[1]!.disconnect).not.toHaveBeenCalled();
+    expect(handles[1]!.send).toHaveBeenCalledTimes(3);
   });
 
   test("ordinary Sessions retain their cached SDK handles between executions", async () => {

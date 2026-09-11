@@ -43,6 +43,7 @@ Each guide explains one capability end to end, including adjacent callers and co
 - [`src/features/inbox/AGENTS.md`](src/features/inbox/AGENTS.md): durable background results presented through ordinary managed sessions
 - [`src/features/workers/AGENTS.md`](src/features/workers/AGENTS.md): owner-scoped background work supervised as ordinary managed sessions
 - [`src/features/apps/AGENTS.md`](src/features/apps/AGENTS.md): session artifact apps, installed definitions and instances, shared compilation, and the public app capability boundary
+- [`src/features/intents/AGENTS.md`](src/features/intents/AGENTS.md): strict intent documents, derived specs and plans, editing transitions, presentation, and agent workflows
 - [`src/features/files/AGENTS.md`](src/features/files/AGENTS.md): browsable workspace files presented as live, bidirectionally editable surfaces
 - [`src/features/terminal/AGENTS.md`](src/features/terminal/AGENTS.md): reconnectable PTYs with mode-aware scrollback that preserves the visible terminal
 - [`cli/AGENTS.md`](cli/AGENTS.md): one installable binary that assembles the browser app and Nitro server

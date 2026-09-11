@@ -16,9 +16,11 @@ type AgentStatusEntry = {
 export function AgentStatus({
   memberships,
   agents,
+  variant = "normal",
 }: {
   memberships: readonly AgentMembership[];
   agents: readonly Agent[];
+  variant?: "normal" | "compact";
 }) {
   const statuses = useWorkspaceSelector((workspace) =>
     memberships.map<AgentStatusEntry["status"]>(({ sessionId }) => {
@@ -35,6 +37,17 @@ export function AgentStatus({
     .sort((left, right) => left.agent.name.localeCompare(right.agent.name));
   const working = entries.filter(({ status }) => status === "working");
   const waiting = entries.filter(({ status }) => status === "waiting");
+
+  if (variant === "compact") {
+    return working.length > 0 ? (
+      <span
+        role="status"
+        aria-label={`${working.map(({ agent }) => agent.name).join(", ")} ${working.length === 1 ? "is" : "are"} working`}
+      >
+        <WorkingAgentAvatars entries={working} />
+      </span>
+    ) : null;
+  }
 
   return (
     <>
@@ -89,14 +102,20 @@ function AgentStatusItem({
 function WorkingAgentGroup({ entries }: { entries: readonly AgentStatusEntry[] }) {
   return (
     <div className="flex items-center gap-2 rounded-full px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted">
-      <div className="flex -space-x-2 hover:space-x-1 focus-within:space-x-1">
-        {entries.map(({ membership, agent }) => (
-          <WorkingAgentAvatar key={membership.sessionId} membership={membership} agent={agent} />
-        ))}
-      </div>
+      <WorkingAgentAvatars entries={entries} />
       <span>Multiple agents are working</span>
       <WorkingDots />
     </div>
+  );
+}
+
+function WorkingAgentAvatars({ entries }: { entries: readonly AgentStatusEntry[] }) {
+  return (
+    <span className="flex -space-x-2 hover:space-x-1 focus-within:space-x-1">
+      {entries.map(({ membership, agent }) => (
+        <WorkingAgentAvatar key={membership.sessionId} membership={membership} agent={agent} />
+      ))}
+    </span>
   );
 }
 
@@ -120,7 +139,7 @@ function WorkingAgentAvatar({ membership, agent }: { membership: AgentMembership
           <AgentAvatar
             name={agent.name}
             avatar={agent.avatar}
-            className="pointer-events-none size-6 ring-2 ring-panel"
+            className="pointer-events-none size-6 ring-2 ring-[var(--surface-background,var(--color-panel))]"
           />
         </TooltipTrigger>
       </SessionPreview>

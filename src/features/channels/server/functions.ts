@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
-import type { Channel, ChannelMessage, ChannelSnapshot } from "@channels/model";
+import type { Channel, ChannelList, ChannelMessage, ChannelSnapshot } from "@channels/model";
 import {
   channelIdentitySchema,
   createChannelInputSchema,
@@ -12,7 +12,7 @@ import {
 import * as channels from ".";
 
 export const listChannels = createServerFn({ method: "GET" }).handler(
-  (): Promise<Channel[]> => channels.listChannels(),
+  (): Promise<ChannelList> => channels.listChannels(),
 );
 
 export const getChannel = createServerFn({ method: "POST" })

@@ -22,6 +22,7 @@ export type SidebarListItemProps = Omit<
   "children" | "className" | "title"
 > & {
   title: string;
+  titleContent?: ReactNode;
   icon?: ReactNode;
   time?: ReactNode;
   badge?: ReactNode;
@@ -36,6 +37,7 @@ export type SidebarListItemProps = Omit<
 
 export function SidebarListItem({
   title,
+  titleContent,
   icon,
   time,
   badge,
@@ -61,6 +63,7 @@ export function SidebarListItem({
       <SidebarListItemButton
         {...props}
         title={title}
+        titleContent={titleContent}
         icon={icon}
         time={time}
         badge={badge}
@@ -97,12 +100,12 @@ export function SidebarListItemLayout({
     <div
       ref={itemRef}
       className={cn(
-        "flex items-center justify-between rounded-lg px-2 py-2 transition-colors",
+        "flex items-center justify-between rounded-lg px-2 py-2 transition-colors [--surface-background:var(--color-panel)]",
         isActive
-          ? "bg-foreground/24 ring-1 ring-border/70"
+          ? "bg-(--surface-background) ring-1 ring-border/70 [--surface-background:color-mix(in_srgb,var(--color-foreground)_24%,var(--color-panel))]"
           : isHighlighted
-            ? "bg-foreground/14"
-            : "hover:bg-foreground/14",
+            ? "bg-(--surface-background) [--surface-background:color-mix(in_srgb,var(--color-foreground)_14%,var(--color-panel))]"
+            : "hover:bg-(--surface-background) hover:[--surface-background:color-mix(in_srgb,var(--color-foreground)_14%,var(--color-panel))]",
         className,
       )}
     >
@@ -124,7 +127,6 @@ export function SidebarListItemButton({
   ...props
 }: Omit<SidebarListItemProps, "className" | "menuDisabled" | "menuItems" | "status"> & {
   isActive: boolean;
-  titleContent?: ReactNode;
 }) {
   return (
     <button
@@ -132,7 +134,9 @@ export function SidebarListItemButton({
       aria-current={isActive ? "page" : undefined}
       className={cn("mr-2 min-w-0 flex-1 text-left", buttonClassName)}
     >
-      <ScrollableFade className={cn("flex items-center gap-1.5 whitespace-nowrap", titleClassName)}>
+      <ScrollableFade
+        className={cn("flex items-center gap-1.5 whitespace-nowrap text-sm", titleClassName)}
+      >
         {icon}
         <span className="min-h-[1lh] shrink-0">{titleContent ?? title}</span>
       </ScrollableFade>

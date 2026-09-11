@@ -1,5 +1,8 @@
 import type { WorkspaceFile } from "../../../../model";
 import { createFileRouteBaseUrl } from "../../../../model/paths";
+import { HTML_BASE_ATTRIBUTE } from "@/shared/embeddedHtml";
+
+export { HTML_BASE_ATTRIBUTE, injectBaseHref } from "@/shared/embeddedHtml";
 
 // An HTML file has content that is a rendered document. `injectHtmlBridge` adds the
 // script that relays edits from its sandboxed iframe back to the pane and toggles editability.
@@ -8,7 +11,6 @@ import { createFileRouteBaseUrl } from "../../../../model/paths";
 
 const SERVE_ROUTE_PREFIX = "/api/serve";
 
-export const HTML_BASE_ATTRIBUTE = "data-toybox-file-base";
 export const HTML_BRIDGE_ATTRIBUTE = "data-toybox-html-bridge";
 export const HTML_CHANGE_MESSAGE_TYPE = "toybox-html:change";
 export const HTML_EDITABLE_MESSAGE_TYPE = "toybox-html:set-editable";
@@ -19,22 +21,6 @@ export const HTML_EDITABLE_MESSAGE_TYPE = "toybox-html:set-editable";
  *  `<base href>` and to resolve sibling embeds in rendered Markdown. */
 export function createFileBaseUri(file: WorkspaceFile, origin: string): string {
   return `${origin}${createFileRouteBaseUrl(SERVE_ROUTE_PREFIX, file)}`;
-}
-
-/** Point a wrapped document's relative URLs at the file's own directory on the serve route,
- *  so sibling embeds (`./chart.js`, images) resolve there rather than against the parent — a
- *  `srcdoc` iframe has no URL of its own. Inserted first in `<head>` so it governs every
- *  following resource; this wins over any base the document declares itself. */
-export function injectBaseHref(html: string, baseUri: string): string {
-  const baseTag = `<base ${HTML_BASE_ATTRIBUTE} href="${baseUri}" />`;
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, (head) => `${head}${baseTag}`);
-  }
-  if (/<html[^>]*>/i.test(html)) {
-    return html.replace(/<html[^>]*>/i, (htmlTag) => `${htmlTag}<head>${baseTag}</head>`);
-  }
-
-  return `<head>${baseTag}</head>${html}`;
 }
 
 /** Inject the script that connects a rendered HTML document to its editor pane. */

@@ -23,6 +23,14 @@ describe("Session system messages", () => {
     expect(systemMessageCoalesceKey(channelMessage)).toBe("channel_message");
     expect(systemMessagePrompt(channelMessage)).toContain("Call `read_channel`");
 
+    const agentHandoff = {
+      type: "agent_handoff",
+      content: "Post the private decision to the team.",
+    } as const;
+    expect(systemMessageLabel(agentHandoff)).toBe("Private direction");
+    expect(systemMessageCoalesceKey(agentHandoff)).toBeUndefined();
+    expect(systemMessagePrompt(agentHandoff)).toContain(agentHandoff.content);
+
     const agentResponse = {
       type: "agent_response",
       executionMode: "worktree",

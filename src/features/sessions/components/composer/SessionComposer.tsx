@@ -9,6 +9,7 @@ import { agentPickerSuggestions } from "@agents/components/agentPickerSuggestion
 import { AgentInvitationChips } from "@agents/components/AgentInvitationChips";
 import { useAgentMentionInput } from "@agents/components/useAgentMentionInput";
 import {
+  agentHandleFromName,
   findMentionedAgents,
   type Agent,
   type AgentExecutionMode,
@@ -122,7 +123,7 @@ type ComposerPromptHandle = {
   agentMentions: AgentMention[];
   setPrompt: (prompt: string) => void;
   restoreAgentInvitations: (mentions: AgentMention[]) => void;
-  clearAgentInvitations: () => void;
+  resetAfterSubmit: () => void;
   focus: () => void;
 };
 
@@ -226,7 +227,12 @@ function ComposerPrompt({
             .map(({ agentId }) => agentId),
         ),
       ),
-    clearAgentInvitations: () => setWorktreeAgentIds(new Set()),
+    resetAfterSubmit: () => {
+      const handles = mentionedAgents.map(({ name }) => `@${agentHandleFromName(name)}`);
+      onPromptChange(handles.length > 0 ? `${handles.join(" ")} ` : "");
+      if (!isControlled) draft.flush();
+      setWorktreeAgentIds(new Set());
+    },
     focus: () => textareaRef.current?.focus(),
   }));
 
@@ -493,8 +499,7 @@ export function SessionComposer(props: SessionComposerProps) {
       },
       immediate ? { immediate } : undefined,
     );
-    promptHandle.current?.setPrompt("");
-    promptHandle.current?.clearAgentInvitations();
+    promptHandle.current?.resetAfterSubmit();
     clearAttachments();
     promptHandle.current?.focus();
     return true;

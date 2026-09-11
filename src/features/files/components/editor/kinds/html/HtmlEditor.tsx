@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { HTML_SANDBOX_PERMISSIONS } from "@files/model";
+import { HTML_SANDBOX_PERMISSIONS } from "@/shared/embeddedHtml";
 import type { EditorProps } from "../index";
 import {
   injectBaseHref,

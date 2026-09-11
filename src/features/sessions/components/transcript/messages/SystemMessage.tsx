@@ -27,38 +27,37 @@ export function SystemMessage({ message }: { message: SystemMessageValue }) {
     );
   }
 
-  if (systemMessage.type === "channel_message") {
-    return (
-      <SystemMessageCard
-        header={
+  return (
+    <SystemMessageCard
+      header={
+        systemMessage.type === "agent_response" ? (
+          <>
+            <AgentAvatar
+              name={systemMessage.name}
+              avatar={systemMessage.avatar}
+              className="size-6"
+            />
+            <span className="text-sm">{systemMessage.name}</span>
+            {systemMessage.executionMode === "worktree" && (
+              <span className="inline-flex items-center gap-1 font-normal text-cyan-700 dark:text-cyan-300">
+                <GitFork className="size-3" /> worktree
+              </span>
+            )}
+          </>
+        ) : (
           <>
             <MessageSquare className="size-4" />
             <span>{systemMessageLabel(systemMessage)}</span>
           </>
-        }
-        timestamp={message.timestamp}
-      />
-    );
-  }
-
-  return (
-    <SystemMessageCard
-      header={
-        <>
-          <AgentAvatar name={systemMessage.name} avatar={systemMessage.avatar} className="size-6" />
-          <span className="text-sm">{systemMessage.name}</span>
-          {systemMessage.executionMode === "worktree" && (
-            <span className="inline-flex items-center gap-1 font-normal text-cyan-700 dark:text-cyan-300">
-              <GitFork className="size-3" /> worktree
-            </span>
-          )}
-        </>
+        )
       }
       timestamp={message.timestamp}
     >
-      <Streamdown className="text-sm [&_p]:my-2 [&_pre]:my-2 [&_ul]:my-2 [&_ol]:my-2">
-        {systemMessage.content}
-      </Streamdown>
+      {systemMessage.type !== "channel_message" && (
+        <Streamdown className="text-sm [&_p]:my-2 [&_pre]:my-2 [&_ul]:my-2 [&_ol]:my-2">
+          {systemMessage.content}
+        </Streamdown>
+      )}
     </SystemMessageCard>
   );
 }

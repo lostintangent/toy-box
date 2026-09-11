@@ -11,7 +11,6 @@ import {
   listSkills as listSdkSkills,
 } from "@sessions/server/sdk/client";
 import * as sessionRegistry from "@sessions/server/state/registry";
-import { clearDraftPrompt } from "@workspace/server/state";
 import {
   applySessionWorktree as applyWorktree,
   getAllSessionWorktrees,
@@ -151,7 +150,6 @@ export const deliverMessage = createServerFn({ method: "POST" })
     const receipt = await deliverSessionMessage(data.sessionId, data.message, {
       immediate: data.immediate,
     });
-    clearDraftPrompt(data.sessionId);
     return { disposition: receipt.disposition };
   });
 

@@ -221,7 +221,6 @@ function AppListItem({
         }
         isActive={active}
         onClick={(event) => onOpen(event.metaKey || event.ctrlKey)}
-        titleClassName="text-sm"
       />
       {dialog === "rename" && (
         <NameDialog

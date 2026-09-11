@@ -20,7 +20,16 @@ import type { SessionMessage } from "@sessions/model";
 import type { InboxEntry } from "../model";
 import { inboxMutations } from "../mutations";
 import { inboxQueries } from "../queries";
+import { InkCloud, type Ink, type Traveler } from "@/shared/components/ink-cloud/InkCloud";
 import { InboxEntries } from "./InboxEntries";
+
+/** Requests leaving the composer and fanning out to their routes. */
+const DISPATCH_INKS: Ink[] = [
+  { color: "var(--user-accent)", home: { x: -36, y: 4 }, drift: { x: -56, y: -40 } },
+  { color: "var(--user-accent)", home: { x: 36, y: 4 }, drift: { x: 56, y: -40 } },
+];
+/** An agent carrying a request through, now and then. */
+const TRAVELER: Traveler = { color: "var(--agent-accent)", interval: 3 };
 
 /** Starts work without opening a client stream. Run dispatches an Inbox task;
  *  Send leaves an ordinary new session in the normal list. */
@@ -121,16 +130,24 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
     <div className="h-full overflow-y-auto">
       <div className="flex min-h-full items-start justify-center p-4 py-6 md:items-center md:p-8">
         <div className="w-full max-w-2xl space-y-10">
-          <SessionComposer
-            prompt={prompt}
-            onPromptChange={setPrompt}
-            onSubmit={handleSend}
-            onRun={handleRun}
-            models={models}
-            model={defaultModel}
-            onModelChange={setDefaultModel}
-            locationPicker={locationPicker}
-          />
+          <div className="space-y-4">
+            <InkCloud
+              inks={DISPATCH_INKS}
+              reaction="part"
+              traveler={TRAVELER}
+              className="mx-auto h-32 w-80"
+            />
+            <SessionComposer
+              prompt={prompt}
+              onPromptChange={setPrompt}
+              onSubmit={handleSend}
+              onRun={handleRun}
+              models={models}
+              model={defaultModel}
+              onModelChange={setDefaultModel}
+              locationPicker={locationPicker}
+            />
+          </div>
           <InboxEntries
             entries={entries}
             sessions={sessions}

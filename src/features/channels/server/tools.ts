@@ -23,7 +23,7 @@ const listChannelsTool = defineTool("list_channels", {
   skipPermission: true,
   handler: async () => {
     const { listChannels } = await import("@channels/server");
-    return JSON.stringify({ channels: await listChannels() });
+    return JSON.stringify({ channels: (await listChannels()).channels });
   },
 });
 
@@ -104,6 +104,46 @@ const readChannelForAgentTool = defineTool("read_channel", {
   handler: async (_args, invocation) => {
     const { readChannelForAgent } = await import("@channels/server");
     return toChannelReadToolResult(await readChannelForAgent(invocation.sessionId));
+  },
+});
+
+const listJoinedChannelsTool = defineTool("list_channels", {
+  description: "Lists only Channels this Agent belongs to, including their stable IDs.",
+  parameters: z.object({}).strict(),
+  skipPermission: true,
+  handler: async (_args, invocation) => {
+    const { listJoinedChannelsForAgent } = await import("@channels/server");
+    const channels = (await listJoinedChannelsForAgent(invocation.sessionId)).map(
+      ({ id: channelId, title, directory }) => ({ channelId, title, directory }),
+    );
+    return JSON.stringify({ channels });
+  },
+});
+
+const readJoinedChannelTool = defineTool("read_channel", {
+  description:
+    "Passively reads up to 100 messages from a Channel this Agent belongs to without advancing that Channel membership's cursor. It also returns current members, shared artifacts, and attached images.",
+  parameters: channelIdentitySchema.extend({
+    afterSequence: z.number().int().nonnegative().optional(),
+  }),
+  skipPermission: true,
+  handler: async ({ channelId, afterSequence }, invocation) => {
+    const { readJoinedChannelForAgent } = await import("@channels/server");
+    return toChannelReadToolResult(
+      await readJoinedChannelForAgent(invocation.sessionId, channelId, afterSequence),
+    );
+  },
+});
+
+const continueInChannelTool = defineTool("continue_in_channel", {
+  description:
+    "Privately hands work to this Agent's existing membership in a joined Channel and waits for it to finish. That membership performs any public Channel actions in its own context. Read the Channel afterwards to verify the result.",
+  parameters: channelIdentitySchema.extend({ content: channelMessageContentSchema }),
+  skipPermission: true,
+  handler: async ({ channelId, content }, invocation) => {
+    const { continueAgentInChannel } = await import("@channels/server");
+    const { status } = await continueAgentInChannel(invocation.sessionId, channelId, content);
+    return JSON.stringify({ status });
   },
 });
 
@@ -196,6 +236,12 @@ export const channelAgentTools = [
   sendChannelMessageTool,
   reactToChannelMessageTool,
   shareChannelArtifactFromAgentTool,
+];
+
+export const joinedChannelTools = [
+  listJoinedChannelsTool,
+  readJoinedChannelTool,
+  continueInChannelTool,
 ];
 
 export const channelTools = [

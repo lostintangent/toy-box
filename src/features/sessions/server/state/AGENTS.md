@@ -8,8 +8,8 @@ creating another source of transcript truth.
 
 - `registry.ts` owns SDK handles, single-flight resume, creation, explicit rename, automatic title
   updates, and complete deletion. Cached handles retain their application-supplied configuration
-  lifetime; runtime acquisition refreshes Agent configuration before the next execution, while short
-  reads and ordinary Sessions reuse their cached handle.
+  lifetime; runtime acquisition replaces an Agent handle when its effective configuration changed,
+  while short reads, unchanged Agents, and ordinary Sessions reuse their cached handle.
   One deletion path releases the live runtime, SDK persistence, worktree, draft claim, cached
   snapshot, managed relationships, pin, and workspace projection before publishing the deletion.
 - `snapshots.ts` reconstructs idle state through the SDK projector and canonical reducer, then

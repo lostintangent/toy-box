@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode } from "react";
+import type { MouseEvent } from "react";
 import { Circle, CircleHelp, Loader2, Pencil } from "lucide-react";
 import {
   SidebarListItemAction,
@@ -18,7 +18,6 @@ type SidebarSessionItemProps = Omit<SidebarListItemProps, "status"> & {
     hasDraftPrompt: boolean;
   };
   previewDisabled?: boolean;
-  titleContent?: ReactNode;
 };
 
 export function SidebarSessionItem({

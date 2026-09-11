@@ -73,12 +73,13 @@ Pending describes worker lifecycle, not whether every intermediate file effect i
 - Markdown renders from its text content and supports direct editing.
 - HTML renders in a sandboxed iframe. A generated serve base lets relative scripts, styles, images, and links resolve within the source session's file storage.
 - SVG renders as a sanitized inline SVG DOM drawing surface. Standard SVG content persists; the background follows the user's theme, while selection chrome, history, viewport, active tool, and the dot grid remain client-local interaction state.
-- Intent files render as flexible, strict `IntentDocument`s rather than one prescribed specification shape. A concise title is the only required opening; Markdown appears only when it improves the task's reading. Findings, Markdown, lists, records, authoritative exhibits, questions, decisions, and optional plan sections compose one canonical document. Concise source-backed findings preserve settled facts that shape the change; optional `basedOn` links make their influence on spec records, exhibits, and decisions explicit. Description, definition, and resolution sections form the effective spec without a stored wrapper, while findings remain grounding rather than requirements. `SpecState` derives guidance, requirements, open questions, unresolved decisions, and settlement. Optional reference-only tabs can partition top-level sections into distinct reading surfaces without limiting whole-document semantics. Records share one data model across persisted table and cards views. Flow exhibits own their nodes, labelled connections, named paths, and regions while reusing shared spec entities by ID; there is no global relationship graph or map view mode. Zero or more top-level plan sections collectively form the optional plan and own first-class steps with completion criteria, direct implementation links, grouping-only named phases, and editable status that workers ordinarily advance. A plan may implement a flow and its shared requirements independently, but findings and their local evidence are not plan targets. `PlanState` evaluates the aggregate plan against `SpecState` and derives effective steps, resolved targets, unplanned requirements, `fullyPlanned`, status, and `canExecute`. A fully planned, complete plan replaces execution with a green check.
+- Intent files delegate to the [Intents feature](../intents/AGENTS.md). The file-kind adapter supplies content revisions, persistence, relative-resource resolution, and worker-backed actions without owning the intent model or presentation.
 - A session `.toy` file compiles as a stateless artifact app and mounts through the shared app runtime. It remains an editor pane and file-owned artifact; machine `.toy` files never execute.
 - Custom editors provide a persisted HTML viewer template for claimed extensions. Built-in editors keep priority, and unclaimed extensions fall back to Markdown.
 
-Format-owned built-in renderers live in their own kind directories; `.toy`
-delegates to the Apps feature that owns its compiler and runtime. See the
+Format-owned built-in renderers and host adapters live in their own kind
+directories. `.intent` delegates to the Intents feature and `.toy` delegates to
+the Apps feature that owns its compiler and runtime. See the
 [SVG editor guide](components/editor/kinds/svg/AGENTS.md) for the drawing
 surface's native-document model, editor lifecycle, and interaction boundaries.
 
@@ -94,6 +95,7 @@ Inbox entries store at most one artifact filename and own its directory. `InboxP
 
 - [`../../workspace/AGENTS.md`](../../workspace/AGENTS.md) owns the pane model and the layouts and workflows that compose editor surfaces.
 - [`useFile.ts`](useFile.ts) owns client file lifecycle; [`components/editor/EditorPane.tsx`](components/editor/EditorPane.tsx) dispatches to format-specific renderers.
+- [`components/editor/kinds/intent/IntentEditor.tsx`](components/editor/kinds/intent/IntentEditor.tsx) adapts that lifecycle to the host-neutral [Intents feature](../intents/AGENTS.md).
 - [`server/functions.ts`](server/functions.ts) owns validated filesystem RPC ingress, while the rest of `server/` owns operations and path resolution. `routes/` owns the watch and serve HTTP adapters because browser-native streaming and relative-resource loading need those transports.
 - [`../inbox/AGENTS.md`](../inbox/AGENTS.md) owns Inbox rows and result lifecycle. This feature owns custom-editor definitions, persistence, and registration; [Sessions](../sessions/AGENTS.md) owns session-file teardown.
 - The [Sessions SDK boundary](../sessions/server/sdk/AGENTS.md) owns projecting agent file activity into events and encoding system messages across SDK history; [`server/tools.ts`](server/tools.ts) owns file-specific agent ingress.

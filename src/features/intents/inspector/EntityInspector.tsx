@@ -36,6 +36,7 @@ import {
   type PlanStep,
   type PlanStepUpdate,
 } from "../model/index";
+import { IntentMarkdownText } from "../MarkdownText";
 import { IntentExhibitEditor } from "./ExhibitEditor";
 import { IntentFindingEditor } from "./FindingEditor";
 import { PlanStepEditor } from "./PlanStepEditor";
@@ -430,7 +431,7 @@ function EntityDetails({
     return (
       <>
         <InspectorSection title="Done when">
-          <p>{entity.step.doneWhen}</p>
+          <IntentMarkdownText>{entity.step.doneWhen}</IntentMarkdownText>
         </InspectorSection>
         <FieldValues fields={entity.section.fields} values={entity.step.values} />
         {onUpdatePlanStep && <EditButton onClick={onEdit} />}
@@ -579,7 +580,13 @@ function FieldValues({
           <dt className="text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">
             {field.label}
           </dt>
-          <dd className="mt-0.5 text-[11.5px]">{fieldValueText(field, values[field.id])}</dd>
+          <dd className="mt-0.5 text-[11.5px]">
+            {field.kind === "text" ? (
+              <IntentMarkdownText>{fieldValueText(field, values[field.id])}</IntentMarkdownText>
+            ) : (
+              fieldValueText(field, values[field.id])
+            )}
+          </dd>
         </div>
       ))}
     </dl>

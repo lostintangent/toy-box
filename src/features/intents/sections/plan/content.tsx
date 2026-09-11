@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { cn } from "@/shared/utils";
+import { IntentMarkdownText } from "../../MarkdownText";
 import {
   fieldValueText,
   planStatus,
@@ -223,10 +224,10 @@ function PlanStepCard({
           wide ? "grid gap-3 sm:grid-cols-2" : "space-y-2",
         )}
       >
-        <div>
+        <div className={wide ? "sm:col-span-2" : undefined}>
           <dt className="text-[9px] font-medium text-muted-foreground">Done when</dt>
           <dd className="mt-0.5 text-[10.5px] leading-relaxed text-foreground/90">
-            {step.doneWhen}
+            <IntentMarkdownText>{step.doneWhen}</IntentMarkdownText>
           </dd>
         </div>
         {section.fields.map((field) => (

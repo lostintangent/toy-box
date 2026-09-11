@@ -101,8 +101,8 @@ reader would otherwise have to reconstruct any important shape:
 - a workflow, control or data flow, causal path, route, ownership transfer, or
   handoff suggests a flow;
 - file or domain containment suggests a tree;
-- visual evidence suggests an image;
-- rendered interfaces, interactions, or spatial behavior suggest a prototype;
+- existing or specifically requested visual assets suggest images; generated
+  SVG or HTML suggests embedded prototypes;
 - comparable entities suggest records.
 
 Use Markdown or an ordered list for normative behavior that remains clearest as

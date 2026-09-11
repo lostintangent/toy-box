@@ -13,7 +13,6 @@ import type {
 } from "@sessions/model";
 import * as sessionRegistry from "@sessions/server/state/registry";
 import { loadSessionSnapshot, refreshSessionSnapshot } from "@sessions/server/state/snapshots";
-import { clearDraftPrompt } from "@workspace/server/state";
 import { emitSessionTouched } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
 import { getSessionStreamHooks, prepareSessionMessage } from "@/server/sessionHooks";
@@ -216,7 +215,6 @@ export async function streamSession(
 
     try {
       await stream.deliver(message);
-      clearDraftPrompt(request.sessionId);
     } catch (error) {
       if (error instanceof SessionStreamFinishedError && !retriedFinishedStream) {
         retriedFinishedStream = true;

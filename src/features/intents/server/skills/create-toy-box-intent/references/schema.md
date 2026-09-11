@@ -493,7 +493,9 @@ ImageExhibit = ExhibitCommon & {
 A relative URI resolves from the intent file's directory. An absolute URI must
 use `http` or `https`; absolute filesystem paths, backslashes, and other schemes
 are invalid. `altText` is required and conveys the visual meaning independently
-of the title. Use `description` as an optional caption.
+of the title. Use `description` as an optional caption. Use an image exhibit
+only for a visual that already exists or that the user specifically requested
+as a separate file.
 
 ### Prototypes
 
@@ -514,15 +516,13 @@ whose experience belongs in the intent without prescribing production
 implementation. HTML or SVG is its backing representation, not its semantic
 kind.
 
-Supply exactly one of `uri` or `content`. Use embedded content when the intent
-owns the prototype; use a URI when an existing local or remote prototype remains
-authoritative. URI rules match images. Relative resources inside embedded
-content resolve from the intent file's directory. Both variants render through
-Toy Box's sandboxed HTML boundary, and remote servers may still refuse framing.
-
-Use an image for a static visual reference, including an SVG file. Use a
-prototype when the rendered layout or behavior is itself part of the contract,
-including interactive documents and inline SVG experiences.
+Supply exactly one of `uri` or `content`. Embed agent-generated HTML or raw SVG
+directly in `content`; do not create a sidecar file solely to reference generated
+prototype content. Use a URI only when an existing local or remote prototype
+remains authoritative or the user specifically requests a separate external
+file. URI rules match images. Relative resources inside embedded content resolve
+from the intent file's directory. Both variants render through Toy Box's
+sandboxed HTML boundary, and remote servers may still refuse framing.
 
 ## Questions
 

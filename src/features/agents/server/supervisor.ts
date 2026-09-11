@@ -68,8 +68,8 @@ export async function mentionAgent(input: MentionAgentInput): Promise<void> {
         await adapter.admitAgent(agent, membership);
       } else {
         await agents.createMembership(membership);
-        announceAgentMembershipChange(membership.host);
       }
+      announceAgentMembershipChange(membership.host);
     }
 
     agent ??= await agents.getAgent(input.agentId);
@@ -108,9 +108,10 @@ export async function detachAgentSession(sessionId: string): Promise<void> {
     const agent = await agents.getAgent(membership.agentId);
     if (!agent) throw new Error("Agent not found.");
     await adapter.removeAgent(agent, membership);
-  } else if (await agents.deleteMembershipBySession(sessionId)) {
-    announceAgentMembershipChange(membership.host);
+  } else if (!(await agents.deleteMembershipBySession(sessionId))) {
+    return;
   }
+  announceAgentMembershipChange(membership.host);
 }
 
 function announceAgentMembershipChange(host: AgentHost): void {

@@ -229,7 +229,6 @@ function mockStreamRuntimeModules({
   mock.module("@workspace/server/state", () => ({
     ...realWorkspaceStateExports,
     setSessionStatus: () => {},
-    clearDraftPrompt: () => {},
     ...workspaceOverrides,
   }));
   onTestFinished(() => {
@@ -1217,11 +1216,7 @@ describe("streamSession", () => {
     });
 
     const fakeSession = makeFakeSession();
-    const clearDraftPromptMock = mock((_sessionId: string) => {});
-
-    mockStreamRuntimeModules({
-      workspace: { clearDraftPrompt: clearDraftPromptMock },
-    });
+    mockStreamRuntimeModules();
 
     const { SessionStream: ImportedSessionStream, streamSession: importedStreamSession } =
       await import("./index");
@@ -1249,7 +1244,6 @@ describe("streamSession", () => {
         },
       },
     });
-    expect(clearDraftPromptMock).toHaveBeenCalledWith("session-client-delivered-queue");
     expect(stream.getQueuedMessages()).toEqual([
       expect.objectContaining({
         clientId: "queued-client",
@@ -1304,7 +1298,7 @@ describe("streamSession", () => {
     ]);
   });
 
-  test("clears the draft prompt when a client prompt starts a new stream turn", async () => {
+  test("starts a new stream turn for a client prompt", async () => {
     cleanUpStreamAfterTest("session-client-delivered-start", {
       restoreMocks: true,
     });
@@ -1313,13 +1307,11 @@ describe("streamSession", () => {
     const { session, emitSdkEvent } = makeControllableSession({
       send: sendMock,
     });
-    const clearDraftPromptMock = mock((_sessionId: string) => {});
 
     mockStreamRuntimeModules({
       sessionRegistry: {
         createSession: async () => ({ session }),
       },
-      workspace: { clearDraftPrompt: clearDraftPromptMock },
     });
 
     const { streamSession: importedStreamSession } = await import("./index");
@@ -1343,7 +1335,6 @@ describe("streamSession", () => {
       content: "Start this client prompt",
     });
     expect(sendMock).toHaveBeenCalledTimes(1);
-    expect(clearDraftPromptMock).toHaveBeenCalledWith("session-client-delivered-start");
   });
 
   test("starts a new stream turn for an attachment-only client message", async () => {

@@ -33,6 +33,8 @@ transcript and artifact index.
 - Deliver user broadcasts and explicit mentions to current members, and admit new members.
 - Let members read unseen messages, send useful public updates, and publish shared artifacts through
   Channel tools.
+- Let an Agent working privately in a Session passively inspect joined Channels and hand work to its
+  existing Channel membership, which retains ownership of cursor movement and public actions.
 - Implement the Agent host contract by supplying Channel instructions and Channel-specific admission
   and removal.
 
@@ -69,10 +71,11 @@ delivery.
 Creating a Channel member is the deliberate persistence seam: one transaction creates the
 Agent-owned membership and its Channel-owned cursor projection.
 
-- The database is authoritative. The Channel list is the browser's sole owner of Channel metadata;
-  workspace `channel.upserted` and `channel.deleted` events keep that list and its unread projection
-  current for every client. Deletion prunes the open pane and closes its detail stream. Only a client
-  displaying a Channel opens that ordered detail stream.
+- The database is authoritative. The Channel list is the browser's sole owner of Channel metadata
+  and structural Agent memberships. Workspace Channel events keep metadata and unread state current;
+  membership hints refresh that projection, while shared Session activity drives transient working
+  avatars without copying status into Channels. Deletion prunes the open pane and closes its detail
+  stream. Only a client displaying a Channel opens that ordered detail stream.
 - A detail snapshot records its event cursor. Open panes reduce incremental message, reaction,
   membership, and artifact events into that snapshot; a replay gap falls back to one authoritative
   snapshot. `streamChannel` owns subscribe-before-snapshot catch-up and live continuation, ordering

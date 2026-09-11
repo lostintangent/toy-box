@@ -27,6 +27,7 @@ describe("channel database", () => {
       sessionId: "critic-session",
       executionMode: "shared",
     });
+    await channels.createChannel({ title: "Another room" });
 
     const { message: first } = await channels.appendMessage({
       id: "message-1",
@@ -53,6 +54,17 @@ describe("channel database", () => {
 
     expect(first.sequence).toBe(1);
     expect(await channels.listMembers(channel.id)).toEqual([member]);
+    expect((await channels.listChannels()).memberships).toEqual([
+      {
+        host: { kind: "channel", channelId: channel.id },
+        agentId: critic.id,
+        sessionId: "critic-session",
+        executionMode: "shared",
+      },
+    ]);
+    expect(await channels.listAgentChannels(critic.id)).toEqual([
+      expect.objectContaining({ id: channel.id, title: "Release room" }),
+    ]);
     expect((await channels.getChannel(channel.id))?.latestSequence).toBe(3);
     const messages = await channels.listMessages(channel.id);
     expect(messages[0]?.attachments).toEqual(first.attachments);

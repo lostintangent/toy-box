@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Circle, Hash, Pencil, Plus, Trash2 } from "lucide-react";
+import { AgentStatus } from "@agents/components/AgentStatus";
+import { agentQueries } from "@agents/queries";
 import { channelHasUnread } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import { channelQueries } from "@channels/queries";
@@ -27,7 +29,10 @@ export function ChannelsPanel({
   onChannelOpen: (channelId: string, toggleInWorkspace: boolean) => void;
   onCreate: () => void;
 }) {
-  const { data: channels } = useSuspenseQuery(channelQueries.list());
+  const {
+    data: { channels, memberships },
+  } = useSuspenseQuery(channelQueries.list());
+  const { data: agents } = useSuspenseQuery(agentQueries.list());
   const [renameChannelId, setRenameChannelId] = useState<string>();
   const [deleteChannelId, setDeleteChannelId] = useState<string>();
   if (channels.length === 0) return null;
@@ -60,47 +65,58 @@ export function ChannelsPanel({
           </Tooltip>
         }
       >
-        {channels.map((channel) => (
-          <SidebarListItem
-            key={channel.id}
-            title={channel.title}
-            icon={
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
-                <Hash className="size-4" />
-              </span>
-            }
-            time={<RelativeTime date={channel.updatedAt} />}
-            badge={
-              channel.directory ? <SessionMetadataBadges cwd={channel.directory} /> : undefined
-            }
-            menuItems={
-              <>
-                <DropdownMenuItem onClick={() => setRenameChannelId(channel.id)}>
-                  <Pencil /> Rename channel
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  onClick={() => setDeleteChannelId(channel.id)}
-                >
-                  <Trash2 /> Delete channel
-                </DropdownMenuItem>
-              </>
-            }
-            status={
-              channelHasUnread(channel) && !openChannelIds.includes(channel.id)
-                ? {
-                    ariaLabel: `${channel.title} has unread messages`,
-                    tooltip: "Channel has unread messages",
-                    icon: <Circle className="h-2.5 w-2.5 fill-unread text-unread" aria-hidden />,
-                  }
-                : undefined
-            }
-            isActive={openChannelIds.includes(channel.id)}
-            onClick={(event) => onChannelOpen(channel.id, event.metaKey || event.ctrlKey)}
-            titleClassName="text-sm"
-          />
-        ))}
+        {channels.map((channel) => {
+          const channelMemberships = memberships.filter(
+            ({ host }) => host.kind === "channel" && host.channelId === channel.id,
+          );
+
+          return (
+            <SidebarListItem
+              key={channel.id}
+              title={channel.title}
+              titleContent={
+                <span className="flex items-center gap-3">
+                  <span>{channel.title}</span>
+                  <AgentStatus memberships={channelMemberships} agents={agents} variant="compact" />
+                </span>
+              }
+              icon={
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
+                  <Hash className="size-4" />
+                </span>
+              }
+              time={<RelativeTime date={channel.updatedAt} />}
+              badge={
+                channel.directory ? <SessionMetadataBadges cwd={channel.directory} /> : undefined
+              }
+              menuItems={
+                <>
+                  <DropdownMenuItem onClick={() => setRenameChannelId(channel.id)}>
+                    <Pencil /> Rename channel
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={() => setDeleteChannelId(channel.id)}
+                  >
+                    <Trash2 /> Delete channel
+                  </DropdownMenuItem>
+                </>
+              }
+              status={
+                channelHasUnread(channel) && !openChannelIds.includes(channel.id)
+                  ? {
+                      ariaLabel: `${channel.title} has unread messages`,
+                      tooltip: "Channel has unread messages",
+                      icon: <Circle className="h-2.5 w-2.5 fill-unread text-unread" aria-hidden />,
+                    }
+                  : undefined
+              }
+              isActive={openChannelIds.includes(channel.id)}
+              onClick={(event) => onChannelOpen(channel.id, event.metaKey || event.ctrlKey)}
+            />
+          );
+        })}
       </SidebarPanel>
 
       {renaming && (

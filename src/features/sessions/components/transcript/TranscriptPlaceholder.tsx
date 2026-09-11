@@ -1,4 +1,4 @@
-import { CloudPlaceholder, type Ink } from "@/shared/components/cloud-placeholder/CloudPlaceholder";
+import { CloudPlaceholder, type Ink } from "@/shared/components/ink-cloud/CloudPlaceholder";
 
 /** The user's own ink at rest, rising gently, settled low in its frame near the prompt. */
 const INKS: Ink[] = [

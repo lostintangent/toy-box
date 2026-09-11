@@ -27,6 +27,7 @@ import {
   type Question,
   type ResolutionSection,
 } from "../../model/index";
+import { IntentMarkdownText } from "../../MarkdownText";
 import { IntentExhibitCard } from "../definition";
 import { ChangeTag, optionRelationshipLabel, Tag } from "../shared";
 
@@ -336,7 +337,13 @@ export function DecisionsSection({
                                     {section.fields.map((field) => (
                                       <div key={field.id}>
                                         <span className="font-medium">{field.label}: </span>
-                                        {fieldValueText(field, addition.values[field.id])}
+                                        {field.kind === "text" ? (
+                                          <IntentMarkdownText>
+                                            {fieldValueText(field, addition.values[field.id])}
+                                          </IntentMarkdownText>
+                                        ) : (
+                                          fieldValueText(field, addition.values[field.id])
+                                        )}
                                       </div>
                                     ))}
                                   </div>

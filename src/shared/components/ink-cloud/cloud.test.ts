@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  createInkCloud,
-  type Ink,
-  type InkCloud,
-  type InkCloudOptions,
-  type Point,
-} from "./inkCloud";
+import { createInkCloud, type Ink, type InkCloud, type InkCloudOptions, type Point } from "./cloud";
 
 const WIDTH = 256;
 const HEIGHT = 176;
@@ -95,6 +89,27 @@ describe("ink cloud", () => {
     const typical = brightness.reduce((sum, value) => sum + value, 0) / brightness.length;
 
     expect(Math.min(...brightness)).toBeGreaterThan(typical / 2);
+  });
+
+  test("a traveler crosses the whole cloud now and then", () => {
+    const ink = cloud(9, { traveler: { color: "#ffffff", interval: 4 } });
+    const crossings: number[][] = [];
+    let crossing: number[] = [];
+
+    for (let sample = 0; sample < 14 / 0.05; sample += 1) {
+      const heads = snapshot(ink, 0.05).cores.filter((core) => core.color === "#ffffff");
+      crossing.push(...heads.map((core) => core.x));
+      if (!heads.length && crossing.length) {
+        crossings.push(crossing);
+        crossing = [];
+      }
+    }
+
+    expect(crossings.length).toBeGreaterThanOrEqual(2);
+    for (const xs of crossings) {
+      expect(Math.min(...xs)).toBeLessThan(WIDTH / 2 - 100);
+      expect(Math.max(...xs)).toBeGreaterThan(WIDTH / 2 + 100);
+    }
   });
 
   test("two inks flow toward each other", () => {

@@ -13,9 +13,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Streamdown } from "streamdown";
-import { HTML_SANDBOX_PERMISSIONS } from "@files/model";
+import { HTML_SANDBOX_PERMISSIONS, injectBaseHref } from "@/shared/embeddedHtml";
 import { cn } from "@/shared/utils";
-import { injectBaseHref } from "../../../html/bridge";
 import type {
   DomainTreeEntry,
   ExhibitsSection,

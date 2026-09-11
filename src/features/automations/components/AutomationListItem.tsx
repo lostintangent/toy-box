@@ -76,7 +76,7 @@ export function AutomationListItem({
         isActive={isSelected}
         onClick={() => onOpenSession(automation.id)}
         disabled={!canOpenSession}
-        titleClassName="text-sm font-medium"
+        titleClassName="font-medium"
         buttonClassName={canOpenSession ? undefined : "cursor-default disabled:opacity-100"}
       />
       {deleteOpen && (

@@ -26,6 +26,7 @@
       "@automations/*": ["./src/features/automations/*"],
       "@files/*": ["./src/features/files/*"],
       "@inbox/*": ["./src/features/inbox/*"],
+      "@intents/*": ["./src/features/intents/*"],
       "@sessions/*": ["./src/features/sessions/*"],
       "@agents/*": ["./src/features/agents/*"],
       "@channels/*": ["./src/features/channels/*"],

@@ -57,7 +57,7 @@ export function useDraftPrompt(sessionId: string | undefined, sharedPrompt: Draf
     syncedTextRef.current = nextText;
   }, [origin, promptSync, sessionId, sharedPrompt]);
 
-  return { prompt, setPrompt };
+  return { prompt, setPrompt, flush: promptSync.flush };
 }
 
 export function shouldAdoptDraftPrompt(

@@ -1,19 +1,22 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { Channel } from "@channels/model";
+import type { ChannelList } from "@channels/model";
 import { channelQueries } from "@channels/queries";
 import type { WorkspaceEvent } from "@workspace/model/events";
 
 export function applyChannelListEvent(queryClient: QueryClient, event: WorkspaceEvent): void {
   switch (event.type) {
     case "channel.upserted":
-      queryClient.setQueryData<Channel[]>(channelQueries.listKey(), (channels) => {
-        if (!channels) return [event.channel];
-        const next = channels.filter(({ id }) => id !== event.channel.id);
+      queryClient.setQueryData<ChannelList>(channelQueries.listKey(), (list) => {
+        if (!list) return { channels: [event.channel], memberships: [] };
+        const next = list.channels.filter(({ id }) => id !== event.channel.id);
         next.push(event.channel);
-        return next.sort(
-          (left, right) =>
-            right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id),
-        );
+        return {
+          ...list,
+          channels: next.sort(
+            (left, right) =>
+              right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id),
+          ),
+        };
       });
       return;
     case "channel.deleted":
@@ -21,9 +24,19 @@ export function applyChannelListEvent(queryClient: QueryClient, event: Workspace
         queryKey: channelQueries.detail(event.channelId).queryKey,
         exact: true,
       });
-      queryClient.setQueryData<Channel[]>(channelQueries.listKey(), (channels) =>
-        channels?.filter(({ id }) => id !== event.channelId),
+      queryClient.setQueryData<ChannelList>(channelQueries.listKey(), (list) =>
+        list
+          ? {
+              channels: list.channels.filter(({ id }) => id !== event.channelId),
+              memberships: list.memberships.filter(
+                ({ host }) => host.kind !== "channel" || host.channelId !== event.channelId,
+              ),
+            }
+          : list,
       );
+      return;
+    case "agent.membership.changed":
+      if (event.host.kind === "channel") void invalidateChannelListQuery(queryClient);
       return;
     default:
       return;

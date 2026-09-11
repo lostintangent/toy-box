@@ -54,13 +54,11 @@ export function setSessionPrompt(
 ): DraftPrompt | null {
   const current = getSessionState(sessionId, now);
   const existingPrompt = current?.prompt;
-  const changed = existingPrompt?.text !== text;
-  const prompt = !changed
-    ? { ...existingPrompt, updatedAt: now }
-    : { text, origin, updatedAt: now };
+  if (existingPrompt?.text === text && existingPrompt.origin === origin) return null;
 
+  const prompt = { text, origin, updatedAt: now };
   applySessionState({ type: "session.prompt.drafted", sessionId, prompt }, now);
-  return changed ? prompt : null;
+  return prompt;
 }
 
 export function deleteSessionState(sessionId: string): boolean {

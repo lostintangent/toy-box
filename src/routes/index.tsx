@@ -301,7 +301,8 @@ function WorkspacePage() {
   });
   const sessions = sessionList?.sessions;
   const worktreeSessionIds = sessionList?.worktreeSessionIds ?? [];
-  const { data: channels = [] } = useQuery(channelQueries.list());
+  const { data: channelList } = useQuery(channelQueries.list());
+  const channels = channelList?.channels;
   const { apps, automationSessionIds, hyperSessionIds, inboxSessionIds } = useWorkspaceSelector(
     (workspace) => ({
       apps: workspace.apps,
@@ -435,7 +436,7 @@ function WorkspacePage() {
 
   // Channels are durable URL roots, parallel to sessions and apps.
   useEffect(() => {
-    if (selectedChannelIds.length === 0) return;
+    if (!channels || selectedChannelIds.length === 0) return;
     const availableChannelIds = new Set(channels.map((channel) => channel.id));
     const validChannelIds = selectedChannelIds.filter((channelId) =>
       availableChannelIds.has(channelId),

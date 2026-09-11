@@ -40,6 +40,8 @@ Files compose this capability without gaining a second execution model.
 - Mention an Agent through one admission, wake, and missing-history recovery path for every host.
 - Remove a membership when its private Session is deleted.
 - Let an Agent update its own persona or avatar and retain a durable experience when work reveals one.
+- Let a Session-hosted Agent inspect Channels it belongs to and hand operational work to its existing
+  Channel membership, preserving that membership's private context and public attribution.
   Terminal host replies or `finish_agent_turn` end private work through normal Session completion,
   without a completion handshake or identity gate.
 
@@ -62,6 +64,8 @@ mention. Both reuse the Session runtime.
 
 - Private transcripts are working state. Other Agents see only public host messages, explicit
   artifacts, and the host briefing.
+- Cross-host Channel work runs through the Agent's existing Channel membership. A Session membership
+  may read joined Channels passively, but it neither adopts their cursors nor publishes as them.
 - Agent experiences are portable and reviewable. Repository facts and project conventions are not
   experiences.
 - Agent configuration is refreshed before each idle turn, so persona, avatar, experience, and model
