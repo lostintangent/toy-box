@@ -32,6 +32,7 @@ const runningSessionIds = new Set<string>();
 
 const createSessionMock = mock((...args: CreationArguments) => create(...args));
 const deleteSessionIfExistsMock = mock((sessionId: string) => removeSession(sessionId));
+const releaseIdleSessionMock = mock(async (_sessionId: string) => {});
 const broadcastMock = mock((_event: WorkspaceEvent) => {});
 
 mock.module("@/server/database", () => ({
@@ -42,6 +43,7 @@ mock.module("@sessions/server/runtime", () => ({
   createSession: createSessionMock,
   deleteSessionIfExists: deleteSessionIfExistsMock,
   isSessionRunning: (sessionId: string) => runningSessionIds.has(sessionId),
+  releaseIdleSession: releaseIdleSessionMock,
 }));
 mock.module("@workspace/server/events", () => ({
   broadcast: broadcastMock,
@@ -63,6 +65,7 @@ beforeEach(async () => {
   automationDatabase = new AutomationDatabase(appDatabase);
   runningSessionIds.clear();
   deleteSessionIfExistsMock.mockClear();
+  releaseIdleSessionMock.mockClear();
   createSessionMock.mockClear();
   broadcastMock.mockClear();
   removeSession = async () => false;
@@ -169,12 +172,13 @@ describe.serial("automation scheduler", () => {
 
     const { sessionId } = await startAutomationRun(automation.id);
     heldCompletion.resolve(completion);
-    await waitForAutomationEvents(1);
+    await waitFor(() => releaseIdleSessionMock.mock.calls.length === 1);
 
     const updated = (await automationDatabase.get(automation.id))!;
     expect(updated?.lastRunAt).toEqual(expect.any(String));
     expect(updated?.id).toBe(sessionId);
     expect(readAutomationEvents()).toEqual([{ type: "automation.upserted", automation: updated }]);
+    expect(releaseIdleSessionMock).toHaveBeenCalledWith(sessionId);
   });
 
   test("leaves automation metadata unchanged when creation cannot start", async () => {
@@ -198,10 +202,11 @@ describe.serial("automation scheduler", () => {
     await startAutomationRun(automation.id);
     await appDatabase`DROP TABLE automations`;
     heldCompletion.resolve({ status: "completed" });
-    await waitFor(() => consoleError.mock.calls.length === 1);
+    await waitFor(() => releaseIdleSessionMock.mock.calls.length === 1);
 
     expect(readAutomationEvents()).toEqual([]);
     expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(releaseIdleSessionMock).toHaveBeenCalledWith(automation.id);
   });
 
   test("publishes every due claim and continues after one cannot start", async () => {
@@ -284,11 +289,6 @@ function holdCompletion(): {
 
 function readAutomationEvents(): WorkspaceEvent[] {
   return broadcastMock.mock.calls.map(([event]) => event);
-}
-
-async function waitForAutomationEvents(count: number): Promise<void> {
-  await waitFor(() => readAutomationEvents().length >= count);
-  expect(readAutomationEvents()).toHaveLength(count);
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {

@@ -14,6 +14,10 @@ export async function listAgents(): Promise<Agent[]> {
   return new AgentDatabase(await getStateDatabase()).listAgents();
 }
 
+export async function listAgentProfiles(): Promise<Array<Pick<Agent, "id" | "name" | "persona">>> {
+  return new AgentDatabase(await getStateDatabase()).listAgentProfiles();
+}
+
 /** Trusted server-side lookup used by features that host an Agent. */
 export async function getAgent(agentId: string): Promise<Agent | null> {
   return new AgentDatabase(await getStateDatabase()).getAgent(agentId);
@@ -59,6 +63,11 @@ export async function manageAgentExperience(
 
 export async function listAgentMemberships(host: AgentHost): Promise<AgentMembership[]> {
   return new AgentDatabase(await getStateDatabase()).listMemberships(host);
+}
+
+export async function getAgentMembership(sessionId: string): Promise<AgentMembership | null> {
+  const database = await getStateDatabase({ createIfMissing: false });
+  return database ? new AgentDatabase(database).getMembershipBySession(sessionId) : null;
 }
 
 export async function listAgentSessionIds(): Promise<string[]> {

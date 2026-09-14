@@ -3,7 +3,7 @@ import { EditorPane } from "@files/components/editor/EditorPane";
 import { InboxPane } from "@inbox/components/InboxPane";
 import { AppPane } from "@apps/components/panes/AppPane";
 import type { WorkspacePane } from "@workspace/model/panes";
-import { PaneSlotsProvider, type PaneSlots } from "./shell/PaneSlots";
+import { PaneSlotsProvider, type PaneSlots } from "./PaneSlots";
 import { CanvasPane } from "@sessions/components/CanvasPane";
 import { SessionPane } from "@sessions/components/SessionPane";
 import { ChannelPane } from "@channels/components/ChannelPane";
@@ -38,7 +38,7 @@ export function WorkspacePaneView({
       content = <AppPane pane={pane} variant={variant} />;
       break;
     case "session":
-      content = <SessionPane sessionId={pane.sessionId} variant={variant} />;
+      content = <SessionPane sessionId={pane.sessionId} variant={variant} isVisible={isVisible} />;
       break;
     case "channel":
       content = <ChannelPane channelId={pane.channelId} isVisible={isVisible} variant={variant} />;

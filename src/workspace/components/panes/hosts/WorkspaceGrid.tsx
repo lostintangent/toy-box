@@ -9,8 +9,8 @@ import {
   ResizableHandle,
 } from "@/shared/components/ui/resizable";
 import type { ImperativePanelGroupHandle } from "react-resizable-panels";
-import { WorkspacePaneView } from "../panes/WorkspacePaneView";
-import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "../panes/shell/paneControls";
+import { WorkspacePaneView } from "../shell/WorkspacePaneView";
+import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "../shell/paneControls";
 import { SessionOverlay } from "@sessions/components/SessionOverlay";
 import { cn } from "@/shared/utils";
 import { paneSourceSessionId, type WorkspacePane } from "@workspace/model/panes";

@@ -31,6 +31,9 @@ const deleteSessionIfExistsMock = mock(async (sessionId: string) => {
   calls.push(`delete-session:${sessionId}`);
   return true;
 });
+const releaseIdleSessionMock = mock(async (sessionId: string) => {
+  calls.push(`release-session:${sessionId}`);
+});
 const deleteInboxEntryMock = mock(async (sessionId: string) => {
   calls.push(`delete-inbox:${sessionId}`);
   entry = null;
@@ -41,6 +44,7 @@ mock.module("@sessions/server/runtime", () => ({
   ...realStreamModule,
   createSession: createSessionMock,
   deleteSessionIfExists: deleteSessionIfExistsMock,
+  releaseIdleSession: releaseIdleSessionMock,
 }));
 mock.module("@workspace/server/state", () => ({
   ...realWorkspaceModule,
@@ -75,6 +79,7 @@ beforeEach(() => {
   getInboxEntryMock.mockClear();
   hasInboxEntryMock.mockClear();
   deleteSessionIfExistsMock.mockClear();
+  releaseIdleSessionMock.mockClear();
   deleteInboxEntryMock.mockClear();
 });
 
@@ -100,7 +105,7 @@ describe("dispatchInboxTask", () => {
 
     entry = { ...entry!, message: "Research complete" };
     completion.resolve({ status: "completed" });
-    await waitFor(() => expect(getInboxEntryMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(releaseIdleSessionMock).toHaveBeenCalledWith(result.sessionId));
 
     expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
     expect(deleteInboxEntryMock).not.toHaveBeenCalled();
@@ -112,12 +117,13 @@ describe("dispatchInboxTask", () => {
     await waitFor(() => expect(deleteInboxEntryMock).toHaveBeenCalledTimes(1));
 
     expect(calls.slice(-2)).toEqual([`delete-session:${sessionId}`, `delete-inbox:${sessionId}`]);
+    expect(releaseIdleSessionMock).not.toHaveBeenCalled();
   });
 
   test("retains failed sessions and their pending Inbox task", async () => {
-    await dispatchInboxTask({ message: { content: "Try this" } });
+    const { sessionId } = await dispatchInboxTask({ message: { content: "Try this" } });
     completion.resolve({ status: "failed", response: "Unable to finish" });
-    await Bun.sleep(0);
+    await waitFor(() => expect(releaseIdleSessionMock).toHaveBeenCalledWith(sessionId));
 
     expect(getInboxEntryMock).not.toHaveBeenCalled();
     expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();

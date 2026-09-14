@@ -10,8 +10,7 @@ import { INBOX_SESSION_INSTRUCTIONS, inboxTools } from "@inbox/server/tools";
 import { getWorkerAppId } from "@workers/server/database";
 import { workerTools } from "@workers/server/tools";
 import { createAgentTool, getAgentMembershipTools, listAgentsTool } from "@agents/server/tools";
-import type { AgentHost } from "@agents/model";
-import { channelAgentTools, channelTools, joinedChannelTools } from "@channels/server/tools";
+import { channelTools } from "@channels/server/tools";
 import {
   coordinationTools,
   HYPER_SESSION_INSTRUCTIONS,
@@ -20,7 +19,6 @@ import {
   STANDARD_SESSION_INSTRUCTIONS,
   sessionLayoutTools,
   sessionTitleTools,
-  sessionAgentTools,
 } from "@sessions/server/tools";
 import { SESSION_HISTORY_DISCOVERY_INSTRUCTIONS } from "@sessions/server/sdk/client";
 import { settingsTools } from "@workspace/server/tools";
@@ -32,12 +30,11 @@ import { getAgentHostAdapter } from "./agentHosts";
 export function getSessionTools(
   sessionType: SessionType,
   appId?: string,
-  agentHost?: AgentHost["kind"],
+  privateAgentTools?: Tool<any>[],
 ): Tool<any>[] {
   const interactive = sessionType === "standard" || sessionType === "hyper";
   const privateAgent = sessionType === "agent";
-  if (privateAgent && !agentHost) throw new Error("Agent tools require a host type.");
-  const agentTools = privateAgent && agentHost ? getAgentMembershipTools(agentHost) : [];
+  if (privateAgent && !privateAgentTools) throw new Error("Agent tools require a host adapter.");
   const canUpdateSettings = sessionType === "automation" || sessionType === "hyper";
   const canCreateAgents = interactive || sessionType === "inbox";
   const canUseChannels =
@@ -62,11 +59,7 @@ export function getSessionTools(
     ...(canUpdateSettings ? settingsTools : []),
     ...(sessionType === "hyper" ? editorTools : []),
     ...(sessionType === "inbox" ? inboxTools : []),
-    ...(sessionType === "agent" && agentHost === "channel" ? channelAgentTools : []),
-    ...(sessionType === "agent" && agentHost === "session"
-      ? [...sessionAgentTools, ...joinedChannelTools]
-      : []),
-    ...agentTools,
+    ...(privateAgentTools ?? []),
   ];
 }
 
@@ -92,7 +85,10 @@ export async function getSessionConfiguration(sessionId: string, sessionType: Se
   const model = agent.model ?? (await getWorkspaceDefaultModel());
   const additionalInstructions = runtime.buildAgentSystemInstructions(agent, hostInstructions);
   return {
-    tools: getSessionTools(sessionType, appId, kind),
+    tools: getSessionTools(sessionType, appId, [
+      ...(host.getTools?.() ?? []),
+      ...getAgentMembershipTools(kind),
+    ]),
     additionalInstructions,
     configurationKey: JSON.stringify([kind, model, additionalInstructions]),
     disableMemory: true as const,

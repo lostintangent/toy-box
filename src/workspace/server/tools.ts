@@ -4,7 +4,7 @@ import { settingsUpdateSchema } from "@workspace/model/config/settings";
 const updateSettingsTool = defineTool("update_settings", {
   description:
     "Updates one or more Toy Box user settings. " +
-    "Only supplied fields change; omitted settings are preserved. " +
+    "Only supplied fields change. Omitted settings are preserved. " +
     "Use a six-digit hexadecimal value such as '#facc15' for accentColor, and an executable path or an empty string for terminalShell. " +
     "Returns the complete authoritative settings value.",
   parameters: settingsUpdateSchema,

@@ -14,7 +14,7 @@ import {
   type WorkspaceFile,
   type WorkspaceFileMode,
 } from "./model";
-import { createFileRouteUrl } from "./model/paths";
+import { createFileWatchUrl } from "./model/paths";
 import { fileQueries } from "./queries";
 
 const SAVE_DEBOUNCE_MS = 2_000;
@@ -154,7 +154,7 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
 
   // Watch the file once it exists, invalidating the read on external change.
   // Own writes are suppressed by timestamp so a save never re-baselines the renderer.
-  const watchUrl = createFileRouteUrl("/api/watch", file);
+  const watchUrl = createFileWatchUrl(file);
 
   useEffect(() => {
     if (!read.isSuccess) return;

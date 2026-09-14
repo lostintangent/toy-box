@@ -18,7 +18,7 @@ import { EditDiffsProvider, useEditDiffs } from "./transcript/editDiffs";
 import { SessionComposer } from "./composer/SessionComposer";
 import { SessionAgentStatus } from "./SessionAgentStatus";
 import { CurrentSessionProvider, type SessionPaneMode } from "./CurrentSessionContext";
-import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
+import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
 import { TranscriptSkeleton } from "./transcript/TranscriptSkeleton";
 
@@ -34,13 +34,19 @@ const VOICE_CONTEXT_MAX_CHARS = 1000;
 type SessionPaneProps = {
   sessionId: string;
   variant?: PaneVariant;
+  isVisible?: boolean;
   /** Mode defaults to active. Active panes own linked panes and artifact shortcuts. Overlays stay
    *  interactive but secondary; passive panes render live read-only state.
    *  Secondary modes default to compact presentation. */
   mode?: SessionPaneMode;
 };
 
-export function SessionPane({ sessionId, mode = "active", variant }: SessionPaneProps) {
+export function SessionPane({
+  sessionId,
+  mode = "active",
+  variant,
+  isVisible = true,
+}: SessionPaneProps) {
   const { panePublications } = useWorkspaceSurface();
   const isPassive = mode === "passive";
   const workspaceSessionStatus = useWorkspaceSelector(
@@ -124,6 +130,7 @@ export function SessionPane({ sessionId, mode = "active", variant }: SessionPane
   } = useSession(sessionId, {
     workspaceSessionStatus,
     mode: isPassive ? "passive" : "active",
+    isVisible,
     defaultModel: defaultModel ?? undefined,
     directory: effectiveDirectory,
     useWorktree: isDraft ? useWorktree : undefined,

@@ -25,30 +25,36 @@ const CONTENT_TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 
+export async function createServeResponse(
+  params: ServeRouteParams,
+  request: Request,
+): Promise<Response> {
+  const { scope, _splat } = params;
+  const resolution = await resolveFileRequest(scope, _splat);
+  if ("error" in resolution) return resolution.error;
+  const { absolutePath, size, modifiedTime } = resolution;
+  const etag = `W/"${size}-${modifiedTime}"`;
+  const headers = {
+    "Cache-Control": "private, no-cache",
+    "Content-Security-Policy": HTML_SANDBOX_CONTENT_SECURITY_POLICY,
+    "Content-Type": getContentType(absolutePath),
+    ETag: etag,
+    "X-Content-Type-Options": "nosniff",
+  };
+
+  if (request.headers.get("If-None-Match") === etag) {
+    return new Response(null, { status: 304, headers });
+  }
+
+  return new Response(Bun.file(absolutePath), { headers });
+}
+
 // Serve raw file bytes for relative resources referenced by rendered files.
 // Read/write use RPCs; this endpoint exists for browser-native URL loading.
 export const Route = createFileRoute("/api/serve/$scope/$")({
   server: {
     handlers: {
-      GET: async ({ params }) => {
-        const { scope, _splat } = params as ServeRouteParams;
-        const resolution = await resolveFileRequest(scope, _splat);
-        if ("error" in resolution) return resolution.error;
-        const { absolutePath } = resolution;
-
-        try {
-          return new Response(Bun.file(absolutePath), {
-            headers: {
-              "Cache-Control": "no-store",
-              "Content-Security-Policy": HTML_SANDBOX_CONTENT_SECURITY_POLICY,
-              "Content-Type": getContentType(absolutePath),
-              "X-Content-Type-Options": "nosniff",
-            },
-          });
-        } catch {
-          return new Response("Unable to read file.", { status: 404 });
-        }
-      },
+      GET: ({ params, request }) => createServeResponse(params as ServeRouteParams, request),
     },
   },
 });

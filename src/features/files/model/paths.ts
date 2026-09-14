@@ -42,19 +42,21 @@ export function toRelativePath(absolutePath: string, cwd?: string): string {
   return absolutePath;
 }
 
-/** Build a route URL for a workspace file. */
-export function createFileRouteUrl(routePrefix: string, file: WorkspaceFile): string {
-  const { scope, path } = encodeFileRoute(file);
-  return `${routePrefix}/${encodeURIComponent(scope)}/${encodeFilePath(path.replaceAll("\\", "/"))}`;
-}
+export const createFileServeUrl = (file: WorkspaceFile) => createFileRouteUrl("/api/serve", file);
+export const createFileWatchUrl = (file: WorkspaceFile) => createFileRouteUrl("/api/watch", file);
 
-/** Build a trailing-slash route base URL for resolving sibling file embeds. */
-export function createFileRouteBaseUrl(routePrefix: string, file: WorkspaceFile): string {
+/** Build a trailing-slash URL for resolving sibling file embeds. */
+export function createFileServeBaseUrl(file: WorkspaceFile): string {
   const { scope, path } = encodeFileRoute(file);
   const directory = getPathDirname(path.replaceAll("\\", "/"));
   const encodedDirectory = directory === "." ? "" : `${encodeFilePath(directory)}/`;
 
-  return `${routePrefix}/${encodeURIComponent(scope)}/${encodedDirectory}`;
+  return `/api/serve/${encodeURIComponent(scope)}/${encodedDirectory}`;
+}
+
+function createFileRouteUrl(routePrefix: string, file: WorkspaceFile): string {
+  const { scope, path } = encodeFileRoute(file);
+  return `${routePrefix}/${encodeURIComponent(scope)}/${encodeFilePath(path.replaceAll("\\", "/"))}`;
 }
 
 function encodeFilePath(path: string): string {

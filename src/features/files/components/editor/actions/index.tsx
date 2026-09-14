@@ -1,5 +1,5 @@
 import { Loader2 } from "lucide-react";
-import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
+import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 import {
   PANE_OVERLAY_BUTTON_CLASS,
   PANE_OVERLAY_ICON_CLASS,

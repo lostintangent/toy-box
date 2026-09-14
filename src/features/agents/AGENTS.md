@@ -24,8 +24,9 @@ Files compose this capability without gaining a second execution model.
 - `AgentMention` is the transient request carried by a user message. It identifies an Agent and the
   optional initial execution mode. Addressing uses stable Agent IDs; mentioning the same Agent again reuses and wakes its membership without changing that mode.
 - `AgentHost.kind` identifies the Session, Channel, or file that owns public context. Its host
-  adapter supplies membership instructions and any host-specific admission or removal. Public
-  messages and files remain owned by their respective hosts, including publication tools.
+  adapter supplies membership instructions, Agent tools, and any host-specific admission, removal,
+  or turn settlement. Public messages and files remain owned by their respective hosts, including
+  publication tools.
 
 ## Algebra
 
@@ -38,6 +39,8 @@ Files compose this capability without gaining a second execution model.
   broadcast meaning.
 - Admit a mention as a new membership or wake the existing membership.
 - Mention an Agent through one admission, wake, and missing-history recovery path for every host.
+- Let a host settle its public membership state when a private turn starts and when that exact
+  Session execution finishes.
 - Remove a membership when its private Session is deleted.
 - Let an Agent update its own persona or avatar and retain a durable experience when work reveals one.
 - Let a Session-hosted Agent inspect Channels it belongs to and hand operational work to its existing
@@ -85,5 +88,5 @@ mention. Both reuse the Session runtime.
 - Deleting an Agent or its host tears down owned private Sessions through the shared Session lifecycle,
   whose host removal operation removes the membership projection.
 - Hosts supply the message and workspace context to `mentionAgent`. The Channel host adapter supplies
-  its atomic membership-and-cursor admission; it does not coordinate private Session startup or
+  its atomic membership-and-read-position admission; it does not coordinate private Session startup or
   recovery.

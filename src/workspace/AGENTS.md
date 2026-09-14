@@ -51,7 +51,8 @@ workspace actions, and settings updates, then delegates to the plain operations 
 Workspace-level orchestration. [`server/tools.ts`](server/tools.ts) exposes Workspace-owned settings
 updates to model sessions. [`server/state/`](server/state) owns only workspace-wide coordination:
 sparse shared session activity, Hyper membership, settings, and environment capabilities.
-[`server/events.ts`](server/events.ts) owns the process-local fan-out behind the shared SSE route.
+[`server/events.ts`](server/events.ts) owns the process-local fan-out behind the shared
+[`routes/api/workspace.ts`](routes/api/workspace.ts) SSE route.
 Shared SQLite connection management stays in [`../server/`](../server), while each feature owns its
 records and lifecycle.
 
@@ -89,18 +90,30 @@ content, Inbox rows, or app state.
 
 Pane `variant` is a separate host concern. `WorkspacePaneView` maps one pane value to its feature
 component and scopes host-owned action and status slots around it. Descendants declare controls
-with `PaneActions` or `PaneStatus` without receiving DOM targets. This lets the grid, pager, and
-Hyper host compose identical content while preserving each feature's lifecycle.
+with `PaneActions` or `PaneStatus` without receiving DOM targets. This lets the grid and pager hosts
+compose identical content for the main, mobile, and Hyper surfaces while preserving each feature's
+lifecycle.
 
 ## Layouts and compositions
 
-[`components/layout/WorkspaceGrid.tsx`](components/layout/WorkspaceGrid.tsx) is the always-mounted
-desktop host. It lays out up to four panes, preserves useful sizing as panes change, and owns
-maximize and restore behavior.
+[`components/layout/WorkspaceLayout.tsx`](components/layout/WorkspaceLayout.tsx) owns the responsive
+hydration boundary. It preserves both compact and desktop HTML during SSR, then mounts only the
+matching client composition. `MobileWorkspaceLayout` owns the compact sidebar, pager, and terminal
+overlay; `DesktopWorkspaceLayout` owns desktop placement plus the transient mechanics of its
+resizable terminal drawer. Shared workspace state and commands remain in the route composition
+root rather than either responsive presentation.
 
-[`components/layout/WorkspacePager.tsx`](components/layout/WorkspacePager.tsx) is the compact host
-used by mobile and Hyper. It keeps inactive pages mounted so paging preserves scroll and local
-surface state, and portals the active pane's controls into its toolbar.
+[`components/panes/hosts/WorkspaceGrid.tsx`](components/panes/hosts/WorkspaceGrid.tsx) is the
+always-mounted desktop host. It lays out up to four panes, preserves useful sizing as panes change,
+and owns maximize and restore behavior.
+
+[`components/panes/hosts/WorkspacePager.tsx`](components/panes/hosts/WorkspacePager.tsx) is the
+compact host used by mobile and Hyper. It keeps inactive pages mounted so paging preserves scroll
+and local surface state, and portals the active pane's controls into its toolbar.
+
+`components/panes/hosts` owns collection geometry and pane visibility. `components/panes/shell`
+owns the single-pane feature adapter and the chrome slots supplied by those hosts. Neither owns the
+feature state rendered inside a pane.
 
 One sparse browser cookie retains non-default `WorkspaceLayout` values across reloads and SSR.
 `sidebarCollapsed` is the shared visibility fact: it produces the desktop rail or reveals the
@@ -117,20 +130,21 @@ is the reusable follow-up surface for session-backed output shown without its so
 
 ## Ownership and extension
 
-- [`../routes/index.tsx`](../routes/index.tsx) is the main composition root. It derives root panes
-  from the URL and chooses the desktop or compact host.
+- [`routes/index.tsx`](routes/index.tsx) is the main composition root. It derives root panes
+  from the URL and supplies shared state and commands to the responsive workspace shell.
 - [`hooks/layout/surface.tsx`](hooks/layout/surface.tsx) owns the independent Main and Hyper surface
   stores. [`hooks/layout/panePublications.ts`](hooks/layout/panePublications.ts) owns publication
   transitions and editor display mode.
-- [`components/panes/WorkspacePaneView.tsx`](components/panes/WorkspacePaneView.tsx) is the single
-  host-to-feature adapter. Feature components own content behavior; Workspace owns placement,
-  focus, and chrome.
+- [`components/panes/shell/WorkspacePaneView.tsx`](components/panes/shell/WorkspacePaneView.tsx) is
+  the single host-to-feature adapter. Feature components own content behavior; Workspace owns
+  placement, focus, and chrome.
 - [Sessions](../features/sessions/AGENTS.md), [Channels](../features/channels/AGENTS.md),
   [Inbox](../features/inbox/AGENTS.md), [Files](../features/files/AGENTS.md), and
   [Apps](../features/apps/AGENTS.md) own the data and behavior rendered in their panes. Agents owns
   the reusable identity and membership UI composed inside Session and Channel panes.
 - [Terminal](../features/terminal/AGENTS.md) owns its PTY and connection lifecycle; the main route
-  owns only its drawer visibility, size, and mobile or desktop placement.
+  owns only shared drawer visibility and size, while each responsive layout owns placement and
+  transient presentation mechanics.
 
 To add a pane kind, define its stable identity and source relationship, render it once in
 `WorkspacePaneView`, and extend ordering or focus policy only when product behavior requires it. To

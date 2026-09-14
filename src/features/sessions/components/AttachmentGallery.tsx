@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { ChevronLeft, ChevronRight, ImageIcon } from "lucide-react";
 import { Carousel, useCarousel } from "motion-plus/react";
+import { machineFile } from "@files/model";
+import { createFileServeUrl, getPathBasename } from "@files/model/paths";
 import { Button } from "@/shared/components/ui/button";
 import {
   Dialog,
@@ -22,51 +24,47 @@ export function AttachmentGallery({
   attachments,
   size = "default",
 }: {
-  attachments: readonly Attachment[];
+  attachments: readonly (Attachment | string)[];
   size?: keyof typeof thumbnailSizeClasses;
 }) {
-  const images = attachments.flatMap((attachment) => {
-    const dataUrl = attachment.mimeType.startsWith("image/") ? toDataUrl(attachment) : undefined;
-    return dataUrl ? [{ attachment, dataUrl }] : [];
-  });
+  const previews = attachments.map((attachment) => ({
+    displayName:
+      typeof attachment === "string" ? getPathBasename(attachment) : attachment.displayName,
+    dataUrl:
+      typeof attachment === "string"
+        ? createFileServeUrl(machineFile(attachment))
+        : attachment.mimeType.startsWith("image/")
+          ? toDataUrl(attachment)
+          : undefined,
+  }));
+  const images = previews.filter((preview) => preview.dataUrl !== undefined);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const sizeClassName = thumbnailSizeClasses[size];
 
   return (
     <Dialog>
-      {attachments.map((attachment) => {
-        const imageIndex = images.findIndex(({ attachment: image }) => image === attachment);
-        if (imageIndex < 0) {
-          return (
-            <div
-              key={attachment.displayName}
-              role="img"
-              aria-label={attachment.displayName}
-              className={cn(
-                sizeClassName,
-                "flex shrink-0 items-center justify-center rounded-md border border-border bg-muted",
-              )}
-            >
-              <ImageIcon className="size-5 text-muted-foreground" />
-            </div>
-          );
-        }
-
+      {previews.map((preview) => {
+        const { displayName, dataUrl } = preview;
+        const imageIndex = images.findIndex((image) => image === preview);
         return (
           <DialogTrigger
-            key={attachment.base64}
+            key={dataUrl ?? displayName}
             type="button"
+            disabled={!dataUrl}
             onClick={() => setSelectedIndex(imageIndex)}
-            aria-label={`Preview ${attachment.displayName}`}
+            aria-label={`Preview ${displayName}`}
             data-long-press-ignore
-            className="shrink-0 overflow-hidden rounded-md border border-border transition-colors hover:border-primary"
+            className={cn(
+              thumbnailSizeClasses[size],
+              "flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted transition-colors",
+              dataUrl && "hover:border-primary",
+            )}
           >
-            <img
-              src={images[imageIndex]?.dataUrl}
-              alt={attachment.displayName}
-              className={cn(sizeClassName, "object-cover")}
-            />
+            {dataUrl ? (
+              <img src={dataUrl} alt={displayName} className="size-full object-cover" />
+            ) : (
+              <ImageIcon className="size-5 text-muted-foreground" />
+            )}
           </DialogTrigger>
         );
       })}
@@ -81,16 +79,16 @@ export function AttachmentGallery({
           <Carousel
             aria-label="Message attachments"
             className="size-full"
-            items={images.map(({ attachment, dataUrl }) => (
+            items={images.map(({ displayName, dataUrl }) => (
               <DialogClose
-                key={attachment.base64}
+                key={dataUrl}
                 type="button"
-                aria-label={`Close preview of ${attachment.displayName}`}
+                aria-label={`Close preview of ${displayName}`}
                 className="flex size-full items-center justify-center"
               >
                 <img
                   src={dataUrl}
-                  alt={attachment.displayName}
+                  alt={displayName}
                   draggable={false}
                   className="max-h-full max-w-full rounded-lg object-contain select-none"
                 />
@@ -114,7 +112,7 @@ function AttachmentCarouselControls({
   images,
   hotkeyTarget,
 }: {
-  images: { attachment: Attachment; dataUrl: string }[];
+  images: { displayName: string }[];
   hotkeyTarget: React.RefObject<HTMLDivElement | null>;
 }) {
   const { currentPage, totalPages, nextPage, prevPage, isNextActive, isPrevActive } = useCarousel();
@@ -125,7 +123,7 @@ function AttachmentCarouselControls({
 
   return (
     <>
-      <DialogTitle className="sr-only">{selectedImage.attachment.displayName}</DialogTitle>
+      <DialogTitle className="sr-only">{selectedImage.displayName}</DialogTitle>
       {totalPages > 1 && (
         <>
           <Button

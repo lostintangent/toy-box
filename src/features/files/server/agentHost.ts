@@ -52,10 +52,12 @@ export const fileAgentHost: AgentHostAdapter = {
     return `You are responding as ${agent.name} (${mention}) in a Markdown comment thread.
 The exact shared artifact is ${JSON.stringify(absolutePath)}.
 
-The artifact is the only public result for this host. Follow the comment protocol in the current prompt.
+The artifact is the only public result here. Follow the comment protocol in the current prompt.
 
 Reread the file immediately before every write. Preserve unrelated content and concurrent edits.
 
-Documint comments do not store authors. Begin each reply body with ${JSON.stringify(replyPrefix)}.`;
+Documint comments do not store authors. Begin each reply body with ${JSON.stringify(replyPrefix)}.
+
+Call finish_agent_turn after your last file action.`;
   },
 };

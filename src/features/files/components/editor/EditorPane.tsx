@@ -4,7 +4,7 @@ import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import type { EditorWorkspacePane } from "@workspace/model/panes";
 import { PaneActions, PaneStatus } from "@workspace/components/panes/shell/PaneSlots";
 import { WorkersMenu } from "@workers/components/WorkersMenu";
-import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
+import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 import { useFile } from "../../useFile";
 import { useEditorKind, type EditorProps, type EditorKind } from "./kinds";
 import { EditorActions } from "./actions";

@@ -85,7 +85,7 @@ does not own session data or streaming behavior.
   `SessionStream` remains its live implementation detail.
 - [`sdk/`](server/sdk/AGENTS.md) isolates Copilot client operations, raw-event projection, history
   replay, attachments, system messages, skills, and universal system prompts.
-- [`state/`](server/state/AGENTS.md) owns SDK handles, snapshots, drafts, worktrees, and complete
+- [`state/`](server/state/AGENTS.md) owns cached SDK sessions, snapshots, drafts, worktrees, and complete
   resource teardown.
 - `tools.ts` defines the model-facing operations that belong to Sessions. Application-level modules
   in `src/server/sessionTools.ts`, `src/server/sessionHooks.ts`, and
@@ -111,8 +111,8 @@ remain outside the feature because they compose multiple domains rather than def
 - Managed features may govern a session's lifecycle, but they do not redefine session execution,
   transcript state, SDK projection, registry, or UI primitives.
 - The application rebuilds Agent configuration for comparison between executions. Single-flight
-  runtime acquisition replaces the idle SDK handle only when that effective configuration changed;
-  active delivery keeps its existing handle. Callers do not coordinate configuration refresh. This
+  runtime acquisition replaces the idle SDK session only when that effective configuration changed;
+  active delivery keeps its existing session. Callers do not coordinate configuration refresh. This
   preserves durable history, workspace identity, and worktree state.
 - Generic workspace composition may render and arrange a session, but it must not copy session
   state into layout state.

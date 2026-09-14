@@ -1,70 +1,99 @@
-import type { ChannelEvent, ChannelMessage, ChannelSnapshot } from ".";
+import { isChannelSystemMessage } from ".";
+import type { ChannelArtifact, ChannelEvent, ChannelMessage, ChannelState } from ".";
 import { workspaceFileId } from "@files/model";
 
-/** Apply one ordered detail event to the canonical Channel snapshot. */
-export function reduceChannelSnapshot(
-  snapshot: ChannelSnapshot,
-  event: ChannelEvent,
-): ChannelSnapshot {
-  if (event.cursor <= snapshot.cursor) return snapshot;
+/** Apply one ordered detail event to the current Channel state. */
+export function reduceChannelState(state: ChannelState, event: ChannelEvent): ChannelState {
+  if (event.revision <= state.revision) return state;
 
   switch (event.type) {
-    case "snapshot": {
-      const messageIds = new Set(event.snapshot.messages.map(({ id }) => id));
-      const localMessages = snapshot.messages.filter(({ id }) => !messageIds.has(id));
+    case "state": {
+      const firstStateSequence = event.state.messages[0]?.sequence;
+      const lastCachedSequence = state.messages.at(-1)?.sequence;
+      if (
+        firstStateSequence !== undefined &&
+        lastCachedSequence !== undefined &&
+        lastCachedSequence < firstStateSequence - 1
+      ) {
+        return event.state;
+      }
+      const messageIds = new Set(event.state.messages.map(({ id }) => id));
+      const localMessages = state.messages.filter(({ id }) => !messageIds.has(id));
       return localMessages.length === 0
-        ? event.snapshot
-        : { ...event.snapshot, messages: [...event.snapshot.messages, ...localMessages] };
+        ? event.state
+        : {
+            ...event.state,
+            messages: mergeChannelMessages(event.state.messages, localMessages),
+          };
     }
-    case "message":
-      return {
-        ...snapshot,
-        cursor: event.cursor,
-        messages: upsertMessage(snapshot.messages, event.message),
+    case "message": {
+      const next = {
+        ...state,
+        revision: event.revision,
+        messages: upsertMessage(state.messages, event.message),
       };
+      if (!isChannelSystemMessage(event.message)) return next;
+      const content = event.message.content;
+      switch (content.type) {
+        case "member_joined":
+          return {
+            ...next,
+            members: [
+              ...state.members.filter(({ sessionId }) => sessionId !== content.member.sessionId),
+              content.member,
+            ],
+          };
+        case "member_left":
+          return {
+            ...next,
+            members: state.members.filter(
+              ({ sessionId }) => sessionId !== content.member.sessionId,
+            ),
+          };
+        case "artifact_shared":
+          return {
+            ...next,
+            artifacts: upsertArtifact(state.artifacts, content.artifact),
+          };
+      }
+    }
     case "reaction":
       return {
-        ...snapshot,
-        cursor: event.cursor,
-        messages: snapshot.messages.map((message) =>
-          message.sequence !== event.sequence
-            ? message
-            : {
-                ...message,
-                reactions: [
-                  ...message.reactions.filter(({ agentId }) => agentId !== event.agentId),
-                  ...(event.reaction ? [{ agentId: event.agentId, reaction: event.reaction }] : []),
-                ],
-              },
+        ...state,
+        revision: event.revision,
+        messages: state.messages.map((message) => {
+          if (message.sequence !== event.sequence || isChannelSystemMessage(message))
+            return message;
+          const reactions = [
+            ...(message.reactions ?? []).filter(({ agentId }) => agentId !== event.agentId),
+            ...(event.reaction ? [{ agentId: event.agentId, reaction: event.reaction }] : []),
+          ];
+          return {
+            ...message,
+            reactions: reactions.length ? reactions : undefined,
+          };
+        }),
+      };
+    case "status":
+      return {
+        ...state,
+        revision: event.revision,
+        members: state.members.map((member) =>
+          member.sessionId === event.sessionId ? { ...member, status: event.status } : member,
         ),
       };
-    case "member_added":
-      return {
-        ...snapshot,
-        cursor: event.cursor,
-        members: [...snapshot.members, event.member],
-      };
-    case "member_removed":
-      return {
-        ...snapshot,
-        cursor: event.cursor,
-        members: snapshot.members.filter(({ sessionId }) => sessionId !== event.sessionId),
-      };
-    case "artifact": {
-      const artifactId = workspaceFileId(event.artifact.file);
-      const index = snapshot.artifacts.findIndex(
-        ({ file }) => workspaceFileId(file) === artifactId,
-      );
-      const artifacts = [...snapshot.artifacts];
-      if (index === -1) artifacts.push(event.artifact);
-      else artifacts[index] = event.artifact;
-      return {
-        ...snapshot,
-        cursor: event.cursor,
-        artifacts,
-      };
-    }
   }
+}
+
+/** Merge messages into the ordered transcript without replacing cached values. */
+export function mergeChannelMessages(
+  messages: readonly ChannelMessage[],
+  incoming: readonly ChannelMessage[],
+): ChannelMessage[] {
+  const messageIds = new Set(messages.map(({ id }) => id));
+  return [...messages, ...incoming.filter(({ id }) => !messageIds.has(id))].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
 }
 
 function upsertMessage(messages: ChannelMessage[], message: ChannelMessage): ChannelMessage[] {
@@ -72,4 +101,14 @@ function upsertMessage(messages: ChannelMessage[], message: ChannelMessage): Cha
   const index = next.findIndex(({ sequence }) => sequence >= message.sequence);
   if (index === -1) return [...next, message];
   return [...next.slice(0, index), message, ...next.slice(index)];
+}
+
+function upsertArtifact(
+  artifacts: readonly ChannelArtifact[],
+  artifact: ChannelArtifact,
+): ChannelArtifact[] {
+  const id = workspaceFileId(artifact.file);
+  const index = artifacts.findIndex(({ file }) => workspaceFileId(file) === id);
+  if (index === -1) return [...artifacts, artifact];
+  return [...artifacts.slice(0, index), artifact, ...artifacts.slice(index + 1)];
 }

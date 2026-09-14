@@ -1,7 +1,9 @@
 import { decodeFileRoute } from "../model";
 import { resolveWorkspaceFile } from "./paths";
 
-type FileRequestResolution = { absolutePath: string } | { error: Response };
+type FileRequestResolution =
+  | { absolutePath: string; size: number; modifiedTime: number }
+  | { error: Response };
 
 /** Resolve and validate one workspace file for the watch and serve routes. */
 export async function resolveFileRequest(
@@ -15,14 +17,14 @@ export async function resolveFileRequest(
   if (!absolutePath) return fail(403, "Invalid file path.");
 
   try {
-    if (!(await Bun.file(absolutePath).stat()).isFile()) {
+    const stats = await Bun.file(absolutePath).stat();
+    if (!stats.isFile()) {
       return fail(404, "Requested path is not a file.");
     }
+    return { absolutePath, size: stats.size, modifiedTime: stats.mtimeMs };
   } catch {
     return fail(404, "File not found.");
   }
-
-  return { absolutePath };
 }
 
 function fail(status: number, message: string): FileRequestResolution {

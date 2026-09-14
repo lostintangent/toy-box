@@ -7,10 +7,10 @@ import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { useFocusedPaneAtom } from "@workspace/hooks/layout/surface";
 import { cn } from "@/shared/utils";
 import { paneSourceSessionId, type WorkspacePane } from "@workspace/model/panes";
-import { WorkspacePaneView } from "../panes/WorkspacePaneView";
+import { WorkspacePaneView } from "../shell/WorkspacePaneView";
 import { SessionOverlay } from "@sessions/components/SessionOverlay";
 
-type WorkspacePagerProps = {
+export type WorkspacePagerProps = {
   panes: WorkspacePane[];
   primaryPaneId: string;
   onBack?: () => void;

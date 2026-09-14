@@ -1,5 +1,5 @@
 import { mutationOptions } from "@tanstack/react-query";
-import type { ChannelSnapshot, CreateChannelInput, PostChannelMessageInput } from "@channels/model";
+import type { ChannelState, CreateChannelInput, PostChannelMessageInput } from "@channels/model";
 import { channelQueries } from "@channels/queries";
 import { applyChannelListEvent } from "@channels/queryCache";
 import {
@@ -31,9 +31,9 @@ export const channelMutations = {
         applyChannelListEvent(client, { type: "channel.deleted", channelId });
       },
     }),
-  removeMember: (channelId: string, sessionId: string) =>
+  removeMember: (sessionId: string) =>
     mutationOptions({
-      mutationFn: () => removeChannelMember({ data: { channelId, sessionId } }),
+      mutationFn: () => removeChannelMember({ data: { sessionId } }),
     }),
   markRead: () =>
     mutationOptions({
@@ -44,21 +44,20 @@ export const channelMutations = {
     mutationOptions({
       mutationFn: (input: PostChannelMessageInput) => postChannelMessage({ data: input }),
       onMutate: (input, { client }) => {
-        client.setQueryData<ChannelSnapshot>(
+        client.setQueryData<ChannelState>(
           channelQueries.detail(input.channelId).queryKey,
-          (snapshot) => {
-            if (!snapshot || snapshot.messages.some(({ id }) => id === input.id)) return snapshot;
+          (state) => {
+            if (!state || state.messages.some(({ id }) => id === input.id)) return state;
             return {
-              ...snapshot,
+              ...state,
               messages: [
-                ...snapshot.messages,
+                ...state.messages,
                 {
                   id: input.id,
-                  sequence: (snapshot.messages.at(-1)?.sequence ?? 0) + 1,
+                  sequence: (state.messages.at(-1)?.sequence ?? 0) + 1,
                   sender: { type: "user" },
                   content: input.content,
                   ...(input.attachments ? { attachments: input.attachments } : {}),
-                  reactions: [],
                   timestamp: new Date().toISOString(),
                 },
               ],

@@ -257,11 +257,11 @@ export function buildSessionSystemPrompt(
     );
   }
 
-  if (additionalInstructions) parts.push(additionalInstructions);
-
   parts.push(
-    'Toy Box renders files ending in `.svg` as rich, directly editable drawing artifacts. When creating a whiteboard, drawing, or spatial diagram, write standard static SVG with an `xmlns`, a meaningful `viewBox`, and ordinary SVG elements such as `<g>`, `<path>`, `<rect>`, `<ellipse>`, `<line>`, `<text>`, and `<image>`; gradients, filters, masks, patterns, markers, and transforms are supported. Give logical objects unique, descriptive IDs and wrap multi-part objects in `<g id="...">` so Toy Box can select, move, resize, and rotate them as one unit. Keep the file self-contained when practical. The editor supplies its own theme-derived background and dot grid, so do not add a background unless it is meaningful document content. Editable SVG artifacts must not contain doctypes, scripts, `<foreignObject>`, event-handler attributes, imported or executable CSS, or unsafe resource protocols.',
+    'Toy Box renders files ending in `.svg` as rich, directly editable drawing artifacts. When creating a whiteboard, drawing, or spatial diagram, write standard static SVG with an `xmlns`, a meaningful `viewBox`, and ordinary SVG elements such as `<g>`, `<path>`, `<rect>`, `<ellipse>`, `<line>`, `<text>`, and `<image>`. Gradients, filters, masks, patterns, markers, and transforms are supported. Give logical objects unique, descriptive IDs and wrap multi-part objects in `<g id="...">` so Toy Box can select, move, resize, and rotate them as one unit. Keep the file self-contained when practical. The editor supplies its own theme-derived background and dot grid, so do not add a background unless it is meaningful document content. Editable SVG artifacts must not contain doctypes, scripts, `<foreignObject>`, event-handler attributes, imported or executable CSS, or unsafe resource protocols.',
   );
+
+  if (additionalInstructions) parts.push(additionalInstructions);
 
   return {
     mode: "append" as const,
@@ -283,6 +283,9 @@ export function startCopilotClient(): Promise<CopilotClient> {
   const promise = (async () => {
     const client = new CopilotClient({
       connection: RuntimeConnection.forStdio({ path: resolveCopilotCliPath() }),
+      // TODO: Re-test SDK/CLI idle GC after upgrades. Once an expired session
+      // resumes reliably, use the native timeout and remove registry-owned expiry.
+      sessionIdleTimeoutSeconds: 0,
       // Make a compiled Bun executable behave like the Bun CLI when the SDK
       // uses process.execPath for child JavaScript entrypoints.
       env: {

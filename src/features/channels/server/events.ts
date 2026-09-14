@@ -17,19 +17,19 @@ export function publishChannelEvent(channelId: string, event: ChannelEvent): voi
   for (const listener of [...events.listeners]) listener(event);
 }
 
-/** Return a complete contiguous replay, or undefined when a snapshot is required. */
+/** Return a complete contiguous replay, or undefined when a state event is required. */
 export function replayChannelEvents(
   channelId: string,
-  afterCursor: number,
-  throughCursor: number,
+  afterRevision: number,
+  throughRevision: number,
 ): ChannelEvent[] | undefined {
-  if (afterCursor === throughCursor) return [];
-  if (afterCursor > throughCursor) return undefined;
+  if (afterRevision === throughRevision) return [];
+  if (afterRevision > throughRevision) return undefined;
   const replay = getChannelEvents(channelId).history.filter(
-    ({ cursor }) => cursor > afterCursor && cursor <= throughCursor,
+    ({ revision }) => revision > afterRevision && revision <= throughRevision,
   );
-  return replay.length === throughCursor - afterCursor &&
-    replay.every(({ cursor }, index) => cursor === afterCursor + index + 1)
+  return replay.length === throughRevision - afterRevision &&
+    replay.every(({ revision }, index) => revision === afterRevision + index + 1)
     ? replay
     : undefined;
 }

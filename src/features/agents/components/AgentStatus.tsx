@@ -1,126 +1,108 @@
-import { CircleHelp, GitFork } from "lucide-react";
-import type { Agent, AgentMembership } from "@agents/model";
+import { useState } from "react";
+import type { Agent, AgentMembership, AgentMembershipStatus } from "@agents/model";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { selectWorkspaceSessionActivity, useWorkspaceSelector } from "@workspace/hooks/state";
+import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
-import { cn } from "@/shared/utils";
 import { AgentAvatar } from "./AgentAvatar";
 
-type AgentStatusEntry = {
-  membership: AgentMembership;
+type StatusMembership = AgentMembership & { status?: AgentMembershipStatus };
+
+type WorkingAgent = {
+  membership: StatusMembership;
   agent: Agent;
-  status: "working" | "waiting" | undefined;
+  status?: string;
 };
 
-/** Present the Session-backed status of Agent memberships. */
+/** Present currently working Agent memberships. */
 export function AgentStatus({
   memberships,
   agents,
   variant = "normal",
 }: {
-  memberships: readonly AgentMembership[];
+  memberships: readonly StatusMembership[];
   agents: readonly Agent[];
   variant?: "normal" | "compact";
 }) {
-  const statuses = useWorkspaceSelector((workspace) =>
-    memberships.map<AgentStatusEntry["status"]>(({ sessionId }) => {
-      const { running, waiting } = selectWorkspaceSessionActivity(workspace, sessionId);
-      return running ? "working" : waiting ? "waiting" : undefined;
-    }),
+  const running = useWorkspaceSelector((workspace) =>
+    memberships.map(
+      ({ sessionId }) => selectWorkspaceSessionActivity(workspace, sessionId).running,
+    ),
   );
-  const entries: AgentStatusEntry[] = memberships
-    .map((membership, index) => ({
-      membership,
-      agent: agents.find(({ id }) => id === membership.agentId)!,
-      status: statuses[index],
-    }))
+  const working: WorkingAgent[] = memberships
+    .flatMap((membership, index) => {
+      if (!running[index]) return [];
+      const agent = agents.find(({ id }) => id === membership.agentId);
+      if (!agent) return [];
+      const status = membership.status?.state === "working" ? membership.status.text : undefined;
+      return [{ membership, agent, ...(status ? { status } : {}) }];
+    })
     .sort((left, right) => left.agent.name.localeCompare(right.agent.name));
-  const working = entries.filter(({ status }) => status === "working");
-  const waiting = entries.filter(({ status }) => status === "waiting");
+
+  if (working.length === 0) return null;
 
   if (variant === "compact") {
-    return working.length > 0 ? (
+    return (
       <span
         role="status"
         aria-label={`${working.map(({ agent }) => agent.name).join(", ")} ${working.length === 1 ? "is" : "are"} working`}
       >
         <WorkingAgentAvatars entries={working} />
       </span>
-    ) : null;
+    );
   }
 
-  return (
-    <>
-      {working.length > 1 ? (
-        <WorkingAgentGroup entries={working} />
-      ) : (
-        working.map(({ membership, agent }) => (
-          <AgentStatusItem key={membership.sessionId} membership={membership} agent={agent} />
-        ))
-      )}
-      {waiting.map(({ membership, agent }) => (
-        <AgentStatusItem key={membership.sessionId} membership={membership} agent={agent} waiting />
-      ))}
-    </>
-  );
+  return <WorkingAgentStatus entries={working} />;
 }
 
-function AgentStatusItem({
-  membership,
-  agent,
-  waiting = false,
-}: {
-  membership: AgentMembership;
-  agent: Agent;
-  waiting?: boolean;
-}) {
-  const preview = useSessionPreview();
+function WorkingAgentStatus({ entries }: { entries: readonly WorkingAgent[] }) {
+  const [hoveredSessionId, setHoveredSessionId] = useState<string>();
+  const selected =
+    entries.find(({ membership }) => membership.sessionId === hoveredSessionId) ??
+    (entries.length === 1 ? entries[0] : undefined);
+  const label =
+    selected?.status ??
+    (selected ? `${selected.agent.name} is working` : "Multiple agents are working");
 
   return (
-    <SessionPreview sessionId={membership.sessionId} nativeButton={false} {...preview}>
-      <div
-        onMouseEnter={preview.onMouseEnter}
-        onMouseLeave={preview.onMouseLeave}
-        className={cn(
-          "flex items-center gap-2 rounded-full px-2 py-1 text-xs transition-colors hover:bg-muted",
-          waiting ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground",
-        )}
-      >
-        <AgentAvatar name={agent.name} avatar={agent.avatar} className="size-6" />
-        <span>
-          {agent.name} {waiting ? "needs input" : "is working"}
-        </span>
-        {waiting ? <CircleHelp className="size-3" aria-hidden /> : <WorkingDots />}
-        {membership.executionMode === "worktree" && (
-          <GitFork className="size-3 text-cyan-600" aria-label="Uses a worktree" />
-        )}
-      </div>
-    </SessionPreview>
-  );
-}
-
-function WorkingAgentGroup({ entries }: { entries: readonly AgentStatusEntry[] }) {
-  return (
-    <div className="flex items-center gap-2 rounded-full px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted">
-      <WorkingAgentAvatars entries={entries} />
-      <span>Multiple agents are working</span>
+    <div
+      role="status"
+      className="flex min-w-0 items-center gap-2 rounded-full px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
+    >
+      <WorkingAgentAvatars entries={entries} onHover={setHoveredSessionId} />
+      <ScrollableFade className="whitespace-nowrap">
+        <span className="shrink-0">{label}</span>
+      </ScrollableFade>
       <WorkingDots />
     </div>
   );
 }
 
-function WorkingAgentAvatars({ entries }: { entries: readonly AgentStatusEntry[] }) {
+function WorkingAgentAvatars({
+  entries,
+  onHover,
+}: {
+  entries: readonly WorkingAgent[];
+  onHover?: (sessionId?: string) => void;
+}) {
   return (
     <span className="flex -space-x-2 hover:space-x-1 focus-within:space-x-1">
-      {entries.map(({ membership, agent }) => (
-        <WorkingAgentAvatar key={membership.sessionId} membership={membership} agent={agent} />
+      {entries.map((entry) => (
+        <WorkingAgentAvatar key={entry.membership.sessionId} entry={entry} onHover={onHover} />
       ))}
     </span>
   );
 }
 
-function WorkingAgentAvatar({ membership, agent }: { membership: AgentMembership; agent: Agent }) {
+function WorkingAgentAvatar({
+  entry,
+  onHover,
+}: {
+  entry: WorkingAgent;
+  onHover?: (sessionId?: string) => void;
+}) {
   const preview = useSessionPreview();
+  const { membership, agent, status } = entry;
 
   return (
     <Tooltip>
@@ -131,8 +113,14 @@ function WorkingAgentAvatar({ membership, agent }: { membership: AgentMembership
               tabIndex={0}
               aria-label={agent.name}
               className="relative rounded-full transition-[margin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onMouseEnter={preview.onMouseEnter}
-              onMouseLeave={preview.onMouseLeave}
+              onMouseEnter={(event) => {
+                preview.onMouseEnter(event);
+                onHover?.(membership.sessionId);
+              }}
+              onMouseLeave={() => {
+                preview.onMouseLeave();
+                onHover?.();
+              }}
             />
           }
         >
@@ -143,7 +131,10 @@ function WorkingAgentAvatar({ membership, agent }: { membership: AgentMembership
           />
         </TooltipTrigger>
       </SessionPreview>
-      <TooltipContent sideOffset={4}>{agent.name}</TooltipContent>
+      <TooltipContent sideOffset={4}>
+        {agent.name}
+        {status ? ` · ${status}` : ""}
+      </TooltipContent>
     </Tooltip>
   );
 }

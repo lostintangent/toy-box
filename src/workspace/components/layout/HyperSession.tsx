@@ -8,7 +8,7 @@ import {
 import { useMutation } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
 import { Maximize2, Minus, X } from "lucide-react";
-import { WorkspacePager } from "./WorkspacePager";
+import { WorkspacePager } from "../panes/hosts/WorkspacePager";
 import {
   SESSION_OVERLAY_BASE_CLASS,
   VIEWPORT_OVERLAY_BOUNDS,

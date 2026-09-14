@@ -46,7 +46,7 @@ const checkSessionStatus = defineTool("check_session_status", {
 const waitForSessions = defineTool("wait_for_sessions", {
   description:
     "Waits for one or more sessions' current executions to complete before returning. " +
-    "Returns each completion status and latest assistant response when available; timing out does not abort the session.",
+    "Returns each completion status and latest assistant response when available. Timing out does not abort the session.",
   parameters: z.object({
     sessionIds: z.array(z.string()).min(1).describe("One or more session IDs to wait for"),
     timeoutMs: z
@@ -112,7 +112,7 @@ const sessionExecutionParameters = {
 const createSessionTool = defineTool("create_session", {
   description:
     "Creates an independent top-level session for work that should remain available outside this Hyper session. " +
-    "The session appears in the normal session list and is not deleted with this Hyper session. Model and directory are used only when explicitly supplied; omitted values use normal new-session defaults. " +
+    "The session appears in the normal session list and is not deleted with this Hyper session. Model and directory are used only when explicitly supplied. Omitted values use normal new-session defaults. " +
     "It does not open by default: `open` defaults to false. Set it to true to open the session immediately, or call `open_session` later with the returned session ID.",
   parameters: z.object({
     prompt: z.string().describe("The initial prompt to send to the new session"),
@@ -186,7 +186,7 @@ export const sessionLayoutTools = [openSession, closeSession];
 
 const sendSessionResponseTool = defineTool("send_session_response", {
   description:
-    "Publishes a useful Markdown response with this Agent's attribution in its host Session and ends the current turn. Finish any private work before calling.",
+    "Publishes a useful Markdown response with this agent's attribution in its session and ends the current turn.",
   parameters: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),
   skipPermission: true,
   isTerminal: true,

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  createFileRouteBaseUrl,
-  createFileRouteUrl,
+  createFileServeBaseUrl,
+  createFileServeUrl,
+  createFileWatchUrl,
   fileName,
   getPathBasename,
   getPathDirname,
@@ -27,7 +28,7 @@ describe("file path display", () => {
 describe("artifact route paths", () => {
   test("encodes session IDs and artifact path segments while preserving hierarchy", () => {
     expect(
-      createFileRouteUrl("/api/watch", {
+      createFileWatchUrl({
         kind: "session",
         sessionId: "toy box/session",
         path: String.raw`nested\file name#.md`,
@@ -36,21 +37,21 @@ describe("artifact route paths", () => {
   });
 
   test("routes machine files under the machine scope", () => {
-    expect(createFileRouteUrl("/api/watch", { kind: "machine", path: "/repo/src/foo.ts" })).toBe(
-      "/api/watch/machine/repo/src/foo.ts",
+    expect(createFileServeUrl({ kind: "machine", path: "/repo/src/foo.ts" })).toBe(
+      "/api/serve/machine/repo/src/foo.ts",
     );
   });
 
   test("builds trailing-slash bases for root and nested artifact directories", () => {
     expect(
-      createFileRouteBaseUrl("/api/serve", {
+      createFileServeBaseUrl({
         kind: "session",
         sessionId: "session",
         path: "plan.md",
       }),
     ).toBe("/api/serve/session/");
     expect(
-      createFileRouteBaseUrl("/api/serve", {
+      createFileServeBaseUrl({
         kind: "session",
         sessionId: "session",
         path: "nested/charts/chart.html",

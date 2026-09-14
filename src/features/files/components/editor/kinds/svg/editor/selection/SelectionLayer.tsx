@@ -35,12 +35,12 @@ export function SelectionLayer({
     document.getSnapshot,
     document.getSnapshot,
   );
-  const { readOnly, selection, viewport, marquee, transforming } = useSelector(
+  const { readOnly, selection, viewportSize, marquee, transforming } = useSelector(
     store,
     (state) => ({
       readOnly: state.readOnly,
       selection: state.selection,
-      viewport: state.viewport,
+      viewportSize: state.viewport.size,
       marquee: state.gesture?.type === "marquee" ? state.gesture.rect : null,
       transforming: state.gesture?.type === "transform" || state.gesture?.type === "line-endpoint",
     }),
@@ -51,12 +51,26 @@ export function SelectionLayer({
     const overlay = overlayRef.current;
     const viewportElement = viewportRef.current;
     if (!overlay || !viewportElement) return;
+    if (selection.length === 0) {
+      overlay.replaceChildren();
+      return;
+    }
     renderSelectionFrame(overlay, selection, viewportElement.getBoundingClientRect(), !readOnly);
   });
 
   useLayoutEffect(() => {
     paint();
-  }, [documentSnapshot, marquee, readOnly, selection, transforming, viewport]);
+  }, [documentSnapshot, marquee, readOnly, selection, transforming, viewportSize]);
+
+  useLayoutEffect(() => {
+    let previousViewport = store.state.viewport;
+    const subscription = store.subscribe((state) => {
+      if (state.viewport === previousViewport) return;
+      previousViewport = state.viewport;
+      paint();
+    });
+    return () => subscription.unsubscribe();
+  }, [store]);
 
   useEffect(() => {
     if (!transforming) return;
@@ -72,8 +86,8 @@ export function SelectionLayer({
     <>
       <svg
         ref={overlayRef}
-        width={viewport.size.width}
-        height={viewport.size.height}
+        width={viewportSize.width}
+        height={viewportSize.height}
         className="pointer-events-none absolute inset-0 z-[5]"
         aria-hidden="true"
       />

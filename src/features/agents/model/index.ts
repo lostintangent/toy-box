@@ -16,7 +16,7 @@ const agentAvatarMarkSchema = z
   .max(2_000)
   .regex(/^[MmZzLlHhVvCcSsQqTtAaEe0-9.,+\-\s]+$/, "Use SVG path data only.")
   .describe(
-    "SVG path data for a distinctive outline mark in a 24 by 24 viewBox. Multiple subpaths are allowed; keep the mark recognizable at 20 pixels.",
+    "SVG path data for a distinctive outline mark in a 24 by 24 viewBox. Multiple subpaths are allowed. Keep the mark recognizable at 20 pixels.",
   );
 const agentAvatarColorSchema = z
   .string()
@@ -30,6 +30,13 @@ export const agentAvatarSchema = z
   .strict();
 
 export const agentExecutionModeSchema = z.enum(["shared", "worktree"]);
+
+export const agentMembershipStatusSchema = z
+  .object({
+    state: z.enum(["working", "waiting"]),
+    text: z.string().trim().min(1).max(100),
+  })
+  .strict();
 
 export const fileAgentHostSchema = z
   .object({
@@ -74,6 +81,7 @@ export type Agent = {
 
 export type AgentHost = z.infer<typeof agentHostSchema>;
 export type AgentExecutionMode = z.infer<typeof agentExecutionModeSchema>;
+export type AgentMembershipStatus = z.output<typeof agentMembershipStatusSchema>;
 export type AgentMention = z.output<typeof agentMentionSchema>;
 
 /** One Agent's durable presence and private Session within one host. */
@@ -226,7 +234,10 @@ export function extractAgentMentionHandles(content: string): {
 }
 
 /** Resolve explicit handles without giving regular Sessions Channel-style broadcast semantics. */
-export function findMentionedAgents(content: string, agents: readonly Agent[]): Agent[] {
+export function findMentionedAgents<Candidate extends Pick<Agent, "name">>(
+  content: string,
+  agents: readonly Candidate[],
+): Candidate[] {
   const { handles } = extractAgentMentionHandles(content);
   const handleSet = new Set(handles);
   return agents.filter(({ name }) => handleSet.has(agentHandleFromName(name)));

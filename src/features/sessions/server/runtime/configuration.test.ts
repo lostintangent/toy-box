@@ -1,4 +1,4 @@
-import { describe, expect, mock, onTestFinished, spyOn, test } from "bun:test";
+import { describe, expect, jest, mock, onTestFinished, spyOn, test } from "bun:test";
 import type { CopilotSession } from "@github/copilot-sdk";
 import { AgentDatabase } from "@agents/server/database";
 import * as state from "@/server/database";
@@ -135,14 +135,123 @@ describe("Session-owned configuration lifetime", () => {
     expect(handles[1]!.send).toHaveBeenCalledTimes(3);
   });
 
-  test("ordinary Sessions retain their cached SDK handles between executions", async () => {
+  test("bounded SDK operations do not refresh changed Agent configuration", async () => {
+    const { sessionId, agent, agents, resume, handles } = await setup(true);
+    await createSession(sessionId, { content: "Start" }, { sessionType: "agent" });
+    SessionStream.get(sessionId)!.finish();
+    await agents.updateAgent({ agentId: agent.id, persona: "Changed persona" });
+
+    await registry.withSession(sessionId, (session) => session.rpc.name.set({ name: "Renamed" }));
+
+    expect(resume).not.toHaveBeenCalled();
+    expect(handles[0]!.disconnect).not.toHaveBeenCalled();
+
+    await deliverSessionMessage(sessionId, { content: "Continue" });
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(handles[0]!.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  test("ordinary Sessions retain their cached SDK sessions between executions", async () => {
     const { sessionId, resume, handles } = await setup(false);
-    await registry.getSession(sessionId);
     await deliverSessionMessage(sessionId, { content: "First" });
     SessionStream.get(sessionId)!.finish();
     await deliverSessionMessage(sessionId, { content: "Second" });
     expect(resume).toHaveBeenCalledTimes(1);
     expect(handles[0]!.disconnect).not.toHaveBeenCalled();
     expect(handles[0]!.send).toHaveBeenCalledTimes(2);
+  });
+
+  test("disconnects after the idle window and waits for detach before resuming", async () => {
+    const { sessionId, resume, handles } = await setup(false);
+
+    jest.useFakeTimers();
+    let finishDisconnect!: () => void;
+    try {
+      await deliverSessionMessage(sessionId, { content: "First" });
+      handles[0]!.disconnect.mockImplementation(
+        () => new Promise<void>((resolve) => (finishDisconnect = resolve)),
+      );
+      jest.advanceTimersByTime(30 * 60 * 1000);
+      expect(handles[0]!.disconnect).not.toHaveBeenCalled();
+
+      SessionStream.get(sessionId)!.finish();
+      jest.advanceTimersByTime(30 * 60 * 1000 - 1);
+      expect(handles[0]!.disconnect).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(1);
+      expect(handles[0]!.disconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+
+    const nextExecution = deliverSessionMessage(sessionId, { content: "Second" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resume).toHaveBeenCalledTimes(1);
+    finishDisconnect();
+    await nextExecution;
+    expect(resume).toHaveBeenCalledTimes(2);
+    expect(handles[1]!.send).toHaveBeenCalledTimes(1);
+  });
+
+  test("retains a cached SDK session when idle disconnect fails", async () => {
+    const { sessionId, resume, handles } = await setup(false);
+
+    await deliverSessionMessage(sessionId, { content: "First" });
+    SessionStream.get(sessionId)!.finish();
+    handles[0]!.disconnect.mockImplementation(async () => {
+      throw new Error("Detach failed");
+    });
+
+    await expect(registry.releaseIdleSession(sessionId)).rejects.toThrow("Detach failed");
+    await deliverSessionMessage(sessionId, { content: "Second" });
+
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(handles[0]!.send).toHaveBeenCalledTimes(2);
+  });
+
+  test("short SDK operations restart idle session retention", async () => {
+    const { sessionId, handles } = await setup(false);
+
+    jest.useFakeTimers();
+    try {
+      await deliverSessionMessage(sessionId, { content: "First" });
+      SessionStream.get(sessionId)!.finish();
+      jest.advanceTimersByTime(29 * 60 * 1000);
+
+      let finishOperation!: () => void;
+      const operation = registry.withSession(
+        sessionId,
+        () => new Promise<void>((resolve) => (finishOperation = resolve)),
+      );
+      await Promise.resolve();
+      jest.advanceTimersByTime(2 * 60 * 1000);
+      expect(handles[0]!.disconnect).not.toHaveBeenCalled();
+
+      finishOperation();
+      await operation;
+      jest.advanceTimersByTime(29 * 60 * 1000);
+      expect(handles[0]!.disconnect).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(60 * 1000);
+      expect(handles[0]!.disconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("supervisors release completed SDK sessions without interrupting execution", async () => {
+    const { sessionId, resume, handles } = await setup(false);
+
+    await deliverSessionMessage(sessionId, { content: "First" });
+    await registry.releaseIdleSession(sessionId);
+    expect(handles[0]!.disconnect).not.toHaveBeenCalled();
+
+    SessionStream.get(sessionId)!.finish();
+    await registry.releaseIdleSession(sessionId);
+    expect(handles[0]!.disconnect).toHaveBeenCalledTimes(1);
+
+    await deliverSessionMessage(sessionId, { content: "Second" });
+    expect(resume).toHaveBeenCalledTimes(2);
+    expect(handles[1]!.send).toHaveBeenCalledTimes(1);
   });
 });

@@ -19,13 +19,16 @@ export function TextInsertion({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const finishedRef = useRef(false);
-  const { viewport, styleDefaults, insertion } = useSelector(
+  const { zoom, styleDefaults, insertion } = useSelector(
     store,
-    (state) => ({
-      viewport: state.viewport,
-      styleDefaults: state.styleDefaults,
-      insertion: state.gesture?.type === "insert-text" ? state.gesture : null,
-    }),
+    (state) => {
+      const insertion = state.gesture?.type === "insert-text" ? state.gesture : null;
+      return {
+        zoom: insertion ? state.viewport.zoom : 1,
+        styleDefaults: state.styleDefaults,
+        insertion,
+      };
+    },
     { compare: shallow },
   );
 
@@ -60,7 +63,7 @@ export function TextInsertion({
         top: insertion.viewportPoint.y,
         color: styleDefaults.color ?? themeForegroundColor,
         fontFamily: TEXT_FONT_FAMILY,
-        fontSize: styleDefaults.fontSize * viewport.zoom,
+        fontSize: styleDefaults.fontSize * zoom,
       }}
       className="absolute z-20 min-w-24 rounded border border-accent bg-transparent px-1 outline-none"
       onPointerDown={(event) => event.stopPropagation()}

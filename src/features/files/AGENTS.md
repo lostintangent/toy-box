@@ -31,6 +31,7 @@ A file exposes six operations with distinct transport needs:
 | Serve     | `/api/serve/<scope>/<path>` returns raw bytes for browser-native relative resources |
 
 The route scope is a session id for an artifact or the literal `machine` for a host file. One resolver (`resolveWorkspaceFile`) maps that `WorkspaceFile` to an allowed absolute path for every operation: a session file resolves beneath its durable files directory; a machine file resolves to its own absolute path.
+Serve responses are privately cached and revalidated from file metadata, so unchanged resources reuse browser-cached bytes without hiding edits.
 
 `queries.ts` defines canonical browse and file-snapshot identity. `mutations.ts` defines creation and per-file serialized writes. `useFile` owns one file's lifetime for editor panes and app file surfaces: it reads initial content, watches external changes, debounces saves, and submits them through the write mutation. It ignores the watch echo of its own save and flushes pending edits before unmount. Pane identity is keyed by the file's identity (`workspaceFileId`), so opening a different file remounts the complete lifecycle while mode changes preserve it.
 

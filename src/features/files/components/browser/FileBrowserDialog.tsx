@@ -239,7 +239,7 @@ function FileBrowser({
                   onCreated={onOpenFile}
                 />
               )}
-              <DirectoryChildren listing={listing} depth={0} />
+              <DirectoryChildren key={listing.currentPath} listing={listing} depth={0} />
               {isEmpty && (
                 <div className="py-8 text-center text-sm text-muted-foreground">Empty folder</div>
               )}
@@ -277,6 +277,7 @@ function FileBrowser({
 }
 
 const FILE_BROWSER_LOADING_WIDTHS = ["w-32", "w-48", "w-40", "w-24", "w-44", "w-36"] as const;
+const INITIAL_DIRECTORY_ENTRY_LIMIT = 250;
 
 function FileBrowserLoading() {
   return (
@@ -296,24 +297,41 @@ function FileBrowserLoading() {
 
 function DirectoryChildren({ listing, depth }: { listing: DirectoryListing; depth: number }) {
   const { extensions, onOpenFile } = useTree();
+  const [showAll, setShowAll] = useState(false);
+  const files = onOpenFile
+    ? listing.files.filter((file) => acceptsExtension(file.path, extensions))
+    : [];
+  const entryLimit = showAll ? Number.POSITIVE_INFINITY : INITIAL_DIRECTORY_ENTRY_LIMIT;
+  const visibleDirectories = listing.directories.slice(0, entryLimit);
+  const visibleFiles = files.slice(0, Math.max(0, entryLimit - listing.directories.length));
+  const hiddenEntryCount =
+    listing.directories.length + files.length - visibleDirectories.length - visibleFiles.length;
 
   return (
     <>
-      {listing.directories.map((directory) => (
+      {visibleDirectories.map((directory) => (
         <DirectoryNode key={directory.path} entry={directory} depth={depth} />
       ))}
       {onOpenFile &&
-        listing.files
-          .filter((file) => acceptsExtension(file.path, extensions))
-          .map((file) => (
-            <Row
-              key={file.path}
-              depth={depth}
-              icon={FileIcon}
-              label={file.name}
-              onActivate={() => onOpenFile(file.path)}
-            />
-          ))}
+        visibleFiles.map((file) => (
+          <Row
+            key={file.path}
+            depth={depth}
+            icon={FileIcon}
+            label={file.name}
+            onActivate={() => onOpenFile(file.path)}
+          />
+        ))}
+      {hiddenEntryCount > 0 && (
+        <button
+          type="button"
+          className="w-full py-1 pr-2 text-left text-sm text-muted-foreground hover:text-foreground"
+          style={{ paddingLeft: depth * 14 + 28 }}
+          onClick={() => setShowAll(true)}
+        >
+          Show {hiddenEntryCount.toLocaleString()} more entries
+        </button>
+      )}
     </>
   );
 }
@@ -375,7 +393,7 @@ function DirectoryNode({ entry, depth }: { entry: DirectoryEntry; depth: number 
           {isPending ? (
             <Row depth={depth + 1} icon={Loader2} label="Loading…" muted spin />
           ) : listing ? (
-            <DirectoryChildren listing={listing} depth={depth + 1} />
+            <DirectoryChildren key={listing.currentPath} listing={listing} depth={depth + 1} />
           ) : (
             <Row depth={depth + 1} icon={AlertCircle} label="Unable to read" muted />
           )}

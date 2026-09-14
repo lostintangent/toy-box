@@ -1,5 +1,4 @@
 import { useLayoutEffect, useRef, useSyncExternalStore, type HTMLAttributes } from "react";
-import { useSelector } from "@tanstack/react-store";
 import type { SvgDocument } from "../../document";
 import type { EditorStore } from "../../store";
 
@@ -21,8 +20,6 @@ export function DocumentLayer({
     document.getSnapshot,
     document.getSnapshot,
   );
-  const viewport = useSelector(store, (state) => state.viewport);
-
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -31,14 +28,27 @@ export function DocumentLayer({
   }, [baseUri, document]);
 
   useLayoutEffect(() => {
-    if (!snapshot.root || viewport.size.width <= 0 || viewport.size.height <= 0) return;
-    document.setRenderedViewport({
-      x: -viewport.panX,
-      y: -viewport.panY,
-      width: viewport.size.width / viewport.zoom,
-      height: viewport.size.height / viewport.zoom,
+    let previousViewport = store.state.viewport;
+
+    function renderViewport() {
+      const viewport = store.state.viewport;
+      previousViewport = viewport;
+      if (!snapshot.root || viewport.size.width <= 0 || viewport.size.height <= 0) return;
+      document.setRenderedViewport({
+        x: -viewport.panX,
+        y: -viewport.panY,
+        width: viewport.size.width / viewport.zoom,
+        height: viewport.size.height / viewport.zoom,
+      });
+    }
+
+    renderViewport();
+    const subscription = store.subscribe((state) => {
+      if (state.viewport === previousViewport) return;
+      renderViewport();
     });
-  }, [document, snapshot.root, viewport]);
+    return () => subscription.unsubscribe();
+  }, [document, snapshot.root, store]);
 
   return (
     <>

@@ -29,6 +29,8 @@ import { isWorkspaceSessionLive, type WorkspaceSessionState } from "@workspace/m
 interface SessionConfig {
   workspaceSessionStatus: WorkspaceSessionState["status"];
   mode?: SessionSubscriptionMode;
+  /** Whether the owning pane is currently presented by its workspace host. */
+  isVisible?: boolean;
   /** Browser default, used when no model has been projected for the session.
    *  Once the session has its own model, that always wins over this default. */
   defaultModel?: ModelConfiguration;
@@ -45,6 +47,7 @@ export function useSession(
   {
     workspaceSessionStatus,
     mode: subscriptionMode = "active",
+    isVisible: paneIsVisible = true,
     defaultModel,
     directory: sessionDirectory,
     useWorktree: sessionUseWorktree,
@@ -56,7 +59,8 @@ export function useSession(
   const isDraft = workspaceSessionStatus === "draft";
   const isSessionLive = isWorkspaceSessionLive(workspaceSessionStatus);
   const isSessionUnread = workspaceSessionStatus === "unread";
-  const isVisible = usePageVisibility();
+  const pageIsVisible = usePageVisibility();
+  const isVisible = pageIsVisible && paneIsVisible;
 
   // ---------------------------------------------------------------------------
   // Session state

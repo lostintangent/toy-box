@@ -6,13 +6,15 @@ import {
   type Agent,
   type AgentMention,
 } from "@agents/model";
-import { getAgent, listAgents } from "@agents/server";
+import { getAgent, listAgentProfiles } from "@agents/server";
 import type { AgentHostAdapter } from "@agents/server/host";
 import { mentionAgent } from "@agents/server/supervisor";
+import { joinedChannelTools } from "@channels/server/tools";
 import type { QueuedUserMessage } from "@sessions/model";
+import { sessionAgentTools } from "@sessions/server/tools";
 import { deliverSessionMessage, getSessionContext, getSessionSnapshot } from "./runtime";
 
-export const SESSION_HOST_AGENT_INSTRUCTIONS = `Messages may @mention Agents, which Toy Box dispatches in parallel and renders with their own attribution. Do not answer for a mentioned Agent or emit a waiting acknowledgment. A mentioned Agent may complete silently. Contribute only distinct work or synthesis the user requested.`;
+export const SESSION_HOST_AGENT_INSTRUCTIONS = `Messages may @mention agents, which Toy Box dispatches in parallel and renders with their own attribution. Do not answer for a mentioned agent or emit a waiting acknowledgment. A mentioned agent may complete silently. Contribute only distinct work or synthesis the user requested.`;
 
 /** Resolve text at admission so a queued request keeps its recipients if an Agent is renamed. */
 export async function resolveSessionAgentMentions(
@@ -21,9 +23,11 @@ export async function resolveSessionAgentMentions(
   if (message.agentMentions !== undefined || !message.content.includes("@")) return message;
   return {
     ...message,
-    agentMentions: findMentionedAgents(message.content, await listAgents()).map(({ id }) => ({
-      agentId: id,
-    })),
+    agentMentions: findMentionedAgents(message.content, await listAgentProfiles()).map(
+      ({ id }) => ({
+        agentId: id,
+      }),
+    ),
   };
 }
 
@@ -68,12 +72,16 @@ async function mentionAgentInSession(
 }
 
 export const sessionAgentHost: AgentHostAdapter = {
+  getTools() {
+    return [...sessionAgentTools, ...joinedChannelTools];
+  },
+
   async getInstructions() {
-    return `You are participating in an ordinary Toy Box Session.
+    return `You are participating in an ordinary Toy Box session.
 
 Work independently using the visible briefing in the current prompt, your private transcript, and your experiences.
 
-You may inspect Channels you belong to. When the user asks you to act in one, use continue_in_channel so that Channel membership performs the work in its own context.
+You may inspect channels you belong to. When the user asks you to act in one, use continue_in_channel so that channel membership performs the work in its own context.
 
 Use send_session_response to publish a useful contribution with your own attribution and end your turn. Your final private reply is not published. If you have nothing useful to add, use finish_agent_turn.`;
   },

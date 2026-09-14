@@ -3,28 +3,21 @@ import { createFileRoute, useNavigate, useRouterState, ClientOnly } from "@tanst
 import { useQuery } from "@tanstack/react-query";
 import { createIsomorphicFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
-import { useState, useRef, useEffect, useDeferredValue, lazy, Suspense } from "react";
+import { useState, useEffect, useDeferredValue, lazy, Suspense } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { z } from "zod";
-import type { ImperativePanelHandle } from "react-resizable-panels";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "@/shared/components/ui/resizable";
 import { useDrafts } from "@sessions/useDrafts";
 import { useHyperSession, type HyperSessionState } from "@workspace/hooks/layout/useHyperSession";
 import { useWarmSessionSnapshots } from "@sessions/useWarmSessionSnapshots";
 import { useWorkspaceSync } from "@workspace/hooks/useWorkspaceSync";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
 import { useViewport } from "@/shared/hooks/useViewport";
-import { usePanelTransition } from "@workspace/hooks/layout/usePanelTransition";
 import { NameDialog } from "@/shared/components/sidebar/NameDialog";
-import { Sidebar, type SidebarProps } from "@workspace/components/sidebar/Sidebar";
-import { WorkspaceGrid } from "@workspace/components/layout/WorkspaceGrid";
-import { HyperSession } from "@workspace/components/layout/HyperSession";
-import { WorkspacePager } from "@workspace/components/layout/WorkspacePager";
-import { TerminalShell } from "@terminal/components/TerminalShell";
+import type { SidebarProps } from "@workspace/components/sidebar/Sidebar";
+import {
+  WorkspaceLayout,
+  type WorkspaceLayoutProps,
+} from "@workspace/components/layout/WorkspaceLayout";
 import {
   focusWorkspaceSurfacePane,
   workspaceSurfaces,
@@ -59,7 +52,9 @@ import { selectNonWorkerSessions, sessionQueries } from "@sessions/queries";
 import { channelQueries } from "@channels/queries";
 import { agentQueries } from "@agents/queries";
 const Terminal = lazy(() =>
-  import("@terminal/components/Terminal").then((m) => ({ default: m.Terminal })),
+  import("@terminal/components/Terminal").then((m) => ({
+    default: m.Terminal,
+  })),
 );
 
 const searchSchema = z
@@ -290,10 +285,6 @@ function WorkspacePage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(initialLayout.sidebarCollapsed);
   const [isTerminalOpen, setIsTerminalOpen] = useState(initialLayout.terminalOpen);
   const [sidebarPanels, setSidebarPanels] = useState<SidebarPanels>(initialLayout.panels);
-  const terminalPanelRef = useRef<ImperativePanelHandle>(null);
-  const shouldRenderMobileTerminalShell = import.meta.env.SSR
-    ? initialLayout.terminalOpen
-    : isTerminalOpen;
 
   const { data: sessionList, isLoading: isSessionsLoading } = useQuery({
     ...sessionQueries.state(),
@@ -455,47 +446,6 @@ function WorkspacePage() {
 
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
-  const [isTerminalDragging, setIsTerminalDragging] = useState(false);
-  const terminalSizeRef = useRef(terminalSize);
-  const isTerminalDraggingRef = useRef(false);
-
-  // Keep terminal mounted during close animation for smooth transition.
-  const isTerminalAnimating = usePanelTransition("terminal");
-  const isTerminalMounted = isTerminalOpen || isTerminalAnimating;
-
-  // Animate terminal panel open/close (mirrors WorkspaceGrid's effect pattern).
-  useEffect(() => {
-    const panel = terminalPanelRef.current;
-    if (!panel) return;
-    if (isTerminalOpen) {
-      if (!Number.isFinite(terminalSize)) return;
-      panel.resize(terminalSize);
-    } else {
-      panel.resize(0);
-    }
-  }, [isTerminalOpen, terminalSize]);
-
-  useEffect(() => {
-    terminalSizeRef.current = terminalSize;
-  }, [terminalSize]);
-
-  function handleTerminalResize(size: number) {
-    if (size > 0) {
-      terminalSizeRef.current = size;
-      if (!isTerminalDraggingRef.current) {
-        setTerminalSize(size);
-      }
-    }
-  }
-
-  function handleTerminalDragging(dragging: boolean) {
-    isTerminalDraggingRef.current = dragging;
-    setIsTerminalDragging(dragging);
-    if (!dragging) {
-      setTerminalSize(terminalSizeRef.current);
-    }
-  }
-
   const toggleSidebar = () => setIsSidebarCollapsed((collapsed) => !collapsed);
 
   function toggleTerminal() {
@@ -605,7 +555,9 @@ function WorkspacePage() {
       toggleHyperSession();
       return;
     }
-    updateSelectedSessionIds([getOrCreateHyperSessionId()], { replaceWorkspace: true });
+    updateSelectedSessionIds([getOrCreateHyperSessionId()], {
+      replaceWorkspace: true,
+    });
   }
 
   // "Open" is viewport-relative: the deck is open on desktop; on mobile the hyper
@@ -672,9 +624,7 @@ function WorkspacePage() {
     }
   }
 
-  const baseMobileView = hasWorkspaceRoot || isSidebarCollapsed ? "workspace" : "sidebar";
-  const mobileView = isTerminalOpen ? "terminal" : baseMobileView;
-  const mobileTrackIndex = baseMobileView === "sidebar" ? 0 : 1;
+  const isMobileWorkspaceVisible = hasWorkspaceRoot || isSidebarCollapsed;
   const terminalBodySkeleton = (
     <div className="relative flex-1 min-h-0 p-2 pb-0">
       <div className="h-5 w-72 max-w-full rounded-md bg-foreground/5 animate-pulse" />
@@ -698,14 +648,6 @@ function WorkspacePage() {
         : { ...current, [panel]: expanded ? true : undefined },
     );
   }
-
-  const mobileSidebarPanels: SidebarPanels = sidebarPanels.channels
-    ? { channels: true }
-    : sidebarPanels.apps
-      ? { apps: true }
-      : sidebarPanels.automations
-        ? { automations: true }
-        : {};
 
   // Shared sidebar props for both mobile and desktop.
   const sidebarProps = {
@@ -739,119 +681,52 @@ function WorkspacePage() {
     isTerminalOpen,
   } satisfies SidebarProps;
 
-  // Mobile layout - three views: sidebar, workspace, terminal
-  const mobileLayout = (
-    <div className="relative h-full overflow-clip md:hidden">
-      {/* Slide track - shifts between sidebar and workspace */}
-      <div
-        className={`flex h-full w-[200%] ${hydrated ? "transition-transform duration-300 ease-in-out" : ""}`}
-        style={{ transform: `translateX(-${mobileTrackIndex * 50}%)` }}
-      >
-        {/* Sidebar */}
-        <div className="h-full w-1/2 shrink-0">
-          <Sidebar {...sidebarProps} panels={mobileSidebarPanels} />
-        </div>
+  const mobileLayoutProps = {
+    sidebar: sidebarProps,
+    workspace: {
+      visible: isMobileWorkspaceVisible,
+      panes: openPanes,
+      primaryPaneId: rootPanes[0].id,
+      onBack: handleMobileWorkspaceBack,
+      resolvePaneClose,
+    },
+    terminal: {
+      open: isTerminalOpen,
+      body: isMobileLayout ? terminalBody : terminalBodySkeleton,
+      onClose: handleTerminalClose,
+    },
+  } satisfies WorkspaceLayoutProps["mobile"];
 
-        {/* Workspace View */}
-        <div className="h-full w-1/2 shrink-0">
-          {baseMobileView === "workspace" && (
-            <WorkspacePager
-              panes={openPanes}
-              primaryPaneId={rootPanes[0].id}
-              onBack={handleMobileWorkspaceBack}
-              resolvePaneClose={resolvePaneClose}
-            />
-          )}
-        </div>
-      </div>
-
-      {/* Terminal overlay (separate layer to avoid transform on input) */}
-      <div
-        className={`absolute inset-y-0 w-full ${
-          hydrated ? "transition-[left] duration-300 ease-in-out" : ""
-        } ${mobileView === "terminal" ? "pointer-events-auto" : "pointer-events-none"}`}
-        style={{ left: mobileView === "terminal" ? "0%" : "100%" }}
-      >
-        <div className="h-full">
-          {shouldRenderMobileTerminalShell && (
-            <TerminalShell onClose={handleTerminalClose}>
-              {isMobileLayout ? terminalBody : terminalBodySkeleton}
-            </TerminalShell>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-
-  // Desktop layout - fixed-width sidebar beside resizable panes
-  const desktopLayout = (
-    <div className="h-full hidden md:block">
-      <div className="flex h-full">
-        <Sidebar
-          {...sidebarProps}
-          collapsible={{
-            expandedWidth: sidebarWidth,
-            collapsed: isSidebarCollapsed,
-            onExpandedWidthChange: setSidebarWidth,
-            onCollapsedChange: setIsSidebarCollapsed,
-          }}
-        />
-
-        <div className="min-w-0 flex-1">
-          <ResizablePanelGroup direction="vertical" className="h-full">
-            {/* Main workspace */}
-            <ResizablePanel order={1} defaultSize={isTerminalOpen ? 100 - terminalSize : 100}>
-              <div className="h-full overflow-hidden relative">
-                <WorkspaceGrid panes={openPanes} resolvePaneClose={resolvePaneClose} />
-              </div>
-            </ResizablePanel>
-
-            {/* Terminal drawer (collapsible from bottom) */}
-            <ResizableHandle
-              disabled={!isTerminalOpen}
-              onDragging={handleTerminalDragging}
-              className={!isTerminalOpen ? "hidden" : ""}
-            />
-            <ResizablePanel
-              ref={terminalPanelRef}
-              id="terminal"
-              order={2}
-              defaultSize={isTerminalOpen ? terminalSize : 0}
-              minSize={15}
-              maxSize={80}
-              collapsible
-              collapsedSize={0}
-              onResize={handleTerminalResize}
-              onCollapse={() => setIsTerminalOpen(false)}
-              onExpand={() => setIsTerminalOpen(true)}
-              className={
-                !isTerminalDragging ? "transition-[flex-grow] duration-300 ease-layout" : ""
-              }
-            >
-              {isTerminalMounted && (
-                <div className="h-full border-t">
-                  <TerminalShell onClose={handleTerminalClose}>
-                    {!isMobileLayout ? terminalBody : terminalBodySkeleton}
-                  </TerminalShell>
-                </div>
-              )}
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </div>
-      </div>
-      {hyperSession?.open && (
-        <HyperSession
-          state={hyperSession}
-          onPositionChange={hyper.setPosition}
-          onRemove={hyper.removeSurface}
-          onMinimize={hyper.toggle}
-          onPromote={hyper.promote}
-          onOpenApp={hyper.openApp}
-          onCloseApp={hyper.closeApp}
-        />
-      )}
-    </div>
-  );
+  const desktopLayoutProps = {
+    sidebar: {
+      ...sidebarProps,
+      collapsible: {
+        expandedWidth: sidebarWidth,
+        collapsed: isSidebarCollapsed,
+        onExpandedWidthChange: setSidebarWidth,
+        onCollapsedChange: setIsSidebarCollapsed,
+      },
+    },
+    workspace: { panes: openPanes, resolvePaneClose },
+    terminal: {
+      open: isTerminalOpen,
+      size: terminalSize,
+      body: !isMobileLayout ? terminalBody : terminalBodySkeleton,
+      onOpenChange: setIsTerminalOpen,
+      onSizeChange: setTerminalSize,
+    },
+    hyper: hyperSession?.open
+      ? {
+          state: hyperSession,
+          onPositionChange: hyper.setPosition,
+          onRemove: hyper.removeSurface,
+          onMinimize: hyper.toggle,
+          onPromote: hyper.promote,
+          onOpenApp: hyper.openApp,
+          onCloseApp: hyper.closeApp,
+        }
+      : null,
+  } satisfies WorkspaceLayoutProps["desktop"];
 
   return (
     <>
@@ -862,18 +737,12 @@ function WorkspacePage() {
         onOpenFile={openFile}
         onToggleFile={toggleFile}
       >
-        <div className="h-full overflow-hidden">
-          {!hydrated ? (
-            <>
-              {mobileLayout}
-              {desktopLayout}
-            </>
-          ) : isMobileLayout ? (
-            mobileLayout
-          ) : (
-            desktopLayout
-          )}
-        </div>
+        <WorkspaceLayout
+          hydrated={hydrated}
+          isMobile={isMobileLayout}
+          mobile={mobileLayoutProps}
+          desktop={desktopLayoutProps}
+        />
       </WorkspaceSurfaceProvider>
       {renameTargetSession && (
         <NameDialog

@@ -7,8 +7,8 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
       directory       TEXT,
       latest_sequence INTEGER NOT NULL DEFAULT 0
         CHECK (typeof(latest_sequence) = 'integer' AND latest_sequence >= 0),
-      event_cursor    INTEGER NOT NULL DEFAULT 0
-        CHECK (typeof(event_cursor) = 'integer' AND event_cursor >= 0),
+      revision        INTEGER NOT NULL DEFAULT 0
+        CHECK (typeof(revision) = 'integer' AND revision >= 0),
       seen_through    INTEGER NOT NULL DEFAULT 0
         CHECK (typeof(seen_through) = 'integer' AND seen_through >= 0),
       updated_at      TEXT NOT NULL
@@ -20,7 +20,8 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
     CREATE TABLE IF NOT EXISTS channel_members (
       session_id   TEXT PRIMARY KEY REFERENCES agent_memberships(session_id) ON DELETE CASCADE,
       seen_through INTEGER NOT NULL DEFAULT 0
-        CHECK (typeof(seen_through) = 'integer' AND seen_through >= 0)
+        CHECK (typeof(seen_through) = 'integer' AND seen_through >= 0),
+      status       TEXT CHECK (status IS NULL OR json_valid(status))
     );
 
     CREATE TABLE IF NOT EXISTS channel_messages (
@@ -30,9 +31,16 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
         CHECK (typeof(sequence) = 'integer' AND sequence > 0),
       sender_type          TEXT NOT NULL CHECK (sender_type IN ('user', 'agent', 'system')),
       sender_agent_id      TEXT,
-      content              TEXT NOT NULL,
-      attachments          TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(attachments)),
+      content              TEXT NOT NULL
+        CHECK (sender_type <> 'system' OR json_valid(content)),
+      attachments          TEXT CHECK (
+        attachments IS NULL OR (sender_type <> 'system' AND json_valid(attachments))
+      ),
       timestamp            TEXT NOT NULL,
+      CHECK (
+        (sender_type = 'agent' AND sender_agent_id IS NOT NULL) OR
+        (sender_type <> 'agent' AND sender_agent_id IS NULL)
+      ),
       UNIQUE(channel_id, sequence)
     );
 
@@ -41,7 +49,7 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
       message_sequence INTEGER NOT NULL,
       agent_id         TEXT NOT NULL,
       reaction         TEXT NOT NULL
-        CHECK (reaction IN ('looking', 'agree', 'celebrate', 'love', 'laugh')),
+        CHECK (reaction IN ('done', 'agree', 'celebrate', 'love', 'laugh')),
       PRIMARY KEY(channel_id, message_sequence, agent_id),
       FOREIGN KEY(channel_id, message_sequence)
         REFERENCES channel_messages(channel_id, sequence) ON DELETE CASCADE

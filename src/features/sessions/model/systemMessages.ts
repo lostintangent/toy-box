@@ -40,7 +40,7 @@ export function systemMessagePrompt(message: SessionSystemMessage): string {
     case "file_edited":
       return `The user edited a file open in Toy Box: ${JSON.stringify(message.file)}. A \`session\` file's \`path\` is relative to that session's files folder, usually your own. A \`machine\` file's \`path\` is an absolute host path. Review its latest contents and respond only if a follow-up would help.`;
     case "channel_message":
-      return `A new public message from ${message.senderName} is waiting in a channel you belong to. Call \`read_channel\` to consume durable messages after your cursor, then decide what action or public response is useful.`;
+      return `A new public message from ${message.senderName} is waiting in a Channel you belong to. Call \`read_channel\` to consume messages since your last read.`;
     case "agent_handoff":
       return `Private direction from another Session where the user is working with you:\n\n${message.content}\n\nCarry it out using this host's context and public tools. Keep the private direction out of public messages unless the user asks you to share it.`;
     case "agent_response":

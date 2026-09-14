@@ -2,6 +2,7 @@ import { defineTool } from "@github/copilot-sdk";
 import { z } from "zod";
 import {
   agentHandleFromName,
+  agentMembershipStatusSchema,
   createAgentInputSchema,
   manageAgentExperienceInputSchema,
   selfUpdateAgentInputSchema,
@@ -9,8 +10,7 @@ import {
 } from "@agents/model";
 
 const updateAgentTool = defineTool("update_agent", {
-  description:
-    "Establishes or updates this persistent Agent's persona, avatar, or both. Use for first-engagement onboarding or durable identity changes.",
+  description: "Updates this persistent agent's persona, avatar, or both.",
   parameters: selfUpdateAgentInputSchema,
   skipPermission: true,
   handler: async (args, invocation) => {
@@ -20,8 +20,7 @@ const updateAgentTool = defineTool("update_agent", {
 });
 
 const manageAgentExperienceTool = defineTool("manage_agent_experience", {
-  description:
-    "Adds, updates, or deletes one durable cross-project experience: a preference, workflow, collaboration lesson, or reusable heuristic.",
+  description: "Adds, updates, or deletes one durable cross-project experience.",
   parameters: manageAgentExperienceInputSchema,
   skipPermission: true,
   handler: async (args, invocation) => {
@@ -31,22 +30,40 @@ const manageAgentExperienceTool = defineTool("manage_agent_experience", {
 });
 
 const finishAgentTurnTool = defineTool("finish_agent_turn", {
-  description:
-    "Ends this private Agent turn without publishing a message. Finish any host work before calling.",
+  description: "Ends this private agent turn without publishing a message.",
   parameters: z.object({}).strict(),
   skipPermission: true,
   isTerminal: true,
   handler: () => "Done.",
 });
 
+const finishChannelAgentTurnTool = defineTool("finish_agent_turn", {
+  description:
+    "Ends this private agent turn and clears its active channel status. waitingFor leaves a brief waiting status.",
+  parameters: z
+    .object({
+      waitingFor: agentMembershipStatusSchema.shape.text
+        .optional()
+        .describe("What this agent is waiting for after the turn ends."),
+    })
+    .strict(),
+  skipPermission: true,
+  isTerminal: true,
+  handler: async ({ waitingFor }, invocation) => {
+    const { finishCurrentAgentTurn } = await import("@agents/server/runtime");
+    await finishCurrentAgentTurn(invocation.sessionId, waitingFor);
+    return "Done.";
+  },
+});
+
 export const listAgentsTool = defineTool("list_available_agents", {
-  description: "Lists available Agents with their stable IDs, exact mentions, and personas.",
+  description: "Lists available agents with their stable IDs, exact mentions, and personas.",
   parameters: z.object({}).strict(),
   skipPermission: true,
   handler: async () => {
-    const { listAgents } = await import("@agents/server");
+    const { listAgentProfiles } = await import("@agents/server");
     return JSON.stringify(
-      (await listAgents()).map(({ id, name, persona }) => ({
+      (await listAgentProfiles()).map(({ id, name, persona }) => ({
         agentId: id,
         name,
         mention: `@${agentHandleFromName(name)}`,
@@ -58,7 +75,7 @@ export const listAgentsTool = defineTool("list_available_agents", {
 
 export const createAgentTool = defineTool("create_agent", {
   description:
-    "Creates a persistent Agent identity with a unique name and optional initial persona. Use list_available_agents first. Creation does not invite the Agent; its first mention on a host onboards any missing persona and avatar.",
+    "Creates a persistent agent identity with a unique name and optional initial persona. Use list_available_agents first. Creation does not invite the agent. Its first engagement onboards any missing persona and avatar.",
   parameters: createAgentInputSchema,
   skipPermission: true,
   handler: async (input) => {
@@ -70,7 +87,7 @@ export const createAgentTool = defineTool("create_agent", {
 
 export function getAgentMembershipTools(kind: AgentHost["kind"]) {
   return [
-    finishAgentTurnTool,
+    kind === "channel" ? finishChannelAgentTurnTool : finishAgentTurnTool,
     updateAgentTool,
     manageAgentExperienceTool,
     ...(kind === "channel" ? [listAgentsTool] : []),

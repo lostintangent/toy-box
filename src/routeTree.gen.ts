@@ -9,9 +9,9 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as IndexRouteImport } from './workspace/routes/index'
 import { Route as ApiInboxRouteImport } from './features/inbox/routes/inbox'
-import { Route as ApiWorkspaceRouteImport } from './routes/api/workspace'
+import { Route as ApiWorkspaceRouteImport } from './workspace/routes/api/workspace'
 import { Route as ApiChannelsChannelIdRouteImport } from './features/channels/routes/channels/$channelId'
 import { Route as ApiServeScopeSplatRouteImport } from './features/files/routes/serve/$scope/$'
 import { Route as ApiWatchScopeSplatRouteImport } from './features/files/routes/watch/$scope/$'

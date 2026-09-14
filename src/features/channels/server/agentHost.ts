@@ -1,9 +1,14 @@
 import type { AgentHostAdapter } from "@agents/server/host";
 import { ChannelDatabase } from "./database";
+import { channelAgentTools } from "./tools";
 import { getStateDatabase } from "@/server/database";
 
 /** Channel implementation of the Agent host port. */
 export const channelAgentHost: AgentHostAdapter = {
+  getTools() {
+    return channelAgentTools;
+  },
+
   async getInstructions(_agent, membership) {
     if (membership.host.kind !== "channel") {
       throw new Error("Channel Agent host received a non-Channel membership.");
@@ -11,21 +16,24 @@ export const channelAgentHost: AgentHostAdapter = {
     const database = new ChannelDatabase(await getStateDatabase());
     const channel = await database.getChannel(membership.host.channelId);
     if (!channel) throw new Error("Channel Agent membership is incomplete.");
-    return `You are participating in the Toy Box Channel “${channel.title}”.
+    return `You are participating in the Toy Box channel “${channel.title}”, a shared collaboration space with the user and other agents.
 
-The Channel is a shared conversation between teammates. Call read_channel before acting.
+Follow this channel lifecycle.
 
-For evolving work such as a spec, plan, design, or evaluation, create one canonical file early. Register it with share_channel_artifact, then read and edit that shared artifact instead of posting successive drafts to the transcript.
+Start
+Call read_channel at the start of every turn. Treat its messages, members, statuses, and artifacts as the current shared context.
 
-Use send_channel_message to talk with the team. Share a decision, question, handoff, or useful result. To include a screenshot, save it as an image file and pass its path as an attachment. It remains part of the message rather than becoming a shared artifact.
+Contribute
+Use the smallest useful action:
+- React when acknowledgement, agreement, sentiment, or completion needs no message.
+- Send a message for a question, decision, feedback, quick answer, handoff, or result. Mentions route attention. Use list_available_agents only to find someone outside this channel. Mentioning them invites them.
+- Set a brief status before work that takes time, then do the work. Skip status for catch-up and quick replies. When a channel message prompted the work, link its sequence. Use lookingAt only while reviewing a referenced file, artifact, attachment, or URL. Use workingOn for other substantive work. Otherwise omit both targets.
+- Share an artifact only for a durable document or prototype that needs shared review or evolution. Attach screenshots and other images to messages.
 
-Do not narrate private work, paste long revisions, or manufacture a status update. Use react_to_channel_message for lightweight signals. Set looking while actively following up, then clear or replace it when finished. When another reaction is a sufficient response, react and complete silently.
+Finish
+Before publishing a result or handoff, call read_channel again. Mention every member whose waiting status the message fulfills so they wake. Publish only new useful information.
 
-Sending a message does not end your turn: you may continue working or coordinating afterwards. Call finish_agent_turn when your work is done.
-
-Your messages wake teammates only through an explicit name-derived mention or @everyone. read_channel returns current members and their exact mentions. Call list_available_agents only to discover someone outside this Channel. Mention a teammate when their attention, decision, or action is needed. Mention an Agent outside this Channel to invite them. Messages without mentions remain visible on the shared transcript without interrupting anyone.
-
-For a newly invited teammate only, send_channel_message.agentMentions may select initialExecutionMode: "worktree". Otherwise it shares the Channel workspace. Existing members retain their original mode.`;
+Call finish_agent_turn after your last channel action. Pass waitingFor only when you cannot continue without a specific user or teammate action.`;
   },
 
   async admitAgent(agent, membership) {
@@ -36,5 +44,15 @@ For a newly invited teammate only, send_channel_message.agentMentions may select
   async removeAgent(agent, membership) {
     const { detachChannelAgentSession } = await import("./index");
     await detachChannelAgentSession(agent, membership);
+  },
+
+  async startTurn(_agent, membership) {
+    const { startChannelAgentTurn } = await import("./index");
+    await startChannelAgentTurn(membership);
+  },
+
+  async finishTurn(_agent, membership, waitingFor) {
+    const { finishChannelAgentTurn } = await import("./index");
+    await finishChannelAgentTurn(membership, waitingFor);
   },
 };

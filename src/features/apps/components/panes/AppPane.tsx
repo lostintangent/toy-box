@@ -9,7 +9,7 @@ import type { Worker } from "@workers/model";
 import { applyWorkspaceEvent } from "@workspace/queries";
 import type { AppDefinition, AppInstance } from "@apps/model";
 import type { AppWorkspacePane } from "@workspace/model/panes";
-import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
+import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 import { PaneStatus } from "@workspace/components/panes/shell/PaneSlots";
 import { WorkersMenu } from "@workers/components/WorkersMenu";
 import { AppStateStore } from "../host/state";

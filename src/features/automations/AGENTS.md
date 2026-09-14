@@ -26,7 +26,9 @@ Each run follows one path:
 2. If that stable session ID already has a live runtime, the attempt returns `started: false`; automation prompts never queue behind an overlapping run.
 3. Otherwise, any idle persisted session with that ID is deleted so the new run begins with a clean transcript.
 4. `createSession` creates the fresh automation session through its first prompt with the configured model, working directory, and title.
-5. The caller returns after delivery starts. The automation supervisor records `lastRunAt` on completion and publishes the updated definition.
+5. The caller returns after delivery starts. On completion, the automation supervisor records
+   `lastRunAt`, publishes the updated definition, and releases the now-idle SDK session while
+   preserving the result for inspection and follow-up.
 
 The session runtime owns every execution transition: the first turn publishes running, and stream closure publishes idle or unread. Automation events only synchronize durable definition and schedule metadata. A creation failure leaves the automation idle without changing `lastRunAt`; a metadata persistence failure leaves no changed automation row to publish.
 

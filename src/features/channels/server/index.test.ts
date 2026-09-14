@@ -2,6 +2,7 @@ import { expect, mock, onTestFinished, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ChannelEvent } from "@channels/model";
 import { createTestDatabase } from "@/server/database";
 
 let currentDb: Bun.SQL | undefined;
@@ -16,9 +17,12 @@ mock.module("@/server/database", () => ({
 const { AgentDatabase } = await import("@agents/server/database");
 const { ChannelDatabase } = await import("./database");
 const {
+  finishChannelAgentTurn,
   postChannelMessageFromSession,
   readChannelForSession,
   sendChannelMessageFromAgent,
+  setChannelAgentStatus,
+  setChannelMessageReactionFromAgent,
   shareChannelArtifactFromSession,
   streamChannel,
 } = await import("./index");
@@ -38,7 +42,9 @@ test("an Agent can attach an image file to a durable Channel message", async () 
 
   const channels = new ChannelDatabase(currentDb);
   const channel = await channels.createChannel({ title: "Visual review" });
-  const agent = await new AgentDatabase(currentDb).createAgent({ name: "Designer" });
+  const agent = await new AgentDatabase(currentDb).createAgent({
+    name: "Designer",
+  });
   const sessionId = "designer-session";
   await channels.createMember({
     channelId: channel.id,
@@ -55,13 +61,12 @@ test("an Agent can attach an image file to a durable Channel message", async () 
   });
 
   expect(message).toMatchObject({
-    sequence: 1,
+    sequence: 2,
     sender: { type: "agent", agentId: agent.id },
     content: "The layout is ready for review.",
-    attachments: [{ displayName: "screenshot.png", mimeType: "image/png", base64: PNG_BASE64 }],
-    reactions: [],
+    attachments: [screenshot],
   });
-  expect(await channels.listMessages(channel.id)).toEqual([message]);
+  expect((await channels.listMessagesAfter(channel.id)).at(-1)).toEqual(message);
 });
 
 test("a Session can seed and passively read Channel context", async () => {
@@ -74,7 +79,10 @@ test("a Session can seed and passively read Channel context", async () => {
   });
 
   const channels = new ChannelDatabase(currentDb);
-  const channel = await channels.createChannel({ title: "Research", directory });
+  const channel = await channels.createChannel({
+    title: "Research",
+    directory,
+  });
   await Promise.all([
     Bun.write(join(directory, "evidence.png"), Buffer.from(PNG_BASE64, "base64")),
     Bun.write(join(directory, "brief.md"), "# Brief"),
@@ -84,7 +92,7 @@ test("a Session can seed and passively read Channel context", async () => {
     id: "kickoff",
     channelId: channel.id,
     content: "Review the evidence and brief.",
-    attachmentPaths: ["evidence.png"],
+    attachmentPaths: [join(directory, "evidence.png")],
   });
   await shareChannelArtifactFromSession("coordinator-session", {
     channelId: channel.id,
@@ -99,17 +107,103 @@ test("a Session can seed and passively read Channel context", async () => {
       {
         id: "kickoff",
         sender: { type: "user" },
-        attachments: [{ displayName: "evidence.png", mimeType: "image/png" }],
+        attachments: [join(directory, "evidence.png")],
+      },
+      {
+        sender: { type: "system" },
+        content: {
+          type: "artifact_shared",
+          artifact: { title: "Research brief" },
+        },
       },
     ],
     artifacts: [{ path: join(directory, "brief.md"), title: "Research brief" }],
     hasMore: false,
   });
   expect((await channels.getChannel(channel.id))?.seenThrough).toBe(0);
-  expect(await readChannelForSession(channel.id, message.sequence)).toMatchObject({
-    messages: [],
+  expect(await readChannelForSession(channel.id, message.sequence + 1)).toMatchObject({
+    messages: [{ id: "kickoff" }],
     hasMore: false,
   });
+});
+
+test("a Channel Agent publishes focus and settles temporary turn state", async () => {
+  currentDb = await createTestDatabase();
+  onTestFinished(async () => {
+    await currentDb?.close();
+    currentDb = undefined;
+  });
+
+  const channels = new ChannelDatabase(currentDb);
+  const channel = await channels.createChannel({ title: "Protocol review" });
+  const agent = await new AgentDatabase(currentDb).createAgent({ name: "Reviewer" });
+  const { member } = await channels.createMember({
+    channelId: channel.id,
+    agentId: agent.id,
+    sessionId: "reviewer-session",
+    executionMode: "shared",
+  });
+  const first = await channels.appendMessage({
+    id: "message-1",
+    channelId: channel.id,
+    sender: { type: "user" },
+    content: "Review the protocol.",
+  });
+  const second = await channels.appendMessage({
+    id: "message-2",
+    channelId: channel.id,
+    sender: { type: "user" },
+    content: "Implement the revision.",
+  });
+  const third = await channels.appendMessage({
+    id: "message-3",
+    channelId: channel.id,
+    sender: { type: "user" },
+    content: "Keep this decision.",
+  });
+
+  await setChannelAgentStatus(member.sessionId, {
+    status: "Reviewing the protocol",
+    lookingAt: first.message.sequence,
+  });
+  expect(await channels.getMemberBySession(member.sessionId)).toMatchObject({
+    status: {
+      state: "working",
+      text: "Reviewing the protocol",
+      lookingAt: first.message.sequence,
+    },
+  });
+  await setChannelAgentStatus(member.sessionId, {
+    status: "Implementing the revision",
+    workingOn: second.message.sequence,
+  });
+  await setChannelMessageReactionFromAgent(member.sessionId, {
+    sequence: third.message.sequence,
+    reaction: "love",
+  });
+  await finishChannelAgentTurn(member, "implementation feedback");
+
+  expect(await channels.getMemberBySession(member.sessionId)).toMatchObject({
+    status: { state: "waiting", text: "implementation feedback" },
+  });
+  const messages = await channels.listMessagesAfter(channel.id);
+  expect(messages.find(({ id }) => id === first.message.id)?.reactions).toBeUndefined();
+  expect(messages.find(({ id }) => id === second.message.id)?.reactions).toBeUndefined();
+  expect(messages.find(({ id }) => id === third.message.id)?.reactions).toEqual([
+    { agentId: agent.id, reaction: "love" },
+  ]);
+  expect(await readChannelForSession(channel.id)).toMatchObject({
+    members: [
+      {
+        agentId: agent.id,
+        status: { state: "waiting", text: "implementation feedback" },
+      },
+    ],
+  });
+
+  await setChannelAgentStatus(member.sessionId, { status: "Checking the revision" });
+  await finishChannelAgentTurn(member);
+  expect((await channels.getMemberBySession(member.sessionId))?.status).toBeUndefined();
 });
 
 test("a Channel stream orders and deduplicates published transitions", async () => {
@@ -123,7 +217,7 @@ test("a Channel stream orders and deduplicates published transitions", async () 
   const channel = await channels.createChannel({ title: "Planning" });
   const received: number[] = [];
   const unsubscribe = await streamChannel(channel.id, 0, (event) => {
-    received.push(event.cursor);
+    received.push(event.revision);
   });
   onTestFinished(() => {
     unsubscribe();
@@ -144,17 +238,50 @@ test("a Channel stream orders and deduplicates published transitions", async () 
   });
   const firstEvent = {
     type: "message",
-    cursor: first.cursor,
+    revision: first.revision,
     message: first.message,
   } as const;
   const secondEvent = {
     type: "message",
-    cursor: second.cursor,
+    revision: second.revision,
     message: second.message,
   } as const;
   publishChannelEvent(channel.id, secondEvent);
   publishChannelEvent(channel.id, secondEvent);
   publishChannelEvent(channel.id, firstEvent);
 
-  expect(received).toEqual([first.cursor, second.cursor]);
+  expect(received).toEqual([first.revision, second.revision]);
+});
+
+test("a Channel stream recovers with bounded latest history", async () => {
+  currentDb = await createTestDatabase();
+  onTestFinished(async () => {
+    await currentDb?.close();
+    currentDb = undefined;
+  });
+
+  const channels = new ChannelDatabase(currentDb);
+  const channel = await channels.createChannel({ title: "Long-running room" });
+  for (let sequence = 1; sequence <= 101; sequence++) {
+    await channels.appendMessage({
+      id: `message-${sequence}`,
+      channelId: channel.id,
+      sender: { type: "user" },
+      content: `Message ${sequence}`,
+    });
+  }
+
+  const events: ChannelEvent[] = [];
+  const unsubscribe = await streamChannel(channel.id, 0, (event) => events.push(event));
+  onTestFinished(() => {
+    unsubscribe();
+    releaseChannelEvents(channel.id);
+  });
+
+  const event = events[0];
+  if (event?.type !== "state") throw new Error("Expected state recovery.");
+  expect(events).toHaveLength(1);
+  expect(event.state.messages).toHaveLength(100);
+  expect(event.state.messages[0]?.sequence).toBe(2);
+  expect(event.state.messages.at(-1)?.sequence).toBe(101);
 });

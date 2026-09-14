@@ -1,7 +1,7 @@
 // Server-side SDK session registry and lifecycle coordination.
 //
 // The SDK persists sessions to disk; this module keeps live CopilotSession
-// handles in memory, creates and resumes them with role-scoped tools, and
+// instances in memory, creates and resumes them with role-scoped tools, and
 // coordinates lifecycle effects across runtime streams, workspace state,
 // snapshots, worktrees, and SDK persistence.
 
@@ -39,10 +39,27 @@ import { hasHyperSession } from "@workspace/server/state/hyperSessions";
 import type { SessionType, SessionWorktree } from "@sessions/model";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
 
-type CachedSession = { session: CopilotSession; configurationKey?: string };
+// The SDK's automatic idle timeout can retire its server-side session while
+// leaving subsequent resume unreliable. Explicit disconnect preserves durable
+// history and gives the next acquisition a reliable resume boundary.
+const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
+type CachedSession = {
+  session: CopilotSession;
+  configurationKey?: string;
+  executionLease: boolean;
+  idleReleaseTimer?: ReturnType<typeof setTimeout>;
+  // SDK disconnect() does not return its in-flight promise to a second caller.
+  disconnecting?: Promise<void>;
+};
 const cachedSessions = sharedMap<CachedSession>("configured-sessions");
-// In-flight resumes share one SDK handle per session ID.
-const pendingResumes = sharedMap<Promise<CopilotSession>>("pending-session-resumes");
+// HMR can retain cached sessions created before lease metadata was introduced. Treat
+// those conservatively as execution-owned until their stream releases them.
+for (const cached of cachedSessions.values()) {
+  cached.executionLease ??= true;
+}
+// Configuration refresh and cold resume are single-flight per session.
+const sessionAcquisitions = sharedMap<Promise<CopilotSession>>("pending-session-resumes");
 
 export type CreateSessionOptions = {
   model?: ModelConfiguration;
@@ -138,7 +155,7 @@ export async function createSession(
     throw error;
   }
   const now = new Date().toISOString();
-  cachedSessions.set(sessionId, { session, configurationKey });
+  cachedSessions.set(sessionId, { session, configurationKey, executionLease: true });
 
   // Emit immediately so the session appears in the list right away.
   // This display context can come from an inherited workspace or a
@@ -175,79 +192,128 @@ export async function createSession(
 
 // ── SDK Sessions ───────────────────────────────────────────────────────
 
-/**
- * Get the live CopilotSession for long-lived owners such as SessionStream.
- *
- * This does not probe the session. Short SDK calls should use
- * withSession so stale-handle retry stays centralized.
- */
-export function getSession(
+/** Acquire the SDK session owned by one execution, refreshing configuration when required. */
+export async function acquireSession(sessionId: string): Promise<CopilotSession> {
+  let cached = cachedSessions.get(sessionId);
+  if (cached?.disconnecting) {
+    await cached.disconnecting.catch(() => {});
+    cached = cachedSessions.get(sessionId);
+  }
+  if (cached && cached.configurationKey === undefined) {
+    cancelSessionRelease(cached);
+    cached.executionLease = true;
+    return cached.session;
+  }
+
+  const session = await acquireConfiguredSession(sessionId, cached);
+  const acquired = cachedSessions.get(sessionId);
+  if (acquired?.session === session) {
+    cancelSessionRelease(acquired);
+    acquired.executionLease = true;
+  }
+  return session;
+}
+
+async function acquireConfiguredSession(
   sessionId: string,
-  { forExecution = false }: { forExecution?: boolean } = {},
+  cached?: CachedSession,
 ): Promise<CopilotSession> {
-  const cached = cachedSessions.get(sessionId);
-  if (cached && (!forExecution || cached.configurationKey === undefined))
-    return Promise.resolve(cached.session);
+  let acquisition = sessionAcquisitions.get(sessionId);
+  if (!acquisition) {
+    acquisition = (async () => {
+      const sessionType = await resolveSessionType(sessionId);
+      const { configurationKey, ...sessionConfiguration } = await getSessionConfiguration(
+        sessionId,
+        sessionType,
+      );
+      if (cached && cached.configurationKey === configurationKey) return cached.session;
 
-  const pending = pendingResumes.get(sessionId);
-  if (pending) return pending;
-
-  const resume = (async () => {
-    const sessionType = await resolveSessionType(sessionId);
-    const { configurationKey, ...sessionConfiguration } = await getSessionConfiguration(
-      sessionId,
-      sessionType,
-    );
-    if (cached && cached.configurationKey === configurationKey) return cached.session;
-
-    if (cached) {
-      cachedSessions.delete(sessionId);
-      await cached.session.disconnect();
-    }
-    const workspaceDirectory = await getSessionDirectory(sessionId);
-    const directory = workspaceDirectory ?? homedir();
-    const session = await sdkResumeSession(sessionId, {
-      directory,
-      sessionType,
-      ...sessionConfiguration,
+      if (cached) await disconnectCachedSession(sessionId, cached);
+      const workspaceDirectory = await getSessionDirectory(sessionId);
+      const directory = workspaceDirectory ?? homedir();
+      const session = await sdkResumeSession(sessionId, {
+        directory,
+        sessionType,
+        ...sessionConfiguration,
+      });
+      cachedSessions.set(sessionId, { session, configurationKey, executionLease: false });
+      return session;
+    })().finally(() => {
+      sessionAcquisitions.delete(sessionId);
+      const idle = cachedSessions.get(sessionId);
+      if (idle) scheduleSessionRelease(sessionId, idle);
     });
-    cachedSessions.set(sessionId, { session, configurationKey });
-    return session;
-  })().finally(() => {
-    pendingResumes.delete(sessionId);
-  });
-  pendingResumes.set(sessionId, resume);
-  return resume;
+    sessionAcquisitions.set(sessionId, acquisition);
+  }
+
+  return acquisition;
+}
+
+/** Release an execution-owned SDK session after its SessionStream finishes. */
+export function releaseSession(sessionId: string): void {
+  const cached = cachedSessions.get(sessionId);
+  if (!cached) return;
+
+  cached.executionLease = false;
+  scheduleSessionRelease(sessionId, cached);
+}
+
+/** Disconnect an idle SDK session when a supervisor expects no immediate reuse. */
+export async function releaseIdleSession(sessionId: string): Promise<void> {
+  const cached = cachedSessions.get(sessionId);
+  if (cached) await releaseCachedSessionIfIdle(sessionId, cached);
 }
 
 /**
  * Run a short SDK operation and retry once if it reveals a stale session.
  *
- * Use this for calls like getEvents() or rpc.skills.list(), not for streams
- * that need to keep one subscribed CopilotSession alive.
+ * Use this for bounded calls such as history replay, rename, and rewind, not
+ * for a SessionStream that owns one CopilotSession throughout execution. A
+ * cached call retains its configuration; only execution acquisition refreshes it.
  */
 export async function withSession<T>(
   sessionId: string,
   operation: (session: CopilotSession) => Promise<T>,
 ): Promise<T> {
-  let session = await getSession(sessionId);
   try {
-    return await operation(session);
+    return await runSessionOperation(sessionId, operation);
   } catch (error) {
     if (!evictCachedSessionIfStale(sessionId, error)) throw error;
 
-    session = await getSession(sessionId);
+    return runSessionOperation(sessionId, operation);
+  }
+}
+
+async function runSessionOperation<T>(
+  sessionId: string,
+  operation: (session: CopilotSession) => Promise<T>,
+): Promise<T> {
+  let cached = cachedSessions.get(sessionId);
+  if (cached?.disconnecting) {
+    await cached.disconnecting.catch(() => {});
+    cached = cachedSessions.get(sessionId);
+  }
+  const session = cached?.session ?? (await acquireConfiguredSession(sessionId));
+  const acquired = cachedSessions.get(sessionId);
+  if (acquired?.session === session) cancelSessionRelease(acquired);
+
+  try {
     return await operation(session);
+  } finally {
+    const current = cachedSessions.get(sessionId);
+    if (current?.session === session) scheduleSessionRelease(sessionId, current);
   }
 }
 
 function evictCachedSession(sessionId: string): void {
+  const cached = cachedSessions.get(sessionId);
+  if (cached) cancelSessionRelease(cached);
   cachedSessions.delete(sessionId);
 }
 
-/** Drop a cached session handle when an error says the SDK no longer knows
+/** Drop a cached SDK session when an error says the SDK no longer knows
  *  the session, so the next access resumes fresh instead of reusing a stale
- *  handle. Returns whether the error was a stale-session error. */
+ *  instance. Returns whether the error was a stale-session error. */
 export function evictCachedSessionIfStale(sessionId: string, error: unknown): boolean {
   if (!isSessionNotFoundError(error)) return false;
 
@@ -292,7 +358,14 @@ export async function deleteSessionIfExists(sessionId: string): Promise<boolean>
 // ── Helpers ────────────────────────────────────────────────────────────
 
 async function deleteSingleSession(sessionId: string): Promise<void> {
-  await sdkDeleteSession(sessionId);
+  const cached = cachedSessions.get(sessionId);
+  if (cached) cancelSessionRelease(cached);
+  try {
+    await sdkDeleteSession(sessionId);
+  } catch (error) {
+    if (cached) scheduleSessionRelease(sessionId, cached);
+    throw error;
+  }
   await removeDeletedSessionState(sessionId);
 }
 
@@ -300,10 +373,7 @@ async function removeDeletedSessionState(sessionId: string): Promise<void> {
   await removeDeletedSessionStream(sessionId);
 
   const cached = cachedSessions.get(sessionId);
-  if (cached) {
-    await cached.session.disconnect();
-    cachedSessions.delete(sessionId);
-  }
+  if (cached) await disconnectCachedSession(sessionId, cached);
   await deleteSessionWorktree(sessionId);
   await deleteDraftSession(sessionId);
   await detachManagedSession(sessionId);
@@ -325,6 +395,57 @@ async function evictDeletedSessionSnapshot(sessionId: string): Promise<void> {
   // dependency one-way during module initialization.
   const { evictCachedSnapshot } = await import("./snapshots");
   evictCachedSnapshot(sessionId);
+}
+
+async function releaseCachedSessionIfIdle(sessionId: string, cached: CachedSession): Promise<void> {
+  if (
+    cachedSessions.get(sessionId) !== cached ||
+    cached.executionLease ||
+    sessionAcquisitions.has(sessionId)
+  ) {
+    return;
+  }
+
+  await disconnectCachedSession(sessionId, cached);
+}
+
+function scheduleSessionRelease(sessionId: string, cached: CachedSession): void {
+  cancelSessionRelease(cached);
+  if (cached.executionLease || cached.disconnecting) return;
+
+  cached.idleReleaseTimer = setTimeout(() => {
+    cached.idleReleaseTimer = undefined;
+    void releaseCachedSessionIfIdle(sessionId, cached).catch((error) => {
+      console.error(`Unable to release idle session ${sessionId}:`, error);
+    });
+  }, SESSION_IDLE_TIMEOUT_MS);
+  cached.idleReleaseTimer.unref();
+}
+
+function cancelSessionRelease(cached: CachedSession): void {
+  if (!cached.idleReleaseTimer) return;
+  clearTimeout(cached.idleReleaseTimer);
+  cached.idleReleaseTimer = undefined;
+}
+
+function disconnectCachedSession(sessionId: string, cached: CachedSession): Promise<void> {
+  if (cached.disconnecting) return cached.disconnecting;
+
+  cancelSessionRelease(cached);
+  const disconnecting = cached.session.disconnect().then(
+    () => {
+      if (cachedSessions.get(sessionId) === cached) cachedSessions.delete(sessionId);
+    },
+    (error) => {
+      if (cachedSessions.get(sessionId) === cached) {
+        cached.disconnecting = undefined;
+        scheduleSessionRelease(sessionId, cached);
+      }
+      throw error;
+    },
+  );
+  cached.disconnecting = disconnecting;
+  return disconnecting;
 }
 
 type PreparedSessionCreation = {

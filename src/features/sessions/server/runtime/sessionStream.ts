@@ -1,4 +1,4 @@
-// One live session runtime. A SessionStream owns an SDK session handle,
+// One live session runtime. A SessionStream owns an SDK session instance,
 // reduced live state, queued turns, completion waiters, and a replayable event
 // bus. It is the one live execution path shared by connected and headless
 // delivery.
@@ -14,7 +14,7 @@ import {
   getSdkSessionName,
   getSdkTurnEndReason,
 } from "@sessions/server/sdk/projector";
-import { evictCachedSessionIfStale } from "@sessions/server/state/registry";
+import { evictCachedSessionIfStale, releaseSession } from "@sessions/server/state/registry";
 import { cacheSnapshot, loadSessionSnapshot } from "@sessions/server/state/snapshots";
 import { setSessionStatus } from "@workspace/server/state";
 import { systemMessageCoalesceKey } from "@sessions/model/systemMessages";
@@ -115,7 +115,7 @@ export class SessionStream {
   // ── Instance fields ──────────────────────────────────────────────────
 
   readonly sessionId: string;
-  /** Underlying SDK handle used by runtime-owned session operations. */
+  /** Underlying SDK session used by runtime-owned operations. */
   readonly sdkSession: CopilotSession;
 
   #bus = createSessionEventBus(MAX_REPLAY_EVENTS);
@@ -325,6 +325,7 @@ export class SessionStream {
     );
     this.#bus.clearReplay();
     this.#dispose();
+    releaseSession(this.sessionId);
   }
 
   /** Always finish the stream, even if the SDK abort itself fails. */

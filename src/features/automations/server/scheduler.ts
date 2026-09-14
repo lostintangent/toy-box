@@ -1,7 +1,12 @@
 // Runs automations on demand and polls for scheduled work. Both paths share one
 // lifecycle for reset, overlap prevention, creation, and completion metadata.
 
-import { createSession, deleteSessionIfExists, isSessionRunning } from "@sessions/server/runtime";
+import {
+  createSession,
+  deleteSessionIfExists,
+  isSessionRunning,
+  releaseIdleSession,
+} from "@sessions/server/runtime";
 import { broadcast } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
 import { getStateDatabase } from "@/server/database";
@@ -103,6 +108,8 @@ async function superviseAutomationRun(
   } catch (error) {
     console.error(`Failed to persist automation run ${automationId}:`, error);
   }
+
+  await releaseIdleSession(automationId);
 }
 
 function scheduleSchedulerTick(delayMs = POLL_INTERVAL_MS): void {

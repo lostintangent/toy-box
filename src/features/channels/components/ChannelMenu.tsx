@@ -7,7 +7,7 @@ import type { Channel, ChannelArtifact, ChannelMember } from "@channels/model";
 import { useEditorDisplay } from "@files/components/editor/kinds";
 import { workspaceFileId } from "@files/model";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
+import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 import {
   PANE_OVERLAY_BUTTON_CLASS,
   PANE_OVERLAY_ICON_CLASS,
@@ -46,15 +46,16 @@ export function ChannelMenu({
   const [editingAgentId, setEditingAgentId] = useState<string>();
   const [removingMember, setRemovingMember] = useState<ChannelMember>();
   const memberAgents = members
-    .map((membership) => ({
-      membership,
-      agent: agents.find(({ id }) => id === membership.agentId)!,
-    }))
+    .flatMap((membership) => {
+      const agent = agents.find(({ id }) => id === membership.agentId);
+      return agent ? [{ membership, agent }] : [];
+    })
     .sort((left, right) => left.agent.name.localeCompare(right.agent.name));
   const removingAgent = removingMember
     ? agents.find(({ id }) => id === removingMember.agentId)
     : undefined;
-  const label = `${members.length} ${members.length === 1 ? "agent" : "agents"} in #${channel.title}`;
+  const memberCount = memberAgents.length;
+  const label = `${memberCount} ${memberCount === 1 ? "agent" : "agents"} in #${channel.title}`;
   const trigger =
     variant === "normal" ? (
       <button
@@ -64,7 +65,7 @@ export function ChannelMenu({
         className={cn(PANE_OVERLAY_BUTTON_CLASS, "flex items-center gap-1.5 text-xs")}
       >
         <Users className={PANE_OVERLAY_ICON_CLASS} />
-        <span className="tabular-nums">{members.length}</span>
+        <span className="tabular-nums">{memberCount}</span>
       </button>
     ) : (
       <MetadataBadge
@@ -72,7 +73,7 @@ export function ChannelMenu({
         className="cursor-pointer select-none hover:bg-secondary/80"
       >
         <Users className="size-3" />
-        <span className="tabular-nums">{members.length}</span>
+        <span className="tabular-nums">{memberCount}</span>
       </MetadataBadge>
     );
 
@@ -86,9 +87,9 @@ export function ChannelMenu({
             <Badge
               variant="secondary"
               className="min-w-5 px-1.5 text-2xs tabular-nums"
-              aria-label={`${members.length} ${members.length === 1 ? "member" : "members"}`}
+              aria-label={`${memberCount} ${memberCount === 1 ? "member" : "members"}`}
             >
-              {members.length}
+              {memberCount}
             </Badge>
           </div>
           <div className="my-1 h-px bg-border" />
@@ -117,6 +118,7 @@ export function ChannelMenu({
                   key={membership.sessionId}
                   membership={membership}
                   agent={agent}
+                  status={membership.status}
                   action={
                     <div className="flex items-center">
                       <PopoverClose
@@ -189,7 +191,7 @@ export function ChannelMenu({
           description={`This removes ${removingAgent.name} from #${channel.title} and deletes their private Channel session. Their Agent and experiences are preserved.`}
           confirmLabel="Remove"
           pendingLabel="Removing…"
-          mutation={channelMutations.removeMember(channel.id, removingMember.sessionId)}
+          mutation={channelMutations.removeMember(removingMember.sessionId)}
           onOpenChange={(open) => {
             if (!open) setRemovingMember(undefined);
           }}

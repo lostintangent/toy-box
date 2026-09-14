@@ -5,14 +5,16 @@ import { Button } from "@/shared/components/ui/button";
 import { RelativeTime } from "@/shared/components/ui/relative-time";
 import { Separator } from "@/shared/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
-import type { UserMessage as UserMessageType } from "../../../model";
+import type { Attachment, UserMessage as UserMessageType } from "../../../model";
 import { AttachmentGallery } from "../../AttachmentGallery";
 
 export function UserMessage({
   message,
   extraActions,
 }: {
-  message: Pick<UserMessageType, "content" | "attachments" | "timestamp">;
+  message: Pick<UserMessageType, "content" | "timestamp"> & {
+    attachments?: (Attachment | string)[];
+  };
   extraActions?: ReactNode;
 }) {
   const attachments = message.attachments ?? [];

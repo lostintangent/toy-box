@@ -33,6 +33,14 @@ export class AgentDatabase {
     return agents.map((row) => agentFromRow(row, experiencesByAgent.get(row.id) ?? []));
   }
 
+  async listAgentProfiles(): Promise<Array<Pick<Agent, "id" | "name" | "persona">>> {
+    return (
+      await this.db<Pick<AgentRow, "id" | "name" | "persona">[]>`
+        SELECT id, name, persona FROM agents ORDER BY name COLLATE NOCASE, id
+      `
+    ).map(({ id, name, persona }) => ({ id, name, persona: persona ?? undefined }));
+  }
+
   async getAgent(agentId: string): Promise<Agent | null> {
     const [row] = await this.db<AgentRow[]>`SELECT * FROM agents WHERE id = ${agentId}`;
     return row ? agentFromRow(row, await this.listExperiences(agentId)) : null;

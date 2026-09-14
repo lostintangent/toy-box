@@ -14,9 +14,10 @@ Dispatch creates the pending entry before starting its session, making ownership
 
 The Inbox supervisor applies only Inbox retention policy:
 
-1. A clean completion that called `send_to_inbox` keeps the completed entry and managed session.
+1. A clean completion that called `send_to_inbox` keeps the completed entry and managed session,
+   then releases its idle SDK session.
 2. A clean completion without a reported result removes both the pending entry and session.
-3. Failed work retains both so the user can inspect it.
+3. Failed work retains both so the user can inspect it, but releases its idle SDK session.
 4. User deletion removes the managed session before publishing entry deletion; session teardown removes any artifact with it.
 
 ## Client synchronization

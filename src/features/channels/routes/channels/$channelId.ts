@@ -7,17 +7,17 @@ export const Route = createFileRoute("/api/channels/$channelId")({
     handlers: {
       GET: ({ params, request }) =>
         createSseResponse(request, (send) =>
-          streamChannel(params.channelId, readCursor(request), (event) =>
-            send(event, event.cursor),
+          streamChannel(params.channelId, readAfterRevision(request), (event) =>
+            send(event, event.revision),
           ),
         ),
     },
   },
 });
 
-function readCursor(request: Request): number {
+function readAfterRevision(request: Request): number {
   const value =
     request.headers.get("last-event-id") ?? new URL(request.url).searchParams.get("after");
-  const cursor = Number(value);
-  return Number.isInteger(cursor) && cursor >= 0 ? cursor : 0;
+  const revision = Number(value);
+  return Number.isInteger(revision) && revision >= 0 ? revision : 0;
 }

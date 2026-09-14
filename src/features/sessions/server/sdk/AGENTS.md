@@ -23,13 +23,15 @@ History replay creates a fresh projector, feeds the stored SDK events in order, 
 
 [`../../model/reducer.ts`](../../model/reducer.ts) is SDK-agnostic. It returns immutable session states with structural sharing, allowing React consumers to rerender only changed messages or tool calls. Translation policy belongs in the projector; transcript state transitions belong in the reducer.
 
-## Session process and handles
+## SDK session ownership
 
 `client.ts` owns one process-wide `CopilotClient`, started during server boot or by the first operation that reaches it. It creates, resumes, lists, and deletes SDK sessions, exposes models, discovers skills for a meaningful working directory or host scope, and normalizes persisted working-directory context. Development and compiled Toy Box binaries both resolve the user's installed Copilot CLI from `PATH`.
 
 Composer skills are server-wide discovery data, not session transcript state. The client caches them by effective working directory; SDK `session.skills_loaded` notifications remain outside canonical projection because they are transient echoes of session-level discovery rather than durable history.
 
-The server-side session registry in [`../state/AGENTS.md`](../state/AGENTS.md) owns SDK handles. It supplies them to short SDK operations and lends one long-lived handle to each active runtime. Do not introduce a second handle cache or move application teardown into the SDK adapter.
+The server-side session registry in [`../state/AGENTS.md`](../state/AGENTS.md) owns cached SDK
+sessions. It supplies them to bounded SDK operations and lends one session instance to each active
+runtime. Do not introduce a second session cache or move application teardown into the SDK adapter.
 
 The SDK requires a working directory. Toy Box uses the user's meaningful working directory when one exists and otherwise supplies the home directory only as an SDK fallback. Context normalization hides that fallback from application metadata so list display, inheritance, and resumed tool scope agree on whether the user actually chose one.
 
@@ -85,6 +87,6 @@ Model-facing tools are a reverse control plane, not a parallel backend. A tool t
 
 - Every SDK event policy has one owner: the projector.
 - Live streaming and history replay must converge on the same `Session` shape.
-- SDK handles are cached by the state registry, not by callers or tools.
+- SDK sessions are cached by the state registry, not by callers or tools.
 - Session role changes instructions and tool availability; it does not create a second execution model.
 - Tool handlers reuse application operations and preserve their validation, ownership, and lifecycle guarantees.

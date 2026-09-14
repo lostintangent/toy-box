@@ -7,15 +7,16 @@ import {
   subscribeChannelEvents,
 } from "./events";
 
-function update(cursor: number): ChannelEvent {
+function update(revision: number): ChannelEvent {
   return {
-    type: "member_removed",
-    cursor,
-    sessionId: `session-${cursor}`,
+    type: "status",
+    revision,
+    sessionId: `session-${revision}`,
+    status: { state: "working", text: `Task ${revision}` },
   };
 }
 
-test("Channel events provide live delivery or a complete cursor replay", () => {
+test("Channel events provide live delivery or a complete revision replay", () => {
   const channelId = `channel-${crypto.randomUUID()}`;
   onTestFinished(() => releaseChannelEvents(channelId));
   const received: ChannelEvent[] = [];

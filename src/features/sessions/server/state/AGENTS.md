@@ -6,10 +6,14 @@ creating another source of transcript truth.
 
 ## Responsibilities
 
-- `registry.ts` owns SDK handles, single-flight resume, creation, explicit rename, automatic title
-  updates, and complete deletion. Cached handles retain their application-supplied configuration
-  lifetime; runtime acquisition replaces an Agent handle when its effective configuration changed,
-  while short reads, unchanged Agents, and ordinary Sessions reuse their cached handle.
+- `registry.ts` owns cached SDK sessions, single-flight resume, creation, explicit rename, automatic
+  title updates, and complete deletion. Cached sessions retain their application-supplied
+  configuration lifetime; runtime acquisition replaces an Agent session when its effective
+  configuration changed, while short reads, unchanged Agents, and ordinary Sessions reuse their
+  cached session. Active executions retain that session; bounded SDK operations restart its idle
+  window. Idle sessions disconnect after 30 minutes and resume from durable SDK history on their
+  next access. Managed supervisors may release a retained session immediately once their workflow
+  reaches a terminal state.
   One deletion path releases the live runtime, SDK persistence, worktree, draft claim, cached
   snapshot, managed relationships, pin, and workspace projection before publishing the deletion.
 - `snapshots.ts` reconstructs idle state through the SDK projector and canonical reducer, then
@@ -30,7 +34,7 @@ creating another source of transcript truth.
   implementation or the SDK adapter.
 - The [SDK boundary](../sdk/AGENTS.md) owns Copilot wire formats, history projection, universal
   instruction encoding, and client operations. Application composition supplies role policy; the
-  registry owns handles and teardown.
+  registry owns cached SDK sessions and teardown.
 - A live session is authoritative while it exists; an idle session is reconstructed from SDK
   history. A snapshot is never a second authority.
 - A session resource has one teardown path. Callers must not independently coordinate SDK state,

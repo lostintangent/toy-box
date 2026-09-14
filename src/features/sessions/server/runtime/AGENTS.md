@@ -51,21 +51,25 @@ Once a session has turn-bearing history, resume is not a separate operation. Del
 
 ## Live execution
 
-`SessionStream` names the live runtime for one session, not the event stream a client reads. It owns the SDK handle, canonical state, queued messages, completion waiters, and replayable event bus for that execution lifetime.
+`SessionStream` names the live runtime for one session, not the event stream a client reads. It owns the SDK session instance, canonical state, queued messages, completion waiters, and replayable event bus for that execution lifetime.
 
 A managed feature may announce work before its live stream exists. `registerPendingSessionCompletion` reserves ID-based completion before publication and retains its settlement briefly, so a caller cannot miss an execution that starts, finishes, and is deleted quickly. The [Workers feature](../../../workers/AGENTS.md) owns the admission and lifetime policy that uses this capability.
 
 Managed features supervise sessions because their terminal policies differ. The runtime centralizes execution and exact completion; scenario-specific policy stays with its owner rather than entering an enum, strategy interface, or alternate execution model.
 
-1. Acquisition is single-flight. Before a new execution borrows an SDK handle, the registry refreshes
+1. Acquisition is single-flight. Before a new execution acquires an SDK session, the registry refreshes
    configuration when its application-supplied lifetime requires it. Active delivery never refreshes
-   that handle; direct system messages and host mentions use this same boundary. A caller joins an existing stream, shares an in-progress creation, creates a new SDK session, or resumes an idle session from its reduced snapshot and SDK handle.
+   that session; direct system messages and host mentions use this same boundary. A caller joins an existing stream, shares an in-progress creation, creates a new SDK session, or resumes an idle session from its reduced snapshot and cached SDK session.
 2. Connected callers subscribe before delivery. Every logical message has a unique client ID; `SessionStream.deliver` synchronously claims the first turn or emits `message_queued` behind active execution. Only queued user messages can be steered, and steering marks that same queue entry while awaiting delivery so reloads preserve its state. The runtime associates each SDK-assigned message ID with its client ID and adds it to the corresponding canonical SDK input event after the projector has filtered subagent and skill inputs. That event removes a queued input, reconciles browser optimism when present, and otherwise appends normally.
 3. The SDK projector translates raw events into canonical `SessionEvent`s. The event bus stamps a process-monotonic `eventId`, and the shared reducer returns the next immutable `Session`.
 4. When the SDK session reports idle, the runtime drains the next queued message through the same path. `assistant.turn_end` ends only an agent-loop segment and does not drain the queue. With no queued work, the runtime finishes the execution.
-5. Finishing publishes one terminal `end`, caches the resulting clean state, selects idle or unread from the active subscriptions, and then disposes the live runtime. Disposing is private resource release: it closes the event bus, resolves waiters, removes the SDK listener, and releases the registry entry. Aborting interrupts SDK work and then finishes; session deletion removes the live runtime without publishing ordinary idle/unread state.
+5. Finishing publishes one terminal `end`, caches the resulting clean state, selects idle or unread from the active subscriptions, and then disposes the live runtime. Disposing closes the event bus, resolves waiters, removes the SDK listener, and removes the stream registry entry; finishing then returns the SDK session to the state registry's bounded idle cache. Aborting interrupts SDK work and then finishes; session deletion removes the live runtime without publishing ordinary idle/unread state.
 
 A delivery receipt exposes the initial `started` or `queued` decision and a waiter bound to that exact stream instance. Completion reports `completed`, `failed`, or `timed_out`, plus the latest substantive assistant response when available. Waiting by session ID also covers work announced before its stream exists and falls back to the final snapshot when no live stream remains. A timeout ends only that caller's wait; it does not abort the session or alter its supervisor's policy.
+
+A supervisor that retains durable history but expects little immediate reuse may call
+`releaseIdleSession` after completion. This disconnects only a session with no active execution;
+ordinary bounded SDK operations independently restart the idle window when they finish.
 
 ## Subscriptions and client orchestration
 
@@ -91,4 +95,4 @@ Transcript continuity belongs to the session event stream. Drafts, running and u
 - The top-level session server functions validate transport input and delegate. Runtime policy belongs here, SDK translation belongs in [`../sdk/AGENTS.md`](../sdk/AGENTS.md), and authority or teardown belongs in [`../state/AGENTS.md`](../state/AGENTS.md).
 - [`../../model/reducer.ts`](../../model/reducer.ts) is the one transition function for live server state, SDK history replay, browser streaming, and reconnect replay. Adding a second event interpretation path is an architectural regression.
 - Session deletion delegates complete resource teardown to the state registry; runtime callers must not release stream state or adjacent resources independently.
-- Process-wide registries survive development module reloads but not process restart. Durable recovery comes from SDK history, SQLite metadata, and files, never from replay buffers or cached handles.
+- Process-wide registries survive development module reloads but not process restart. Durable recovery comes from SDK history, SQLite metadata, and files, never from replay buffers or cached SDK sessions.

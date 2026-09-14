@@ -1,5 +1,9 @@
 import { queryOptions } from "@tanstack/react-query";
-import { getChannel, listChannels } from "@channels/server/functions";
+import {
+  getChannelState,
+  listChannelMessagesBefore,
+  listChannels,
+} from "@channels/server/functions";
 
 export const channelQueries = {
   all: () => ["channels"] as const,
@@ -16,10 +20,16 @@ export const channelQueries = {
   detail: (channelId: string) =>
     queryOptions({
       queryKey: [...channelQueries.details(), channelId] as const,
-      queryFn: () => getChannel({ data: { channelId } }),
+      queryFn: () => getChannelState({ data: { channelId } }),
       staleTime: Infinity,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
       retry: false,
+    }),
+  messagesBefore: (channelId: string, beforeSequence: number) =>
+    queryOptions({
+      queryKey: [...channelQueries.details(), channelId, "before", beforeSequence] as const,
+      queryFn: () => listChannelMessagesBefore({ data: { channelId, beforeSequence } }),
+      gcTime: 0,
     }),
 };

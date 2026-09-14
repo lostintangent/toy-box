@@ -62,8 +62,15 @@ export function SessionMessageList({
         scrollToBottomRef={scrollToBottomRef}
         activity={activity}
       />
-      <ScrollToBottomButton />
+      <SessionScrollToBottomButton />
     </StickToBottom>
+  );
+}
+
+function SessionScrollToBottomButton() {
+  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
+  return (
+    <ScrollToBottomButton isAtBottom={isAtBottom} onScrollToBottom={() => void scrollToBottom()} />
   );
 }
 

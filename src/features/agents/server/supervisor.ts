@@ -3,7 +3,6 @@
 
 import {
   agentHostId,
-  type Agent,
   type AgentHost,
   type AgentMembership,
   type AgentMention,
@@ -38,13 +37,18 @@ const admissionQueues = sharedMap<SerialTaskQueue>("agent-membership-admission-q
 export async function mentionAgent(input: MentionAgentInput): Promise<void> {
   return withAdmission(input.host, input.agentId, async () => {
     const agents = new AgentDatabase(await getStateDatabase());
+    const agent = await agents.getAgent(input.agentId);
+    if (!agent) throw new Error("Agent not found.");
+    const adapter = await getAgentHostAdapter(input.host);
     let membership = await agents.getMembership(input.host, input.agentId);
-    let agent: Agent | null | undefined;
     if (membership) {
       try {
-        await deliverSessionMessage(membership.sessionId, input.message, {
+        const receipt = await deliverSessionMessage(membership.sessionId, input.message, {
           immediate: true,
         });
+        if (receipt.disposition === "started") {
+          await adapter.startTurn?.(agent, membership);
+        }
         return;
       } catch (error) {
         if (!isSessionNotFoundError(error)) throw error;
@@ -55,15 +59,12 @@ export async function mentionAgent(input: MentionAgentInput): Promise<void> {
     } else {
       const executionMode = input.initialExecutionMode ?? "shared";
       await assertAgentExecutionModeAvailable(executionMode, input.directory);
-      agent = await agents.getAgent(input.agentId);
-      if (!agent) throw new Error("Agent not found.");
       membership = {
         host: input.host,
         agentId: input.agentId,
         sessionId: `${SESSION_ID_PREFIX}${crypto.randomUUID()}`,
         executionMode,
       };
-      const adapter = await getAgentHostAdapter(input.host);
       if (adapter.admitAgent) {
         await adapter.admitAgent(agent, membership);
       } else {
@@ -72,8 +73,6 @@ export async function mentionAgent(input: MentionAgentInput): Promise<void> {
       announceAgentMembershipChange(membership.host);
     }
 
-    agent ??= await agents.getAgent(input.agentId);
-    if (!agent) throw new Error("Agent not found.");
     await createSession(membership.sessionId, input.message, {
       directory: input.directory,
       initialContext: input.initialContext,
@@ -81,6 +80,7 @@ export async function mentionAgent(input: MentionAgentInput): Promise<void> {
       useWorktree: membership.executionMode === "worktree",
       name: `${agent.name} · ${input.hostLabel}`,
     });
+    await adapter.startTurn?.(agent, membership);
   });
 }
 

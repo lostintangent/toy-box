@@ -1,6 +1,6 @@
 // Inbox-managed session dispatch and completion supervision.
 
-import { createSession } from "@sessions/server/runtime";
+import { createSession, releaseIdleSession } from "@sessions/server/runtime";
 import { SESSION_ID_PREFIX } from "@sessions/model/constants";
 import type { SessionCompletion, SessionLaunch } from "@sessions/model";
 import { createPendingInboxEntry, deleteInboxEntry, getInboxEntry } from "./index";
@@ -34,10 +34,14 @@ async function superviseInboxTask(
   waitForCompletion: () => Promise<SessionCompletion>,
 ): Promise<void> {
   const completion = await waitForCompletion();
-  if (completion.status !== "completed") return;
+  if (completion.status === "completed") {
+    const entry = await getInboxEntry(sessionId);
+    if (!entry) return;
+    if (entry.message === undefined) {
+      await deleteInboxEntry(sessionId);
+      return;
+    }
+  }
 
-  const entry = await getInboxEntry(sessionId);
-  if (!entry || entry.message !== undefined) return;
-
-  await deleteInboxEntry(sessionId);
+  await releaseIdleSession(sessionId);
 }

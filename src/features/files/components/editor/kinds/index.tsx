@@ -16,7 +16,7 @@ import {
   Target,
   type LucideIcon,
 } from "lucide-react";
-import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
+import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import type { CustomEditorKind, WorkspaceFile } from "@files/model";
 import { ARTIFACT_APP_EXTENSION } from "@apps/model";

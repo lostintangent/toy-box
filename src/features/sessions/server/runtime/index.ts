@@ -21,7 +21,7 @@ import type { SessionStreamSubscription } from "./eventBus";
 
 export { SessionStream };
 export { getSessionContext, readSessionContext } from "../sdk/client";
-export { deleteSession, deleteSessionIfExists } from "../state/registry";
+export { deleteSession, deleteSessionIfExists, releaseIdleSession } from "../state/registry";
 export type { SessionContext } from "@github/copilot-sdk";
 export { canCreateSessionWorktree } from "../state/worktrees";
 export { isSessionNotFoundError } from "../state/registry";
@@ -262,7 +262,7 @@ async function deliver(
 ) {
   const normalizedMessage = await normalizeMessage(message);
   let retriedFinishedStream = false;
-  let retriedStaleHandle = false;
+  let retriedStaleSession = false;
 
   for (;;) {
     try {
@@ -278,13 +278,13 @@ async function deliver(
         continue;
       }
 
-      // A stale cached SDK handle (possible on the snapshot-seed path, which
+      // A stale cached SDK session (possible on the snapshot-seed path, which
       // skips the replay path's getEvents probe) surfaces as a send failure
       // after turn start evicts it and finishes the stream. No client is subscribed
       // to retry, so rebuild once — the resume is fresh by construction and the
       // cached snapshot is still valid (the log never changed).
-      if (!retriedStaleHandle && sessionRegistry.evictCachedSessionIfStale(sessionId, error)) {
-        retriedStaleHandle = true;
+      if (!retriedStaleSession && sessionRegistry.evictCachedSessionIfStale(sessionId, error)) {
+        retriedStaleSession = true;
         continue;
       }
 
@@ -337,10 +337,10 @@ async function createStreamForMessage(
     );
   }
 
-  // Acquisition is already single-flight and no live runtime exists. Refresh
-  // dynamic configuration here, before borrowing the handle for execution.
-  const sdkSession = await sessionRegistry.getSession(sessionId, { forExecution: true });
+  // Rebuild history before taking the execution lease so a replay failure
+  // cannot strand a session as active. Refresh configuration immediately after.
   const snapshot = await loadSessionSnapshot(sessionId);
+  const sdkSession = await sessionRegistry.acquireSession(sessionId);
   const stream = SessionStream.getOrCreate(
     sessionId,
     sdkSession,

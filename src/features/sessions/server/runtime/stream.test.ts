@@ -200,8 +200,8 @@ function mockStreamRuntimeModules({
     createSession: async () => {
       throw new Error("createSession mock was not provided");
     },
-    getSession: async () => {
-      throw new Error("getSession mock was not provided");
+    acquireSession: async () => {
+      throw new Error("acquireSession mock was not provided");
     },
     withSession: async () => {
       throw new Error("withSession mock was not provided");
@@ -1435,7 +1435,7 @@ describe("streamSession", () => {
     mockStreamRuntimeModules({
       sessionRegistry: {
         withSession: withSessionEvents([]),
-        getSession: async () => resumedSession,
+        acquireSession: async () => resumedSession,
       },
     });
 
@@ -1493,7 +1493,7 @@ describe("streamSession", () => {
     mockStreamRuntimeModules({
       sessionRegistry: {
         withSession: withSessionEvents([]),
-        getSession: async () => session,
+        acquireSession: async () => session,
       },
     });
 
@@ -1545,7 +1545,7 @@ describe("streamSession", () => {
     mockStreamRuntimeModules({
       sessionRegistry: {
         withSession: withSessionEvents([]),
-        getSession: async () => fakeSession,
+        acquireSession: async () => fakeSession,
       },
     });
 
@@ -1592,7 +1592,7 @@ describe("streamSession", () => {
     mockStreamRuntimeModules({
       sessionRegistry: {
         withSession: withSessionEvents([]),
-        getSession: async () => fakeSession,
+        acquireSession: async () => fakeSession,
         evictCachedSessionIfStale: evictMock,
       },
     });
@@ -1679,7 +1679,7 @@ describe("delivery receipts", () => {
     mockStreamRuntimeModules({
       sessionRegistry: {
         withSession: withSessionEvents([]),
-        getSession: async () => fakeSession,
+        acquireSession: async () => fakeSession,
       },
     });
 
@@ -1712,7 +1712,7 @@ describe("delivery receipts", () => {
     mockStreamRuntimeModules({
       sessionRegistry: {
         withSession: withSessionEvents([]),
-        getSession: async () => fakeSession,
+        acquireSession: async () => fakeSession,
       },
     });
 
@@ -1815,6 +1815,28 @@ describe("createSession", () => {
 });
 
 describe("deliverSessionMessage", () => {
+  test("does not acquire a session for execution when history replay fails", async () => {
+    const sessionId = "session-replay-failure";
+    cleanUpStreamAfterTest(sessionId, { restoreMocks: true });
+    const acquireSession = mock(async () => makeFakeSession());
+
+    mockStreamRuntimeModules({
+      sessionRegistry: { acquireSession },
+      snapshotCache: {
+        loadSessionSnapshot: async () => {
+          throw new Error("History replay failed");
+        },
+      },
+    });
+
+    const { deliverSessionMessage: importedDeliver } = await import("./index");
+
+    await expect(importedDeliver(sessionId, userMessage("Follow up"))).rejects.toThrow(
+      "History replay failed",
+    );
+    expect(acquireSession).not.toHaveBeenCalled();
+  });
+
   test("starts an idle historical session immediately", async () => {
     cleanUpStreamAfterTest("session-start-helper", { restoreMocks: true });
 
@@ -1824,7 +1846,7 @@ describe("deliverSessionMessage", () => {
     mockStreamRuntimeModules({
       sessionRegistry: {
         withSession: withSessionEvents([]),
-        getSession: async () => fakeSession,
+        acquireSession: async () => fakeSession,
       },
     });
 
@@ -1868,7 +1890,7 @@ describe("deliverSessionMessage", () => {
         withSession: async () => {
           throw new Error("snapshot-seeded streams must not fetch history");
         },
-        getSession: async () => fakeSession,
+        acquireSession: async () => fakeSession,
       },
       snapshotCache: {
         getCachedSnapshot: async () =>
@@ -1897,7 +1919,7 @@ describe("deliverSessionMessage", () => {
     });
   });
 
-  test("retries once when a snapshot-seeded send hits a stale cached handle", async () => {
+  test("retries once when a snapshot-seeded send hits a stale cached session", async () => {
     cleanUpStreamAfterTest("session-snapshot-stale", { restoreMocks: true });
 
     const staleSend = mock(async () => {
@@ -1907,12 +1929,12 @@ describe("deliverSessionMessage", () => {
     const staleSession = makeFakeSession({ send: staleSend });
     const freshSession = makeFakeSession({ send: freshSend });
 
-    // First resume returns the stale cached handle; after eviction the next
+    // First resume returns the stale cached session; after eviction the next
     // resume is fresh.
     let resumeCount = 0;
     mockStreamRuntimeModules({
       sessionRegistry: {
-        getSession: async () => (resumeCount++ === 0 ? staleSession : freshSession),
+        acquireSession: async () => (resumeCount++ === 0 ? staleSession : freshSession),
         evictCachedSessionIfStale: (_sessionId: string, error: unknown) =>
           error instanceof Error && error.message.toLowerCase().includes("session not found"),
       },
@@ -1967,7 +1989,7 @@ describe("single-flight stream acquisition", () => {
     mockStreamRuntimeModules({
       sessionRegistry: {
         withSession: withSessionMock,
-        getSession: async () => fakeSession,
+        acquireSession: async () => fakeSession,
       },
     });
 
@@ -2013,7 +2035,7 @@ describe("single-flight stream acquisition", () => {
             getEvents: async () => [],
           } as unknown as CopilotSession);
         },
-        getSession: async () => fakeSession,
+        acquireSession: async () => fakeSession,
       },
     });
 

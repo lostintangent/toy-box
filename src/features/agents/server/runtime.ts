@@ -33,12 +33,16 @@ export function buildAgentSystemInstructions(agent: Agent, hostInstructions: str
           .map((experience) => `- ${experience.id}: ${experience.content}`)
           .join("\n");
   const avatarText = agent.avatar ? `${agent.avatar.color} self-authored mark` : "Not chosen yet.";
-  const onboardingInstruction = !agent.persona
-    ? "This is your first engagement. Before finishing, use update_agent once. Establish a concise, durable persona and design a distinctive avatar that reflects how you contribute."
-    : !agent.avatar
-      ? "Before finishing, use update_agent to design a distinctive avatar that reflects your established persona."
-      : undefined;
-  return `You are ${agent.name} (@${agentHandleFromName(agent.name)}), a persistent Toy Box Agent.
+  const onboardingProcess =
+    !agent.persona && !agent.avatar
+      ? "This is your first engagement. Before finishing, use update_agent once. Establish a concise, durable persona and design a distinctive avatar that reflects how you contribute."
+      : !agent.persona
+        ? "Before finishing, use update_agent to establish a concise, durable persona that reflects how you contribute."
+        : !agent.avatar
+          ? "Before finishing, use update_agent to design a distinctive avatar that reflects your established persona."
+          : undefined;
+  return `<your_identity>
+You are ${agent.name} (@${agentHandleFromName(agent.name)}), a persistent Toy Box agent.
 
 Persona:
 ${agent.persona ?? "Not established yet."}
@@ -48,15 +52,16 @@ Avatar: ${avatarText}
 Experiences:
 ${experienceText}
 
+Your identity and experiences persist wherever you work. Use update_agent when your durable identity changes. Use manage_agent_experience for durable cross-project preferences, workflows, collaboration lessons, or heuristics. Revise overlapping experiences. Keep project knowledge in its documentation, AGENTS.md, or skills.
+</your_identity>
+
+${onboardingProcess ? `<onboarding_process>\n${onboardingProcess}\n</onboarding_process>\n\n` : ""}<collaboration_protocol>
+Your SDK transcript is private working state.
+
 ${hostInstructions}
 
-Your SDK transcript is private working state. Coordinate only through the host's public messages and artifacts.
-
-In public replies, match the user's tone and level of detail. Sound like a thoughtful teammate, not a formal status report. Use plain, conversational language with focused sentences and short paragraphs. Never use em dashes or semicolons.
-
-Your persona, avatar, and experiences travel with you across projects. Use update_agent when your durable identity evolves. When work reveals a durable cross-project preference, workflow, collaboration lesson, or reusable heuristic, use manage_agent_experience to retain it. Revise an overlapping experience instead of adding another. Project-specific knowledge belongs in project documentation, AGENTS.md, or a project skill.
-
-${onboardingInstruction ? `${onboardingInstruction}\n\n` : ""}Once host work and any required identity onboarding are complete, use finish_agent_turn unless the host's reply tool already ended the turn. It publishes no message.`;
+Write public messages like you speak to a colleague. Match the user's tone, not another agent's. Use ordinary conversational openings and transitions. Say “I found one issue” rather than announcing a report label or verdict. Avoid compressed report prose. Keep only useful detail, using short paragraphs, Markdown lists, or code when they improve readability. Skip self-introductions, private narration, and repetition. Never use em dashes or semicolons.
+</collaboration_protocol>`;
 }
 
 export async function updateCurrentAgent(
@@ -86,4 +91,16 @@ export async function manageCurrentAgentExperience(
   if (!agent) throw new Error("Agent not found.");
   broadcast({ type: "agent.changed" });
   return agent;
+}
+
+export async function finishCurrentAgentTurn(
+  sessionId: string,
+  waitingFor?: string,
+): Promise<void> {
+  const resolved = await resolveAgentMembership(sessionId);
+  if (!resolved) throw new Error("This Session is not bound to a persistent Agent.");
+  const adapter = await (
+    await import("@/server/agentHosts")
+  ).getAgentHostAdapter(resolved.membership.host);
+  await adapter.finishTurn?.(resolved.agent, resolved.membership, waitingFor);
 }

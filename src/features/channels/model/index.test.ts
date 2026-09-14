@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Agent, AgentMention } from "@agents/model";
 import type { ChannelMember } from "./index";
-import { resolveChannelAudience } from "./index";
+import { resolveChannelAudience, setChannelStatusInputSchema } from "./index";
 
 const members: ChannelMember[] = [
   {
@@ -74,7 +74,7 @@ describe("channel delivery policy", () => {
     });
   });
 
-  test("both senders may invite a named Agent without inviting the whole roster", () => {
+  test("both senders may invite a named Agent without inviting every current member", () => {
     for (const sender of [user, critic]) {
       expect(audience("@builder plan with @planner", sender)).toEqual({
         members: [members[1]],
@@ -117,4 +117,14 @@ describe("channel delivery policy", () => {
       ]),
     ).toEqual({ members: [members[1]], invitations: [] });
   });
+});
+
+test("a working status points to at most one assigned message", () => {
+  expect(
+    setChannelStatusInputSchema.safeParse({
+      status: "Reviewing and implementing",
+      lookingAt: 1,
+      workingOn: 1,
+    }).success,
+  ).toBe(false);
 });

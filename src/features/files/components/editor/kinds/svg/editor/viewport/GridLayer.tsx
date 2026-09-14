@@ -10,7 +10,7 @@ export function GridLayer({
   store: EditorStore;
   colorScheme: "dark" | "light";
 }) {
-  const viewport = useSelector(store, (state) => state.viewport);
+  const size = useSelector(store, (state) => state.viewport.size);
   const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -21,27 +21,40 @@ export function GridLayer({
 
     const context = canvas.getContext("2d");
     if (!context) return;
+    const targetCanvas: HTMLCanvasElement = canvas;
+    const renderingContext: CanvasRenderingContext2D = context;
 
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.clearRect(0, 0, canvas.width, canvas.height);
+    let previousViewport = store.state.viewport;
+    function paint() {
+      const viewport = store.state.viewport;
+      previousViewport = viewport;
+      renderingContext.setTransform(1, 0, 0, 1, 0, 0);
+      renderingContext.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+      renderingContext.setTransform(
+        dpr * viewport.zoom,
+        0,
+        0,
+        dpr * viewport.zoom,
+        viewport.panX * dpr * viewport.zoom,
+        viewport.panY * dpr * viewport.zoom,
+      );
+      renderSvgGrid(renderingContext, viewport, colorScheme);
+    }
 
-    context.setTransform(
-      dpr * viewport.zoom,
-      0,
-      0,
-      dpr * viewport.zoom,
-      viewport.panX * dpr * viewport.zoom,
-      viewport.panY * dpr * viewport.zoom,
-    );
-    renderSvgGrid(context, viewport, colorScheme);
-  }, [colorScheme, dpr, viewport]);
+    paint();
+    const subscription = store.subscribe((state) => {
+      if (state.viewport === previousViewport) return;
+      paint();
+    });
+    return () => subscription.unsubscribe();
+  }, [colorScheme, dpr, size, store]);
 
   return (
     <canvas
       ref={canvasRef}
-      width={Math.ceil(viewport.size.width * dpr)}
-      height={Math.ceil(viewport.size.height * dpr)}
-      style={{ width: viewport.size.width, height: viewport.size.height }}
+      width={Math.ceil(size.width * dpr)}
+      height={Math.ceil(size.height * dpr)}
+      style={{ width: size.width, height: size.height }}
       className="pointer-events-none absolute inset-0"
       aria-hidden="true"
     />

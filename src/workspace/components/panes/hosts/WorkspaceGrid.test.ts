@@ -7,7 +7,7 @@ function layout(rows: [number, number], top: [number, number], bottom: [number, 
   return { rows, top, bottom };
 }
 
-describe("workspace grid pane-count transitions", () => {
+describe("workspace pane grid transitions", () => {
   test("adds only the split needed for each new pane", () => {
     const twoPanes = layout([100, 0], [61.4, 38.6], [100, 0]);
 
@@ -49,7 +49,7 @@ describe("workspace grid pane-count transitions", () => {
   });
 });
 
-describe("workspace grid session overlay", () => {
+describe("workspace pane grid session overlay", () => {
   const sessionPane = createSessionPane("session-a", false);
   const artifactPane = createEditorPane(sessionFile("session-a", "result.md"));
 

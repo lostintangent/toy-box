@@ -17,7 +17,7 @@ import {
   PANE_OVERLAY_BUTTON_CLASS,
   PANE_OVERLAY_ICON_CLASS,
 } from "@workspace/components/panes/shell/paneControls";
-import type { PaneVariant } from "@workspace/components/panes/WorkspacePaneView";
+import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 
 /** Lists one pane's active workers and previews their ordinary session details. */
 export function WorkersMenu({
