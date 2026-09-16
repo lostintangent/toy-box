@@ -3,7 +3,7 @@ import { z } from "zod";
 export * from "./editors";
 
 // A workspace file is one address for a file surfaced in the workspace: an
-// artifact under a session's files directory, or a real file on the host machine.
+// artifact under a session's artifacts directory, or a real file on the host machine.
 
 export const sessionFileSchema = z.object({
   kind: z.literal("session"),
@@ -76,7 +76,7 @@ export function decodeFileRoute(scope: string, path: string): WorkspaceFile {
   return scope === "machine" ? { kind: "machine", path: `/${path}` } : sessionFile(scope, path);
 }
 
-/** A session file (an artifact): a path beneath a session's own files directory. */
+/** A session file (an artifact): a path beneath a session's own artifacts directory. */
 export function sessionFile(sessionId: string, path: string): SessionFile {
   return { kind: "session", sessionId, path };
 }

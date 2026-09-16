@@ -10,7 +10,7 @@ test("persists one complete settings document", async () => {
   const settings = {
     ...DEFAULT_SETTINGS,
     accentColor: "#123abc" as const,
-    defaultModel: { name: "gpt-5", reasoningEffort: "high" },
+    defaultModel: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
     terminalShell: "/bin/zsh",
     useWorktree: true,
     pinnedSessionIds: ["session-a"],

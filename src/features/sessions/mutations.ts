@@ -88,7 +88,7 @@ export const sessionMutations = {
       onMutate: async (name, { client }) => {
         await cancelSessionsStateQuery(client);
         const previousSessionsState = snapshotSessionsState(client);
-        upsertSessionInState(client, { sessionId, summary: name });
+        upsertSessionInState(client, { sessionId, title: name });
         return { previousSessionsState };
       },
       onError: (_error, _variables, context, { client }) => {

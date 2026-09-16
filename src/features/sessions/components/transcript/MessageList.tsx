@@ -27,7 +27,8 @@ type PendingMessageAnchor = {
 
 function isRenderableMessage(message: Message): boolean {
   return (
-    message.role !== "assistant" || Boolean(message.content || (message.toolCalls?.length ?? 0) > 0)
+    message.role !== "assistant" ||
+    Boolean(message.content || message.error || (message.toolCalls?.length ?? 0) > 0)
   );
 }
 

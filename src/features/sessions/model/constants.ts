@@ -1,3 +1,3 @@
 export const SESSION_ID_PREFIX = "toy-box-";
-/** Home-relative directory where Copilot stores persisted Toy Box session state. */
-export const SESSION_STATE_PATH = ".copilot/session-state";
+export const SESSION_STORAGE_PATH = ".toy-box/sessions";
+export const SESSION_ARTIFACT_EXTENSIONS = [".md", ".html", ".json", ".svg", ".intent", ".toy"];

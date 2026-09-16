@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { SessionMetadata } from "../../../model";
+import type { SessionContext, SessionMetadata } from "../../../model";
 import { createEmptySessionsState, sessionQueries } from "../../../queries";
 import { SessionLocationPicker } from "../SessionLocationPicker";
 import { SessionDirectoryPicker } from "./SessionDirectoryPicker";
@@ -12,17 +12,20 @@ function createSession(cwd: string): SessionMetadata {
     sessionId: "session-1",
     startTime: new Date(0),
     modifiedTime: new Date(1),
-    summary: "Session",
-    isRemote: false,
-    context: { workingDirectory: cwd },
+    title: "Session",
+    directory: cwd,
   };
 }
 
 function renderPicker(
   props: ComponentProps<typeof SessionDirectoryPicker>,
   sessions?: SessionMetadata[],
+  context?: SessionContext,
 ) {
   const queryClient = new QueryClient();
+  if (context) {
+    queryClient.setQueryData(sessionQueries.context(context.workingDirectory).queryKey, context);
+  }
   if (sessions) {
     queryClient.setQueryData(sessionQueries.stateKey(), {
       ...createEmptySessionsState(),
@@ -47,10 +50,17 @@ describe("SessionDirectoryPicker", () => {
     expect(markup).not.toContain("Select directory");
   });
 
-  test("uses the MRU after recent directories load", () => {
-    const markup = renderPicker({ onValueChange: () => {} }, [createSession("/repo/project")]);
+  test("SSR uses the MRU's native repository metadata before directory lookup", () => {
+    const markup = renderPicker({ onValueChange: () => {} }, [
+      {
+        ...createSession("/repo/project"),
+        gitRoot: "/repo/project",
+        repository: "owner/project",
+      },
+    ]);
 
-    expect(markup).toContain('aria-label="Working directory: /repo/project"');
+    expect(markup).toContain("lucide-git-branch");
+    expect(markup).toContain('aria-label="Repository: owner/project"');
     expect(markup).toContain(">project</span>");
   });
 
@@ -62,12 +72,15 @@ describe("SessionDirectoryPicker", () => {
   });
 
   test("treats null as an explicit empty selection", () => {
-    const markup = renderPicker({ value: null, onValueChange: () => {} }, [
-      createSession("/repo/project"),
-    ]);
+    const markup = renderPicker(
+      { value: null, repository: "owner/project", onValueChange: () => {} },
+      [createSession("/repo/project")],
+      { workingDirectory: "/repo/project", repository: "owner/project" },
+    );
 
     expect(markup).toContain("Select directory");
     expect(markup).not.toContain("Loading working directory");
+    expect(markup).not.toContain("owner/project");
   });
 
   test("renders an explicit directory without waiting for MRU data", () => {
@@ -79,6 +92,75 @@ describe("SessionDirectoryPicker", () => {
     expect(markup).toContain('aria-label="Working directory: /explicit/project"');
     expect(markup).not.toContain("Loading working directory");
   });
+
+  test("shows a newly selected repository without session or MRU metadata", () => {
+    const markup = renderPicker({ value: "/new/project", onValueChange: () => {} }, [], {
+      workingDirectory: "/new/project",
+      gitRoot: "/new/project",
+      repository: "owner/project",
+    });
+
+    expect(markup).toContain("lucide-git-branch");
+    expect(markup).toContain("owner/project");
+  });
+
+  test("catalog Git metadata wins over conflicting directory-cache data", () => {
+    const markup = renderPicker(
+      {
+        value: "/repo/project",
+        repository: "owner/project",
+        gitRoot: "/repo/project",
+        onValueChange: () => {},
+      },
+      [],
+      { workingDirectory: "/repo/project" },
+    );
+    expect(markup).toContain("lucide-git-branch");
+    expect(markup).toContain('aria-label="Repository: owner/project"');
+  });
+
+  test("a directory without metadata does not borrow another directory's cached result", () => {
+    const markup = renderPicker({ value: "/folder", onValueChange: () => {} }, [], {
+      workingDirectory: "/repo/project",
+      gitRoot: "/repo/project",
+      repository: "owner/project",
+    });
+    expect(markup).not.toContain("lucide-git-branch");
+    expect(markup).not.toContain("owner/project");
+    expect(markup).toContain('aria-label="Working directory: /folder"');
+  });
+
+  test.each(["catalog", "query"])(
+    "%s metadata renders existing-session branch controls",
+    (source) => {
+      const client = new QueryClient();
+      const context = {
+        workingDirectory: "/repo/project",
+        gitRoot: "/repo/project",
+        repository: "owner/project",
+        branch: "main",
+      };
+      if (source === "query") {
+        client.setQueryData(sessionQueries.context(context.workingDirectory).queryKey, context);
+      }
+      const markup = renderToStaticMarkup(
+        createElement(
+          QueryClientProvider,
+          { client },
+          createElement(SessionLocationPicker, {
+            value: context.workingDirectory,
+            ...(source === "catalog"
+              ? { repository: context.repository, gitRoot: context.gitRoot, branch: context.branch }
+              : {}),
+          }),
+        ),
+      );
+
+      expect(markup).toContain("lucide-git-branch");
+      expect(markup).toContain('aria-label="Repository: owner/project"');
+      expect(markup).toContain('aria-haspopup="menu"');
+    },
+  );
 
   test("supports externally owned loading for existing sessions", () => {
     const markup = renderPicker({ value: "/session/project", isLoading: true });

@@ -35,6 +35,7 @@ exports[`history pipeline golden replay replaying a recorded session produces th
     },
     {
       "content": "My quick take: the shape is much cleaner now, but I’ll get independent reviews on the main risk areas before making a stronger call.",
+      "messageId": "572c6c64-a4a2-495b-aa4c-535d1cc4abdc",
       "role": "assistant",
       "toolCalls": [
         {
@@ -53,6 +54,7 @@ exports[`history pipeline golden replay replaying a recorded session produces th
           "agent": {
             "model": {
               "name": "gpt-5.5",
+              "provider": "copilot",
             },
           },
           "arguments": {
@@ -74,6 +76,7 @@ exports[`history pipeline golden replay replaying a recorded session produces th
           "agent": {
             "model": {
               "name": "claude-haiku-4.5",
+              "provider": "copilot",
             },
           },
           "arguments": {
@@ -100,6 +103,7 @@ Intended behavior:
           "agent": {
             "model": {
               "name": "claude-haiku-4.5",
+              "provider": "copilot",
             },
           },
           "arguments": {
@@ -126,6 +130,7 @@ Intended behavior:
           "agent": {
             "model": {
               "name": "claude-haiku-4.5",
+              "provider": "copilot",
             },
           },
           "arguments": {
@@ -152,6 +157,7 @@ Intended behavior:
           "agent": {
             "model": {
               "name": "claude-haiku-4.5",
+              "provider": "copilot",
             },
           },
           "arguments": {
@@ -179,6 +185,7 @@ Focus areas:
             "content": "",
             "model": {
               "name": "claude-haiku-4.5",
+              "provider": "copilot",
             },
             "toolCalls": [
               {
@@ -309,6 +316,7 @@ Context: Changes include SDK blob attachments, semantic Attachment type, semanti
             "content": "I'll start by examining the uncommitted changes to understand the design context.",
             "model": {
               "name": "claude-opus-4.8",
+              "provider": "copilot",
             },
             "toolCalls": [
               {
@@ -408,6 +416,7 @@ Evaluate the overall design decisions:
   ],
   "model": {
     "name": "gpt-5.5",
+    "provider": "copilot",
     "reasoningEffort": "xhigh",
   },
   "openedFiles": [],
@@ -416,7 +425,7 @@ Evaluate the overall design decisions:
   "queuedMessages": [],
   "reasoningContent": "",
   "status": "idle",
-  "summary": undefined,
+  "title": undefined,
   "todos": undefined,
 }
 `;

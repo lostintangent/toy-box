@@ -110,8 +110,6 @@ describe("Channel state reducer", () => {
       host: { kind: "channel", channelId: "channel" } as const,
       agentId: "reviewer",
       sessionId: "reviewer-session",
-      executionMode: "shared" as const,
-      seenThrough: 1,
     };
     const joined = reduceChannelState(state(), {
       type: "message",

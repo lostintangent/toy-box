@@ -74,7 +74,7 @@ create stylesheet sidecars.
 - `AppAlert` gives failures consistent alert semantics and destructive styling.
   Render the error as its children and use `className` only for surrounding
   layout.
-- `AppSessionStatus` renders a session's standard Draft, Running, Idle, or
+- `AppSessionStatus` renders a session's standard Draft, Running, Waiting, Idle, or
   Finished badge. Pass the reactive `session.status` value directly.
 - `AppSessionToggle` renders the current surface's standard Open/Close control
   for a session. Pass its `sessionId`; the component subscribes to pane state
@@ -88,7 +88,14 @@ These components accept their corresponding native element props and
 
 - Use `AppModelPicker` when the user should choose the model for a new session
   or worker. It takes `{ value, onValueChange }`; initialize it from
-  `workspace.defaultModel` and render it only when non-null.
+  `workspace.defaultModel` and render it only when non-null. Keep the returned
+  configuration intact when storing or passing it to session and worker actions;
+  the shared picker and Sessions handle provider identity and model options.
+  Store it as an opaque JSON object in the app state schema (`{ "type": "object" }`)
+  instead of enumerating its fields. Import the `ModelConfiguration` type from
+  `@toy-box/sdk` when restoring that picker-produced value from opaque state.
+  App state already handles JSON serialization; session and worker APIs validate
+  the configuration when it is submitted.
 - Use `AppLocationPicker` when work may run in a chosen directory or worktree.
   It takes `{ value, onValueChange, useWorktree?, onUseWorktreeChange? }`. Keep
   the directory value as `string | null` to match `onValueChange`.
@@ -181,12 +188,9 @@ Use `useWorkspace(selector)` for the smallest reactive workspace projection the
 component needs:
 
 ```ts
-type AppSession = {
-  id: string;
-  title: string;
-  status: "draft" | "running" | "idle" | "unread";
-  directory?: string;
-  isRemote: boolean;
+type AppSession = SessionMetadata & {
+  status: "draft" | "running" | "waiting" | "idle" | "unread";
+  kind: "standard" | "automation" | "hyper";
   worktree?: SessionWorktree;
   children: AppSession[];
 };
@@ -205,6 +209,8 @@ type AppWorkspace = {
   models: Array<{
     id: string;
     name: string;
+    provider: string;
+    providerName?: string;
     supportedReasoningEfforts?: string[];
     defaultReasoningEffort?: string;
     /** Ordered with the model's default tier first. */
@@ -226,10 +232,19 @@ type AppWorkspace = {
 const sessions = useWorkspace((workspace) => workspace.sessions);
 ```
 
+`AppSession` and `SessionMetadata` are exported by `@toy-box/sdk`. The session
+metadata passes through unchanged: `sessionId`, optional `provider` and `title`,
+`startTime` and `modifiedTime` as `Date` values, optional `directory`, and available
+native `gitRoot`, `repository`, and `branch` display metadata.
+The status type is shared with the workspace. Use `session.sessionId` with session actions and controls,
+`session.directory` for its directory, and a display fallback such
+as `session.title ?? "Untitled session"` when needed.
+Git fields are presentation metadata, not inputs to session creation.
+
 Use this data to render live session status, durable child-session trees,
 available models, saved apps, visible panes, and, for a saved app, active
 app-owned workers.
-`sessions` contains top-level standard sessions; each recursive `children` array
+`sessions` contains top-level standard, automation, and Hyper sessions; each `children` array
 contains the session- and file-owned worker sessions rooted beneath it. `workers`
 is already scoped to the current saved app instance; artifact apps receive empty
 `workers` and `shares` arrays because they do not fabricate an instance owner.
@@ -331,7 +346,7 @@ type AppActions = {
 type SessionMessage = {
   id?: string;
   content: string;
-  attachments?: Array<{ displayName: string; mimeType: string; base64: string }>;
+  attachments?: Array<{ mimeType: string; base64: string }>;
   model?: ModelConfiguration;
 };
 

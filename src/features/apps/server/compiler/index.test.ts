@@ -36,6 +36,10 @@ describe("app compiler", () => {
           createId,
           useApp,
           useFile,
+          useWorkspace,
+          type AppSession,
+          type SessionMetadata,
+          type ModelConfiguration,
           type SessionLaunch,
           type WorkspaceFile,
         } from "@toy-box/sdk";
@@ -45,6 +49,20 @@ describe("app compiler", () => {
           return <span>{value}</span>;
         });
         const CountSchema = z.number().int().catch(0);
+
+        function SessionRow({ session }: { session: AppSession }) {
+          const metadata: SessionMetadata = session;
+          return (
+            <section data-session={metadata.sessionId} data-provider={metadata.provider}>
+              {metadata.title ?? "Untitled session"}
+              {metadata.directory}
+              <time>{metadata.modifiedTime.toISOString()}</time>
+              <AppSessionStatus status={session.status} />
+              <AppSessionToggle sessionId={metadata.sessionId} />
+              {session.children.map((child) => <SessionRow key={child.sessionId} session={child} />)}
+            </section>
+          );
+        }
 
         export default function TestApp() {
           const [count, setCount] = useState(CountSchema.parse(1));
@@ -57,15 +75,22 @@ describe("app compiler", () => {
             "shared",
           );
           const app = useApp();
+          const sessions = useWorkspace((workspace) => workspace.sessions);
           const { actions } = app;
-          const launch = { message: { content: "Inspect this app." } } satisfies SessionLaunch;
+          const model: ModelConfiguration = {
+            provider: "codex",
+            name: "future-model",
+            reasoningEffort: "high",
+            contextTier: "standard",
+            options: { budget: 42 },
+          };
+          const launch = { message: { content: "Inspect this app.", model } } satisfies SessionLaunch;
           return (
             <>
               <style>{"[data-toybox-app='test-app'] .meter { accent-color: rebeccapurple; }"}</style>
               <AppFilePicker value={file} extensions={[".md"]} onValueChange={setFile} />
               <AppAlert>Something went wrong.</AppAlert>
-              <AppSessionStatus status="running" />
-              <AppSessionToggle sessionId="session" />
+              {sessions.map((session) => <SessionRow key={session.sessionId} session={session} />)}
               <AppSharePicker mimeType="text/plain" content="Hello" />
               <button
                 onClick={async () => {

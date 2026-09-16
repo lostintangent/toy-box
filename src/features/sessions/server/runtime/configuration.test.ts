@@ -1,10 +1,14 @@
 import { describe, expect, jest, mock, onTestFinished, spyOn, test } from "bun:test";
-import type { CopilotSession } from "@github/copilot-sdk";
+import type { SessionConnection } from "@providers/server/provider";
 import { AgentDatabase } from "@agents/server/database";
 import * as state from "@/server/database";
-import * as sdk from "../sdk/client";
+import * as sdk from "../providers";
 import * as registry from "../state/registry";
 import * as snapshots from "../state/snapshots";
+import { bindProviderSession } from "../state/sessions";
+import { getSessionConfiguration } from "@/server/sessionTools";
+import * as settings from "@workspace/server/state/settings";
+import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
 import { createSession, deliverSessionMessage, SessionStream } from "./index";
 
 async function setup(agentSession: boolean) {
@@ -35,14 +39,13 @@ async function setup(agentSession: boolean) {
   const agent = (await agents.updateAgent({
     agentId: createdAgent.id,
     persona: "Original persona",
-    model: { name: "model-one" },
+    model: { provider: "copilot", name: "model-one" },
   }))!;
   if (agentSession)
     await agents.createMembership({
       host: { kind: "session", sessionId: "parent" },
       agentId: agent.id,
       sessionId,
-      executionMode: "shared",
     });
   onTestFinished(() => {
     SessionStream.remove(sessionId);
@@ -57,15 +60,46 @@ function makeSession() {
   const send = mock(async () => crypto.randomUUID());
   const disconnect = mock(async () => {});
   const session = {
-    on: () => () => {},
+    identity: { sessionId: "test", providerId: "copilot", nativeId: "test" },
+    onEvent: () => () => {},
+    setModel: async () => {},
+    rename: async () => true,
     send,
     disconnect,
     rpc: { name: { set: async () => {} } },
-  } as unknown as CopilotSession;
+  } as unknown as SessionConnection;
   return { session, send, disconnect };
 }
 
 describe("Session-owned configuration lifetime", () => {
+  test.each(["copilot", "codex"] as const)(
+    "inherited Agent models preserve an existing %s provider when the workspace default changes",
+    async (providerId) => {
+      const { sessionId, agent, agents } = await setup(true);
+      await agents.updateAgent({ agentId: agent.id, model: null });
+      const defaultModel = {
+        provider: providerId === "copilot" ? "codex" : "copilot",
+        name: "new-default",
+      };
+      spyOn(settings, "getSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, defaultModel });
+      expect(await getSessionConfiguration(sessionId, "agent")).toMatchObject({
+        model: defaultModel,
+      });
+
+      await bindProviderSession({ sessionId, providerId, nativeId: "existing-native-session" });
+      expect(await getSessionConfiguration(sessionId, "agent")).not.toHaveProperty("model");
+
+      const sameProviderDefault = { provider: providerId, name: "updated-model" };
+      spyOn(settings, "getSettings").mockResolvedValue({
+        ...DEFAULT_SETTINGS,
+        defaultModel: sameProviderDefault,
+      });
+      expect(await getSessionConfiguration(sessionId, "agent")).toMatchObject({
+        model: sameProviderDefault,
+      });
+    },
+  );
+
   test("Agents refresh changed configuration only between executions", async () => {
     const { sessionId, agent, agents, create, resume, handles } = await setup(true);
     const receipt = await createSession(
@@ -82,7 +116,7 @@ describe("Session-owned configuration lifetime", () => {
     );
     expect(initialConfiguration).toMatchObject({
       additionalInstructions: expect.stringContaining("Original persona"),
-      model: { name: "model-one" },
+      model: { provider: "copilot", name: "model-one" },
     });
     expect(agent.avatar).toBeUndefined();
 
@@ -96,7 +130,7 @@ describe("Session-owned configuration lifetime", () => {
     });
     await agents.updateAgent({
       agentId: agent.id,
-      model: { name: "model-two" },
+      model: { provider: "copilot", name: "model-two" },
     });
     await deliverSessionMessage(sessionId, { content: "Continue" }, { immediate: true });
     expect(resume).not.toHaveBeenCalled();
@@ -120,7 +154,7 @@ describe("Session-owned configuration lifetime", () => {
     expect(handles[0]!.disconnect).toHaveBeenCalledTimes(1);
     const configuration = resume.mock.calls[0]![1];
     expect(configuration).toMatchObject({
-      model: { name: "model-two" },
+      model: { provider: "copilot", name: "model-two" },
       disableMemory: true,
     });
     expect(configuration.additionalInstructions).toContain("Evolved persona");
@@ -141,7 +175,7 @@ describe("Session-owned configuration lifetime", () => {
     SessionStream.get(sessionId)!.finish();
     await agents.updateAgent({ agentId: agent.id, persona: "Changed persona" });
 
-    await registry.withSession(sessionId, (session) => session.rpc.name.set({ name: "Renamed" }));
+    await registry.withSession(sessionId, (session) => session.rename("Renamed"));
 
     expect(resume).not.toHaveBeenCalled();
     expect(handles[0]!.disconnect).not.toHaveBeenCalled();

@@ -14,6 +14,7 @@ const SETTINGS_SHAPE = {
   useWorktree: z.boolean(),
   autoFocusArtifacts: z.enum(SESSION_FEATURE_SCOPE_VALUES),
   showExternalSessions: z.boolean(),
+  hiddenSessionProviders: z.array(z.string()),
   pinnedSessionIds: z.array(z.string()),
 };
 
@@ -28,6 +29,7 @@ export const DEFAULT_SETTINGS: Settings = {
   useWorktree: false,
   autoFocusArtifacts: "automations",
   showExternalSessions: true,
+  hiddenSessionProviders: [],
   pinnedSessionIds: [],
 };
 
@@ -44,6 +46,7 @@ export function normalizeSettings(value: unknown): Settings {
     }),
   ) as Settings;
   settings.pinnedSessionIds = [...new Set(settings.pinnedSessionIds)].sort();
+  settings.hiddenSessionProviders = [...new Set(settings.hiddenSessionProviders)].sort();
   return settings;
 }
 
@@ -52,8 +55,8 @@ export function areSettingsEqual(left: Settings, right: Settings): boolean {
     if (key === "defaultModel") {
       return areModelConfigurationsEqual(left.defaultModel, right.defaultModel);
     }
-    if (key === "pinnedSessionIds") {
-      return areStringSetsEqual(left.pinnedSessionIds, right.pinnedSessionIds);
+    if (key === "pinnedSessionIds" || key === "hiddenSessionProviders") {
+      return areStringSetsEqual(left[key], right[key]);
     }
     return Object.is(left[key], right[key]);
   });

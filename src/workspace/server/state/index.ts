@@ -14,7 +14,7 @@ import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 import { broadcast } from "@workspace/server/events";
 import { addHyperSession, deleteHyperState, getHyperSessionIds } from "./hyperSessions";
 import { applySessionState, getSessionStates, setSessionPrompt } from "./sessions";
-import { getDraftSessions } from "@sessions/server/state/drafts";
+import { getDraftSessions } from "@sessions/server/state/sessions";
 import { getSettings, persistSettings } from "./settings";
 
 export { getEnvironment } from "./environment";

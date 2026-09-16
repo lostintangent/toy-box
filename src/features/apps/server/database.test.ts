@@ -147,14 +147,14 @@ describe("app instance database", () => {
     const { apps, db } = await openTestDatabase();
     const created = await apps.create(initialApp);
     await db`
-      INSERT INTO drafts (session_id, artifact_path, created_at)
-      VALUES (${"ordinary-session"}, ${null}, ${1})
+      INSERT INTO sessions (session_id, created_at)
+      VALUES (${"ordinary-session"}, ${1})
     `;
 
     expect(await apps.delete(created.id)).toBe(true);
     expect(await apps.get(created.id)).toBeNull();
-    const drafts = await db<{ session_id: string }[]>`SELECT session_id FROM drafts`;
-    expect(Array.from(drafts)).toEqual([{ session_id: "ordinary-session" }]);
+    const sessions = await db<{ session_id: string }[]>`SELECT session_id FROM sessions`;
+    expect(Array.from(sessions)).toEqual([{ session_id: "ordinary-session" }]);
   });
 
   test("checks definition use without loading instance state", async () => {

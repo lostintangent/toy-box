@@ -6,7 +6,12 @@ Inbox runs durable background tasks without requiring a browser to stay attached
 
 An entry begins pending with only an ID and creation time. `send_to_inbox` may complete it once with a concise message and at most one artifact filename. The artifact is an ordinary file in the managed session workspace; Inbox stores only the filename needed to present it.
 
-`model/` owns the entry and ingress schemas. `server/database.ts` owns Inbox rows. `server/index.ts` owns entry/session teardown and workspace publication, while `server/dispatcher.ts` owns dispatch and completion supervision. `server/functions.ts` is the validated RPC ingress used by Query mutations and matching server callers; `server/tools.ts` validates and handles the agent-only result operation. `routes/inbox.ts` owns the external JSON and multipart HTTP ingress used by the browser extension.
+`model/` owns the entry and ingress schemas. `server/schema.ts` defines the Inbox table, and
+`server/database.ts` owns its rows. `server/index.ts` owns entry/session teardown and workspace
+publication, while `server/dispatcher.ts` owns dispatch and completion supervision.
+`server/functions.ts` is the validated RPC ingress used by Query mutations and matching server
+callers; `server/tools.ts` validates and handles the agent-only result operation. `routes/inbox.ts`
+owns the external JSON and multipart HTTP ingress used by the browser extension.
 
 ## Managed-session lifecycle
 
@@ -31,8 +36,11 @@ The Inbox pane may publish one artifact into the browser-local workspace surface
 ## Boundaries and invariants
 
 - The [Sessions runtime](../sessions/server/runtime/AGENTS.md) owns delivery, execution, completion, and transcript streaming. Inbox owns only supervision and retention policy.
-- [`../../server/database.ts`](../../server/database.ts) owns the shared connection, [Sessions](../sessions/AGENTS.md) owns session teardown, and [Workspace](../../workspace/AGENTS.md) owns the aggregate projection. Inbox owns its rows and entry events.
+- [`../../server/database.ts`](../../server/database.ts) owns the shared connection and composes
+  feature schemas, [Sessions](../sessions/AGENTS.md) owns session teardown, and
+  [Workspace](../../workspace/AGENTS.md) owns the aggregate projection. Inbox owns its table, rows,
+  and entry events.
 - Inbox owns its role instructions and the `send_to_inbox` contract in `server/tools.ts`; application
-  composition selects them for the [Sessions SDK boundary](../sessions/server/sdk/AGENTS.md).
+  composition selects them for the [session provider boundary](../providers/INTEGRATION.md).
 - [Workspace](../../workspace/AGENTS.md) owns generic pane composition. Inbox owns the behavior of its pane and entries.
 - Never create a second execution model or a second status source for Inbox work. Entry identity, session identity, and workspace session status must continue to agree.

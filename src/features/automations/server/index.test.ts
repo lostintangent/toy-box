@@ -41,7 +41,7 @@ beforeEach(() => {
 const options = {
   title: "Daily summary",
   prompt: "Summarize the repository.",
-  model: { name: "gpt-5" },
+  model: { provider: "copilot", name: "gpt-5" },
   cron: "0 9 * * *",
 } satisfies AutomationOptions;
 

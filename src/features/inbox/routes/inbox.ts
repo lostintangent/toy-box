@@ -47,7 +47,6 @@ async function parseInboxInput(request: Request): Promise<InboxInput> {
       .getAll("attachments")
       .filter((entry) => entry instanceof File)
       .map(async (file) => ({
-        displayName: file.name,
         mimeType: file.type || "application/octet-stream",
         base64: Buffer.from(await file.arrayBuffer()).toString("base64"),
       })),

@@ -17,22 +17,20 @@ export function ImageAttachments({
     <div className="mb-2 flex flex-wrap gap-1.5">
       {attachments.map((attachment, index) => (
         <div
-          key={attachment.base64}
+          // eslint-disable-next-line react/no-array-index-key -- stateless previews may contain the same image more than once
+          key={index}
           className="inline-flex items-center gap-1.5 rounded-md border bg-secondary-background p-1.5"
         >
           <img
             src={toDataUrl(attachment)}
-            alt={attachment.displayName}
+            alt={`Image ${index + 1}`}
             className="h-8 w-8 rounded object-cover"
           />
-          <span className="max-w-25 truncate text-xs text-muted-foreground">
-            {attachment.displayName}
-          </span>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            aria-label={`Remove ${attachment.displayName}`}
+            aria-label={`Remove image ${index + 1}`}
             className="h-5 w-5 rounded-full"
             onClick={() => onRemove(index)}
           >

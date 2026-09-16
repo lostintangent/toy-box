@@ -16,16 +16,16 @@ export function getRecentDirectories(sessions: SessionMetadata[]): RecentDirecto
     .slice(0, RECENT_SESSION_LIMIT);
 
   for (const session of recentSessions) {
-    const cwd = session.context?.workingDirectory?.trim();
+    const cwd = session.directory?.trim();
     if (!cwd) continue;
-
-    const existing = directories.get(cwd);
+    const previous = directories.get(cwd);
+    if (previous?.repository || previous?.gitRoot) continue;
     directories.set(cwd, {
       cwd,
-      repository: existing?.repository ?? session.context?.repository,
-      gitRoot: existing?.gitRoot ?? session.context?.gitRoot,
+      repository: session.repository,
+      gitRoot: session.gitRoot,
     });
   }
 
-  return Array.from(directories.values());
+  return [...directories.values()];
 }

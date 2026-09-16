@@ -25,7 +25,6 @@ describe("channel database", () => {
       channelId: channel.id,
       agentId: critic.id,
       sessionId: "critic-session",
-      executionMode: "shared",
     });
     await channels.createChannel({ title: "Another room" });
 
@@ -34,7 +33,7 @@ describe("channel database", () => {
       channelId: channel.id,
       sender: { type: "user" },
       content: "@critic Please check the invitation flow.",
-      attachments: [{ displayName: "flow.png", mimeType: "image/png", base64: "aW1hZ2U=" }],
+      attachments: [{ mimeType: "image/png", base64: "aW1hZ2U=" }],
     });
     await channels.appendMessage({
       id: "message-2",
@@ -53,7 +52,6 @@ describe("channel database", () => {
         host: { kind: "channel", channelId: channel.id },
         agentId: critic.id,
         sessionId: "critic-session",
-        executionMode: "shared",
       },
     ]);
     expect(await channels.listAgentChannels(critic.id)).toEqual([
@@ -178,7 +176,6 @@ describe("channel database", () => {
       channelId: channel.id,
       agentId: agent.id,
       sessionId: "planner-session",
-      executionMode: "shared",
     });
     await channels.appendMessage({
       id: "message-1",
@@ -244,7 +241,6 @@ describe("channel database", () => {
       channelId: channel.id,
       agentId: agent.id,
       sessionId: "reviewer-session",
-      executionMode: "shared",
     });
     await channels.appendMessage({
       id: "message-1",

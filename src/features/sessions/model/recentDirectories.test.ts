@@ -5,33 +5,32 @@ import { getRecentDirectories } from "./recentDirectories";
 function createSession(
   sessionId: string,
   modifiedTime: number,
-  cwd?: string,
-  context?: { repository?: string; gitRoot?: string },
+  directory?: string,
 ): SessionMetadata {
   return {
     sessionId,
     startTime: new Date(modifiedTime),
     modifiedTime: new Date(modifiedTime),
-    summary: sessionId,
-    isRemote: false,
-    context: cwd ? { workingDirectory: cwd, ...context } : undefined,
+    title: sessionId,
+    directory,
   };
 }
 
 describe("recent directories", () => {
   test("orders unique directories by their most recent session", () => {
     const sessions = [
-      createSession("older-repo", 1, "/repo", {
-        repository: "repo",
+      {
+        ...createSession("older-repo", 1, "/repo"),
+        repository: "owner/repo",
         gitRoot: "/repo",
-      }),
-      createSession("other", 2, "/other", { repository: "other" }),
+      },
+      createSession("other", 2, "/other"),
       createSession("newer-repo", 3, " /repo "),
     ];
 
     expect(getRecentDirectories(sessions)).toEqual([
-      { cwd: "/repo", repository: "repo", gitRoot: "/repo" },
-      { cwd: "/other", repository: "other", gitRoot: undefined },
+      { cwd: "/repo", repository: "owner/repo", gitRoot: "/repo" },
+      { cwd: "/other", repository: undefined, gitRoot: undefined },
     ]);
     expect(sessions.map((session) => session.sessionId)).toEqual([
       "older-repo",
@@ -54,5 +53,21 @@ describe("recent directories", () => {
     expect(directories).toHaveLength(48);
     expect(directories[0]?.cwd).toBe("/repo/50");
     expect(directories.at(-1)?.cwd).toBe("/repo/3");
+  });
+
+  test("does not mix older repository metadata into a newer Git snapshot", () => {
+    const directories = getRecentDirectories([
+      {
+        ...createSession("newer", 2, "/repo"),
+        gitRoot: "/repo",
+      },
+      {
+        ...createSession("older", 1, "/repo"),
+        gitRoot: "/repo",
+        repository: "old/remote",
+      },
+    ]);
+
+    expect(directories).toEqual([{ cwd: "/repo", gitRoot: "/repo", repository: undefined }]);
   });
 });

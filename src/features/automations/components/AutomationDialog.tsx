@@ -10,23 +10,12 @@ import {
   DialogTitle,
 } from "@/shared/components/ui/dialog";
 import { Input } from "@/shared/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/shared/components/ui/select";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import { Textarea } from "@/shared/components/ui/textarea";
 import { SessionDirectoryPicker } from "@sessions/components/location/directory/SessionDirectoryPicker";
-import {
-  formatReasoningEffort,
-  normalizeModelConfiguration,
-  resolveModelConfigurationForModel,
-} from "@sessions/model/modelConfiguration";
+import { normalizeModelConfiguration } from "@sessions/model/modelConfiguration";
+import { ModelConfigurationPicker } from "@sessions/components/composer/ModelPicker";
 import { useModels } from "@sessions/useModels";
-import { cn } from "@/shared/utils";
 import type { ModelInfo } from "@sessions/model";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
 import { automationMutations } from "../mutations";
@@ -58,15 +47,6 @@ export function AutomationDialog(props: AutomationDialogProps) {
     createAutomationForm(mode, automation, models, defaultModel),
   );
   const selectedModel = form.model ?? (mode === "create" ? defaultModel : null);
-  const formModel = models.find((model) => model.id === selectedModel?.name);
-  const formReasoningEfforts = formModel?.supportedReasoningEfforts ?? [];
-  const modelOptions = models.map((model) => ({ value: model.id, label: model.name }));
-  const reasoningEffortOptions = formReasoningEfforts.map((effort) => ({
-    value: effort,
-    label: formatReasoningEffort(effort),
-  }));
-  const hasReasoningEffortOptions = formReasoningEfforts.length > 0;
-  const selectedReasoningEffort = selectedModel?.reasoningEffort;
   const cronError = getCronValidationError(form.cron);
 
   const dialogTitle = mode === "edit" ? "Edit automation" : "Create automation";
@@ -122,69 +102,18 @@ export function AutomationDialog(props: AutomationDialogProps) {
                 />
               )}
             </AutomationField>
-            <div
-              className={cn(
-                "grid gap-3",
-                hasReasoningEffortOptions && "grid-cols-[minmax(0,1fr)_9rem]",
-              )}
-            >
-              <AutomationField label="Model">
-                {(id) =>
-                  selectedModel ? (
-                    <Select
-                      items={modelOptions}
-                      value={selectedModel.name}
-                      onValueChange={(modelId) => {
-                        const modelInfo = models.find((candidate) => candidate.id === modelId);
-                        updateForm({
-                          model: resolveModelConfigurationForModel(modelInfo, {
-                            ...selectedModel,
-                            name: modelId,
-                          }),
-                        });
-                      }}
-                    >
-                      <SelectTrigger id={id} className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {modelOptions.map((model) => (
-                          <SelectItem key={model.value} value={model.value}>
-                            {model.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Skeleton className="h-10 w-full rounded-md" />
-                  )
-                }
-              </AutomationField>
-              {hasReasoningEffortOptions && selectedReasoningEffort && (
-                <AutomationField label="Reasoning effort">
-                  {(id) => (
-                    <Select
-                      items={reasoningEffortOptions}
-                      value={selectedReasoningEffort}
-                      onValueChange={(reasoningEffort) =>
-                        updateForm({
-                          model: selectedModel ? { ...selectedModel, reasoningEffort } : null,
-                        })
-                      }
-                    >
-                      <SelectTrigger id={id} className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {reasoningEffortOptions.map((effort) => (
-                          <SelectItem key={effort.value} value={effort.value}>
-                            {effort.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                </AutomationField>
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Model</p>
+              {selectedModel ? (
+                <div className="flex items-center gap-1 rounded-md border border-border/70 bg-muted/20 p-2">
+                  <ModelConfigurationPicker
+                    models={models}
+                    value={selectedModel}
+                    onValueChange={(model) => updateForm({ model })}
+                  />
+                </div>
+              ) : (
+                <Skeleton className="h-10 w-full rounded-md" />
               )}
             </div>
             <AutomationDirectoryPicker value={form.cwd} onChange={(cwd) => updateForm({ cwd })} />

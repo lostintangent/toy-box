@@ -1,5 +1,8 @@
+import type { SessionConnection } from "@providers/server/provider";
+import { resolveSessionArtifactPath } from "@files/server/paths";
+import { deleteSessionFiles, listSessionArtifacts } from "@sessions/server/artifacts";
 import { expect, mock, onTestFinished, test } from "bun:test";
-import type { CopilotSession, ToolInvocation } from "@github/copilot-sdk";
+import type { ToolInvocation } from "@github/copilot-sdk";
 import { createTestDatabase } from "@/server/database";
 import { SessionStream } from "@sessions/server/runtime/sessionStream";
 
@@ -56,23 +59,15 @@ test("send_to_inbox writes its artifact to the session workspace and attaches th
   const sessionId = `toy-box-${crypto.randomUUID()}`;
   await createInboxEntry(sessionId);
 
-  // Drive a real stream with a fake SDK session so the tool's workspace write is observable.
-  const createdFiles: Array<{ path: string; content: string }> = [];
   const fakeSession = {
-    on: () => () => {},
-    send: async () => {},
-    abort: async () => {},
-    rpc: {
-      queue: { clear: async () => {} },
-      workspaces: {
-        createFile: async (params: { path: string; content: string }) => {
-          createdFiles.push(params);
-        },
-      },
-    },
-  } as unknown as CopilotSession;
+    identity: { sessionId, providerId: "copilot", nativeId: sessionId },
+    onEvent: () => () => {},
+  } as unknown as SessionConnection;
   const stream = SessionStream.getOrCreate(sessionId, fakeSession);
-  onTestFinished(() => stream.finish());
+  onTestFinished(async () => {
+    stream.finish();
+    await deleteSessionFiles(sessionId);
+  });
 
   const [sendToInbox] = inboxTools;
   const sendResult = await sendToInbox?.handler?.(
@@ -84,7 +79,10 @@ test("send_to_inbox writes its artifact to the session workspace and attaches th
   );
   const { entryId } = JSON.parse(String(sendResult)) as { entryId: string };
 
-  expect(createdFiles).toEqual([{ path: "research.md", content: "# Research" }]);
+  expect(await Bun.file(resolveSessionArtifactPath(sessionId, "research.md")!).text()).toBe(
+    "# Research",
+  );
+  expect(await listSessionArtifacts(sessionId)).toEqual(["research.md"]);
   expect(await listInboxEntries()).toContainEqual({
     id: entryId,
     message: "Research is ready",

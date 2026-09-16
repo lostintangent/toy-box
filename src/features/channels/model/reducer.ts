@@ -6,94 +6,80 @@ import { workspaceFileId } from "@files/model";
 export function reduceChannelState(state: ChannelState, event: ChannelEvent): ChannelState {
   if (event.revision <= state.revision) return state;
 
-  switch (event.type) {
-    case "state": {
-      const firstStateSequence = event.state.messages[0]?.sequence;
-      const lastCachedSequence = state.messages.at(-1)?.sequence;
-      if (
-        firstStateSequence !== undefined &&
-        lastCachedSequence !== undefined &&
-        lastCachedSequence < firstStateSequence - 1
-      ) {
-        return event.state;
-      }
-      const messageIds = new Set(event.state.messages.map(({ id }) => id));
-      const localMessages = state.messages.filter(({ id }) => !messageIds.has(id));
-      return localMessages.length === 0
-        ? event.state
-        : {
-            ...event.state,
-            messages: mergeChannelMessages(event.state.messages, localMessages),
-          };
+  if (event.type === "state") {
+    const firstStateSequence = event.state.messages[0]?.sequence;
+    const lastCachedSequence = state.messages.at(-1)?.sequence;
+    if (
+      firstStateSequence !== undefined &&
+      lastCachedSequence !== undefined &&
+      lastCachedSequence < firstStateSequence - 1
+    ) {
+      return event.state;
     }
+    const messages = mergeChannelMessages(event.state.messages, state.messages);
+    return messages === event.state.messages ? event.state : { ...event.state, messages };
+  }
+
+  const next = { ...state, revision: event.revision };
+  switch (event.type) {
     case "message": {
-      const next = {
-        ...state,
-        revision: event.revision,
-        messages: upsertMessage(state.messages, event.message),
-      };
+      next.messages = upsertMessage(state.messages, event.message);
       if (!isChannelSystemMessage(event.message)) return next;
+
       const content = event.message.content;
       switch (content.type) {
         case "member_joined":
-          return {
-            ...next,
-            members: [
-              ...state.members.filter(({ sessionId }) => sessionId !== content.member.sessionId),
-              content.member,
-            ],
-          };
-        case "member_left":
-          return {
-            ...next,
-            members: state.members.filter(
-              ({ sessionId }) => sessionId !== content.member.sessionId,
-            ),
-          };
-        case "artifact_shared":
-          return {
-            ...next,
-            artifacts: upsertArtifact(state.artifacts, content.artifact),
-          };
-      }
-    }
-    case "reaction":
-      return {
-        ...state,
-        revision: event.revision,
-        messages: state.messages.map((message) => {
-          if (message.sequence !== event.sequence || isChannelSystemMessage(message))
-            return message;
-          const reactions = [
-            ...(message.reactions ?? []).filter(({ agentId }) => agentId !== event.agentId),
-            ...(event.reaction ? [{ agentId: event.agentId, reaction: event.reaction }] : []),
+          next.members = [
+            ...state.members.filter(({ sessionId }) => sessionId !== content.member.sessionId),
+            content.member,
           ];
-          return {
-            ...message,
-            reactions: reactions.length ? reactions : undefined,
-          };
-        }),
-      };
+          break;
+
+        case "member_left":
+          next.members = state.members.filter(
+            ({ sessionId }) => sessionId !== content.member.sessionId,
+          );
+          break;
+
+        case "artifact_shared":
+          next.artifacts = upsertArtifact(state.artifacts, content.artifact);
+          break;
+      }
+      return next;
+    }
+
+    case "reaction":
+      next.messages = state.messages.map((message) => {
+        if (message.sequence !== event.sequence || isChannelSystemMessage(message)) return message;
+
+        const reactions = [
+          ...(message.reactions ?? []).filter(({ agentId }) => agentId !== event.agentId),
+          ...(event.reaction ? [{ agentId: event.agentId, reaction: event.reaction }] : []),
+        ];
+        return {
+          ...message,
+          reactions: reactions.length ? reactions : undefined,
+        };
+      });
+      return next;
+
     case "status":
-      return {
-        ...state,
-        revision: event.revision,
-        members: state.members.map((member) =>
-          member.sessionId === event.sessionId ? { ...member, status: event.status } : member,
-        ),
-      };
+      next.members = state.members.map((member) =>
+        member.sessionId === event.sessionId ? { ...member, status: event.status } : member,
+      );
+      return next;
   }
 }
 
 /** Merge messages into the ordered transcript without replacing cached values. */
 export function mergeChannelMessages(
-  messages: readonly ChannelMessage[],
+  messages: ChannelMessage[],
   incoming: readonly ChannelMessage[],
 ): ChannelMessage[] {
   const messageIds = new Set(messages.map(({ id }) => id));
-  return [...messages, ...incoming.filter(({ id }) => !messageIds.has(id))].sort(
-    (left, right) => left.sequence - right.sequence,
-  );
+  const additions = incoming.filter(({ id }) => !messageIds.has(id));
+  if (additions.length === 0) return messages;
+  return [...messages, ...additions].sort((left, right) => left.sequence - right.sequence);
 }
 
 function upsertMessage(messages: ChannelMessage[], message: ChannelMessage): ChannelMessage[] {

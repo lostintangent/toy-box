@@ -184,18 +184,13 @@ export class AgentDatabase {
     return row ? membershipFromRow(row) : null;
   }
 
-  async createMembership(input: {
-    host: AgentHost;
-    agentId: string;
-    sessionId: string;
-    executionMode: AgentMembership["executionMode"];
-  }): Promise<AgentMembership> {
+  async createMembership(input: AgentMembership): Promise<AgentMembership> {
     const { hostKind, hostId } = hostColumns(input.host);
     await this.db`
       INSERT INTO agent_memberships (
-        session_id, agent_id, host_kind, host_id, execution_mode
+        session_id, agent_id, host_kind, host_id
       ) VALUES (
-        ${input.sessionId}, ${input.agentId}, ${hostKind}, ${hostId}, ${input.executionMode}
+        ${input.sessionId}, ${input.agentId}, ${hostKind}, ${hostId}
       )
     `;
     return input;
@@ -294,7 +289,6 @@ type AgentHostRow = {
 type AgentMembershipRow = AgentHostRow & {
   agent_id: string;
   session_id: string;
-  execution_mode: AgentMembership["executionMode"];
 };
 
 function agentFromRow(row: AgentRow, experiences: AgentExperience[]): Agent {
@@ -323,7 +317,6 @@ function membershipFromRow(row: AgentMembershipRow): AgentMembership {
     host: agentHostFromRow(row),
     agentId: row.agent_id,
     sessionId: row.session_id,
-    executionMode: row.execution_mode,
   };
 }
 

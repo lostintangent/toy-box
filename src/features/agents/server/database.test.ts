@@ -32,9 +32,10 @@ describe("Agent database", () => {
 
     await agents.updateAgent({
       agentId: first.id,
-      model: { name: "gpt-5.4", reasoningEffort: "high" },
+      model: { provider: "copilot", name: "gpt-5.4", reasoningEffort: "high" },
     });
     expect((await agents.getAgent(first.id))?.model).toEqual({
+      provider: "copilot",
       name: "gpt-5.4",
       reasoningEffort: "high",
     });
@@ -87,7 +88,6 @@ describe("Agent database", () => {
       host,
       agentId: agent.id,
       sessionId: "advisor-session",
-      executionMode: "worktree",
     });
 
     expect(await agents.getMembership(host, agent.id)).toEqual(membership);
@@ -97,7 +97,6 @@ describe("Agent database", () => {
         host,
         agentId: agent.id,
         sessionId: "another-session",
-        executionMode: "shared",
       }),
     ).rejects.toThrow();
   });
@@ -110,7 +109,6 @@ describe("Agent database", () => {
       host,
       agentId: agent.id,
       sessionId: "editor-session",
-      executionMode: "shared",
     });
     expect(await agents.getMembership(host, agent.id)).toMatchObject({
       sessionId: "editor-session",

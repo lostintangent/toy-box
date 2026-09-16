@@ -1,5 +1,6 @@
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
+import { TriangleAlert } from "lucide-react";
 import type { AssistantMessage as AssistantMessageType, ToolCall } from "../../../model";
 import { transcriptLinkComponents, transcriptRehypePlugins } from "./TranscriptFileLink";
 import { ToolCallMessage } from "./tools/ToolCallMessage";
@@ -19,8 +20,7 @@ export function AssistantMessage({
 }) {
   const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
 
-  // Skip rendering empty assistant messages (no content AND no tool calls)
-  if (!message.content && !hasToolCalls) {
+  if (!message.content && !hasToolCalls && !message.error) {
     return null;
   }
 
@@ -43,6 +43,21 @@ export function AssistantMessage({
           {/* Tool calls display */}
           {hasToolCalls && (
             <ToolCallsDisplay toolCalls={message.toolCalls!} isStreaming={isStreaming} />
+          )}
+          {message.error && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm"
+            >
+              <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-amber-500" />
+              <Streamdown
+                mode="static"
+                linkSafety={{ enabled: false }}
+                className="min-w-0 break-words"
+              >
+                {message.error}
+              </Streamdown>
+            </div>
           )}
         </div>
       </div>

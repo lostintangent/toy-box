@@ -7,8 +7,7 @@ function createSession(sessionId: string, modifiedTime: Date): SessionMetadata {
     sessionId,
     startTime: modifiedTime,
     modifiedTime,
-    summary: sessionId,
-    isRemote: false,
+    title: sessionId,
   };
 }
 

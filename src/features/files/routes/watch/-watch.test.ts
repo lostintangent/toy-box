@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, onTestFinished, test } from "bun:test";
 import { createWatchResponse } from "./$scope/$.ts";
+import type { FileWatchEvent } from "@files/model";
 
 describe("file watch", () => {
   const directories: string[] = [];
@@ -36,4 +37,55 @@ describe("file watch", () => {
     abort.abort();
     await reader.cancel();
   });
+
+  test("disconnecting one client leaves the other client's shared file subscription live", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "toy-box-file-watch-"));
+    directories.push(directory);
+    const path = join(directory, "document.md");
+    await Bun.write(path, "Before");
+
+    async function connect() {
+      const abort = new AbortController();
+      const response = await createWatchResponse(
+        { scope: "machine", _splat: path.replace(/^\/+/, "") },
+        new Request("http://localhost/api/watch", { signal: abort.signal }),
+      );
+      const reader = response.body!.getReader();
+      onTestFinished(async () => {
+        abort.abort();
+        await reader.cancel();
+      });
+      return { abort, reader };
+    }
+
+    const first = await connect();
+    const second = await connect();
+    const initial = await nextFileEvent(first.reader);
+    expect(await nextFileEvent(second.reader)).toEqual(initial);
+    first.abort.abort();
+    expect((await first.reader.read()).done).toBe(true);
+
+    await Bun.write(path, "After");
+    expect(await nextFileEvent(second.reader)).toEqual({
+      type: "modified",
+      timestamp: (await Bun.file(path).stat()).mtimeMs,
+    });
+    await rm(path);
+    expect(await nextFileEvent(second.reader)).toEqual({ type: "deleted" });
+  });
 });
+
+async function nextFileEvent(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<FileWatchEvent> {
+  const decoder = new TextDecoder();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("File subscription ended before its next event.");
+    const data = decoder
+      .decode(value)
+      .split("\n")
+      .find((line) => line.startsWith("data: "));
+    if (data) return JSON.parse(data.slice(6));
+  }
+}

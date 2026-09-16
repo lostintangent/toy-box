@@ -1,4 +1,4 @@
-import { defineTool } from "@github/copilot-sdk";
+import { defineTool } from "@sessions/server/tools/definition";
 import { sendToInboxInputSchema } from "../model";
 
 export const INBOX_SESSION_INSTRUCTIONS = `This session is running a background task managed by the Toy Box inbox, and its session ID is also its inbox entry ID. Before finishing its initial task, ensure useful work leaves a durable, user-visible outcome. If the task naturally created or changed something durable outside this session, such as files in the user's working directory or an automation, do not duplicate it with an inbox result.
@@ -13,7 +13,6 @@ const sendToInboxTool = defineTool("send_to_inbox", {
     "Do not include an artifact when the complete result fits in the message. " +
     "Do not send routine progress updates or duplicate messages.",
   parameters: sendToInboxInputSchema,
-  skipPermission: true,
   isTerminal: true,
   handler: async ({ message, artifact }, invocation) => {
     const { sessionId } = invocation;

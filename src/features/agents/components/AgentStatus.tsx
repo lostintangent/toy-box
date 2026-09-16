@@ -4,6 +4,7 @@ import { SessionPreview, useSessionPreview } from "@sessions/components/SessionP
 import { selectWorkspaceSessionActivity, useWorkspaceSelector } from "@workspace/hooks/state";
 import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+import { cn } from "@/shared/utils";
 import { AgentAvatar } from "./AgentAvatar";
 
 type StatusMembership = AgentMembership & { status?: AgentMembershipStatus };
@@ -70,7 +71,7 @@ function WorkingAgentStatus({ entries }: { entries: readonly WorkingAgent[] }) {
       className="flex min-w-0 items-center gap-2 rounded-full px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
     >
       <WorkingAgentAvatars entries={entries} onHover={setHoveredSessionId} />
-      <ScrollableFade className="whitespace-nowrap">
+      <ScrollableFade className="w-fit whitespace-nowrap">
         <span className="shrink-0">{label}</span>
       </ScrollableFade>
       <WorkingDots />
@@ -86,7 +87,12 @@ function WorkingAgentAvatars({
   onHover?: (sessionId?: string) => void;
 }) {
   return (
-    <span className="flex -space-x-2 hover:space-x-1 focus-within:space-x-1">
+    <span
+      className={cn(
+        "flex shrink-0",
+        entries.length > 1 && "-space-x-2 hover:space-x-1 focus-within:space-x-1",
+      )}
+    >
       {entries.map((entry) => (
         <WorkingAgentAvatar key={entry.membership.sessionId} entry={entry} onHover={onHover} />
       ))}
@@ -141,7 +147,7 @@ function WorkingAgentAvatar({
 
 function WorkingDots() {
   return (
-    <span className="flex gap-0.5" aria-hidden>
+    <span className="flex shrink-0 gap-0.5" aria-hidden>
       <span className="size-1 animate-pulse rounded-full bg-current" />
       <span className="size-1 animate-pulse rounded-full bg-current [animation-delay:150ms]" />
       <span className="size-1 animate-pulse rounded-full bg-current [animation-delay:300ms]" />

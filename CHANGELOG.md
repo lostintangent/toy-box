@@ -1,3 +1,9 @@
+## 📅 v0.1.21 (09/16/26)
+
+- Introduced support for Codex-based sessions
+- Added new tools for sessions/agents to search and read sessions
+- Added a customized "ink cloud" to the channel and inbox panes
+
 ## 📅 v0.1.20 (09/08/26)
 
 - Introduced the notion of agents and channels
@@ -15,11 +21,11 @@
 
 - Introduced the concept of "intent board" artifacts
 - Added support for user input questions
-- Qeueued messages can now be sent immediately
+- Qeueued messages can now be sent immediately ("steering")
 
 ## 📅 v0.1.17 (08/14/26)
 
-- Added support for session-scoped apps
+- Added support for session-scoped apps (`.toy` artifacts)
 - Queued messages now display attachments
 
 ## 📅 v0.1.16 (08/06/26)

@@ -80,7 +80,7 @@ describe.serial("automation scheduler", () => {
     const automation = await createAutomation({
       title: "Daily summary",
       prompt: "Summarize repository status.",
-      model: { name: "gpt-5", reasoningEffort: "high" },
+      model: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
       cwd: "/repo/automation",
     });
 
@@ -258,7 +258,7 @@ async function createAutomation(overrides: Partial<AutomationOptions> = {}): Pro
   return automationDatabase.create({
     title: "Repository summary",
     prompt: "Summarize repository status.",
-    model: { name: "gpt-5" },
+    model: { provider: "copilot", name: "gpt-5" },
     cron: "0 9 * * *",
     ...overrides,
   });

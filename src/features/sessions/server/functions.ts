@@ -5,11 +5,11 @@ import { getRequest } from "@tanstack/react-start/server";
 import { zodValidator } from "@tanstack/zod-adapter";
 import type { RealtimeToken } from "@tanstack/ai";
 import type { ServerRequest } from "nitro/types";
+import { listModels as listProviderModels } from "@providers/server";
 import {
-  listModels as listSdkModels,
-  listSessions as listSdkSessions,
-  listSkills as listSdkSkills,
-} from "@sessions/server/sdk/client";
+  listSessions as listProviderSessions,
+  listSkills as listProviderSkills,
+} from "@sessions/server/providers";
 import * as sessionRegistry from "@sessions/server/state/registry";
 import {
   applySessionWorktree as applyWorktree,
@@ -39,12 +39,14 @@ import {
   sendSystemMessageInputSchema,
   queuedMessageInputSchema,
   renameSessionInputSchema,
+  resolveSessionContextInputSchema,
   rewindSessionInputSchema,
   sessionInputSchema,
   streamSessionRequestSchema,
   waitForSessionInputSchema,
 } from "../model/protocol";
 import { readSessionCatalog } from "@/server/managedSessions";
+import { resolveSessionContext as resolveGitContext } from "./git";
 
 const REALTIME_MODEL = "gpt-realtime";
 
@@ -54,12 +56,12 @@ const withSessionId = createMiddleware({ type: "function" }).validator(
 
 /** Fetch durable session list metadata in a single round-trip. */
 export const getSessionsState = createServerFn({ method: "GET" }).handler(() =>
-  readSessionCatalog(() => Promise.all([listSdkSessions(), getAllSessionWorktrees()])),
+  readSessionCatalog(() => Promise.all([listProviderSessions(), getAllSessionWorktrees()])),
 );
 
 export const listModels = createServerFn({ method: "GET" }).handler(
   async (): Promise<ModelInfo[]> => {
-    return listSdkModels();
+    return listProviderModels();
   },
 );
 
@@ -83,12 +85,16 @@ export const createVoiceToken = createServerFn({ method: "POST" }).handler(
 export const listSkills = createServerFn({ method: "POST" })
   .validator(zodValidator(listSkillsInputSchema))
   .handler(async ({ data }): Promise<SessionSkill[]> => {
-    return listSdkSkills(data.cwd, data.sessionType);
+    return listProviderSkills(data.cwd, data.sessionType, data.provider);
   });
+
+export const resolveSessionContext = createServerFn({ method: "POST" })
+  .validator(zodValidator(resolveSessionContextInputSchema))
+  .handler(({ data }) => resolveGitContext(data.directory));
 
 /** A session's reduced transcript snapshot, served from the cheapest source
  *  that is still truthful: the live stream's in-memory state, then the
- *  cold-path ladder (snapshot cache, then SDK resume + full history replay,
+ *  cold-path ladder (snapshot cache, then read-only provider history replay,
  *  which repopulates the cache for the next open). */
 export const querySession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
@@ -136,7 +142,7 @@ export const createSession = createServerFn({ method: "POST" })
     return { sessionId };
   });
 
-/** Create a durable zero-turn SDK workspace while retaining draft UX semantics. */
+/** Reserve a provider-independent draft and its optional initial artifact. */
 export const createDraftSession = createServerFn({ method: "POST" })
   .validator(zodValidator(createDraftSessionInputSchema))
   .handler(({ data: { sessionId, ...options } }) =>

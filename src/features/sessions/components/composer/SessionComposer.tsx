@@ -1,20 +1,14 @@
 // Shared composer for session delivery and Inbox creation. Session ID
 // presence is the complete host discriminator.
 
-import { useEffect, useImperativeHandle, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUp, ChevronDown, Play, Square } from "lucide-react";
 import { AgentPicker } from "@agents/components/AgentPicker";
 import { agentPickerSuggestions } from "@agents/components/agentPickerSuggestions";
 import { AgentInvitationChips } from "@agents/components/AgentInvitationChips";
 import { useAgentMentionInput } from "@agents/components/useAgentMentionInput";
-import {
-  agentHandleFromName,
-  findMentionedAgents,
-  type Agent,
-  type AgentExecutionMode,
-  type AgentMention,
-} from "@agents/model";
+import { agentHandleFromName, findMentionedAgents } from "@agents/model";
 import { agentQueries } from "@agents/queries";
 import {
   DropdownMenu,
@@ -87,8 +81,6 @@ type SessionComposerCommonProps = {
   lastMessage?: string;
   /** Persistent Agents are operational mentions only in ordinary and Hyper sessions. */
   enableAgentMentions?: boolean;
-  /** Whether newly mentioned agents may begin in an isolated Git worktree. */
-  canUseAgentWorktrees?: boolean;
 };
 
 type SessionComposerProps = SessionComposerCommonProps &
@@ -120,9 +112,7 @@ function ModelConfigurationSkeleton() {
 
 type ComposerPromptHandle = {
   prompt: string;
-  agentMentions: AgentMention[];
   setPrompt: (prompt: string) => void;
-  restoreAgentInvitations: (mentions: AgentMention[]) => void;
   resetAfterSubmit: () => void;
   focus: () => void;
 };
@@ -143,7 +133,6 @@ type ComposerPromptProps = {
   leadingControls: React.ReactNode;
   voiceControl: React.ReactNode;
   enableAgentMentions: boolean;
-  canUseAgentWorktrees: boolean;
 };
 
 function ComposerPrompt({
@@ -161,7 +150,6 @@ function ComposerPrompt({
   leadingControls,
   voiceControl,
   enableAgentMentions,
-  canUseAgentWorktrees,
 }: ComposerPromptProps) {
   const isControlled = "prompt" in binding;
   const sessionId = isControlled ? undefined : binding.sessionId;
@@ -184,24 +172,9 @@ function ComposerPrompt({
     ...agentQueries.membershipList(membershipHost),
     enabled: enableAgentMentions && sessionId !== undefined,
   });
-  const [worktreeAgentIds, setWorktreeAgentIds] = useState<Set<string>>(() => new Set());
   const mentionedAgents = findMentionedAgents(prompt, agents);
   const memberAgentIds = new Set(memberships.map(({ agentId }) => agentId));
-  const invitations: { agent: Agent; executionMode: AgentExecutionMode }[] = [];
-  const agentMentions: AgentMention[] = [];
-  for (const agent of mentionedAgents) {
-    if (memberAgentIds.has(agent.id)) {
-      agentMentions.push({ agentId: agent.id });
-      continue;
-    }
-    const executionMode =
-      canUseAgentWorktrees && worktreeAgentIds.has(agent.id) ? "worktree" : "shared";
-    invitations.push({ agent, executionMode });
-    agentMentions.push({
-      agentId: agent.id,
-      ...(executionMode === "worktree" ? { initialExecutionMode: "worktree" } : {}),
-    });
-  }
+  const invitations = mentionedAgents.filter(({ id }) => !memberAgentIds.has(id));
   const mention = useAgentMentionInput({
     value: prompt,
     onValueChange: onPromptChange,
@@ -217,21 +190,11 @@ function ComposerPrompt({
 
   useImperativeHandle(promptHandle, () => ({
     prompt,
-    agentMentions,
     setPrompt: onPromptChange,
-    restoreAgentInvitations: (agentMentions) =>
-      setWorktreeAgentIds(
-        new Set(
-          agentMentions
-            .filter(({ initialExecutionMode }) => initialExecutionMode === "worktree")
-            .map(({ agentId }) => agentId),
-        ),
-      ),
     resetAfterSubmit: () => {
       const handles = mentionedAgents.map(({ name }) => `@${agentHandleFromName(name)}`);
       onPromptChange(handles.length > 0 ? `${handles.join(" ")} ` : "");
       if (!isControlled) draft.flush();
-      setWorktreeAgentIds(new Set());
     },
     focus: () => textareaRef.current?.focus(),
   }));
@@ -279,18 +242,7 @@ function ComposerPrompt({
         rows={1}
       />
 
-      <AgentInvitationChips
-        invitations={invitations}
-        canUseWorktrees={canUseAgentWorktrees}
-        onExecutionModeChange={(agentId, mode) =>
-          setWorktreeAgentIds((current) => {
-            const next = new Set(current);
-            if (mode === "worktree") next.add(agentId);
-            else next.delete(agentId);
-            return next;
-          })
-        }
-      />
+      <AgentInvitationChips invitations={invitations} />
 
       <InputGroupAddon align="block-end" className="relative justify-between pt-0 pb-2">
         <TypingEffect value={prompt} />
@@ -447,7 +399,6 @@ export function SessionComposer(props: SessionComposerProps) {
     sessionName,
     lastMessage,
     enableAgentMentions = false,
-    canUseAgentWorktrees = false,
   } = props;
   const promptHandle = useRef<ComposerPromptHandle>(null);
   const { isMobile } = useViewport();
@@ -479,7 +430,6 @@ export function SessionComposer(props: SessionComposerProps) {
 
   const handleEditQueuedMessage = (message: QueuedUserMessage) => {
     promptHandle.current?.setPrompt(message.content);
-    promptHandle.current?.restoreAgentInvitations(message.agentMentions ?? []);
     replaceAttachments(message.attachments ?? []);
     promptHandle.current?.focus();
   };
@@ -490,12 +440,10 @@ export function SessionComposer(props: SessionComposerProps) {
   ) => {
     const prompt = promptHandle.current?.prompt.trim() ?? "";
     if ((!prompt && attachments.length === 0) || !submitter) return false;
-    const agentMentions = promptHandle.current?.agentMentions ?? [];
     submitter(
       {
         content: prompt,
         attachments: attachments.length > 0 ? attachments : undefined,
-        agentMentions: agentMentions.length > 0 ? agentMentions : undefined,
       },
       immediate ? { immediate } : undefined,
     );
@@ -561,7 +509,6 @@ export function SessionComposer(props: SessionComposerProps) {
             skills={skills}
             showGlobalSkillBadges={showGlobalSkillBadges}
             enableAgentMentions={enableAgentMentions}
-            canUseAgentWorktrees={canUseAgentWorktrees}
             leadingControls={
               <>
                 <AttachImageButton onClick={openPicker} />

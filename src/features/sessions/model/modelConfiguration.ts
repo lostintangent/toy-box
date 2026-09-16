@@ -1,8 +1,8 @@
-import type { CopilotSession, SessionConfig as SdkSessionConfig } from "@github/copilot-sdk";
 import { z } from "zod";
 
 export const modelConfigurationSchema = z
   .object({
+    provider: z.string().trim().min(1).describe("Session provider"),
     name: z.string().trim().min(1).describe("Model name"),
     reasoningEffort: z
       .string()
@@ -19,7 +19,7 @@ export const modelConfigurationSchema = z
   })
   // Preserve future JSON-valued SDK/catalog knobs so adding one only needs
   // its boundary behavior and picker updated.
-  .catchall(z.json());
+  .catchall(z.json().optional());
 
 export type ModelConfiguration = z.infer<typeof modelConfigurationSchema>;
 
@@ -34,50 +34,21 @@ export type ModelOptionInfo = {
   /** Ordered with the model's default tier first. */
   supportedContextTiers?: readonly ContextTier[];
 };
-type ModelCatalogInfo = ModelOptionInfo & { id: string };
-type SdkSetModelOptions = NonNullable<Parameters<CopilotSession["setModel"]>[1]>;
-type SdkSessionModelOptions = Pick<SdkSessionConfig, "model" | "reasoningEffort" | "contextTier">;
-
-/** The SDK's public option unions are narrower than live metadata, so keep
- *  open-string casts in these boundary helpers. */
-function toSdkReasoningEffort(reasoningEffort?: string): SdkSessionConfig["reasoningEffort"] {
-  return reasoningEffort as SdkSessionConfig["reasoningEffort"];
+type ModelCatalogInfo = ModelOptionInfo & { id: string; provider: string };
+/** Native model names are unique only within their provider. */
+export function modelCatalogKey(model: { id: string; provider: string }): string {
+  return `${model.provider}:${model.id}`;
 }
-
-function toSdkContextTier(contextTier?: string): SdkSessionConfig["contextTier"] {
-  return contextTier as SdkSessionConfig["contextTier"];
-}
-
-export function toSdkSetModelOptions(configuration?: ModelConfiguration): SdkSetModelOptions {
-  return {
-    ...(configuration?.reasoningEffort
-      ? { reasoningEffort: toSdkReasoningEffort(configuration.reasoningEffort) }
-      : {}),
-    ...(configuration?.contextTier
-      ? { contextTier: toSdkContextTier(configuration.contextTier) }
-      : {}),
-  };
-}
-
-export function toSdkSessionModelOptions(
-  configuration?: ModelConfiguration,
-): SdkSessionModelOptions {
-  return {
-    model: configuration?.name,
-    ...toSdkSetModelOptions(configuration),
-  };
-}
-
-function parseModelConfiguration(value: unknown): ModelConfiguration | null {
-  const result = modelConfigurationSchema.safeParse(value);
-  return result.success ? result.data : null;
+export function modelConfigurationKey(model: ModelConfiguration): string {
+  return modelCatalogKey({ id: model.name, provider: model.provider });
 }
 
 export function parseSerializedModelConfiguration(value: string | null): ModelConfiguration | null {
   if (!value) return null;
 
   try {
-    return parseModelConfiguration(JSON.parse(value));
+    const result = modelConfigurationSchema.safeParse(JSON.parse(value));
+    return result.success ? result.data : null;
   } catch {
     return null;
   }
@@ -124,10 +95,15 @@ export function normalizeModelConfiguration(
 ): ModelConfiguration | null {
   if (models.length === 0) return configuration ?? null;
 
-  const model = models.find((candidate) => candidate.id === configuration?.name) ?? models[0];
+  const model =
+    models.find(
+      (candidate) =>
+        candidate.id === configuration?.name && candidate.provider === configuration?.provider,
+    ) ?? models[0];
   return resolveModelConfigurationForModel(model, {
     ...configuration,
     name: model.id,
+    provider: model.provider,
   });
 }
 

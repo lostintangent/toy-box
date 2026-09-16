@@ -59,8 +59,7 @@ export const automationMutations = {
           sessionId,
           startTime: new Date(),
           modifiedTime: new Date(),
-          summary: automation?.title ?? "",
-          isRemote: false,
+          title: automation?.title ?? "",
         });
       },
     }),

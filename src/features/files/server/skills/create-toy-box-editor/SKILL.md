@@ -59,7 +59,7 @@ authoritative.
 
 6. Open representative files and exercise initial rendering, external content
    updates, edits, malformed input, and worker behavior as applicable. Create
-   worker-enabled examples in this session's files folder and use their artifact
+   worker-enabled examples in this session's artifacts folder and use their artifact
    panes; opening the same path as a machine file creates a second address that
    cannot own workers. Validate through Toy Box rather than installing a
    separate browser harness.

@@ -1,12 +1,14 @@
-import { beforeEach, describe, expect, mock, onTestFinished, test } from "bun:test";
-import * as realFsPromises from "node:fs/promises";
-import type { SessionSnapshot } from "@sessions/model";
+import { beforeEach, describe, expect, mock, onTestFinished, spyOn, test } from "bun:test";
+import * as providers from "../providers";
+import { deleteSessionFiles, writeSessionArtifact } from "../artifacts";
+import type { SessionEvent, SessionSnapshot } from "@sessions/model";
 import {
   cacheSnapshot,
   evictCachedSnapshot,
   getCachedSnapshot,
   hasCachedSnapshot,
   isCachedSnapshotFresh,
+  loadSessionSnapshot,
   retainSessionSnapshots,
 } from "@sessions/server/state/snapshots";
 
@@ -23,48 +25,12 @@ function snapshot(sessionId: string): SessionSnapshot {
 describe("cached snapshot freshness", () => {
   const entry = { snapshot: snapshot("A"), capturedAt: 1_000_000 };
 
-  const cases: Array<{
-    name: string;
-    eventsLogMtimeMs: number | undefined;
-    now: number;
-    fresh: boolean;
-  }> = [
-    {
-      name: "serves an entry whose log has not changed since capture",
-      eventsLogMtimeMs: entry.capturedAt - 500,
-      now: entry.capturedAt + 60_000,
-      fresh: true,
-    },
-    {
-      name: "tolerates the SDK's trailing log flush just after capture",
-      eventsLogMtimeMs: entry.capturedAt + 1_500,
-      now: entry.capturedAt + 60_000,
-      fresh: true,
-    },
-    {
-      name: "rejects an entry whose log was written meaningfully after capture",
-      eventsLogMtimeMs: entry.capturedAt + 60_000,
-      now: entry.capturedAt + 120_000,
-      fresh: false,
-    },
-    {
-      name: "rejects an entry whose log is missing",
-      eventsLogMtimeMs: undefined,
-      now: entry.capturedAt + 60_000,
-      fresh: false,
-    },
-    {
-      name: "rejects an entry older than the TTL",
-      eventsLogMtimeMs: entry.capturedAt - 500,
-      now: entry.capturedAt + 25 * 60 * 60 * 1000,
-      fresh: false,
-    },
-  ];
-
-  test.each(cases)("$name", (testCase) => {
-    expect(isCachedSnapshotFresh(entry, testCase.eventsLogMtimeMs, testCase.now)).toBe(
-      testCase.fresh,
-    );
+  test("serves recent snapshots only while the provider confirms their history", () => {
+    expect(isCachedSnapshotFresh(entry, true, entry.capturedAt + 60_000)).toBe(true);
+    expect(isCachedSnapshotFresh(entry, false, entry.capturedAt + 60_000)).toBe(false);
+  });
+  test("expires retained history after the cache TTL", () => {
+    expect(isCachedSnapshotFresh(entry, true, entry.capturedAt + 25 * 60 * 60 * 1000)).toBe(false);
   });
 });
 
@@ -73,18 +39,30 @@ describe.serial("snapshot cache", () => {
     await clearSnapshotCache();
   });
 
+  test("cold and cached snapshots derive artifacts from current files", async () => {
+    const sessionId = `toy-box-test-${crypto.randomUUID()}`;
+    spyOn(providers, "isHistoryCurrent").mockResolvedValue(true);
+    onTestFinished(async () => {
+      mock.restore();
+      evictCachedSnapshot(sessionId);
+      await deleteSessionFiles(sessionId);
+    });
+    await writeSessionArtifact(sessionId, "current.html", "Current artifact");
+    await withProviderHistory(async () => {
+      expect((await loadSessionSnapshot(sessionId)).artifacts).toEqual(["current.html"]);
+      await deleteSessionFiles(sessionId);
+      expect((await getCachedSnapshot(sessionId))?.artifacts).toBeUndefined();
+      evictCachedSnapshot(sessionId);
+      expect((await loadSessionSnapshot(sessionId)).artifacts).toBeUndefined();
+    }, [{ type: "assistant_message", content: "Created deleted.md" }]);
+  });
+
   test("stores and serves snapshots as private copies", async () => {
-    const realFsExports = { ...realFsPromises };
+    spyOn(providers, "isHistoryCurrent").mockResolvedValue(true);
     onTestFinished(() => {
-      mock.module("node:fs/promises", () => realFsExports);
+      mock.restore();
       evictCachedSnapshot("snapshot-cache-test-clone");
     });
-    // Freshness would consult the session's real events log; stub the stat so
-    // the entry reads as fresh and the served value is what's under test.
-    mock.module("node:fs/promises", () => ({
-      ...realFsExports,
-      stat: async () => ({ mtimeMs: Date.now() }),
-    }));
 
     const original = snapshot("snapshot-cache-test-clone");
     cacheSnapshot("snapshot-cache-test-clone", original);
@@ -140,6 +118,8 @@ describe.serial("snapshot cache", () => {
   });
 
   test("drops entries whose session has no event log on disk", async () => {
+    spyOn(providers, "isHistoryCurrent").mockResolvedValue(false);
+    onTestFinished(() => mock.restore());
     const sessionId = "snapshot-cache-test-missing-log";
     cacheSnapshot(sessionId, snapshot(sessionId));
 
@@ -148,7 +128,7 @@ describe.serial("snapshot cache", () => {
   });
 
   test("retaining warms a cold session and keeps its slot through rotation", async () => {
-    await withEmptySdkHistory(async () => {
+    await withProviderHistory(async () => {
       await retainSessionSnapshots(["retained-0"]);
       expect(hasCachedSnapshot("retained-0")).toBe(true);
 
@@ -164,7 +144,7 @@ describe.serial("snapshot cache", () => {
   });
 
   test("replacing the retained set returns the previous sessions to rotation", async () => {
-    await withEmptySdkHistory(async () => {
+    await withProviderHistory(async () => {
       await retainSessionSnapshots(["released-0"]);
       await retainSessionSnapshots([]);
 
@@ -177,19 +157,17 @@ describe.serial("snapshot cache", () => {
   });
 });
 
-/** Replays warmed sessions from an empty SDK history so warming stays local. */
-async function withEmptySdkHistory(run: () => Promise<void>): Promise<void> {
-  const realRegistry = { ...(await import("./registry")) };
-  mock.module("./registry", () => ({
-    ...realRegistry,
-    withSession: (_sessionId: string, operation: (session: unknown) => Promise<unknown>) =>
-      operation({ getEvents: async () => [] }),
-  }));
+/** Keep snapshot replay local to the supplied canonical provider history. */
+async function withProviderHistory(
+  run: () => Promise<void>,
+  events: SessionEvent[] = [],
+): Promise<void> {
+  const history = spyOn(providers, "readSessionHistory").mockResolvedValue(events);
 
   try {
     await run();
   } finally {
-    mock.module("./registry", () => realRegistry);
+    history.mockRestore();
   }
 }
 

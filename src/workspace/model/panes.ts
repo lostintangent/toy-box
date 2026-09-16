@@ -213,12 +213,14 @@ type DeriveVisibleWorkspacePanesOptions = {
   rootPanes: WorkspacePane[];
   panePublications: PanePublications;
   maxVisible?: number;
+  focusedPaneId?: string | null;
 };
 
 export function deriveVisibleWorkspacePanes({
   rootPanes,
   panePublications,
   maxVisible = MAX_WORKSPACE_PANES,
+  focusedPaneId,
 }: DeriveVisibleWorkspacePanesOptions): WorkspacePane[] {
   const visiblePanes = rootPanes.slice(0, maxVisible);
   const seenPaneIds = new Set(visiblePanes.map((pane) => pane.id));
@@ -241,6 +243,23 @@ export function deriveVisibleWorkspacePanes({
       visiblePanes.push(pane);
       publishers.push(pane);
       if (visiblePanes.length === maxVisible) break;
+    }
+  }
+
+  // An explicit focus request can select a published pane beyond the grid
+  // capacity. Replace an unrelated pane, retaining the publishers that keep
+  // the requested surface alive. Clearing focus restores the ordinary order.
+  if (focusedPaneId && !seenPaneIds.has(focusedPaneId)) {
+    const focusedPane = deriveReachablePanes(rootPanes, panePublications).find(
+      (pane) => pane.id === focusedPaneId,
+    );
+    if (focusedPane) {
+      for (let index = visiblePanes.length - 1; index >= 0; index--) {
+        const pane = visiblePanes[index]!;
+        if (deriveReachablePaneIds([pane], panePublications).includes(focusedPaneId)) continue;
+        visiblePanes[index] = focusedPane;
+        break;
+      }
     }
   }
 

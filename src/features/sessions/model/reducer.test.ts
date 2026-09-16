@@ -396,6 +396,31 @@ describe("sessionReducer", () => {
       });
     });
 
+    test("waits only while a blocking question remains pending", () => {
+      const request = (id: string, blocking: boolean): SessionEvent[] => {
+        const question = { question: id, allowFreeform: true, blocking };
+        return [
+          { type: "tool_start", toolCallId: id, toolName: "ask_user", arguments: {}, question },
+          { type: "question_requested", toolCallId: id, requestId: id, question },
+        ];
+      };
+      let state = reduceEvents(request("background", false));
+      expect(state.status).not.toBe("waiting");
+
+      state = reduceEvents([...request("first", true), ...request("second", true)], state);
+      expect(state.status).toBe("waiting");
+      state = applySessionEvent(state, {
+        type: "question_resolved",
+        toolCallId: "first",
+        answer: "Proceed",
+      });
+      expect(state.status).toBe("waiting");
+
+      state = applySessionEvent(state, { type: "question_cancelled", toolCallId: "second" });
+      expect(state.status).toBe("thinking");
+      expect(assistantMessageAt(state, 0).toolCalls?.[0].question?.state).toBe("pending");
+    });
+
     test("makes a pending question read-only when the turn ends", () => {
       const question = { question: "Continue?", choices: ["Yes", "No"], allowFreeform: true };
       const state = reduceEvents([
@@ -509,12 +534,13 @@ describe("sessionReducer", () => {
         {
           type: "model_changed",
           agentId: "agent-1",
-          model: { name: "claude-haiku-4.5" },
+          model: { provider: "copilot", name: "claude-haiku-4.5" },
         },
       ]);
 
       const message = assistantMessageAt(state, 0);
       expect(message.toolCalls?.[0].agent?.model).toEqual({
+        provider: "copilot",
         name: "claude-haiku-4.5",
       });
       expect(state.model).toBeUndefined();
@@ -753,7 +779,7 @@ describe("sessionReducer", () => {
         linkedSessionIds: ["session-1", "session-2"],
         status: "responding",
         reasoningContent: "thinking...",
-        model: { name: "claude-sonnet-4.6" },
+        model: { provider: "copilot", name: "claude-sonnet-4.6" },
       });
       previousState.pendingToolCalls.set("tool-1", {
         id: "tool-1",
@@ -776,7 +802,7 @@ describe("sessionReducer", () => {
         { id: "todo-1", title: "Inspect stream state", status: "in_progress" },
       ]);
       expect(nextState.linkedSessionIds).toEqual(["session-1", "session-2"]);
-      expect(nextState.model).toEqual({ name: "claude-sonnet-4.6" });
+      expect(nextState.model).toEqual({ provider: "copilot", name: "claude-sonnet-4.6" });
       expect(nextState.queuedMessages).toEqual([
         { clientId: "queued-1", role: "user", content: "Now summarize it" },
       ]);
@@ -790,19 +816,28 @@ describe("sessionReducer", () => {
       expect(previousState.pendingToolCalls.size).toBe(1);
     });
 
-    test("end/error replaces a partial assistant message with the error notice", () => {
-      const state = reduceEvents([
+    test("end/error preserves a partial assistant message alongside the error notice", () => {
+      const before = reduceEvents([
         { type: "user_message", content: "go" },
         { type: "status", status: "thinking" },
         { type: "delta", content: "partial resp" },
-        { type: "end", reason: "error" },
+        { type: "tool_start", toolName: "read", toolCallId: "read", arguments: {} },
+        { type: "tool_end", toolCallId: "read", success: true, result: "File contents" },
       ]);
+      const state = applySessionEvent(before, {
+        type: "end",
+        reason: "error",
+        error: "You've hit your usage limit.",
+      });
 
       expect(state.messages).toHaveLength(2);
       expect(state.messages[1]).toMatchObject({
         role: "assistant",
-        content: "An error occurred. Please try again.",
+        content: "partial resp",
+        error: "You've hit your usage limit.",
       });
+      expect(assistantMessageAt(state, 1).toolCalls).toBe(assistantMessageAt(before, 1).toolCalls);
+      expect(assistantMessageAt(before, 1).error).toBeUndefined();
       expect(state.status).toBe("idle");
       expect(state.reasoningContent).toBe("");
       expect(state.pendingToolCalls.size).toBe(0);
@@ -817,23 +852,43 @@ describe("sessionReducer", () => {
       expect(state.messages).toHaveLength(2);
       expect(state.messages[1]).toMatchObject({
         role: "assistant",
-        content: "An error occurred. Please try again.",
+        content: "",
+        error: "An error occurred. Please try again.",
       });
       expect(state.status).toBe("idle");
     });
 
-    test("a synthesized end/idle does not clobber an earlier end/error", () => {
+    test("repeated and synthesized terminal events preserve the provider error without duplication", () => {
       const state = reduceEvents([
         { type: "user_message", content: "go" },
+        { type: "end", reason: "error", error: "You've hit your usage limit." },
+        { type: "end", reason: "error", error: "You've hit your usage limit." },
         { type: "end", reason: "error" },
         { type: "end", reason: "idle" },
       ]);
 
+      expect(state.messages).toHaveLength(2);
       expect(state.messages.at(-1)).toMatchObject({
         role: "assistant",
-        content: "An error occurred. Please try again.",
+        content: "",
+        error: "You've hit your usage limit.",
       });
       expect(state.status).toBe("idle");
+    });
+
+    test.each<SessionEvent>([
+      { type: "delta", content: "Recovered" },
+      { type: "assistant_message", content: "Recovered" },
+      { type: "tool_start", toolName: "read", toolCallId: "retry-read", arguments: {} },
+    ])("a later $type cannot reuse a failed assistant message", (event) => {
+      const failed = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "end", reason: "error", error: "You've hit your usage limit." },
+      ]);
+      const retried = applySessionEvent(prepareSessionForNextTurn(failed), event);
+      expect(retried.messages).toHaveLength(3);
+      expect(retried.messages[1]).toBe(failed.messages[1]);
+      expect(assistantMessageAt(retried, 2).error).toBeUndefined();
     });
 
     test("tracks compacting status and returns to thinking when done", () => {
@@ -952,7 +1007,7 @@ describe("sessionReducer", () => {
       state = applySessionEvent(state, {
         type: "user_message",
         content: "canonical hello",
-        attachments: [{ displayName: "canonical.png", mimeType: "image/png", base64: "c2VydmVy" }],
+        attachments: [{ mimeType: "image/png", base64: "c2VydmVy" }],
         clientId: "msg-1",
         timestamp: "2026-02-09T00:00:00.500Z",
         eventId: 11,
@@ -962,9 +1017,7 @@ describe("sessionReducer", () => {
         {
           role: "user",
           content: "canonical hello",
-          attachments: [
-            { displayName: "canonical.png", mimeType: "image/png", base64: "c2VydmVy" },
-          ],
+          attachments: [{ mimeType: "image/png", base64: "c2VydmVy" }],
           timestamp: "2026-02-09T00:00:00.500Z",
         },
         {
@@ -1037,25 +1090,27 @@ describe("sessionReducer", () => {
     test("stores session title updates from metadata events", () => {
       let state = createInitialSession();
       state = applySessionEvent(state, { type: "session_title_changed", title: "Friendly title" });
-      expect(state.summary).toBe("Friendly title");
+      expect(state.title).toBe("Friendly title");
     });
   });
 
   describe("artifacts", () => {
-    test("appends artifact paths and includes them in snapshots", () => {
+    test("replaces artifact membership idempotently and includes it in snapshots", () => {
       let state = createInitialSession();
 
       state = applySessionEvent(state, {
-        type: "artifacts_patch",
-        patches: [{ type: "upsert", path: "report.md" }],
+        type: "artifacts_changed",
+        artifacts: ["report.md"],
       });
+      const previous = state.artifacts;
       state = applySessionEvent(state, {
-        type: "artifacts_patch",
-        patches: [{ type: "upsert", path: "report.md" }],
+        type: "artifacts_changed",
+        artifacts: ["report.md"],
       });
+      expect(state.artifacts).toBe(previous);
       state = applySessionEvent(state, {
-        type: "artifacts_patch",
-        patches: [{ type: "upsert", path: "notes.md" }],
+        type: "artifacts_changed",
+        artifacts: ["report.md", "notes.md"],
       });
 
       expect(state.artifacts).toEqual(["report.md", "notes.md"]);
@@ -1068,11 +1123,14 @@ describe("sessionReducer", () => {
       });
 
       state = applySessionEvent(state, {
-        type: "artifacts_patch",
-        patches: [{ type: "delete", path: "report.md" }],
+        type: "artifacts_changed",
+        artifacts: ["notes.md"],
       });
 
       expect(state.artifacts).toEqual(["notes.md"]);
+      state = applySessionEvent(state, { type: "artifacts_changed", artifacts: [] });
+      expect(state.artifacts).toEqual([]);
+      expect(toSessionSnapshot("session-1", state).artifacts).toBeUndefined();
     });
   });
 
@@ -1239,7 +1297,7 @@ describe("toSessionSnapshot", () => {
       artifacts: ["report.md"],
       status: "responding",
       reasoningContent: "thinking...",
-      model: { name: "gpt-5.5", contextTier: "future_tier" },
+      model: { provider: "copilot", name: "gpt-5.5", contextTier: "future_tier" },
     });
     state.lastSeenEventId = 42;
 
@@ -1247,7 +1305,7 @@ describe("toSessionSnapshot", () => {
       id: "session-1",
       messages: state.messages,
       queuedMessages: state.queuedMessages,
-      model: { name: "gpt-5.5", contextTier: "future_tier" },
+      model: { provider: "copilot", name: "gpt-5.5", contextTier: "future_tier" },
       todos: state.todos,
       linkedSessionIds: ["linked-1"],
       artifacts: ["report.md"],
@@ -1265,11 +1323,11 @@ describe("toSessionSnapshot", () => {
       queuedMessages: [],
       status: "idle",
       reasoningContent: "",
-      model: { name: "claude-opus-4.8" },
+      model: { provider: "copilot", name: "claude-opus-4.8" },
     });
 
     expect(snapshot.id).toBe("session-existing");
-    expect(snapshot.model).toEqual({ name: "claude-opus-4.8" });
+    expect(snapshot.model).toEqual({ provider: "copilot", name: "claude-opus-4.8" });
     // Empty linked sessions collapse to undefined rather than [].
     expect(snapshot.linkedSessionIds).toBeUndefined();
   });
@@ -1295,11 +1353,14 @@ describe("sessionSeedFromSnapshot", () => {
         patches: [{ type: "upsert", id: "1", title: "Ship it", status: "done" }],
       },
       {
-        type: "artifacts_patch",
-        patches: [{ type: "upsert", path: "summary.md" }],
+        type: "artifacts_changed",
+        artifacts: ["summary.md"],
       },
       { type: "linked_session_added", sessionId: "toy-box-child" },
-      { type: "model_changed", model: { name: "gpt-5", contextTier: "future_tier" } },
+      {
+        type: "model_changed",
+        model: { provider: "copilot", name: "gpt-5", contextTier: "future_tier" },
+      },
       { type: "end", reason: "idle" },
     ];
 

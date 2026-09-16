@@ -1,5 +1,5 @@
 // Owner-scoped session execution. The worker supervisor centralizes inherited
-// context, exact completion, cancellation, and ephemeral-lifetime cleanup.
+// configuration, exact completion, cancellation, and ephemeral-lifetime cleanup.
 
 import { workerParentSessionId, type Worker } from "../model";
 import type { SessionCompletion, SessionLaunch } from "@sessions/model";
@@ -10,7 +10,7 @@ import {
   createSession,
   deleteSessionIfExists,
   getSessionSnapshot,
-  readSessionContext,
+  getSessionDirectory,
 } from "@sessions/server/runtime";
 
 type SpawnWorkerInput = SessionLaunch & {
@@ -46,9 +46,9 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<WorkerReceip
     await ensureWorkersSwept();
     throwIfWorkerCanceled(sessionId);
 
-    const [parentContext, parentSnapshot] = await Promise.all([
+    const [parentDirectory, parentSnapshot] = await Promise.all([
       input.directory === undefined && parentSessionId
-        ? readSessionContext(parentSessionId)
+        ? getSessionDirectory(parentSessionId)
         : undefined,
       input.message.model === undefined && parentSessionId
         ? getSessionSnapshot(parentSessionId)
@@ -62,8 +62,7 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<WorkerReceip
       sessionId,
       { ...input.message, model },
       {
-        directory: input.directory ?? parentContext?.workingDirectory,
-        initialContext: parentContext,
+        directory: input.directory ?? parentDirectory,
         sessionType: "worker",
         parentSessionId,
         useWorktree: input.useWorktree ?? false,

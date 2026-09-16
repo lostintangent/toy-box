@@ -1,4 +1,4 @@
-import { defineTool } from "@github/copilot-sdk";
+import { defineTool } from "@sessions/server/tools/definition";
 import { z } from "zod";
 import { modelConfigurationSchema } from "@sessions/model/modelConfiguration";
 import { workerNameSchema } from "../model";
@@ -30,7 +30,6 @@ const spawnWorkerTool = defineTool("spawn_worker", {
         "Delete the worker, transcript, and any worktree after its initial execution. Defaults to false.",
       ),
   }),
-  skipPermission: true,
   handler: async (args, invocation) => {
     const { spawnSessionWorker } = await import("@workers/server");
     const ephemeral = args.ephemeral ?? false;

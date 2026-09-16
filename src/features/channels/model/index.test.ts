@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Agent, AgentMention } from "@agents/model";
+import type { Agent } from "@agents/model";
 import type { ChannelMember } from "./index";
 import { resolveChannelAudience, setChannelStatusInputSchema } from "./index";
 
@@ -8,15 +8,11 @@ const members: ChannelMember[] = [
     host: { kind: "channel", channelId: "channel" },
     agentId: "agent-critic",
     sessionId: "session-critic",
-    executionMode: "shared",
-    seenThrough: 0,
   },
   {
     host: { kind: "channel", channelId: "channel" },
     agentId: "agent-builder",
     sessionId: "session-builder",
-    executionMode: "worktree",
-    seenThrough: 0,
   },
 ];
 
@@ -46,12 +42,8 @@ const critic = {
   type: "agent",
   agentId: "agent-critic",
 } as const;
-function audience(
-  content: string,
-  sender: typeof user | typeof critic = user,
-  agentMentions?: AgentMention[],
-) {
-  return resolveChannelAudience({ content, sender, members, agents, agentMentions });
+function audience(content: string, sender: typeof user | typeof critic = user) {
+  return resolveChannelAudience({ content, sender, members, agents });
 }
 
 describe("channel delivery policy", () => {
@@ -87,35 +79,11 @@ describe("channel delivery policy", () => {
     }
   });
 
-  test("stable IDs preserve recipients even when an Agent has been renamed", () => {
-    expect(audience("@old-name please review", user, [{ agentId: "agent-critic" }])).toEqual({
-      members: [members[0]],
-      invitations: [],
-    });
-    expect(audience("@critic please review", user, [])).toEqual({ members: [], invitations: [] });
-    expect(
-      audience("Please review", user, [
-        { agentId: "agent-planner", initialExecutionMode: "worktree" },
-      ]),
-    ).toEqual({ members: [], invitations: [agents[2]] });
-  });
-
-  test("broadcast intent is preserved when the composer supplies no explicit IDs", () => {
-    expect(audience("Please review", user, [])).toEqual({ members, invitations: [] });
-    expect(audience("@everyone please review", critic, [])).toEqual({
+  test("duplicate mentions and self-addresses do not produce duplicate work", () => {
+    expect(audience("@builder @builder @critic", critic)).toEqual({
       members: [members[1]],
       invitations: [],
     });
-  });
-
-  test("duplicate mentions and self-addresses do not produce duplicate work", () => {
-    expect(
-      audience("@builder @builder @critic", critic, [
-        { agentId: "agent-builder" },
-        { agentId: "agent-builder" },
-        { agentId: "agent-critic" },
-      ]),
-    ).toEqual({ members: [members[1]], invitations: [] });
   });
 });
 

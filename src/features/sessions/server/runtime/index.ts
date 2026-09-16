@@ -2,6 +2,7 @@
 // create or deliver; connected callers use one composite that subscribes while
 // optionally doing either. Every mutation acquires the same live runtime.
 
+import { listSessionArtifacts, writeSessionArtifact } from "../artifacts";
 import type { SessionQuestionAnswer, StreamSessionRequest } from "@sessions/model/protocol";
 import { sessionSeedFromSnapshot, toSessionSnapshot } from "@sessions/model/reducer";
 import type {
@@ -20,10 +21,8 @@ import { SessionStream, SessionStreamFinishedError } from "./sessionStream";
 import type { SessionStreamSubscription } from "./eventBus";
 
 export { SessionStream };
-export { getSessionContext, readSessionContext } from "../sdk/client";
+export { getSessionDirectory } from "../providers";
 export { deleteSession, deleteSessionIfExists, releaseIdleSession } from "../state/registry";
-export type { SessionContext } from "@github/copilot-sdk";
-export { canCreateSessionWorktree } from "../state/worktrees";
 export { isSessionNotFoundError } from "../state/registry";
 
 type PendingSessionCompletion = {
@@ -143,17 +142,8 @@ export async function rewindSession(
   sessionId: string,
   timestamp: string,
 ): Promise<SessionSnapshot> {
-  await sessionRegistry.withSession(sessionId, async (session) => {
-    const { points } = await session.rpc.history.listRewindPoints();
-    const point = points.find((candidate) => candidate.timestamp === timestamp);
-    if (!point) throw new Error("That message is no longer available to rewind.");
-
-    const { eventsRemoved } = await session.rpc.history.rewind({
-      eventId: point.eventId,
-      mode: "conversation",
-    });
-    if (eventsRemoved === undefined) throw new Error("Session rewind failed.");
-  });
+  if (SessionStream.isRunning(sessionId)) throw new Error("Stop this session before rewinding it.");
+  await sessionRegistry.withSession(sessionId, (session) => session.rewind(timestamp));
 
   const snapshot = await refreshSessionSnapshot(sessionId);
   // The SDK's snapshot_rewind event is ephemeral and idle sessions have no
@@ -169,7 +159,13 @@ export async function createSessionArtifact(
 ): Promise<void> {
   const stream = SessionStream.get(sessionId);
   if (!stream) throw new Error("Cannot create a session artifact without a running session.");
-  await stream.sdkSession.rpc.workspaces.createFile({ path, content });
+  await writeSessionArtifact(sessionId, path, content);
+}
+
+/** Filesystem observation refreshes artifact membership for active sessions. */
+export async function refreshSessionArtifacts(sessionId: string): Promise<void> {
+  const stream = SessionStream.get(sessionId);
+  if (stream) stream.updateArtifacts(await listSessionArtifacts(sessionId));
 }
 
 function waitForPendingSession(
@@ -371,6 +367,5 @@ async function normalizeMessage(message: MessageInput): Promise<QueuedMessage> {
     content: message.content,
     attachments: message.attachments,
     model: message.model,
-    agentMentions: message.agentMentions,
   });
 }

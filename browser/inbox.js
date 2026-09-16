@@ -85,7 +85,6 @@ function createViewportAttachment(dataUrl) {
   }
 
   return {
-    displayName: "viewport.jpg",
     mimeType: "image/jpeg",
     base64: dataUrl.slice(VIEWPORT_DATA_URL_PREFIX.length),
   };

@@ -1,10 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
-import {
-  agentHandleFromName,
-  type Agent,
-  type AgentMembership,
-  type AgentMention,
-} from "@agents/model";
+import { agentHandleFromName, type Agent, type AgentMembership } from "@agents/model";
 import { getAgentMembership, listAgentProfiles } from "@agents/server";
 import { mentionAgent } from "@agents/server/supervisor";
 import type {
@@ -28,12 +23,12 @@ import { resolveChannelAudience } from "@channels/model";
 import { resolveWorkspaceFile, workspaceFileFromAbsolutePath } from "@files/server/paths";
 import {
   deleteSessionIfExists,
-  readSessionContext,
+  getSessionDirectory,
   waitForSession,
 } from "@sessions/server/runtime";
 import { getStateDatabase } from "@/server/database";
 import { broadcast } from "@workspace/server/events";
-import { ChannelDatabase } from "./database";
+import { ChannelDatabase, type ChannelMemberRecord } from "./database";
 import {
   publishChannelEvent,
   releaseChannelEvents,
@@ -323,7 +318,6 @@ export async function sendChannelMessageFromAgent(
   input: {
     content: string;
     attachmentPaths?: readonly string[];
-    agentMentions?: readonly AgentMention[];
   },
 ): Promise<ChannelMessage> {
   const member = await requireChannelMember(
@@ -339,7 +333,6 @@ export async function sendChannelMessageFromAgent(
     },
     content: input.content,
     attachments: await resolveAttachmentPaths(sessionId, input.attachmentPaths),
-    agentMentions: input.agentMentions,
   });
 }
 
@@ -445,7 +438,9 @@ function publishChannelStatus(
 
 async function resolveAttachmentPaths(sessionId: string, paths: readonly string[] | undefined) {
   if (!paths?.length) return undefined;
-  const directory = (await readSessionContext(sessionId))?.workingDirectory;
+  const directory = paths.some((path) => !isAbsolute(path))
+    ? await getSessionDirectory(sessionId)
+    : undefined;
   return Promise.all(
     paths.map(async (path) => {
       if (!isAbsolute(path) && !directory)
@@ -467,20 +462,18 @@ async function postMessage({
   sender,
   content,
   attachments,
-  agentMentions,
 }: {
   id: string;
   channelId: string;
   sender: Exclude<ChannelMessageSender, { type: "system" }>;
   content: string;
   attachments?: ChannelAttachment[];
-  agentMentions?: readonly AgentMention[];
 }): Promise<ChannelMessage> {
   const database = new ChannelDatabase(await getStateDatabase());
   const [channel, members, agents] = await Promise.all([
     database.getChannel(channelId),
     database.listMembers(channelId),
-    content.includes("@") || agentMentions?.length ? listAgentProfiles() : [],
+    content.includes("@") || sender.type === "agent" ? listAgentProfiles() : [],
   ]);
   if (!channel) throw new Error("Channel not found.");
   const audience = resolveChannelAudience({
@@ -488,7 +481,6 @@ async function postMessage({
     sender,
     members,
     agents,
-    agentMentions,
   });
   const message = await appendMessage(database, {
     id,
@@ -502,16 +494,15 @@ async function postMessage({
     sender.type === "agent"
       ? (agents.find(({ id }) => id === sender.agentId)?.name ?? "an Agent")
       : "the user";
-  const wake = (agentId: string, initialExecutionMode?: AgentMention["initialExecutionMode"]) =>
+  const wake = (agentId: string) =>
     mentionAgent({
       host: { kind: "channel", channelId },
       agentId,
-      initialExecutionMode,
       message: { systemMessage: { type: "channel_message", senderName } },
       directory: channel.directory,
       hostLabel: channel.title,
     });
-  deliverChannelMessage(audience, agentMentions, wake);
+  deliverChannelMessage(audience, wake);
   return message;
 }
 
@@ -526,7 +517,6 @@ export async function admitChannelAgent(_agent: Agent, membership: AgentMembersh
     channelId: membership.host.channelId,
     agentId: membership.agentId,
     sessionId: membership.sessionId,
-    executionMode: membership.executionMode,
   });
   publishChannelMessage(membership.host.channelId, change);
 }
@@ -536,22 +526,15 @@ function deliverChannelMessage(
     members: ChannelMember[];
     invitations: Array<Pick<Agent, "id">>;
   },
-  agentMentions: readonly AgentMention[] | undefined,
-  wake: (
-    agentId: string,
-    initialExecutionMode?: AgentMention["initialExecutionMode"],
-  ) => Promise<void>,
+  wake: (agentId: string) => Promise<void>,
 ): void {
   for (const member of audience.members) {
     void wake(member.agentId).catch((error) => {
       console.error(`Failed to wake Channel Agent ${member.sessionId}:`, error);
     });
   }
-  const initialModes = new Map(
-    agentMentions?.map(({ agentId, initialExecutionMode }) => [agentId, initialExecutionMode]),
-  );
   for (const agent of audience.invitations) {
-    void wake(agent.id, initialModes.get(agent.id)).catch((error) => {
+    void wake(agent.id).catch((error) => {
       console.error(`Failed to invite Channel Agent ${agent.id}:`, error);
     });
   }
@@ -565,8 +548,7 @@ export async function shareChannelArtifactFromAgent(
   const member = await requireChannelMember(database, sessionId);
   const channel = await database.getChannel(member.host.channelId);
   if (!channel) throw new Error("Channel not found.");
-  const workspaceDirectory =
-    (await readSessionContext(sessionId))?.workingDirectory ?? channel.directory;
+  const workspaceDirectory = (await getSessionDirectory(sessionId)) ?? channel.directory;
   return shareChannelArtifact(database, channel.id, workspaceDirectory, {
     ...input,
     actor: { type: "agent", agentId: member.agentId },
@@ -580,8 +562,7 @@ export async function shareChannelArtifactFromSession(
   const database = new ChannelDatabase(await getStateDatabase());
   const channel = await database.getChannel(input.channelId);
   if (!channel) throw new Error("Channel not found.");
-  const workspaceDirectory =
-    (await readSessionContext(sessionId))?.workingDirectory ?? channel.directory;
+  const workspaceDirectory = (await getSessionDirectory(sessionId)) ?? channel.directory;
   return shareChannelArtifact(database, channel.id, workspaceDirectory, {
     ...input,
     actor: { type: "user" },
@@ -630,7 +611,7 @@ export async function detachChannelAgentSession(
 async function requireChannelMember(
   database: ChannelDatabase,
   sessionId: string,
-): Promise<ChannelMember> {
+): Promise<ChannelMemberRecord> {
   const member = await database.getMemberBySession(sessionId);
   if (!member) throw new Error("This agent session does not belong to a channel.");
   return member;

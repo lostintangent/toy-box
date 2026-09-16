@@ -1,20 +1,18 @@
 // Server-side resolution of a WorkspaceFile to an absolute path: a session
-// artifact resolves under its sandboxed session files directory; a machine file
+// artifact resolves under its sandboxed session artifacts directory; a machine file
 // resolves to its own absolute path (single trusted owner, so no sandbox root).
 
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { SESSION_STATE_PATH } from "@sessions/model/constants";
+import { SESSION_STORAGE_PATH } from "@sessions/model/constants";
 import { machineFile, sessionFile, type WorkspaceFile } from "../model";
 
-const SESSION_FILES_DIRECTORY = "files";
+const SESSION_ARTIFACTS_DIRECTORY = "artifacts";
 
-/** Resolve a domain-relative artifact path under a session's files directory. */
+/** Resolve a domain-relative artifact path under a session's artifacts directory. */
 export function resolveSessionArtifactPath(sessionId: string, artifactPath: string): string | null {
-  const sessionRoot = resolveSessionRoot(sessionId);
-  if (!sessionRoot) return null;
-
-  const filesRoot = resolve(sessionRoot, SESSION_FILES_DIRECTORY);
+  const filesRoot = sessionArtifactDirectory(sessionId);
+  if (!filesRoot) return null;
   const relativePath = artifactPath.trim();
   if (!relativePath) return null;
   if (
@@ -41,12 +39,12 @@ export function resolveWorkspaceFile(file: WorkspaceFile): string | null {
 /** Preserve Session ownership when turning an absolute host path into a file address. */
 export function workspaceFileFromAbsolutePath(path: string): WorkspaceFile {
   const absolutePath = resolve(path);
-  const sessionStateRoot = getSessionStateRoot();
+  const sessionStateRoot = resolve(homedir(), SESSION_STORAGE_PATH);
   if (isPathInsideRoot(sessionStateRoot, absolutePath)) {
     const [sessionId, directory, ...artifactPath] = relative(sessionStateRoot, absolutePath).split(
       sep,
     );
-    if (sessionId && directory === SESSION_FILES_DIRECTORY && artifactPath.length > 0) {
+    if (sessionId && directory === SESSION_ARTIFACTS_DIRECTORY && artifactPath.length > 0) {
       return sessionFile(sessionId, artifactPath.join("/"));
     }
   }
@@ -69,14 +67,17 @@ export function projectSessionArtifactPath(
   return file.kind === "session" && file.sessionId === sessionId ? file.path : undefined;
 }
 
-function getSessionStateRoot(): string {
-  return resolve(homedir(), SESSION_STATE_PATH);
-}
-
-function resolveSessionRoot(sessionId: string): string | null {
-  const sessionStateRoot = getSessionStateRoot();
-  const sessionRoot = resolve(sessionStateRoot, sessionId);
-  return isPathInsideRoot(sessionStateRoot, sessionRoot) ? sessionRoot : null;
+/** Sessions owns one artifact location, independent of its provider. */
+export function sessionArtifactDirectory(sessionId: string): string | null {
+  if (
+    !sessionId ||
+    sessionId.includes("/") ||
+    sessionId.includes("\\") ||
+    sessionId === "." ||
+    sessionId === ".."
+  )
+    return null;
+  return resolve(homedir(), SESSION_STORAGE_PATH, sessionId, SESSION_ARTIFACTS_DIRECTORY);
 }
 
 function resolveSdkSessionStatePath(path: string | undefined): string | null {
@@ -91,11 +92,13 @@ function resolveSdkSessionStatePath(path: string | undefined): string | null {
   }
   if (!isAbsolute(absolutePath)) return null;
 
-  return isPathInsideRoot(getSessionStateRoot(), absolutePath) ? absolutePath : null;
+  return isPathInsideRoot(resolve(homedir(), SESSION_STORAGE_PATH), absolutePath)
+    ? absolutePath
+    : null;
 }
 
 function isSessionStateRelativePath(path: string): boolean {
-  return path === SESSION_STATE_PATH || path.startsWith(`${SESSION_STATE_PATH}/`);
+  return path === SESSION_STORAGE_PATH || path.startsWith(`${SESSION_STORAGE_PATH}/`);
 }
 
 function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {

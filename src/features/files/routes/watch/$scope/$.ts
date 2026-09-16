@@ -1,27 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Debouncer } from "@tanstack/pacer/debouncer";
-import type { FSWatcher } from "node:fs";
 import { createSseResponse } from "@/shared/server/sse";
 import type { FileWatchEvent } from "@files/model";
 import { resolveFileRequest } from "@files/server/request";
+import { fileWatcher } from "@files/server/watcher";
 
 type WatchRouteParams = {
   scope: string;
   _splat?: string;
 };
-
-const WATCH_DEBOUNCE_MS = 50;
-
-async function statWatchedFile(absolutePath: string): Promise<FileWatchEvent> {
-  try {
-    return {
-      type: "modified",
-      timestamp: (await Bun.file(absolutePath).stat()).mtimeMs,
-    };
-  } catch {
-    return { type: "deleted" };
-  }
-}
 
 export async function createWatchResponse(
   params: WatchRouteParams,
@@ -32,29 +18,12 @@ export async function createWatchResponse(
   if ("error" in resolution) return resolution.error;
   const { absolutePath } = resolution;
 
-  return createSseResponse<FileWatchEvent>(request, async (send, close) => {
-    let watcher: FSWatcher | undefined;
-    const changeEvents = new Debouncer(async () => send(await statWatchedFile(absolutePath)), {
-      wait: WATCH_DEBOUNCE_MS,
-    });
-
+  return createSseResponse<FileWatchEvent>(request, (send, close) => {
     try {
-      const { watch } = await import("node:fs");
-      watcher = watch(absolutePath, changeEvents.maybeExecute);
-      watcher.on("error", close);
-      // Close the read-then-watch gap: a write can land after the client's
-      // snapshot read but before this watcher is installed. Register first,
-      // then publish the current revision so either this snapshot or a later
-      // watch event makes the client converge.
-      send(await statWatchedFile(absolutePath));
+      return fileWatcher.observeFile(absolutePath, send, close);
     } catch {
       close();
     }
-
-    return () => {
-      watcher?.close();
-      changeEvents.cancel();
-    };
   });
 }
 

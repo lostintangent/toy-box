@@ -28,7 +28,9 @@ export function QuestionToolCall({ question }: { question: SessionQuestion }) {
       {question.state === "answered" ? (
         <div className="mt-3 border-t pt-3">
           <div className="mb-1 text-xs text-muted-foreground">Answer</div>
-          <div className="whitespace-pre-wrap">{question.answer}</div>
+          <div className="whitespace-pre-wrap">
+            {question.secret ? "Answer submitted" : question.answer}
+          </div>
         </div>
       ) : question.state === "unanswered" ? (
         <p className="mt-3 text-xs text-muted-foreground">No answer was recorded.</p>
@@ -86,6 +88,7 @@ function QuestionAnswerForm({
       {question.allowFreeform && (
         <form className="flex gap-2" onSubmit={handleFreeformSubmit}>
           <Input
+            type={question.secret ? "password" : "text"}
             value={freeformAnswer}
             disabled={answerMutation.isPending}
             placeholder="Type an answer"

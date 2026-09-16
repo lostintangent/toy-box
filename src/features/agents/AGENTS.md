@@ -18,11 +18,12 @@ Files compose this capability without gaining a second execution model.
   heuristic acquired by the Agent. Users may review, edit, or delete it; project facts belong in
   project documentation, AGENTS.md, or a project skill.
 - `AgentMembership` is one Agent's durable presence in one Session, Channel, or file. It owns exactly
-  one private Session and a `shared | worktree` execution mode. It retains only the stable Agent ID;
-  consumers resolve current identity from `Agent`. Running, waiting, and idle state come from that
-  Session; turn-specific requests remain in its prompt or host message bus.
-- `AgentMention` is the transient request carried by a user message. It identifies an Agent and the
-  optional initial execution mode. Addressing uses stable Agent IDs; mentioning the same Agent again reuses and wakes its membership without changing that mode.
+  one private Session and retains only the stable Agent ID; consumers resolve current identity from
+  `Agent`. Running, waiting, and idle state come from that Session; turn-specific requests remain in
+  its prompt or host message bus.
+- Visible name-derived `@handle` text addresses an Agent. Session ingress resolves those handles once
+  and pins stable IDs while a message is queued; mentioning the same Agent again reuses and wakes its
+  membership.
 - `AgentHost.kind` identifies the Session, Channel, or file that owns public context. Its host
   adapter supplies membership instructions, Agent tools, and any host-specific admission, removal,
   or turn settlement. Public messages and files remain owned by their respective hosts, including
@@ -77,7 +78,8 @@ mention. Both reuse the Session runtime.
   identity changes should reflect durable evolution, not routine task progress.
 - Experiences contain durable cross-project lessons; revise an overlapping experience rather than
   adding another.
-- Worktrees are optional and created by Sessions before model work begins.
+- Private Agent Sessions use their host's working directory. Ordinary Sessions own their separate
+  worktree policy.
 - Managed Agent sessions do not appear in the ordinary session list. Hosts may show their passive
   Session preview as activity detail.
 - A regular Session renders a published Agent response with Agent attribution when one is useful. A

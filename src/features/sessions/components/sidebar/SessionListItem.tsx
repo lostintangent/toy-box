@@ -36,16 +36,14 @@ export function SessionListItem({
 }: SessionListItemProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const activity = useWorkspaceSessionActivity(session.sessionId);
-  const sessionLabel = session.summary || (isDraft ? "Draft session" : "New session");
-  const isTitleLoading = !isDraft && !session.summary && activity.running;
+  const sessionLabel = session.title || (isDraft ? "Draft session" : "New session");
+  const isTitleLoading = !isDraft && !session.title && activity.running;
 
   const handleClick = (event: React.MouseEvent) => {
     onSelect(session.sessionId, event.metaKey || event.ctrlKey);
   };
 
-  const showBadges = Boolean(
-    session.context?.repository || session.context?.gitRoot || session.context?.workingDirectory,
-  );
+  const showBadges = Boolean(session.directory);
 
   return (
     <>
@@ -61,9 +59,9 @@ export function SessionListItem({
         badge={
           showBadges && (
             <SessionMetadataBadges
-              repository={session.context?.repository}
-              gitRoot={session.context?.gitRoot}
-              cwd={session.context?.workingDirectory}
+              cwd={session.directory}
+              repository={session.repository}
+              gitRoot={session.gitRoot}
               isWorktree={isWorktree}
             />
           )
@@ -90,9 +88,7 @@ export function SessionListItem({
         isActive={isActive}
         previewDisabled={isDraft}
         onClick={handleClick}
-        titleClassName={
-          isDraft || !session.summary ? "italic text-muted-foreground" : "font-medium"
-        }
+        titleClassName={isDraft || !session.title ? "italic text-muted-foreground" : "font-medium"}
       />
       {deleteOpen && (
         <DestructiveConfirmationDialog

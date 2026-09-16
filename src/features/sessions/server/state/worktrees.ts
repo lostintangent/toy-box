@@ -4,29 +4,21 @@
 // record must move together. This module owns that complete lifecycle so
 // session callers never coordinate Git and persistence independently.
 
-import * as childProcess from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getStateDatabase } from "@/server/database";
 import type { SessionWorktree } from "@sessions/model";
+import { detectGitRoot, git } from "../git";
 
 /** Create and persist a worktree for a session when its directory is a Git repository. */
 export async function createSessionWorktree(
   sessionId: string,
   directory: string,
-): Promise<
-  | {
-      worktree: SessionWorktree;
-      sourceGitRoot: string;
-      sourceRepository?: string;
-    }
-  | undefined
-> {
-  const sourceGitRoot = await detectGitRoot(directory);
-  if (!sourceGitRoot) return undefined;
+): Promise<SessionWorktree | undefined> {
+  const gitRoot = await detectGitRoot(directory);
+  if (!gitRoot) return undefined;
 
-  const sourceRepository = await getRepositoryName(sourceGitRoot);
-  const worktree = await createGitWorktree(sourceGitRoot, sessionId);
+  const worktree = await createGitWorktree(gitRoot, sessionId);
 
   try {
     await saveSessionWorktree(sessionId, worktree);
@@ -35,12 +27,7 @@ export async function createSessionWorktree(
     throw error;
   }
 
-  return { worktree, sourceGitRoot, sourceRepository };
-}
-
-/** Whether a directory can back a managed session worktree. */
-export async function canCreateSessionWorktree(directory: string): Promise<boolean> {
-  return Boolean(await detectGitRoot(directory));
+  return worktree;
 }
 
 /** Get every session worktree for session-list hydration. */
@@ -81,7 +68,11 @@ async function finishSessionWorktree(
   const worktree = await getSessionWorktree(sessionId);
   if (!worktree) return;
 
-  const gitRoot = await detectGitRoot(worktree.path);
+  if (await git(worktree.path, "status", "--porcelain")) {
+    throw new Error("Commit the session's changes before applying or merging its worktree.");
+  }
+
+  const gitRoot = await detectMainGitRoot(worktree.path);
   if (!gitRoot) return;
 
   await action(gitRoot, worktree);
@@ -157,37 +148,6 @@ async function deleteSessionWorktreeRecord(sessionId: string): Promise<void> {
 }
 
 // Git mechanics
-
-async function git(directory: string, ...args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    childProcess.execFile(
-      "git",
-      ["-C", directory, ...args],
-      { encoding: "utf-8" },
-      (error, stdout) => {
-        if (error) reject(error);
-        else resolve(stdout.trim());
-      },
-    );
-  });
-}
-
-async function getRepositoryName(directory: string): Promise<string | undefined> {
-  try {
-    const url = await git(directory, "remote", "get-url", "origin");
-    return url.match(/[/:]([^/]+\/[^/]+?)(?:\.git)?$/)?.[1];
-  } catch {
-    return undefined;
-  }
-}
-
-async function detectGitRoot(directory: string): Promise<string | null> {
-  try {
-    return await git(directory, "rev-parse", "--show-toplevel");
-  } catch {
-    return null;
-  }
-}
 
 async function createGitWorktree(gitRoot: string, sessionId: string): Promise<SessionWorktree> {
   const shortId = sessionId.replace(/^toy-box-/, "").slice(0, 12);

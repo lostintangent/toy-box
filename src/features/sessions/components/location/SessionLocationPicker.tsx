@@ -1,5 +1,6 @@
 import { SessionDirectoryPicker } from "./directory/SessionDirectoryPicker";
 import { SessionBranchMenu, type WorktreeBranchActions } from "./git/SessionBranchMenu";
+import { useSessionContext } from "./useSessionContext";
 
 export type SessionLocationPickerProps = {
   value?: string | null;
@@ -18,44 +19,51 @@ export type SessionLocationPickerProps = {
   worktreeActions?: WorktreeBranchActions;
 };
 
-export function SessionLocationPicker({
+export function SessionLocationPicker(props: SessionLocationPickerProps) {
+  if (props.isLoading || props.onValueChange) {
+    return <SessionDirectoryPicker {...props} />;
+  }
+  return <ReadonlySessionLocationPicker {...props} />;
+}
+
+function ReadonlySessionLocationPicker({
   value,
   repository,
   gitRoot,
   className,
-  isLoading,
-  onValueChange,
-  useWorktree,
-  onUseWorktreeChange,
   branch,
   worktreeActions,
 }: SessionLocationPickerProps) {
-  if (isLoading) {
-    return <SessionDirectoryPicker className={className} isLoading />;
-  }
-
-  if (!onValueChange && (branch || worktreeActions)) {
-    return (
-      <SessionBranchMenu
-        branch={branch}
-        repository={repository}
-        gitRoot={gitRoot}
-        cwd={value ?? undefined}
-        className={className}
-        {...worktreeActions}
-      />
-    );
-  }
+  const { context, error } = useSessionContext({
+    workingDirectory: value ?? undefined,
+    repository,
+    gitRoot,
+    branch,
+  });
 
   return (
-    <SessionDirectoryPicker
-      value={value}
-      repository={repository}
-      gitRoot={gitRoot}
-      className={className}
-      onValueChange={onValueChange}
-      useWorktree={useWorktree}
-      onUseWorktreeChange={onUseWorktreeChange}
-    />
+    <span
+      className="inline-flex min-w-0"
+      aria-description={error?.message}
+      title={error ? `Repository information unavailable: ${error.message}` : undefined}
+    >
+      {context.branch || worktreeActions ? (
+        <SessionBranchMenu
+          branch={context.branch}
+          repository={context.repository}
+          gitRoot={context.gitRoot}
+          cwd={context.workingDirectory}
+          className={className}
+          {...worktreeActions}
+        />
+      ) : (
+        <SessionDirectoryPicker
+          value={context.workingDirectory}
+          repository={context.repository}
+          gitRoot={context.gitRoot}
+          className={className}
+        />
+      )}
+    </span>
   );
 }

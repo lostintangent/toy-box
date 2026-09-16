@@ -9,13 +9,9 @@ const realWorkerStateModule = { ...workerStateModule };
 type Completion = { status: "completed" | "failed"; response?: string };
 type CreateArguments = Parameters<typeof streamModule.createSession>;
 
-const parentModel = { name: "gpt-5", reasoningEffort: "high" as const };
-const explicitModel = { name: "claude-sonnet-4.5" };
-const parentContext = {
-  workingDirectory: "/repo",
-  gitRoot: "/repo",
-  repository: "example/repo",
-};
+const parentModel = { provider: "copilot", name: "gpt-5", reasoningEffort: "high" as const };
+const explicitModel = { provider: "copilot", name: "claude-sonnet-4.5" };
+const parentDirectory = "/repo/.worktrees/parent";
 const parentSnapshot: SessionSnapshot = {
   id: "toy-box-parent",
   messages: [],
@@ -56,7 +52,7 @@ const createSessionMock = mock(async (..._args: CreateArguments) => {
 });
 const deleteSessionIfExistsMock = mock(async (_sessionId: string) => true);
 const getSessionSnapshotMock = mock(async () => parentSnapshot);
-const readSessionContextMock = mock(async () => parentContext);
+const getSessionDirectoryMock = mock(async () => parentDirectory);
 const getEphemeralWorkerSessionIdsMock = mock(async (): Promise<string[]> => []);
 const registerWorkerSessionMock = mock(async () => {
   admissionCalls.push("register");
@@ -69,7 +65,7 @@ mock.module("@sessions/server/runtime", () => ({
   createSession: createSessionMock,
   deleteSessionIfExists: deleteSessionIfExistsMock,
   getSessionSnapshot: getSessionSnapshotMock,
-  readSessionContext: readSessionContextMock,
+  getSessionDirectory: getSessionDirectoryMock,
 }));
 mock.module("@workers/server/database", () => ({
   ...realWorkerStateModule,
@@ -101,7 +97,7 @@ beforeEach(() => {
   deleteSessionIfExistsMock.mockClear();
   deleteSessionIfExistsMock.mockImplementation(async () => true);
   getSessionSnapshotMock.mockClear();
-  readSessionContextMock.mockClear();
+  getSessionDirectoryMock.mockClear();
   getEphemeralWorkerSessionIdsMock.mockClear();
   getEphemeralWorkerSessionIdsMock.mockImplementation(async () => []);
   registerWorkerSessionMock.mockClear();
@@ -120,7 +116,7 @@ beforeEach(() => {
 });
 
 describe("spawnWorker", () => {
-  test("inherits its parent's execution context and deletes after exact completion", async () => {
+  test("inherits its parent's model and worktree directory and deletes after exact completion", async () => {
     const worker = { ...fileWorker, name: "Focused job" };
     const receipt = await spawnWorker({
       worker,
@@ -132,8 +128,7 @@ describe("spawnWorker", () => {
       "toy-box-worker",
       { content: "Do one focused job.", model: parentModel },
       {
-        directory: parentContext.workingDirectory,
-        initialContext: parentContext,
+        directory: parentDirectory,
         sessionType: "worker",
         parentSessionId: "toy-box-parent",
         useWorktree: false,
@@ -143,6 +138,7 @@ describe("spawnWorker", () => {
     expect(registerWorkerSessionMock).toHaveBeenCalledWith(worker);
     expect(admissionCalls.slice(0, 2)).toEqual(["register", "create"]);
     expect(getSessionSnapshotMock).toHaveBeenCalledWith("toy-box-parent");
+    expect(getSessionDirectoryMock).toHaveBeenCalledWith("toy-box-parent");
     expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
 
     const completion = receipt.waitForCompletion();
@@ -176,12 +172,11 @@ describe("spawnWorker", () => {
     workerCompletion.resolve({ status: "completed" });
     await receipt.waitForCompletion();
 
-    expect(readSessionContextMock).not.toHaveBeenCalled();
+    expect(getSessionDirectoryMock).not.toHaveBeenCalled();
     expect(getSessionSnapshotMock).not.toHaveBeenCalled();
     expect(createSessionMock.mock.calls[0]![1]).toMatchObject({ model: explicitModel });
     expect(createSessionMock.mock.calls[0]![2]).toMatchObject({
       directory: "/other",
-      initialContext: undefined,
     });
   });
 
@@ -193,14 +188,13 @@ describe("spawnWorker", () => {
     workerCompletion.resolve({ status: "completed" });
     await receipt.waitForCompletion();
 
-    expect(readSessionContextMock).not.toHaveBeenCalled();
+    expect(getSessionDirectoryMock).not.toHaveBeenCalled();
     expect(getSessionSnapshotMock).not.toHaveBeenCalled();
     expect(createSessionMock).toHaveBeenCalledWith(
       "toy-box-worker",
       { content: "Generate a pattern.", model: explicitModel },
       {
         directory: undefined,
-        initialContext: undefined,
         sessionType: "worker",
         parentSessionId: undefined,
         useWorktree: false,
@@ -268,17 +262,17 @@ describe("spawnWorker", () => {
     await expect(cancelWorker("toy-box-worker")).resolves.toBe(false);
   });
 
-  test("cancels a worker while its inherited context is still loading", async () => {
-    const context = deferred<typeof parentContext>();
-    readSessionContextMock.mockImplementationOnce(() => context.promise);
+  test("cancels a worker while its inherited directory is still loading", async () => {
+    const directory = deferred<string>();
+    getSessionDirectoryMock.mockImplementationOnce(() => directory.promise);
     const spawn = spawnWorker({
       worker: fileWorker,
       message: { content: "Do one focused job." },
     });
-    await waitFor(() => expect(readSessionContextMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getSessionDirectoryMock).toHaveBeenCalledTimes(1));
 
     await expect(cancelWorker("toy-box-worker")).resolves.toBe(true);
-    context.resolve(parentContext);
+    directory.resolve(parentDirectory);
 
     await expect(spawn).rejects.toBeInstanceOf(WorkerCanceledError);
     expect(createSessionMock).not.toHaveBeenCalled();
@@ -300,10 +294,10 @@ describe("spawnWorker", () => {
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
   });
 
-  test("cleans up a reserved worker id when parent context loading fails", async () => {
-    const contextError = new Error("Unable to load parent context.");
-    readSessionContextMock.mockImplementationOnce(async () => {
-      throw contextError;
+  test("cleans up a reserved worker id when parent directory loading fails", async () => {
+    const directoryError = new Error("Unable to load parent directory.");
+    getSessionDirectoryMock.mockImplementationOnce(async () => {
+      throw directoryError;
     });
 
     await expect(
@@ -311,7 +305,7 @@ describe("spawnWorker", () => {
         worker: fileWorker,
         message: { content: "Do one focused job." },
       }),
-    ).rejects.toBe(contextError);
+    ).rejects.toBe(directoryError);
     expect(createSessionMock).not.toHaveBeenCalled();
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
   });

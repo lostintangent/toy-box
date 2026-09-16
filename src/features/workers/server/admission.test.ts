@@ -249,7 +249,7 @@ describe("workers", () => {
       appId: app.id,
       message: {
         content: "Generate a semantic-version expression.",
-        model: { name: "gpt-5" },
+        model: { provider: "copilot", name: "gpt-5" },
       },
       directory: "/repo",
       useWorktree: true,
@@ -264,7 +264,7 @@ describe("workers", () => {
         ephemeral: true,
         appId: app.id,
       },
-      message: { model: { name: "gpt-5" } },
+      message: { model: { provider: "copilot", name: "gpt-5" } },
       directory: "/repo",
       useWorktree: true,
     });

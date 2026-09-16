@@ -9,9 +9,11 @@ import type {
   SessionCompletion,
   SessionLaunch,
   SessionMessage,
+  SessionMetadata,
   SessionWorktree,
 } from "@sessions/model";
 import type { ContextTier, ModelConfiguration } from "@sessions/model/modelConfiguration";
+import type { WorkspaceSessionState } from "@workspace/model/state/reducer";
 
 export type {
   AppInstance,
@@ -21,6 +23,7 @@ export type {
   SessionCompletion,
   SessionLaunch,
   SessionMessage,
+  SessionMetadata,
   SessionWorktree,
   WorkspaceFile,
   WorkspaceFileMode,
@@ -171,17 +174,13 @@ export type WorkspaceFileState = {
   cancelWorker(workerSessionId: string): Promise<void>;
 };
 
-export type AppSession = {
-  id: string;
-  title: string;
-  status: "draft" | "running" | "waiting" | "idle" | "unread";
+export type AppSession = SessionMetadata & {
+  status: WorkspaceSessionState["status"];
   /**
    * How the session is governed: an ordinary conversation, a scheduled
    * automation's durable run session, or a member of the Hyper workspace.
    */
   kind: "standard" | "automation" | "hyper";
-  directory?: string;
-  isRemote: boolean;
   worktree?: SessionWorktree;
   /** Worker sessions owned by this session or one of its files. */
   children: AppSession[];
@@ -198,6 +197,8 @@ export type AppWorkspace = {
   models: Array<{
     id: string;
     name: string;
+    provider: string;
+    providerName?: string;
     supportedReasoningEfforts?: string[];
     defaultReasoningEffort?: string;
     /** Ordered with the model's default tier first. */

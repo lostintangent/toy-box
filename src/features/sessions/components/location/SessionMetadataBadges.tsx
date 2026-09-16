@@ -4,25 +4,31 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/
 import { cn } from "@/shared/utils";
 import { SessionLocationIcon } from "./SessionLocationIcon";
 import { resolveSessionLocation } from "./locationDisplay";
+import { useSessionContext } from "./useSessionContext";
 
 type SessionMetadataBadgesProps = {
+  cwd?: string;
   repository?: string;
   gitRoot?: string;
-  cwd?: string;
   messageCount?: number;
   isWorktree?: boolean;
   className?: string;
 };
 
 export function SessionMetadataBadges({
+  cwd,
   repository,
   gitRoot,
-  cwd,
   messageCount,
   isWorktree = false,
   className,
 }: SessionMetadataBadgesProps) {
-  const location = resolveSessionLocation({ repository, gitRoot, cwd });
+  const { context, error } = useSessionContext({ workingDirectory: cwd, repository, gitRoot });
+  const location = resolveSessionLocation({
+    repository: context.repository,
+    gitRoot: context.gitRoot,
+    cwd: context.workingDirectory,
+  });
   const hasMessageCount = typeof messageCount === "number" && messageCount > 0;
   if (!location && !hasMessageCount) return null;
 
@@ -32,7 +38,11 @@ export function SessionMetadataBadges({
         <Tooltip>
           <TooltipTrigger
             render={
-              <MetadataBadge className="max-w-44" aria-label={location.description}>
+              <MetadataBadge
+                className="max-w-44"
+                aria-label={location.description}
+                aria-description={error?.message}
+              >
                 <SessionLocationIcon
                   kind={location.kind}
                   isWorktree={isWorktree}
@@ -44,6 +54,7 @@ export function SessionMetadataBadges({
           />
           <TooltipContent sideOffset={6} className="max-w-96 break-all">
             {location.tooltip}
+            {error && <p>Repository information unavailable: {error.message}</p>}
           </TooltipContent>
         </Tooltip>
       )}

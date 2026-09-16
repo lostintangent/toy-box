@@ -3,6 +3,7 @@ import { LoaderCircle, Pencil, X } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 import { Button } from "@/shared/components/ui/button";
+import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
 import { useLongPress } from "@/shared/hooks/useLongPress";
 import { cn } from "@/shared/utils";
 import type { QueuedMessage, QueuedUserMessage } from "../../model";
@@ -83,8 +84,7 @@ function QueuedMessageRow({
     message.role === "system"
       ? systemMessageLabel(message.content)
       : message.content.trim() ||
-        message.attachments?.map((attachment) => attachment.displayName).join(", ") ||
-        "Attachment";
+        `${attachments.length} attachment${attachments.length === 1 ? "" : "s"}`;
   const steer = () => {
     if (canSteer) steerMutation.mutate(message.clientId);
   };
@@ -126,7 +126,9 @@ function QueuedMessageRow({
       </Button>
 
       <div className="min-w-0 flex-1">
-        <span className={cn("block truncate", message.role === "system" && "italic")}>{label}</span>
+        <ScrollableFade className={cn("whitespace-nowrap", message.role === "system" && "italic")}>
+          {label}
+        </ScrollableFade>
         {attachments.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
             <AttachmentGallery attachments={attachments} size="compact" />

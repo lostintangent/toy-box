@@ -37,7 +37,7 @@ describe("session type resolution", () => {
     const automation = await new AutomationDatabase(currentDb!).create({
       title: "Managed automation",
       prompt: "Run",
-      model: { name: "gpt-5" },
+      model: { provider: "copilot", name: "gpt-5" },
       cron: "0 9 * * *",
     });
     const inboxId = `toy-box-${crypto.randomUUID()}`;
@@ -58,7 +58,6 @@ describe("session type resolution", () => {
       host: { kind: "session", sessionId: "toy-box-host" },
       agentId: agent.id,
       sessionId: agentSessionId,
-      executionMode: "shared",
     });
     onTestFinished(() => deleteHyperState(hyperId));
 
@@ -94,7 +93,6 @@ describe("Session catalog projection", () => {
           host: { kind: "session", sessionId: "parent" },
           agentId: agent.id,
           sessionId: "private-agent",
-          executionMode: "worktree",
         });
         await registerWorkerSession({
           type: "session",
@@ -108,8 +106,7 @@ describe("Session catalog projection", () => {
         sessionId,
         startTime: new Date(0),
         modifiedTime: new Date(0),
-        summary: sessionId,
-        isRemote: false,
+        title: sessionId,
       }));
       const worktree = { branch: "work", baseBranch: "main", path: "/repo/work" };
 

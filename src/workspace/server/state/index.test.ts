@@ -26,7 +26,7 @@ const {
   setSessionStatus,
   unpinSession,
 } = await import(".");
-const { persistDraftSession } = await import("@sessions/server/state/drafts");
+const { persistDraftSession } = await import("@sessions/server/state/sessions");
 
 async function openWorkspaceTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
@@ -67,7 +67,7 @@ describe("workspace state", () => {
     await openWorkspaceTestDatabase();
     const initial = {
       ...(await snapshot()).settings,
-      defaultModel: { name: "gpt-5", reasoningEffort: "high" },
+      defaultModel: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
       terminalShell: "/bin/zsh",
       pinnedSessionIds: ["session-a"],
     };
@@ -165,7 +165,7 @@ describe("workspace state", () => {
       id: "automation-a",
       title: "Daily summary",
       prompt: "Summarize repo status.",
-      model: { name: "gpt-5" },
+      model: { provider: "copilot", name: "gpt-5" },
       cron: "0 9 * * *",
       createdAt: "2026-02-14T00:00:00.000Z",
       updatedAt: "2026-02-14T00:00:00.000Z",

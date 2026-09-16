@@ -19,6 +19,8 @@ Apps are trusted React surfaces with two ownership models:
 The feature is organized by responsibility:
 
 - `model/` owns schemas and domain values shared across the boundary.
+- `server/schema.ts` defines the SQLite tables, while `server/database.ts` owns saved instance and
+  share rows.
 - `queries.ts` and `mutations.ts` are the browser's declarative access to
   compiled bundles, saved-app reads, and saved-app operations.
 - `components/` owns the Apps sidebar and workspace pane. Its private `host/`
@@ -158,4 +160,14 @@ app and bundle reads use `appQueries`; discrete saved-app operations use
   events; only a saved instance may own pending shares or app workers.
 - Shares transfer MIME-typed JSON content; only sessions execute messages.
 - Deleting an instance cleans up all of its app-owned workers.
-- Breaking author-API changes require a new runtime module contract.
+- Breaking changes to a shipped author API require a new runtime module contract.
+
+The public model catalog and model picker come from Sessions through the workspace
+projection. Model identity is `{ provider, name }`; the catalog includes provider
+display names for grouping. Apps pass that configuration through ordinary Session
+operations and contain no native-provider selection or execution branches.
+
+`AppSession` extends shared `SessionMetadata` with workspace status, governance kind,
+worktree, and child sessions. Metadata retains its canonical names and values, including
+`sessionId`, optional `title` and `directory`, and available native Git display fields;
+apps choose display fallbacks. Creation still receives only the directory and worktree choice.

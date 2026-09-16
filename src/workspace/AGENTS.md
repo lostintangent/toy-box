@@ -53,8 +53,9 @@ updates to model sessions. [`server/state/`](server/state) owns only workspace-w
 sparse shared session activity, Hyper membership, settings, and environment capabilities.
 [`server/events.ts`](server/events.ts) owns the process-local fan-out behind the shared
 [`routes/api/workspace.ts`](routes/api/workspace.ts) SSE route.
-Shared SQLite connection management stays in [`../server/`](../server), while each feature owns its
-records and lifecycle.
+Shared SQLite connection management and schema composition stay in [`../server/`](../server), while
+each feature owns its schema, records, and lifecycle. Workspace's own `server/state/schema.ts`
+defines the durable settings table.
 
 Browser-local pane topology, focus, layout, and client identity are deliberately absent from the
 server projection.
@@ -81,6 +82,8 @@ sessions, files, apps, and channels are deduplicated and capped at four panes. A
 Inbox, and app panes can publish linked panes through a browser-local graph owned by their workspace
 surface. That graph contains composition only; it never copies transcripts, Channel messages, file
 content, Inbox rows, or app state.
+Explicit focus can bring an overflow artifact or child into the capped layout by replacing an
+unrelated pane while retaining its publishers. Clearing focus restores the ordinary ordering.
 
 `SessionPane` has three interaction modes:
 

@@ -283,6 +283,48 @@ describe("workspace pane derivation", () => {
       ]),
     ).toEqual(["A", "B"]);
   });
+
+  test("focuses an overflow artifact or child without losing its publishing session", () => {
+    const root = selectedSessionPane("A");
+    const artifacts = ["one.md", "two.md", "three.md", "four.toy"].map((path) =>
+      createEditorPane(sessionFile("A", path)),
+    );
+    const child = createLinkedSessionPane("child");
+    const panePublications = { [root.id]: [...artifacts, child] };
+    for (const focusedPane of [artifacts[3]!, child]) {
+      expect(
+        deriveVisibleWorkspacePanes({
+          rootPanes: [root],
+          panePublications,
+          focusedPaneId: focusedPane.id,
+        }),
+      ).toEqual([root, artifacts[0], artifacts[1], focusedPane]);
+    }
+    expect(deriveVisibleWorkspacePanes({ rootPanes: [root], panePublications })).toEqual([
+      root,
+      ...artifacts.slice(0, 3),
+    ]);
+  });
+
+  test("retains a publishing app when explicit focus displaces a root in a full workspace", () => {
+    const rootPanes = ["a", "b", "c", "owner"].map(createAppPane);
+    const child = createLinkedSessionPane("child");
+    const panePublications = { [rootPanes[3]!.id]: [child] };
+    expect(
+      deriveVisibleWorkspacePanes({
+        rootPanes,
+        panePublications,
+        focusedPaneId: child.id,
+      }),
+    ).toEqual([rootPanes[0], rootPanes[1], child, rootPanes[3]]);
+    expect(
+      deriveVisibleWorkspacePanes({
+        rootPanes,
+        panePublications,
+        focusedPaneId: "departed",
+      }),
+    ).toEqual(rootPanes);
+  });
 });
 
 describe("artifact auto-focus", () => {

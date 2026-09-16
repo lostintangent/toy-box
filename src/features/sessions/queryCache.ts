@@ -8,6 +8,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { WorkspaceEvent } from "@workspace/model/events";
 import type { SessionMetadata, SessionMetadataUpdate, SessionsState } from "./model";
 import { createEmptySessionsState, projectsSessionListMetadata, sessionQueries } from "./queries";
+import { createInitialSession, toSessionSnapshot } from "./model/reducer";
 
 export function applyWorkspaceEventToSessionQueries(
   queryClient: QueryClient,
@@ -19,6 +20,16 @@ export function applyWorkspaceEventToSessionQueries(
       return;
     case "session.deleted":
       removeSessionFromState(queryClient, event.sessionId);
+      // Managed workflows can recreate this public ID while its pane stays
+      // mounted. Cancel old history reads and retire the old transcript before
+      // the replacement execution announces itself as running.
+      void queryClient.cancelQueries({
+        queryKey: sessionQueries.detail(event.sessionId).queryKey,
+        exact: true,
+      });
+      queryClient.setQueryData(sessionQueries.detail(event.sessionId).queryKey, (previous) =>
+        previous ? toSessionSnapshot(event.sessionId, createInitialSession()) : undefined,
+      );
       return;
     case "session.touched":
       void queryClient.invalidateQueries({
@@ -86,7 +97,7 @@ export function upsertSessionInState(
     const sessionIndex = state.sessions.findIndex(
       (session) => session.sessionId === sessionUpdate.sessionId,
     );
-    // Partial title/context updates may patch a projected Session, but only a
+    // Partial metadata updates may patch a projected Session, but only a
     // role-classified creation update has enough information to admit one.
     if (sessionIndex === -1 && !sessionUpdate.sessionType) return state;
     const existing = sessionIndex === -1 ? undefined : state.sessions[sessionIndex];
@@ -150,12 +161,15 @@ function mergeSessionMetadata(
   const startTime = parseEventDate(update.startTime, fallbackStartTime);
 
   return {
+    ...existing,
     sessionId: update.sessionId,
     startTime,
     modifiedTime,
-    summary: update.summary ?? existing?.summary ?? "",
-    isRemote: update.isRemote ?? existing?.isRemote ?? false,
-    context: update.context ?? existing?.context,
+    title: update.title ?? existing?.title ?? "",
+    ...((update.provider ?? existing?.provider)
+      ? { provider: update.provider ?? existing?.provider }
+      : {}),
+    directory: update.directory ?? existing?.directory,
   };
 }
 

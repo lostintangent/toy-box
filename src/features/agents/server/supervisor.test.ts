@@ -4,7 +4,7 @@ import { AgentDatabase } from "./database";
 import { ChannelDatabase } from "@channels/server/database";
 import * as state from "@/server/database";
 import * as runtime from "@sessions/server/runtime";
-import { assertAgentExecutionModeAvailable, mentionAgent } from "./supervisor";
+import { mentionAgent } from "./supervisor";
 
 async function setup() {
   const db = await state.createTestDatabase();
@@ -25,12 +25,6 @@ async function setup() {
 }
 
 describe("Agent membership supervision", () => {
-  test("rejects isolated work without a Git directory", async () => {
-    await expect(assertAgentExecutionModeAvailable("worktree")).rejects.toThrow(
-      "needs a Git working directory",
-    );
-  });
-
   test("Session, File, and Channel mentions share one durable admission and wake path", async () => {
     const { agents, agent, channels, create, deliver } = await setup();
     const channel = await channels.createChannel({ title: "Design" });
@@ -54,7 +48,7 @@ describe("Agent membership supervision", () => {
       expect(create).toHaveBeenLastCalledWith(
         member.sessionId,
         input.message,
-        expect.objectContaining({ sessionType: "agent", useWorktree: false }),
+        expect.objectContaining({ sessionType: "agent" }),
       );
       expect(deliver).toHaveBeenLastCalledWith(member.sessionId, input.message, {
         immediate: true,
@@ -64,9 +58,7 @@ describe("Agent membership supervision", () => {
           seenThrough: 0,
         });
       }
-      // A later mention cannot reinterpret an existing membership's workspace.
-      await mentionAgent({ ...input, initialExecutionMode: "worktree" });
-      expect((await agents.getMembership(host, agent.id))?.executionMode).toBe("shared");
+      await mentionAgent(input);
     }
     expect(create).toHaveBeenCalledTimes(3);
     expect(deliver).toHaveBeenCalledTimes(6);

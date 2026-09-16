@@ -1,18 +1,14 @@
 // Ordinary Sessions own mention briefings and attributed public responses.
 
-import {
-  agentHandleFromName,
-  findMentionedAgents,
-  type Agent,
-  type AgentMention,
-} from "@agents/model";
+import { agentHandleFromName, findMentionedAgents, type Agent } from "@agents/model";
 import { getAgent, listAgentProfiles } from "@agents/server";
 import type { AgentHostAdapter } from "@agents/server/host";
+import { finishAgentTurnTool } from "@agents/server/tools";
 import { mentionAgent } from "@agents/server/supervisor";
 import { joinedChannelTools } from "@channels/server/tools";
 import type { QueuedUserMessage } from "@sessions/model";
 import { sessionAgentTools } from "@sessions/server/tools";
-import { deliverSessionMessage, getSessionContext, getSessionSnapshot } from "./runtime";
+import { deliverSessionMessage, getSessionDirectory, getSessionSnapshot } from "./runtime";
 
 export const SESSION_HOST_AGENT_INSTRUCTIONS = `Messages may @mention agents, which Toy Box dispatches in parallel and renders with their own attribution. Do not answer for a mentioned agent or emit a waiting acknowledgment. A mentioned agent may complete silently. Contribute only distinct work or synthesis the user requested.`;
 
@@ -20,13 +16,11 @@ export const SESSION_HOST_AGENT_INSTRUCTIONS = `Messages may @mention agents, wh
 export async function resolveSessionAgentMentions(
   message: QueuedUserMessage,
 ): Promise<QueuedUserMessage> {
-  if (message.agentMentions !== undefined || !message.content.includes("@")) return message;
+  if (message.mentionedAgentIds !== undefined || !message.content.includes("@")) return message;
   return {
     ...message,
-    agentMentions: findMentionedAgents(message.content, await listAgentProfiles()).map(
-      ({ id }) => ({
-        agentId: id,
-      }),
+    mentionedAgentIds: findMentionedAgents(message.content, await listAgentProfiles()).map(
+      ({ id }) => id,
     ),
   };
 }
@@ -36,12 +30,14 @@ export async function dispatchSessionAgentMentions(
   hostSessionId: string,
   message: QueuedUserMessage,
 ): Promise<void> {
-  if (!message.agentMentions?.length) return;
+  if (!message.mentionedAgentIds?.length) return;
   const { resolveSessionType } = await import("@/server/managedSessions");
   const sessionType = await resolveSessionType(hostSessionId);
   if (sessionType !== "standard" && sessionType !== "hyper") return;
   const results = await Promise.allSettled(
-    message.agentMentions.map((mention) => mentionAgentInSession(hostSessionId, message, mention)),
+    message.mentionedAgentIds.map((agentId) =>
+      mentionAgentInSession(hostSessionId, message, agentId),
+    ),
   );
   const failures = results.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : [],
@@ -53,27 +49,26 @@ export async function dispatchSessionAgentMentions(
 async function mentionAgentInSession(
   hostSessionId: string,
   message: QueuedUserMessage,
-  mention: AgentMention,
+  agentId: string,
 ): Promise<void> {
-  const agent = await getAgent(mention.agentId);
+  const agent = await getAgent(agentId);
   if (!agent) throw new Error("Agent not found.");
-  const [{ prompt, hostLabel }, context] = await Promise.all([
+  const [{ prompt, hostLabel }, directory] = await Promise.all([
     buildSessionMentionContext(hostSessionId, agent, message.content),
-    getSessionContext(hostSessionId),
+    getSessionDirectory(hostSessionId),
   ]);
   await mentionAgent({
     host: { kind: "session", sessionId: hostSessionId },
-    ...mention,
+    agentId,
     message: { content: prompt, attachments: message.attachments },
-    directory: context?.workingDirectory,
-    initialContext: context,
+    directory,
     hostLabel,
   });
 }
 
 export const sessionAgentHost: AgentHostAdapter = {
   getTools() {
-    return [...sessionAgentTools, ...joinedChannelTools];
+    return [...sessionAgentTools, ...joinedChannelTools, finishAgentTurnTool];
   },
 
   async getInstructions() {
@@ -98,9 +93,7 @@ export async function sendAgentResponse(sessionId: string, message: string): Pro
     {
       systemMessage: {
         type: "agent_response",
-        name: resolved.agent.name,
-        avatar: resolved.agent.avatar,
-        executionMode: resolved.membership.executionMode,
+        agentId: resolved.membership.agentId,
         content: message,
       },
     },
@@ -113,7 +106,10 @@ async function buildSessionMentionContext(
   agent: Agent,
   content: string,
 ): Promise<{ prompt: string; hostLabel: string }> {
-  const snapshot = await getSessionSnapshot(hostSessionId);
+  const [snapshot, agents] = await Promise.all([
+    getSessionSnapshot(hostSessionId),
+    listAgentProfiles(),
+  ]);
   const lastMessage = snapshot.messages.at(-1);
   const priorMessages =
     lastMessage?.role === "user" && lastMessage.content === content
@@ -125,8 +121,10 @@ async function buildSessionMentionContext(
         const visible = message.content.trim();
         return visible ? [`${message.role === "user" ? "User" : "Primary Agent"}: ${visible}`] : [];
       }
-      if (message.content.type === "agent_response") {
-        return [`${message.content.name}: ${message.content.content}`];
+      const systemMessage = message.content;
+      if (systemMessage.type === "agent_response") {
+        const name = agents.find(({ id }) => id === systemMessage.agentId)?.name ?? "Deleted agent";
+        return [`${name}: ${systemMessage.content}`];
       }
       return [];
     })

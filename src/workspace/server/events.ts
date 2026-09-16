@@ -32,7 +32,7 @@ export function emitSessionDelete(sessionId: string): void {
 export function emitSessionNameUpdate(sessionId: string, name: string): void {
   emitSessionUpsert({
     sessionId,
-    summary: name,
+    title: name,
   });
 }
 

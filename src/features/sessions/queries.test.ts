@@ -8,13 +8,12 @@ describe("session list projection", () => {
       sessionId: "standard",
       startTime: new Date(0),
       modifiedTime: new Date(0),
-      summary: "Standard",
-      isRemote: false,
+      title: "Standard",
     };
     const workers = ["session-worker", "file-worker", "app-worker"].map((sessionId) => ({
       ...standard,
       sessionId,
-      summary: "Implementation detail",
+      title: "Implementation detail",
     }));
     const state = {
       sessions: [...workers, standard],
@@ -45,11 +44,11 @@ describe("live query refresh policies", () => {
 
 describe("skill query identity", () => {
   test("shares discovery by working directory and distinguishes host-level discovery", () => {
-    expect(skillQueries.byCwd("/repo")).toEqual(["skills", "/repo", "standard"]);
+    expect(skillQueries.byCwd("/repo")).toEqual(["skills", "/repo", "standard", null]);
     expect(skillQueries.byCwd("/repo")).toEqual(skillQueries.byCwd("/repo"));
     expect(skillQueries.byCwd("/other")).not.toEqual(skillQueries.byCwd("/repo"));
-    expect(skillQueries.byCwd()).toEqual(["skills", null, "standard"]);
-    expect(skillQueries.byCwd("/repo", "hyper")).toEqual(["skills", "/repo", "hyper"]);
+    expect(skillQueries.byCwd()).toEqual(["skills", null, "standard", null]);
+    expect(skillQueries.byCwd("/repo", "hyper")).toEqual(["skills", "/repo", "hyper", null]);
     expect(skillQueries.byCwd("/repo", "hyper")).not.toEqual(skillQueries.byCwd("/repo"));
   });
 });

@@ -1,9 +1,10 @@
-import { expect, mock, onTestFinished, test } from "bun:test";
+import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChannelEvent } from "@channels/model";
 import { createTestDatabase } from "@/server/database";
+import * as sessions from "@sessions/server/providers";
 
 let currentDb: Bun.SQL | undefined;
 
@@ -50,7 +51,6 @@ test("an Agent can attach an image file to a durable Channel message", async () 
     channelId: channel.id,
     agentId: agent.id,
     sessionId,
-    executionMode: "shared",
   });
   const screenshot = join(directory, "screenshot.png");
   await Bun.write(screenshot, Buffer.from(PNG_BASE64, "base64"));
@@ -70,6 +70,8 @@ test("an Agent can attach an image file to a durable Channel message", async () 
 });
 
 test("a Session can seed and passively read Channel context", async () => {
+  const getDirectory = spyOn(sessions, "getSessionDirectory").mockResolvedValue(undefined);
+  onTestFinished(() => getDirectory.mockRestore());
   currentDb = await createTestDatabase();
   const directory = await mkdtemp(join(tmpdir(), "toy-box-channel-session-"));
   onTestFinished(async () => {
@@ -141,7 +143,6 @@ test("a Channel Agent publishes focus and settles temporary turn state", async (
     channelId: channel.id,
     agentId: agent.id,
     sessionId: "reviewer-session",
-    executionMode: "shared",
   });
   const first = await channels.appendMessage({
     id: "message-1",

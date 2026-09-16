@@ -1,10 +1,8 @@
 import { z } from "zod";
-import type { Agent, AgentMembership, AgentMention } from "@agents/model";
+import type { Agent, AgentMembership } from "@agents/model";
 import {
-  agentExecutionModeSchema,
   agentHandleFromName,
   agentMembershipStatusSchema,
-  agentMentionSchema,
   extractAgentMentionHandles,
 } from "@agents/model";
 import { workspaceFileSchema } from "@files/model";
@@ -78,8 +76,6 @@ const channelMemberSchema = z
     host: z.object({ kind: z.literal("channel"), channelId: durableIdSchema }).strict(),
     agentId: durableIdSchema,
     sessionId: durableIdSchema,
-    executionMode: agentExecutionModeSchema,
-    seenThrough: z.number().int().nonnegative(),
     status: channelMemberStatusSchema.optional(),
   })
   .strict();
@@ -191,7 +187,6 @@ export const postChannelMessageInputSchema = z
     channelId: durableIdSchema,
     content: channelMessageTextSchema,
     attachments: messageAttachmentsSchema.optional(),
-    agentMentions: z.array(agentMentionSchema).max(50).optional(),
   })
   .strict()
   .refine(({ content, attachments }) => content.length > 0 || (attachments?.length ?? 0) > 0, {
@@ -222,25 +217,20 @@ export function resolveChannelAudience<
   sender,
   members,
   agents,
-  agentMentions,
 }: {
   content: string;
   sender: Exclude<ChannelMessageSender, { type: "system" }>;
   members: readonly Member[];
   agents: readonly Candidate[];
-  /** When supplied, stable IDs are authoritative; text still carries @everyone. */
-  agentMentions?: readonly AgentMention[];
 }): { members: Member[]; invitations: Candidate[] } {
   const { handles, mentionAll } = extractAgentMentionHandles(content);
   const mentionedHandles = new Set(handles);
   const mentionedIds = new Set(
-    agentMentions !== undefined
-      ? agentMentions.map(({ agentId }) => agentId)
-      : agents
-          .filter(({ name }) => mentionedHandles.has(agentHandleFromName(name)))
-          .map(({ id }) => id),
+    agents
+      .filter(({ name }) => mentionedHandles.has(agentHandleFromName(name)))
+      .map(({ id }) => id),
   );
-  const hasMentions = mentionAll || handles.length > 0 || mentionedIds.size > 0;
+  const hasMentions = mentionAll || handles.length > 0;
   const broadcast = mentionAll || (sender.type === "user" && !hasMentions);
   const senderId = sender.type === "agent" ? sender.agentId : undefined;
   const memberIds = new Set(members.map(({ agentId }) => agentId));

@@ -1,11 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionsState } from "@sessions/model";
-import type { ModelCatalogInfo } from "@sessions/useModels";
+import type { ModelInfo } from "@sessions/model";
 import { createEmptyWorkspaceState } from "@workspace/model/state/reducer";
 import { createLinkedSessionPane } from "@workspace/model/panes";
 import { projectAppWorkspace } from "./workspace";
 
 describe("app workspace projection", () => {
+  test("preserves every provider's model identity and display group", () => {
+    const models = [
+      { id: "shared", name: "Shared model", provider: "copilot", providerName: "GitHub Copilot" },
+      { id: "shared", name: "Shared model", provider: "codex", providerName: "Codex" },
+    ] satisfies ModelInfo[];
+    const defaultModel = { provider: "codex", name: "shared" };
+    const projection = projectAppWorkspace({
+      workspace: createEmptyWorkspaceState(),
+      sessions: { sessions: [], worktrees: {}, workerSessionParents: {} },
+      models,
+      defaultModel,
+      openPanes: [],
+    });
+    expect(projection.models).toEqual(models);
+    expect(projection.defaultModel).toEqual(defaultModel);
+  });
   test("exposes sessions with governance kinds and hides inbox implementation sessions", () => {
     const workspace = {
       ...createEmptyWorkspaceState(),
@@ -21,7 +37,7 @@ describe("app workspace projection", () => {
           id: "automation",
           title: "Automation",
           prompt: "Run the automation",
-          model: { name: "gpt-5" },
+          model: { provider: "copilot", name: "gpt-5" },
           cron: "0 9 * * *",
           createdAt: "2026-07-28T00:00:00.000Z",
           updatedAt: "2026-07-28T00:00:00.000Z",
@@ -82,48 +98,45 @@ describe("app workspace projection", () => {
       sessions: [
         {
           sessionId: "standard",
+          provider: "codex",
           startTime: new Date("2026-07-28T00:00:00.000Z"),
           modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
-          summary: "Standard work",
-          isRemote: false,
-          context: { workingDirectory: "/repo" },
+          title: "Standard work",
+          directory: "/repo",
+          repository: "owner/repo",
+          gitRoot: "/repo",
+          branch: "main",
         },
         {
           sessionId: "automation",
           startTime: new Date("2026-07-28T00:00:00.000Z"),
           modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
-          summary: "Managed work",
-          isRemote: false,
+          title: "Managed work",
         },
         {
           sessionId: "hyper",
           startTime: new Date("2026-07-28T00:00:00.000Z"),
           modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
-          summary: "Hyper work",
-          isRemote: false,
         },
         {
           sessionId: "app-worker",
           startTime: new Date("2026-07-28T00:00:00.000Z"),
           modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
-          summary: "Hidden worker",
-          isRemote: false,
+          title: "Hidden worker",
         },
         {
           sessionId: "session-worker",
           startTime: new Date("2026-07-28T00:00:00.000Z"),
           modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
-          summary: "Implement feature",
-          isRemote: false,
-          context: { workingDirectory: "/repo" },
+          title: "Implement feature",
+          directory: "/tmp/worktree",
         },
         {
           sessionId: "nested-worker",
           startTime: new Date("2026-07-28T00:00:00.000Z"),
           modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
-          summary: "Review feature",
-          isRemote: false,
-          context: { workingDirectory: "/repo" },
+          title: "Review feature",
+          directory: "/tmp/worktree",
         },
       ],
       worktrees: {
@@ -140,34 +153,22 @@ describe("app workspace projection", () => {
       },
     };
 
-    const models: ModelCatalogInfo[] = [
+    const models: ModelInfo[] = [
       {
         id: "gpt-5",
+        provider: "copilot",
+        providerName: "GitHub Copilot",
         name: "GPT-5",
-        capabilities: {
-          supports: { vision: false, reasoningEffort: true },
-          limits: {
-            max_context_window_tokens: 1_000_000,
-            max_prompt_tokens: 936_000,
-          },
-        },
         supportedReasoningEfforts: ["low", "high"],
         defaultReasoningEffort: "high",
         supportedContextTiers: [
           { name: "default", tokenWindow: 264_000 },
           { name: "future_tier", tokenWindow: 1_000_000 },
         ],
-        billing: {
-          multiplier: 2,
-          tokenPrices: {
-            maxPromptTokens: 200_000,
-            longContext: { maxPromptTokens: 936_000 },
-          },
-        },
       },
     ];
     const openPanes = [createLinkedSessionPane("standard")];
-    const defaultModel = { name: "gpt-5", reasoningEffort: "low" };
+    const defaultModel = { provider: "copilot", name: "gpt-5", reasoningEffort: "low" };
     const source = {
       workspace,
       sessions: sessionsState,
@@ -181,21 +182,27 @@ describe("app workspace projection", () => {
     expect(projection).toEqual({
       sessions: [
         {
-          id: "standard",
+          sessionId: "standard",
+          provider: "codex",
+          startTime: new Date("2026-07-28T00:00:00.000Z"),
+          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
           title: "Standard work",
           status: "running",
           kind: "standard",
           directory: "/repo",
-          isRemote: false,
+          repository: "owner/repo",
+          gitRoot: "/repo",
+          branch: "main",
           worktree: undefined,
           children: [
             {
-              id: "session-worker",
+              sessionId: "session-worker",
+              startTime: new Date("2026-07-28T00:00:00.000Z"),
+              modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
               title: "Implement feature",
               status: "unread",
               kind: "standard",
-              directory: "/repo",
-              isRemote: false,
+              directory: "/tmp/worktree",
               worktree: {
                 path: "/tmp/worktree",
                 branch: "toy-box/session-worker",
@@ -203,12 +210,13 @@ describe("app workspace projection", () => {
               },
               children: [
                 {
-                  id: "nested-worker",
+                  sessionId: "nested-worker",
+                  startTime: new Date("2026-07-28T00:00:00.000Z"),
+                  modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
                   title: "Review feature",
                   status: "idle",
                   kind: "standard",
-                  directory: "/repo",
-                  isRemote: false,
+                  directory: "/tmp/worktree",
                   worktree: undefined,
                   children: [],
                 },
@@ -217,22 +225,21 @@ describe("app workspace projection", () => {
           ],
         },
         {
-          id: "automation",
+          sessionId: "automation",
+          startTime: new Date("2026-07-28T00:00:00.000Z"),
+          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
           title: "Managed work",
           status: "unread",
           kind: "automation",
-          directory: undefined,
-          isRemote: false,
           worktree: undefined,
           children: [],
         },
         {
-          id: "hyper",
-          title: "Hyper work",
+          sessionId: "hyper",
+          startTime: new Date("2026-07-28T00:00:00.000Z"),
+          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
           status: "running",
           kind: "hyper",
-          directory: undefined,
-          isRemote: false,
           worktree: undefined,
           children: [],
         },
@@ -260,6 +267,8 @@ describe("app workspace projection", () => {
       models: [
         {
           id: "gpt-5",
+          provider: "copilot",
+          providerName: "GitHub Copilot",
           name: "GPT-5",
           supportedReasoningEfforts: ["low", "high"],
           defaultReasoningEffort: "high",
@@ -270,6 +279,7 @@ describe("app workspace projection", () => {
         },
       ],
       defaultModel: {
+        provider: "copilot",
         name: "gpt-5",
         reasoningEffort: "low",
       },

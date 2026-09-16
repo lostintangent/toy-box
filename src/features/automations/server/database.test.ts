@@ -31,7 +31,7 @@ describe("automation database", () => {
     const created = await db1.create({
       title: "Daily summary",
       prompt: "Summarize open pull requests.",
-      model: { name: "gpt-5", reasoningEffort: "high" },
+      model: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
       cron: "0 9 * * *",
       cwd: "/Users/test/project",
     });
@@ -45,7 +45,11 @@ describe("automation database", () => {
     const reloaded = reloadedList.find((a) => a.id === created.id);
     expect(reloaded?.title).toBe("Daily summary");
     expect(reloaded?.prompt).toBe("Summarize open pull requests.");
-    expect(reloaded?.model).toEqual({ name: "gpt-5", reasoningEffort: "high" });
+    expect(reloaded?.model).toEqual({
+      provider: "copilot",
+      name: "gpt-5",
+      reasoningEffort: "high",
+    });
     expect(reloaded?.cron).toBe("0 9 * * *");
     expect(reloaded?.id).toBe(created.id);
     expect(reloaded?.id).toStartWith("toy-box-auto-");
@@ -59,7 +63,7 @@ describe("automation database", () => {
     const created = await db.create({
       title: "Minute ping",
       prompt: "Ping",
-      model: { name: "gpt-5" },
+      model: { provider: "copilot", name: "gpt-5" },
       cron: "* * * * *",
     });
     expect(created.cwd).toBeUndefined();
@@ -90,7 +94,7 @@ describe("automation database", () => {
     const created = await db.create({
       title: "Original title",
       prompt: "Original prompt",
-      model: { name: "gpt-5" },
+      model: { provider: "copilot", name: "gpt-5" },
       cron: "0 9 * * *",
     });
 
@@ -99,14 +103,18 @@ describe("automation database", () => {
       title: "Updated title",
       prompt: "Updated prompt",
       cron: "0 12 * * *",
-      model: { name: "gpt-5", reasoningEffort: "medium" },
+      model: { provider: "copilot", name: "gpt-5", reasoningEffort: "medium" },
       cwd: "/tmp/updated",
     });
     expect(updated).not.toBeNull();
     expect(updated?.title).toBe("Updated title");
     expect(updated?.prompt).toBe("Updated prompt");
     expect(updated?.cron).toBe("0 12 * * *");
-    expect(updated?.model).toEqual({ name: "gpt-5", reasoningEffort: "medium" });
+    expect(updated?.model).toEqual({
+      provider: "copilot",
+      name: "gpt-5",
+      reasoningEffort: "medium",
+    });
     expect(updated?.cwd).toBe("/tmp/updated");
     expect(updated?.nextRunAt).not.toBe(created.nextRunAt);
   });
@@ -116,7 +124,7 @@ describe("automation database", () => {
     const created = await db.create({
       title: "Temporary",
       prompt: "Run once.",
-      model: { name: "gpt-5" },
+      model: { provider: "copilot", name: "gpt-5" },
       cron: "0 9 * * *",
     });
 
@@ -131,7 +139,7 @@ describe("automation database", () => {
     const created = await db.create({
       title: "Daily summary",
       prompt: "Summarize status.",
-      model: { name: "gpt-5" },
+      model: { provider: "copilot", name: "gpt-5" },
       cron: "0 9 * * *",
     });
 
@@ -155,7 +163,7 @@ describe("automation database", () => {
     const valid = await db.create({
       title: "Valid automation",
       prompt: "Summarize status.",
-      model: { name: "gpt-5" },
+      model: { provider: "copilot", name: "gpt-5" },
       cron: "0 9 * * *",
     });
     await rawDb`
@@ -178,7 +186,7 @@ describe("automation database", () => {
     const valid = await db.create({
       title: "Valid due automation",
       prompt: "Summarize status.",
-      model: { name: "gpt-5" },
+      model: { provider: "copilot", name: "gpt-5" },
       cron: "* * * * *",
     });
     await rawDb`

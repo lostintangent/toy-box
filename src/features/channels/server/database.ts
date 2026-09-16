@@ -40,6 +40,9 @@ type AppendSystemMessageInput = {
 
 type AppendMessageInput = AppendConversationMessageInput | AppendSystemMessageInput;
 
+/** Channel-owned persistence state that never enters shared member projections. */
+export type ChannelMemberRecord = ChannelMember & { seenThrough: number };
+
 /** Durable Channels, ordered messages, member read positions, and shared file references. */
 export class ChannelDatabase {
   constructor(private readonly db: Bun.SQL) {}
@@ -50,7 +53,7 @@ export class ChannelDatabase {
       this.db<ChannelMembershipRow[]>`
         SELECT
           membership.host_id AS channel_id, membership.agent_id,
-          membership.session_id, membership.execution_mode
+          membership.session_id
         FROM agent_memberships AS membership
         JOIN channels AS channel ON channel.id = membership.host_id
         WHERE membership.host_kind = 'channel'
@@ -154,15 +157,15 @@ export class ChannelDatabase {
     return listMembers(this.db, channelId);
   }
 
-  async getMemberBySession(sessionId: string): Promise<ChannelMember | null> {
+  async getMemberBySession(sessionId: string): Promise<ChannelMemberRecord | null> {
     return getMemberBySession(this.db, sessionId);
   }
 
-  async getMember(channelId: string, agentId: string): Promise<ChannelMember | null> {
+  async getMember(channelId: string, agentId: string): Promise<ChannelMemberRecord | null> {
     const [row] = await this.db<ChannelMemberRow[]>`
       SELECT
         membership.host_id AS channel_id, member.seen_through, member.status,
-        membership.agent_id, membership.session_id, membership.execution_mode
+        membership.agent_id, membership.session_id
       FROM channel_members AS member
       JOIN agent_memberships AS membership ON membership.session_id = member.session_id
       WHERE membership.host_kind = 'channel'
@@ -172,18 +175,12 @@ export class ChannelDatabase {
     return row ? memberFromRow(row) : null;
   }
 
-  async createMember(input: {
-    channelId: string;
-    agentId: string;
-    sessionId: string;
-    executionMode: ChannelMember["executionMode"];
-  }) {
+  async createMember(input: { channelId: string; agentId: string; sessionId: string }) {
     return inStateTransaction(this.db, async (db) => {
       const membership = await new AgentDatabase(db).createMembership({
         host: { kind: "channel", channelId: input.channelId },
         agentId: input.agentId,
         sessionId: input.sessionId,
-        executionMode: input.executionMode,
       });
       const rows = await db<{ session_id: string }[]>`
         INSERT INTO channel_members (session_id, seen_through)
@@ -194,7 +191,6 @@ export class ChannelDatabase {
       const member: ChannelMember = {
         ...membership,
         host: { kind: "channel", channelId: input.channelId },
-        seenThrough: 0,
       };
       const change = await appendMessage(db, {
         id: crypto.randomUUID(),
@@ -227,13 +223,14 @@ export class ChannelDatabase {
       const member = await getMemberBySession(db, sessionId);
       if (!member) return null;
       if (!(await new AgentDatabase(db).deleteMembershipBySession(sessionId))) return null;
+      const publicMember = channelMemberFromRecord(member);
       const change = await appendMessage(db, {
         id: crypto.randomUUID(),
         channelId: member.host.channelId,
         sender: { type: "system" },
-        content: { type: "member_left", member },
+        content: { type: "member_left", member: publicMember },
       });
-      return { ...change, member };
+      return { ...change, member: publicMember };
     });
   }
 
@@ -429,11 +426,14 @@ async function changeMemberStatus(
   });
 }
 
-async function getMemberBySession(db: Bun.SQL, sessionId: string): Promise<ChannelMember | null> {
+async function getMemberBySession(
+  db: Bun.SQL,
+  sessionId: string,
+): Promise<ChannelMemberRecord | null> {
   const [row] = await db<ChannelMemberRow[]>`
     SELECT
       membership.host_id AS channel_id, member.seen_through, member.status,
-      membership.agent_id, membership.session_id, membership.execution_mode
+      membership.agent_id, membership.session_id
     FROM channel_members AS member
     JOIN agent_memberships AS membership ON membership.session_id = member.session_id
     WHERE membership.session_id = ${sessionId} AND membership.host_kind = 'channel'
@@ -445,13 +445,13 @@ async function listMembers(db: Bun.SQL, channelId: string): Promise<ChannelMembe
   const rows = await db<ChannelMemberRow[]>`
     SELECT
       membership.host_id AS channel_id, member.seen_through, member.status,
-      membership.agent_id, membership.session_id, membership.execution_mode
+      membership.agent_id, membership.session_id
     FROM channel_members AS member
     JOIN agent_memberships AS membership ON membership.session_id = member.session_id
     WHERE membership.host_kind = 'channel' AND membership.host_id = ${channelId}
     ORDER BY membership.session_id
   `;
-  return rows.map(memberFromRow);
+  return rows.map((row) => channelMemberFromRecord(memberFromRow(row)));
 }
 
 async function listMessagesBefore(
@@ -512,7 +512,6 @@ type ChannelMemberRow = {
   channel_id: string;
   agent_id: string;
   session_id: string;
-  execution_mode: ChannelMember["executionMode"];
   seen_through: number;
   status: string | null;
 };
@@ -551,15 +550,18 @@ function channelFromRow(row: ChannelRow): Channel {
   };
 }
 
-function memberFromRow(row: ChannelMemberRow): ChannelMember {
+function memberFromRow(row: ChannelMemberRow): ChannelMemberRecord {
   return {
     host: { kind: "channel", channelId: row.channel_id },
     agentId: row.agent_id,
     sessionId: row.session_id,
-    executionMode: row.execution_mode,
     seenThrough: row.seen_through,
     ...(row.status ? { status: channelMemberStatusSchema.parse(JSON.parse(row.status)) } : {}),
   };
+}
+
+function channelMemberFromRecord({ seenThrough: _seenThrough, ...member }: ChannelMemberRecord) {
+  return member;
 }
 
 function membershipFromRow(row: ChannelMembershipRow): AgentMembership {
@@ -567,7 +569,6 @@ function membershipFromRow(row: ChannelMembershipRow): AgentMembership {
     host: { kind: "channel", channelId: row.channel_id },
     agentId: row.agent_id,
     sessionId: row.session_id,
-    executionMode: row.execution_mode,
   };
 }
 

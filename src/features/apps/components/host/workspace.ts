@@ -4,13 +4,13 @@ import { selectNonWorkerSessions } from "@sessions/queries";
 import type { WorkspaceState } from "@workspace/model/state/reducer";
 import type { WorkspacePane } from "@workspace/model/panes";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
-import type { ModelCatalogInfo } from "@sessions/useModels";
+import type { ModelInfo } from "@sessions/model";
 import type { AppSession, AppWorkspace } from "@apps/sdk";
 
 type AppWorkspaceSource = {
   workspace: WorkspaceState;
   sessions: SessionsState;
-  models: readonly ModelCatalogInfo[];
+  models: readonly ModelInfo[];
   defaultModel: ModelConfiguration | null;
   appId?: string;
   openPanes: readonly WorkspacePane[];
@@ -43,12 +43,9 @@ export function projectAppWorkspace(
 
   function projectSession(session: SessionsState["sessions"][number]): AppSession {
     return {
-      id: session.sessionId,
-      title: session.summary?.trim() || "Untitled session",
+      ...session,
       status: workspace.sessionStates[session.sessionId]?.status ?? "idle",
       kind: sessionKind(session.sessionId),
-      directory: session.context?.workingDirectory,
-      isRemote: session.isRemote ?? false,
       worktree: sessions.worktrees[session.sessionId],
       children: (childrenByParent.get(session.sessionId) ?? []).map(projectSession),
     };
@@ -68,10 +65,20 @@ export function projectAppWorkspace(
     })),
     shares: appId ? workspace.appShares.filter((share) => share.targetAppId === appId) : [],
     models: models.map(
-      ({ id, name, supportedReasoningEfforts, defaultReasoningEffort, supportedContextTiers }) => ({
+      ({
         id,
         name,
+        provider,
+        providerName,
         supportedReasoningEfforts,
+        defaultReasoningEffort,
+        supportedContextTiers,
+      }) => ({
+        id,
+        name,
+        provider,
+        providerName,
+        supportedReasoningEfforts: supportedReasoningEfforts && [...supportedReasoningEfforts],
         defaultReasoningEffort,
         supportedContextTiers: supportedContextTiers && [...supportedContextTiers],
       }),

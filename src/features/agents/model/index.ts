@@ -5,6 +5,7 @@ import {
 } from "@sessions/model/modelConfiguration";
 
 const durableIdSchema = z.string().trim().min(1).max(255);
+export const agentIdSchema = durableIdSchema;
 const agentNameSchema = z.string().trim().min(1).max(80);
 const agentPersonaSchema = z.string().trim().min(1).max(8_000);
 const agentExperienceContentSchema = z.string().trim().min(1).max(2_000);
@@ -29,8 +30,6 @@ export const agentAvatarSchema = z
   })
   .strict();
 
-export const agentExecutionModeSchema = z.enum(["shared", "worktree"]);
-
 export const agentMembershipStatusSchema = z
   .object({
     state: z.enum(["working", "waiting"]),
@@ -52,14 +51,6 @@ export const agentHostSchema = z.discriminatedUnion("kind", [
   fileAgentHostSchema,
 ]);
 
-/** Address one Agent. Execution mode only initializes a new membership. */
-export const agentMentionSchema = z
-  .object({
-    agentId: durableIdSchema,
-    initialExecutionMode: agentExecutionModeSchema.optional(),
-  })
-  .strict();
-
 export type AgentAvatar = z.output<typeof agentAvatarSchema>;
 
 export type AgentExperience = {
@@ -80,16 +71,13 @@ export type Agent = {
 };
 
 export type AgentHost = z.infer<typeof agentHostSchema>;
-export type AgentExecutionMode = z.infer<typeof agentExecutionModeSchema>;
 export type AgentMembershipStatus = z.output<typeof agentMembershipStatusSchema>;
-export type AgentMention = z.output<typeof agentMentionSchema>;
 
 /** One Agent's durable presence and private Session within one host. */
 export type AgentMembership = {
   host: AgentHost;
   agentId: string;
   sessionId: string;
-  executionMode: AgentExecutionMode;
 };
 
 /** Stable identity within one Agent host kind. */

@@ -13,8 +13,8 @@ capabilities, visibility, and teardown.
 A Worker is one backing Session plus an immutable owner and lifetime. Both share one ID. An optional
 name and metadata describe local work; they do not create an identity.
 
-- A session-owned Worker inherits its parent's model and workspace context unless overridden. It is
-  retained by default and opens as a linked child.
+- A session-owned Worker inherits its parent's model and execution directory unless overridden,
+  including the parent's worktree path. It is retained by default and opens as a linked child.
 - A file-owned Worker belongs to one session file and is always ephemeral.
 - An app-owned Worker belongs to one saved app, receives app-scoped tools, and is ephemeral by
   default.
@@ -47,7 +47,8 @@ cannot disappear before `waitForSession` observes its result.
 
 ## Boundaries
 
-`server/database.ts` persists ownership and lifetime for classification, deletion, and recovery.
+`server/schema.ts` defines the Worker table, while `server/database.ts` persists ownership and
+lifetime for classification, deletion, and recovery.
 `server/registry.ts` contains only active work and publishes `worker.started` and `worker.finished` to
 the workspace stream. Workers has no query cache: the workspace snapshot is the client projection.
 `components/WorkersMenu.tsx` owns activity, Session preview, and cancellation UI; Files and Apps only

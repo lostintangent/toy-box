@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
-import { GitFork, MessageSquare, Pencil } from "lucide-react";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { MessageSquare, Pencil } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { AgentAvatar } from "@agents/components/AgentAvatar";
+import { agentQueries } from "@agents/queries";
 import { RelativeTime } from "@/shared/components/ui/relative-time";
 import { cn } from "@/shared/utils";
 import type { SystemMessage as SystemMessageValue } from "../../../model";
@@ -31,19 +33,7 @@ export function SystemMessage({ message }: { message: SystemMessageValue }) {
     <SystemMessageCard
       header={
         systemMessage.type === "agent_response" ? (
-          <>
-            <AgentAvatar
-              name={systemMessage.name}
-              avatar={systemMessage.avatar}
-              className="size-6"
-            />
-            <span className="text-sm">{systemMessage.name}</span>
-            {systemMessage.executionMode === "worktree" && (
-              <span className="inline-flex items-center gap-1 font-normal text-cyan-700 dark:text-cyan-300">
-                <GitFork className="size-3" /> worktree
-              </span>
-            )}
-          </>
+          <AgentResponseHeader agentId={systemMessage.agentId} />
         ) : (
           <>
             <MessageSquare className="size-4" />
@@ -59,6 +49,19 @@ export function SystemMessage({ message }: { message: SystemMessageValue }) {
         </Streamdown>
       )}
     </SystemMessageCard>
+  );
+}
+
+function AgentResponseHeader({ agentId }: { agentId: string }) {
+  const { data: agents } = useSuspenseQuery(agentQueries.list());
+  const agent = agents.find(({ id }) => id === agentId);
+  const name = agent?.name ?? "Deleted agent";
+
+  return (
+    <>
+      <AgentAvatar name={agent?.name ?? "?"} avatar={agent?.avatar} className="size-6" />
+      <span className={cn("text-sm", !agent && "italic")}>{name}</span>
+    </>
   );
 }
 

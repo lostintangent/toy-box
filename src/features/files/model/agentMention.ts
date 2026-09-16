@@ -1,9 +1,10 @@
 import { z } from "zod";
-import { agentMentionSchema, fileAgentHostSchema } from "@agents/model";
+import { agentIdSchema, fileAgentHostSchema } from "@agents/model";
 
 /** The renderer persists the comment, then addresses an Agent with the complete thread prompt. */
-export const mentionFileAgentInputSchema = agentMentionSchema
-  .extend({
+export const mentionFileAgentInputSchema = z
+  .object({
+    agentId: agentIdSchema,
     host: fileAgentHostSchema,
     prompt: z.string().trim().min(1).max(50_000),
   })

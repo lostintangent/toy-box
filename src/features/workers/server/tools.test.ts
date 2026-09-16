@@ -27,7 +27,7 @@ beforeEach(() => {
 describe("worker SDK tool", () => {
   test("spawns a retained child owned by the caller", async () => {
     const tool = workerTools.find((candidate) => candidate.name === "spawn_worker");
-    const model = { name: "claude-sonnet-4.5" };
+    const model = { provider: "copilot", name: "claude-sonnet-4.5" };
 
     const result = await tool?.handler?.(
       {

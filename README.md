@@ -8,6 +8,7 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
 
 ## Features
 
+- **Supports GitHub Copilot and Codex:** Use either installed CLI with its existing login. Choose the provider in the model picker; sessions, tools, skills, and workflows share the same workspace.
 - **Live, multi-device sessions:** Start or resume work from desktop or mobile, watch and steer it from every connected client, answer agent questions, manage queued follow-ups, and pin important sessions.
 - **Rich composer:** Choose the model and reasoning effort, attach images, invoke skills, dictate by voice, and start sessions in a working directory or isolated Git worktree.
 - **Multi-pane workspace:** Open up to four sessions, local files, artifacts, apps, terminals, or agent-provided canvases together, with live previews and an adaptive mobile layout.
@@ -20,7 +21,11 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
 
 ## Getting Started
 
-1. Install the Copilot CLI and authenticate with your GitHub account
+1. Install and sign in to at least one provider:
+
+- [GitHub Copilot CLI](https://github.com/github/copilot)
+- [Codex CLI](https://developers.openai.com/codex/cli/)
+
 1. Install Toy Box: `npm install -g @lostintangent/toy-box`
 1. Start the agent server: `toy-box`
 1. Open `http://localhost:3000` in your browser
@@ -54,10 +59,10 @@ curl -X POST "https://<toy-box-host>/api/inbox" \
 
 The webhook supports both JSON and multipart form data:
 
-| Payload type | Expected payload data                                                                                       |
-| ------------ | ----------------------------------------------------------------------------------------------------------- |
-| JSON         | A non-empty `prompt`, with optional base64 `attachments` containing `displayName`, `mimeType`, and `base64` |
-| Form data    | `prompt` or `transcription`, with optional files using the field name `attachments`                         |
+| Payload type | Expected payload data                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| JSON         | A non-empty `prompt`, with optional base64 `attachments` containing `mimeType` and `base64` |
+| Form data    | `prompt` or `transcription`, with optional files using the field name `attachments`         |
 
 The same endpoint works with several ready-made integrations:
 

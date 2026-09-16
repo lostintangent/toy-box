@@ -1,6 +1,12 @@
-import { queryOptions } from "@tanstack/react-query";
+import { queryOptions, skipToken } from "@tanstack/react-query";
 import type { SessionsState, SessionType } from "./model";
-import { getSessionsState, listModels, listSkills, querySession } from "./server/functions";
+import {
+  getSessionsState,
+  listModels,
+  listSkills,
+  querySession,
+  resolveSessionContext,
+} from "./server/functions";
 
 export const sessionQueries = {
   all: () => ["sessions"] as const,
@@ -16,6 +22,16 @@ export const sessionQueries = {
       staleTime: Infinity,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
+    }),
+
+  context: (directory?: string) =>
+    queryOptions({
+      queryKey: [...sessionQueries.all(), "context", directory ?? null] as const,
+      queryFn: directory ? () => resolveSessionContext({ data: { directory } }) : skipToken,
+      staleTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      retry: false,
     }),
 
   details: () => [...sessionQueries.all(), "detail"] as const,
@@ -76,13 +92,13 @@ export const modelQueries = {
 export const skillQueries = {
   all: () => ["skills"] as const,
 
-  byCwd: (cwd?: string, sessionType: SessionType = "standard") =>
-    [...skillQueries.all(), cwd ?? null, sessionType] as const,
+  byCwd: (cwd?: string, sessionType: SessionType = "standard", provider?: string) =>
+    [...skillQueries.all(), cwd ?? null, sessionType, provider ?? null] as const,
 
-  list: (cwd?: string, sessionType?: SessionType) =>
+  list: (cwd?: string, sessionType?: SessionType, provider?: string) =>
     queryOptions({
-      queryKey: skillQueries.byCwd(cwd, sessionType),
-      queryFn: () => listSkills({ data: { cwd, sessionType } }),
+      queryKey: skillQueries.byCwd(cwd, sessionType, provider),
+      queryFn: () => listSkills({ data: { cwd, sessionType, provider } }),
       staleTime: Infinity,
     }),
 };

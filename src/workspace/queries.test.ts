@@ -8,7 +8,7 @@ const automation = {
   id: "automation-a",
   title: "Daily summary",
   prompt: "Summarize repo status.",
-  model: { name: "gpt-5" },
+  model: { provider: "copilot", name: "gpt-5" },
   cron: "0 9 * * *",
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",

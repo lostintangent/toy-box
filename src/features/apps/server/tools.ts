@@ -1,4 +1,4 @@
-import { defineTool, type Tool } from "@github/copilot-sdk";
+import { defineTool, type Tool } from "@sessions/server/tools/definition";
 import { z } from "zod";
 import {
   artifactAppPathSchema,
@@ -14,7 +14,6 @@ import { sessionFile } from "@files/model";
 const listAppDefinitionsTool = defineTool("list_app_definitions", {
   description: "Lists installed Toy Box app definitions, including state schemas and defaults.",
   parameters: z.object({}).strict(),
-  skipPermission: true,
   handler: async () => {
     const apps = await import("@apps/server");
     return JSON.stringify(await apps.listAppDefinitions());
@@ -25,7 +24,6 @@ const listAppsTool = defineTool("list_apps", {
   description:
     "Lists saved Toy Box app instances without their state. Call get_app to inspect an instance before updating it.",
   parameters: z.object({}).strict(),
-  skipPermission: true,
   handler: async () => {
     const appLifecycle = await import("@apps/server");
     const apps = await appLifecycle.listApps();
@@ -47,7 +45,6 @@ const getAppTool = defineTool("get_app", {
   description:
     "Gets an app's complete state, revision, and JSON Schema. Pass its revision as update_app.expectedRevision.",
   parameters: appIdInputSchema,
-  skipPermission: true,
   handler: async ({ appId }) => {
     return JSON.stringify(await getApp(appId));
   },
@@ -57,7 +54,6 @@ const registerAppTool = defineTool("register_app", {
   description:
     "Validates the manifest state contract, typechecks and compiles TSX, then activates ~/.toy-box/apps/<id>/.",
   parameters: appDefinitionInputSchema,
-  skipPermission: true,
   handler: async (input) => {
     try {
       const apps = await import("@apps/server");
@@ -81,10 +77,11 @@ const validateArtifactAppTool = defineTool("validate_artifact_app", {
     "Typechecks and compiles a .toy app in the current session without registering or saving it.",
   parameters: z
     .object({
-      path: artifactAppPathSchema.describe("Path relative to the current session's files folder."),
+      path: artifactAppPathSchema.describe(
+        "Path relative to the current session's artifacts folder.",
+      ),
     })
     .strict(),
-  skipPermission: true,
   handler: async ({ path }, invocation) => {
     try {
       const apps = await import("@apps/server");
@@ -103,7 +100,6 @@ const validateArtifactAppTool = defineTool("validate_artifact_app", {
 const createAppTool = defineTool("create_app", {
   description: "Creates a saved instance of an installed Toy Box app definition.",
   parameters: createAppInputSchema,
-  skipPermission: true,
   handler: async (input) => {
     const apps = await import("@apps/server");
     const app = await apps.createApp(input);
@@ -120,7 +116,6 @@ const installAppTool = defineTool("install_app", {
   description:
     "Installs an app definition from a public GitHub Gist and creates its first saved instance.",
   parameters: installAppInputSchema,
-  skipPermission: true,
   handler: async (input) => {
     const apps = await import("@apps/server");
     const { definition, app } = await apps.installApp(input);
@@ -137,7 +132,6 @@ const installAppTool = defineTool("install_app", {
 const uninstallAppTool = defineTool("uninstall_app", {
   description: "Deletes an installed app definition that has no saved instances.",
   parameters: appDefinitionInputSchema,
-  skipPermission: true,
   handler: async (input) => {
     const apps = await import("@apps/server");
     await apps.uninstallApp(input);
@@ -149,7 +143,6 @@ const updateAppTool = defineTool("update_app", {
   description:
     "Replaces app state at expectedRevision after schema validation. On conflict, merge current state and retry.",
   parameters: updateAppInputSchema,
-  skipPermission: true,
   handler: async (input) => {
     const apps = await import("@apps/server");
     const result = await apps.updateApp(input);
@@ -160,7 +153,6 @@ const updateAppTool = defineTool("update_app", {
 const deleteAppTool = defineTool("delete_app", {
   description: "Deletes a saved app instance and all of its app-owned worker sessions.",
   parameters: appIdInputSchema,
-  skipPermission: true,
   handler: async ({ appId }) => {
     const apps = await import("@apps/server");
     await apps.deleteApp(appId);
@@ -178,14 +170,12 @@ export function createAppStateTools(appId?: string): Tool<any>[] {
       description:
         "Gets the owning app's state, revision, and JSON Schema. Pass its revision as update_app.expectedRevision.",
       parameters: z.object({}).strict(),
-      skipPermission: true,
       handler: async () => JSON.stringify(await getApp(appId)),
     }),
     defineTool("update_app", {
       description:
         "Replaces owning app state at expectedRevision after schema validation. On conflict, merge current state and retry.",
       parameters: appWorkerUpdateInputSchema,
-      skipPermission: true,
       handler: async (input) => {
         const apps = await import("@apps/server");
         return JSON.stringify(await apps.updateApp({ appId, ...input }));

@@ -28,8 +28,7 @@ export function useDrafts({ hiddenSessionIds }: { hiddenSessionIds: string[] }) 
       sessionId,
       startTime: new Date(state.createdAt),
       modifiedTime: new Date(draftUpdatedAt(state)),
-      summary: draftArtifactLabel(state.artifactPath),
-      isRemote: false,
+      title: draftArtifactLabel(state.artifactPath),
     }));
 
   function isDraft(sessionId: string) {

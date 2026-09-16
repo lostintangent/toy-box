@@ -1,4 +1,5 @@
 import { ChevronDown } from "lucide-react";
+import { Fragment } from "react";
 import { Button } from "@/shared/components/ui/button";
 import {
   DropdownMenu,
@@ -9,18 +10,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/components/ui/dropdown-menu";
-import type { ModelConfiguration, ModelOptionInfo } from "../../model/modelConfiguration";
+import type { ModelConfiguration } from "../../model/modelConfiguration";
+import type { ModelInfo } from "../../model";
 import {
   formatReasoningEffort,
+  modelCatalogKey,
+  modelConfigurationKey,
   getModelContextTierConfig,
   getModelReasoningConfig,
   resolveModelConfigurationForModel,
 } from "../../model/modelConfiguration";
-
-type ModelPickerInfo = ModelOptionInfo & {
-  id: string;
-  name: string;
-};
 
 const INHERIT_MODEL_VALUE = "__toy_box_inherit_model__";
 
@@ -35,7 +34,7 @@ function ModelPicker({
   inheritLabel,
   onModelChange,
 }: {
-  models: readonly ModelPickerInfo[];
+  models: readonly ModelInfo[];
   selectedModel?: string;
   inheritLabel?: string;
   onModelChange: (modelId: string | undefined) => void;
@@ -44,9 +43,17 @@ function ModelPicker({
 
   const selectedModelName =
     (selectedModel
-      ? (models.find((model) => model.id === selectedModel)?.name ?? selectedModel)
+      ? (models.find((model) => modelCatalogKey(model) === selectedModel)?.name ?? selectedModel)
       : inheritLabel) ?? models[0].name;
   const selectedValue = selectedModel ?? (inheritLabel ? INHERIT_MODEL_VALUE : undefined);
+  const groups = new Map<string, ModelInfo[]>();
+  for (const model of models) {
+    const group = groups.get(model.provider);
+    if (group) group.push(model);
+    else groups.set(model.provider, [model]);
+  }
+  const selectModel = (value: string) =>
+    onModelChange(value === INHERIT_MODEL_VALUE ? undefined : value);
 
   return (
     <DropdownMenu modal={false}>
@@ -57,26 +64,32 @@ function ModelPicker({
         <ChevronDown className="h-3 w-3 opacity-50" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
-        <DropdownMenuRadioGroup
-          value={selectedValue}
-          onValueChange={(value) =>
-            onModelChange(value === INHERIT_MODEL_VALUE ? undefined : value)
-          }
-        >
-          {inheritLabel && (
-            <>
-              <DropdownMenuRadioItem value={INHERIT_MODEL_VALUE} className="text-xs">
-                {inheritLabel}
-              </DropdownMenuRadioItem>
-              <DropdownMenuSeparator />
-            </>
-          )}
-          {models.map((model) => (
-            <DropdownMenuRadioItem key={model.id} value={model.id} className="text-xs">
-              {model.name}
+        {inheritLabel && (
+          <DropdownMenuRadioGroup value={selectedValue} onValueChange={selectModel}>
+            <DropdownMenuRadioItem value={INHERIT_MODEL_VALUE} className="text-xs">
+              {inheritLabel}
             </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
+          </DropdownMenuRadioGroup>
+        )}
+        {[...groups].map(([provider, group], index) => (
+          <Fragment key={provider}>
+            {(inheritLabel || index > 0) && <DropdownMenuSeparator />}
+            <DropdownMenuRadioGroup value={selectedValue} onValueChange={selectModel}>
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                {group[0].providerName ?? provider}
+              </DropdownMenuLabel>
+              {group.map((model) => (
+                <DropdownMenuRadioItem
+                  key={modelCatalogKey(model)}
+                  value={modelCatalogKey(model)}
+                  className="text-xs"
+                >
+                  {model.name}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </Fragment>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -87,7 +100,7 @@ function ModelOptionsPicker({
   value,
   onValueChange,
 }: {
-  model?: ModelPickerInfo;
+  model?: ModelInfo;
   value: ModelConfiguration;
   onValueChange: (value: ModelConfiguration) => void;
 }) {
@@ -153,24 +166,29 @@ export function ModelConfigurationPicker({
   value,
   onValueChange,
 }: {
-  models: readonly ModelPickerInfo[];
+  models: readonly ModelInfo[];
   value: ModelConfiguration;
   onValueChange: (value: ModelConfiguration) => void;
 }) {
-  const selectedModel = models.find((model) => model.id === value.name);
+  const selectedModel = models.find(
+    (model) => modelCatalogKey(model) === modelConfigurationKey(value),
+  );
 
   return (
     <>
       <ModelPicker
         models={models}
-        selectedModel={value.name}
+        selectedModel={modelConfigurationKey(value)}
         onModelChange={(name) => {
           if (!name) return;
+          const selected = models.find((candidate) => modelCatalogKey(candidate) === name);
+          if (!selected) return;
           onValueChange(
-            resolveModelConfigurationForModel(
-              models.find((candidate) => candidate.id === name),
-              { ...value, name },
-            ),
+            resolveModelConfigurationForModel(selected, {
+              ...value,
+              name: selected.id,
+              provider: selected.provider,
+            }),
           );
         }}
       />
@@ -186,14 +204,17 @@ export function OptionalModelConfigurationPicker({
   inheritedValue,
   onValueChange,
 }: {
-  models: readonly ModelPickerInfo[];
+  models: readonly ModelInfo[];
   value?: ModelConfiguration;
   inheritedValue?: ModelConfiguration | null;
   onValueChange: (value: ModelConfiguration | undefined) => void;
 }) {
-  const selectedModel = value ? models.find((model) => model.id === value.name) : undefined;
+  const selectedModel = value
+    ? models.find((model) => modelCatalogKey(model) === modelConfigurationKey(value))
+    : undefined;
   const inheritedName = inheritedValue
-    ? (models.find((model) => model.id === inheritedValue.name)?.name ?? inheritedValue.name)
+    ? (models.find((model) => modelCatalogKey(model) === modelConfigurationKey(inheritedValue))
+        ?.name ?? inheritedValue.name)
     : undefined;
   const inheritLabel = inheritedName ? `Workspace default · ${inheritedName}` : "Workspace default";
 
@@ -201,19 +222,22 @@ export function OptionalModelConfigurationPicker({
     <>
       <ModelPicker
         models={models}
-        selectedModel={value?.name}
+        selectedModel={value ? modelConfigurationKey(value) : undefined}
         inheritLabel={inheritLabel}
         onModelChange={(name) => {
           if (!name) {
             onValueChange(undefined);
             return;
           }
-          const seed = value ?? inheritedValue ?? { name };
+          const selected = models.find((candidate) => modelCatalogKey(candidate) === name);
+          if (!selected) return;
+          const seed = value ?? inheritedValue ?? { name: selected.id };
           onValueChange(
-            resolveModelConfigurationForModel(
-              models.find((candidate) => candidate.id === name),
-              { ...seed, name },
-            ),
+            resolveModelConfigurationForModel(selected, {
+              ...seed,
+              name: selected.id,
+              provider: selected.provider,
+            }),
           );
         }}
       />

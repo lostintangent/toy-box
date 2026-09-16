@@ -1,3 +1,4 @@
+import { modelCatalogKey, modelConfigurationKey } from "../../model/modelConfiguration";
 // Voice-driven prompt composing.
 //
 // A voice call is an ephemeral realtime session whose whole job is to fill the
@@ -128,7 +129,7 @@ function buildTools(bridge: VoiceComposerBridge, attachedToSession: boolean): An
         currentModel: model?.name ?? "",
         currentReasoningEffort: model?.reasoningEffort ?? "",
         models: models.map((model) => ({
-          id: model.id,
+          id: modelCatalogKey(model),
           name: model.name,
           reasoningEfforts: [...(model.supportedReasoningEfforts ?? [])],
         })),
@@ -206,18 +207,19 @@ function buildInstructions(attachedToSession: boolean): string {
  *  Pure policy behind the set_model tool; errors are phrased for the agent to
  *  read back and recover in one turn. */
 function selectModel(context: VoiceComposerContext, modelId: string) {
-  const model = context.models.find((candidate) => candidate.id === modelId);
+  const model = context.models.find((candidate) => modelCatalogKey(candidate) === modelId);
   if (!model) {
     return {
       ok: false,
       error: `Unknown model "${modelId}". Available: ${context.models
-        .map((candidate) => candidate.id)
+        .map(modelCatalogKey)
         .join(", ")}.`,
     };
   }
   const next = resolveModelConfigurationForModel(model, {
     ...context.model,
     name: model.id,
+    provider: model.provider,
   });
   context.setModel(next);
   return { ok: true, model: next.name, reasoningEffort: next.reasoningEffort };
@@ -228,7 +230,9 @@ function selectModel(context: VoiceComposerContext, modelId: string) {
 function selectReasoningEffort(context: VoiceComposerContext, reasoningEffort: string) {
   const configuration = context.model;
   const model = configuration
-    ? context.models.find((candidate) => candidate.id === configuration.name)
+    ? context.models.find(
+        (candidate) => modelCatalogKey(candidate) === modelConfigurationKey(configuration),
+      )
     : undefined;
   if (!configuration || !model) {
     return { ok: false, error: "No model is selected yet." };
@@ -249,6 +253,7 @@ function selectReasoningEffort(context: VoiceComposerContext, reasoningEffort: s
   const next: ModelConfiguration = {
     ...configuration,
     name: model.id,
+    provider: model.provider,
     reasoningEffort,
   };
   context.setModel(next);

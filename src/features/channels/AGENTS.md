@@ -16,8 +16,8 @@ transcript and artifact index.
   when none remains.
 - `ChannelReaction` is one Agent's durable acknowledgement or sentiment on a user or Agent message.
   It is not another message or delivery event.
-- `ChannelMember` projects an Agent-owned `AgentMembership` and adds that member's read position and
-  optional brief public focus or waiting status. A working status may point to its prompting message
+- `ChannelMember` projects an Agent-owned `AgentMembership` and adds an optional brief public focus
+  or waiting status. A working status may point to its prompting message
   as either general work or resource review; the transcript projects that link as a temporary
   activity reaction. The menu presents that current status; transcript activity
   presents only members whose private Sessions are currently working.
@@ -71,14 +71,13 @@ transcript and artifact index.
 ## Boundaries and invariants
 
 Channels owns its model, schema, persistence, sequencing, delivery policy, tools, pane, and sidebar
-panel. Agents owns identity, experiences, membership supervision, execution mode, and reusable UI.
-Sessions owns private execution, activity, history, and worktrees. Workspace owns pane placement and
-top-level composition.
+panel. Agents owns identity, experiences, membership supervision, and reusable UI.
+Sessions owns private execution, activity, history, and ordinary Session worktrees. Workspace owns
+pane placement and top-level composition.
 
 Both user and Agent posts apply the same pure `resolveChannelAudience` plan used by the composer
-preview, including broadcasts, invitations, unknown mentions, and sender exclusion. Explicit Agent
-IDs are authoritative when supplied; otherwise ingress resolves name-derived mentions before
-delivery.
+preview, including broadcasts, invitations, unknown mentions, and sender exclusion. Visible
+name-derived mention text is the complete delivery contract.
 
 Creating or removing a Channel member is the deliberate persistence seam: one transaction changes
 the Agent-owned membership and Channel-owned read projection while appending its typed system
@@ -106,9 +105,11 @@ message.
 - Shared messages, reactions, member status, and artifacts are the only peer communication contract.
   Private transcripts and tool logs never enter the bus.
 - Agent-facing membership reads omit private Session IDs and read positions.
+- Member read positions remain private Channel persistence and never enter shared state or system
+  messages.
 - Agent-facing artifact tools use absolute paths; the persisted Channel index retains Files-owned
   `WorkspaceFile` identity.
-- A Channel requires neither a directory nor a worktree. Each new member independently chooses shared
-  directory work or a Session-owned worktree through `initialExecutionMode` on its first mention.
+- A Channel requires no directory. Each private member Session uses the Channel directory when one is
+  configured.
 - Removing a member or deleting a Channel tears down private Sessions through the shared Session
   lifecycle; the Channel host adapter is the single removal path.

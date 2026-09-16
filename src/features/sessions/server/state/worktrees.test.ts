@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, onTestFinished, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
-import { homedir } from "node:os";
+import { access, mkdtemp, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestDatabase } from "@/server/database";
 import type { SessionWorktree } from "@sessions/model";
@@ -8,7 +9,7 @@ import type { SessionWorktree } from "@sessions/model";
 let currentDb: Bun.SQL | undefined;
 let gitCalls: Array<{ directory: string; args: string[] }> = [];
 let runGit = async (_directory: string, _args: string[]): Promise<string> => {
-  throw new Error("Not a Git repository");
+  throw new Error("fatal: not a git repository (or any of the parent directories): .git");
 };
 
 mock.module("@/server/database", () => ({
@@ -19,8 +20,13 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-const { createSessionWorktree, deleteSessionWorktree, getAllSessionWorktrees } =
-  await import("./worktrees");
+const {
+  createSessionWorktree,
+  deleteSessionWorktree,
+  getAllSessionWorktrees,
+  applySessionWorktree,
+  mergeSessionWorktree,
+} = await import("./worktrees");
 
 async function openWorktreeTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
@@ -55,7 +61,7 @@ describe("session worktrees", () => {
   beforeEach(() => {
     gitCalls = [];
     runGit = async () => {
-      throw new Error("Not a Git repository");
+      throw new Error("fatal: not a git repository (or any of the parent directories): .git");
     };
     const execFile = spyOn(childProcess, "execFile").mockImplementation(((
       _file: string,
@@ -79,9 +85,6 @@ describe("session worktrees", () => {
     await openWorktreeTestDatabase();
     runGit = async (_directory, args) => {
       if (args.join(" ") === "rev-parse --show-toplevel") return "/source";
-      if (args.join(" ") === "remote get-url origin") {
-        return "git@github.com:openai/toy-box.git";
-      }
       if (args.join(" ") === "rev-parse --abbrev-ref HEAD") return "main";
       if (args[0] === "worktree" && args[1] === "add") return "";
       throw new Error(`Unexpected Git command: ${args.join(" ")}`);
@@ -90,13 +93,9 @@ describe("session worktrees", () => {
     const sessionId = "toy-box-worktree-test";
     const path = join(homedir(), ".toy-box", "worktrees", "worktree-tes");
     await expect(createSessionWorktree(sessionId, "/source/subdirectory")).resolves.toEqual({
-      worktree: {
-        path,
-        branch: "toy-box/worktree-tes",
-        baseBranch: "main",
-      },
-      sourceGitRoot: "/source",
-      sourceRepository: "openai/toy-box",
+      path,
+      branch: "toy-box/worktree-tes",
+      baseBranch: "main",
     });
     expect(await getAllSessionWorktrees()).toEqual({
       [sessionId]: {
@@ -198,3 +197,60 @@ describe("session worktrees", () => {
     expect(failure).toBeInstanceOf(Error);
   });
 });
+
+for (const [name, finish] of [
+  ["apply", applySessionWorktree],
+  ["merge", mergeSessionWorktree],
+] as const) {
+  test(`${name} preserves unfinished edits, then transfers committed work to the source checkout`, async () => {
+    await openWorktreeTestDatabase();
+    const directory = await mkdtemp(join(tmpdir(), "toy-box-worktree-test-"));
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
+    const source = join(directory, "source");
+    const path = join(directory, "session");
+    const git = async (cwd: string, ...args: string[]) => {
+      const process = Bun.spawn(["git", "-C", cwd, ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(process.stdout).text(),
+        new Response(process.stderr).text(),
+        process.exited,
+      ]);
+      if (code !== 0) throw new Error(stderr);
+      return stdout.trim();
+    };
+    await git(directory, "init", "-b", "main", source);
+    await git(source, "config", "user.name", "Toy Box Test");
+    await git(source, "config", "user.email", "test@example.invalid");
+    await Bun.write(join(source, "value.txt"), "before\n");
+    await git(source, "add", ".");
+    await git(source, "commit", "-m", "fixture");
+    await git(source, "worktree", "add", "-b", "session", path);
+    await insertWorktree("toy-box-session", { path, branch: "session", baseBranch: "main" });
+    await Bun.write(join(path, "value.txt"), "after\n");
+    await Bun.write(join(path, "new.txt"), "new file\n");
+
+    await expect(finish("toy-box-session")).rejects.toThrow("Commit the session's changes");
+    expect(await Bun.file(join(source, "value.txt")).text()).toBe("before\n");
+    expect(await Bun.file(join(path, "value.txt")).text()).toBe("after\n");
+    expect(await Bun.file(join(path, "new.txt")).text()).toBe("new file\n");
+    expect((await getAllSessionWorktrees())["toy-box-session"]?.path).toBe(path);
+
+    await git(path, "add", ".");
+    await git(path, "commit", "-m", "session changes");
+    await finish("toy-box-session");
+    expect(await Bun.file(join(source, "value.txt")).text()).toBe("after\n");
+    expect(await Bun.file(join(source, "new.txt")).text()).toBe("new file\n");
+    expect(await git(source, "branch", "--show-current")).toBe("main");
+    expect(Boolean(await git(source, "status", "--porcelain"))).toBe(name === "apply");
+    expect(
+      await access(path).then(
+        () => true,
+        () => false,
+      ),
+    ).toBe(false);
+    expect(await getAllSessionWorktrees()).toEqual({});
+  });
+}

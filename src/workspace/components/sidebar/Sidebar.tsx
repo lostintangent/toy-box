@@ -17,8 +17,8 @@ import {
 } from "./SidebarActions";
 import { SessionList } from "@sessions/components/sidebar/SessionList";
 import { FileBrowserDialog } from "@files/components/browser/FileBrowserDialog";
-import { ChannelsPanel } from "@channels/components/ChannelsPanel";
-import { CreateChannelDialog } from "@channels/components/CreateChannelDialog";
+import { ChannelsPanel } from "@channels/components/sidebar/ChannelsPanel";
+import { CreateChannelDialog } from "@channels/components/sidebar/CreateChannelDialog";
 import type { SidebarPanels } from "@workspace/model/config/layoutPrefs";
 
 /**
@@ -36,8 +36,6 @@ function layerClass(visible: boolean): string {
 export type SidebarProps = {
   filter: string;
   onFilterChange: (value: string) => void;
-  showExternalSessions: boolean;
-  onShowExternalSessionsChange: (value: boolean) => void;
 
   sessions: SessionMetadata[];
   isSessionsLoading: boolean;
@@ -90,8 +88,6 @@ export type SidebarProps = {
 export function Sidebar({
   filter,
   onFilterChange,
-  showExternalSessions,
-  onShowExternalSessionsChange,
 
   sessions,
   isSessionsLoading,
@@ -166,8 +162,6 @@ export function Sidebar({
           leadingSlot={collapsible ? <ActionSpacer /> : undefined}
           filter={filter}
           onFilterChange={onFilterChange}
-          showExternalSessions={showExternalSessions}
-          onShowExternalSessionsChange={onShowExternalSessionsChange}
           sessionCount={sessions.length}
           onCreateSession={onCreateSession}
           onCreateAutomation={() => setCreateAutomationOpen(true)}

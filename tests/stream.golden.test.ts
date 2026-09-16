@@ -1,3 +1,4 @@
+import { connectCopilotSession } from "@providers/server/copilot/connection";
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { WorkspaceEvent } from "@workspace/model/events";
@@ -61,13 +62,13 @@ mock.module("@sessions/server/state/registry", () => ({
 }));
 mock.module("@workspace/server/events", () => ({
   emitSessionNameUpdate: (sessionId: string, name: string) => {
-    sideEffects.push(`summary:${sessionId}:${name}`);
+    sideEffects.push(`title:${sessionId}:${name}`);
     emitMockWorkspaceEvent({
       type: "session.upserted",
       session: {
         sessionId,
         modifiedTime: new Date().toISOString(),
-        summary: name,
+        title: name,
       },
     });
   },
@@ -138,9 +139,13 @@ describe("stream golden replay", () => {
       },
     } as unknown as CopilotSession;
 
-    const stream = SessionStream.getOrCreate(SESSION_ID, fakeSession, {
-      model: { name: "gpt-5.5" },
-    });
+    const stream = SessionStream.getOrCreate(
+      SESSION_ID,
+      connectCopilotSession(fakeSession, SESSION_ID),
+      {
+        model: { provider: "copilot", name: "gpt-5.5" },
+      },
+    );
     const received: unknown[] = [];
     const events = stream.subscribe();
     const collector = (async () => {
@@ -265,7 +270,11 @@ describe("stream golden replay", () => {
       } as unknown as CopilotSession;
 
       return {
-        stream: SessionStream.getOrCreate(sessionId, fakeSession, initialState),
+        stream: SessionStream.getOrCreate(
+          sessionId,
+          connectCopilotSession(fakeSession, sessionId),
+          initialState,
+        ),
         emit: (event) => handler!(event),
       };
     };

@@ -1,21 +1,20 @@
-// Server-side SDK session registry and lifecycle coordination.
+// Server-side provider session registry and lifecycle coordination.
 //
-// The SDK persists sessions to disk; this module keeps live CopilotSession
+// Providers persist native history; this module keeps live SessionConnection
 // instances in memory, creates and resumes them with role-scoped tools, and
 // coordinates lifecycle effects across runtime streams, workspace state,
-// snapshots, worktrees, and SDK persistence.
+// snapshots, worktrees, and provider persistence.
 
 import { homedir } from "node:os";
-import type { CopilotSession, SessionContext } from "@github/copilot-sdk";
+import type { SessionConnection } from "@providers/server/provider";
+import { SessionConnectionUnavailableError } from "@providers/server/provider";
+import { ensureSessionFiles, writeSessionArtifact, deleteSessionFiles } from "../artifacts";
 import {
-  createDraftSession as sdkCreateDraftSession,
-  createSession as sdkCreateSession,
-  deleteSession as sdkDeleteSession,
+  createSession as createProviderSession,
+  deleteSession as deleteProviderSession,
   getSessionDirectory,
-  readSessionContext,
-  resumeSession as sdkResumeSession,
-  setSessionWorkingDirectory as sdkSetSessionWorkingDirectory,
-} from "../sdk/client";
+  resumeSession as resumeProviderSession,
+} from "../providers";
 import { getSessionConfiguration } from "@/server/sessionTools";
 import {
   emitSessionDelete,
@@ -28,7 +27,7 @@ import {
   unpinSession,
 } from "@workspace/server/state";
 import { createSessionWorktree, deleteSessionWorktree } from "./worktrees";
-import { deleteDraftSession, getDraftSession, persistDraftSession } from "./drafts";
+import { deleteSessionRecord, getDraftSession, persistDraftSession } from "./sessions";
 import {
   deleteOwnedSessions,
   detachManagedSession,
@@ -36,30 +35,23 @@ import {
 } from "@/server/managedSessions";
 import { sharedMap } from "@/shared/server/processState";
 import { hasHyperSession } from "@workspace/server/state/hyperSessions";
-import type { SessionType, SessionWorktree } from "@sessions/model";
+import type { SessionType } from "@sessions/model";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
 
-// The SDK's automatic idle timeout can retire its server-side session while
-// leaving subsequent resume unreliable. Explicit disconnect preserves durable
-// history and gives the next acquisition a reliable resume boundary.
+// Release idle native connections explicitly while preserving durable history.
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 type CachedSession = {
-  session: CopilotSession;
+  session: SessionConnection;
   configurationKey?: string;
   executionLease: boolean;
   idleReleaseTimer?: ReturnType<typeof setTimeout>;
-  // SDK disconnect() does not return its in-flight promise to a second caller.
+  // Join the same teardown when acquisitions and release overlap.
   disconnecting?: Promise<void>;
 };
 const cachedSessions = sharedMap<CachedSession>("configured-sessions");
-// HMR can retain cached sessions created before lease metadata was introduced. Treat
-// those conservatively as execution-owned until their stream releases them.
-for (const cached of cachedSessions.values()) {
-  cached.executionLease ??= true;
-}
 // Configuration refresh and cold resume are single-flight per session.
-const sessionAcquisitions = sharedMap<Promise<CopilotSession>>("pending-session-resumes");
+const sessionAcquisitions = sharedMap<Promise<SessionConnection>>("pending-session-resumes");
 
 export type CreateSessionOptions = {
   model?: ModelConfiguration;
@@ -67,34 +59,39 @@ export type CreateSessionOptions = {
   directory?: string;
   sessionType?: SessionType;
   useWorktree?: boolean;
-  initialContext?: SessionContext;
   parentSessionId?: string;
 };
 
 // ── Creation ──────────────────────────────────────────────────────────
 
-/** Create the SDK workspace now while retaining draft UX until the first message. */
+/** Claim public identity before creating any files or selecting a provider. */
 export async function createDraftSession(
   sessionId: string,
   options: { artifact?: { path: string; content: string }; hyper?: true },
 ): Promise<void> {
   const artifact = options.artifact;
 
-  await sdkCreateDraftSession(sessionId, artifact);
   const draft = {
     sessionId,
     createdAt: Date.now(),
     ...(artifact ? { artifactPath: artifact.path } : {}),
   };
   await persistDraftSession(draft);
+  try {
+    await ensureSessionFiles(sessionId);
+    if (artifact) await writeSessionArtifact(sessionId, artifact.path, artifact.content);
+  } catch (error) {
+    await deleteSessionRecord(sessionId);
+    throw error;
+  }
   addDraftSession(draft, options.hyper);
 }
 
-/** Create and publish a new SDK session with a caller-provided ID. */
+/** Create and publish a new provider session with a caller-provided ID. */
 export async function createSession(
   sessionId: string,
   options?: CreateSessionOptions,
-): Promise<{ session: CopilotSession; artifactPath?: string }> {
+): Promise<{ session: SessionConnection; artifactPath?: string }> {
   const requested = options ?? {};
   const sessionType = options?.sessionType ?? (hasHyperSession(sessionId) ? "hyper" : "standard");
   const model = requested.model;
@@ -106,94 +103,54 @@ export async function createSession(
     sessionId,
     sessionType,
   );
-  const { executionDirectory, displayContext, worktree } = await prepareSessionCreation(sessionId, {
-    directory,
-    useWorktree,
-    initialContext: requested.initialContext,
-  });
+  const worktree =
+    directory && useWorktree ? await createSessionWorktree(sessionId, directory) : undefined;
+  const executionDirectory = worktree?.path ?? directory;
 
-  // The SDK requires a working directory. When none was explicitly provided
+  // Providers require a working directory. When none was explicitly provided
   // (e.g. automations with no cwd), fall back to the user's home directory
-  // so the SDK has a valid path without leaking the server's cwd.
-  let session: CopilotSession | undefined;
-  let sessionContext = displayContext;
+  // so the provider has a valid path without leaking the server's cwd.
+  let session: SessionConnection;
   try {
-    // Drafts temporarily use this same-ID create path. TODO: Resume the draft
-    // directly when the Copilot SDK can resume a zero-turn session; today it
-    // persists the workspace but no event history, so resume reports not found.
-    session = await sdkCreateSession(sessionId, {
+    await ensureSessionFiles(sessionId);
+    session = await createProviderSession(sessionId, {
       model,
+      name,
       directory: executionDirectory ?? homedir(),
       sessionType,
       ...sessionConfiguration,
       artifactPath: draft?.artifactPath,
     });
-    if (draft && executionDirectory) {
-      // Same-ID draft promotion no longer updates the SDK's persisted workspace metadata.
-      sessionContext = await sdkSetSessionWorkingDirectory(session, executionDirectory);
-    }
-    if (draft?.artifactPath) {
-      // Empty draft sessions persist their workspace but have no resumable
-      // event log. Re-record the existing file after the first turn starts so
-      // ordinary history projection owns artifact discovery from here on.
-      const file = await session.rpc.workspaces.readFile({
-        path: draft.artifactPath,
-      });
-      await session.rpc.workspaces.createFile({
-        path: draft.artifactPath,
-        content: file.content,
-      });
-    }
-    if (name) await session.rpc.name.set({ name });
-    if (draft) await deleteDraftSession(sessionId);
   } catch (error) {
-    if (session) {
-      if (draft) await session.disconnect().catch(console.error);
-      else await sdkDeleteSession(sessionId).catch(console.error);
-    }
     if (worktree) await deleteSessionWorktree(sessionId).catch(console.error);
     throw error;
   }
   const now = new Date().toISOString();
   cachedSessions.set(sessionId, { session, configurationKey, executionLease: true });
 
-  // Emit immediately so the session appears in the list right away.
-  // This display context can come from an inherited workspace or a
-  // worktree rewrite; the SDK history remains the authoritative source once
-  // session.start is written to disk.
+  // Publish the execution directory immediately so clients can resolve its location.
   emitSessionUpsert({
     sessionId,
+    provider: session.identity.providerId,
     startTime: now,
     modifiedTime: now,
-    summary: name ?? "",
-    isRemote: false,
-    context: sessionContext,
+    title: name ?? "",
+    directory: executionDirectory,
     worktree,
     parentSessionId: requested.parentSessionId,
     sessionType,
   });
 
-  // Backfill full context (gitRoot, repository, branch) from the SDK's
-  // session.start event once it's written to disk. Skip for directory-less
-  // sessions — their events.jsonl contains the homedir fallback, not a
-  // meaningful location the user chose.
-  if (!draft && executionDirectory) {
-    void readSessionContext(sessionId).then((context) => {
-      if (context) {
-        emitSessionUpsert({ sessionId, context });
-      }
-    });
-  }
   return {
     session,
     ...(draft?.artifactPath ? { artifactPath: draft.artifactPath } : {}),
   };
 }
 
-// ── SDK Sessions ───────────────────────────────────────────────────────
+// ── Provider connections ───────────────────────────────────────────────────────
 
-/** Acquire the SDK session owned by one execution, refreshing configuration when required. */
-export async function acquireSession(sessionId: string): Promise<CopilotSession> {
+/** Acquire the provider session owned by one execution, refreshing configuration when required. */
+export async function acquireSession(sessionId: string): Promise<SessionConnection> {
   let cached = cachedSessions.get(sessionId);
   if (cached?.disconnecting) {
     await cached.disconnecting.catch(() => {});
@@ -217,7 +174,7 @@ export async function acquireSession(sessionId: string): Promise<CopilotSession>
 async function acquireConfiguredSession(
   sessionId: string,
   cached?: CachedSession,
-): Promise<CopilotSession> {
+): Promise<SessionConnection> {
   let acquisition = sessionAcquisitions.get(sessionId);
   if (!acquisition) {
     acquisition = (async () => {
@@ -231,7 +188,7 @@ async function acquireConfiguredSession(
       if (cached) await disconnectCachedSession(sessionId, cached);
       const workspaceDirectory = await getSessionDirectory(sessionId);
       const directory = workspaceDirectory ?? homedir();
-      const session = await sdkResumeSession(sessionId, {
+      const session = await resumeProviderSession(sessionId, {
         directory,
         sessionType,
         ...sessionConfiguration,
@@ -249,7 +206,7 @@ async function acquireConfiguredSession(
   return acquisition;
 }
 
-/** Release an execution-owned SDK session after its SessionStream finishes. */
+/** Release an execution-owned provider session after its SessionStream finishes. */
 export function releaseSession(sessionId: string): void {
   const cached = cachedSessions.get(sessionId);
   if (!cached) return;
@@ -258,22 +215,22 @@ export function releaseSession(sessionId: string): void {
   scheduleSessionRelease(sessionId, cached);
 }
 
-/** Disconnect an idle SDK session when a supervisor expects no immediate reuse. */
+/** Disconnect an idle provider session when a supervisor expects no immediate reuse. */
 export async function releaseIdleSession(sessionId: string): Promise<void> {
   const cached = cachedSessions.get(sessionId);
   if (cached) await releaseCachedSessionIfIdle(sessionId, cached);
 }
 
 /**
- * Run a short SDK operation and retry once if it reveals a stale session.
+ * Run a short provider operation and retry once if it reveals a stale session.
  *
  * Use this for bounded calls such as history replay, rename, and rewind, not
- * for a SessionStream that owns one CopilotSession throughout execution. A
+ * for a SessionStream that owns one SessionConnection throughout execution. A
  * cached call retains its configuration; only execution acquisition refreshes it.
  */
 export async function withSession<T>(
   sessionId: string,
-  operation: (session: CopilotSession) => Promise<T>,
+  operation: (session: SessionConnection) => Promise<T>,
 ): Promise<T> {
   try {
     return await runSessionOperation(sessionId, operation);
@@ -286,7 +243,7 @@ export async function withSession<T>(
 
 async function runSessionOperation<T>(
   sessionId: string,
-  operation: (session: CopilotSession) => Promise<T>,
+  operation: (session: SessionConnection) => Promise<T>,
 ): Promise<T> {
   let cached = cachedSessions.get(sessionId);
   if (cached?.disconnecting) {
@@ -309,30 +266,29 @@ function evictCachedSession(sessionId: string): void {
   const cached = cachedSessions.get(sessionId);
   if (cached) cancelSessionRelease(cached);
   cachedSessions.delete(sessionId);
+  if (cached) void cached.session.disconnect().catch(console.error);
 }
 
-/** Drop a cached SDK session when an error says the SDK no longer knows
+/** Drop a cached provider session when an error says the provider no longer knows
  *  the session, so the next access resumes fresh instead of reusing a stale
  *  instance. Returns whether the error was a stale-session error. */
 export function evictCachedSessionIfStale(sessionId: string, error: unknown): boolean {
-  if (!isSessionNotFoundError(error)) return false;
+  if (!(error instanceof SessionConnectionUnavailableError) && !isSessionNotFoundError(error))
+    return false;
 
   evictCachedSession(sessionId);
   return true;
 }
 
-/** Rename a session through the SDK and broadcast the updated display name. */
+/** Rename a session through its provider and broadcast the updated display name. */
 export async function renameSession(sessionId: string, name: string): Promise<void> {
-  await withSession(sessionId, (session) => session.rpc.name.set({ name }));
+  await withSession(sessionId, (session) => session.rename(name));
   emitSessionNameUpdate(sessionId, name);
 }
 
 /** Update an inferred title without replacing a name explicitly assigned by its creator or user. */
 export async function updateSessionTitle(sessionId: string, title: string): Promise<boolean> {
-  const result = await withSession(sessionId, (session) =>
-    session.rpc.name.setAuto({ summary: title }),
-  );
-  return result.applied;
+  return withSession(sessionId, (session) => session.rename(title, true));
 }
 
 // ── Deletion ───────────────────────────────────────────────────────────
@@ -361,7 +317,7 @@ async function deleteSingleSession(sessionId: string): Promise<void> {
   const cached = cachedSessions.get(sessionId);
   if (cached) cancelSessionRelease(cached);
   try {
-    await sdkDeleteSession(sessionId);
+    if (!(await getDraftSession(sessionId))) await deleteProviderSession(sessionId);
   } catch (error) {
     if (cached) scheduleSessionRelease(sessionId, cached);
     throw error;
@@ -375,7 +331,8 @@ async function removeDeletedSessionState(sessionId: string): Promise<void> {
   const cached = cachedSessions.get(sessionId);
   if (cached) await disconnectCachedSession(sessionId, cached);
   await deleteSessionWorktree(sessionId);
-  await deleteDraftSession(sessionId);
+  await deleteSessionFiles(sessionId);
+  await deleteSessionRecord(sessionId);
   await detachManagedSession(sessionId);
   await unpinSession(sessionId);
   deleteSessionWorkspaceState(sessionId);
@@ -385,7 +342,7 @@ async function removeDeletedSessionState(sessionId: string): Promise<void> {
 
 async function removeDeletedSessionStream(sessionId: string): Promise<void> {
   // Dynamic import keeps the registry from forming a static cycle with the
-  // runtime stream, which imports this module to create and resume SDK sessions.
+  // runtime stream, which imports this module to create and resume provider sessions.
   const { SessionStream } = await import("../runtime/sessionStream");
   SessionStream.remove(sessionId);
 }
@@ -448,62 +405,14 @@ function disconnectCachedSession(sessionId: string, cached: CachedSession): Prom
   return disconnecting;
 }
 
-type PreparedSessionCreation = {
-  executionDirectory?: string;
-  displayContext?: SessionContext;
-  worktree?: SessionWorktree;
-};
-
-async function prepareSessionCreation(
-  sessionId: string,
-  options: Pick<CreateSessionOptions, "directory" | "useWorktree" | "initialContext">,
-): Promise<PreparedSessionCreation> {
-  const requestedDirectory = options.directory;
-  let executionDirectory = requestedDirectory;
-  let sourceGitRoot: string | undefined;
-  let sourceRepository: string | undefined;
-  let worktree: SessionWorktree | undefined;
-
-  if (options.useWorktree && requestedDirectory) {
-    const created = await createSessionWorktree(sessionId, requestedDirectory);
-    if (created) {
-      sourceGitRoot = created.sourceGitRoot;
-      sourceRepository = created.sourceRepository;
-      executionDirectory = created.worktree.path;
-      worktree = created.worktree;
-    }
-  }
-
-  let displayContext: SessionContext | undefined;
-  if (executionDirectory) {
-    displayContext = { workingDirectory: executionDirectory };
-
-    const gitRoot = sourceGitRoot ?? options.initialContext?.gitRoot;
-    if (gitRoot) displayContext.gitRoot = gitRoot;
-
-    const repository = sourceRepository ?? options.initialContext?.repository;
-    if (repository) displayContext.repository = repository;
-
-    // Worktree sessions display their synthetic branch from worktree metadata,
-    // not from the source session's branch.
-    if (!options.useWorktree && options.initialContext?.branch) {
-      displayContext.branch = options.initialContext.branch;
-    }
-  }
-
-  return {
-    executionDirectory,
-    displayContext,
-    worktree,
-  };
-}
-
 export function isSessionNotFoundError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
   return (
     message.includes("session not found") ||
     message.includes("unknown session") ||
-    message.includes("session file not found")
+    message.includes("session file not found") ||
+    message.includes("thread not found") ||
+    message.includes("no rollout found")
   );
 }

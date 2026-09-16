@@ -1,17 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import { replaySdkHistory } from "@sessions/server/sdk/historyReplay";
 import type { Session } from "@sessions/model/reducer";
-import { loadSessionFixture } from "./helpers";
+import { replayCopilotHistory } from "./helpers";
 
-// State-level history replay coverage: persisted SDK events → historyReplay
-// adapter → streaming projector → sessionReducer → final Session. Assertions
+// State-level history replay coverage: native events → provider projector
+// → shared history reducer → final Session. Assertions
 // target the reduced Session because that is the replay contract — the
 // emitted event stream is an implementation detail of the streaming
 // projection, which has its own unit suite (projector.test.ts).
 
 const replayHistory = (events: SdkSessionEvent[]) =>
-  replaySdkHistory("history-replay-session", events);
+  replayCopilotHistory("history-replay-session", events);
 
 function assistantToolCalls(state: Session) {
   return state.messages.flatMap((message) =>
@@ -20,39 +19,8 @@ function assistantToolCalls(state: Session) {
 }
 
 describe("history replay", () => {
-  test("replays the subagent fixture through reducer-owned state construction", async () => {
-    const state = replayHistory(await loadSessionFixture("subagents"));
-    const agents = assistantToolCalls(state).filter((toolCall) => toolCall.name === "agent");
-
-    expect(state.messages.map((message) => message.role)).toEqual([
-      "assistant",
-      "user",
-      "assistant",
-    ]);
-    expect(state.messages[0]).toMatchObject({
-      role: "assistant",
-      toolCalls: [
-        {
-          id: "call_M1QBw3fDmRrrXoYP9bt4edOd",
-          name: "read",
-          result: { success: false, content: "Path does not exist" },
-        },
-      ],
-    });
-    expect(state.model).toMatchObject({ name: "gpt-5.5", reasoningEffort: "xhigh" });
-    expect(agents).toHaveLength(7);
-    expect(
-      agents
-        .map((toolCall) => toolCall.agent?.toolCalls?.length ?? 0)
-        .filter((count) => count > 0)
-        .sort((a, b) => a - b),
-    ).toEqual([3, 4]);
-    expect(state.pendingToolCalls.size).toBe(0);
-    expect(state.status).toBe("idle");
-  });
-
-  test("replays leading root tool lifecycle events even before a visible turn", () => {
-    const state = replayHistory([
+  test("replays leading root tool lifecycle events even before a visible turn", async () => {
+    const state = await replayHistory([
       {
         type: "tool.execution_start",
         data: {
@@ -97,10 +65,10 @@ describe("history replay", () => {
     ]);
   });
 
-  test("translates todo SQL into todos, keeps it out of the tool call list, and applies titles", () => {
+  test("translates todo SQL into todos, keeps it out of the tool call list, and applies titles", async () => {
     const insertTodo =
       "INSERT INTO todos (id, title) VALUES ('inspect-sql-events', 'inspect SQL events');";
-    const state = replayHistory([
+    const state = await replayHistory([
       { type: "user.message", data: { content: "User prompt" } },
       { type: "assistant.message", data: { content: "Assistant response" } },
       {
@@ -122,7 +90,7 @@ describe("history replay", () => {
     expect(state.todos).toEqual([
       { id: "inspect-sql-events", title: "inspect SQL events", status: "pending" },
     ]);
-    expect(state.summary).toBe("Friendly title");
+    expect(state.title).toBe("Friendly title");
     expect(assistantToolCalls(state)).toEqual([
       {
         id: "call-1",
@@ -133,8 +101,8 @@ describe("history replay", () => {
     ]);
   });
 
-  test("replays session model events through the streaming projector", () => {
-    const state = replayHistory([
+  test("replays session model events through the streaming projector", async () => {
+    const state = await replayHistory([
       {
         type: "session.start",
         data: {
@@ -148,13 +116,13 @@ describe("history replay", () => {
       { type: "session.model_change", data: { newModel: "claude-sonnet-4.6" } },
     ] as SdkSessionEvent[]);
 
-    expect(state.model).toEqual({ name: "claude-sonnet-4.6" });
+    expect(state.model).toEqual({ provider: "copilot", name: "claude-sonnet-4.6" });
   });
 
-  test("normalizes apply_patch string arguments and preserves detailed diffs", () => {
+  test("normalizes apply_patch string arguments and preserves detailed diffs", async () => {
     const patchText = "*** Begin Patch\n*** Update File: notes.md\n@@\n-old\n+new\n*** End Patch";
     const patchDiff = "diff --git a/notes.md b/notes.md\n@@ -1 +1 @@\n-old\n+new";
-    const state = replayHistory([
+    const state = await replayHistory([
       { type: "user.message", data: { content: "Patch it" } },
       { type: "assistant.message", data: { content: "Applying patch." } },
       {
@@ -181,8 +149,8 @@ describe("history replay", () => {
     ]);
   });
 
-  test("restores linked sessions without surfacing the translated tool call", () => {
-    const state = replayHistory([
+  test("restores linked sessions without surfacing the translated tool call", async () => {
+    const state = await replayHistory([
       { type: "user.message", data: { content: "Spin one up" } },
       { type: "assistant.message", data: { content: "Opening a companion session." } },
       {
@@ -198,7 +166,7 @@ describe("history replay", () => {
         data: {
           toolCallId: "tool-create-session",
           success: true,
-          result: { content: JSON.stringify({ sessionId: "toy-box-created-2" }) },
+          result: { content: JSON.stringify({ sessionId: "toy-box-created-2", opened: true }) },
         },
       },
     ] as SdkSessionEvent[]);
@@ -207,8 +175,8 @@ describe("history replay", () => {
     expect(assistantToolCalls(state)).toEqual([]);
   });
 
-  test("keeps omitted tools out of the transcript", () => {
-    const state = replayHistory([
+  test("keeps omitted tools out of the transcript", async () => {
+    const state = await replayHistory([
       { type: "user.message", data: { content: "Check status" } },
       { type: "assistant.message", data: { content: "Checking." } },
       {
@@ -226,8 +194,8 @@ describe("history replay", () => {
     expect(assistantToolCalls(state)).toEqual([]);
   });
 
-  test("keeps subagent prompts out of the root transcript", () => {
-    const state = replayHistory([
+  test("keeps subagent prompts out of the root transcript", async () => {
+    const state = await replayHistory([
       { type: "user.message", data: { content: "Real root turn" } },
       { type: "assistant.message", data: { content: "Delegating." } },
       {
@@ -247,8 +215,8 @@ describe("history replay", () => {
     expect(state.messages[0]).toMatchObject({ content: "Real root turn" });
   });
 
-  test("reads persisted blob attachments by default, skipping legacy file entries", () => {
-    const state = replayHistory([
+  test("reads persisted blob attachments by default, skipping legacy file entries", async () => {
+    const state = await replayHistory([
       {
         type: "user.message",
         timestamp: "2026-01-01T00:00:00.000Z",
@@ -267,7 +235,7 @@ describe("history replay", () => {
         role: "user",
         content: "What is in this image?",
         timestamp: "2026-01-01T00:00:00.000Z",
-        attachments: [{ base64: "aW1hZ2U=", mimeType: "image/png", displayName: "image.png" }],
+        attachments: [{ base64: "aW1hZ2U=", mimeType: "image/png" }],
       },
     ]);
   });

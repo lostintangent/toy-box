@@ -16,6 +16,7 @@ export function useWorkspaceSync(): void {
     if (!isVisible) return;
 
     const source = new EventSource("/api/workspace");
+
     source.onopen = () => {
       void Promise.all([
         invalidateWorkspaceStateQuery(queryClient),
@@ -26,15 +27,18 @@ export function useWorkspaceSync(): void {
         console.error("Failed to refresh shared state:", error);
       });
     };
+
     source.onmessage = (message) => {
       if (!message.data) return;
 
       try {
-        applyWorkspaceEvent(queryClient, JSON.parse(message.data) as WorkspaceEvent);
+        const event = JSON.parse(message.data) as WorkspaceEvent;
+        applyWorkspaceEvent(queryClient, event);
       } catch (error) {
         console.error("Failed to parse workspace event:", error);
       }
     };
+
     return () => source.close();
   }, [isVisible, queryClient]);
 }

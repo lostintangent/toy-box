@@ -10,7 +10,7 @@ runtime. The runtime supplies pre-installed libraries, a design system for visua
 continuity, and an SDK for composing workspace sessions, files, and panes. It has
 two storage and ownership models:
 
-- **Artifact apps** are `*.toy` files in the current session's files folder.
+- **Artifact apps** are `*.toy` files in the current session's artifacts folder.
   Each file is a stateless, session-owned artifact with no manifest,
   registration, saved instance, pending shares, or app-owned workers.
 - An **installed app** is a reusable `app.tsx` plus `app.json` definition under
@@ -70,7 +70,7 @@ uniquely named `.toy` files in the same session.
    authoritative contract for available libraries, the design system, and which
    SDK capabilities each app kind owns.
 2. Choose a concise relative path ending in `.toy`, then create or patch that
-   file inside the current session's files folder from the system instructions.
+   file inside the current session's artifacts folder from the system instructions.
    For a revision, read and preserve unrelated behavior in the existing file.
 3. Build one coherent surface. Use React state for interaction and mount-local
    data. Use `useWorkspace`, `useFile`, and `useAppActions` for portable host
@@ -79,7 +79,7 @@ uniquely named `.toy` files in the same session.
    a saved app instance. File-owned workers remain available through `useFile` for
    session files the artifact presents.
 4. After every complete write, call `validate_artifact_app` with the path
-   relative to the session files folder:
+   relative to the session artifacts folder:
 
    ```json
    { "path": "release-board.toy" }

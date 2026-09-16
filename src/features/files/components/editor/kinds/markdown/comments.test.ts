@@ -6,7 +6,7 @@ const thread: CommentThread = {
   id: "thread-a",
   quote: "Original section",
   anchor: { prefix: "Original section" },
-  comments: [{ body: "@[Copilot](copilot) make this clearer", updatedAt: "earlier" }],
+  comments: [{ body: "@[Assistant](assistant) make this clearer", updatedAt: "earlier" }],
 };
 
 describe("Markdown artifact comments", () => {
@@ -15,7 +15,7 @@ describe("Markdown artifact comments", () => {
 
     expect(prompt).toContain("A user asked for your help in an inline comment thread");
     expect(prompt).toContain('"id": "thread-a"');
-    expect(prompt).toContain("@[Copilot](copilot) make this clearer");
+    expect(prompt).toContain("@[Assistant](assistant) make this clearer");
     expect(prompt).toContain('Use "2026-07-14T12:00:00.000Z" for `updatedAt`');
     expect(prompt).toContain("appending that object must be the only file change");
     expect(prompt).toContain("update its `quote` to the replacement text");
@@ -38,7 +38,7 @@ describe("Markdown artifact comments", () => {
       threadId: "thread-a",
     });
     expect(
-      planArtifactCommentResponse(added(["agent-a", "copilot"]), ["agent-a"], now),
+      planArtifactCommentResponse(added(["agent-a", "assistant"]), ["agent-a"], now),
     ).toMatchObject({ agentIds: ["agent-a"], spawnWorker: true });
     expect(planArtifactCommentResponse(added([]), ["agent-a"], now)).toMatchObject({
       agentIds: [],

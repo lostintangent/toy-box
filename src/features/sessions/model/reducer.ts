@@ -1,13 +1,12 @@
 // Canonical session state reducer — the single transition function for
 // Session state. Three consumers feed it the same SessionEvents:
 //   - server live streaming (SessionStream#emit, server/runtime/sessionStream.ts)
-//   - server history replay (sdk/historyReplay.ts)
+//   - server history replay (server/state/snapshots.ts)
 //   - the client, for live SSE events and the buffered-event replay a
 //     late-connecting client catches up on (useSession#applyEvent)
 // Sharing this module is what guarantees a transcript renders identically
 // whether it is watched live, reloaded, or reconnected to. It stays agnostic
-// to Copilot SDK details — SDK translation policy lives in
-// server/sdk/projector.ts.
+// to native SDK details — translation policy lives in Providers.
 //
 // Vocabulary used throughout this file:
 //   - root vs agent-scoped: events without an agentId mutate the top-level
@@ -33,7 +32,6 @@ import type { ModelConfiguration } from "./modelConfiguration";
 import type {
   Message,
   QueuedMessage,
-  SessionArtifactPatch,
   SessionCanvas,
   SessionEvent,
   SessionQuestion,
@@ -48,7 +46,7 @@ import type {
 export type Session = {
   messages: Message[];
   queuedMessages: QueuedMessage[];
-  summary?: string;
+  title?: string;
   todos?: TodoItem[];
   linkedSessionIds: string[];
   canvases?: SessionCanvas[];
@@ -73,7 +71,7 @@ export function createInitialSession(initial: Partial<Session> = {}): Session {
   return {
     messages: initial.messages ? [...initial.messages] : [],
     queuedMessages: initial.queuedMessages ? [...initial.queuedMessages] : [],
-    summary: initial.summary,
+    title: initial.title,
     todos: initial.todos ? initial.todos.map((todo) => ({ ...todo })) : undefined,
     linkedSessionIds: initial.linkedSessionIds ? [...initial.linkedSessionIds] : [],
     ...(initial.canvases ? { canvases: initial.canvases.map((canvas) => ({ ...canvas })) } : {}),
@@ -84,6 +82,14 @@ export function createInitialSession(initial: Partial<Session> = {}): Session {
     model: initial.model,
     pendingToolCalls: new Map(),
   };
+}
+
+/** Rebuild idle state from provider history, clearing any trailing live state. */
+export function replaySessionHistory(events: readonly SessionEvent[]): Session {
+  return applySessionEvent(events.reduce(applySessionEvent, createInitialSession()), {
+    type: "end",
+    reason: "idle",
+  });
 }
 
 /** Project a Session into the wire/query snapshot shape — the one mapping
@@ -135,6 +141,16 @@ export function hasPendingSessionQuestion(
         (toolCall) =>
           toolCall.question?.state === "pending" && toolCall.question.requestId === requestId,
       ) === true,
+  );
+}
+
+export function hasBlockingSessionQuestion(session: Pick<Session, "messages">): boolean {
+  return session.messages.some(
+    (message) =>
+      message.role === "assistant" &&
+      message.toolCalls?.some(
+        (tool) => tool.question?.state === "pending" && tool.question.blocking !== false,
+      ),
   );
 }
 
@@ -213,17 +229,15 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
         return;
       }
 
-      // Turn boundary: a committed root assistant message finalizes the
-      // previous message group's pending tool calls. In live streams it may
-      // arrive after thinking/deltas, so reconcile it with the in-flight
-      // assistant placeholder instead of appending duplicate text.
+      // A committed message closes the current tool group. Native IDs select
+      // its streamed preview; older events fall back to activity status.
       const reconcileLiveMessage =
         state.status === "thinking" ||
         state.status === "reasoning" ||
         state.status === "responding";
       state.pendingToolCalls = new Map();
 
-      upsertCommittedAssistantMessage(state, event.content, reconcileLiveMessage);
+      upsertCommittedAssistantMessage(state, event.content, reconcileLiveMessage, event.messageId);
       if (reconcileLiveMessage && event.content) {
         state.status = "responding";
         state.reasoningContent = "";
@@ -256,7 +270,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       // potentially dropping in-flight tool call results.
       if (event.content.length === 0) return;
 
-      ensureCleanAssistantMessage(state);
+      ensureCleanAssistantMessage(state, event.messageId);
       state.status = "responding";
       state.reasoningContent = "";
       appendAssistantDelta(state, event.content);
@@ -361,8 +375,10 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
           requestId: event.requestId,
         },
       }));
-      state.status = "waiting";
-      state.reasoningContent = "";
+      if (event.question.blocking !== false) {
+        state.status = "waiting";
+        state.reasoningContent = "";
+      }
       return;
     }
 
@@ -378,15 +394,25 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
           },
         };
       });
-      state.status = "thinking";
+      state.status = hasBlockingSessionQuestion(state) ? "waiting" : "thinking";
+      return;
+    }
+
+    case "question_cancelled": {
+      updateToolCall(state, event.toolCallId, (toolCall) =>
+        toolCall.question?.state === "pending"
+          ? { ...toolCall, question: { ...toQuestionBase(toolCall.question), state: "unanswered" } }
+          : toolCall,
+      );
+      state.status = hasBlockingSessionQuestion(state) ? "waiting" : "thinking";
       return;
     }
 
     // ── Status & metadata ─────────────────────────────────────────────
 
     case "session_title_changed":
-      if (state.summary === event.title) return;
-      state.summary = event.title;
+      if (state.title === event.title) return;
+      state.title = event.title;
       return;
 
     case "todos_patch": {
@@ -418,8 +444,13 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     // ── Artifacts ─────────────────────────────────────────────────────
 
-    case "artifacts_patch": {
-      applyArtifactPatches(state, event.patches);
+    case "artifacts_changed": {
+      if (
+        event.artifacts.length === state.artifacts.length &&
+        event.artifacts.every((path, index) => path === state.artifacts[index])
+      )
+        return;
+      state.artifacts = [...event.artifacts];
       return;
     }
 
@@ -458,7 +489,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
       // event-less completions/transport failures, and replays can deliver one
       // after state is already final.
       if (event.reason === "error") {
-        finishWithError(state);
+        finishWithError(state, event.error);
         return;
       }
 
@@ -482,18 +513,22 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
   }
 }
 
-function finishWithError(state: Session): void {
+function finishWithError(state: Session, error?: string): void {
   const message = state.messages[state.messages.length - 1];
-  const errorContent = "An error occurred. Please try again.";
+  const errorContent =
+    error ||
+    (message?.role === "assistant" && message.error) ||
+    "An error occurred. Please try again.";
   if (message?.role === "assistant") {
     replaceMessage(state, state.messages.length - 1, {
       ...message,
-      content: errorContent,
+      error: errorContent,
     });
   } else {
     appendMessage(state, {
       role: "assistant",
-      content: errorContent,
+      content: "",
+      error: errorContent,
     });
   }
 
@@ -533,28 +568,6 @@ function upsertCanvas(state: Session, canvas: Omit<SessionCanvas, "key" | "revis
   state.canvases = next;
 }
 
-function upsertArtifact(state: Session, path: string): void {
-  if (state.artifacts.includes(path)) return;
-  state.artifacts = [...state.artifacts, path];
-}
-
-function removeArtifact(state: Session, path: string): void {
-  const artifacts = state.artifacts.filter((artifact) => artifact !== path);
-  if (artifacts.length === state.artifacts.length) return;
-  state.artifacts = artifacts;
-}
-
-function applyArtifactPatches(state: Session, patches: SessionArtifactPatch[]): void {
-  for (const patch of patches) {
-    if (patch.type === "delete") {
-      removeArtifact(state, patch.path);
-      continue;
-    }
-
-    upsertArtifact(state, patch.path);
-  }
-}
-
 function openFile(state: Session, file: WorkspaceFile): void {
   const id = workspaceFileId(file);
   if (state.openedFiles.some((opened) => workspaceFileId(opened) === id)) return;
@@ -581,6 +594,7 @@ function inputMessageFromEvent(event: InputEvent): InputMessage {
         role: "user",
         content: event.content,
         attachments: event.attachments,
+        ...(event.rewindable === false ? { rewindable: false } : {}),
         timestamp: event.timestamp,
       }
     : {
@@ -606,37 +620,60 @@ function reconcileOptimisticUserMessage(
 
 function ensureAssistantMessage(state: Session): void {
   const last = state.messages[state.messages.length - 1];
-  if (last?.role === "assistant") return;
+  if (last?.role === "assistant" && !last.error) return;
   appendMessage(state, { role: "assistant", content: "" });
 }
 
 // Like ensureAssistantMessage, but also starts a new message when the current
 // one already has tool calls — so that text after tool execution lands on a
 // fresh assistant message, preserving the interleaving of text and tool groups.
-function ensureCleanAssistantMessage(state: Session): void {
+function ensureCleanAssistantMessage(state: Session, messageId?: string): void {
   const last = state.messages[state.messages.length - 1];
-  if (last?.role === "assistant" && !last.toolCalls?.length && state.pendingToolCalls.size === 0) {
+  if (
+    last?.role === "assistant" &&
+    !last.error &&
+    !last.toolCalls?.length &&
+    (messageId === undefined || last.messageId === messageId) &&
+    state.pendingToolCalls.size === 0
+  ) {
     return;
   }
   // Finalize: pending tool calls have already been applied to the previous message.
   state.pendingToolCalls = new Map();
-  appendMessage(state, { role: "assistant", content: "" });
+  appendMessage(state, {
+    role: "assistant",
+    content: "",
+    ...(messageId !== undefined ? { messageId } : {}),
+  });
 }
 
 function upsertCommittedAssistantMessage(
   state: Session,
   content: string,
   reconcileLiveMessage: boolean,
+  messageId?: string,
 ): void {
   const last = state.messages[state.messages.length - 1];
-  if (reconcileLiveMessage && last?.role === "assistant" && !last.toolCalls?.length) {
+  if (
+    last?.role === "assistant" &&
+    !last.error &&
+    !last.toolCalls?.length &&
+    (messageId !== undefined ? last.messageId === messageId : reconcileLiveMessage)
+  ) {
     replaceMessage(state, state.messages.length - 1, {
       ...last,
-      content: reconcileCommittedAssistantContent(last.content, content),
+      content:
+        messageId !== undefined
+          ? content
+          : reconcileCommittedAssistantContent(last.content, content),
     });
     return;
   }
-  appendMessage(state, { role: "assistant", content });
+  appendMessage(state, {
+    role: "assistant",
+    content,
+    ...(messageId !== undefined ? { messageId } : {}),
+  });
 }
 
 function reconcileCommittedAssistantContent(existing: string, incoming: string): string {
@@ -687,25 +724,27 @@ function toQuestionBase(question: SessionQuestion): SessionQuestionBase {
     question: question.question,
     ...(question.choices ? { choices: question.choices } : {}),
     allowFreeform: question.allowFreeform,
+    ...(question.blocking !== undefined ? { blocking: question.blocking } : {}),
+    ...(question.secret !== undefined ? { secret: question.secret } : {}),
   };
 }
 
 function markPendingQuestionUnanswered(messages: Message[]): Message[] {
-  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
-    const message = messages[messageIndex];
+  let result = messages;
+  for (const [messageIndex, message] of messages.entries()) {
     if (message.role !== "assistant" || !message.toolCalls) continue;
-    for (const [toolCallIndex, toolCall] of message.toolCalls.entries()) {
-      if (toolCall.question?.state !== "pending") continue;
-      return replaceAt(messages, messageIndex, {
-        ...message,
-        toolCalls: replaceAt(message.toolCalls, toolCallIndex, {
-          ...toolCall,
-          question: { ...toQuestionBase(toolCall.question), state: "unanswered" },
-        }),
+    let tools = message.toolCalls;
+    for (const [index, tool] of tools.entries()) {
+      if (tool.question?.state !== "pending") continue;
+      tools = replaceAt(tools, index, {
+        ...tool,
+        question: { ...toQuestionBase(tool.question), state: "unanswered" },
       });
     }
+    if (tools !== message.toolCalls)
+      result = replaceAt(result, messageIndex, { ...message, toolCalls: tools });
   }
-  return messages;
+  return result;
 }
 
 function applyPendingToolCallsToLastAssistant(state: Session): void {
@@ -801,9 +840,13 @@ function applyTodoPatches(
 ): TodoItem[] | undefined {
   if (patches.length === 0) return current;
 
-  const next = current ? current.map((todo) => ({ ...todo })) : [];
+  let next = current ? current.map((todo) => ({ ...todo })) : [];
 
   for (const patch of patches) {
+    if (patch.type === "replace_all") {
+      next = patch.items.map((todo) => ({ ...todo }));
+      continue;
+    }
     if (patch.type === "update_all") {
       for (const todo of next) {
         todo.status = patch.status;

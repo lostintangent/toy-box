@@ -13,14 +13,14 @@ import { agentQueries } from "@agents/queries";
 import type { EditorProps } from "../index";
 import { usePreferredColorScheme } from "@/shared/hooks/usePreferredColorScheme";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
-import { COPILOT_DOCUMENT_USER_ID, planArtifactCommentResponse } from "./comments";
+import { ASSISTANT_DOCUMENT_USER_ID, planArtifactCommentResponse } from "./comments";
 
-const COPILOT_USER = {
-  id: COPILOT_DOCUMENT_USER_ID,
-  username: "copilot",
-  fullName: "Copilot",
+const ASSISTANT_USER = {
+  id: ASSISTANT_DOCUMENT_USER_ID,
+  username: "assistant",
+  fullName: "Assistant",
 } satisfies DocumentUser;
-/** Rich Markdown editing with live external diffs and inline Copilot responses. */
+/** Rich Markdown editing with live external diffs and inline Assistant responses. */
 export function MarkdownEditor({ mode, file, pendingWorkers, spawnWorker }: EditorProps) {
   const theme = useDocumintTheme();
   const fileHost =
@@ -35,7 +35,7 @@ export function MarkdownEditor({ mode, file, pendingWorkers, spawnWorker }: Edit
   const mentionAgent = useMutation(fileMutations.mentionAgent());
   const agents = fileHost ? (agentsQuery.data ?? []) : [];
   const users: DocumentUser[] = [
-    COPILOT_USER,
+    ASSISTANT_USER,
     ...agents.map((agent) => ({
       id: agent.id,
       username: agentHandleFromName(agent.name),
@@ -48,10 +48,10 @@ export function MarkdownEditor({ mode, file, pendingWorkers, spawnWorker }: Edit
       return threadId
         ? [
             {
-              userId: COPILOT_USER.id,
+              userId: ASSISTANT_USER.id,
               cursor: { threadId },
               color: "#8b5cf6",
-              status: "Copilot is working…",
+              status: "Assistant is working…",
             },
           ]
         : [];

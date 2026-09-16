@@ -6,7 +6,7 @@ import type { WorkspacePane } from "@workspace/model/panes";
 import { PaneSlotsProvider, type PaneSlots } from "./PaneSlots";
 import { CanvasPane } from "@sessions/components/CanvasPane";
 import { SessionPane } from "@sessions/components/SessionPane";
-import { ChannelPane } from "@channels/components/ChannelPane";
+import { ChannelPane } from "@channels/components/pane/ChannelPane";
 
 export type PaneVariant = "normal" | "compact";
 

@@ -14,11 +14,12 @@ describe("settings", () => {
   test("preserves valid settings", () => {
     const settings: Settings = {
       accentColor: "#123abc",
-      defaultModel: { name: "gpt-5", reasoningEffort: "high" },
+      defaultModel: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
       terminalShell: "/bin/zsh",
       useWorktree: true,
       autoFocusArtifacts: "sessions",
       showExternalSessions: false,
+      hiddenSessionProviders: ["codex"],
       pinnedSessionIds: ["session-a", "session-b"],
     };
 
@@ -32,6 +33,18 @@ describe("settings", () => {
     ).toMatchObject({
       pinnedSessionIds: ["session-a", "session-b"],
     });
+  });
+
+  test("provider visibility is a durable set and new providers remain visible by default", () => {
+    const settings = normalizeSettings({ hiddenSessionProviders: ["copilot", "codex", "copilot"] });
+    expect(settings.hiddenSessionProviders).toEqual(["codex", "copilot"]);
+    expect(normalizeSettings({}).hiddenSessionProviders).toEqual([]);
+    expect(
+      areSettingsEqual(settings, { ...settings, hiddenSessionProviders: ["copilot", "codex"] }),
+    ).toBe(true);
+    expect(areSettingsEqual(settings, { ...settings, hiddenSessionProviders: ["codex"] })).toBe(
+      false,
+    );
   });
 
   test("defaults invalid persisted fields independently", () => {
@@ -96,7 +109,7 @@ describe("settings", () => {
   test("compares settings by their domain fields", () => {
     const settings = {
       ...normalizeSettings({}),
-      defaultModel: { name: "gpt-5", reasoningEffort: "high" },
+      defaultModel: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
       pinnedSessionIds: ["session-a"],
     };
     expect(

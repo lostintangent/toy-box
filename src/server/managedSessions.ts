@@ -7,6 +7,7 @@ import { getStateDatabase } from "@/server/database";
 import { hasHyperSession } from "@workspace/server/state/hyperSessions";
 
 type DeleteSession = (sessionId: string) => Promise<void>;
+
 /** Read the public Session catalog with feature-owned visibility and relationships. */
 export async function readSessionCatalog(
   readCatalog: () => Promise<[SessionsState["sessions"], SessionsState["worktrees"]]>,

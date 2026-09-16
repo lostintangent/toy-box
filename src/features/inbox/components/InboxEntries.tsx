@@ -75,7 +75,7 @@ function InboxEntryRow({
   const dispatchWorkspaceAction = useDispatchWorkspaceAction();
   const pending = entry.message === undefined;
   const preview = useSessionPreview(!pending || !session);
-  const label = entry.message || session?.summary;
+  const label = entry.message || session?.title;
 
   return (
     <>

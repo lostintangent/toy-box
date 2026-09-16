@@ -112,7 +112,7 @@ describe("workspace state reducer", () => {
     const settings = {
       ...initial.settings,
       accentColor: "#123abc" as const,
-      defaultModel: { name: "gpt-5", reasoningEffort: "high" },
+      defaultModel: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
       pinnedSessionIds: ["session-a"],
     };
     const state = reduceWorkspaceState(initial, { type: "settings.changed", settings });
@@ -384,7 +384,7 @@ function createAutomation(overrides: Partial<Automation> = {}): Automation {
     id: overrides.id ?? "automation-a",
     title: overrides.title ?? "Daily summary",
     prompt: overrides.prompt ?? "Summarize repo status.",
-    model: overrides.model ?? { name: "gpt-5" },
+    model: overrides.model ?? { provider: "copilot", name: "gpt-5" },
     cron: overrides.cron ?? "0 9 * * *",
     createdAt: overrides.createdAt ?? "2026-02-14T00:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-02-14T00:00:00.000Z",

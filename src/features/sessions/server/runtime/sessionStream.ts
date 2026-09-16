@@ -1,27 +1,17 @@
-// One live session runtime. A SessionStream owns an SDK session instance,
+// One live session runtime. A SessionStream owns a provider connection,
 // reduced live state, queued turns, completion waiters, and a replayable event
 // bus. It is the one live execution path shared by connected and headless
 // delivery.
 //
 // The event bus stamps eventId for reconnect cursors. Client-provided message
-// identity is correlated separately when the SDK echoes sent inputs.
+// identity is correlated separately when the provider echoes sent inputs.
 
-import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import { toSdkSystemMessage } from "@sessions/server/sdk/systemMessageCodec";
-import { toSdkAttachments } from "@sessions/server/sdk/attachments";
-import {
-  createSdkEventProjector,
-  getSdkSessionName,
-  getSdkTurnEndReason,
-} from "@sessions/server/sdk/projector";
+import type { SessionConnection } from "@providers/server/provider";
 import { evictCachedSessionIfStale, releaseSession } from "@sessions/server/state/registry";
 import { cacheSnapshot, loadSessionSnapshot } from "@sessions/server/state/snapshots";
 import { setSessionStatus } from "@workspace/server/state";
 import { systemMessageCoalesceKey } from "@sessions/model/systemMessages";
-import {
-  areModelConfigurationsEqual,
-  toSdkSetModelOptions,
-} from "@sessions/model/modelConfiguration";
+import { areModelConfigurationsEqual } from "@sessions/model/modelConfiguration";
 import type { SessionQuestionAnswer, SessionSubscriptionMode } from "@sessions/model/protocol";
 import {
   applySessionEvent,
@@ -45,7 +35,7 @@ import { createSessionEventBus, type SessionStreamSubscription } from "./eventBu
 type MessageDisposition = "started" | "queued";
 type StreamEndReason = Extract<SessionEvent, { type: "end" }>["reason"];
 type SessionStreamHooks = {
-  onUserMessageStarted?: (message: QueuedUserMessage) => void;
+  onUserMessageSubmitted?: (message: QueuedUserMessage) => void;
 };
 
 // Replay retention cap. A client reconnecting across a gap larger than this
@@ -70,7 +60,7 @@ export class SessionStream {
   /** @internal acquireSessionStream is the production caller. */
   static getOrCreate(
     sessionId: string,
-    session: CopilotSession,
+    session: SessionConnection,
     initialState?: Partial<Session>,
     hooks?: SessionStreamHooks,
   ): SessionStream {
@@ -115,23 +105,22 @@ export class SessionStream {
   // ── Instance fields ──────────────────────────────────────────────────
 
   readonly sessionId: string;
-  /** Underlying SDK session used by runtime-owned operations. */
-  readonly sdkSession: CopilotSession;
+  /** Underlying provider session used by runtime-owned operations. */
+  readonly connection: SessionConnection;
 
   #bus = createSessionEventBus(MAX_REPLAY_EVENTS);
 
   readonly #completionWaiters = new Set<() => void>();
 
-  // SDK event listener
-  #unsubscribeSdk: () => void;
+  // Provider event listener
+  #unsubscribeProvider: () => void;
 
   // Live session state survives turn boundaries; only replay history is
   // turn-scoped.
   #sessionState: Session;
-  #projectSdkEvent: ReturnType<typeof createSdkEventProjector>;
 
-  /** Associates each Toy Box client message with its SDK-assigned message ID. */
-  readonly #sdkMessageIdsByClientId = new Map<string, string>();
+  /** Submitted inputs stay claimed until the provider echoes their client IDs. */
+  readonly #submittedClientIds = new Set<string>();
   #isSendingQueuedMessage = false;
   // Claimed synchronously before #startTurn awaits so concurrent deliveries
   // cannot both open the stream's first turn.
@@ -144,17 +133,16 @@ export class SessionStream {
 
   private constructor(
     sessionId: string,
-    sdkSession: CopilotSession,
+    connection: SessionConnection,
     initialState?: Partial<Session>,
     hooks: SessionStreamHooks = {},
   ) {
     this.sessionId = sessionId;
-    this.sdkSession = sdkSession;
+    this.connection = connection;
     this.#sessionState = createInitialSession(initialState);
-    this.#projectSdkEvent = createSdkEventProjector(sessionId);
     this.#hooks = hooks;
 
-    this.#unsubscribeSdk = sdkSession.on((event) => this.#handleSdkEvent(event));
+    this.#unsubscribeProvider = connection.onEvent((event) => this.#handleProviderEvent(event));
   }
 
   // ── Live stream surface ──────────────────────────────────────────────
@@ -207,11 +195,7 @@ export class SessionStream {
     const message = this.#sessionState.queuedMessages.find(
       (candidate) => candidate.clientId === clientId,
     );
-    if (
-      message?.role !== "user" ||
-      message.immediate ||
-      this.#sdkMessageIdsByClientId.has(clientId)
-    ) {
+    if (message?.role !== "user" || message.immediate || this.#submittedClientIds.has(clientId)) {
       return false;
     }
 
@@ -224,7 +208,7 @@ export class SessionStream {
     const message = this.#sessionState.queuedMessages.find(
       (candidate) => candidate.clientId === clientId,
     );
-    if (!message || this.#sdkMessageIdsByClientId.has(clientId) || message.immediate) {
+    if (!message || this.#submittedClientIds.has(clientId) || message.immediate) {
       return false;
     }
 
@@ -249,11 +233,7 @@ export class SessionStream {
       return false;
     }
 
-    const result = await this.sdkSession.rpc.ui.handlePendingUserInput({
-      requestId,
-      response: { answer, wasFreeform },
-    });
-    return result.success;
+    return this.connection.answerQuestion({ requestId, answer, wasFreeform });
   }
 
   /** Wait for this stream instance to complete, not future replacements with the same ID. */
@@ -305,17 +285,15 @@ export class SessionStream {
   // ── Stream controls ──────────────────────────────────────────────────
 
   /** @internal Complete this execution; external controls should abort or delete the session. */
-  finish(reason: StreamEndReason = "idle"): void {
+  finish(reason: StreamEndReason = "idle", error?: string): void {
     if (this.#finished) return;
     this.#finished = true;
-    // Capture completion before publishing end/error; the reducer can replace
-    // the session state's trailing assistant message for terminal rendering.
     this.#completionResult = completionResult(
       this.#sessionState.messages,
       reason === "error" ? "failed" : "completed",
     );
 
-    this.#emit({ type: "end", reason });
+    this.#emit({ type: "end", reason, ...(error ? { error } : {}) });
     if (reason === "idle" && !this.#abortRequested) {
       cacheSnapshot(this.sessionId, toSessionSnapshot(this.sessionId, this.#sessionState));
     }
@@ -332,11 +310,7 @@ export class SessionStream {
   async abort(): Promise<void> {
     this.#abortRequested = true;
     try {
-      try {
-        await this.sdkSession.rpc.queue.clear();
-      } finally {
-        await this.sdkSession.abort();
-      }
+      await this.connection.abort();
     } catch (error) {
       evictCachedSessionIfStale(this.sessionId, error);
       throw error;
@@ -356,8 +330,8 @@ export class SessionStream {
         await this.#setModel(model);
       }
 
-      await this.#sendToSdk(message);
-      this.#notifyUserMessageStarted(message);
+      await this.#sendToProvider(message);
+      this.#notifyUserMessageSubmitted(message);
     } catch (error) {
       evictCachedSessionIfStale(this.sessionId, error);
       this.finish("error");
@@ -380,37 +354,31 @@ export class SessionStream {
       return;
     }
 
-    await this.sdkSession.setModel(configuration.name, toSdkSetModelOptions(configuration));
+    await this.connection.setModel(configuration);
     this.#emit({
       type: "model_changed",
       model: configuration,
     });
   }
 
-  // ── SDK event handling ───────────────────────────────────────────────
+  // ── Provider event handling ───────────────────────────────────────────────
 
-  #handleSdkEvent(sdkEvent: SdkSessionEvent): void {
-    const sessionName = getSdkSessionName(sdkEvent);
-    if (sessionName) {
-      emitSessionNameUpdate(this.sessionId, sessionName);
+  #handleProviderEvent(event: SessionEvent): void {
+    if (event.type === "session_title_changed") {
+      emitSessionNameUpdate(this.sessionId, event.title);
     }
-
-    const turnEndReason = getSdkTurnEndReason(sdkEvent);
-    if (turnEndReason) {
-      if (turnEndReason === "error") {
-        if (this.#abortRequested) return;
-        this.finish("error");
-        return;
+    if (event.type === "end") {
+      if (event.reason === "error") {
+        if (!this.#abortRequested) this.finish("error", event.error);
+      } else {
+        void this.#drainMessageQueue();
       }
-      void this.#drainMessageQueue();
       return;
     }
-
-    const sdkMessageId = sdkEvent.type === "user.message" ? sdkEvent.data.messageId : undefined;
-    const projectedEvents = this.#projectSdkEvent(sdkEvent);
-    for (const sessionEvent of projectedEvents) {
-      this.#emit(this.#correlateInputEvent(sessionEvent, sdkMessageId));
+    if ((event.type === "user_message" || event.type === "system_message") && event.clientId) {
+      this.#submittedClientIds.delete(event.clientId);
     }
+    this.#emit(event);
   }
 
   async #drainMessageQueue(): Promise<void> {
@@ -439,23 +407,14 @@ export class SessionStream {
   #emit(event: SessionEvent): void {
     const published = this.#bus.publish(event);
     this.#sessionState = applySessionEvent(this.#sessionState, published);
-    if (published.type === "question_requested") {
+    if (published.type === "question_requested" && published.question.blocking !== false) {
       setSessionStatus(this.sessionId, "waiting");
-    } else if (published.type === "question_resolved") {
-      setSessionStatus(this.sessionId, "running");
+    } else if (published.type === "question_resolved" || published.type === "question_cancelled") {
+      setSessionStatus(
+        this.sessionId,
+        this.#sessionState.status === "waiting" ? "waiting" : "running",
+      );
     }
-  }
-
-  #correlateInputEvent(event: SessionEvent, sdkMessageId?: string): SessionEvent {
-    if (event.type !== "user_message" && event.type !== "system_message") return event;
-    if (!sdkMessageId) return event;
-
-    for (const [clientId, pendingSdkMessageId] of this.#sdkMessageIdsByClientId) {
-      if (pendingSdkMessageId !== sdkMessageId) continue;
-      this.#sdkMessageIdsByClientId.delete(clientId);
-      return { ...event, clientId };
-    }
-    return event;
   }
 
   // ── Internal helpers ─────────────────────────────────────────────────
@@ -468,8 +427,8 @@ export class SessionStream {
     });
 
     try {
-      await this.#sendToSdk(message, "immediate");
-      this.#notifyUserMessageStarted(message);
+      await this.#sendToProvider(message, "immediate");
+      this.#notifyUserMessageSubmitted(message);
       return true;
     } catch (error) {
       if (
@@ -486,22 +445,27 @@ export class SessionStream {
     }
   }
 
-  async #sendToSdk(message: QueuedMessage, mode?: "immediate"): Promise<void> {
-    const sdkMessageId = await this.sdkSession.send({
-      ...(message.role === "system"
-        ? toSdkSystemMessage(message.content)
-        : { prompt: message.content, attachments: toSdkAttachments(message.attachments) }),
-      ...(mode ? { mode } : {}),
-    });
-    this.#sdkMessageIdsByClientId.set(message.clientId, sdkMessageId);
+  async #sendToProvider(message: QueuedMessage, mode?: "immediate"): Promise<void> {
+    this.#submittedClientIds.add(message.clientId);
+    try {
+      await this.connection.send(message, mode === "immediate" ? true : undefined);
+    } catch (error) {
+      this.#submittedClientIds.delete(message.clientId);
+      throw error;
+    }
   }
 
-  #notifyUserMessageStarted(message: QueuedMessage): void {
+  updateArtifacts(paths: string[]): void {
+    if (this.#finished) return;
+    this.#emit({ type: "artifacts_changed", artifacts: paths });
+  }
+
+  #notifyUserMessageSubmitted(message: QueuedMessage): void {
     if (message.role !== "user") return;
     try {
-      this.#hooks.onUserMessageStarted?.(message);
+      this.#hooks.onUserMessageSubmitted?.(message);
     } catch (error) {
-      console.error(`Session ${this.sessionId} message-start hook failed:`, error);
+      console.error(`Session ${this.sessionId} message submission hook failed:`, error);
     }
   }
 
@@ -516,7 +480,7 @@ export class SessionStream {
     this.#sessionState = { ...this.#sessionState, queuedMessages: [] };
     this.#bus.close();
     this.#resolveCompletionWaiters();
-    this.#unsubscribeSdk();
+    this.#unsubscribeProvider();
     SessionStream.streams.delete(this.sessionId);
   }
 

@@ -31,7 +31,6 @@ export async function initializeAgentSchema(db: Bun.SQL): Promise<void> {
       agent_id       TEXT NOT NULL REFERENCES agents(id),
       host_kind      TEXT NOT NULL CHECK (host_kind IN ('session', 'channel', 'file')),
       host_id        TEXT NOT NULL CHECK (host_kind <> 'file' OR json_valid(host_id)),
-      execution_mode TEXT NOT NULL CHECK (execution_mode IN ('shared', 'worktree')),
       UNIQUE(host_kind, host_id, agent_id)
     );
 

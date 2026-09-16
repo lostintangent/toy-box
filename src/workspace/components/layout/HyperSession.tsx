@@ -168,6 +168,7 @@ export function HyperSession({
   // publishes linked panes under its pane id, which the pager pages through as
   // a self-contained deck. Promote is what graduates it to the main grid.
   const rootPanes = deriveWorkspaceRootPanes([state.sessionId], [], state.appIds);
+  const focusedPaneId = useSelector(workspaceSurfaces.hyper.focusedPaneAtom);
   const hyperPanes = useSelector(
     workspaceSurfaces.hyper.panePublications,
     (panePublications) =>
@@ -175,6 +176,7 @@ export function HyperSession({
         rootPanes,
         panePublications,
         maxVisible: MAX_HYPER_PANES,
+        focusedPaneId,
       }),
     { compare: arePaneListsEqual },
   );

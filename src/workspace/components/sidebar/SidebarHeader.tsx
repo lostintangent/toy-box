@@ -1,4 +1,7 @@
 import type { ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { modelQueries } from "@sessions/queries";
+import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
 import { ChevronDown, Clock3, FileText, Filter, Hash, Shapes, X } from "lucide-react";
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
@@ -7,7 +10,9 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/components/ui/dropdown-menu";
@@ -17,8 +22,6 @@ export function SidebarHeader({
   leadingSlot,
   filter,
   onFilterChange,
-  showExternalSessions,
-  onShowExternalSessionsChange,
   sessionCount,
   onCreateSession,
   onCreateAutomation,
@@ -28,13 +31,25 @@ export function SidebarHeader({
   leadingSlot?: ReactNode;
   filter: string;
   onFilterChange: (value: string) => void;
-  showExternalSessions: boolean;
-  onShowExternalSessionsChange: (value: boolean) => void;
   sessionCount: number;
   onCreateSession: (options?: SidebarCreateOptions) => void;
   onCreateAutomation: () => void;
   onCreateChannel: () => void;
 }) {
+  const showExternalSessions = useWorkspaceSelector(
+    (workspace) => workspace.settings.showExternalSessions,
+  );
+  const hiddenProviders = useWorkspaceSelector(
+    (workspace) => workspace.settings.hiddenSessionProviders,
+  );
+  const updateSetting = useUpdateWorkspaceSetting();
+  const { data: providers = [] } = useQuery({
+    ...modelQueries.list(),
+    select: (models) => [
+      ...new Map(models.map((model) => [model.provider, model.providerName ?? model.provider])),
+    ],
+  });
+
   function createArtifactDraft(path: string, content = "") {
     onCreateSession({ artifact: { path, content } });
   }
@@ -50,8 +65,13 @@ export function SidebarHeader({
           <DropdownMenuTrigger
             render={
               <button
-                className="absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 text-muted-foreground hover:text-foreground"
-                aria-label="Filter source"
+                className={cn(
+                  "absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 hover:text-foreground",
+                  hiddenProviders.length || !showExternalSessions
+                    ? "text-foreground"
+                    : "text-muted-foreground",
+                )}
+                aria-label="Filter sessions"
                 suppressHydrationWarning
               />
             }
@@ -62,10 +82,34 @@ export function SidebarHeader({
           <DropdownMenuContent align="start">
             <DropdownMenuCheckboxItem
               checked={showExternalSessions}
-              onCheckedChange={(checked) => onShowExternalSessionsChange(checked === true)}
+              onCheckedChange={(checked) => updateSetting("showExternalSessions", checked)}
             >
               Show external sessions
             </DropdownMenuCheckboxItem>
+            {providers.length > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Providers</DropdownMenuLabel>
+                  {providers.map(([id, name]) => (
+                    <DropdownMenuCheckboxItem
+                      key={id}
+                      checked={!hiddenProviders.includes(id)}
+                      onCheckedChange={(checked) =>
+                        updateSetting(
+                          "hiddenSessionProviders",
+                          checked
+                            ? hiddenProviders.filter((provider) => provider !== id)
+                            : [...hiddenProviders, id],
+                        )
+                      }
+                    >
+                      {name}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </DropdownMenuGroup>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
         <Input

@@ -13,8 +13,7 @@ const session = {
   sessionId,
   startTime: new Date("2026-08-01T12:00:00.000Z"),
   modifiedTime: new Date("2026-08-01T12:01:00.000Z"),
-  summary: "Original name",
-  isRemote: false,
+  title: "Original name",
 } satisfies SessionMetadata;
 
 describe("session mutation options", () => {
@@ -171,7 +170,7 @@ describe("session mutation options", () => {
     const renameMutation = new MutationObserver(queryClient, {
       ...sessionMutations.renameSession(sessionId),
       mutationFn: async () => {
-        expect(readSession(queryClient).summary).toBe("Optimistic name");
+        expect(readSession(queryClient).title).toBe("Optimistic name");
         throw new Error("rename failed");
       },
     });

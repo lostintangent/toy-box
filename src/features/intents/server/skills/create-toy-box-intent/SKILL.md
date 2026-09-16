@@ -170,5 +170,5 @@ Before saving, confirm that:
 On revision, preserve disclosure, records views, tab membership, human choices
 and answers, and plan status unless the request changes them. Repair all
 affected references in the same rewrite. Validate the complete JSON, write it
-to a concise `.intent` path in the current session's files folder, and never
+to a concise `.intent` path in the current session's artifacts folder, and never
 call `open_file`; Toy Box surfaces it automatically.

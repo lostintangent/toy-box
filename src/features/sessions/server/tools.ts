@@ -1,4 +1,4 @@
-import { defineTool } from "@github/copilot-sdk";
+import { defineTool } from "@sessions/server/tools/definition";
 import { z } from "zod";
 import { sessionNameSchema } from "@sessions/model/protocol";
 import { modelConfigurationSchema } from "@sessions/model/modelConfiguration";
@@ -18,7 +18,6 @@ const updateSessionTitleTool = defineTool("update_session_title", {
   parameters: z.object({
     title: sessionNameSchema.describe("Concise 2-6 word title for the current focus"),
   }),
-  skipPermission: true,
   handler: async ({ title }, invocation) => {
     const { updateSessionTitle } = await import("@sessions/server/state/registry");
     return JSON.stringify({
@@ -29,6 +28,29 @@ const updateSessionTitleTool = defineTool("update_session_title", {
 
 export const sessionTitleTools = [updateSessionTitleTool];
 
+export const sessionHistoryTools = [
+  defineTool("list_sessions", {
+    description:
+      "Discover Toy Box and native sessions across available providers. Returns session metadata, newest first, and the total number of matches. Search by title to narrow the results.",
+    parameters: z.object({
+      query: z.string().optional().describe("Optional case-insensitive title substring."),
+      limit: z.number().int().min(1).max(100).optional().describe("Maximum results (default 20)."),
+    }),
+    handler: async ({ query, limit = 20 }) => {
+      const title = query?.trim().toLowerCase();
+      const sessions = (await (await import("./providers")).listSessions())
+        .filter((session) => !title || session.title?.toLowerCase().includes(title))
+        .sort((a, b) => b.modifiedTime.getTime() - a.modifiedTime.getTime());
+      return { sessions: sessions.slice(0, limit), total: sessions.length };
+    },
+  }),
+  defineTool("read_session", {
+    description: "Read a session's conversation and artifacts using its public Toy Box session ID.",
+    parameters: z.object({ sessionId: z.string() }),
+    handler: async ({ sessionId }) => (await import("./runtime")).getSessionSnapshot(sessionId),
+  }),
+] as const;
+
 const checkSessionStatus = defineTool("check_session_status", {
   description:
     "Checks another session's current runtime status. " +
@@ -36,7 +58,6 @@ const checkSessionStatus = defineTool("check_session_status", {
   parameters: z.object({
     sessionId: z.string().describe("The ID of the session to check"),
   }),
-  skipPermission: true,
   handler: async ({ sessionId }) => {
     const { getSessionRuntimeStatus } = await import("@sessions/server/runtime");
     return JSON.stringify(getSessionRuntimeStatus(sessionId));
@@ -57,7 +78,6 @@ const waitForSessions = defineTool("wait_for_sessions", {
       .optional()
       .describe("Optional maximum time to wait in milliseconds"),
   }),
-  skipPermission: true,
   handler: async ({ sessionIds, timeoutMs }) => {
     const { waitForSession } = await import("@sessions/server/runtime");
     return JSON.stringify({
@@ -83,7 +103,6 @@ const deliverMessage = defineTool("deliver_message", {
       .optional()
       .describe("Optional model and reasoning override for this message"),
   }),
-  skipPermission: true,
   handler: async ({ sessionId, message, model }) => {
     const { deliverSessionMessage } = await import("@sessions/server/runtime");
 
@@ -122,7 +141,6 @@ const createSessionTool = defineTool("create_session", {
       .optional()
       .describe("Whether to open the new session as a linked pane. Defaults to false."),
   }),
-  skipPermission: true,
   handler: async (args) => {
     const { createSession } = await import("@sessions/server/runtime");
     const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
@@ -149,7 +167,6 @@ const openSession = defineTool("open_session", {
   parameters: z.object({
     sessionId: z.string().describe("The ID of the session to open alongside this one"),
   }),
-  skipPermission: true,
   handler: ({ sessionId }) => `Session ${sessionId} opened.`,
 });
 
@@ -160,7 +177,6 @@ const closeSession = defineTool("close_session", {
   parameters: z.object({
     sessionId: z.string().describe("The ID of the session to remove from the grid"),
   }),
-  skipPermission: true,
   handler: ({ sessionId }) => `Session ${sessionId} closed.`,
 });
 
@@ -171,7 +187,6 @@ const deleteSessionTool = defineTool("delete_session", {
   parameters: z.object({
     sessionId: z.string().describe("The ID of the session to delete"),
   }),
-  skipPermission: true,
   handler: async ({ sessionId }) => {
     const { deleteSession } = await import("@sessions/server/runtime");
 
@@ -188,7 +203,6 @@ const sendSessionResponseTool = defineTool("send_session_response", {
   description:
     "Publishes a useful Markdown response with this agent's attribution in its session and ends the current turn.",
   parameters: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),
-  skipPermission: true,
   isTerminal: true,
   handler: async ({ message }, invocation) => {
     const { sendAgentResponse } = await import("./agentHost");

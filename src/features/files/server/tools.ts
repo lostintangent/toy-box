@@ -1,4 +1,4 @@
-import { defineTool } from "@github/copilot-sdk";
+import { defineTool } from "@sessions/server/tools/definition";
 import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
 import { customEditorKindSchema, machineFile, type WorkspaceFile } from "../model";
@@ -16,12 +16,11 @@ function toMachineFile(path: string): WorkspaceFile {
 const openFile = defineTool("open_file", {
   description:
     "Opens an existing file on disk as a live pane in Toy Box so the user can view and edit it. " +
-    "Use it for files outside your session files folder, which already appear automatically. " +
+    "Use it for files outside your session artifacts folder, which already appear automatically. " +
     "Give an absolute path.",
   parameters: z.object({
     path: z.string().trim().min(1).describe("Absolute path of the file to open."),
   }),
-  skipPermission: true,
   handler: ({ path }) => JSON.stringify(toMachineFile(path)),
 });
 
@@ -31,7 +30,6 @@ const closeFile = defineTool("close_file", {
   parameters: z.object({
     path: z.string().trim().min(1).describe("Absolute path of the open file pane to close."),
   }),
-  skipPermission: true,
   handler: ({ path }) => JSON.stringify(toMachineFile(path)),
 });
 
@@ -41,7 +39,6 @@ const registerEditorKindTool = defineTool("register_editor", {
   description:
     "Registers or replaces a custom editor for the supplied file extensions. Follow the loaded `create-toy-box-editor` skill for its HTML bridge contract.",
   parameters: customEditorKindSchema,
-  skipPermission: true,
   handler: async (input) => {
     const extensions = normalizeExtensions(input.extensions);
     if (extensions.length === 0) {

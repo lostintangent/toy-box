@@ -27,9 +27,8 @@ export function AttachmentGallery({
   attachments: readonly (Attachment | string)[];
   size?: keyof typeof thumbnailSizeClasses;
 }) {
-  const previews = attachments.map((attachment) => ({
-    displayName:
-      typeof attachment === "string" ? getPathBasename(attachment) : attachment.displayName,
+  const previews = attachments.map((attachment, index) => ({
+    label: typeof attachment === "string" ? getPathBasename(attachment) : `Attachment ${index + 1}`,
     dataUrl:
       typeof attachment === "string"
         ? createFileServeUrl(machineFile(attachment))
@@ -43,25 +42,26 @@ export function AttachmentGallery({
 
   return (
     <Dialog>
-      {previews.map((preview) => {
-        const { displayName, dataUrl } = preview;
+      {previews.map((preview, index) => {
+        const { label, dataUrl } = preview;
         const imageIndex = images.findIndex((image) => image === preview);
         return (
           <DialogTrigger
-            key={dataUrl ?? displayName}
+            // eslint-disable-next-line react/no-array-index-key -- message attachments retain their order and can contain identical images
+            key={index}
             type="button"
             disabled={!dataUrl}
             onClick={() => setSelectedIndex(imageIndex)}
-            aria-label={`Preview ${displayName}`}
+            aria-label={`Preview ${label}`}
             data-long-press-ignore
             className={cn(
               thumbnailSizeClasses[size],
               "flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted transition-colors",
-              dataUrl && "hover:border-primary",
+              dataUrl && "hover:border-user-accent",
             )}
           >
             {dataUrl ? (
-              <img src={dataUrl} alt={displayName} className="size-full object-cover" />
+              <img src={dataUrl} alt={label} className="size-full object-cover" />
             ) : (
               <ImageIcon className="size-5 text-muted-foreground" />
             )}
@@ -79,16 +79,17 @@ export function AttachmentGallery({
           <Carousel
             aria-label="Message attachments"
             className="size-full"
-            items={images.map(({ displayName, dataUrl }) => (
+            items={images.map(({ label, dataUrl }, index) => (
               <DialogClose
-                key={dataUrl}
+                // eslint-disable-next-line react/no-array-index-key -- each occurrence in the immutable message has its own carousel position
+                key={index}
                 type="button"
-                aria-label={`Close preview of ${displayName}`}
+                aria-label={`Close preview of ${label}`}
                 className="flex size-full items-center justify-center"
               >
                 <img
                   src={dataUrl}
-                  alt={displayName}
+                  alt={label}
                   draggable={false}
                   className="max-h-full max-w-full rounded-lg object-contain select-none"
                 />
@@ -112,7 +113,7 @@ function AttachmentCarouselControls({
   images,
   hotkeyTarget,
 }: {
-  images: { displayName: string }[];
+  images: { label: string }[];
   hotkeyTarget: React.RefObject<HTMLDivElement | null>;
 }) {
   const { currentPage, totalPages, nextPage, prevPage, isNextActive, isPrevActive } = useCarousel();
@@ -123,7 +124,7 @@ function AttachmentCarouselControls({
 
   return (
     <>
-      <DialogTitle className="sr-only">{selectedImage.displayName}</DialogTitle>
+      <DialogTitle className="sr-only">{selectedImage.label}</DialogTitle>
       {totalPages > 1 && (
         <>
           <Button

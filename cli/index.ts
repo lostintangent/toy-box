@@ -17,7 +17,7 @@ const main = defineCommand({
   meta: {
     name: "Toy Box",
     version,
-    description: "Self-hosted web client for GitHub Copilot",
+    description: "Self-hosted agent server for Codex and GitHub Copilot",
   },
   args: {
     cwd: {

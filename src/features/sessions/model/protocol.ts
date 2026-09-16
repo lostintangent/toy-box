@@ -3,7 +3,6 @@
 // the boundary cannot drift.
 
 import { z } from "zod";
-import { agentMentionSchema } from "@agents/model";
 import { modelConfigurationSchema } from "./modelConfiguration";
 import { sessionSystemMessageSchema } from "./systemMessages";
 
@@ -27,8 +26,13 @@ export const waitForSessionInputSchema = sessionInputSchema.extend({
 });
 
 export const listSkillsInputSchema = z.object({
+  provider: z.string().optional(),
   cwd: z.string().min(1).optional(),
   sessionType: sessionTypeSchema.optional(),
+});
+
+export const resolveSessionContextInputSchema = z.object({
+  directory: z.string().min(1),
 });
 
 export const sessionNameSchema = z.string().trim().min(1).max(100);
@@ -52,7 +56,6 @@ export const createDraftSessionInputSchema = sessionInputSchema.extend({
 });
 
 export const attachmentSchema = z.object({
-  displayName: z.string(),
   mimeType: z.string(),
   base64: z.string(),
 });
@@ -67,7 +70,6 @@ export const sessionMessageSchema = z
     content: z.string(),
     attachments: messageAttachmentsSchema.optional(),
     model: modelConfigurationSchema.optional(),
-    agentMentions: z.array(agentMentionSchema).max(50).optional(),
   })
   .refine(
     (message) => message.content.trim().length > 0 || (message.attachments?.length ?? 0) > 0,

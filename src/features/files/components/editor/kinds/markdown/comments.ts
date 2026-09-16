@@ -3,7 +3,7 @@
 
 import type { CommentChange, CommentThread } from "@lostintangent/documint";
 
-export const COPILOT_DOCUMENT_USER_ID = "copilot";
+export const ASSISTANT_DOCUMENT_USER_ID = "assistant";
 
 type ArtifactCommentResponsePlan = {
   agentIds: string[];
@@ -13,7 +13,7 @@ type ArtifactCommentResponsePlan = {
 };
 
 /** Route one new comment to every explicitly mentioned persistent Agent.
- * Unaddressed comments retain the anonymous Worker behavior; @Copilot may be
+ * Unaddressed comments retain the anonymous Worker behavior; @Assistant may be
  * combined with named Agents when the user deliberately asks for both. */
 export function planArtifactCommentResponse(
   change: CommentChange,
@@ -27,7 +27,7 @@ export function planArtifactCommentResponse(
     agentIds,
     prompt: buildArtifactCommentPrompt(change.thread, now),
     spawnWorker:
-      agentIds.length === 0 || change.mentionedUserIds.includes(COPILOT_DOCUMENT_USER_ID),
+      agentIds.length === 0 || change.mentionedUserIds.includes(ASSISTANT_DOCUMENT_USER_ID),
     threadId: change.threadId,
   };
 }
@@ -47,7 +47,7 @@ First decide whether the comment asks for a document edit, an answer, an acknowl
 
 The instructions and current thread payload below fully define the comment format. Unless the comment explicitly asks otherwise, modify only the artifact. Keep every body edit scoped to the comment and preserve unrelated content.
 
-Documint stores comments as JSON in the trailing \`:::documint-comments\` directive in the same file. Preserve the directive and valid JSON. To reply, append exactly one object with \`body\` and \`updatedAt\` to the matching thread's \`comments\` array; do not reconstruct the thread or prefix the reply with an @copilot mention. Match the thread using its quote, anchor, and existing comments. If the document body does not change, appending that object must be the only file change: preserve \`quote\`, \`anchor\`, \`resolvedAt\`, and every existing comment exactly. If a body edit changes text covered by that thread, update its \`quote\` to the replacement text. Preserve its existing \`anchor\` unless an anchor prefix or suffix contains changed text; in that case, update only that string to the corresponding nearby text. Use ${JSON.stringify(now.toISOString())} for \`updatedAt\`.
+Documint stores comments as JSON in the trailing \`:::documint-comments\` directive in the same file. Preserve the directive and valid JSON. To reply, append exactly one object with \`body\` and \`updatedAt\` to the matching thread's \`comments\` array; do not reconstruct the thread or prefix the reply with an @assistant mention. Match the thread using its quote, anchor, and existing comments. If the document body does not change, appending that object must be the only file change: preserve \`quote\`, \`anchor\`, \`resolvedAt\`, and every existing comment exactly. If a body edit changes text covered by that thread, update its \`quote\` to the replacement text. Preserve its existing \`anchor\` unless an anchor prefix or suffix contains changed text; in that case, update only that string to the corresponding nearby text. Use ${JSON.stringify(now.toISOString())} for \`updatedAt\`.
 
 Latest comment:
 ${latestComment}

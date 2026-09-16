@@ -10,11 +10,13 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/components/ui/dropdown-menu";
 import { Button } from "@/shared/components/ui/button";
+import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import { cn } from "@/shared/utils";
 import { SessionLocationIcon } from "../SessionLocationIcon";
 import { getRecentDirectories, type RecentDirectory } from "../../../model/recentDirectories";
 import { resolveSessionLocation } from "../locationDisplay";
+import { useSessionContext } from "../useSessionContext";
 import { sessionQueries } from "../../../queries";
 
 type SessionDirectoryPickerProps = {
@@ -90,21 +92,31 @@ function EditableSessionDirectoryPicker({
   const [browserOpen, setBrowserOpen] = useState(false);
   const { recentDirectories, isLoading: areRecentDirectoriesLoading } = useRecentDirectories();
 
+  const effectiveValue = value === undefined ? recentDirectories[0]?.cwd : (value ?? undefined);
+  const selectedDirectory = recentDirectories.find((directory) => directory.cwd === effectiveValue);
+  const { context, error } = useSessionContext(
+    effectiveValue
+      ? {
+          workingDirectory: effectiveValue,
+          repository: selectedDirectory?.repository ?? repository,
+          gitRoot: selectedDirectory?.gitRoot ?? gitRoot,
+        }
+      : {},
+  );
+
   if (value === undefined && areRecentDirectoriesLoading) {
     return <SessionDirectoryPickerSkeleton className={className} />;
   }
 
-  const effectiveValue = value === undefined ? recentDirectories[0]?.cwd : (value ?? undefined);
-  const selectedDirectory = recentDirectories.find((directory) => directory.cwd === effectiveValue);
   const directories =
     effectiveValue && !selectedDirectory
       ? [...recentDirectories, { cwd: effectiveValue, repository, gitRoot }]
       : recentDirectories;
 
   const selectedLocation = resolveSessionLocation({
-    repository: selectedDirectory?.repository ?? repository,
-    gitRoot: selectedDirectory?.gitRoot ?? gitRoot,
-    cwd: selectedDirectory?.cwd ?? effectiveValue,
+    repository: context.repository,
+    gitRoot: context.gitRoot,
+    cwd: context.workingDirectory,
   });
 
   function handlePickDirectory() {
@@ -131,6 +143,8 @@ function EditableSessionDirectoryPicker({
                 className,
               )}
               aria-label={selectedLocation?.description ?? "Select working directory"}
+              aria-description={error?.message}
+              title={error ? `Repository information unavailable: ${error.message}` : undefined}
             />
           }
         >
@@ -167,9 +181,9 @@ function EditableSessionDirectoryPicker({
           <div className="max-h-[min(20rem,40vh)] overflow-y-auto">
             {directories.length > 0 ? (
               directories.map((directory) => {
-                const location = resolveSessionLocation(directory);
-                if (!location) return null;
                 const isSelected = directory.cwd === effectiveValue;
+                const location = isSelected ? selectedLocation : resolveSessionLocation(directory);
+                if (!location) return null;
 
                 return (
                   <DropdownMenuItem
@@ -181,9 +195,9 @@ function EditableSessionDirectoryPicker({
                     <SessionLocationIcon kind={location.kind} className="h-3.5 w-3.5 shrink-0" />
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate text-xs">{location.label}</span>
-                      <span className="truncate text-2xs text-muted-foreground">
-                        {directory.cwd}
-                      </span>
+                      <ScrollableFade className="whitespace-nowrap text-2xs text-muted-foreground">
+                        <span className="shrink-0">{directory.cwd}</span>
+                      </ScrollableFade>
                     </span>
                   </DropdownMenuItem>
                 );

@@ -10,7 +10,7 @@ import { useDrafts } from "@sessions/useDrafts";
 import { useHyperSession, type HyperSessionState } from "@workspace/hooks/layout/useHyperSession";
 import { useWarmSessionSnapshots } from "@sessions/useWarmSessionSnapshots";
 import { useWorkspaceSync } from "@workspace/hooks/useWorkspaceSync";
-import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
+import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { NameDialog } from "@/shared/components/sidebar/NameDialog";
 import type { SidebarProps } from "@workspace/components/sidebar/Sidebar";
@@ -46,7 +46,7 @@ import {
   type SidebarPanels,
 } from "@workspace/model/config/layoutPrefs";
 import { sessionMutations } from "@sessions/mutations";
-import { SESSION_ID_PREFIX } from "@sessions/model/constants";
+import { filterSessionList } from "@sessions/components/sidebar/sessionFilters";
 import type { SessionsState } from "@sessions/model";
 import { selectNonWorkerSessions, sessionQueries } from "@sessions/queries";
 import { channelQueries } from "@channels/queries";
@@ -261,9 +261,11 @@ function WorkspacePage() {
     }
   };
   const reachablePaneIds = deriveReachablePaneIds(rootPanes, panePublications);
+  const focusedPaneId = useSelector(workspaceSurfaces.main.focusedPaneAtom);
   const openPanes = deriveVisibleWorkspacePanes({
     rootPanes,
     panePublications,
+    focusedPaneId,
   });
   const openSessionIds = deriveOpenSessionIds(openPanes);
   const selectedSessionIdSet = new Set(selectedSessionIds);
@@ -277,7 +279,9 @@ function WorkspacePage() {
   const showExternalSessions = useWorkspaceSelector(
     (workspace) => workspace.settings.showExternalSessions,
   );
-  const updateSetting = useUpdateWorkspaceSetting();
+  const hiddenProviders = useWorkspaceSelector(
+    (workspace) => workspace.settings.hiddenSessionProviders,
+  );
 
   // Layout state is restored from and persisted to the workspace layout cookie.
   const [sidebarWidth, setSidebarWidth] = useState(initialLayout.sidebarWidth);
@@ -469,28 +473,17 @@ function WorkspacePage() {
   const deferredFilter = useDeferredValue(filter);
 
   // Managed sessions are presented by their automation, inbox, hyper, or parent surface.
-  const listedSessions = (sessions ?? [])
-    .filter((session) => !managedSessionIds.has(session.sessionId) && !isDraft(session.sessionId))
-    .sort((left, right) => right.modifiedTime.getTime() - left.modifiedTime.getTime())
-    .slice(0, 50);
+  const listedSessions = (sessions ?? []).filter(
+    (session) => !managedSessionIds.has(session.sessionId) && !isDraft(session.sessionId),
+  );
 
   useWarmSessionSnapshots();
 
-  let filteredSessions = listedSessions;
-
-  if (!showExternalSessions) {
-    filteredSessions = filteredSessions.filter((session) =>
-      session.sessionId.startsWith(SESSION_ID_PREFIX),
-    );
-  }
-
-  // Finally apply the text filter on summary.
-  const lowerFilter = deferredFilter.trim().toLowerCase();
-  if (lowerFilter) {
-    filteredSessions = filteredSessions.filter((session) =>
-      session.summary?.toLowerCase().includes(lowerFilter),
-    );
-  }
+  const filteredSessions = filterSessionList(listedSessions, {
+    showExternalSessions,
+    hiddenProviders,
+    query: deferredFilter,
+  });
 
   function handleSessionDelete(sessionIdToDelete: string) {
     if (selectedSessionIds.includes(sessionIdToDelete)) {
@@ -653,8 +646,6 @@ function WorkspacePage() {
   const sidebarProps = {
     filter,
     onFilterChange: setFilter,
-    showExternalSessions,
-    onShowExternalSessionsChange: (value) => updateSetting("showExternalSessions", value),
     sessions: filteredSessions,
     isSessionsLoading,
     onSessionSelect: handleSessionSelect,
@@ -662,7 +653,10 @@ function WorkspacePage() {
     onSessionDelete: handleSessionDelete,
     openSessionIds: sidebarOpenSessionIds,
     worktreeSessionIds,
-    emptyMessage: deferredFilter ? "No sessions match your filter" : undefined,
+    emptyMessage:
+      deferredFilter || hiddenProviders.length || !showExternalSessions
+        ? "No sessions match your filters"
+        : undefined,
     draftSessions: listedDrafts,
     panels: sidebarPanels,
     onPanelExpanded: handlePanelExpanded,
@@ -747,7 +741,7 @@ function WorkspacePage() {
       {renameTargetSession && (
         <NameDialog
           key={renameTargetSession.sessionId}
-          name={renameTargetSession.summary ?? ""}
+          name={renameTargetSession.title ?? ""}
           title="Rename session"
           description="Change how this session appears in the session list."
           mutation={sessionMutations.renameSession(renameTargetSession.sessionId)}

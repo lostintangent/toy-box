@@ -1,13 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { replaySdkHistory } from "@sessions/server/sdk/historyReplay";
 import type { Session } from "@sessions/model/reducer";
-import { loadSessionFixture } from "./helpers";
+import { loadSessionFixture, replayCopilotHistory } from "./helpers";
 
 // Golden replay of the HISTORY pipeline — the resume/replay consumption mode:
-// raw v1 CLI events → projector (history mode) → sessionReducer → final
-// Session state, via the same production entry point the server uses when a
-// client opens a recorded session. Layer-level regressions are caught by the
-// unit suites beside each module; this locks the end-to-end contract.
+// native events → provider projector → shared history reducer → idle Session.
 describe("history pipeline golden replay", () => {
   function agentToolCalls(state: Session) {
     return state.messages.flatMap((m) =>
@@ -16,7 +12,20 @@ describe("history pipeline golden replay", () => {
   }
 
   test("replaying a recorded session produces the final session state", async () => {
-    const state = replaySdkHistory("history-golden-session", await loadSessionFixture("subagents"));
+    const state = await replayCopilotHistory(
+      "history-golden-session",
+      await loadSessionFixture("subagents"),
+    );
+    expect(state.messages.map((message) => message.role)).toEqual([
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    expect(state.model).toMatchObject({
+      provider: "copilot",
+      name: "gpt-5.5",
+      reasoningEffort: "xhigh",
+    });
 
     // Every subagent's work is grouped under its agent call...
     const agents = agentToolCalls(state);

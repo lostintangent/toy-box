@@ -43,7 +43,6 @@ describe("browser Inbox dispatch", () => {
     expect(body.prompt).toContain("Task:\nSummarize the article.");
     expect(body.attachments).toEqual([
       {
-        displayName: "viewport.jpg",
         mimeType: "image/jpeg",
         base64: "c2NyZWVuc2hvdA==",
       },

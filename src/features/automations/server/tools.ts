@@ -1,4 +1,4 @@
-import { defineTool } from "@github/copilot-sdk";
+import { defineTool } from "@sessions/server/tools/definition";
 import { z } from "zod";
 import {
   automationIdInputSchema,
@@ -15,7 +15,6 @@ const listAutomationsTool = defineTool("list_automations", {
     "Lists all available automations. " +
     "Returns full automation records so they can be inspected, edited, or run.",
   parameters: z.object({}),
-  skipPermission: true,
   handler: async () => {
     const { listAutomations } = await import("./index");
     const automations = await listAutomations();
@@ -31,7 +30,6 @@ const createAutomationTool = defineTool("create_automation", {
     "Creates a new automation with a title, prompt, cron schedule, model configuration, and optional working directory. " +
     "Returns the created automation record.",
   parameters: automationOptionsSchema,
-  skipPermission: true,
   handler: async (input) => {
     const { createAutomation } = await import("./index");
     const automation = await createAutomation(input);
@@ -45,7 +43,6 @@ const updateAutomationTool = defineTool("update_automation", {
     "Use list_automations first to inspect the current automation and preserve any unchanged values. " +
     "Returns the updated automation record.",
   parameters: updateAutomationInputSchema,
-  skipPermission: true,
   handler: async ({ automationId, ...input }) => {
     const { updateAutomation } = await import("./index");
     const automation = await updateAutomation(automationId, input);
@@ -60,7 +57,6 @@ const runAutomationTool = defineTool("run_automation", {
     "Use list_automations first if you need to discover the available automation IDs. " +
     "Returns the session ID for the triggered automation run.",
   parameters: automationIdInputSchema,
-  skipPermission: true,
   handler: async ({ automationId }) => {
     const { runAutomation } = await import("./index");
     const result = await runAutomation(automationId);

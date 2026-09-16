@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { normalizeModelConfiguration } from "../model/modelConfiguration";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import type { SessionMessage } from "../model";
@@ -20,13 +21,8 @@ import { SessionAgentStatus } from "./SessionAgentStatus";
 import { CurrentSessionProvider, type SessionPaneMode } from "./CurrentSessionContext";
 import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
+import { SessionMessageList } from "./transcript/MessageList";
 import { TranscriptSkeleton } from "./transcript/TranscriptSkeleton";
-
-const SessionMessageList = lazy(() =>
-  import("./transcript/MessageList").then((module) => ({
-    default: module.SessionMessageList,
-  })),
-);
 
 // Cap the transcript text handed to a voice call so context stays cheap to send.
 const VOICE_CONTEXT_MAX_CHARS = 1000;
@@ -66,7 +62,7 @@ export function SessionPane({
       workspace.inboxEntries.some(({ id }) => id === sessionId),
   );
   const isDraft = workspaceSessionStatus === "draft";
-  const { models, defaultModel, setDefaultModel } = useModels();
+  const { models: catalog, defaultModel, setDefaultModel } = useModels();
   // In the "compact" variant (the pager) the session surfaces its location picker
   // + message badges in the host's title bar and hides them from the composer; in
   // "normal" (the grid) it keeps them inline. See WorkspacePaneView.
@@ -95,10 +91,9 @@ export function SessionPane({
     isDraft ||
     isHyper ||
     (!isSessionRecordLoading && !isManagedWorkflow && !sessionRecord?.isWorkerSession);
-  const sessionContext = sessionMetadata?.context;
-  const selectedDirectory = sessionContext?.workingDirectory;
-  const selectedRepository = sessionContext?.repository;
-  const selectedGitRoot = sessionContext?.gitRoot;
+  const selectedDirectory = sessionMetadata?.directory;
+  const selectedRepository = sessionMetadata?.repository;
+  const selectedGitRoot = sessionMetadata?.gitRoot;
   const draftDirectory =
     draftDirectorySelection === undefined
       ? sessionRecord?.recentDirectory
@@ -107,6 +102,13 @@ export function SessionPane({
 
   // Worktree choice belongs to a draft's initial location.
   const [useWorktree, setUseWorktree] = useState(isDraft ? defaultUseWorktree : false);
+
+  const sessionDefaultModel = isDraft
+    ? defaultModel
+    : normalizeModelConfiguration(
+        catalog.filter((model) => model.provider === sessionMetadata?.provider),
+        defaultModel,
+      );
 
   // The hook owns reduced session state. The default model and location seed a
   // draft's first turn; directory also scopes skill discovery.
@@ -131,7 +133,7 @@ export function SessionPane({
     workspaceSessionStatus,
     mode: isPassive ? "passive" : "active",
     isVisible,
-    defaultModel: defaultModel ?? undefined,
+    defaultModel: sessionDefaultModel ?? undefined,
     directory: effectiveDirectory,
     useWorktree: isDraft ? useWorktree : undefined,
     draftArtifactPath,
@@ -140,7 +142,10 @@ export function SessionPane({
   // Drafts start with the workspace default. Existing sessions reveal their
   // model only after hydration; if history has none, the default then becomes
   // the next-message fallback instead of flashing before session state loads.
-  const displayedModel = isDraft || hasLoadedSessionState ? (sessionModel ?? defaultModel) : null;
+  const provider = isDraft ? undefined : (sessionModel?.provider ?? sessionMetadata?.provider);
+  const models = provider ? catalog.filter((model) => model.provider === provider) : catalog;
+  const fallbackModel = normalizeModelConfiguration(models, defaultModel);
+  const displayedModel = isDraft || hasLoadedSessionState ? (sessionModel ?? fallbackModel) : null;
 
   // Update both this session and the workspace-wide default.
   function handleModelChange(nextModel: ModelConfiguration) {
@@ -150,7 +155,11 @@ export function SessionPane({
 
   // Skills follow the effective directory, with no directory resolving host-level skills.
   const { data: skills } = useQuery({
-    ...skillQueries.list(effectiveDirectory, isHyper ? "hyper" : undefined),
+    ...skillQueries.list(
+      effectiveDirectory,
+      isHyper ? "hyper" : undefined,
+      displayedModel?.provider ?? provider,
+    ),
     enabled: !isPassive && !isSessionRecordLoading,
   });
   useEffect(() => {
@@ -187,6 +196,11 @@ export function SessionPane({
   const applyWorktreeMutation = useMutation(sessionMutations.applyWorktree(sessionId));
   const isWorktreeMutationPending =
     mergeWorktreeMutation.isPending || applyWorktreeMutation.isPending;
+  const worktreeError = (
+    mergeWorktreeMutation.submittedAt > applyWorktreeMutation.submittedAt
+      ? mergeWorktreeMutation
+      : applyWorktreeMutation
+  ).error;
 
   // Shared between the desktop composer and compact title bar.
   const isExistingLocationLoading = !isDraft && isSessionRecordLoading;
@@ -201,7 +215,7 @@ export function SessionPane({
         onValueChange: isDraft ? setDraftDirectorySelection : undefined,
         useWorktree: isDraft ? useWorktree : undefined,
         onUseWorktreeChange: isDraft ? setUseWorktree : undefined,
-        branch: sessionContext?.branch,
+        branch: sessionMetadata?.branch,
         worktreeActions: isWorktreeSession
           ? {
               worktreeBranch: worktree?.branch,
@@ -268,25 +282,28 @@ export function SessionPane({
         ) : isLoadingSessionState ? (
           <TranscriptSkeleton />
         ) : (
-          <Suspense fallback={<TranscriptSkeleton />}>
-            <CurrentSessionProvider value={{ sessionId, cwd: effectiveDirectory, mode }}>
-              <EditDiffsProvider value={editDiffs.byToolCallId}>
-                <SessionMessageList
-                  messages={messages}
-                  isStreaming={isStreaming}
-                  status={status}
-                  reasoningContent={reasoningContent}
-                  scrollToBottomRef={scrollToBottomRef}
-                  activity={<SessionAgentStatus sessionId={sessionId} />}
-                />
-              </EditDiffsProvider>
-            </CurrentSessionProvider>
-          </Suspense>
+          <CurrentSessionProvider value={{ sessionId, cwd: effectiveDirectory, mode }}>
+            <EditDiffsProvider value={editDiffs.byToolCallId}>
+              <SessionMessageList
+                messages={messages}
+                isStreaming={isStreaming}
+                status={status}
+                reasoningContent={reasoningContent}
+                scrollToBottomRef={scrollToBottomRef}
+                activity={<SessionAgentStatus sessionId={sessionId} />}
+              />
+            </EditDiffsProvider>
+          </CurrentSessionProvider>
         )}
       </div>
 
       {!isPassive && !isSessionNotFound && (
         <div className="shrink-0 border-t bg-background px-4 pt-4 md:pb-4">
+          {isWorktreeSession && worktreeError && (
+            <p role="alert" className="mb-3 text-sm text-destructive">
+              {worktreeError.message}
+            </p>
+          )}
           <SessionComposer
             sessionId={sessionId}
             onSubmit={handleSubmit}
@@ -302,10 +319,9 @@ export function SessionPane({
             sessionDiff={editDiffs}
             artifacts={mode === "active" ? artifacts : []}
             queuedMessages={queuedMessages}
-            sessionName={sessionMetadata?.summary}
+            sessionName={sessionMetadata?.title}
             lastMessage={lastVoiceMessage}
             enableAgentMentions={supportsAgentMentions}
-            canUseAgentWorktrees={Boolean(isDraft ? effectiveDirectory : selectedGitRoot)}
           />
         </div>
       )}

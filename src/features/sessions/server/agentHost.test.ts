@@ -24,20 +24,17 @@ describe("Session Agent host", () => {
       clientId: "input",
       content: "@critic review",
     });
-    expect(queued.agentMentions).toEqual([{ agentId: agent.id }]);
+    expect(queued.mentionedAgentIds).toEqual([agent.id]);
     await agents.updateAgent({ agentId: agent.id, name: "Reviewer" });
-    expect((await resolveSessionAgentMentions(queued)).agentMentions).toEqual([
-      { agentId: agent.id },
-    ]);
+    expect((await resolveSessionAgentMentions(queued)).mentionedAgentIds).toEqual([agent.id]);
   });
 
-  test("publishes attributed responses without requiring or completing Agent identity work", async () => {
+  test("publishes responses with stable Agent identity without mutating the Agent", async () => {
     const { agents, agent } = await setup();
     await agents.createMembership({
       host: { kind: "session", sessionId: "parent" },
       agentId: agent.id,
       sessionId: "critic-session",
-      executionMode: "shared",
     });
     const deliver = spyOn(runtime, "deliverSessionMessage").mockResolvedValue({
       disposition: "started",
@@ -49,9 +46,7 @@ describe("Session Agent host", () => {
       {
         systemMessage: {
           type: "agent_response",
-          name: "Critic",
-          avatar: undefined,
-          executionMode: "shared",
+          agentId: agent.id,
           content: "A useful contribution.",
         },
       },

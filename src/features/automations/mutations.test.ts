@@ -12,7 +12,7 @@ const automation = {
   id: "toy-box-auto-11111111-1111-4111-8111-111111111111",
   title: "Daily summary",
   prompt: "Summarize the repository.",
-  model: { name: "gpt-5" },
+  model: { provider: "copilot", name: "gpt-5" },
   cron: "0 9 * * *",
   createdAt: "2026-08-01T09:00:00.000Z",
   updatedAt: "2026-08-01T09:00:00.000Z",
@@ -103,8 +103,7 @@ describe("automation mutation options", () => {
         sessionId: automation.id,
         startTime: expect.any(Date),
         modifiedTime: expect.any(Date),
-        summary: automation.title,
-        isRemote: false,
+        title: automation.title,
       },
     ]);
 
@@ -144,8 +143,7 @@ function createQueryClient(seed?: Automation): QueryClient {
             sessionId: seed.id,
             startTime: new Date(seed.createdAt),
             modifiedTime: new Date(seed.updatedAt),
-            summary: seed.title,
-            isRemote: false,
+            title: seed.title,
           },
         ]
       : [],

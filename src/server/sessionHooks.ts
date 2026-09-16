@@ -1,21 +1,21 @@
 import type { QueuedUserMessage } from "@sessions/model";
 
-/** Application composition for feature reactions to Session lifecycle events. */
+/** Compose application behavior into the generic Session runtime lifecycle. */
 export function getSessionStreamHooks(sessionId: string) {
   return {
-    onUserMessageStarted(message: QueuedUserMessage) {
+    onUserMessageSubmitted(message: QueuedUserMessage) {
       void import("@sessions/server/agentHost")
         .then(({ dispatchSessionAgentMentions }) =>
           dispatchSessionAgentMentions(sessionId, message),
         )
         .catch((error) => {
-          console.error("Agent message-start hook failed:", error);
+          console.error("Agent message submission failed:", error);
         });
     },
   };
 }
 
-/** Normalize application addressing before the Session mailbox takes ownership. */
+/** Prepare application addressing before the Session mailbox accepts a message. */
 export async function prepareSessionMessage(
   message: QueuedUserMessage,
 ): Promise<QueuedUserMessage> {

@@ -1,11 +1,34 @@
 import { describe, expect, test } from "bun:test";
 import {
+  decodeSystemMessage,
+  encodeSystemMessage,
   systemMessageCoalesceKey,
   systemMessageLabel,
   systemMessagePrompt,
 } from "./systemMessages";
 
 describe("Session system messages", () => {
+  test("round-trips structured display content separately from the model prompt", () => {
+    const message = {
+      type: "agent_response",
+      agentId: "reviewer",
+      content: "The invariant holds.",
+    } as const;
+    const display = encodeSystemMessage(message);
+    expect(display).not.toBe(systemMessagePrompt(message));
+    expect(decodeSystemMessage(display)).toEqual(message);
+  });
+
+  test("rejects ordinary, malformed, and invalid display content", () => {
+    expect(decodeSystemMessage("hello")).toBeUndefined();
+    expect(decodeSystemMessage("toybox-system:{bad}")).toBeUndefined();
+    expect(
+      decodeSystemMessage(
+        'toybox-system:{"type":"file_edited","file":{"kind":"session","sessionId":"s1","path":""}}',
+      ),
+    ).toBeUndefined();
+  });
+
   test("derives presentation and delivery policy from each message", () => {
     const fileEdited = {
       type: "file_edited",
@@ -33,11 +56,10 @@ describe("Session system messages", () => {
 
     const agentResponse = {
       type: "agent_response",
-      executionMode: "worktree",
-      name: "Reviewer",
+      agentId: "reviewer",
       content: "The invariant holds.",
     } as const;
-    expect(systemMessageLabel(agentResponse)).toBe("Reviewer replied");
+    expect(systemMessageLabel(agentResponse)).toBe("Agent replied");
     expect(systemMessageCoalesceKey(agentResponse)).toBeUndefined();
     expect(systemMessagePrompt(agentResponse)).toContain("The invariant holds.");
   });

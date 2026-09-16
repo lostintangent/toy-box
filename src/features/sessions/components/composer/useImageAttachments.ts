@@ -7,7 +7,7 @@ export function useImageAttachments() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
 
-  function attachImage(file: File, fallbackName = "image.png") {
+  function attachImage(file: File) {
     if (!file.type.startsWith("image/")) return;
 
     const reader = new FileReader();
@@ -18,7 +18,6 @@ export function useImageAttachments() {
       setAttachments((current) => [
         ...current,
         {
-          displayName: file.name || fallbackName,
           base64,
           mimeType: file.type,
         },
@@ -38,7 +37,7 @@ export function useImageAttachments() {
       if (!item.type.startsWith("image/")) continue;
       event.preventDefault();
       const file = item.getAsFile();
-      if (file) attachImage(file, "pasted-image.png");
+      if (file) attachImage(file);
       return;
     }
   }
@@ -72,7 +71,7 @@ export function useImageAttachments() {
         event.preventDefault();
         setIsDragging(false);
         const file = event.dataTransfer.files[0];
-        if (file) attachImage(file, "dropped-image.png");
+        if (file) attachImage(file);
       },
     },
     clearAttachments: () => setAttachments([]),

@@ -1,4 +1,4 @@
-import { defineTool } from "@github/copilot-sdk";
+import { defineTool } from "@sessions/server/tools/definition";
 import { settingsUpdateSchema } from "@workspace/model/config/settings";
 
 const updateSettingsTool = defineTool("update_settings", {
@@ -8,7 +8,6 @@ const updateSettingsTool = defineTool("update_settings", {
     "Use a six-digit hexadecimal value such as '#facc15' for accentColor, and an executable path or an empty string for terminalShell. " +
     "Returns the complete authoritative settings value.",
   parameters: settingsUpdateSchema,
-  skipPermission: true,
   handler: async (update) => {
     const { updateSettings } = await import("@workspace/server");
     const settings = await updateSettings(update);

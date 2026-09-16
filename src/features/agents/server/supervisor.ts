@@ -1,20 +1,13 @@
 // One admission and wake path for an Agent in any host. Hosts prepare public
 // context; Sessions owns execution, idle configuration, history, and worktrees.
 
-import {
-  agentHostId,
-  type AgentHost,
-  type AgentMembership,
-  type AgentMention,
-} from "@agents/model";
+import { agentHostId, type AgentHost } from "@agents/model";
 import type { SessionMessage, SessionSystemMessage } from "@sessions/model";
 import { SESSION_ID_PREFIX } from "@sessions/model/constants";
 import {
-  canCreateSessionWorktree,
   createSession,
   deliverSessionMessage,
   isSessionNotFoundError,
-  type SessionContext,
 } from "@sessions/server/runtime";
 import { getAgentHostAdapter } from "@/server/agentHosts";
 import { getStateDatabase } from "@/server/database";
@@ -23,11 +16,11 @@ import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 import { broadcast } from "@workspace/server/events";
 import { AgentDatabase } from "./database";
 
-type MentionAgentInput = AgentMention & {
+type MentionAgentInput = {
+  agentId: string;
   host: AgentHost;
   message: SessionMessage | { systemMessage: SessionSystemMessage };
   directory?: string;
-  initialContext?: SessionContext;
   hostLabel: string;
 };
 
@@ -54,16 +47,12 @@ export async function mentionAgent(input: MentionAgentInput): Promise<void> {
         if (!isSessionNotFoundError(error)) throw error;
         // An admitted membership may not yet have SDK history (for example,
         // after interrupted startup). Recreate it under the same durable ID.
-        await assertAgentExecutionModeAvailable(membership.executionMode, input.directory);
       }
     } else {
-      const executionMode = input.initialExecutionMode ?? "shared";
-      await assertAgentExecutionModeAvailable(executionMode, input.directory);
       membership = {
         host: input.host,
         agentId: input.agentId,
         sessionId: `${SESSION_ID_PREFIX}${crypto.randomUUID()}`,
-        executionMode,
       };
       if (adapter.admitAgent) {
         await adapter.admitAgent(agent, membership);
@@ -75,26 +64,11 @@ export async function mentionAgent(input: MentionAgentInput): Promise<void> {
 
     await createSession(membership.sessionId, input.message, {
       directory: input.directory,
-      initialContext: input.initialContext,
       sessionType: "agent",
-      useWorktree: membership.executionMode === "worktree",
       name: `${agent.name} · ${input.hostLabel}`,
     });
     await adapter.startTurn?.(agent, membership);
   });
-}
-
-/** Validate isolated work before admitting a membership or recreating its Session. */
-export async function assertAgentExecutionModeAvailable(
-  executionMode: AgentMembership["executionMode"],
-  directory?: string,
-): Promise<void> {
-  if (
-    executionMode === "worktree" &&
-    (!directory || !(await canCreateSessionWorktree(directory)))
-  ) {
-    throw new Error("This agent needs a Git working directory to use an isolated worktree.");
-  }
 }
 
 export async function detachAgentSession(sessionId: string): Promise<void> {

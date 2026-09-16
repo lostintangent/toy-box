@@ -31,7 +31,9 @@ export default defineConfig(({ mode }) => {
         ? [
             {
               find: /^koffi$/,
-              replacement: resolve("src/features/sessions/server/sdk/unsupportedCopilotFfi.ts"),
+              replacement: resolve(
+                "src/features/providers/server/copilot/unsupportedCopilotFfi.ts",
+              ),
             },
           ]
         : [],

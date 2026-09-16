@@ -2,14 +2,14 @@
 // model-facing instructions and tool definitions; handlers that call the
 // Session runtime import it lazily to avoid an initialization cycle.
 
-import type { Tool } from "@github/copilot-sdk";
+import type { Tool } from "@sessions/server/tools/definition";
 import { AUTOMATION_SESSION_INSTRUCTIONS, automationTools } from "@automations/server/tools";
 import { appLifecycleTools, artifactAppTools, createAppStateTools } from "@apps/server/tools";
 import { editorTools, fileTools } from "@files/server/tools";
 import { INBOX_SESSION_INSTRUCTIONS, inboxTools } from "@inbox/server/tools";
 import { getWorkerAppId } from "@workers/server/database";
 import { workerTools } from "@workers/server/tools";
-import { createAgentTool, getAgentMembershipTools, listAgentsTool } from "@agents/server/tools";
+import { agentSelfTools, createAgentTool, listAgentsTool } from "@agents/server/tools";
 import { channelTools } from "@channels/server/tools";
 import {
   coordinationTools,
@@ -19,8 +19,9 @@ import {
   STANDARD_SESSION_INSTRUCTIONS,
   sessionLayoutTools,
   sessionTitleTools,
+  sessionHistoryTools,
 } from "@sessions/server/tools";
-import { SESSION_HISTORY_DISCOVERY_INSTRUCTIONS } from "@sessions/server/sdk/client";
+import { SESSION_HISTORY_DISCOVERY_INSTRUCTIONS } from "@sessions/server/instructions";
 import { settingsTools } from "@workspace/server/tools";
 import type { SessionType } from "@sessions/model";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
@@ -43,6 +44,7 @@ export function getSessionTools(
     sessionType === "inbox" ||
     sessionType === "automation";
   return [
+    ...(privateAgent ? [] : sessionHistoryTools),
     ...(sessionType === "hyper" ? hyperLifecycleTools : []),
     ...(privateAgent ? [] : workerTools),
     ...(privateAgent ? [] : lifecycleTools),
@@ -79,18 +81,14 @@ export async function getSessionConfiguration(sessionId: string, sessionType: Se
     throw new Error("Agent sessions require a persistent Agent membership.");
   }
   const { agent, membership } = resolved;
-  const kind = membership.host.kind;
   const host = await getAgentHostAdapter(membership.host);
   const hostInstructions = await host.getInstructions(agent, membership);
-  const model = agent.model ?? (await getWorkspaceDefaultModel());
+  const model = agent.model ?? (await getWorkspaceDefaultModel(sessionId));
   const additionalInstructions = runtime.buildAgentSystemInstructions(agent, hostInstructions);
   return {
-    tools: getSessionTools(sessionType, appId, [
-      ...(host.getTools?.() ?? []),
-      ...getAgentMembershipTools(kind),
-    ]),
+    tools: getSessionTools(sessionType, appId, [...(host.getTools?.() ?? []), ...agentSelfTools]),
     additionalInstructions,
-    configurationKey: JSON.stringify([kind, model, additionalInstructions]),
+    configurationKey: JSON.stringify([membership.host.kind, model, additionalInstructions]),
     disableMemory: true as const,
     ...(model ? { model } : {}),
   };
@@ -112,12 +110,21 @@ async function getSessionInstructions(sessionType: Exclude<SessionType, "agent">
   return parts.join("\n\n");
 }
 
-/** Resolve the same implicit default the model picker presents. Passing it
- * explicitly lets a resumed Agent leave behind an earlier durable override. */
-async function getWorkspaceDefaultModel(): Promise<ModelConfiguration | undefined> {
+/** Inherit workspace defaults within an existing session's provider. A new
+ * default provider applies to new sessions; existing conversations retain theirs. */
+async function getWorkspaceDefaultModel(
+  sessionId: string,
+): Promise<ModelConfiguration | undefined> {
+  const binding = await (
+    await import("@sessions/server/state/sessions")
+  ).readProviderBinding(sessionId);
   const settings = await (await import("@workspace/server/state/settings")).getSettings();
-  if (settings.defaultModel) return settings.defaultModel;
+  if (settings.defaultModel)
+    return !binding || settings.defaultModel.provider === binding.providerId
+      ? settings.defaultModel
+      : undefined;
 
-  const models = await (await import("@sessions/server/sdk/client")).listModels();
-  return models[0] ? { name: models[0].id } : undefined;
+  const models = await (await import("@providers/server")).listModels();
+  const model = models.find((candidate) => !binding || candidate.provider === binding.providerId);
+  return model ? { name: model.id, provider: model.provider } : undefined;
 }

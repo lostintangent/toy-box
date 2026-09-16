@@ -1,4 +1,4 @@
-import type { Tool } from "@github/copilot-sdk";
+import type { Tool } from "@sessions/server/tools/definition";
 import type { Agent, AgentMembership } from "@agents/model";
 
 /** Agents owns this host interface and supervision; each host supplies its

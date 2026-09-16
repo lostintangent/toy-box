@@ -1,12 +1,12 @@
-Toy Box is a full stack binary built on the Bun runtime. It uses the GitHub Copilot SDK for agent sessions; TanStack Start and Nitro for the SSR web server, server functions, and HTTP/SSE/WebSocket routes; React, TanStack Router and Query, and Jotai for the client; and Tailwind CSS with shadcn/ui for presentation.
+Toy Box is a full stack binary built on the Bun runtime. It uses installed Codex and GitHub Copilot CLIs through a shared Providers feature; TanStack Start and Nitro for the SSR web server, server functions, and HTTP/SSE/WebSocket routes; React, TanStack Router and Query, and Jotai for the client; and Tailwind CSS with shadcn/ui for presentation.
 
 ## Architecture
 
 Toy Box's central unit of work is a session that runs on the server and outlives any browser connection. A client can create one with its first prompt, attach to work already running, reconnect from a cursor, or reopen an idle session from history. Multiple clients can observe and control the same session; disconnecting ends only that client's observation.
 
-A session ID ties together durable SDK history, at most one live runtime, Toy Box metadata and owned resources, and shared client status. A durable draft claim reserves that ID, and the SDK's experimental empty-session surface creates its workspace and optional artifact without creating resumable event history. The first message starts the turn-bearing SDK session over that same workspace. An artifact-first draft treats its file as both the preferred pane and the initial conversational subject supplied to the agent.
+A public session ID ties together provider history, at most one live runtime, Toy Box metadata and owned resources, and shared client status. Sessions reserves that ID with a row in its `sessions` table and creates its artifact directory without starting a provider. A row without a provider is a draft; the first message binds that same row to the selected provider's native history ID. An artifact-first draft treats its file as both the preferred pane and the initial conversational subject supplied to the agent. Imported native sessions use provider-prefixed IDs without requiring a local record.
 
-Raw Copilot SDK activity is translated into canonical `SessionEvent`s. One pure reducer builds the same session state for the live server runtime, persisted-history replay, and browser clients, so a transcript agrees whether it is watched live, reconnected, or opened after completion. Active sessions take their truth from the in-memory runtime; idle sessions are reconstructed from durable SDK history, with snapshots serving only as a cache.
+Native provider activity is translated into canonical `SessionEvent`s. One pure reducer builds the same session state for the live server runtime, persisted-history replay, and browser clients, so a transcript agrees whether it is watched live, reconnected, or opened after completion. Active sessions take their truth from the in-memory runtime; idle sessions are reconstructed from durable provider history, with snapshots serving only as a cache.
 
 Automations, Inbox, Hyper, and parent sessions govern managed-session lifecycles while reusing that same runtime rather than defining alternate execution models. Files open as live, editable editor surfaces that can notify their owning agent. High-frequency transcript activity travels through ordered, replayable per-session streams. Lower-frequency shared workspace changes use a separate at-most-once update stream and recover missed events from authoritative snapshots or query refetches.
 
@@ -16,7 +16,9 @@ The app runtime supports two ownership models. Installed apps are durable, bookm
 flowchart LR
     Clients[Desktop and phone clients] <--> API[RPC, HTTP, SSE, and WebSocket routes]
     API --> Runtime[Session runtime]
-    Runtime <--> SDK[Copilot SDK and session history]
+    Runtime <--> Providers[Session provider interface]
+    Providers <--> Copilot[Copilot SDK and history]
+    Providers <--> Codex[Codex app-server and history]
     Runtime --> Streams[Replayable session streams]
     Streams --> Clients
     API --> State[Server state]
@@ -29,13 +31,14 @@ flowchart LR
     API --> Terminal[Terminal PTY runtime]
 ```
 
-Toy Box currently assumes one trusted, coordinating server process for one owner; it does not provide an authentication boundary or horizontal coordination. SDK history, SQLite metadata, worktrees, and artifact files survive restarts; active execution, replay buffers, workspace coordination, Hyper membership, and terminal PTYs do not.
+Toy Box currently assumes one trusted, coordinating server process for one owner; it does not provide an authentication boundary or horizontal coordination. Provider history, SQLite metadata, worktrees, and artifact files survive restarts; active execution, replay buffers, workspace coordination, Hyper membership, and terminal PTYs do not.
 
 ### Subsystem guides
 
 Each guide explains one capability end to end, including adjacent callers and consumers when its implementation spans folders. Read them in order for a first architecture pass; for a targeted change, start with the guide whose responsibility matches it. A guide's location marks the subsystem's semantic core, not its complete boundary.
 
 - [`src/features/sessions/AGENTS.md`](src/features/sessions/AGENTS.md): the foundational session model, runtime, registry, SDK projection, browser lifecycle, and presentation
+- [`src/features/providers/AGENTS.md`](src/features/providers/AGENTS.md): the native provider contract, catalogs, Copilot and Codex implementations, and history projection
 - [`src/features/agents/AGENTS.md`](src/features/agents/AGENTS.md): persistent teammate identity, experiences, membership, private-session supervision, and host adapters
 - [`src/features/channels/AGENTS.md`](src/features/channels/AGENTS.md): durable shared message buses, membership cursors, delivery policy, artifacts, and channel presentation
 - [`src/workspace/AGENTS.md`](src/workspace/AGENTS.md): aggregate workspace state, synchronization, pane identity, and layout composition
@@ -70,7 +73,7 @@ Great code pursues simplicity by placing a rich domain model at the center, deco
   - Concentrate exhaustive coverage around foundational state machines, reducers, policies, codecs, and boundaries where one defect propagates widely. Test leaf consumers when they own distinct behavior, lifecycle, or integration risk.
   - Keep tests deterministic and readable as specifications: order common behavior before edge cases, prove one contract per test, and introduce narrow seams or protocol-faithful fakes only when needed.
 
-For model examples, see [`src/features/sessions/server/sdk/projector.ts`](src/features/sessions/server/sdk/projector.ts) and [`src/features/sessions/server/sdk/projector.test.ts`](src/features/sessions/server/sdk/projector.test.ts).
+For model examples, see [`src/features/providers/server/copilot/projector.ts`](src/features/providers/server/copilot/projector.ts) and [`src/features/providers/server/copilot/projector.test.ts`](src/features/providers/server/copilot/projector.test.ts).
 
 ## Definition of Done
 

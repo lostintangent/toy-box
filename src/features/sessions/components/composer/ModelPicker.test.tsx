@@ -14,6 +14,7 @@ const CONTEXT_TIERS = [
 function model(overrides: Partial<PickerModel> = {}): PickerModel {
   return {
     id: "gpt-5",
+    provider: "copilot",
     name: "GPT-5",
     ...overrides,
   };
@@ -50,7 +51,7 @@ describe("ModelConfigurationPicker", () => {
       supportedReasoningEfforts: ["low", "future_effort"],
       defaultReasoningEffort: "future_effort",
     });
-    const value = { name: selectedModel.id };
+    const value = { provider: selectedModel.provider, name: selectedModel.id };
 
     const optionsPicker = renderOptionsPicker(selectedModel, value);
     const text = collectText(optionsPicker);
@@ -66,7 +67,7 @@ describe("ModelConfigurationPicker", () => {
       defaultReasoningEffort: "high",
       supportedContextTiers: CONTEXT_TIERS,
     });
-    const value = { name: selectedModel.id };
+    const value = { provider: selectedModel.provider, name: selectedModel.id };
 
     const optionsPicker = renderOptionsPicker(selectedModel, value);
     const trigger = renderPicker(selectedModel, value);
@@ -88,6 +89,7 @@ describe("ModelConfigurationPicker", () => {
       supportedContextTiers: CONTEXT_TIERS,
     });
     const value = {
+      provider: selectedModel.provider,
       name: selectedModel.id,
       reasoningEffort: "high",
       contextTier: "future_tier",

@@ -1,8 +1,9 @@
 import { basename } from "node:path";
 import { agentHandleFromName } from "@agents/model";
 import type { AgentHostAdapter } from "@agents/server/host";
+import { finishAgentTurnTool } from "@agents/server/tools";
 import type { MentionFileAgentInput } from "@files/model/agentMention";
-import { getSessionContext } from "@sessions/server/runtime";
+import { getSessionDirectory } from "@sessions/server/runtime";
 import { resolveWorkspaceFile } from "./paths";
 
 /** Validate File-owned context, then hand admission to the shared Agent
@@ -18,15 +19,13 @@ export async function mentionFileAgent(input: MentionFileAgentInput): Promise<vo
     throw new Error("The Markdown artifact is no longer available.");
   }
 
-  const context = await getSessionContext(input.host.sessionId);
+  const directory = await getSessionDirectory(input.host.sessionId);
   const { mentionAgent } = await import("@agents/server/supervisor");
   await mentionAgent({
     host: input.host,
     agentId: input.agentId,
     message: { content: input.prompt },
-    initialExecutionMode: input.initialExecutionMode,
-    directory: context?.workingDirectory,
-    initialContext: context,
+    directory,
     hostLabel: basename(input.host.path),
   });
 }
@@ -34,6 +33,10 @@ export async function mentionFileAgent(input: MentionFileAgentInput): Promise<vo
 /** Markdown-file implementation of the Agent host port. The persisted file,
  * not the private Agent Session, is the shared conversation and result. */
 export const fileAgentHost: AgentHostAdapter = {
+  getTools() {
+    return [finishAgentTurnTool];
+  },
+
   async getInstructions(agent, membership) {
     if (membership.host.kind !== "file") {
       throw new Error("File Agent membership is incomplete.");

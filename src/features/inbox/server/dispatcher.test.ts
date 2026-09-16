@@ -86,7 +86,7 @@ beforeEach(() => {
 describe("dispatchInboxTask", () => {
   test("claims Inbox ownership before opening an Inbox session", async () => {
     const result = await dispatchInboxTask({
-      message: { content: "Research this", model: { name: "gpt-5" } },
+      message: { content: "Research this", model: { provider: "copilot", name: "gpt-5" } },
       directory: "/repo",
       useWorktree: false,
     });
@@ -95,7 +95,7 @@ describe("dispatchInboxTask", () => {
     expect(calls).toEqual([`inbox:${result.sessionId}`, `session:${result.sessionId}`]);
     expect(createSessionMock).toHaveBeenCalledWith(
       result.sessionId,
-      { content: "Research this", model: { name: "gpt-5" } },
+      { content: "Research this", model: { provider: "copilot", name: "gpt-5" } },
       {
         directory: "/repo",
         useWorktree: false,

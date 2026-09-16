@@ -7,6 +7,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
       "eventId": 0,
       "model": {
         "name": "gpt-5.5",
+        "provider": "copilot",
         "reasoningEffort": "xhigh",
       },
       "type": "model_changed",
@@ -58,6 +59,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
     {
       "content": "My quick take: the shape is much cleaner now, but I’ll get independent reviews on the main risk areas before making a stronger call.",
       "eventId": 7,
+      "messageId": "572c6c64-a4a2-495b-aa4c-535d1cc4abdc",
       "type": "assistant_message",
     },
     {
@@ -194,6 +196,7 @@ Evaluate the overall design decisions:
       "eventId": 16,
       "model": {
         "name": "gpt-5.5",
+        "provider": "copilot",
       },
       "type": "model_changed",
     },
@@ -210,6 +213,7 @@ Evaluate the overall design decisions:
       "eventId": 18,
       "model": {
         "name": "claude-opus-4.8",
+        "provider": "copilot",
       },
       "type": "model_changed",
     },
@@ -218,6 +222,7 @@ Evaluate the overall design decisions:
       "eventId": 19,
       "model": {
         "name": "claude-haiku-4.5",
+        "provider": "copilot",
       },
       "type": "model_changed",
     },
@@ -226,6 +231,7 @@ Evaluate the overall design decisions:
       "eventId": 20,
       "model": {
         "name": "claude-haiku-4.5",
+        "provider": "copilot",
       },
       "type": "model_changed",
     },
@@ -234,6 +240,7 @@ Evaluate the overall design decisions:
       "eventId": 21,
       "model": {
         "name": "claude-haiku-4.5",
+        "provider": "copilot",
       },
       "type": "model_changed",
     },
@@ -242,6 +249,7 @@ Evaluate the overall design decisions:
       "eventId": 22,
       "model": {
         "name": "claude-haiku-4.5",
+        "provider": "copilot",
       },
       "type": "model_changed",
     },
@@ -250,6 +258,7 @@ Evaluate the overall design decisions:
       "eventId": 23,
       "model": {
         "name": "claude-haiku-4.5",
+        "provider": "copilot",
       },
       "type": "model_changed",
     },
@@ -613,6 +622,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
     },
     {
       "content": "My quick take: the shape is much cleaner now, but I’ll get independent reviews on the main risk areas before making a stronger call.",
+      "messageId": "572c6c64-a4a2-495b-aa4c-535d1cc4abdc",
       "role": "assistant",
       "toolCalls": [
         {
@@ -631,6 +641,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
           "agent": {
             "model": {
               "name": "gpt-5.5",
+              "provider": "copilot",
             },
           },
           "arguments": {
@@ -652,6 +663,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
           "agent": {
             "model": {
               "name": "claude-haiku-4.5",
+              "provider": "copilot",
             },
           },
           "arguments": {
@@ -678,6 +690,7 @@ Intended behavior:
           "agent": {
             "model": {
               "name": "claude-haiku-4.5",
+              "provider": "copilot",
             },
           },
           "arguments": {
@@ -704,6 +717,7 @@ Intended behavior:
           "agent": {
             "model": {
               "name": "claude-haiku-4.5",
+              "provider": "copilot",
             },
           },
           "arguments": {
@@ -730,6 +744,7 @@ Intended behavior:
           "agent": {
             "model": {
               "name": "claude-haiku-4.5",
+              "provider": "copilot",
             },
           },
           "arguments": {
@@ -757,6 +772,7 @@ Focus areas:
             "content": "",
             "model": {
               "name": "claude-haiku-4.5",
+              "provider": "copilot",
             },
             "toolCalls": [
               {
@@ -887,6 +903,7 @@ Context: Changes include SDK blob attachments, semantic Attachment type, semanti
             "content": "I'll start by examining the uncommitted changes to understand the design context.",
             "model": {
               "name": "claude-opus-4.8",
+              "provider": "copilot",
             },
             "toolCalls": [
               {
@@ -1000,6 +1017,7 @@ Evaluate the overall design decisions:
   ],
   "model": {
     "name": "gpt-5.5",
+    "provider": "copilot",
     "reasoningEffort": "xhigh",
   },
   "openedFiles": [],
@@ -1008,7 +1026,7 @@ Evaluate the overall design decisions:
   "queuedMessages": [],
   "reasoningContent": "",
   "status": "idle",
-  "summary": undefined,
+  "title": undefined,
   "todos": undefined,
 }
 `;

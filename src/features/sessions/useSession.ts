@@ -5,11 +5,11 @@
  * work while visible, reduce stream events, and expose user commands. Mutations
  * carry request/response commands; the long-lived event stream stays explicit.
  *
- * Draft start: a draft (see useDrafts) already owns a durable SDK
- * workspace, but its first send creates the turn-bearing SDK history with
- * `location` carrying its directory and worktree choice. Once
- * delivery begins, the ordinary runtime `running` transition replaces its
- * draft status.
+ * Draft start: a draft (see useDrafts) owns a public ID and artifacts,
+ * and its first send creates the selected provider's history with
+ * `location` carrying its directory and worktree choice. Submission seeds its
+ * catalog entry and applies the ordinary `running` transition optimistically;
+ * provider creation then supplies the authoritative metadata.
  */
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -20,10 +20,19 @@ import type { SessionEvent, SessionMessage, SessionSnapshot } from "./model";
 import type { SessionSubscriptionMode, StreamSessionRequest } from "./model/protocol";
 import { sessionMutations } from "./mutations";
 import { sessionQueries } from "./queries";
+import {
+  addSessionIfMissing,
+  invalidateSessionsStateQuery,
+  upsertSessionInState,
+} from "./queryCache";
 import { streamSession } from "./server/functions";
 import { usePageVisibility } from "@/shared/hooks/usePageVisibility";
 import { generateUUID } from "@/shared/utils";
-import { applyWorkspaceEvent, dispatchWorkspaceAction } from "@workspace/queries";
+import {
+  applyWorkspaceEvent,
+  dispatchWorkspaceAction,
+  repairWorkspaceStateQuery,
+} from "@workspace/queries";
 import { isWorkspaceSessionLive, type WorkspaceSessionState } from "@workspace/model/state/reducer";
 
 interface SessionConfig {
@@ -269,6 +278,7 @@ export function useSession(
   const sendMessage = async (input: SessionMessage, { immediate }: { immediate?: true } = {}) => {
     if (!input.content.trim() && !input.attachments?.length) return;
     const clientId = generateUUID();
+    const now = new Date();
 
     // The session's own model always wins; otherwise this message makes the
     // browser selection the session's effective model.
@@ -277,9 +287,13 @@ export function useSession(
       ...input,
       clientId,
       attachments: input.attachments?.length ? input.attachments : undefined,
-      agentMentions: input.agentMentions?.length ? input.agentMentions : undefined,
       model,
     } satisfies SessionMessage & { clientId: string };
+
+    upsertSessionInState(queryClient, {
+      sessionId,
+      modifiedTime: now.toISOString(),
+    });
 
     // Server running state owns the send-vs-queue distinction. The controller
     // also closes the same-tick gap before that shared state reaches React.
@@ -299,15 +313,22 @@ export function useSession(
     if (model) {
       sessionRef.current = { ...sessionRef.current, model };
     }
-    if (!isDraft) {
-      applyWorkspaceEvent(queryClient, { type: "session.running", sessionId });
+    if (isDraft) {
+      addSessionIfMissing(queryClient, {
+        sessionId,
+        provider: model?.provider,
+        startTime: now,
+        modifiedTime: now,
+        directory: sessionDirectory,
+      });
     }
+    applyWorkspaceEvent(queryClient, { type: "session.running", sessionId });
     applyEvent({
       type: "user_message",
       content: message.content,
       attachments: message.attachments,
       clientId,
-      timestamp: new Date().toISOString(),
+      timestamp: now.toISOString(),
     });
 
     const request: StreamSessionRequest = {
@@ -327,9 +348,15 @@ export function useSession(
     } catch (error) {
       console.error("Streaming error:", error);
       applyEvent({ type: "end", reason: "error" });
-      // Reconcile the optimistic running state; an unstarted draft ignores idle.
-      applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
-      await invalidateSessionSnapshot();
+      if (isDraft) {
+        // Creation may have failed before or after binding the provider. Read
+        // the authoritative lifecycle rather than guessing whether to undo it.
+        await repairWorkspaceStateQuery(queryClient);
+        await invalidateSessionsStateQuery(queryClient);
+      } else {
+        applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
+        await invalidateSessionSnapshot();
+      }
     }
   };
 
@@ -352,7 +379,7 @@ export function useSession(
     [],
   );
 
-  // A draft workspace has no SDK-history snapshot until its first turn. Live state
+  // A draft has no provider-history snapshot until its first turn. Live state
   // wins while connected; an idle started session adopts the latest snapshot.
   useEffect(() => {
     if (isDraft) return;

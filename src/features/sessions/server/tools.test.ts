@@ -1,7 +1,17 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  onTestFinished,
+  spyOn,
+  test,
+} from "bun:test";
 import type { ToolInvocation } from "@github/copilot-sdk";
 import * as streamModule from "@sessions/server/runtime";
 import * as registryModule from "@sessions/server/state/registry";
+import * as providers from "./providers";
 
 const realStreamModule = { ...streamModule };
 const realRegistryModule = { ...registryModule };
@@ -22,7 +32,37 @@ mock.module("@sessions/server/state/registry", () => ({
   updateSessionTitle: updateSessionTitleMock,
 }));
 
-const { hyperLifecycleTools, sessionTitleTools } = await import("./tools");
+const { hyperLifecycleTools, sessionTitleTools, sessionHistoryTools } = await import("./tools");
+
+test("session discovery bounds results and searches titles across providers, newest first", async () => {
+  const list = spyOn(providers, "listSessions").mockResolvedValue(
+    Array.from({ length: 25 }, (_, index) => ({
+      sessionId: `session-${index}`,
+      provider: index % 3 ? "codex" : "copilot",
+      title: index % 2 ? "Other session" : "Mobile Pager Dots",
+      startTime: new Date(index),
+      modifiedTime: new Date(index),
+    })),
+  );
+  onTestFinished(() => list.mockRestore());
+  const tool = sessionHistoryTools[0];
+  const all = (await tool.handler({}, invocation(tool.name))) as {
+    sessions: { sessionId: string; provider: string }[];
+    total: number;
+  };
+  expect(all.total).toBe(25);
+  expect(all.sessions).toHaveLength(20);
+  expect(all.sessions[0]?.sessionId).toBe("session-24");
+  const filtered = await tool.handler({ query: " PAGER ", limit: 2 }, invocation(tool.name));
+  expect(filtered).toMatchObject({
+    total: 13,
+    sessions: [
+      { sessionId: "session-24", provider: "copilot" },
+      { sessionId: "session-22", provider: "codex" },
+    ],
+  });
+  expect(tool.parameters?.safeParse({ limit: 101 }).success).toBe(false);
+});
 
 afterAll(() => {
   mock.module("@sessions/server/runtime", () => realStreamModule);
@@ -80,7 +120,7 @@ describe("SDK lifecycle tools", () => {
 
   test("create_session honors explicit execution options and can open the new session", async () => {
     const tool = hyperLifecycleTools.find((candidate) => candidate.name === "create_session");
-    const model = { name: "claude-sonnet-4.5" };
+    const model = { provider: "copilot", name: "claude-sonnet-4.5" };
 
     const result = await tool?.handler?.(
       {

@@ -4,7 +4,7 @@
     "target": "ES2022",
     "jsx": "react-jsx",
     "module": "ESNext",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
     "types": ["vite/client", "bun-types"],
 
     /* Bundler mode */
@@ -24,6 +24,7 @@
       "@/*": ["./src/*"],
       "@apps/*": ["./src/features/apps/*"],
       "@automations/*": ["./src/features/automations/*"],
+      "@providers/*": ["./src/features/providers/*"],
       "@files/*": ["./src/features/files/*"],
       "@inbox/*": ["./src/features/inbox/*"],
       "@intents/*": ["./src/features/intents/*"],
