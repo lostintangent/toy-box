@@ -344,16 +344,21 @@ type AppActions = {
 };
 
 type SessionMessage = {
-  id?: string;
+  clientId?: string;
   content: string;
   attachments?: Array<{ mimeType: string; base64: string }>;
   model?: ModelConfiguration;
+  immediate?: true;
+};
+
+type SessionLocation = {
+  directory?: string;
+  useWorktree?: boolean;
 };
 
 type SessionLaunch = {
   message: SessionMessage;
-  directory?: string;
-  useWorktree?: boolean;
+  location?: SessionLocation;
 };
 
 type SessionCompletion = {

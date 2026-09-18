@@ -8,7 +8,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { WorkspaceEvent } from "@workspace/model/events";
 import type { SessionMetadata, SessionMetadataUpdate, SessionsState } from "./model";
 import { createEmptySessionsState, projectsSessionListMetadata, sessionQueries } from "./queries";
-import { createInitialSession, toSessionSnapshot } from "./model/reducer";
+import { createInitialSessionState } from "./model/reducer";
 
 export function applyWorkspaceEventToSessionQueries(
   queryClient: QueryClient,
@@ -28,7 +28,7 @@ export function applyWorkspaceEventToSessionQueries(
         exact: true,
       });
       queryClient.setQueryData(sessionQueries.detail(event.sessionId).queryKey, (previous) =>
-        previous ? toSessionSnapshot(event.sessionId, createInitialSession()) : undefined,
+        previous ? createInitialSessionState() : undefined,
       );
       return;
     case "session.touched":

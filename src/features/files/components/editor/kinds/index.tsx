@@ -1,6 +1,7 @@
 import { lazy, type ComponentType } from "react";
 import {
   Braces,
+  BookOpen,
   ChartBar,
   Code2,
   Database,
@@ -13,7 +14,6 @@ import {
   AppWindow,
   PenTool,
   Table,
-  Target,
   type LucideIcon,
 } from "lucide-react";
 import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
@@ -62,8 +62,8 @@ const JsonEditor = lazy(() =>
   import("./json/JsonEditor").then((module) => ({ default: module.JsonEditor })),
 );
 
-const IntentEditor = lazy(() =>
-  import("./intent/IntentEditor").then((module) => ({ default: module.IntentEditor })),
+const BriefEditor = lazy(() =>
+  import("./brief/BriefEditor").then((module) => ({ default: module.BriefEditor })),
 );
 
 const ArtifactAppPane = lazy(() =>
@@ -101,10 +101,10 @@ const BUILTIN_EDITOR_KINDS: Record<string, EditorKind> = {
     Renderer: JsonEditor,
     icon: Braces,
   },
-  intent: {
-    extensions: ["intent"],
-    Renderer: IntentEditor,
-    icon: Target,
+  brief: {
+    extensions: ["brief"],
+    Renderer: BriefEditor,
+    icon: BookOpen,
   },
 };
 

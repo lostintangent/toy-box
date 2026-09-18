@@ -2,7 +2,7 @@ import { normalizeModelConfiguration } from "../model/modelConfiguration";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
-import type { SessionMessage } from "../model";
+import type { UserMessage } from "../model";
 import type { ModelConfiguration } from "../model/modelConfiguration";
 import { getRecentDirectories } from "../model/recentDirectories";
 import { sessionMutations } from "../mutations";
@@ -17,7 +17,6 @@ import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { useModels } from "../useModels";
 import { EditDiffsProvider, useEditDiffs } from "./transcript/editDiffs";
 import { SessionComposer } from "./composer/SessionComposer";
-import { SessionAgentStatus } from "./SessionAgentStatus";
 import { CurrentSessionProvider, type SessionPaneMode } from "./CurrentSessionContext";
 import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
@@ -56,11 +55,6 @@ export function SessionPane({
   const isHyper = useWorkspaceSelector((workspace) =>
     workspace.hyperSessionIds.includes(sessionId),
   );
-  const isManagedWorkflow = useWorkspaceSelector(
-    (workspace) =>
-      workspace.automations.some(({ id }) => id === sessionId) ||
-      workspace.inboxEntries.some(({ id }) => id === sessionId),
-  );
   const isDraft = workspaceSessionStatus === "draft";
   const { models: catalog, defaultModel, setDefaultModel } = useModels();
   // In the "compact" variant (the pager) the session surfaces its location picker
@@ -82,15 +76,10 @@ export function SessionPane({
     select: (state) => ({
       metadata: state.sessions.find((session) => session.sessionId === sessionId),
       worktree: state.worktrees[sessionId],
-      isWorkerSession: Object.hasOwn(state.workerSessionParents, sessionId),
       recentDirectory: isDraft ? getRecentDirectories(state.sessions)[0]?.cwd : undefined,
     }),
   });
   const sessionMetadata = sessionRecord?.metadata;
-  const supportsAgentMentions =
-    isDraft ||
-    isHyper ||
-    (!isSessionRecordLoading && !isManagedWorkflow && !sessionRecord?.isWorkerSession);
   const selectedDirectory = sessionMetadata?.directory;
   const selectedRepository = sessionMetadata?.repository;
   const selectedGitRoot = sessionMetadata?.gitRoot;
@@ -169,7 +158,7 @@ export function SessionPane({
     panePublications.actions.publishSessionPanes(
       sessionId,
       isDraft ? [] : linkedSessionIds,
-      isDraft ? [] : (canvases ?? []),
+      isDraft ? [] : canvases,
       artifacts,
       isDraft ? [] : openedFiles,
     );
@@ -228,7 +217,10 @@ export function SessionPane({
       }
     : undefined;
 
-  function handleSubmit(message: SessionMessage, options?: { immediate?: true }) {
+  function handleSubmit(
+    message: Pick<UserMessage, "content" | "attachments">,
+    options?: { immediate?: true },
+  ) {
     void sendMessage(message, options);
 
     // Force scroll to bottom after submitting a message
@@ -287,10 +279,10 @@ export function SessionPane({
               <SessionMessageList
                 messages={messages}
                 isStreaming={isStreaming}
+                isWaiting={workspaceSessionStatus === "waiting"}
                 status={status}
                 reasoningContent={reasoningContent}
                 scrollToBottomRef={scrollToBottomRef}
-                activity={<SessionAgentStatus sessionId={sessionId} />}
               />
             </EditDiffsProvider>
           </CurrentSessionProvider>
@@ -321,7 +313,6 @@ export function SessionPane({
             queuedMessages={queuedMessages}
             sessionName={sessionMetadata?.title}
             lastMessage={lastVoiceMessage}
-            enableAgentMentions={supportsAgentMentions}
           />
         </div>
       )}

@@ -15,8 +15,8 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ModelConfiguration } from "./model/modelConfiguration";
-import { applySessionEvent, createInitialSession, toSessionSnapshot } from "./model/reducer";
-import type { SessionEvent, SessionMessage, SessionSnapshot } from "./model";
+import { applySessionEvent, createInitialSessionState } from "./model/reducer";
+import type { SessionEvent, SessionLaunch, SessionState, UserMessage } from "./model";
 import type { SessionSubscriptionMode, StreamSessionRequest } from "./model/protocol";
 import { sessionMutations } from "./mutations";
 import { sessionQueries } from "./queries";
@@ -78,7 +78,7 @@ export function useSession(
   // published to React immediately for discrete events or once per frame for
   // rapid text deltas.
   const [publishedSession, setPublishedSession] = useState(() =>
-    createInitialSession(draftArtifactPath ? { artifacts: [draftArtifactPath] } : {}),
+    createInitialSessionState(draftArtifactPath ? { artifacts: [draftArtifactPath] } : {}),
   );
   const sessionRef = useRef(publishedSession);
   const rafIdRef = useRef<number | null>(null);
@@ -88,7 +88,7 @@ export function useSession(
   const [hasLoadedSessionState, setHasLoadedSessionState] = useState(isDraft);
   const { data: sessionSnapshot, error } = useQuery({
     ...sessionQuery,
-    enabled: !isDraft && !isStreaming,
+    enabled: isVisible && !isDraft && !isStreaming,
   });
 
   /** Flush any pending batched update and publish the latest reduced state. */
@@ -137,8 +137,8 @@ export function useSession(
     }
   };
 
-  /** Explicit user pick of the session's model. Takes effect
-   *  immediately in the UI and is sent with the next message. */
+  /** The client-selected Session model. Takes effect immediately in the UI
+   *  and is sent with the next message. */
   const setModel = (model: ModelConfiguration) => {
     sessionRef.current = { ...sessionRef.current, model };
     publishState();
@@ -181,9 +181,7 @@ export function useSession(
 
       // Keep the snapshot aligned with live state so reenabling its query
       // cannot briefly replay stale linked-session state.
-      queryClient.setQueryData<SessionSnapshot>(sessionQuery.queryKey, (old) =>
-        toSessionSnapshot(sessionId, sessionRef.current, old),
-      );
+      queryClient.setQueryData<SessionState>(sessionQuery.queryKey, sessionRef.current);
 
       // Do not change workspace session status here. The runtime publishes
       // the terminal idle/unread transition when the execution truly finishes. A
@@ -221,17 +219,14 @@ export function useSession(
     }
   };
 
-  // Ending the subscription resets only this client's transient state. The reset
-  // goes through the reducer so local and server terminal cleanup cannot drift.
-  // It deliberately leaves workspace status running because background work
-  // continues on the server.
+  // Ending observation never changes canonical session state; background work
+  // continues on the server and a later subscription resumes from its cursor.
   const endSubscription = () => {
     const controller = abortControllerRef.current;
     if (!controller) return;
 
     controller.abort();
     abortControllerRef.current = null;
-    applyEvent({ type: "end", reason: "idle" });
     setIsStreaming(false);
   };
 
@@ -239,9 +234,8 @@ export function useSession(
     ...sessionMutations.abortSession(sessionId),
     onMutate: () => {
       endSubscription();
+      applyEvent({ type: "end", reason: "idle" });
       applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
-      sessionRef.current = { ...sessionRef.current, queuedMessages: [] };
-      publishState();
     },
   });
 
@@ -275,7 +269,10 @@ export function useSession(
     },
   });
 
-  const sendMessage = async (input: SessionMessage, { immediate }: { immediate?: true } = {}) => {
+  const sendMessage = async (
+    input: Pick<UserMessage, "content" | "attachments">,
+    { immediate }: { immediate?: true } = {},
+  ) => {
     if (!input.content.trim() && !input.attachments?.length) return;
     const clientId = generateUUID();
     const now = new Date();
@@ -288,7 +285,8 @@ export function useSession(
       clientId,
       attachments: input.attachments?.length ? input.attachments : undefined,
       model,
-    } satisfies SessionMessage & { clientId: string };
+      immediate,
+    } satisfies SessionLaunch["message"] & { clientId: string };
 
     upsertSessionInState(queryClient, {
       sessionId,
@@ -298,10 +296,7 @@ export function useSession(
     // Server running state owns the send-vs-queue distinction. The controller
     // also closes the same-tick gap before that shared state reaches React.
     if (isSessionLive || abortControllerRef.current) {
-      followUpMutation.mutate({
-        ...message,
-        immediate,
-      });
+      followUpMutation.mutate(message);
       return;
     }
 
@@ -385,21 +380,10 @@ export function useSession(
     if (isDraft) return;
 
     if (!isStreaming && sessionSnapshot) {
+      // Keep the locally picked model when older history has none.
       const restoredSession = {
-        ...createInitialSession({
-          messages: sessionSnapshot.messages,
-          queuedMessages: sessionSnapshot.queuedMessages ?? [],
-          todos: sessionSnapshot.todos,
-          linkedSessionIds: sessionSnapshot.linkedSessionIds,
-          canvases: sessionSnapshot.canvases,
-          artifacts: sessionSnapshot.artifacts,
-          openedFiles: sessionSnapshot.openedFiles,
-          status: sessionSnapshot.status ?? "idle",
-          reasoningContent: sessionSnapshot.reasoningContent ?? "",
-          // Keep the locally picked model when older history has none.
-          model: sessionSnapshot.model ?? sessionRef.current.model,
-        }),
-        lastSeenEventId: sessionSnapshot.lastSeenEventId,
+        ...sessionSnapshot,
+        model: sessionSnapshot.model ?? sessionRef.current.model,
       };
       sessionRef.current = restoredSession;
       setPublishedSession(restoredSession);

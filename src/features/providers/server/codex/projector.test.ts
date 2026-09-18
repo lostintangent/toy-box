@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { sessionArtifactsDirectory } from "@sessions/server/artifacts";
-import { applySessionEvent, createInitialSession } from "@sessions/model/reducer";
+import { applySessionEvent, createInitialSessionState } from "@sessions/model/reducer";
 import { computeFileDiffStats, getToolCallFileDiffs } from "@sessions/model/fileDiffs";
 import type { SessionEvent } from "@sessions/model";
 import { createCodexProjector } from "./projector";
@@ -35,8 +35,8 @@ test("native Toy Box tools keep their friendly identity and result live and afte
     ...live(itemEvent(item)),
   ];
   const replay = createCodexProjector("native-tools")(itemEvent(item));
-  expect(events.reduce(applySessionEvent, createInitialSession())).toEqual(
-    replay.reduce(applySessionEvent, createInitialSession()),
+  expect(events.reduce(applySessionEvent, createInitialSessionState())).toEqual(
+    replay.reduce(applySessionEvent, createInitialSessionState()),
   );
   expect(events).toMatchObject([
     { type: "tool_start", toolName: "update_session_title", arguments: item.arguments },
@@ -48,6 +48,39 @@ test("native Toy Box tools keep their friendly identity and result live and afte
     ),
   ).toMatchObject([{ type: "tool_start", toolName: "another_app/update_session_title" }]);
 });
+
+test.each([
+  ["open_file", "file_opened"],
+  ["close_file", "file_closed"],
+] as const)("%s derives artifact identity from arguments live and after replay", (tool, type) => {
+  const item: ThreadItem = {
+    type: "dynamicToolCall",
+    id: "file-visibility",
+    namespace: "toy_box",
+    tool,
+    arguments: { path: join(sessionArtifactsDirectory("owner"), "plan.md") },
+    status: "completed",
+    success: true,
+    durationMs: null,
+    contentItems: [{ type: "inputText", text: "OK" }],
+  };
+  const project = createCodexProjector("file-tools");
+  expect(
+    project(
+      itemEvent(
+        { ...item, status: "inProgress", success: null, contentItems: null },
+        "item/started",
+      ),
+    ),
+  ).toEqual([]);
+  const live = project(itemEvent(item));
+  expect(live).toEqual([{ type, file: { kind: "session", sessionId: "owner", path: "plan.md" } }]);
+  expect(createCodexProjector("file-tools")(itemEvent(item))).toEqual(live);
+  expect(
+    createCodexProjector("file-tools")(itemEvent({ ...item, status: "failed", success: false })),
+  ).toEqual([]);
+});
+
 const commandItem = (
   actions: CommandAction[],
 ): Extract<ThreadItem, { type: "commandExecution" }> => ({
@@ -119,7 +152,7 @@ test("full commands and output survive live projection and history replay", () =
   ];
   const replay = createCodexProjector("command-details")(itemEvent(item));
   const reduce = (events: SessionEvent[]) =>
-    events.reduce(applySessionEvent, createInitialSession());
+    events.reduce(applySessionEvent, createInitialSessionState());
   expect(reduce(events)).toEqual(reduce(replay));
   expect(events).toMatchObject([
     { type: "tool_start", toolName: "bash", arguments: { command: item.command } },
@@ -151,7 +184,7 @@ test("native additions, deletions, and edits use the shared diff statistics live
   ];
   const replay = createCodexProjector("diff-test")(itemEvent(item));
   const reduce = (events: SessionEvent[]) =>
-    events.reduce(applySessionEvent, createInitialSession());
+    events.reduce(applySessionEvent, createInitialSessionState());
   const state = reduce(events);
   expect(state).toEqual(reduce(replay));
   const tool = state.messages.flatMap((message) =>
@@ -184,7 +217,7 @@ test("native artifact renames leave membership to filesystem observation", () =>
         },
       ],
     }),
-  ).reduce(applySessionEvent, createInitialSession({ artifacts: ["before.md"] }));
+  ).reduce(applySessionEvent, createInitialSessionState({ artifacts: ["before.md"] }));
   expect(state.artifacts).toEqual(["before.md"]);
   expect(state.messages).toEqual([]);
 });
@@ -200,7 +233,7 @@ test("native plan updates replace and clear shared todos", () => {
         { step: "Third", status: "completed" },
       ],
     },
-  }).reduce(applySessionEvent, createInitialSession());
+  }).reduce(applySessionEvent, createInitialSessionState());
   expect(initial.todos?.map((todo) => todo.status)).toEqual(["pending", "in_progress", "done"]);
   const resumed = createCodexProjector("plans");
   const next = resumed({
@@ -211,6 +244,6 @@ test("native plan updates replace and clear shared todos", () => {
   expect(
     resumed({ method: "turn/plan/updated", params: { plan: [] } }).reduce(applySessionEvent, next)
       .todos,
-  ).toBeUndefined();
+  ).toEqual([]);
   expect(initial.todos).toHaveLength(3);
 });

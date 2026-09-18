@@ -74,10 +74,3 @@ export async function listAgentSessionIds(): Promise<string[]> {
   const database = await getStateDatabase({ createIfMissing: false });
   return database ? new AgentDatabase(database).listAgentSessionIds() : [];
 }
-
-export async function listSessionOwnedAgentSessionIds(sessionId: string): Promise<string[]> {
-  const database = await getStateDatabase({ createIfMissing: false });
-  return database
-    ? new AgentDatabase(database).listSessionOwnedMembershipSessionIds(sessionId)
-    : [];
-}

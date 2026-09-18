@@ -55,7 +55,7 @@ Provider failures are isolated during catalog/history discovery, so Codex alone 
 Copilot discovery and context use the SDK's `listSessions()` and `getSessionMetadata()`;
 history uses `rpc.sessions.readPersistedEvents()` without resuming. Native history files are not parsed for metadata. An empty
 native handle is not yet catalog history; Sessions owns the draft until its first turn.
-An Agent without an explicit model inherits workspace defaults within its existing
+A private Channel Agent without an explicit model inherits workspace defaults within its existing
 provider; a changed default provider applies to new conversations. Discovery reads
 provider bindings and managed ownership across the native catalog request, preserving
 public identity when creation or deletion overlaps a refresh. A catalog containing

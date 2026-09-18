@@ -151,8 +151,7 @@ describe("workers", () => {
       name: "Reviewer",
       ephemeral: true,
       message: { content: "Review the change." },
-      directory: "/repo",
-      useWorktree: true,
+      location: { directory: "/repo", useWorktree: true },
     });
     onTestFinished(() => finishWorker(worker.sessionId));
 
@@ -165,8 +164,7 @@ describe("workers", () => {
         ephemeral: true,
       },
       message: { content: "Review the change." },
-      directory: "/repo",
-      useWorktree: true,
+      location: { directory: "/repo", useWorktree: true },
     });
 
     const wait = waitForSession(worker.sessionId);
@@ -251,8 +249,7 @@ describe("workers", () => {
         content: "Generate a semantic-version expression.",
         model: { provider: "copilot", name: "gpt-5" },
       },
-      directory: "/repo",
-      useWorktree: true,
+      location: { directory: "/repo", useWorktree: true },
     });
     onTestFinished(() => finishWorker(worker.sessionId));
 
@@ -265,8 +262,7 @@ describe("workers", () => {
         appId: app.id,
       },
       message: { model: { provider: "copilot", name: "gpt-5" } },
-      directory: "/repo",
-      useWorktree: true,
+      location: { directory: "/repo", useWorktree: true },
     });
     const prompt = spawnWorkerMock.mock.calls[0]![0].message.content;
     expect(prompt).toContain(`app instance ID is "${app.id}"`);

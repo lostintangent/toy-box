@@ -31,9 +31,7 @@ export function ChannelPane({
   const channel = channels.find(({ id }) => id === channelId);
 
   if (!channel) return <ChannelUnavailable />;
-  const members = memberships.filter(
-    ({ host }) => host.kind === "channel" && host.channelId === channelId,
-  );
+  const members = memberships.filter(({ host }) => host.channelId === channelId);
   const detailFallback = (
     <div className="min-h-0 flex-1">
       <TranscriptSkeleton />

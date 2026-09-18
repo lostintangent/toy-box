@@ -70,18 +70,26 @@ export const sessionMessageSchema = z
     content: z.string(),
     attachments: messageAttachmentsSchema.optional(),
     model: modelConfigurationSchema.optional(),
+    immediate: z.literal(true).optional(),
   })
   .refine(
     (message) => message.content.trim().length > 0 || (message.attachments?.length ?? 0) > 0,
     { message: "A prompt or attachment is required" },
   );
 
-export type SessionMessage = z.infer<typeof sessionMessageSchema>;
-
-const sessionLocationSchema = z.object({
+export const sessionLocationSchema = z.object({
   directory: z.string().optional(),
   useWorktree: z.boolean().optional(),
 });
+
+export type SessionLocation = z.infer<typeof sessionLocationSchema>;
+
+export const sessionLaunchSchema = z.object({
+  message: sessionMessageSchema,
+  location: sessionLocationSchema.optional(),
+});
+
+export type SessionLaunch = z.infer<typeof sessionLaunchSchema>;
 
 const streamSessionBaseSchema = sessionInputSchema.extend({
   afterEventId: z.number().int().nonnegative().optional(),
@@ -93,10 +101,7 @@ const sessionSubscriptionModeSchema = z.enum(["active", "passive"]);
 // optionally mutates that same stream; location is established only with its first message.
 export const streamSessionRequestSchema = streamSessionBaseSchema.and(
   z.union([
-    z.object({
-      message: sessionMessageSchema,
-      location: sessionLocationSchema.optional(),
-    }),
+    sessionLaunchSchema,
     z.object({
       message: z.never().optional(),
       location: z.never().optional(),
@@ -105,15 +110,8 @@ export const streamSessionRequestSchema = streamSessionBaseSchema.and(
   ]),
 );
 
-export const sessionLaunchSchema = sessionLocationSchema.extend({
-  message: sessionMessageSchema,
-});
-
-export type SessionLaunch = z.infer<typeof sessionLaunchSchema>;
-
 export const deliverMessageInputSchema = sessionInputSchema.extend({
   message: sessionMessageSchema,
-  immediate: z.literal(true).optional(),
 });
 
 export const sendSystemMessageInputSchema = sessionInputSchema.extend({

@@ -59,13 +59,17 @@ describe("resolveEditorKind", () => {
     expect(resolveEditorKind(machine("DATA.JSON"), [rival]).Renderer).toBe(kind.Renderer);
   });
 
-  test("resolves intent definitions to their built-in editor case-insensitively", () => {
-    const rival = { ...csvTable, name: "not-intent", extensions: ["intent"] };
-    const kind = resolveEditorKind(machine("change.intent"), []);
+  test("resolves brief definitions to their built-in editor case-insensitively", () => {
+    const rival = { ...csvTable, name: "not-brief", extensions: ["brief"] };
+    const kind = resolveEditorKind(machine("change.brief"), []);
 
-    expect(kind).toMatchObject({ extensions: ["intent"] });
+    expect(kind).toMatchObject({ extensions: ["brief"] });
     expect(kind.definition).toBeUndefined();
-    expect(resolveEditorKind(machine("CHANGE.INTENT"), [rival]).Renderer).toBe(kind.Renderer);
+    expect(resolveEditorKind(machine("CHANGE.BRIEF"), [rival]).Renderer).toBe(kind.Renderer);
+  });
+
+  test("does not retain intent extension compatibility", () => {
+    expect(resolveEditorKind(machine("change.intent"), []).extensions).toEqual(["md", "markdown"]);
   });
 
   test("an unclaimed extension falls back to a built-in, not a registered kind", () => {

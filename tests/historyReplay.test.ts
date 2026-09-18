@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import type { Session } from "@sessions/model/reducer";
+import type { SessionState } from "@sessions/model";
 import { replayCopilotHistory } from "./helpers";
 
 // State-level history replay coverage: native events → provider projector
@@ -12,7 +12,7 @@ import { replayCopilotHistory } from "./helpers";
 const replayHistory = (events: SdkSessionEvent[]) =>
   replayCopilotHistory("history-replay-session", events);
 
-function assistantToolCalls(state: Session) {
+function assistantToolCalls(state: SessionState) {
   return state.messages.flatMap((message) =>
     message.role === "assistant" ? (message.toolCalls ?? []) : [],
   );
@@ -65,7 +65,7 @@ describe("history replay", () => {
     ]);
   });
 
-  test("translates todo SQL into todos, keeps it out of the tool call list, and applies titles", async () => {
+  test("translates todo SQL into todos and keeps it out of the tool call list", async () => {
     const insertTodo =
       "INSERT INTO todos (id, title) VALUES ('inspect-sql-events', 'inspect SQL events');";
     const state = await replayHistory([
@@ -90,7 +90,6 @@ describe("history replay", () => {
     expect(state.todos).toEqual([
       { id: "inspect-sql-events", title: "inspect SQL events", status: "pending" },
     ]);
-    expect(state.title).toBe("Friendly title");
     expect(assistantToolCalls(state)).toEqual([
       {
         id: "call-1",

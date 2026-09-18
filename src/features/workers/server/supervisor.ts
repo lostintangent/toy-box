@@ -35,7 +35,7 @@ export class WorkerCanceledError extends Error {
 
 /** Spawn one worker session and supervise its execution and lifetime. */
 export async function spawnWorker(input: SpawnWorkerInput): Promise<WorkerReceipt> {
-  const { worker } = input;
+  const { worker, message: inputMessage, location } = input;
   const sessionId = worker.sessionId;
   const parentSessionId = workerParentSessionId(worker);
   if (activeWorkers.has(sessionId)) throw new Error(`Worker ${sessionId} is already active.`);
@@ -47,28 +47,27 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<WorkerReceip
     throwIfWorkerCanceled(sessionId);
 
     const [parentDirectory, parentSnapshot] = await Promise.all([
-      input.directory === undefined && parentSessionId
+      location?.directory === undefined && parentSessionId
         ? getSessionDirectory(parentSessionId)
         : undefined,
-      input.message.model === undefined && parentSessionId
+      inputMessage.model === undefined && parentSessionId
         ? getSessionSnapshot(parentSessionId)
         : undefined,
     ]);
     throwIfWorkerCanceled(sessionId);
-    const model = input.message.model ?? parentSnapshot?.model;
+    const message = {
+      ...inputMessage,
+      model: inputMessage.model ?? parentSnapshot?.model,
+    };
 
     await registerWorkerSession(worker);
-    receipt = await createSession(
-      sessionId,
-      { ...input.message, model },
-      {
-        directory: input.directory ?? parentDirectory,
-        sessionType: "worker",
-        parentSessionId,
-        useWorktree: input.useWorktree ?? false,
-        ...(worker.name === undefined ? {} : { name: worker.name }),
-      },
-    );
+    receipt = await createSession(sessionId, message, {
+      directory: location?.directory ?? parentDirectory,
+      sessionType: "worker",
+      parentSessionId,
+      useWorktree: location?.useWorktree ?? false,
+      ...(worker.name === undefined ? {} : { name: worker.name }),
+    });
     if (cancelingWorkers.has(sessionId)) {
       await abortSession(sessionId);
       throw new WorkerCanceledError(sessionId);

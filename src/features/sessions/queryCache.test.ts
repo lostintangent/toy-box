@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
-import type { SessionMetadata, SessionSnapshot } from "./model";
-import { createInitialSession, toSessionSnapshot } from "./model/reducer";
+import type { SessionMetadata, SessionState } from "./model";
+import { createInitialSessionState } from "./model/reducer";
 import type { SessionsState } from "./model";
 import { createEmptySessionsState, sessionQueries } from "./queries";
 import {
@@ -221,13 +221,7 @@ describe("session query cache", () => {
     const otherSessionId = "toy-box-untouched";
     seedState(queryClient, { sessions: [createSession(sessionId)] });
     for (const id of [sessionId, otherSessionId]) {
-      queryClient.setQueryData(sessionQueries.detail(id).queryKey, {
-        id,
-        messages: [],
-        queuedMessages: [],
-        status: "idle",
-        reasoningContent: "",
-      });
+      queryClient.setQueryData(sessionQueries.detail(id).queryKey, createInitialSessionState());
     }
     applyWorkspaceEventToSessionQueries(queryClient, {
       type: "session.touched",
@@ -288,14 +282,11 @@ describe("session deletion cache boundary", () => {
     const sessionId = "automation";
     const queryKey = sessionQueries.detail(sessionId).queryKey;
     const previous = {
-      ...toSessionSnapshot(
-        sessionId,
-        createInitialSession({
-          messages: [{ role: "assistant", content: "Previous run" }],
-          artifacts: ["old.md"],
-          model: { provider: "copilot", name: "previous-model" },
-        }),
-      ),
+      ...createInitialSessionState({
+        messages: [{ role: "assistant", content: "Previous run" }],
+        artifacts: ["old.md"],
+        model: { provider: "copilot", name: "previous-model" },
+      }),
       lastSeenEventId: 100,
     };
     client.setQueryData(queryKey, previous);
@@ -303,12 +294,12 @@ describe("session deletion cache boundary", () => {
     const read = client.fetchQuery({ queryKey, queryFn: () => history.promise });
 
     applyWorkspaceEventToSessionQueries(client, { type: "session.deleted", sessionId });
-    const empty = toSessionSnapshot(sessionId, createInitialSession());
-    expect(client.getQueryData<SessionSnapshot>(queryKey)).toEqual(empty);
+    const empty = createInitialSessionState();
+    expect(client.getQueryData<SessionState>(queryKey)).toEqual(empty);
 
     history.resolve(previous);
     await read.catch(() => {});
-    expect(client.getQueryData<SessionSnapshot>(queryKey)).toEqual(empty);
+    expect(client.getQueryData<SessionState>(queryKey)).toEqual(empty);
     client.clear();
   });
 

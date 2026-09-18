@@ -7,12 +7,6 @@ export function applyAgentEvent(queryClient: QueryClient, event: WorkspaceEvent)
     case "agent.changed":
       void queryClient.invalidateQueries({ queryKey: agentQueries.listKey(), exact: true });
       return;
-    case "agent.membership.changed":
-      void queryClient.invalidateQueries({
-        queryKey: agentQueries.membershipList(event.host).queryKey,
-        exact: true,
-      });
-      return;
     default:
       return;
   }

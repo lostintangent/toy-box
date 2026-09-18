@@ -170,7 +170,6 @@ function channelMentionSuggestions(
     query,
     agents,
     memberships: members,
-    hostKind: "channel",
   });
   if (members.length > 0 && "everyone".includes(normalizedQuery)) {
     suggestions.unshift({

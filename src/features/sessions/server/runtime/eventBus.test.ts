@@ -62,6 +62,17 @@ describe("session event bus replay and live delivery", () => {
 
     await passive.return();
   });
+
+  test("keeps event ids monotonic across buses after a synchronous burst", () => {
+    const first = createTestBus(1);
+    let last = first.publish(event("0"));
+    for (let index = 1; index < 2_000; index++) {
+      last = first.publish(event(String(index)));
+    }
+
+    const second = createTestBus(1);
+    expect(second.publish(event("next")).eventId).toBe(last.eventId! + 1);
+  });
 });
 
 describe("session event bus retention", () => {

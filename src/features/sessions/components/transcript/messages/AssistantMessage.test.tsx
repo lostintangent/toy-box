@@ -16,6 +16,7 @@ test.each(["", "Partial answer"])(
           },
         ]}
         isStreaming={false}
+        isWaiting={false}
         status="idle"
         reasoningContent=""
         scrollToBottomRef={{ current: null }}

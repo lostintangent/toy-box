@@ -10,9 +10,8 @@ import {
 describe("Session system messages", () => {
   test("round-trips structured display content separately from the model prompt", () => {
     const message = {
-      type: "agent_response",
-      agentId: "reviewer",
-      content: "The invariant holds.",
+      type: "file_edited",
+      file: { kind: "session", sessionId: "s1", path: "résumé 🍣.md" },
     } as const;
     const display = encodeSystemMessage(message);
     expect(display).not.toBe(systemMessagePrompt(message));
@@ -45,22 +44,5 @@ describe("Session system messages", () => {
     expect(systemMessageLabel(channelMessage)).toBe("Message from Research Scout");
     expect(systemMessageCoalesceKey(channelMessage)).toBe("channel_message");
     expect(systemMessagePrompt(channelMessage)).toContain("Call `read_channel`");
-
-    const agentHandoff = {
-      type: "agent_handoff",
-      content: "Post the private decision to the team.",
-    } as const;
-    expect(systemMessageLabel(agentHandoff)).toBe("Private direction");
-    expect(systemMessageCoalesceKey(agentHandoff)).toBeUndefined();
-    expect(systemMessagePrompt(agentHandoff)).toContain(agentHandoff.content);
-
-    const agentResponse = {
-      type: "agent_response",
-      agentId: "reviewer",
-      content: "The invariant holds.",
-    } as const;
-    expect(systemMessageLabel(agentResponse)).toBe("Agent replied");
-    expect(systemMessageCoalesceKey(agentResponse)).toBeUndefined();
-    expect(systemMessagePrompt(agentResponse)).toContain("The invariant holds.");
   });
 });

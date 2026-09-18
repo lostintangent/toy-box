@@ -1,10 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
-import type { Agent, AgentMembership } from "@agents/model";
+import type { Agent } from "@agents/model";
 import {
   createAgentInputSchema,
   deleteAgentInputSchema,
-  listAgentMembershipsInputSchema,
   manageAgentExperienceRequestSchema,
   updateAgentInputSchema,
 } from "@agents/model";
@@ -29,7 +28,3 @@ export const deleteAgent = createServerFn({ method: "POST" })
 export const manageAgentExperience = createServerFn({ method: "POST" })
   .validator(zodValidator(manageAgentExperienceRequestSchema))
   .handler(({ data }): Promise<Agent> => agents.manageAgentExperience(data.agentId, data.change));
-
-export const listAgentMemberships = createServerFn({ method: "POST" })
-  .validator(zodValidator(listAgentMembershipsInputSchema))
-  .handler(({ data }): Promise<AgentMembership[]> => agents.listAgentMemberships(data.host));

@@ -31,7 +31,7 @@ export type ModelInfo = import("./modelConfiguration").ModelOptionInfo & {
   providerName?: string;
 };
 export type { SessionSystemMessage } from "./systemMessages";
-export type { Attachment, SessionLaunch, SessionMessage, SessionType } from "./protocol";
+export type { Attachment, SessionLaunch, SessionLocation, SessionType } from "./protocol";
 
 export type SessionSkill = {
   name: string;
@@ -69,13 +69,7 @@ export type TodoItemPatch =
   | { type: "update_all"; status: TodoStatus }
   | { type: "delete"; id: string };
 
-export type SessionStatus =
-  | "idle"
-  | "waiting"
-  | "thinking"
-  | "compacting"
-  | "reasoning"
-  | "responding";
+export type SessionStatus = "idle" | "thinking" | "compacting" | "reasoning" | "responding";
 
 /** The observable result of waiting for a session's current execution. */
 export type SessionCompletion = {
@@ -98,22 +92,24 @@ export type SessionCanvas = {
 
 type SessionCanvasOpen = Omit<SessionCanvas, "key" | "revision">;
 
-export type SessionSnapshot = {
-  id: string;
+/** Canonical reduced state for a session at any point in time. */
+export type SessionState = {
   messages: Message[];
-  queuedMessages: QueuedMessage[];
+  queuedMessages: Array<SessionMessage & { status: "queued" | "submitting" | "submitted" }>;
   model?: ModelConfiguration;
-  todos?: TodoItem[];
-  linkedSessionIds?: string[];
-  canvases?: SessionCanvas[];
-  artifacts?: string[];
-  openedFiles?: WorkspaceFile[];
+  todos: TodoItem[];
+  linkedSessionIds: string[];
+  canvases: SessionCanvas[];
+  artifacts: string[];
+  openedFiles: WorkspaceFile[];
   lastSeenEventId?: number;
   status: SessionStatus;
   reasoningContent: string;
 };
 
 export type UserMessage = {
+  /** Identifies the client submission across queued, optimistic, and canonical forms. */
+  clientId?: string;
   rewindable?: boolean;
   role: "user";
   content: string;
@@ -122,6 +118,8 @@ export type UserMessage = {
 };
 
 export type SystemMessage = {
+  /** Identifies the submission when the provider preserves it in history. */
+  clientId?: string;
   role: "system";
   content: SessionSystemMessage;
   timestamp?: string;
@@ -139,7 +137,20 @@ export type AssistantMessage = {
 
 export type Message = UserMessage | SystemMessage | AssistantMessage;
 
-type SubAgent = {
+/** An identified user or system message submitted to a Session. */
+export type SessionMessage =
+  | (Omit<UserMessage, "clientId" | "rewindable" | "timestamp"> & {
+      clientId: string;
+      model?: ModelConfiguration;
+      immediate?: true;
+    })
+  | (Omit<SystemMessage, "clientId" | "timestamp"> & {
+      clientId: string;
+      immediate?: true;
+    });
+
+/** Provider-native child activity nested under its spawning agent tool call. */
+export type SubagentActivity = {
   content?: string;
   model?: ModelConfiguration;
   reasoningContent?: string;
@@ -171,7 +182,7 @@ export type ToolCall = {
     success: boolean;
     details?: string;
   };
-  agent?: SubAgent;
+  subagent?: SubagentActivity;
   question?: SessionQuestion;
 };
 
@@ -180,23 +191,6 @@ export function toDataUrl(attachment: Attachment): string | undefined {
   if (!attachment.base64) return undefined;
   return `data:${attachment.mimeType};base64,${attachment.base64}`;
 }
-
-export type QueuedUserMessage = Omit<UserMessage, "timestamp"> & {
-  clientId: string;
-  model?: ModelConfiguration;
-  /** Recipients resolved from visible mention text when the server accepts this message. */
-  mentionedAgentIds?: string[];
-  /** Immediate delivery has been requested, but the canonical SDK user message has not arrived. */
-  immediate?: true;
-};
-
-type QueuedSystemMessage = Omit<SystemMessage, "timestamp"> & {
-  clientId: string;
-  /** Immediate delivery has been requested, but the canonical SDK input has not arrived. */
-  immediate?: true;
-};
-
-export type QueuedMessage = QueuedUserMessage | QueuedSystemMessage;
 
 export type DraftPrompt = {
   text: string;
@@ -230,22 +224,22 @@ export type SessionEvent = (
       type: "assistant_message";
       content: string;
       messageId?: string;
-      agentId?: string;
+      parentToolCallId?: string;
     }
-  | { type: "delta"; content: string; messageId?: string; agentId?: string }
-  | { type: "reasoning"; content: string; agentId?: string }
+  | { type: "delta"; content: string; messageId?: string }
+  | { type: "reasoning"; content: string; parentToolCallId?: string }
   | {
       type: "tool_start";
       toolName: string;
       toolCallId: string;
-      agentId?: string;
+      parentToolCallId?: string;
       arguments: { [key: string]: JSONType };
       question?: SessionQuestionBase;
     }
   | {
       type: "tool_end";
       toolCallId: string;
-      agentId?: string;
+      parentToolCallId?: string;
       success: boolean;
       result?: string;
       details?: string;
@@ -265,9 +259,14 @@ export type SessionEvent = (
   | { type: "status"; status: SessionStatus }
   | { type: "todos_patch"; patches: TodoItemPatch[] }
   | { type: "session_title_changed"; title: string }
-  | { type: "message_queued"; message: QueuedMessage }
+  | { type: "message_queued"; message: SessionMessage }
+  | {
+      type: "message_status_changed";
+      clientId: string;
+      status: "submitting" | "submitted";
+    }
   | { type: "message_cancelled"; clientId: string }
-  | { type: "model_changed"; model: ModelConfiguration; agentId?: string }
+  | { type: "model_changed"; model: ModelConfiguration; parentToolCallId?: string }
   | { type: "linked_session_added"; sessionId: string }
   | { type: "linked_session_removed"; sessionId: string }
   | { type: "canvas_opened"; canvas: SessionCanvasOpen }

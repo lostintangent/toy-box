@@ -29,8 +29,8 @@ export async function initializeAgentSchema(db: Bun.SQL): Promise<void> {
     CREATE TABLE IF NOT EXISTS agent_memberships (
       session_id     TEXT PRIMARY KEY,
       agent_id       TEXT NOT NULL REFERENCES agents(id),
-      host_kind      TEXT NOT NULL CHECK (host_kind IN ('session', 'channel', 'file')),
-      host_id        TEXT NOT NULL CHECK (host_kind <> 'file' OR json_valid(host_id)),
+      host_kind      TEXT NOT NULL CHECK (host_kind = 'channel'),
+      host_id        TEXT NOT NULL,
       UNIQUE(host_kind, host_id, agent_id)
     );
 

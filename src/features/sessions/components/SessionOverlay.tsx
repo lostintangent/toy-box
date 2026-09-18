@@ -15,7 +15,13 @@ import {
 import { PaneStatus } from "@workspace/components/panes/shell/PaneSlots";
 import { SessionPane } from "./SessionPane";
 
-export function SessionOverlay({ sessionId }: { sessionId: string }) {
+export function SessionOverlay({
+  sessionId,
+  isVisible = true,
+}: {
+  sessionId: string;
+  isVisible?: boolean;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const { running, waiting } = useWorkspaceSessionActivity(sessionId);
   const trigger = (
@@ -72,7 +78,12 @@ export function SessionOverlay({ sessionId }: { sessionId: string }) {
             >
               <X className={PANE_OVERLAY_ICON_CLASS} />
             </button>
-            <SessionPane key={sessionId} sessionId={sessionId} mode="overlay" />
+            <SessionPane
+              key={sessionId}
+              sessionId={sessionId}
+              mode="overlay"
+              isVisible={isVisible}
+            />
           </m.div>
         )}
       </AnimatePresence>

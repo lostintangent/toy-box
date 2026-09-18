@@ -159,7 +159,7 @@ export function SidebarHeader({
               }
             >
               <Shapes />
-              New diagram
+              New whiteboard
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onCreateAutomation}>

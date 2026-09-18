@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { Session } from "@sessions/model/reducer";
+import type { SessionState } from "@sessions/model";
 import { loadSessionFixture, replayCopilotHistory } from "./helpers";
 
 // Golden replay of the HISTORY pipeline — the resume/replay consumption mode:
 // native events → provider projector → shared history reducer → idle Session.
 describe("history pipeline golden replay", () => {
-  function agentToolCalls(state: Session) {
+  function agentToolCalls(state: SessionState) {
     return state.messages.flatMap((m) =>
       m.role === "assistant" ? (m.toolCalls ?? []).filter((tc) => tc.name === "agent") : [],
     );
@@ -31,7 +31,7 @@ describe("history pipeline golden replay", () => {
     const agents = agentToolCalls(state);
     expect(agents).toHaveLength(7);
     const childCounts = agents
-      .map((tc) => tc.agent?.toolCalls?.length ?? 0)
+      .map((tc) => tc.subagent?.toolCalls?.length ?? 0)
       .filter((n) => n > 0)
       .sort((a, b) => a - b);
     expect(childCounts).toEqual([3, 4]);
@@ -46,16 +46,11 @@ describe("history pipeline golden replay", () => {
       result: { success: false, content: "Path does not exist" },
     });
     expect(
-      agents.some((tc) => tc.agent?.content?.includes("examining the uncommitted changes")),
+      agents.some((tc) => tc.subagent?.content?.includes("examining the uncommitted changes")),
     ).toBe(true);
 
-    // ...and replay fully resolves transient state.
+    // ...and replay fully resolves transient status.
     expect(state.status).toBe("idle");
-    expect(state.pendingToolCalls.size).toBe(0);
-
-    expect({
-      ...state,
-      pendingToolCalls: [...state.pendingToolCalls.entries()],
-    }).toMatchSnapshot();
+    expect(state).toMatchSnapshot();
   });
 });

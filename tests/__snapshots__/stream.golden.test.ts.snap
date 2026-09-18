@@ -192,12 +192,12 @@ Evaluate the overall design decisions:
       "type": "tool_start",
     },
     {
-      "agentId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
       "eventId": 16,
       "model": {
         "name": "gpt-5.5",
         "provider": "copilot",
       },
+      "parentToolCallId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
       "type": "model_changed",
     },
     {
@@ -209,100 +209,99 @@ Evaluate the overall design decisions:
       "type": "tool_end",
     },
     {
-      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "eventId": 18,
       "model": {
         "name": "claude-opus-4.8",
         "provider": "copilot",
       },
+      "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "type": "model_changed",
     },
     {
-      "agentId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
       "eventId": 19,
       "model": {
         "name": "claude-haiku-4.5",
         "provider": "copilot",
       },
+      "parentToolCallId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
       "type": "model_changed",
     },
     {
-      "agentId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
       "eventId": 20,
       "model": {
         "name": "claude-haiku-4.5",
         "provider": "copilot",
       },
+      "parentToolCallId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
       "type": "model_changed",
     },
     {
-      "agentId": "call_7CE08h3s8nNulW1GHoiNsWeu",
       "eventId": 21,
       "model": {
         "name": "claude-haiku-4.5",
         "provider": "copilot",
       },
+      "parentToolCallId": "call_7CE08h3s8nNulW1GHoiNsWeu",
       "type": "model_changed",
     },
     {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "eventId": 22,
       "model": {
         "name": "claude-haiku-4.5",
         "provider": "copilot",
       },
+      "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "type": "model_changed",
     },
     {
-      "agentId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
       "eventId": 23,
       "model": {
         "name": "claude-haiku-4.5",
         "provider": "copilot",
       },
+      "parentToolCallId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
       "type": "model_changed",
     },
     {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "content": "",
       "eventId": 24,
+      "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "type": "assistant_message",
     },
     {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "arguments": {
         "command": "cd /Users/lostintangent/Desktop/toy-box && git status",
         "description": "Check git status to see uncommitted changes",
       },
       "eventId": 25,
+      "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "toolCallId": "toolu_bdrk_01Bc16CL9HSZ6uwrBHBTraGR",
       "toolName": "bash",
       "type": "tool_start",
     },
     {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "arguments": {
         "command": "cd /Users/lostintangent/Desktop/toy-box && git diff --name-only",
         "description": "List modified files",
       },
       "eventId": 26,
+      "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "toolCallId": "toolu_bdrk_01WYvdnAft499BoKhWbhRnnF",
       "toolName": "bash",
       "type": "tool_start",
     },
     {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "arguments": {
         "command": "cd /Users/lostintangent/Desktop/toy-box && git status --porcelain",
         "description": "Get full status with untracked files",
       },
       "eventId": 27,
+      "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "toolCallId": "toolu_bdrk_01CpyvLNVaTKQDdQt31piuC6",
       "toolName": "bash",
       "type": "tool_start",
     },
     {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "details": 
 "On branch main
 Changes not staged for commit:
@@ -312,6 +311,7 @@ Changes not staged for commit:
 	modif…"
 ,
       "eventId": 28,
+      "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "result": 
 "On branch main
 Changes not staged for commit:
@@ -325,7 +325,6 @@ Changes not staged for commit:
       "type": "tool_end",
     },
     {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "details": 
 "src/components/session/SessionView.tsx
 src/components/session/input/DiffPopup.tsx
@@ -335,6 +334,7 @@ src/components/session/messages/tools/AgentToolCall.tsx
 src…"
 ,
       "eventId": 29,
+      "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "result": 
 "src/components/session/SessionView.tsx
 src/components/session/input/DiffPopup.tsx
@@ -348,7 +348,6 @@ src…"
       "type": "tool_end",
     },
     {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "details": 
 "M src/components/session/SessionView.tsx
  M src/components/session/input/DiffPopup.tsx
@@ -357,6 +356,7 @@ src…"
  M src/components/session/messages/tools/AgentTo…"
 ,
       "eventId": 30,
+      "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "result": 
 "M src/components/session/SessionView.tsx
  M src/components/session/input/DiffPopup.tsx
@@ -369,43 +369,42 @@ src…"
       "type": "tool_end",
     },
     {
-      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "content": "I'll start by examining the uncommitted changes to understand the design context.",
       "eventId": 31,
+      "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "type": "assistant_message",
     },
     {
-      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "arguments": {
         "intent": "Examining uncommitted changes",
       },
       "eventId": 32,
+      "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "toolCallId": "toolu_01U7w1ymeBtK62owAFb7pxSA",
       "toolName": "report_intent",
       "type": "tool_start",
     },
     {
-      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "arguments": {
         "command": "cd /Users/lostintangent/Desktop/toy-box && git --no-pager status && echo "===DIFFSTAT===" && git --no-pager diff --stat",
         "description": "Show git status and diff stat",
       },
       "eventId": 33,
+      "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "toolCallId": "toolu_01AaNM5wZ1QXPthiuEr4vzZW",
       "toolName": "bash",
       "type": "tool_start",
     },
     {
-      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "details": "Examining uncommitted changes",
       "eventId": 34,
+      "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "result": "Intent logged",
       "success": true,
       "toolCallId": "toolu_01U7w1ymeBtK62owAFb7pxSA",
       "type": "tool_end",
     },
     {
-      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "details": 
 "On branch main
 Changes not staged for commit:
@@ -415,6 +414,7 @@ Changes not staged for commit:
 	modif…"
 ,
       "eventId": 35,
+      "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "result": 
 "On branch main
 Changes not staged for commit:
@@ -428,17 +428,16 @@ Changes not staged for commit:
       "type": "tool_end",
     },
     {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "arguments": {
         "path": "/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts",
       },
       "eventId": 36,
+      "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "toolCallId": "toolu_bdrk_01DuKi1hYw5i5feiz5KeWwaC",
       "toolName": "read",
       "type": "tool_start",
     },
     {
-      "agentId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "details": 
 "
 diff --git a/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts b/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts
@@ -446,6 +445,7 @@ index 0000000..0000000 100644
 --- a/Users/lostintangent/Desktop/toy-box/sr…"
 ,
       "eventId": 37,
+      "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "result": 
 "1. import { describe, expect, test } from "bun:test";
 2. import { initializeSessionStateFromSdkHistory } from "./sessionState";
@@ -458,18 +458,17 @@ index 0000000..0000000 100644
       "type": "tool_end",
     },
     {
-      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "arguments": {
         "command": "cd /Users/lostintangent/Desktop/toy-box && git --no-pager diff src/types.ts",
         "description": "Show diff of types.ts",
       },
       "eventId": 38,
+      "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "toolCallId": "toolu_01TorsDVgPrQe3waDFEWnQvD",
       "toolName": "bash",
       "type": "tool_start",
     },
     {
-      "agentId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "details": 
 "diff --git a/src/types.ts b/src/types.ts
 index 375b1b8..9db9a3a 100644
@@ -481,6 +480,7 @@ index 375b1b8..9db9a3a 100644
  export…"
 ,
       "eventId": 39,
+      "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "result": 
 "diff --git a/src/types.ts b/src/types.ts
 index 375b1b8..9db9a3a 100644
@@ -552,25 +552,37 @@ index 375b1b8..9db9a3a 100644
       "type": "message_queued",
     },
     {
+      "clientId": "queued-1",
+      "eventId": 49,
+      "status": "submitting",
+      "type": "message_status_changed",
+    },
+    {
+      "clientId": "queued-1",
+      "eventId": 50,
+      "status": "submitted",
+      "type": "message_status_changed",
+    },
+    {
       "attachments": undefined,
       "clientId": "queued-1",
       "content": "now fix the findings",
-      "eventId": 49,
+      "eventId": 51,
       "timestamp": undefined,
       "type": "user_message",
     },
     {
-      "eventId": 50,
+      "eventId": 52,
       "status": "thinking",
       "type": "status",
     },
     {
       "content": "On it.",
-      "eventId": 51,
+      "eventId": 53,
       "type": "delta",
     },
     {
-      "eventId": 52,
+      "eventId": 54,
       "reason": "idle",
       "type": "end",
     },
@@ -589,7 +601,8 @@ index 375b1b8..9db9a3a 100644
 exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, and finish 2`] = `
 {
   "artifacts": [],
-  "lastSeenEventId": 52,
+  "canvases": [],
+  "lastSeenEventId": 54,
   "linkedSessionIds": [],
   "messages": [
     {
@@ -616,6 +629,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
     },
     {
       "attachments": undefined,
+      "clientId": "client-1",
       "content": "What’s your thoughts on this change now? Maybe kick off a code review and a half dozen sub agents to go review different aspects of this change and see how they feel about itne2e",
       "role": "user",
       "timestamp": "2026-06-11T02:19:11.607Z",
@@ -638,12 +652,6 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
           },
         },
         {
-          "agent": {
-            "model": {
-              "name": "gpt-5.5",
-              "provider": "copilot",
-            },
-          },
           "arguments": {
             "agent_type": "code-review",
             "description": "Review full diff",
@@ -658,14 +666,14 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
             "details": undefined,
             "success": true,
           },
-        },
-        {
-          "agent": {
+          "subagent": {
             "model": {
-              "name": "claude-haiku-4.5",
+              "name": "gpt-5.5",
               "provider": "copilot",
             },
           },
+        },
+        {
           "arguments": {
             "agent_type": "explore",
             "description": "Review attachments flow",
@@ -685,14 +693,14 @@ Intended behavior:
             "details": undefined,
             "success": true,
           },
-        },
-        {
-          "agent": {
+          "subagent": {
             "model": {
               "name": "claude-haiku-4.5",
               "provider": "copilot",
             },
           },
+        },
+        {
           "arguments": {
             "agent_type": "explore",
             "description": "Review tool semantics",
@@ -712,14 +720,14 @@ Intended behavior:
             "details": undefined,
             "success": true,
           },
-        },
-        {
-          "agent": {
+          "subagent": {
             "model": {
               "name": "claude-haiku-4.5",
               "provider": "copilot",
             },
           },
+        },
+        {
           "arguments": {
             "agent_type": "explore",
             "description": "Review diff parser",
@@ -739,14 +747,14 @@ Intended behavior:
             "details": undefined,
             "success": true,
           },
-        },
-        {
-          "agent": {
+          "subagent": {
             "model": {
               "name": "claude-haiku-4.5",
               "provider": "copilot",
             },
           },
+        },
+        {
           "arguments": {
             "agent_type": "explore",
             "description": "Review runtime state",
@@ -766,9 +774,33 @@ Focus areas:
             "details": undefined,
             "success": true,
           },
+          "subagent": {
+            "model": {
+              "name": "claude-haiku-4.5",
+              "provider": "copilot",
+            },
+          },
         },
         {
-          "agent": {
+          "arguments": {
+            "agent_type": "explore",
+            "description": "Review tests coverage",
+            "mode": "background",
+            "name": "coverage-review",
+            "prompt": 
+"You are an explore agent reviewing test coverage for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+
+Context: Changes include SDK blob attachments, semantic Attachment type, semantic ToolCall i…"
+,
+          },
+          "id": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+          "name": "agent",
+          "result": {
+            "content": "",
+            "details": undefined,
+            "success": true,
+          },
+          "subagent": {
             "content": "",
             "model": {
               "name": "claude-haiku-4.5",
@@ -879,27 +911,28 @@ index 0000000..0000000 100644
               },
             ],
           },
+        },
+        {
           "arguments": {
-            "agent_type": "explore",
-            "description": "Review tests coverage",
+            "agent_type": "rubber-duck",
+            "description": "Rubber duck design",
             "mode": "background",
-            "name": "coverage-review",
+            "name": "design-review",
             "prompt": 
-"You are an explore agent reviewing test coverage for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+"You are a rubber-duck reviewer for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Provide high-signal design feedback only; ignore style/formatting.
 
-Context: Changes include SDK blob attachments, semantic Attachment type, semantic ToolCall i…"
+Evaluate the overall design decisions:
+- Se…"
 ,
           },
-          "id": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+          "id": "call_aIs3ubnSXyt6yavyLbThBQZk",
           "name": "agent",
           "result": {
             "content": "",
             "details": undefined,
             "success": true,
           },
-        },
-        {
-          "agent": {
+          "subagent": {
             "content": "I'll start by examining the uncommitted changes to understand the design context.",
             "model": {
               "name": "claude-opus-4.8",
@@ -978,25 +1011,6 @@ index 375b1b8..9db9a3a 100644
               },
             ],
           },
-          "arguments": {
-            "agent_type": "rubber-duck",
-            "description": "Rubber duck design",
-            "mode": "background",
-            "name": "design-review",
-            "prompt": 
-"You are a rubber-duck reviewer for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Provide high-signal design feedback only; ignore style/formatting.
-
-Evaluate the overall design decisions:
-- Se…"
-,
-          },
-          "id": "call_aIs3ubnSXyt6yavyLbThBQZk",
-          "name": "agent",
-          "result": {
-            "content": "",
-            "details": undefined,
-            "success": true,
-          },
         },
       ],
     },
@@ -1006,6 +1020,7 @@ Evaluate the overall design decisions:
     },
     {
       "attachments": undefined,
+      "clientId": "queued-1",
       "content": "now fix the findings",
       "role": "user",
       "timestamp": undefined,
@@ -1021,12 +1036,9 @@ Evaluate the overall design decisions:
     "reasoningEffort": "xhigh",
   },
   "openedFiles": [],
-  "pendingOptimisticUserMessage": undefined,
-  "pendingToolCalls": [],
   "queuedMessages": [],
   "reasoningContent": "",
   "status": "idle",
-  "title": undefined,
-  "todos": undefined,
+  "todos": [],
 }
 `;

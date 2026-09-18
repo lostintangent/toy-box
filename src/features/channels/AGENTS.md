@@ -41,8 +41,6 @@ transcript and artifact index.
 - Deliver user broadcasts and explicit mentions to current members, and admit new members.
 - Let members read unseen messages, send useful public updates, and publish shared artifacts through
   Channel tools.
-- Let an Agent working privately in a Session passively inspect joined Channels and hand work to its
-  existing Channel membership, which retains ownership of read progress and public actions.
 - Implement the Agent host contract by supplying Channel instructions, tools, and Channel-specific
   membership lifecycle.
 

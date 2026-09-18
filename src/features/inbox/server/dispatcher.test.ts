@@ -87,8 +87,7 @@ describe("dispatchInboxTask", () => {
   test("claims Inbox ownership before opening an Inbox session", async () => {
     const result = await dispatchInboxTask({
       message: { content: "Research this", model: { provider: "copilot", name: "gpt-5" } },
-      directory: "/repo",
-      useWorktree: false,
+      location: { directory: "/repo", useWorktree: false },
     });
 
     expect(result.sessionId).toStartWith("toy-box-");

@@ -22,10 +22,9 @@ import {
   upsertSessionInState,
 } from "./queryCache";
 import { applyWorkspaceEvent } from "@workspace/queries";
-import type { SessionLaunch, SessionMessage } from "./model";
+import type { SessionLaunch } from "./model";
 import type { SessionQuestionAnswer } from "./model/protocol";
 
-type MessageDelivery = SessionMessage & { clientId: string; immediate?: true };
 type CreateDraftSessionVariables = {
   sessionId: string;
   createdAt: number;
@@ -100,8 +99,8 @@ export const sessionMutations = {
 
   deliverMessage: (sessionId: string) =>
     mutationOptions({
-      mutationFn: ({ immediate, ...message }: MessageDelivery) =>
-        deliverMessage({ data: { sessionId, message, immediate } }),
+      mutationFn: (message: SessionLaunch["message"] & { clientId: string }) =>
+        deliverMessage({ data: { sessionId, message } }),
     }),
 
   answerSessionQuestion: (sessionId: string) =>

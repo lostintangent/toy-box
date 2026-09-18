@@ -1,11 +1,10 @@
 import type { CopilotSession, SessionEvent as SdkEvent } from "@github/copilot-sdk";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
 import type { SessionConnection } from "@providers/server/provider";
-import type { QueuedMessage } from "@sessions/model";
 import { encodeSystemMessage, systemMessagePrompt } from "@sessions/model/systemMessages";
 import { toSdkAttachments } from "./attachments";
 import { toSdkSetModelOptions } from "./modelConfiguration";
-import { createSdkEventProjector, getSdkTurnEndReason } from "./projector";
+import { createSdkEventProjector } from "./projector";
 
 /** Native SDK event and RPC details never cross the Sessions contract. */
 export function connectCopilotSession(
@@ -18,9 +17,12 @@ export function connectCopilotSession(
     onEvent(listener) {
       const project = createSdkEventProjector(sessionId);
       return native.on((event: SdkEvent) => {
-        const reason = getSdkTurnEndReason(event);
-        if (reason) {
-          listener({ type: "end", reason });
+        if (event.type === "session.idle") {
+          listener({ type: "end", reason: "idle" });
+          return;
+        }
+        if (event.type === "session.error" || event.type === "abort") {
+          listener({ type: "end", reason: "error" });
           return;
         }
         for (const projected of project(event)) {
@@ -41,15 +43,18 @@ export function connectCopilotSession(
         }
       });
     },
-    async send(message: QueuedMessage, immediate?: true) {
+    async send(message) {
       const id = await native.send({
         ...(message.role === "system"
           ? {
               prompt: systemMessagePrompt(message.content),
               displayPrompt: encodeSystemMessage(message.content),
             }
-          : { prompt: message.content, attachments: toSdkAttachments(message.attachments) }),
-        ...(immediate ? { mode: "immediate" } : {}),
+          : {
+              prompt: message.content,
+              attachments: toSdkAttachments(message.attachments),
+            }),
+        ...(message.immediate ? { mode: "immediate" } : {}),
       });
       pendingInputs.set(id, message.clientId);
     },

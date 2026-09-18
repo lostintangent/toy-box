@@ -10,13 +10,12 @@ export const channelAgentHost: AgentHostAdapter = {
   },
 
   async getInstructions(_agent, membership) {
-    if (membership.host.kind !== "channel") {
-      throw new Error("Channel Agent host received a non-Channel membership.");
-    }
     const database = new ChannelDatabase(await getStateDatabase());
     const channel = await database.getChannel(membership.host.channelId);
     if (!channel) throw new Error("Channel Agent membership is incomplete.");
     return `You are participating in the Toy Box channel “${channel.title}”, a shared collaboration space with the user and other agents.
+
+Your SDK transcript is private working state.
 
 Follow this channel lifecycle.
 

@@ -14,7 +14,7 @@ import { AppDatabase } from "@apps/server/database";
 import { resolveWorkspaceFile } from "@files/server/paths";
 import { workspaceFileId } from "@files/model";
 import { SESSION_ID_PREFIX } from "@sessions/model/constants";
-import type { SessionLaunch } from "@sessions/model";
+import type { SessionLaunch, SessionLocation } from "@sessions/model";
 
 type SessionWorkerInput = SessionLaunch & {
   parentSessionId: string;
@@ -40,7 +40,7 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId:
     const worker: Worker = { ...details, type: "file", file: input.file, ephemeral: true };
     void admitWorker(worker, () =>
       spawnWorkerSession(
-        input,
+        input.location,
         {
           ...input.message,
           content: buildWorkerPrompt(input.message.content, {
@@ -64,7 +64,7 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId:
       const app = await apps.get(input.appId);
       if (!app) throw new Error("The app was deleted before its worker started.");
       return spawnWorkerSession(
-        input,
+        input.location,
         {
           ...input.message,
           content: buildWorkerPrompt(input.message.content, { type: "app", app }),
@@ -90,7 +90,7 @@ export async function spawnSessionWorker(
     ...(input.name === undefined ? {} : { name: input.name }),
   };
 
-  await admitWorker(worker, () => spawnWorkerSession(input, input.message, worker));
+  await admitWorker(worker, () => spawnWorkerSession(input.location, input.message, worker));
   return { sessionId };
 }
 
@@ -124,7 +124,7 @@ export async function cancelAdmittedWorker(sessionId: string): Promise<boolean> 
 }
 
 async function spawnWorkerSession(
-  input: Pick<SessionLaunch, "directory" | "useWorktree">,
+  location: SessionLocation | undefined,
   message: SessionLaunch["message"],
   worker: Worker,
 ): Promise<WorkerSessionReceipt> {
@@ -132,8 +132,7 @@ async function spawnWorkerSession(
   return supervisor.spawnWorker({
     worker,
     message,
-    directory: input.directory,
-    useWorktree: input.useWorktree,
+    location,
   });
 }
 

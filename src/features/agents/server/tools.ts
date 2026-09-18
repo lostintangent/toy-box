@@ -25,13 +25,6 @@ const manageAgentExperienceTool = defineTool("manage_agent_experience", {
   },
 });
 
-export const finishAgentTurnTool = defineTool("finish_agent_turn", {
-  description: "Ends this private agent turn without publishing a message.",
-  parameters: z.object({}).strict(),
-  isTerminal: true,
-  handler: () => "Done.",
-});
-
 export const listAgentsTool = defineTool("list_available_agents", {
   description: "Lists available agents with their stable IDs, exact mentions, and personas.",
   parameters: z.object({}).strict(),

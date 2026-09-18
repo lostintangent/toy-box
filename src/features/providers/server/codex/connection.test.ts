@@ -5,12 +5,10 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   applySessionEvent,
-  createInitialSession,
+  createInitialSessionState,
   replaySessionHistory,
-  sessionSeedFromSnapshot,
-  toSessionSnapshot,
 } from "@sessions/model/reducer";
-import type { QueuedMessage, SessionEvent } from "@sessions/model";
+import type { SessionEvent, SessionMessage } from "@sessions/model";
 import type { SessionConfiguration } from "@providers/server/provider";
 import { defineTool } from "@sessions/server/tools/definition";
 import { CodexConnection } from "./connection";
@@ -47,7 +45,7 @@ const assistantItem: ThreadItem = {
 };
 
 function sessionState(events: SessionEvent[]) {
-  return events.reduce(applySessionEvent, createInitialSession());
+  return events.reduce(applySessionEvent, createInitialSessionState());
 }
 
 function setup(tools: SessionConfiguration["tools"] = []) {
@@ -65,6 +63,7 @@ function setup(tools: SessionConfiguration["tools"] = []) {
     name: null,
     turns: [{ ...turn, items: [userItem, assistantItem] }],
   } as Thread;
+  const childThreads = new Map<string, Thread>();
   const rpc = new CodexTransport((line) => {
     const request = JSON.parse(line) as {
       id: number;
@@ -79,8 +78,13 @@ function setup(tools: SessionConfiguration["tools"] = []) {
     let result: unknown = {};
     if (request.method === "turn/start") result = { turn };
     if (request.method === "turn/steer") result = { turnId: turn.id };
-    if (request.method === "thread/read") result = { thread };
-    if (request.method === "thread/turns/list") result = { data: thread.turns, nextCursor: null };
+    const requestedThread =
+      typeof request.params.threadId === "string"
+        ? (childThreads.get(request.params.threadId) ?? thread)
+        : thread;
+    if (request.method === "thread/read") result = { thread: requestedThread };
+    if (request.method === "thread/turns/list")
+      result = { data: requestedThread.turns, nextCursor: null };
     queueMicrotask(() => {
       if (request.method === "turn/start") beforeStartResponse?.();
       rpc.receive(JSON.stringify({ id: request.id, result }) + "\n");
@@ -104,6 +108,8 @@ function setup(tools: SessionConfiguration["tools"] = []) {
   connection.onEvent((event) => events.push(event));
   const notify = (method: string, params: object) =>
     rpc.receive(JSON.stringify({ method, params: { threadId: "native", ...params } }) + "\n");
+  const notifyThread = (threadId: string, method: string, params: object) =>
+    rpc.receive(JSON.stringify({ method, params: { threadId, ...params } }) + "\n");
   const request = (id: string, method: string, params: object) =>
     rpc.receive(
       JSON.stringify({ id, method, params: { threadId: "native", turnId: turn.id, ...params } }) +
@@ -120,6 +126,7 @@ function setup(tools: SessionConfiguration["tools"] = []) {
     readHistory: () => codexProvider.readHistory(connection.identity),
     rpc,
     notify,
+    notifyThread,
     request,
     written,
     events,
@@ -140,6 +147,9 @@ function setup(tools: SessionConfiguration["tools"] = []) {
     setThread: (value: Thread) => {
       thread = value;
     },
+    setChildThread: (value: Thread) => {
+      childThreads.set(value.id, value);
+    },
   };
 }
 
@@ -151,7 +161,7 @@ test("a late turn/start response never reactivates a completed Codex turn", asyn
   });
   await connection.send({ role: "user", clientId: "first", content: "Start" });
   await expect(
-    connection.send({ role: "user", clientId: "steer", content: "Late" }, true),
+    connection.send({ role: "user", clientId: "steer", content: "Late", immediate: true }),
   ).rejects.toThrow("turn has ended");
   expect(written.some(({ method }) => method === "turn/steer")).toBe(false);
 });
@@ -166,6 +176,153 @@ test("native plan notifications reach the shared session state", () => {
   expect(sessionState(events).todos).toEqual([
     { id: "codex-plan-0", title: "Validate the provider", status: "in_progress" },
   ]);
+});
+
+test("native subagent activity stays nested under one agent call live and after replay", async () => {
+  const { notify, notifyThread, events, readHistory, setThread, setChildThread } = setup();
+  const rootTurn = { ...turn, id: "root-turn" };
+  const childTurn = { ...turn, id: "child-turn" };
+  const spawn: Extract<ThreadItem, { type: "collabAgentToolCall" }> = {
+    type: "collabAgentToolCall",
+    id: "spawn",
+    tool: "spawnAgent",
+    status: "completed",
+    senderThreadId: "native",
+    receiverThreadIds: ["child"],
+    prompt: "Inspect the reducer",
+    model: null,
+    reasoningEffort: null,
+    agentsStates: { child: { status: "running", message: null } },
+  };
+  const wait: Extract<ThreadItem, { type: "collabAgentToolCall" }> = {
+    ...spawn,
+    id: "wait",
+    tool: "wait",
+    prompt: null,
+  };
+  const command: Extract<ThreadItem, { type: "commandExecution" }> = {
+    type: "commandExecution",
+    id: "child-command",
+    pluginId: null,
+    scriptPath: null,
+    command: "pwd",
+    cwd: "/tmp",
+    processId: null,
+    source: "agent",
+    status: "completed",
+    commandActions: [],
+    aggregatedOutput: "/tmp\n",
+    exitCode: 0,
+    durationMs: 1,
+  };
+  const childReply: ThreadItem = { ...assistantItem, id: "child-reply", text: "CHILD_DONE" };
+  const rootReply: ThreadItem = { ...assistantItem, id: "root-reply", text: "ROOT_DONE" };
+
+  notify("turn/started", { turn: rootTurn });
+  notify("item/started", {
+    turnId: rootTurn.id,
+    item: { ...spawn, status: "inProgress", receiverThreadIds: [] },
+  });
+  notify("item/completed", { turnId: rootTurn.id, item: spawn });
+  notify("item/started", { turnId: rootTurn.id, item: { ...wait, status: "inProgress" } });
+  notify("item/completed", { turnId: rootTurn.id, item: wait });
+
+  notifyThread("child", "turn/started", { turn: childTurn });
+  notifyThread("child", "item/started", {
+    turnId: childTurn.id,
+    item: { ...command, status: "inProgress", aggregatedOutput: null, exitCode: null },
+  });
+
+  const active = sessionState(events);
+  const activeAgent = active.messages
+    .flatMap((message) => (message.role === "assistant" ? (message.toolCalls ?? []) : []))
+    .find((toolCall) => toolCall.id === spawn.id)!;
+  expect(active.status).not.toBe("idle");
+  expect(activeAgent.name).toBe("agent");
+  expect(activeAgent.result).toBeUndefined();
+  expect(activeAgent.subagent?.toolCalls).toHaveLength(1);
+
+  notifyThread("child", "item/completed", { turnId: childTurn.id, item: command });
+  notifyThread("child", "item/completed", { turnId: childTurn.id, item: childReply });
+  notifyThread("child", "turn/completed", {
+    turn: { ...childTurn, status: "completed", items: [command, childReply] },
+  });
+  notify("turn/completed", {
+    turn: { ...rootTurn, status: "completed", items: [spawn, wait, rootReply] },
+  });
+
+  const completed = sessionState(events);
+  const completedAgent = completed.messages
+    .flatMap((message) => (message.role === "assistant" ? (message.toolCalls ?? []) : []))
+    .find((toolCall) => toolCall.id === spawn.id)!;
+  expect(completed.status).toBe("idle");
+  expect(completedAgent.result).toMatchObject({ success: true });
+  expect(completedAgent.subagent).toMatchObject({
+    content: "CHILD_DONE",
+    toolCalls: [{ id: command.id, result: { success: true } }],
+  });
+  expect(
+    completed.messages
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.content),
+  ).not.toContain("CHILD_DONE");
+  expect(
+    events.filter((event) => event.type === "tool_start" && event.toolName === "agent"),
+  ).toHaveLength(1);
+
+  setThread({
+    id: "native",
+    historyMode: "paginated",
+    model: "model-one",
+    reasoningEffort: "low",
+    name: null,
+    turns: [{ ...rootTurn, status: "completed", items: [spawn, wait, rootReply] }],
+  } as Thread);
+  setChildThread({
+    id: "child",
+    historyMode: "paginated",
+    model: "model-one",
+    reasoningEffort: "low",
+    name: null,
+    turns: [{ ...childTurn, status: "completed", items: [userItem, command, childReply] }],
+  } as Thread);
+  const replayed = replaySessionHistory(await readHistory());
+  const replayedAgent = replayed.messages
+    .flatMap((message) => (message.role === "assistant" ? (message.toolCalls ?? []) : []))
+    .find((toolCall) => toolCall.id === spawn.id)!;
+  expect(replayedAgent.result).toEqual(completedAgent.result);
+  expect(replayedAgent.subagent).toMatchObject({
+    content: "CHILD_DONE",
+    toolCalls: [{ id: command.id, result: { success: true } }],
+  });
+  expect(
+    replayed.messages
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.content),
+  ).not.toContain("CHILD_DONE");
+
+  setChildThread({
+    id: "child",
+    historyMode: "paginated",
+    turns: [
+      {
+        ...childTurn,
+        status: "failed",
+        items: [userItem],
+        error: {
+          message: "Child failed",
+          codexErrorInfo: null,
+          additionalDetails: null,
+          misalignment: null,
+        },
+      },
+    ],
+  } as Thread);
+  const failedReplay = replaySessionHistory(await readHistory());
+  const failedAgent = failedReplay.messages
+    .flatMap((message) => (message.role === "assistant" ? (message.toolCalls ?? []) : []))
+    .find((toolCall) => toolCall.id === spawn.id)!;
+  expect(failedAgent.result).toMatchObject({ success: false, content: "Child failed" });
 });
 
 test("imported local media is restored while missing media retains its file reference", async () => {
@@ -215,7 +372,12 @@ test("Codex starts and steers the same turn with public input identity and per-t
   await connection.setModel({ provider: "codex", name: "model-two", reasoningEffort: "high" });
   await connection.send({ role: "user", clientId: "first", content: "Start" });
   notify("turn/started", { turn });
-  await connection.send({ role: "user", clientId: "second", content: "Steer" }, true);
+  await connection.send({
+    role: "user",
+    clientId: "second",
+    content: "Steer",
+    immediate: true,
+  });
   expect(written[0]).toMatchObject({
     method: "turn/start",
     params: {
@@ -248,7 +410,7 @@ test("Codex live text, snapshot resume, and native history preserve message boun
     itemId: assistantItem.id,
     delta: "ne (draft)",
   });
-  const snapshot = toSessionSnapshot(connection.identity.sessionId, sessionState(events));
+  const snapshot = sessionState(events);
   const resumeFrom = events.length;
   notify("item/completed", { turnId: turn.id, item: assistantItem });
   const repeated = { ...assistantItem, id: "repeated" };
@@ -270,11 +432,10 @@ test("Codex live text, snapshot resume, and native history preserve message boun
   } as Thread);
   const history = await readHistory();
   const live = sessionState(events);
-  const replay = history.reduce(applySessionEvent, createInitialSession());
+  const replay = history.reduce(applySessionEvent, createInitialSessionState());
   expect(live.messages).toEqual(replay.messages);
-  const resumed = events
-    .slice(resumeFrom)
-    .reduce(applySessionEvent, createInitialSession(sessionSeedFromSnapshot(snapshot)));
+  const { lastSeenEventId: _lastSeenEventId, ...resumeState } = snapshot;
+  const resumed = events.slice(resumeFrom).reduce(applySessionEvent, resumeState);
   expect(resumed.messages).toEqual(live.messages);
   expect(live.messages.map((message) => message.content)).toEqual([
     "Hello",
@@ -282,8 +443,6 @@ test("Codex live text, snapshot resume, and native history preserve message boun
     "Done",
     "Done again",
   ]);
-  expect(live.title).toBe("A shared title");
-  expect(live.title).toBe(replay.title);
   expect(live.status).toBe("idle");
 });
 
@@ -372,7 +531,7 @@ test("native question resolution cancels only unanswered questions in the batch"
 
 test("Codex replays attachments and system messages entirely from native input", async () => {
   const { connection, readHistory, setThread, written } = setup();
-  const message: QueuedMessage = {
+  const message: SessionMessage = {
     role: "user",
     clientId: "input",
     content: "Review",
@@ -392,7 +551,7 @@ test("Codex replays attachments and system messages entirely from native input",
     content: message.content,
     attachments: message.attachments,
   });
-  const system: QueuedMessage = {
+  const system: SessionMessage = {
     role: "system",
     clientId: "system",
     content: { type: "channel_message", senderName: "Ada" },
@@ -436,7 +595,7 @@ test("multi-question input resolves live cards and gathers one native response",
   });
   const questions = events.filter((event) => event.type === "question_requested");
   expect(questions).toHaveLength(2);
-  expect(sessionState(events).status).toBe("waiting");
+  expect(sessionState(events).status).toBe("thinking");
   await expect(
     connection.answerQuestion({
       requestId: questions[0]!.requestId,

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import type { JSONType } from "zod";
 import { encodeSystemMessage } from "@sessions/model/systemMessages";
 import { replaySessionHistory } from "@sessions/model/reducer";
-import { createSdkEventProjector, getSdkTurnEndReason } from "@providers/server/copilot/projector";
+import { createSdkEventProjector } from "@providers/server/copilot/projector";
 import type { SessionEvent } from "@sessions/model";
 
 function createStreamingContext() {
@@ -26,6 +26,8 @@ function sdkEvent(event: unknown): SdkSessionEvent {
 const OMITTED_TOOL_NAMES = [
   "skill",
   "read_agent",
+  "write_agent",
+  "list_agents",
   "check_session_status",
   "wait_for_sessions",
   "deliver_message",
@@ -151,6 +153,7 @@ function toolExecutionComplete(
     detailedContent?: string;
     errorMessage?: string;
     agentId?: string;
+    parentToolCallId?: string;
   },
 ): SdkSessionEvent {
   return sdkEvent({
@@ -159,6 +162,7 @@ function toolExecutionComplete(
     data: {
       toolCallId,
       success: options.success ?? true,
+      ...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
       ...(options.resultContent !== undefined || options.detailedContent !== undefined
         ? {
             result: {
@@ -170,6 +174,24 @@ function toolExecutionComplete(
           }
         : {}),
       ...(options.errorMessage !== undefined ? { error: { message: options.errorMessage } } : {}),
+    },
+  });
+}
+
+function subagentStarted(
+  agentId: string,
+  toolCallId: string,
+  model = "claude-haiku-4.5",
+): SdkSessionEvent {
+  return sdkEvent({
+    type: "subagent.started",
+    agentId,
+    data: {
+      toolCallId,
+      agentName: "explore",
+      agentDisplayName: "Explore Agent",
+      agentDescription: "Searches code.",
+      model,
     },
   });
 }
@@ -548,43 +570,37 @@ describe("projector", () => {
   });
 
   describe("streaming: subagents", () => {
-    test("subagent tool calls carry their parent agent id from the event envelope", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("view", "sub-1", { path: "a.ts" }, {}, { agentId: "call-task-9" }),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_start",
-          toolName: "read",
-          toolCallId: "sub-1",
-          agentId: "call-task-9",
-          arguments: { path: "a.ts" },
-        },
-      ]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("sub-1", {
-            success: true,
-            resultContent: "ok",
-            agentId: "call-task-9",
+    test("nests native subagent replies and work beneath the spawning agent call", () => {
+      const project = createStreamingContext();
+      const nativeAgentId = "native-agent-9";
+      const parentToolCallId = "call-task-9";
+      const state = replaySessionHistory(
+        [
+          toolExecutionStart("task", parentToolCallId, { description: "Inspect the reducer" }),
+          subagentStarted(nativeAgentId, parentToolCallId),
+          sdkEvent({
+            type: "assistant.message",
+            agentId: nativeAgentId,
+            data: { content: "Ownership returned to parent." },
           }),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_end",
-          toolCallId: "sub-1",
-          agentId: "call-task-9",
-          success: true,
-          result: "ok",
-          details: undefined,
-        },
-      ]);
+          toolExecutionStart("view", "sub-1", { path: "a.ts" }, {}, { agentId: nativeAgentId }),
+        ].flatMap(project),
+      );
+
+      expect(state.messages[0]).toMatchObject({
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: parentToolCallId,
+            subagent: {
+              model: { name: "claude-haiku-4.5" },
+              content: "Ownership returned to parent.",
+              toolCalls: [{ id: "sub-1", name: "read" }],
+            },
+          },
+        ],
+      });
     });
 
     test("background agent calls suppress the early tool_end and complete via subagent.completed", () => {
@@ -1411,13 +1427,17 @@ describe("projector", () => {
         projectSdkEvent(
           sdkEvent({
             type: "assistant.message",
-            agentId: "call-agent-1",
-            data: { content: "Agent response" },
+            agentId: "native-agent-1",
+            data: { content: "Agent response", parentToolCallId: "call-agent-1" },
           }),
           context,
         ),
       ).toEqual([
-        { type: "assistant_message", agentId: "call-agent-1", content: "Agent response" },
+        {
+          type: "assistant_message",
+          parentToolCallId: "call-agent-1",
+          content: "Agent response",
+        },
       ]);
     });
 
@@ -1472,7 +1492,6 @@ describe("projector", () => {
           sdkEvent({
             type: "skill.invoked",
             id: "skill-event-1",
-            agentId: "call-agent-1",
             data: {
               name: "review",
               path: "/repo/.agents/skills/review/SKILL.md",
@@ -1487,7 +1506,6 @@ describe("projector", () => {
           type: "tool_start",
           toolName: "skill",
           toolCallId: "skill-event-1",
-          agentId: "call-agent-1",
           arguments: {
             skill: "review",
             path: "/repo/.agents/skills/review/SKILL.md",
@@ -1496,7 +1514,6 @@ describe("projector", () => {
         {
           type: "tool_end",
           toolCallId: "skill-event-1",
-          agentId: "call-agent-1",
           success: true,
         },
       ]);
@@ -1537,33 +1554,26 @@ describe("projector", () => {
       ]);
     });
 
-    test("open_file and close_file project durable file visibility events", () => {
-      const context = createStreamingContext();
-      const file = { kind: "machine", path: "/repo/src/foo.ts" } as const;
+    test.each([
+      { path: "/repo/src/foo.ts", file: { kind: "machine", path: "/repo/src/foo.ts" } },
+      {
+        path: ARTIFACT_PATCH_PATH,
+        file: { kind: "session", sessionId: "toy-box-session", path: "plan.md" },
+      },
+    ])("file visibility derives $file.kind identity from the recorded path", ({ path, file }) => {
+      const project = createStreamingContext();
+      for (const [tool, type] of [
+        ["open_file", "file_opened"],
+        ["close_file", "file_closed"],
+      ] as const) {
+        expect(project(toolExecutionStart(tool, tool, { path }))).toEqual([]);
+        expect(
+          project(toolExecutionComplete(tool, { success: true, resultContent: "OK" })),
+        ).toEqual([{ type, file }]);
 
-      expect(
-        projectSdkEvent(toolExecutionStart("open_file", "call-open", { path: file.path }), context),
-      ).toEqual([]);
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("call-open", {
-            success: true,
-            resultContent: JSON.stringify(file),
-          }),
-          context,
-        ),
-      ).toEqual([{ type: "file_opened", file }]);
-
-      projectSdkEvent(toolExecutionStart("close_file", "call-close", { path: file.path }), context);
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("call-close", {
-            success: true,
-            resultContent: JSON.stringify(file),
-          }),
-          context,
-        ),
-      ).toEqual([{ type: "file_closed", file }]);
+        project(toolExecutionStart(tool, `${tool}-failed`, { path }));
+        expect(project(toolExecutionComplete(`${tool}-failed`, { success: false }))).toEqual([]);
+      }
     });
 
     test("decodes system messages at the SDK boundary", () => {
@@ -1629,14 +1639,14 @@ describe("projector", () => {
       ).toEqual([{ type: "reasoning", content: "Hmm" }]);
     });
 
-    test("drops subagent text deltas and scopes subagent reasoning deltas", () => {
+    test("drops transient subagent text and reasoning deltas", () => {
       const context = createStreamingContext();
 
       expect(
         projectSdkEvent(
           sdkEvent({
             type: "assistant.message_delta",
-            agentId: "call-agent-1",
+            agentId: "native-agent-1",
             data: { deltaContent: "Subagent text" },
           }),
           context,
@@ -1647,25 +1657,16 @@ describe("projector", () => {
         projectSdkEvent(
           sdkEvent({
             type: "assistant.reasoning_delta",
-            agentId: "call-agent-1",
+            agentId: "native-agent-1",
             data: { deltaContent: "Subagent reasoning" },
           }),
           context,
         ),
-      ).toEqual([{ type: "reasoning", agentId: "call-agent-1", content: "Subagent reasoning" }]);
+      ).toEqual([]);
     });
   });
 
   describe("streaming: session events", () => {
-    test("reads SDK turn endings for the runtime", () => {
-      expect(getSdkTurnEndReason(sdkEvent({ type: "session.idle", data: {} }))).toBe("idle");
-      expect(getSdkTurnEndReason(sdkEvent({ type: "session.error", data: {} }))).toBe("error");
-      expect(getSdkTurnEndReason(sdkEvent({ type: "abort", data: {} }))).toBe("error");
-      expect(
-        getSdkTurnEndReason(sdkEvent({ type: "assistant.turn_end", data: { turnId: "1" } })),
-      ).toBeUndefined();
-    });
-
     test("drops subagent status events so they do not mutate root status", () => {
       const context = createStreamingContext();
 
@@ -1773,7 +1774,7 @@ describe("projector", () => {
         "document.html",
         "document.json",
         "document.svg",
-        "document.intent",
+        "document.brief",
         "document.toy",
       ]) {
         expect(
@@ -1807,7 +1808,7 @@ describe("projector", () => {
         projectSdkEvent(
           sdkEvent({
             type: "subagent.started",
-            agentId: "call-agent-1",
+            agentId: "native-agent-1",
             data: {
               toolCallId: "call-agent-1",
               agentName: "explore",
@@ -1821,7 +1822,7 @@ describe("projector", () => {
       ).toEqual([
         {
           type: "model_changed",
-          agentId: "call-agent-1",
+          parentToolCallId: "call-agent-1",
           model: { provider: "copilot", name: "claude-haiku-4.5" },
         },
       ]);

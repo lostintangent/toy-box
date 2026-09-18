@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { Attachment, QueuedMessage, SessionEvent, SessionSkill } from "@sessions/model";
+import type { Attachment, SessionEvent, SessionMessage, SessionSkill } from "@sessions/model";
 import { attachmentSchema } from "@sessions/model/protocol";
 import {
   decodeSystemMessage,
@@ -15,7 +15,7 @@ const ATTACHMENT_PREFIX = "toybox-attachment:";
  * and expose a staged path to the model. No input is copied to Toy Box's database. */
 export async function encodeInput(
   attachmentsDirectory: string,
-  message: QueuedMessage,
+  message: SessionMessage,
   skills: readonly SessionSkill[],
 ): Promise<UserInput[]> {
   if (message.role === "system")

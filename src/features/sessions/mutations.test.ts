@@ -2,7 +2,8 @@ import { describe, expect, onTestFinished, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import { workspaceQueries } from "@workspace/queries";
 import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model/state/reducer";
-import type { SessionMetadata, SessionSnapshot } from "./model";
+import type { SessionMetadata, SessionState } from "./model";
+import { createInitialSessionState } from "./model/reducer";
 import { sessionMutations } from "./mutations";
 import type { SessionsState } from "./model";
 import { createEmptySessionsState, sessionQueries } from "./queries";
@@ -121,12 +122,9 @@ describe("session mutation options", () => {
 
   test("replaces the detail cache with the authoritative rewind snapshot", async () => {
     const queryClient = createQueryClient();
-    const rewoundSnapshot: SessionSnapshot = {
-      id: sessionId,
+    const rewoundSnapshot: SessionState = {
+      ...createInitialSessionState(),
       messages: [{ role: "user", content: "retained" }],
-      queuedMessages: [],
-      status: "idle",
-      reasoningContent: "",
     };
     const mutation = new MutationObserver(queryClient, {
       ...sessionMutations.rewindSession(sessionId, "2026-08-14T20:00:00.000Z"),
@@ -136,7 +134,7 @@ describe("session mutation options", () => {
     await mutation.mutate();
 
     expect(
-      queryClient.getQueryData<SessionSnapshot>(sessionQueries.detail(sessionId).queryKey),
+      queryClient.getQueryData<SessionState>(sessionQueries.detail(sessionId).queryKey),
     ).toEqual(rewoundSnapshot);
   });
 
@@ -208,13 +206,7 @@ describe("session mutation options", () => {
 
 function createQueryClient(): QueryClient {
   const queryClient = new QueryClient();
-  queryClient.setQueryData(sessionQueries.detail(sessionId).queryKey, {
-    id: sessionId,
-    messages: [],
-    queuedMessages: [],
-    status: "idle",
-    reasoningContent: "",
-  });
+  queryClient.setQueryData(sessionQueries.detail(sessionId).queryKey, createInitialSessionState());
   onTestFinished(() => queryClient.clear());
   return queryClient;
 }

@@ -62,7 +62,7 @@ describe("bundled SDK skills", () => {
 
   test("exposes universal skills to every session and editor authoring only to Hyper", () => {
     const root = "/skills";
-    const universal = ["create-toy-box-app", "create-toy-box-intent", "execute-toy-box-intent"];
+    const universal = ["create-toy-box-app", "create-toy-box-brief", "execute-toy-box-brief"];
     const expected = {
       standard: universal,
       automation: universal,

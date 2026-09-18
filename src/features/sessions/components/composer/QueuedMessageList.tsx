@@ -6,7 +6,7 @@ import { Button } from "@/shared/components/ui/button";
 import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
 import { useLongPress } from "@/shared/hooks/useLongPress";
 import { cn } from "@/shared/utils";
-import type { QueuedMessage, QueuedUserMessage } from "../../model";
+import type { SessionState } from "../../model";
 import { systemMessageLabel } from "../../model/systemMessages";
 import { sessionMutations } from "../../mutations";
 import { AttachmentGallery } from "../AttachmentGallery";
@@ -19,8 +19,8 @@ export function QueuedMessageList({
   onEdit,
 }: {
   sessionId: string;
-  messages: QueuedMessage[];
-  onEdit: (message: QueuedUserMessage) => void;
+  messages: SessionState["queuedMessages"];
+  onEdit: (message: Extract<SessionState["queuedMessages"][number], { role: "user" }>) => void;
 }) {
   const cancelMutation = useMutation(sessionMutations.cancelQueuedMessage(sessionId));
 
@@ -68,17 +68,17 @@ function QueuedMessageRow({
   onCancel,
 }: {
   sessionId: string;
-  message: QueuedMessage;
+  message: SessionState["queuedMessages"][number];
   cancelDisabled: boolean;
   isCancelling: boolean;
   onEdit: () => void;
   onCancel: () => void;
 }) {
   const steerMutation = useMutation(sessionMutations.steerQueuedMessage(sessionId));
-  const isSendingImmediately =
-    message.immediate === true ||
+  const isSubmitted =
+    message.status !== "queued" ||
     (message.role === "user" && (steerMutation.isPending || steerMutation.data === true));
-  const canSteer = message.role === "user" && !cancelDisabled && !isSendingImmediately;
+  const canSteer = message.role === "user" && !cancelDisabled && !isSubmitted;
   const attachments = message.role === "user" ? (message.attachments ?? []) : [];
   const label =
     message.role === "system"
@@ -111,14 +111,14 @@ function QueuedMessageRow({
         type="button"
         variant="ghost"
         size="icon"
-        aria-label={isSendingImmediately ? "Sending queued message now" : "Edit queued message"}
+        aria-label={isSubmitted ? "Sending queued message now" : "Edit queued message"}
         aria-live="polite"
-        disabled={isSendingImmediately || cancelDisabled || message.role !== "user"}
+        disabled={isSubmitted || cancelDisabled || message.role !== "user"}
         data-long-press-ignore
         className="h-5 w-5 shrink-0 rounded-full"
         onClick={onEdit}
       >
-        {isSendingImmediately ? (
+        {isSubmitted ? (
           <LoaderCircle className="h-3 w-3 animate-spin" />
         ) : (
           <Pencil className="h-3 w-3" />
@@ -136,7 +136,7 @@ function QueuedMessageRow({
         )}
       </div>
 
-      {!isSendingImmediately && (
+      {!isSubmitted && (
         <Button
           type="button"
           variant="ghost"

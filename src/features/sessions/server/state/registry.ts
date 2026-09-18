@@ -15,7 +15,7 @@ import {
   getSessionDirectory,
   resumeSession as resumeProviderSession,
 } from "../providers";
-import { getSessionConfiguration } from "@/server/sessionTools";
+import { getSessionConfiguration } from "@/server/sessionConfiguration";
 import {
   emitSessionDelete,
   emitSessionNameUpdate,
@@ -295,7 +295,7 @@ export async function updateSessionTitle(sessionId: string, title: string): Prom
 
 /** Delete a session and the complete tree of managed sessions it owns. */
 export async function deleteSession(sessionId: string): Promise<void> {
-  await deleteOwnedSessions(sessionId, deleteSession);
+  await deleteOwnedSessions(sessionId);
   await deleteSingleSession(sessionId);
 }
 

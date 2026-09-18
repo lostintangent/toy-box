@@ -1,1 +1,0 @@
-export { IntentEntityInspector } from "./EntityInspector";

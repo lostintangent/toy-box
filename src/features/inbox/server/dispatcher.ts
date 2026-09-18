@@ -13,8 +13,7 @@ export async function dispatchInboxTask(input: SessionLaunch): Promise<{ session
   let waitForCompletion: () => Promise<SessionCompletion>;
   try {
     const receipt = await createSession(sessionId, input.message, {
-      directory: input.directory,
-      useWorktree: input.useWorktree,
+      ...input.location,
       sessionType: "inbox",
     });
     waitForCompletion = receipt.waitForCompletion;

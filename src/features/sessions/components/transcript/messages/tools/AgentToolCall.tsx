@@ -15,10 +15,10 @@ export function AgentToolCall({ toolCall, ...props }: ToolCallProps) {
   const label = description ? `${agentLabel}: ${description}` : agentLabel;
 
   const isBackground = toolCall.arguments.mode === "background";
-  const model = toolCall.agent?.model?.name;
-  const agentContent = toolCall.agent?.content;
-  const reasoningContent = toolCall.agent?.reasoningContent;
-  const agentToolCalls = toolCall.agent?.toolCalls;
+  const model = toolCall.subagent?.model?.name;
+  const subagentContent = toolCall.subagent?.content;
+  const reasoningContent = toolCall.subagent?.reasoningContent;
+  const subagentToolCalls = toolCall.subagent?.toolCalls;
   const promptTitle = model ? `Prompt (${model})` : "Prompt";
   const result = toolCall.result?.content;
 
@@ -30,15 +30,15 @@ export function AgentToolCall({ toolCall, ...props }: ToolCallProps) {
       label={label}
       headerExtra={
         <span className="text-2xs font-medium text-muted-foreground bg-muted rounded-full px-1.5 py-0.5">
-          {agentToolCalls?.length ?? 0}
+          {subagentToolCalls?.length ?? 0}
         </span>
       }
     >
       {reasoningContent && <ReasoningDisplay content={reasoningContent} />}
-      {agentToolCalls && agentToolCalls.length > 0 && (
+      {subagentToolCalls && subagentToolCalls.length > 0 && (
         <div className="space-y-1">
           <div className="text-xs text-muted-foreground mb-1">Tool Calls</div>
-          {agentToolCalls.map((child) => (
+          {subagentToolCalls.map((child) => (
             <ToolCallMessage
               key={child.id}
               toolCall={child}
@@ -50,8 +50,8 @@ export function AgentToolCall({ toolCall, ...props }: ToolCallProps) {
       <TextBlock title={promptTitle} maxHeight="max-h-32">
         {prompt}
       </TextBlock>
-      {agentContent ? (
-        <MarkdownBlock title="Result">{agentContent}</MarkdownBlock>
+      {subagentContent ? (
+        <MarkdownBlock title="Result">{subagentContent}</MarkdownBlock>
       ) : (
         !isBackground && result && <MarkdownBlock title="Result">{result}</MarkdownBlock>
       )}

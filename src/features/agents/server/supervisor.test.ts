@@ -1,5 +1,4 @@
 import { describe, expect, mock, onTestFinished, spyOn, test } from "bun:test";
-import type { AgentHost } from "@agents/model";
 import { AgentDatabase } from "./database";
 import { ChannelDatabase } from "@channels/server/database";
 import * as state from "@/server/database";
@@ -25,48 +24,42 @@ async function setup() {
 }
 
 describe("Agent membership supervision", () => {
-  test("Session, File, and Channel mentions share one durable admission and wake path", async () => {
+  test("Channel mentions share one durable admission and wake path", async () => {
     const { agents, agent, channels, create, deliver } = await setup();
     const channel = await channels.createChannel({ title: "Design" });
-    const hosts: AgentHost[] = [
-      { kind: "session", sessionId: "parent" },
-      { kind: "file", sessionId: "parent", path: "spec.md" },
-      { kind: "channel", channelId: channel.id },
-    ];
-    for (const host of hosts) {
-      const input = {
-        host,
-        agentId: agent.id,
-        message: { content: "Review this." },
-        hostLabel: "Design",
-      };
-      // Concurrent first mentions must not allocate parallel private Sessions.
-      await Promise.all([mentionAgent(input), mentionAgent(input)]);
-      const memberships = await agents.listMemberships(host);
-      expect(memberships).toHaveLength(1);
-      const member = memberships[0]!;
-      expect(create).toHaveBeenLastCalledWith(
-        member.sessionId,
-        input.message,
-        expect.objectContaining({ sessionType: "agent" }),
-      );
-      expect(deliver).toHaveBeenLastCalledWith(member.sessionId, input.message, {
-        immediate: true,
-      });
-      if (host.kind === "channel") {
-        expect(await channels.getMemberBySession(member.sessionId)).toMatchObject({
-          seenThrough: 0,
-        });
-      }
-      await mentionAgent(input);
-    }
-    expect(create).toHaveBeenCalledTimes(3);
-    expect(deliver).toHaveBeenCalledTimes(6);
+    const host = { kind: "channel", channelId: channel.id } as const;
+    const input = {
+      host,
+      agentId: agent.id,
+      message: { content: "Review this." },
+      hostLabel: "Design",
+    };
+
+    // Concurrent first mentions must not allocate parallel private Sessions.
+    await Promise.all([mentionAgent(input), mentionAgent(input)]);
+    const memberships = await agents.listMemberships(host);
+    expect(memberships).toHaveLength(1);
+    const member = memberships[0]!;
+    expect(create).toHaveBeenLastCalledWith(
+      member.sessionId,
+      input.message,
+      expect.objectContaining({ sessionType: "agent" }),
+    );
+    expect(deliver).toHaveBeenLastCalledWith(member.sessionId, {
+      ...input.message,
+      immediate: true,
+    });
+    expect(await channels.getMemberBySession(member.sessionId)).toMatchObject({ seenThrough: 0 });
+
+    await mentionAgent(input);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(deliver).toHaveBeenCalledTimes(2);
   });
 
   test("an interrupted startup recovers the same membership and Session ID", async () => {
-    const { agents, agent, create, deliver } = await setup();
-    const host = { kind: "session", sessionId: "parent" } as const;
+    const { agents, agent, channels, create, deliver } = await setup();
+    const channel = await channels.createChannel({ title: "Design" });
+    const host = { kind: "channel", channelId: channel.id } as const;
     const input = {
       host,
       agentId: agent.id,
@@ -115,9 +108,10 @@ describe("Agent membership supervision", () => {
   });
 
   test("delivery failures do not recreate existing private history", async () => {
-    const { agent, create, deliver } = await setup();
+    const { agent, channels, create, deliver } = await setup();
+    const channel = await channels.createChannel({ title: "Design" });
     const input = {
-      host: { kind: "session", sessionId: "parent" } as const,
+      host: { kind: "channel", channelId: channel.id } as const,
       agentId: agent.id,
       message: { content: "Review." },
       hostLabel: "Design",

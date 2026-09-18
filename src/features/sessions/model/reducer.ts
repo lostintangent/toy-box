@@ -9,177 +9,75 @@
 // to native SDK details — translation policy lives in Providers.
 //
 // Vocabulary used throughout this file:
-//   - root vs agent-scoped: events without an agentId mutate the top-level
+//   - root vs child-scoped: events without a parentToolCallId mutate the top-level
 //     transcript; events carrying one mutate the subagent state nested under
-//     the spawning agent tool call (toolCall.agent).
-//   - pending vs committed: the in-progress message group's tool calls live
-//     in pendingToolCalls, mirrored onto the last assistant message after
-//     every change. A boundary "commits" them — afterwards they are only
-//     reachable by searching committed messages.
+//     the spawning agent tool call (toolCall.subagent).
 //   - message group / boundary: an assistant turn renders as alternating
 //     text and tool-call groups. A boundary — the first text delta after
 //     tool calls (live), or a committed root assistant_message (replay) —
 //     finalizes the current group and starts a fresh assistant message.
 //
-// Identity contract: each event returns a new Session with structural sharing.
+// Identity contract: each event returns a new SessionState with structural sharing.
 // Every changed render-visible branch gets a new identity, while unchanged
-// messages and nested tool calls retain theirs. pendingToolCalls is internal
-// bookkeeping, also replaced only when it changes. This lets clients batch
-// when they publish state to React without obscuring what changed.
+// messages and nested tool calls retain theirs. This lets clients batch when
+// they publish state to React without obscuring what changed.
 
 import { workspaceFileId, type WorkspaceFile } from "@files/model";
-import type { ModelConfiguration } from "./modelConfiguration";
+import { hasBlockingSessionQuestion } from "./questions";
 import type {
-  Message,
-  QueuedMessage,
   SessionCanvas,
   SessionEvent,
+  Message,
   SessionQuestion,
   SessionQuestionBase,
-  SessionSnapshot,
-  SessionStatus,
+  SessionState,
+  SubagentActivity,
   TodoItem,
   TodoItemPatch,
   ToolCall,
 } from "./index";
 
-export type Session = {
-  messages: Message[];
-  queuedMessages: QueuedMessage[];
-  title?: string;
-  todos?: TodoItem[];
-  linkedSessionIds: string[];
-  canvases?: SessionCanvas[];
-  artifacts: string[];
-  openedFiles: WorkspaceFile[];
-  status: SessionStatus;
-  reasoningContent: string;
-  model?: ModelConfiguration;
-  pendingToolCalls: Map<string, ToolCall>;
-  pendingOptimisticUserMessage?: {
-    clientId: string;
-    index: number;
-  };
-  lastSeenEventId?: number;
-};
-
 // ============================================================================
 // Public API
 // ============================================================================
 
-export function createInitialSession(initial: Partial<Session> = {}): Session {
+export function createInitialSessionState(initial: Partial<SessionState> = {}): SessionState {
   return {
     messages: initial.messages ? [...initial.messages] : [],
     queuedMessages: initial.queuedMessages ? [...initial.queuedMessages] : [],
-    title: initial.title,
-    todos: initial.todos ? initial.todos.map((todo) => ({ ...todo })) : undefined,
+    todos: initial.todos ? initial.todos.map((todo) => ({ ...todo })) : [],
     linkedSessionIds: initial.linkedSessionIds ? [...initial.linkedSessionIds] : [],
-    ...(initial.canvases ? { canvases: initial.canvases.map((canvas) => ({ ...canvas })) } : {}),
+    canvases: initial.canvases ? initial.canvases.map((canvas) => ({ ...canvas })) : [],
     artifacts: initial.artifacts ? [...initial.artifacts] : [],
     openedFiles: initial.openedFiles ? [...initial.openedFiles] : [],
     status: initial.status ?? "idle",
     reasoningContent: initial.reasoningContent ?? "",
     model: initial.model,
-    pendingToolCalls: new Map(),
+    ...(initial.lastSeenEventId !== undefined ? { lastSeenEventId: initial.lastSeenEventId } : {}),
   };
 }
 
 /** Rebuild idle state from provider history, clearing any trailing live state. */
-export function replaySessionHistory(events: readonly SessionEvent[]): Session {
-  return applySessionEvent(events.reduce(applySessionEvent, createInitialSession()), {
+export function replaySessionHistory(events: readonly SessionEvent[]): SessionState {
+  return applySessionEvent(events.reduce(applySessionEvent, createInitialSessionState()), {
     type: "end",
     reason: "idle",
   });
 }
 
-/** Project a Session into the wire/query snapshot shape — the one mapping
- *  shared by the server (querySession) and the client (detail query cache).
- *  `previous` lets the client preserve fields the live state hasn't learned
- *  yet; the server omits it. */
-export function toSessionSnapshot(
-  sessionId: string,
-  state: Session,
-  previous?: SessionSnapshot,
-): SessionSnapshot {
-  return {
-    id: previous?.id ?? sessionId,
-    messages: state.messages,
-    queuedMessages: state.queuedMessages,
-    model: state.model ?? previous?.model,
-    todos: state.todos,
-    linkedSessionIds: state.linkedSessionIds.length > 0 ? state.linkedSessionIds : undefined,
-    canvases: state.canvases && state.canvases.length > 0 ? state.canvases : undefined,
-    artifacts: state.artifacts.length > 0 ? state.artifacts : undefined,
-    openedFiles: state.openedFiles.length > 0 ? state.openedFiles : undefined,
-    lastSeenEventId: state.lastSeenEventId,
-    status: state.status,
-    reasoningContent: state.reasoningContent,
-  };
-}
-
-/** Rebuild reducer seed state from a wire snapshot — the inverse of
- *  toSessionSnapshot, for seeding a stream from a cached snapshot without
- *  replaying history.
- *  Drops the wire/per-stream fields (`id`, `lastSeenEventId`) so a fresh
- *  stream stamps its own event sequence. createInitialSession copies the
- *  collections; individual messages share structure with the snapshot, the
- *  same convention the client uses when seeding its reducer from the cached
- *  detail snapshot. */
-export function sessionSeedFromSnapshot(snapshot: SessionSnapshot): Partial<Session> {
-  const { id: _id, lastSeenEventId: _lastSeenEventId, ...seed } = snapshot;
-  return seed;
-}
-
-export function hasPendingSessionQuestion(
-  session: Pick<Session, "messages">,
-  requestId: string,
-): boolean {
-  return session.messages.some(
-    (message) =>
-      message.role === "assistant" &&
-      message.toolCalls?.some(
-        (toolCall) =>
-          toolCall.question?.state === "pending" && toolCall.question.requestId === requestId,
-      ) === true,
-  );
-}
-
-export function hasBlockingSessionQuestion(session: Pick<Session, "messages">): boolean {
-  return session.messages.some(
-    (message) =>
-      message.role === "assistant" &&
-      message.toolCalls?.some(
-        (tool) => tool.question?.state === "pending" && tool.question.blocking !== false,
-      ),
-  );
-}
-
-/** Reduce one canonical event into a new Session. The switch mutates only this
+/** Reduce one canonical event into a new SessionState. The switch mutates only this
  *  fresh shallow root; helpers replace every nested branch they change. */
-export function applySessionEvent(state: Session, event: SessionEvent): Session {
+export function applySessionEvent(state: SessionState, event: SessionEvent): SessionState {
   const next = { ...state };
   applySessionEventCore(next, event);
   return next;
-}
-
-/** Reset turn-scoped state ahead of a new turn, preserving durable session
- *  state. The turn-boundary sibling of the end handler below — the
- *  same transient fields, but transitioning into "thinking" instead of idle. */
-export function prepareSessionForNextTurn(state: Session): Session {
-  return {
-    ...state,
-    status: "thinking",
-    reasoningContent: "",
-    pendingToolCalls: new Map(),
-    pendingOptimisticUserMessage: undefined,
-  };
 }
 
 // ============================================================================
 // Event reducer
 // ============================================================================
 
-function applySessionEventCore(state: Session, event: SessionEvent): void {
+function applySessionEventCore(state: SessionState, event: SessionEvent): void {
   // Replayed buffer events that are already incorporated in a snapshot
   // can race with detail refetches; skip stale events before mutating state.
   if (
@@ -195,19 +93,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     // ── Messages ──────────────────────────────────────────────────────
 
     case "user_message": {
-      if (event.clientId) removeQueuedMessage(state, event.clientId);
-      if (reconcileOptimisticUserMessage(state, event)) return;
-
-      appendMessage(state, inputMessageFromEvent(event));
-      // Only locally-synthesized events lack an eventId (the server stamps
-      // one on everything it emits). Remember the optimistic message so the
-      // canonical SDK event reconciles it instead of duplicating it.
-      if (event.clientId && event.eventId === undefined) {
-        state.pendingOptimisticUserMessage = {
-          clientId: event.clientId,
-          index: state.messages.length - 1,
-        };
-      }
+      upsertUserMessage(state, event);
       return;
     }
 
@@ -218,13 +104,10 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     }
 
     case "assistant_message": {
-      if (event.agentId) {
-        updateToolCall(state, event.agentId, (toolCall) => ({
-          ...toolCall,
-          agent: {
-            ...toolCall.agent,
-            content: appendCommittedAgentContent(toolCall.agent?.content ?? "", event.content),
-          },
+      if (event.parentToolCallId) {
+        updateSubagentActivity(state, event.parentToolCallId, (activity) => ({
+          ...activity,
+          content: appendCommittedSubagentContent(activity.content ?? "", event.content),
         }));
         return;
       }
@@ -235,7 +118,6 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
         state.status === "thinking" ||
         state.status === "reasoning" ||
         state.status === "responding";
-      state.pendingToolCalls = new Map();
 
       upsertCommittedAssistantMessage(state, event.content, reconcileLiveMessage, event.messageId);
       if (reconcileLiveMessage && event.content) {
@@ -246,7 +128,12 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     }
 
     case "message_queued": {
-      upsertQueuedMessage(state, event.message);
+      upsertQueuedMessage(state, { ...event.message, status: "queued" });
+      return;
+    }
+
+    case "message_status_changed": {
+      setQueuedMessageStatus(state, event.clientId, event.status);
       return;
     }
 
@@ -264,10 +151,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     }
 
     case "delta": {
-      // Ignore empty deltas. They carry no content and would otherwise
-      // call ensureCleanAssistantMessage, which clears pendingToolCalls
-      // and creates a new message — fragmenting the conversation and
-      // potentially dropping in-flight tool call results.
+      // Empty deltas carry no content and must not create a message boundary.
       if (event.content.length === 0) return;
 
       ensureCleanAssistantMessage(state, event.messageId);
@@ -278,16 +162,10 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     }
 
     case "reasoning": {
-      if (event.agentId) {
-        updateToolCall(state, event.agentId, (toolCall) => ({
-          ...toolCall,
-          agent: {
-            ...toolCall.agent,
-            reasoningContent: mergeStreamingText(
-              toolCall.agent?.reasoningContent ?? "",
-              event.content,
-            ),
-          },
+      if (event.parentToolCallId) {
+        updateSubagentActivity(state, event.parentToolCallId, (activity) => ({
+          ...activity,
+          reasoningContent: mergeStreamingText(activity.reasoningContent ?? "", event.content),
         }));
         return;
       }
@@ -300,32 +178,27 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     // ── Tool calls ────────────────────────────────────────────────────
 
     case "tool_start": {
-      ensureAssistantMessage(state);
-
-      if (event.agentId) {
+      if (event.parentToolCallId) {
         // Nest subagent tool calls under their agent call.
         const child: ToolCall = {
           id: event.toolCallId,
           name: event.toolName,
           arguments: event.arguments,
         };
-        updateToolCall(state, event.agentId, (parent) => ({
-          ...parent,
-          agent: {
-            ...parent.agent,
-            toolCalls: parent.agent?.toolCalls ? [...parent.agent.toolCalls, child] : [child],
-          },
+        updateSubagentActivity(state, event.parentToolCallId, (activity) => ({
+          ...activity,
+          toolCalls: activity.toolCalls ? [...activity.toolCalls, child] : [child],
         }));
         return;
       }
 
-      state.pendingToolCalls = new Map(state.pendingToolCalls).set(event.toolCallId, {
+      ensureAssistantMessage(state);
+      upsertToolCallOnLastAssistant(state, {
         id: event.toolCallId,
         name: event.toolName,
         arguments: event.arguments,
         ...(event.question ? { question: { ...event.question, state: "unanswered" } } : {}),
       });
-      applyPendingToolCallsToLastAssistant(state);
       return;
     }
 
@@ -336,29 +209,17 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
         details: event.details,
       };
 
-      if (event.agentId) {
+      if (event.parentToolCallId) {
         // Complete a child tool call nested under its agent call.
-        updateToolCall(state, event.agentId, (parent) => {
-          const childToolCalls = parent.agent?.toolCalls;
-          const index = childToolCalls?.findIndex((child) => child.id === event.toolCallId) ?? -1;
-          if (!childToolCalls || index === -1) return parent;
-
-          return {
-            ...parent,
-            agent: {
-              ...parent.agent,
-              toolCalls: replaceAt(childToolCalls, index, {
-                ...childToolCalls[index],
-                result,
-              }),
-            },
-          };
-        });
+        updateSubagentToolCall(state, event.parentToolCallId, event.toolCallId, (toolCall) => ({
+          ...toolCall,
+          result,
+        }));
         return;
       }
 
-      // Deferred completions can arrive after a message boundary has moved the
-      // call out of pendingToolCalls. The shared updater resolves either form.
+      // Deferred completions can arrive after a message boundary, so search
+      // the transcript rather than assuming the call is on the last message.
       updateToolCall(state, event.toolCallId, (toolCall) => ({
         ...toolCall,
         result,
@@ -367,7 +228,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     }
 
     case "question_requested": {
-      updateToolCall(state, event.toolCallId, (toolCall) => ({
+      updateQuestion(state, event.toolCallId, (toolCall) => ({
         ...toolCall,
         question: {
           ...event.question,
@@ -375,15 +236,11 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
           requestId: event.requestId,
         },
       }));
-      if (event.question.blocking !== false) {
-        state.status = "waiting";
-        state.reasoningContent = "";
-      }
       return;
     }
 
     case "question_resolved": {
-      updateToolCall(state, event.toolCallId, (toolCall) => {
+      updateQuestion(state, event.toolCallId, (toolCall) => {
         if (!toolCall.question) return toolCall;
         return {
           ...toolCall,
@@ -394,25 +251,22 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
           },
         };
       });
-      state.status = hasBlockingSessionQuestion(state) ? "waiting" : "thinking";
       return;
     }
 
     case "question_cancelled": {
-      updateToolCall(state, event.toolCallId, (toolCall) =>
+      updateQuestion(state, event.toolCallId, (toolCall) =>
         toolCall.question?.state === "pending"
           ? { ...toolCall, question: { ...toQuestionBase(toolCall.question), state: "unanswered" } }
           : toolCall,
       );
-      state.status = hasBlockingSessionQuestion(state) ? "waiting" : "thinking";
       return;
     }
 
     // ── Status & metadata ─────────────────────────────────────────────
 
     case "session_title_changed":
-      if (state.title === event.title) return;
-      state.title = event.title;
+      // Session titles belong to workspace metadata, not reduced transcript state.
       return;
 
     case "todos_patch": {
@@ -467,13 +321,10 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
     // ── Model ─────────────────────────────────────────────────────────
 
     case "model_changed":
-      if (event.agentId) {
-        updateToolCall(state, event.agentId, (toolCall) => ({
-          ...toolCall,
-          agent: {
-            ...toolCall.agent,
-            model: event.model,
-          },
+      if (event.parentToolCallId) {
+        updateSubagentActivity(state, event.parentToolCallId, (activity) => ({
+          ...activity,
+          model: event.model,
         }));
         return;
       }
@@ -485,6 +336,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
 
     case "end":
       state.messages = markPendingQuestionUnanswered(state.messages);
+      if (state.queuedMessages.length > 0) state.queuedMessages = [];
       // Idempotent on purpose: clients can synthesize fallback end events for
       // event-less completions/transport failures, and replays can deliver one
       // after state is already final.
@@ -493,18 +345,11 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
         return;
       }
 
-      if (
-        state.status === "idle" &&
-        state.reasoningContent === "" &&
-        state.pendingToolCalls.size === 0 &&
-        state.pendingOptimisticUserMessage === undefined
-      ) {
+      if (state.status === "idle" && state.reasoningContent === "") {
         return;
       }
       state.status = "idle";
       state.reasoningContent = "";
-      state.pendingToolCalls = new Map();
-      state.pendingOptimisticUserMessage = undefined;
       return;
 
     default:
@@ -513,7 +358,7 @@ function applySessionEventCore(state: Session, event: SessionEvent): void {
   }
 }
 
-function finishWithError(state: Session, error?: string): void {
+function finishWithError(state: SessionState, error?: string): void {
   const message = state.messages[state.messages.length - 1];
   const errorContent =
     error ||
@@ -534,8 +379,6 @@ function finishWithError(state: Session, error?: string): void {
 
   state.status = "idle";
   state.reasoningContent = "";
-  state.pendingToolCalls = new Map();
-  state.pendingOptimisticUserMessage = undefined;
 }
 
 // ============================================================================
@@ -548,18 +391,17 @@ function createCanvasKey(
   return JSON.stringify([canvas.extensionId ?? null, canvas.canvasId, canvas.instanceId]);
 }
 
-function upsertCanvas(state: Session, canvas: Omit<SessionCanvas, "key" | "revision">): void {
+function upsertCanvas(state: SessionState, canvas: Omit<SessionCanvas, "key" | "revision">): void {
   const key = createCanvasKey(canvas);
-  const currentCanvases = state.canvases ?? [];
-  const index = currentCanvases.findIndex((candidate) => candidate.key === key);
+  const index = state.canvases.findIndex((candidate) => candidate.key === key);
 
   if (index === -1) {
-    state.canvases = [...currentCanvases, { ...canvas, key, revision: 1 }];
+    state.canvases = [...state.canvases, { ...canvas, key, revision: 1 }];
     return;
   }
 
-  const current = currentCanvases[index];
-  const next = [...currentCanvases];
+  const current = state.canvases[index];
+  const next = [...state.canvases];
   next[index] = {
     ...canvas,
     key,
@@ -568,13 +410,13 @@ function upsertCanvas(state: Session, canvas: Omit<SessionCanvas, "key" | "revis
   state.canvases = next;
 }
 
-function openFile(state: Session, file: WorkspaceFile): void {
+function openFile(state: SessionState, file: WorkspaceFile): void {
   const id = workspaceFileId(file);
   if (state.openedFiles.some((opened) => workspaceFileId(opened) === id)) return;
   state.openedFiles = [...state.openedFiles, file];
 }
 
-function closeFile(state: Session, file: WorkspaceFile): void {
+function closeFile(state: SessionState, file: WorkspaceFile): void {
   const id = workspaceFileId(file);
   const openedFiles = state.openedFiles.filter((opened) => workspaceFileId(opened) !== id);
   if (openedFiles.length === state.openedFiles.length) return;
@@ -592,6 +434,7 @@ function inputMessageFromEvent(event: InputEvent): InputMessage {
   return event.type === "user_message"
     ? {
         role: "user",
+        ...(event.clientId ? { clientId: event.clientId } : {}),
         content: event.content,
         attachments: event.attachments,
         ...(event.rewindable === false ? { rewindable: false } : {}),
@@ -599,47 +442,52 @@ function inputMessageFromEvent(event: InputEvent): InputMessage {
       }
     : {
         role: "system",
+        ...(event.clientId ? { clientId: event.clientId } : {}),
         content: event.content,
         timestamp: event.timestamp,
       };
 }
 
-/** Reconcile an incoming user_message with a previously optimistic one.
- *  Returns true if the event was handled (caller should return early). */
-function reconcileOptimisticUserMessage(
-  state: Session,
+/** One client ID identifies a user input while queued, optimistically
+ *  rendered, and canonically echoed. Canonical data replaces an existing
+ *  transcript entry; otherwise the input moves from the queue into history. */
+function upsertUserMessage(
+  state: SessionState,
   event: Extract<SessionEvent, { type: "user_message" }>,
-): boolean {
-  const pending = state.pendingOptimisticUserMessage;
-  if (!pending || event.clientId !== pending.clientId) return false;
-
-  replaceMessage(state, pending.index, inputMessageFromEvent(event));
-  state.pendingOptimisticUserMessage = undefined;
-  return true;
+): void {
+  if (event.clientId) removeQueuedMessage(state, event.clientId);
+  const message = inputMessageFromEvent(event);
+  const index = event.clientId
+    ? state.messages.findIndex(
+        (candidate) => candidate.role === "user" && candidate.clientId === event.clientId,
+      )
+    : -1;
+  if (index === -1) appendMessage(state, message);
+  else replaceMessage(state, index, message);
 }
 
-function ensureAssistantMessage(state: Session): void {
+function ensureAssistantMessage(state: SessionState): void {
   const last = state.messages[state.messages.length - 1];
   if (last?.role === "assistant" && !last.error) return;
-  appendMessage(state, { role: "assistant", content: "" });
+  appendMessage(state, {
+    role: "assistant",
+    content: "",
+  });
 }
 
 // Like ensureAssistantMessage, but also starts a new message when the current
 // one already has tool calls — so that text after tool execution lands on a
 // fresh assistant message, preserving the interleaving of text and tool groups.
-function ensureCleanAssistantMessage(state: Session, messageId?: string): void {
+function ensureCleanAssistantMessage(state: SessionState, messageId?: string): void {
   const last = state.messages[state.messages.length - 1];
   if (
     last?.role === "assistant" &&
     !last.error &&
     !last.toolCalls?.length &&
-    (messageId === undefined || last.messageId === messageId) &&
-    state.pendingToolCalls.size === 0
+    (messageId === undefined || last.messageId === messageId)
   ) {
     return;
   }
-  // Finalize: pending tool calls have already been applied to the previous message.
-  state.pendingToolCalls = new Map();
   appendMessage(state, {
     role: "assistant",
     content: "",
@@ -648,7 +496,7 @@ function ensureCleanAssistantMessage(state: Session, messageId?: string): void {
 }
 
 function upsertCommittedAssistantMessage(
-  state: Session,
+  state: SessionState,
   content: string,
   reconcileLiveMessage: boolean,
   messageId?: string,
@@ -698,15 +546,15 @@ function mergeStreamingText(existing: string, incoming: string): string {
 }
 
 // Unlike mergeStreamingText (which splices deltas of ONE growing message),
-// agent assistant_message events are whole committed messages — joined as
+// subagent assistant_message events are whole committed messages — joined as
 // separate paragraphs.
-function appendCommittedAgentContent(existing: string, incoming: string): string {
+function appendCommittedSubagentContent(existing: string, incoming: string): string {
   if (incoming.length === 0) return existing;
   if (existing.length === 0) return incoming;
   return `${existing}\n\n${incoming}`;
 }
 
-function appendAssistantDelta(state: Session, content: string): void {
+function appendAssistantDelta(state: SessionState, content: string): void {
   const last = state.messages[state.messages.length - 1];
   if (!last || last.role !== "assistant") return;
   replaceMessage(state, state.messages.length - 1, {
@@ -747,33 +595,23 @@ function markPendingQuestionUnanswered(messages: Message[]): Message[] {
   return result;
 }
 
-function applyPendingToolCallsToLastAssistant(state: Session): void {
+function upsertToolCallOnLastAssistant(state: SessionState, toolCall: ToolCall): void {
   const last = state.messages[state.messages.length - 1];
   if (!last || last.role !== "assistant") return;
-  const toolCalls = Array.from(state.pendingToolCalls.values());
+  const toolCalls = last.toolCalls ?? [];
+  const index = toolCalls.findIndex((candidate) => candidate.id === toolCall.id);
   replaceMessage(state, state.messages.length - 1, {
     ...last,
-    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    toolCalls: index === -1 ? [...toolCalls, toolCall] : replaceAt(toolCalls, index, toolCall),
   });
 }
 
-/** Replace a tool call wherever it currently lives. Active calls are mirrored
- *  from pendingToolCalls onto the last message; committed calls can belong to
- *  any earlier message, so replace that exact message branch. */
+/** Replace a tool call wherever it lives in the transcript. */
 function updateToolCall(
-  state: Session,
+  state: SessionState,
   toolCallId: string,
   update: (toolCall: ToolCall) => ToolCall,
 ): void {
-  const pending = state.pendingToolCalls.get(toolCallId);
-  if (pending) {
-    const next = update(pending);
-    if (next === pending) return;
-    state.pendingToolCalls = new Map(state.pendingToolCalls).set(toolCallId, next);
-    applyPendingToolCallsToLastAssistant(state);
-    return;
-  }
-
   for (let messageIndex = state.messages.length - 1; messageIndex >= 0; messageIndex--) {
     const message = state.messages[messageIndex];
     if (message.role !== "assistant" || !message.toolCalls) continue;
@@ -793,11 +631,55 @@ function updateToolCall(
   }
 }
 
+function updateSubagentActivity(
+  state: SessionState,
+  parentToolCallId: string,
+  update: (activity: SubagentActivity) => SubagentActivity,
+): void {
+  updateToolCall(state, parentToolCallId, (toolCall) => {
+    const current = toolCall.subagent ?? {};
+    const subagent = update(current);
+    return subagent === current ? toolCall : { ...toolCall, subagent };
+  });
+}
+
+function updateSubagentToolCall(
+  state: SessionState,
+  parentToolCallId: string,
+  toolCallId: string,
+  update: (toolCall: ToolCall) => ToolCall,
+): void {
+  updateSubagentActivity(state, parentToolCallId, (activity) => {
+    const toolCalls = activity.toolCalls;
+    const index = toolCalls?.findIndex((toolCall) => toolCall.id === toolCallId) ?? -1;
+    if (!toolCalls || index === -1) return activity;
+    return { ...activity, toolCalls: replaceAt(toolCalls, index, update(toolCalls[index])) };
+  });
+}
+
+function updateQuestion(
+  state: SessionState,
+  toolCallId: string,
+  update: (toolCall: ToolCall) => ToolCall,
+): void {
+  const hadBlockingQuestion = hasBlockingSessionQuestion(state);
+  updateToolCall(state, toolCallId, update);
+  const hasBlockingQuestion = hasBlockingSessionQuestion(state);
+
+  if (hasBlockingQuestion !== hadBlockingQuestion) {
+    state.status = "thinking";
+    if (hasBlockingQuestion) state.reasoningContent = "";
+  }
+}
+
 // ============================================================================
 // Queue helpers
 // ============================================================================
 
-function upsertQueuedMessage(state: Session, message: QueuedMessage): void {
+function upsertQueuedMessage(
+  state: SessionState,
+  message: SessionState["queuedMessages"][number],
+): void {
   const index = state.queuedMessages.findIndex(
     (candidate) => candidate.clientId === message.clientId,
   );
@@ -807,7 +689,20 @@ function upsertQueuedMessage(state: Session, message: QueuedMessage): void {
       : replaceAt(state.queuedMessages, index, message);
 }
 
-function removeQueuedMessage(state: Session, clientId: string): void {
+function setQueuedMessageStatus(
+  state: SessionState,
+  clientId: string,
+  status: SessionState["queuedMessages"][number]["status"],
+): void {
+  const index = state.queuedMessages.findIndex((message) => message.clientId === clientId);
+  if (index === -1 || state.queuedMessages[index].status === status) return;
+  state.queuedMessages = replaceAt(state.queuedMessages, index, {
+    ...state.queuedMessages[index],
+    status,
+  });
+}
+
+function removeQueuedMessage(state: SessionState, clientId: string): void {
   if (state.queuedMessages.length === 0) return;
 
   const index = state.queuedMessages.findIndex((message) => message.clientId === clientId);
@@ -818,11 +713,11 @@ function removeQueuedMessage(state: Session, clientId: string): void {
   ];
 }
 
-function appendMessage(state: Session, message: Message): void {
+function appendMessage(state: SessionState, message: Message): void {
   state.messages = [...state.messages, message];
 }
 
-function replaceMessage(state: Session, index: number, message: Message): void {
+function replaceMessage(state: SessionState, index: number, message: Message): void {
   state.messages = replaceAt(state.messages, index, message);
 }
 
@@ -834,13 +729,10 @@ function replaceAt<T>(items: T[], index: number, item: T): T[] {
 // Todo helpers
 // ============================================================================
 
-function applyTodoPatches(
-  current: TodoItem[] | undefined,
-  patches: TodoItemPatch[],
-): TodoItem[] | undefined {
+function applyTodoPatches(current: TodoItem[], patches: TodoItemPatch[]): TodoItem[] {
   if (patches.length === 0) return current;
 
-  let next = current ? current.map((todo) => ({ ...todo })) : [];
+  let next = current.map((todo) => ({ ...todo }));
 
   for (const patch of patches) {
     if (patch.type === "replace_all") {
@@ -879,5 +771,5 @@ function applyTodoPatches(
     };
   }
 
-  return next.length > 0 ? next : undefined;
+  return next;
 }

@@ -10,18 +10,16 @@ import { agentHandleFromName, findAgentMentionToken, type AgentMentionToken } fr
 import { agentMutations } from "@agents/mutations";
 import type { AgentPickerSuggestion } from "./agentPickerSuggestions";
 
-/** Shared keyboard/caret workflow for operational @mentions in any agent host composer. */
+/** Keyboard and caret workflow for Channel Agent mentions. */
 export function useAgentMentionInput({
   value,
   onValueChange,
   textareaRef,
-  enabled = true,
   suggestionsFor,
 }: {
   value: string;
   onValueChange: (value: string) => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
-  enabled?: boolean;
   suggestionsFor: (query: string) => AgentPickerSuggestion[];
 }) {
   const [token, setToken] = useState<AgentMentionToken>();
@@ -47,7 +45,7 @@ export function useAgentMentionInput({
     : matchingSuggestions;
 
   function updateToken(nextValue: string, caret: number | null): void {
-    const next = enabled ? findAgentMentionToken(nextValue, caret ?? nextValue.length) : undefined;
+    const next = findAgentMentionToken(nextValue, caret ?? nextValue.length);
     if (next?.start !== token?.start || next?.end !== token?.end || next?.query !== token?.query) {
       setActiveIndex(0);
     }

@@ -1,6 +1,6 @@
 import { SessionConnectionUnavailableError } from "@providers/server/provider";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
-import type { QueuedMessage, SessionEvent, SessionSkill } from "@sessions/model";
+import type { SessionEvent, SessionMessage, SessionSkill } from "@sessions/model";
 import type { SessionQuestionAnswer } from "@sessions/model/protocol";
 import type {
   SessionIdentity,
@@ -21,7 +21,13 @@ import type {
   ReasoningEffort,
 } from "./protocol";
 import { CodexTransport, type RpcNotification, type RpcRequest } from "./protocol/transport";
-import { createCodexProjector, codexQuestionId, itemTimestamp } from "./projector";
+import {
+  createCodexProjector,
+  codexQuestionId,
+  isCodexSubagentSpawn,
+  itemTimestamp,
+  scopeCodexSubagentEvent,
+} from "./projector";
 import { encodeInput } from "./inputs";
 import { readThreadHistory } from "./history";
 
@@ -29,6 +35,16 @@ type PendingQuestion = {
   rpcId: string | number;
   params: ToolRequestUserInputParams;
   answers: ToolRequestUserInputResponse["answers"];
+};
+
+type SubagentProjection = {
+  call: {
+    toolCallId: string;
+    remainingThreadIds: Set<string>;
+    failed: boolean;
+    error?: string;
+  };
+  project: ReturnType<typeof createCodexProjector>;
 };
 
 export class CodexConnection implements SessionConnection {
@@ -39,6 +55,7 @@ export class CodexConnection implements SessionConnection {
   #model: ModelConfiguration;
   #turn?: Pick<Turn, "id"> & { controller: AbortController };
   #questions = new Map<string, PendingQuestion>();
+  #subagents = new Map<string, SubagentProjection>();
   #terminalTurn?: string;
   #terminalCallId?: string;
   #disconnected = false;
@@ -68,11 +85,11 @@ export class CodexConnection implements SessionConnection {
     return () => this.#listeners.delete(listener);
   }
 
-  async send(message: QueuedMessage, immediate?: true): Promise<void> {
+  async send(message: SessionMessage): Promise<void> {
     if (this.#disconnected)
       throw new SessionConnectionUnavailableError("Codex session disconnected.");
     const input = await encodeInput(this.configuration.attachmentsDirectory, message, this.skills);
-    if (immediate) {
+    if (message.immediate) {
       if (!this.#turn)
         throw new Error("The Codex turn has ended. Send this message as a new turn.");
       await this.rpc.request("turn/steer", {
@@ -135,6 +152,7 @@ export class CodexConnection implements SessionConnection {
     this.#cancelRequests();
     for (const dispose of this.#dispose) dispose();
     this.#listeners.clear();
+    this.#subagents.clear();
     await this.rpc.request("thread/unsubscribe", { threadId: this.identity.nativeId });
   }
 
@@ -172,6 +190,7 @@ export class CodexConnection implements SessionConnection {
         numTurns: thread.turns.length - index,
       });
     this.#project = createCodexProjector(this.identity.sessionId);
+    this.#subagents.clear();
   }
 
   #emit(event: SessionEvent): void {
@@ -186,13 +205,13 @@ export class CodexConnection implements SessionConnection {
 
   #notification(notification: RpcNotification): void {
     const { method, params } = notification;
-    if (
-      !params ||
-      typeof params !== "object" ||
-      !("threadId" in params) ||
-      params.threadId !== this.identity.nativeId
-    )
+    if (!params || typeof params !== "object" || !("threadId" in params)) return;
+    const threadId = params.threadId;
+    if (typeof threadId !== "string") return;
+    if (threadId !== this.identity.nativeId) {
+      this.#subagentNotification(threadId, notification);
       return;
+    }
     switch (method) {
       case "turn/started": {
         const { turn } = params as TurnStartedNotification;
@@ -213,6 +232,7 @@ export class CodexConnection implements SessionConnection {
         break;
       }
     }
+    this.#registerSubagent(notification);
     for (const event of this.#project(notification)) this.#emit(event);
     if (method === "item/completed") {
       const { item, turnId } = params as ItemCompletedNotification;
@@ -229,6 +249,62 @@ export class CodexConnection implements SessionConnection {
           });
       }
     }
+  }
+
+  #registerSubagent(notification: RpcNotification): void {
+    if (notification.method !== "item/completed") return;
+    const { item } = notification.params as ItemCompletedNotification;
+    if (!isCodexSubagentSpawn(item) || item.status !== "completed") return;
+
+    const threadIds = item.receiverThreadIds;
+    if (!threadIds.length) return;
+    const call = {
+      toolCallId: item.id,
+      remainingThreadIds: new Set(threadIds),
+      failed: false,
+    };
+    for (const threadId of threadIds) {
+      this.#subagents.set(threadId, {
+        call,
+        project: createCodexProjector(this.identity.sessionId),
+      });
+    }
+  }
+
+  #subagentNotification(threadId: string, notification: RpcNotification): void {
+    const subagent = this.#subagents.get(threadId);
+    if (!subagent) return;
+
+    for (const event of subagent.project(notification)) {
+      if (event.type === "end") {
+        this.#completeSubagent(threadId, subagent, event);
+        continue;
+      }
+      const scoped = scopeCodexSubagentEvent(event, subagent.call.toolCallId);
+      if (scoped) this.#emit(scoped);
+    }
+  }
+
+  #completeSubagent(
+    threadId: string,
+    subagent: SubagentProjection,
+    event: Extract<SessionEvent, { type: "end" }>,
+  ): void {
+    this.#subagents.delete(threadId);
+    const { call } = subagent;
+    call.remainingThreadIds.delete(threadId);
+    if (event.reason === "error") {
+      call.failed = true;
+      call.error ??= event.error;
+    }
+    if (call.remainingThreadIds.size) return;
+
+    this.#emit({
+      type: "tool_end",
+      toolCallId: call.toolCallId,
+      success: !call.failed,
+      ...(call.error ? { result: call.error } : {}),
+    });
   }
 
   #request(request: RpcRequest): boolean {

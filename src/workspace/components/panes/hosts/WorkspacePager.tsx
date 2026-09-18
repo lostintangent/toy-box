@@ -6,9 +6,8 @@ import { Button } from "@/shared/components/ui/button";
 import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { useFocusedPaneAtom } from "@workspace/hooks/layout/surface";
 import { cn } from "@/shared/utils";
-import { paneSourceSessionId, type WorkspacePane } from "@workspace/model/panes";
+import type { WorkspacePane } from "@workspace/model/panes";
 import { WorkspacePaneView } from "../shell/WorkspacePaneView";
-import { SessionOverlay } from "@sessions/components/SessionOverlay";
 
 export type WorkspacePagerProps = {
   panes: WorkspacePane[];
@@ -113,15 +112,6 @@ export function WorkspacePager({
       <div className="relative min-h-0 flex-1">
         {panes.map((pane) => {
           const isActive = pane.id === activePaneId;
-          const associatedSessionId = paneSourceSessionId(pane);
-          const hasSourceSessionPane =
-            associatedSessionId !== undefined &&
-            panes.some(
-              (candidate) =>
-                candidate.kind === "session" && candidate.sessionId === associatedSessionId,
-            );
-          const shouldRenderSessionOverlay =
-            associatedSessionId !== undefined && pane.kind !== "session" && !hasSourceSessionPane;
           // Stack all panes and toggle visibility (not display) so inactive ones keep their
           // layout — and therefore their scroll position — instead of being torn out and reset.
           return (
@@ -138,9 +128,7 @@ export function WorkspacePager({
                   status: isActive ? statusSlot : null,
                 }}
                 onFocusPane={setFocusedPaneId}
-              >
-                {shouldRenderSessionOverlay && <SessionOverlay sessionId={associatedSessionId} />}
-              </WorkspacePaneView>
+              />
             </div>
           );
         })}

@@ -38,8 +38,7 @@ const spawnWorkerTool = defineTool("spawn_worker", {
       ephemeral,
       ...(args.name === undefined ? {} : { name: args.name }),
       message: { content: args.task, model: args.model },
-      directory: args.directory,
-      useWorktree: args.useWorktree,
+      location: { directory: args.directory, useWorktree: args.useWorktree },
     });
 
     return JSON.stringify({ sessionId, opened: !ephemeral });

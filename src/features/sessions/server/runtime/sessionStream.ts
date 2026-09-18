@@ -13,19 +13,13 @@ import { setSessionStatus } from "@workspace/server/state";
 import { systemMessageCoalesceKey } from "@sessions/model/systemMessages";
 import { areModelConfigurationsEqual } from "@sessions/model/modelConfiguration";
 import type { SessionQuestionAnswer, SessionSubscriptionMode } from "@sessions/model/protocol";
-import {
-  applySessionEvent,
-  createInitialSession,
-  hasPendingSessionQuestion,
-  prepareSessionForNextTurn,
-  toSessionSnapshot,
-  type Session,
-} from "@sessions/model/reducer";
+import { applySessionEvent, createInitialSessionState } from "@sessions/model/reducer";
+import { hasBlockingSessionQuestion, hasPendingSessionQuestion } from "@sessions/model/questions";
 import type {
-  QueuedMessage,
-  QueuedUserMessage,
   SessionCompletion,
   SessionEvent,
+  SessionMessage,
+  SessionState,
 } from "@sessions/model";
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
 import { emitSessionNameUpdate } from "@workspace/server/events";
@@ -34,9 +28,6 @@ import { createSessionEventBus, type SessionStreamSubscription } from "./eventBu
 
 type MessageDisposition = "started" | "queued";
 type StreamEndReason = Extract<SessionEvent, { type: "end" }>["reason"];
-type SessionStreamHooks = {
-  onUserMessageSubmitted?: (message: QueuedUserMessage) => void;
-};
 
 // Replay retention cap. A client reconnecting across a gap larger than this
 // silently misses the trimmed events; the client heals by refetching the
@@ -61,15 +52,14 @@ export class SessionStream {
   static getOrCreate(
     sessionId: string,
     session: SessionConnection,
-    initialState?: Partial<Session>,
-    hooks?: SessionStreamHooks,
+    initialState?: Partial<SessionState>,
   ): SessionStream {
     const existing = SessionStream.streams.get(sessionId);
     if (existing) {
       return existing;
     }
 
-    const stream = new SessionStream(sessionId, session, initialState, hooks);
+    const stream = new SessionStream(sessionId, session, initialState);
     SessionStream.streams.set(sessionId, stream);
     return stream;
   }
@@ -111,36 +101,26 @@ export class SessionStream {
   #bus = createSessionEventBus(MAX_REPLAY_EVENTS);
 
   readonly #completionWaiters = new Set<() => void>();
-
-  // Provider event listener
   #unsubscribeProvider: () => void;
 
   // Live session state survives turn boundaries; only replay history is
   // turn-scoped.
-  #sessionState: Session;
+  #sessionState: SessionState;
 
-  /** Submitted inputs stay claimed until the provider echoes their client IDs. */
-  readonly #submittedClientIds = new Set<string>();
-  #isSendingQueuedMessage = false;
   // Claimed synchronously before #startTurn awaits so concurrent deliveries
   // cannot both open the stream's first turn.
   #hasOpenedTurn = false;
   #abortRequested = false;
   #finished = false;
-  #disposed = false;
   #completionResult: SessionCompletion | undefined;
-  readonly #hooks: SessionStreamHooks;
-
   private constructor(
     sessionId: string,
     connection: SessionConnection,
-    initialState?: Partial<Session>,
-    hooks: SessionStreamHooks = {},
+    initialState?: Partial<SessionState>,
   ) {
     this.sessionId = sessionId;
     this.connection = connection;
-    this.#sessionState = createInitialSession(initialState);
-    this.#hooks = hooks;
+    this.#sessionState = createInitialSessionState(initialState);
 
     this.#unsubscribeProvider = connection.onEvent((event) => this.#handleProviderEvent(event));
   }
@@ -155,23 +135,29 @@ export class SessionStream {
   }
 
   /** Start the stream's first message or queue behind its active turn. */
-  async deliver(message: QueuedMessage, immediate?: true): Promise<MessageDisposition> {
+  async deliver(message: SessionMessage): Promise<MessageDisposition> {
     if (this.#finished || this.#abortRequested) {
       throw new SessionStreamFinishedError();
     }
 
     if (!this.#hasOpenedTurn) {
       this.#hasOpenedTurn = true;
-      await this.#startTurn(message);
+      await this.#startTurn(deferMessage(message));
       return "started";
     }
 
-    if (immediate && !this.#isSendingQueuedMessage) {
-      await this.#sendQueuedMessageImmediately(message);
+    const isSubmittingMessage = this.#sessionState.queuedMessages.some(
+      ({ status }) => status === "submitting",
+    );
+    const queuedMessage =
+      message.immediate && isSubmittingMessage ? deferMessage(message) : message;
+
+    if (queuedMessage.immediate) {
+      await this.#submitMessage(queuedMessage);
       return "queued";
     }
 
-    const coalesceKey = coalesceKeyForMessage(message);
+    const coalesceKey = coalesceKeyForMessage(queuedMessage);
     if (
       !coalesceKey ||
       !this.#sessionState.queuedMessages.some(
@@ -180,7 +166,7 @@ export class SessionStream {
     ) {
       this.#emit({
         type: "message_queued",
-        message,
+        message: queuedMessage,
       });
     }
 
@@ -188,18 +174,24 @@ export class SessionStream {
   }
 
   async steerQueuedMessage(clientId: string): Promise<boolean> {
-    if (this.#abortRequested || this.#isSendingQueuedMessage) {
+    if (
+      this.#abortRequested ||
+      this.#sessionState.queuedMessages.some(({ status }) => status === "submitting")
+    ) {
       return false;
     }
 
     const message = this.#sessionState.queuedMessages.find(
       (candidate) => candidate.clientId === clientId,
     );
-    if (message?.role !== "user" || message.immediate || this.#submittedClientIds.has(clientId)) {
+    if (message?.role !== "user" || message.status !== "queued") {
       return false;
     }
 
-    return this.#sendQueuedMessageImmediately(message);
+    const immediateMessage: SessionMessage = { ...messageFromQueue(message), immediate: true };
+    this.#emit({ type: "message_queued", message: immediateMessage });
+    await this.#submitMessage(immediateMessage);
+    return true;
   }
 
   cancelQueuedMessage(clientId: string): boolean {
@@ -208,7 +200,7 @@ export class SessionStream {
     const message = this.#sessionState.queuedMessages.find(
       (candidate) => candidate.clientId === clientId,
     );
-    if (!message || this.#submittedClientIds.has(clientId) || message.immediate) {
+    if (!message || message.status !== "queued") {
       return false;
     }
 
@@ -269,17 +261,8 @@ export class SessionStream {
     });
   }
 
-  getSessionState(): Session {
+  getSessionState(): SessionState {
     return this.#sessionState;
-  }
-
-  getQueuedMessages(): QueuedMessage[] {
-    return this.#sessionState.queuedMessages;
-  }
-
-  /** @internal Test seam for event replay cursor behavior. */
-  getReplayEventsSince(afterEventId?: number): SessionEvent[] {
-    return this.#bus.replaySince(afterEventId);
   }
 
   // ── Stream controls ──────────────────────────────────────────────────
@@ -295,7 +278,7 @@ export class SessionStream {
 
     this.#emit({ type: "end", reason, ...(error ? { error } : {}) });
     if (reason === "idle" && !this.#abortRequested) {
-      cacheSnapshot(this.sessionId, toSessionSnapshot(this.sessionId, this.#sessionState));
+      cacheSnapshot(this.sessionId, this.#sessionState);
     }
     setSessionStatus(
       this.sessionId,
@@ -321,30 +304,25 @@ export class SessionStream {
 
   // ── Turn execution ───────────────────────────────────────────────────
 
-  async #startTurn(message: QueuedMessage): Promise<void> {
-    this.#prepareForNewTurn();
+  async #startTurn(message: SessionMessage): Promise<void> {
+    this.#bus.clearReplay();
+    this.#sessionState = applySessionEvent(this.#sessionState, {
+      type: "status",
+      status: "thinking",
+    });
+    setSessionStatus(this.sessionId, "running");
 
     try {
-      const model = message.role === "user" ? message.model : undefined;
-      if (model) {
-        await this.#setModel(model);
+      if (message.role === "user" && message.model) {
+        await this.#setModel(message.model);
       }
 
-      await this.#sendToProvider(message);
-      this.#notifyUserMessageSubmitted(message);
+      await this.connection.send(message);
     } catch (error) {
       evictCachedSessionIfStale(this.sessionId, error);
       this.finish("error");
       throw error;
     }
-  }
-
-  #prepareForNewTurn(): void {
-    this.#bus.clearReplay();
-
-    this.#sessionState = prepareSessionForNextTurn(this.#sessionState);
-
-    setSessionStatus(this.sessionId, "running");
   }
 
   async #setModel(configuration: ModelConfiguration): Promise<void> {
@@ -366,6 +344,7 @@ export class SessionStream {
   #handleProviderEvent(event: SessionEvent): void {
     if (event.type === "session_title_changed") {
       emitSessionNameUpdate(this.sessionId, event.title);
+      return;
     }
     if (event.type === "end") {
       if (event.reason === "error") {
@@ -375,30 +354,28 @@ export class SessionStream {
       }
       return;
     }
-    if ((event.type === "user_message" || event.type === "system_message") && event.clientId) {
-      this.#submittedClientIds.delete(event.clientId);
-    }
     this.#emit(event);
   }
 
   async #drainMessageQueue(): Promise<void> {
-    if (this.#abortRequested || this.#isSendingQueuedMessage) return;
+    if (
+      this.#abortRequested ||
+      this.#sessionState.queuedMessages.some(({ status }) => status === "submitting")
+    ) {
+      return;
+    }
 
     const queuedMessage = this.#sessionState.queuedMessages[0];
     if (!queuedMessage) {
       this.finish();
       return;
     }
-    if (queuedMessage.immediate) return;
-
-    this.#isSendingQueuedMessage = true;
+    if (queuedMessage.status !== "queued") return;
 
     try {
-      await this.#startTurn(queuedMessage);
+      await this.#submitMessage(messageFromQueue(queuedMessage));
     } catch {
       // #startTurn already finished the stream; this runs from a floating SDK handler.
-    } finally {
-      this.#isSendingQueuedMessage = false;
     }
   }
 
@@ -406,51 +383,57 @@ export class SessionStream {
 
   #emit(event: SessionEvent): void {
     const published = this.#bus.publish(event);
+    const changesQuestionState =
+      published.type === "question_requested" ||
+      published.type === "question_resolved" ||
+      published.type === "question_cancelled";
+    const hadBlockingQuestion = changesQuestionState
+      ? hasBlockingSessionQuestion(this.#sessionState)
+      : false;
     this.#sessionState = applySessionEvent(this.#sessionState, published);
-    if (published.type === "question_requested" && published.question.blocking !== false) {
-      setSessionStatus(this.sessionId, "waiting");
-    } else if (published.type === "question_resolved" || published.type === "question_cancelled") {
-      setSessionStatus(
-        this.sessionId,
-        this.#sessionState.status === "waiting" ? "waiting" : "running",
-      );
+    const hasBlockingQuestion = changesQuestionState
+      ? hasBlockingSessionQuestion(this.#sessionState)
+      : false;
+    if (changesQuestionState && hasBlockingQuestion !== hadBlockingQuestion) {
+      setSessionStatus(this.sessionId, hasBlockingQuestion ? "waiting" : "running");
     }
   }
 
   // ── Internal helpers ─────────────────────────────────────────────────
 
-  async #sendQueuedMessageImmediately(message: QueuedMessage): Promise<boolean> {
-    this.#isSendingQueuedMessage = true;
+  async #submitMessage(message: SessionMessage): Promise<void> {
+    if (!this.#sessionState.queuedMessages.some(({ clientId }) => clientId === message.clientId)) {
+      this.#emit({ type: "message_queued", message });
+    }
     this.#emit({
-      type: "message_queued",
-      message: { ...message, immediate: true },
+      type: "message_status_changed",
+      clientId: message.clientId,
+      status: "submitting",
     });
-
     try {
-      await this.#sendToProvider(message, "immediate");
-      this.#notifyUserMessageSubmitted(message);
-      return true;
+      if (message.immediate) {
+        await this.connection.send(message);
+      } else {
+        await this.#startTurn(message);
+      }
+      this.#emit({
+        type: "message_status_changed",
+        clientId: message.clientId,
+        status: "submitted",
+      });
     } catch (error) {
       if (
+        message.immediate &&
         !this.#abortRequested &&
         this.#sessionState.queuedMessages.some(
           ({ clientId: candidateId }) => candidateId === message.clientId,
         )
       ) {
-        this.#emit({ type: "message_queued", message });
+        this.#emit({
+          type: "message_queued",
+          message: deferMessage(message),
+        });
       }
-      throw error;
-    } finally {
-      this.#isSendingQueuedMessage = false;
-    }
-  }
-
-  async #sendToProvider(message: QueuedMessage, mode?: "immediate"): Promise<void> {
-    this.#submittedClientIds.add(message.clientId);
-    try {
-      await this.connection.send(message, mode === "immediate" ? true : undefined);
-    } catch (error) {
-      this.#submittedClientIds.delete(message.clientId);
       throw error;
     }
   }
@@ -460,36 +443,17 @@ export class SessionStream {
     this.#emit({ type: "artifacts_changed", artifacts: paths });
   }
 
-  #notifyUserMessageSubmitted(message: QueuedMessage): void {
-    if (message.role !== "user") return;
-    try {
-      this.#hooks.onUserMessageSubmitted?.(message);
-    } catch (error) {
-      console.error(`Session ${this.sessionId} message submission hook failed:`, error);
-    }
-  }
-
   #dispose(): void {
-    if (this.#disposed) return;
-    this.#disposed = true;
     // Session deletion can dispose without the domain finish transition. Mark
     // the stream finished so a stale reference cannot emit a terminal event or
     // accept a message after registry removal.
     this.#finished = true;
 
-    this.#sessionState = { ...this.#sessionState, queuedMessages: [] };
     this.#bus.close();
-    this.#resolveCompletionWaiters();
+    for (const resolve of this.#completionWaiters) resolve();
+    this.#completionWaiters.clear();
     this.#unsubscribeProvider();
     SessionStream.streams.delete(this.sessionId);
-  }
-
-  #resolveCompletionWaiters(): void {
-    if (this.#completionWaiters.size === 0) return;
-    for (const resolve of this.#completionWaiters) {
-      resolve();
-    }
-    this.#completionWaiters.clear();
   }
 
   #isCurrentStream(): boolean {
@@ -503,12 +467,22 @@ export class SessionStreamFinishedError extends Error {
   }
 }
 
-function coalesceKeyForMessage(message: QueuedMessage): string | undefined {
+function coalesceKeyForMessage(message: SessionMessage): string | undefined {
   return message.role === "system" ? systemMessageCoalesceKey(message.content) : undefined;
 }
 
+function messageFromQueue(message: SessionState["queuedMessages"][number]): SessionMessage {
+  const { status: _status, ...sessionMessage } = message;
+  return sessionMessage;
+}
+
+function deferMessage(message: SessionMessage): SessionMessage {
+  const { immediate: _immediate, ...deferred } = message;
+  return deferred;
+}
+
 function completionResult(
-  messages: Session["messages"],
+  messages: SessionState["messages"],
   status: SessionCompletion["status"] = "completed",
 ): SessionCompletion {
   for (let index = messages.length - 1; index >= 0; index--) {

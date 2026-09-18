@@ -1,6 +1,7 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import type { SessionSnapshot } from "./model";
+import type { SessionState } from "./model";
+import { createInitialSessionState } from "./model/reducer";
 import { sessionQueries } from "./queries";
 import { warmSessionSnapshotQuery } from "./useWarmSessionSnapshots";
 
@@ -11,13 +12,7 @@ describe("warm session snapshot retention", () => {
     onTestFinished(() => queryClient.clear());
 
     const { queryKey } = warmSessionSnapshotQuery("warm-session");
-    queryClient.setQueryData<SessionSnapshot>(queryKey, {
-      id: "warm-session",
-      messages: [],
-      queuedMessages: [],
-      status: "idle",
-      reasoningContent: "",
-    });
+    queryClient.setQueryData<SessionState>(queryKey, createInitialSessionState());
 
     const stopWarming = subscribe(queryClient, warmSessionSnapshotQuery("warm-session"));
     const closePane = subscribe(queryClient, sessionQueries.detail("warm-session"));

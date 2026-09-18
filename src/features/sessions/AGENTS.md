@@ -9,19 +9,27 @@ and apps compose sessions rather than introducing another transcript or executio
 
 `model/` is the canonical application language for a session:
 
-- `index.ts` owns transcript, queue, canvas, todo, snapshot, completion, metadata, and session-list
-  values.
+- `index.ts` owns the canonical `SessionState` plus transcript, queue, canvas, todo, completion,
+  metadata, and session-list values. Point-in-time snapshots cache this same state and are keyed by
+  session ID outside the value.
 - `protocol.ts` owns RPC schemas and infers every TypeScript type that crosses those validated
   boundaries.
 - `systemMessages.ts` owns the validated system-message vocabulary, labels, coalescing,
   model-facing prompts, and the structured display codec retained in native provider history.
+- `questions.ts` owns derived queries over pending and blocking transcript questions.
 - `fileDiffs.ts` parses edit and patch tool-call results for transcript presentation and
   identifying artifact-only tools that stay hidden.
 - `modelConfiguration.ts` owns the validated model, reasoning-effort, and context-tier
   configuration shared by sessions and their managed workflows.
 - `reducer.ts` is the one pure transition function shared by live server execution, persisted
-  history replay, and browser streaming.
+  history replay, and browser streaming. Its status records provider activity; the workspace
+  projects the user-facing waiting state from pending blocking questions.
 - `constants.ts` contains stable persisted identity and path conventions.
+
+`Message` is one canonical transcript entry. `SessionMessage` is an identified user or system
+submission addressed to a session, including its turn-specific model or immediate-send policy.
+A queued message is that same value plus its queue status. `SessionLaunch` composes the initial
+message payload with an optional `SessionLocation`; location is creation context, not message data.
 
 `SessionsState` is the durable session-list read model. It combines provider metadata and worktrees with
 feature-owned classification needed to hide managed sessions and nest Worker children. A managed
@@ -52,22 +60,15 @@ sources. An idle conversation rewind refreshes the initiating client's snapshot 
 A deletion cancels pending history reads and clears any cached transcript, so an Automation can
 reuse its public ID without appending its next execution to the previous run in an open pane.
 
-`useSession.ts` owns one mounted session's browser lifecycle. It hydrates a cold snapshot,
-subscribes while visible, reduces ordered events, batches text deltas to animation frames, and
+`useSession.ts` owns one mounted session's browser lifecycle. It reads snapshots and subscribes
+while visible, reduces ordered events, batches text deltas to animation frames, and
 exposes delivery and control operations. The long-lived async event stream deliberately remains
 explicit instead of being disguised as a mutation. Ending a browser subscription never stops
 server work; abort is a separate operation.
 
-Visible `@handle` text addresses Agents in ordinary user messages. Mention completion can create a
-new named Agent whose first Session or Channel turn establishes its persona and avatar. Ingress
-resolves that text to stable Agent IDs before queuing, so later Agent renames do not redirect an
-accepted request. `SessionStream` exposes one message-submitted hook after the provider accepts a
-turn, so Agents never runs for a merely queued message that can still be edited or canceled. Session
-and Channel composers reuse Agent-owned mention controls; the session transcript still owns user and
-system message placement. For a
-mention-directed request, the host agent defers to the attributed Agent response instead of answering
-on its behalf or echoing its completion; it contributes only when the user also requested synthesis or
-distinct host work.
+Ordinary Sessions remain unbranded coordinators. Their Channel tools can list Agents and Channels,
+create Channels and Agents, read Channel context, post user-attributed messages, share artifacts, and
+wait for Channel Agent work. Persistent Agent identity and `@mention` delivery belong to Channels.
 
 `useDrafts.ts` and `useDraftPrompt.ts` own draft creation, reuse, and synchronized composer text.
 The first submission in `useSession.ts` optimistically inserts catalog metadata and transitions
@@ -114,32 +115,34 @@ does not own session data or streaming behavior.
 - [`state/`](server/state/AGENTS.md) owns cached provider connections, snapshots, drafts, worktrees, and complete
   resource teardown.
 - `tools.ts` defines the model-facing operations that belong to Sessions. Application-level modules
-  in `src/server/sessionTools.ts`, `src/server/sessionHooks.ts`, and
-  `src/server/managedSessions.ts` compose feature-owned session configuration, Agent message
-  submission reactions,
-  role and presentation policy, and owned-resource teardown over narrow Session extension points.
+  in `src/server/sessionConfiguration.ts` and `src/server/managedSessions.ts` compose feature-owned Session
+  configuration, role and presentation policy, and owned-resource teardown over narrow Session
+  extension points.
 - `functions.ts` is the validated browser ingress, including the short-lived voice token endpoint.
   It delegates to the same server capabilities used by trusted orchestration.
 
 Automations, Inbox, Workers, and Agents build on `@sessions/server/runtime`. They add scheduling,
-ownership, identity, membership, admission, and retention policy without importing Copilot details,
-snapshot storage, or the registry implementation. Channels builds on Agent membership rather than
-defining another execution path. Shared workspace projection and process infrastructure
-remain outside the feature because they compose multiple domains rather than define session execution.
+ownership, identity, membership, admission, and retention policy without importing provider details,
+snapshot storage, or the registry implementation. Channel memberships are managed private Sessions
+whose configuration carries their Agent identity. Shared workspace projection and process
+infrastructure remain outside the feature because they compose multiple domains rather than define
+Session execution.
 
 ## Invariants
 
 - One `SessionEvent` model and one reducer must produce the same transcript live, after reconnect,
   and from persisted history.
-- Active truth comes from the live runtime; idle truth comes from provider history. Query snapshots are
-  caches, not another authority.
+- Provider-native children are `agent` tool calls: providers keep native IDs private, route child
+  activity with `parentToolCallId`, and the reducer stores that activity in `ToolCall.subagent`.
+- Active truth comes from the live runtime; idle truth comes from provider history. Query snapshots
+  are cached `SessionState` values, not another authority or another state shape.
 - Queries and mutations are the browser API for request/response session operations; `useSession`
   owns the connected stream lifecycle.
 - Managed features may govern a session's lifecycle, but they do not redefine session execution,
   transcript state, native event projection, registry, or UI primitives.
-- The application rebuilds Agent configuration for comparison between executions. Single-flight
-  runtime acquisition replaces the idle provider connection only when that effective configuration changed;
-  active delivery keeps its existing session. Callers do not coordinate configuration refresh. This
-  preserves durable history, workspace identity, and worktree state.
+- The application rebuilds private Channel Agent configuration for comparison between executions.
+  Single-flight runtime acquisition replaces the idle provider connection only when that effective
+  configuration changed; active delivery keeps its existing session. Callers do not coordinate
+  configuration refresh. This preserves durable history, workspace identity, and worktree state.
 - Generic workspace composition may render and arrange a session, but it must not copy session
   state into layout state.

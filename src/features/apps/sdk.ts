@@ -6,9 +6,10 @@ import type { WorkspaceFile, WorkspaceFileMode } from "@files/model";
 import type { AppInstance, AppShare } from "@apps/model";
 import type { Worker } from "@workers/model";
 import type {
+  Message,
   SessionCompletion,
   SessionLaunch,
-  SessionMessage,
+  SessionLocation,
   SessionMetadata,
   SessionWorktree,
 } from "@sessions/model";
@@ -20,9 +21,10 @@ export type {
   AppShare,
   ContextTier,
   ModelConfiguration,
+  Message,
   SessionCompletion,
   SessionLaunch,
-  SessionMessage,
+  SessionLocation,
   SessionMetadata,
   SessionWorktree,
   WorkspaceFile,
@@ -228,7 +230,7 @@ export type AppActions = {
   waitForSession(sessionId: string, timeoutMs?: number): Promise<SessionCompletion>;
   cancelWorker(this: void, sessionId: string): Promise<boolean>;
   deleteSession(sessionId: string): Promise<void>;
-  deliverMessage(sessionId: string, message: SessionMessage): Promise<void>;
+  deliverMessage(sessionId: string, message: SessionLaunch["message"]): Promise<void>;
   abortSession(sessionId: string): Promise<void>;
   openSession(sessionId: string): void;
   closeSession(sessionId: string): void;

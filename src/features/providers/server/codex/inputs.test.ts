@@ -1,6 +1,6 @@
 import { expect, onTestFinished, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import type { QueuedMessage, SessionSystemMessage } from "@sessions/model";
+import type { SessionMessage, SessionSystemMessage } from "@sessions/model";
 import { systemMessagePrompt } from "@sessions/model/systemMessages";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,10 +16,10 @@ const userItem = (content: UserInput[]): Extract<ThreadItem, { type: "userMessag
   content,
 });
 
-test("native display spans preserve Unicode and multiline system messages through replay", async () => {
+test("native display spans preserve Unicode system messages through replay", async () => {
   const content: SessionSystemMessage = {
-    type: "agent_handoff",
-    content: "Review résumé 🍣.md.\nKeep this direction private.",
+    type: "file_edited",
+    file: { kind: "session", sessionId: "session", path: "résumé 🍣.md" },
   };
   const input = await encodeInput(
     "/tmp/attachments",
@@ -56,10 +56,10 @@ test("native display spans preserve Unicode and multiline system messages throug
   ).toEqual([expected, { type: "end", reason: "idle" }]);
 });
 
-test("native input preserves ordinary text, skill selection, and ordered attachments without staged files", async () => {
+test("native input preserves skills and ordered attachments without staged files", async () => {
   const directory = await mkdtemp(join(tmpdir(), "toybox-codex-inputs-"));
   onTestFinished(() => rm(directory, { recursive: true, force: true }));
-  const message: QueuedMessage = {
+  const message: SessionMessage = {
     role: "user",
     clientId: "../../untrusted-client-id",
     content: "/review Inspect these\nwith spacing intact.  ",

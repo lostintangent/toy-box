@@ -8,17 +8,17 @@ creating another source of transcript truth.
 
 - `registry.ts` owns cached provider connections, single-flight resume, creation, explicit rename, automatic
   title updates, and complete deletion. Cached sessions retain their application-supplied
-  configuration lifetime; runtime acquisition replaces an Agent session when its effective
-  configuration changed, while unchanged Agents and ordinary Sessions reuse their
+  configuration lifetime; runtime acquisition replaces a private Channel Agent session when its
+  effective configuration changed, while unchanged Channel Agents and ordinary Sessions reuse their
   cached session. Active executions retain that session; bounded provider operations restart its idle
   window. Idle sessions disconnect after 30 minutes and resume from durable provider history on their
   next execution or control operation. History reads bypass connections. Managed supervisors may release a retained session immediately once their workflow
   reaches a terminal state.
   One deletion path releases the live runtime, provider persistence, worktree, draft claim, cached
   snapshot, managed relationships, pin, and workspace projection before publishing the deletion.
-- `snapshots.ts` reconstructs idle state through the provider history codec and canonical reducer, then
-  caches that result. Active truth always comes from the runtime; cached snapshots only avoid
-  replay work.
+- `snapshots.ts` reconstructs `SessionState` through provider history projection and the canonical
+  reducer, then caches that same value under the caller-supplied session ID. Active truth always
+  comes from the runtime; cached snapshots only avoid replay work.
 - `schema.ts` defines the Sessions-owned `sessions` and `worktrees` tables. `sessions.ts` owns
   durable public identity in the `sessions` table. A row without a provider
   is a draft; native creation binds that same row to its provider and history ID. Providers own

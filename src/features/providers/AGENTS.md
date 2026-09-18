@@ -19,8 +19,12 @@ completion, and broadcasts. It supplies providers with prepared skill directorie
 attachment storage, and question policy on creation and resume. Providers must not reach
 into the Sessions registry, runtime, persistence, or resource layout.
 
-Both providers project into Sessions' `SessionEvent` and use its shared reducer and
-pure codecs. This model dependency does not give providers ownership of session state.
+Private Channel Agent sessions receive composed identity instructions and host tools like any other
+Session configuration. Providers receive no persistent Agent identity, and ordinary user inputs
+carry no Agent metadata.
+
+Both providers project into Sessions' `SessionEvent` and use its shared reducer. This model
+dependency does not give providers ownership of `SessionState`.
 A provider's `end` notification ends native work; the session runtime drains its queue
 before publishing completion. Disconnecting a browser never disconnects the provider.
 

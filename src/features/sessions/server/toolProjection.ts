@@ -1,7 +1,7 @@
 // Domain effects of Toy Box tools, shared by every provider and history replay.
 import type { SessionEvent, ToolCall } from "@sessions/model";
-import { workspaceFileSchema, type WorkspaceFile } from "@files/model";
-import { projectSessionArtifactPath } from "@files/server/paths";
+import { isAbsolute } from "node:path";
+import { projectSessionArtifactPath, workspaceFileFromAbsolutePath } from "@files/server/paths";
 import { parsePatchTouchedFiles } from "@sessions/model/fileDiffs";
 
 export type ToolCompletion = {
@@ -18,6 +18,8 @@ export type ToolCompletion = {
 const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
   skill: { kind: "omitted" },
   read_agent: { kind: "omitted" },
+  write_agent: { kind: "omitted" },
+  list_agents: { kind: "omitted" },
   check_session_status: { kind: "omitted" },
   wait_for_sessions: { kind: "omitted" },
   deliver_message: { kind: "omitted" },
@@ -30,16 +32,8 @@ const TOOL_CALL_POLICIES: Record<string, ToolCallPolicyEntry | undefined> = {
   create: projectArtifactFilePolicy,
   edit: projectArtifactFilePolicy,
   patch: projectPatchPolicy,
-  open_file: {
-    kind: "translated",
-    projectOnComplete: (data) =>
-      projectFileVisibility(data, (file) => ({ type: "file_opened", file })),
-  },
-  close_file: {
-    kind: "translated",
-    projectOnComplete: (data) =>
-      projectFileVisibility(data, (file) => ({ type: "file_closed", file })),
-  },
+  open_file: (args) => projectFileVisibility(args, "file_opened"),
+  close_file: (args) => projectFileVisibility(args, "file_closed"),
   create_session: { kind: "translated", projectOnComplete: projectCreatedSession },
   spawn_worker: { kind: "translated", projectOnComplete: projectCreatedSession },
   open_session: (args) => ({
@@ -86,19 +80,18 @@ export function resolveToolCallPolicy(
   return typeof entry === "function" ? entry(args, state) : entry;
 }
 
-/** Project an open_file / close_file result (a JSON WorkspaceFile) into a visibility event. */
 function projectFileVisibility(
-  data: ToolCompletion,
-  toEvent: (file: WorkspaceFile) => SessionEvent,
-): SessionEvent[] {
-  if (!data.success) return [];
-  const result = data.result;
-  if (!result) return [];
-  try {
-    return [toEvent(workspaceFileSchema.parse(JSON.parse(result)))];
-  } catch {
-    return [];
-  }
+  args: ToolArguments,
+  type: "file_opened" | "file_closed",
+): ToolCallProjectionPolicy {
+  const path = readStringArg(args, "path")?.trim();
+  return {
+    kind: "translated",
+    projectOnComplete: ({ success }) =>
+      success && path && isAbsolute(path)
+        ? [{ type, file: workspaceFileFromAbsolutePath(path) }]
+        : [],
+  };
 }
 
 function projectArtifactFilePolicy(

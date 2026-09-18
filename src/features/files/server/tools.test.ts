@@ -1,23 +1,16 @@
 import { expect, test } from "bun:test";
-import type { ToolInvocation } from "@github/copilot-sdk";
+import type { ToolInvocation } from "@sessions/server/tools/definition";
 import { fileTools } from "./tools";
-
-const [openFile, closeFile] = fileTools;
 
 function invocation(): ToolInvocation {
   return { sessionId: "toy-box-session", toolCallId: "call", toolName: "open_file", arguments: {} };
 }
 
-test("open_file resolves an absolute path to a machine workspace file", () => {
-  const result = openFile.handler?.({ path: "/repo/src/foo.ts" }, invocation());
-  expect(JSON.parse(String(result))).toEqual({ kind: "machine", path: "/repo/src/foo.ts" });
-});
-
-test("close_file resolves an absolute path to a machine workspace file", () => {
-  const result = closeFile.handler?.({ path: "/repo/src/foo.ts" }, invocation());
-  expect(JSON.parse(String(result))).toEqual({ kind: "machine", path: "/repo/src/foo.ts" });
-});
-
-test("open_file rejects a relative path", () => {
-  expect(() => openFile.handler?.({ path: "src/foo.ts" }, invocation())).toThrow("absolute");
+test.each(fileTools)("$name validates an absolute path and acknowledges success", (tool) => {
+  const args = tool.parameters!.parse({ path: " /repo/src/foo.ts " });
+  expect(args).toEqual({ path: "/repo/src/foo.ts" });
+  expect(tool.handler(args, invocation())).toBe(
+    tool.name === "open_file" ? "Opened file." : "Closed file.",
+  );
+  expect(() => tool.parameters!.parse({ path: "src/foo.ts" })).toThrow("absolute");
 });

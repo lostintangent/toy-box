@@ -1,1 +1,0 @@
-export { IntentResolutionContent } from "./content";

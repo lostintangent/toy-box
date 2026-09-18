@@ -1,17 +1,11 @@
 import { defineTool } from "@sessions/server/tools/definition";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { customEditorKindSchema, machineFile, type WorkspaceFile } from "../model";
+import { customEditorKindSchema } from "../model";
 import { normalizeExtensions, registerEditorKind } from "./editors";
 
-// open_file / close_file surface an existing file on disk as a live pane. The tool
-// resolves the path to a machine workspace file and returns it; the SDK projector
-// reads that result into a durable file_opened / file_closed session event.
-
-function toMachineFile(path: string): WorkspaceFile {
-  if (!isAbsolute(path)) throw new Error("Provide an absolute path.");
-  return machineFile(resolve(path));
-}
+// Successful calls project file visibility from their recorded path arguments.
+const absolutePath = z.string().trim().min(1).refine(isAbsolute, "Provide an absolute path.");
 
 const openFile = defineTool("open_file", {
   description:
@@ -19,18 +13,18 @@ const openFile = defineTool("open_file", {
     "Use it for files outside your session artifacts folder, which already appear automatically. " +
     "Give an absolute path.",
   parameters: z.object({
-    path: z.string().trim().min(1).describe("Absolute path of the file to open."),
+    path: absolutePath.describe("Absolute path of the file to open."),
   }),
-  handler: ({ path }) => JSON.stringify(toMachineFile(path)),
+  handler: () => "Opened file.",
 });
 
 const closeFile = defineTool("close_file", {
   description:
     "Closes a file pane previously opened with open_file. Does not delete the file. Give an absolute path.",
   parameters: z.object({
-    path: z.string().trim().min(1).describe("Absolute path of the open file pane to close."),
+    path: absolutePath.describe("Absolute path of the open file pane to close."),
   }),
-  handler: ({ path }) => JSON.stringify(toMachineFile(path)),
+  handler: () => "Closed file.",
 });
 
 export const fileTools = [openFile, closeFile];

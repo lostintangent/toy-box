@@ -1,8 +1,8 @@
-// One admission and wake path for an Agent in any host. Hosts prepare public
-// context; Sessions owns execution, idle configuration, history, and worktrees.
+// One admission and wake path for an Agent in a Channel. The Channel prepares
+// public context; Sessions owns execution, idle configuration, history, and worktrees.
 
-import { agentHostId, type AgentHost } from "@agents/model";
-import type { SessionMessage, SessionSystemMessage } from "@sessions/model";
+import type { AgentHost } from "@agents/model";
+import type { SessionLaunch, SessionSystemMessage } from "@sessions/model";
 import { SESSION_ID_PREFIX } from "@sessions/model/constants";
 import {
   createSession,
@@ -19,7 +19,7 @@ import { AgentDatabase } from "./database";
 type MentionAgentInput = {
   agentId: string;
   host: AgentHost;
-  message: SessionMessage | { systemMessage: SessionSystemMessage };
+  message: SessionLaunch["message"] | { systemMessage: SessionSystemMessage };
   directory?: string;
   hostLabel: string;
 };
@@ -32,11 +32,12 @@ export async function mentionAgent(input: MentionAgentInput): Promise<void> {
     const agents = new AgentDatabase(await getStateDatabase());
     const agent = await agents.getAgent(input.agentId);
     if (!agent) throw new Error("Agent not found.");
-    const adapter = await getAgentHostAdapter(input.host);
+    const adapter = await getAgentHostAdapter();
     let membership = await agents.getMembership(input.host, input.agentId);
     if (membership) {
       try {
-        const receipt = await deliverSessionMessage(membership.sessionId, input.message, {
+        const receipt = await deliverSessionMessage(membership.sessionId, {
+          ...input.message,
           immediate: true,
         });
         if (receipt.disposition === "started") {
@@ -77,7 +78,7 @@ export async function detachAgentSession(sessionId: string): Promise<void> {
   const agents = new AgentDatabase(database);
   const membership = await agents.getMembershipBySession(sessionId);
   if (!membership) return;
-  const adapter = await getAgentHostAdapter(membership.host);
+  const adapter = await getAgentHostAdapter();
   if (adapter.removeAgent) {
     const agent = await agents.getAgent(membership.agentId);
     if (!agent) throw new Error("Agent not found.");
@@ -92,13 +93,13 @@ function announceAgentMembershipChange(host: AgentHost): void {
   broadcast({ type: "agent.membership.changed", host });
 }
 
-/** One lock per Agent/host identity, including the period before its Session exists. */
+/** One lock per Agent/Channel identity, including the period before its Session exists. */
 function withAdmission<Result>(
   host: AgentHost,
   agentId: string,
   operation: () => Promise<Result>,
 ): Promise<Result> {
-  const key = JSON.stringify([host.kind, agentHostId(host), agentId]);
+  const key = JSON.stringify([host.channelId, agentId]);
   let queue = admissionQueues.get(key);
   if (!queue) {
     queue = new SerialTaskQueue();

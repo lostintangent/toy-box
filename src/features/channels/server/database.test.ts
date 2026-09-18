@@ -54,9 +54,6 @@ describe("channel database", () => {
         sessionId: "critic-session",
       },
     ]);
-    expect(await channels.listAgentChannels(critic.id)).toEqual([
-      expect.objectContaining({ id: channel.id, title: "Release room" }),
-    ]);
     expect((await channels.getChannel(channel.id))?.latestSequence).toBe(3);
     const messages = await channels.listMessagesAfter(channel.id);
     expect(messages[1]?.attachments).toEqual(first.attachments);

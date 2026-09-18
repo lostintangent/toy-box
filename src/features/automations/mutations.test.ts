@@ -4,7 +4,8 @@ import type { SessionsState } from "@sessions/model";
 import { createEmptySessionsState, sessionQueries } from "@sessions/queries";
 import { workspaceQueries } from "@workspace/queries";
 import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model/state/reducer";
-import type { SessionSnapshot } from "@sessions/model";
+import type { SessionState } from "@sessions/model";
+import { createInitialSessionState } from "@sessions/model/reducer";
 import type { Automation, AutomationOptions } from "./model";
 import { automationMutations } from "./mutations";
 
@@ -76,12 +77,9 @@ describe("automation mutation options", () => {
 
   test("primes a genuinely started run without replacing an overlapping run", async () => {
     const startedClient = createQueryClient(automation);
-    startedClient.setQueryData<SessionSnapshot>(sessionQueries.detail(automation.id).queryKey, {
-      id: automation.id,
+    startedClient.setQueryData<SessionState>(sessionQueries.detail(automation.id).queryKey, {
+      ...createInitialSessionState(),
       messages: [{ role: "assistant", content: "Old transcript" }],
-      queuedMessages: [],
-      status: "idle",
-      reasoningContent: "",
     });
 
     await new MutationObserver(startedClient, {
@@ -90,13 +88,10 @@ describe("automation mutation options", () => {
     }).mutate();
 
     const startedSnapshot = {
-      id: automation.id,
-      messages: [],
-      queuedMessages: [],
+      ...createInitialSessionState(),
       model: automation.model,
       status: "thinking",
-      reasoningContent: "",
-    } satisfies SessionSnapshot;
+    } satisfies SessionState;
     expect(readSessionSnapshot(startedClient)).toEqual(startedSnapshot);
     expect(readSessions(startedClient).sessions).toEqual([
       {
@@ -109,12 +104,10 @@ describe("automation mutation options", () => {
 
     const overlappingClient = createQueryClient(automation);
     const previousSnapshot = {
-      id: automation.id,
+      ...createInitialSessionState(),
       messages: [{ role: "assistant", content: "Current transcript" }],
-      queuedMessages: [],
       status: "thinking",
-      reasoningContent: "",
-    } satisfies SessionSnapshot;
+    } satisfies SessionState;
     overlappingClient.setQueryData(sessionQueries.detail(automation.id).queryKey, previousSnapshot);
     await new MutationObserver(overlappingClient, {
       ...automationMutations.run(automation.id),
@@ -168,6 +161,6 @@ function readSessions(queryClient: QueryClient): SessionsState {
   return sessions;
 }
 
-function readSessionSnapshot(queryClient: QueryClient): SessionSnapshot | undefined {
-  return queryClient.getQueryData<SessionSnapshot>(["sessions", "detail", automation.id]);
+function readSessionSnapshot(queryClient: QueryClient): SessionState | undefined {
+  return queryClient.getQueryData<SessionState>(["sessions", "detail", automation.id]);
 }

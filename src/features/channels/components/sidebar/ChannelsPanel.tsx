@@ -67,7 +67,7 @@ export function ChannelsPanel({
       >
         {channels.map((channel) => {
           const channelMemberships = memberships.filter(
-            ({ host }) => host.kind === "channel" && host.channelId === channel.id,
+            ({ host }) => host.channelId === channel.id,
           );
 
           return (

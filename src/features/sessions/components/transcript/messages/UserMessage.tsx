@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Copy } from "lucide-react";
-import { AgentMention } from "@agents/components/AgentMention";
+import { Streamdown } from "streamdown";
 import { Button } from "@/shared/components/ui/button";
 import { RelativeTime } from "@/shared/components/ui/relative-time";
 import { Separator } from "@/shared/components/ui/separator";
@@ -11,11 +11,13 @@ import { AttachmentGallery } from "../../AttachmentGallery";
 export function UserMessage({
   message,
   extraActions,
+  children,
 }: {
   message: Pick<UserMessageType, "content" | "timestamp"> & {
     attachments?: (Attachment | string)[];
   };
   extraActions?: ReactNode;
+  children?: ReactNode;
 }) {
   const attachments = message.attachments ?? [];
 
@@ -23,7 +25,11 @@ export function UserMessage({
     <div className="flex flex-col items-end gap-2">
       {message.content && (
         <div className="max-w-full @md:max-w-[80%] rounded-lg bg-primary px-3 py-2.5 text-primary-foreground">
-          <AgentMention content={message.content} onAccent />
+          {children ?? (
+            <Streamdown className="whitespace-pre-wrap text-sm [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_ul]:my-1.5 [&_[data-streamdown=link]]:text-primary-foreground [&_[data-streamdown=inline-code]]:bg-primary-foreground/15">
+              {message.content}
+            </Streamdown>
+          )}
         </div>
       )}
       <div className="flex min-h-6 items-center gap-1">

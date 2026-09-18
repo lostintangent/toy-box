@@ -1,0 +1,1 @@
+export { BriefFindingsContent } from "./content";

@@ -4,8 +4,8 @@
 import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
 import type {
   ModelInfo,
-  QueuedMessage,
   SessionEvent,
+  SessionMessage,
   SessionMetadata,
   SessionSkill,
 } from "@sessions/model";
@@ -37,7 +37,7 @@ export interface SessionConnection {
   readonly identity: SessionIdentity;
   /** The runtime consumes end to drain queued work before publishing completion. */
   onEvent(listener: (event: SessionEvent) => void): () => void;
-  send(message: QueuedMessage, immediate?: true): Promise<void>;
+  send(message: SessionMessage): Promise<void>;
   setModel(model: ModelConfiguration): Promise<void>;
   answerQuestion(answer: SessionQuestionAnswer): Promise<boolean>;
   abort(): Promise<void>;

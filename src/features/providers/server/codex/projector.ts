@@ -24,6 +24,30 @@ import type { RpcNotification, RpcRequest } from "./protocol/transport";
 import { decodeInput } from "./inputs";
 import { fileChangesDiff } from "./fileChanges";
 
+/** The native collaboration call that creates a visible child execution. */
+export function isCodexSubagentSpawn(
+  item: ThreadItem,
+): item is Extract<ThreadItem, { type: "collabAgentToolCall" }> {
+  return item.type === "collabAgentToolCall" && item.tool === "spawnAgent";
+}
+
+/** Keep child-thread transcript activity inside its root agent card. */
+export function scopeCodexSubagentEvent(
+  event: SessionEvent,
+  parentToolCallId: string,
+): SessionEvent | undefined {
+  switch (event.type) {
+    case "assistant_message":
+    case "reasoning":
+    case "tool_start":
+    case "tool_end":
+    case "model_changed":
+      return { ...event, parentToolCallId };
+    default:
+      return undefined;
+  }
+}
+
 export function createCodexProjector(sessionId: string) {
   const turnsWithInput = new Set<string>();
   const items = new Map<string, "completed" | { policy?: ToolCallProjectionPolicy }>();
@@ -183,7 +207,8 @@ export function createCodexProjector(sessionId: string) {
           arguments: tool.arguments,
         });
     }
-    if (complete) {
+    const defersCompletion = isCodexSubagentSpawn(item) && item.receiverThreadIds.length > 0;
+    if (complete && !defersCompletion) {
       const result = toolResult(item);
       if (policy?.kind === "translated") events.push(...(policy.projectOnComplete?.(result) ?? []));
       else
@@ -254,7 +279,9 @@ function itemTool(
         arguments: recordArguments(item.arguments),
       };
     case "collabAgentToolCall":
-      return { name: "agent", arguments: { prompt: item.prompt ?? "", description: item.tool } };
+      return isCodexSubagentSpawn(item)
+        ? { name: "agent", arguments: { prompt: item.prompt ?? "" } }
+        : undefined;
     case "webSearch":
       return { name: "web_search", arguments: { query: item.query } };
     case "imageView":
@@ -330,7 +357,7 @@ function toolResult(item: ThreadItem): ToolCompletion {
           : item.error?.message,
       };
     case "collabAgentToolCall":
-      return { success: item.status === "completed", result: JSON.stringify(item.agentsStates) };
+      return { success: item.status === "completed" };
     default:
       return { success: true };
   }

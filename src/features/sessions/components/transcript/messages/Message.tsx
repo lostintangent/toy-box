@@ -1,10 +1,10 @@
-import type { Message as SessionMessage } from "../../../model";
+import type { Message as SessionTranscriptMessage } from "../../../model";
 import { AssistantMessage } from "./AssistantMessage";
 import { SessionUserMessage } from "./SessionUserMessage";
 import { SystemMessage } from "./SystemMessage";
 
 type MessageProps = {
-  message: SessionMessage;
+  message: SessionTranscriptMessage;
   isStreaming: boolean;
   isLast: boolean;
 };

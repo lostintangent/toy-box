@@ -1,1 +1,0 @@
-export { IntentPlanSection } from "./content";

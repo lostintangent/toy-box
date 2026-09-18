@@ -107,43 +107,6 @@ const readChannelForAgentTool = defineTool("read_channel", {
   },
 });
 
-const listJoinedChannelsTool = defineTool("list_channels", {
-  description: "Lists only channels this agent belongs to, including their stable IDs.",
-  parameters: z.object({}).strict(),
-  handler: async (_args, invocation) => {
-    const { listJoinedChannelsForAgent } = await import("@channels/server");
-    const channels = (await listJoinedChannelsForAgent(invocation.sessionId)).map(channelForTool);
-    return JSON.stringify({ channels });
-  },
-});
-
-const readJoinedChannelTool = defineTool("read_channel", {
-  description:
-    "Passively reads the newest 100 messages before an optional sequence from a channel this agent belongs to without changing its read position. Omit beforeSequence for the latest messages. While hasMore is true, continue with the first returned message's sequence. It also returns current members, shared artifacts, and attachments. File attachments are absolute paths. Inline uploads are attached images.",
-  parameters: channelIdentitySchema.extend({
-    beforeSequence: z.number().int().positive().optional(),
-  }),
-  handler: async ({ channelId, beforeSequence }, invocation) => {
-    const { readJoinedChannelForAgent } = await import("@channels/server");
-    return toChannelReadToolResult(
-      await readJoinedChannelForAgent(invocation.sessionId, channelId, beforeSequence),
-    );
-  },
-});
-
-const continueInChannelTool = defineTool("continue_in_channel", {
-  description:
-    "Privately hands work to this agent's existing membership in a joined channel and waits for it to finish. That membership performs any public channel actions in its own context. Read the channel afterwards to verify the result.",
-  parameters: channelIdentitySchema.extend({
-    content: channelMessageContentSchema,
-  }),
-  handler: async ({ channelId, content }, invocation) => {
-    const { continueAgentInChannel } = await import("@channels/server");
-    const { status } = await continueAgentInChannel(invocation.sessionId, channelId, content);
-    return JSON.stringify({ status });
-  },
-});
-
 const sendChannelMessageTool = defineTool("send_channel_message", {
   description:
     "Publishes a Markdown channel message without ending the turn. Pass screenshot and image paths in attachments. Name-derived @mentions wake or invite agents. @everyone wakes all current members. Messages without mentions wake nobody.",
@@ -285,12 +248,6 @@ export const channelAgentTools = [
   shareChannelArtifactFromAgentTool,
   finishChannelAgentTurnTool,
   listAgentsTool,
-];
-
-export const joinedChannelTools = [
-  listJoinedChannelsTool,
-  readJoinedChannelTool,
-  continueInChannelTool,
 ];
 
 export const channelTools = [

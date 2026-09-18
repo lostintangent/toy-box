@@ -12,6 +12,8 @@ An editor addresses one `WorkspaceFile`, whose `kind` is either `session` (an _a
 Clients never encode physical storage. Read, write, watch, serve, and worker operations all carry the same `WorkspaceFile` address, and one server resolver (`resolveWorkspaceFile`) selects the absolute path.
 When an Agent shares an absolute path with a Channel, Files performs the inverse classification once
 so a path beneath Session storage remains a Session file rather than becoming a machine file.
+Shared tool projection derives that same identity from successful `open_file` / `close_file`
+calls' recorded path arguments; their results only acknowledge success.
 
 The pane carries one of three modes: `read`, `edit`, or `shared`. Read keeps content presentation-only while still allowing Markdown comments. Edit persists user changes without notifying the agent. Shared persists changes and notifies the owning session's agent. Ordinary session files open in edit mode, automation files open in read mode, and Inbox files open in shared mode with follow-up conversation through the managed session overlay.
 
@@ -59,15 +61,11 @@ An accepted spawn reconciles the workspace snapshot before resolving, so a rende
 
 Workers for one resolved file can progress concurrently. The watched file remains their shared source of truth: each worker must reread it immediately before every write and merge its intended change around intervening edits. The [Workers feature](../workers/AGENTS.md) owns this admission policy and its started/finished projection; cancelling admitted work delegates to its race-safe supervisor without affecting siblings. Consumers may monitor the worker through the general session-completion API and receive its final assistant response, but ephemeral completion is not retained as history. File workers are always ephemeral, stay out of Inbox and the normal session list, and disappear after finishing; a startup sweep deletes ephemeral workers abandoned by a process restart. Source deletion finishes outstanding associations and recursively tears down its worker tree. The watched file remains the durable result.
 
-Markdown layers inline comments on this primitive and composes the Agents feature at that renderer
-boundary. Comment additions, edits, and deletions persist without sending `file_edited` system messages.
-Documint receives the persistent Agent roster and owns its mention completion; a new comment or reply
-invokes each selected Agent ID after the renderer flushes the file. Each Agent gets one durable, private
-membership per file, while the current prompt carries the addressed thread. An unaddressed comment
-retains the anonymous Worker path, and an explicit @Copilot mention can combine that Worker with named
-Agents. The renderer authors one complete Documint response prompt for either path. The responder changes
-the body, replies in the persisted thread, or does both according to the comment; the file stays the
-public source of truth. Custom editors continue to use the Worker capability through
+Markdown layers inline comments on this primitive. Comment additions, edits, and deletions persist
+without sending `file_edited` system messages. Documint exposes the anonymous Assistant, and a new
+comment or reply spawns a Worker. The renderer authors the complete
+Documint response prompt. The responder changes the body, replies in the persisted thread, or does both
+according to the comment; the file stays the public source of truth. Custom editors continue to use the Worker capability through
 `Toybox.spawnWorker({ name?, prompt, metadata? })` and receive pending workers in the idempotent
 `onRender` context.
 
@@ -81,16 +79,14 @@ Pending describes worker lifecycle, not whether every intermediate file effect i
 
 - Markdown renders from its text content and supports direct editing.
 - HTML renders in a sandboxed iframe. A generated serve base lets relative scripts, styles, images, and links resolve within the source session's file storage.
-- SVG renders as a sanitized inline SVG DOM drawing surface. Standard SVG content persists; the background follows the user's theme, while selection chrome, history, viewport, active tool, and the dot grid remain client-local interaction state.
-- Intent files delegate to the [Intents feature](../intents/AGENTS.md). The file-kind adapter supplies content revisions, persistence, relative-resource resolution, and worker-backed actions without owning the intent model or presentation.
+- SVG files delegate to the [Whiteboard feature](../whiteboard/AGENTS.md). The file-kind adapter supplies content, editability, persistence, relative-resource resolution, and pane actions without owning the native SVG model or editor presentation.
+- Brief files delegate to the [Briefs feature](../briefs/AGENTS.md). The file-kind adapter supplies content revisions, persistence, relative-resource resolution, and worker-backed actions without owning the brief model or presentation.
 - A session `.toy` file compiles as a stateless artifact app and mounts through the shared app runtime. It remains an editor pane and file-owned artifact; machine `.toy` files never execute.
 - Custom editors provide a persisted HTML viewer template for claimed extensions. Built-in editors keep priority, and unclaimed extensions fall back to Markdown.
 
-Format-owned built-in renderers and host adapters live in their own kind
-directories. `.intent` delegates to the Intents feature and `.toy` delegates to
-the Apps feature that owns its compiler and runtime. See the
-[SVG editor guide](components/editor/kinds/svg/AGENTS.md) for the drawing
-surface's native-document model, editor lifecycle, and interaction boundaries.
+File-kind adapters live in their own kind directories. `.svg` delegates to the
+Whiteboard feature, `.brief` delegates to the Briefs feature, and `.toy`
+delegates to the Apps feature that owns its compiler and runtime.
 
 Custom editor definitions live under `~/.toy-box/editors/` and hydrate through shared workspace state. Registration publishes the new definition so connected clients can resolve the renderer immediately. The viewer receives file content, its external revision, and pending workers through the Toy Box bridge, can spawn workers, and can emit replacement content only when the kind is editable. Own edits do not advance the external revision, allowing the viewer to retain its editing buffer while context-only renders update worker presence or editability.
 
@@ -104,7 +100,8 @@ Inbox entries store at most one artifact filename and own its directory. `InboxP
 
 - [`../../workspace/AGENTS.md`](../../workspace/AGENTS.md) owns the pane model and the layouts and workflows that compose editor surfaces.
 - [`useFile.ts`](useFile.ts) owns client file lifecycle; [`components/editor/EditorPane.tsx`](components/editor/EditorPane.tsx) dispatches to format-specific renderers.
-- [`components/editor/kinds/intent/IntentEditor.tsx`](components/editor/kinds/intent/IntentEditor.tsx) adapts that lifecycle to the host-neutral [Intents feature](../intents/AGENTS.md).
+- [`components/editor/kinds/svg/SvgEditor.tsx`](components/editor/kinds/svg/SvgEditor.tsx) adapts that lifecycle and [`SvgPaneActions.tsx`](components/editor/kinds/svg/SvgPaneActions.tsx) adapts semantic editor actions to pane chrome for the host-neutral [Whiteboard feature](../whiteboard/AGENTS.md).
+- [`components/editor/kinds/brief/BriefEditor.tsx`](components/editor/kinds/brief/BriefEditor.tsx) adapts that lifecycle to the host-neutral [Briefs feature](../briefs/AGENTS.md).
 - [`server/functions.ts`](server/functions.ts) owns validated filesystem RPC ingress, while the rest of `server/` owns operations and path resolution. `routes/` owns the watch and serve HTTP adapters because browser-native streaming and relative-resource loading need those transports.
 - [`../inbox/AGENTS.md`](../inbox/AGENTS.md) owns Inbox rows and result lifecycle. This feature owns custom-editor definitions, persistence, and registration; [Sessions](../sessions/AGENTS.md) owns session-file teardown.
 - The [session provider boundary](../providers/INTEGRATION.md) owns projecting tool activity and encoding system messages across SDK history. Sessions owns filesystem-based artifact discovery; [`server/tools.ts`](server/tools.ts) owns file-specific agent ingress.

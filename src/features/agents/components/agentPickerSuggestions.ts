@@ -16,17 +16,15 @@ export type AgentPickerSuggestion = {
   kind?: "everyone" | "create";
 };
 
-/** Group matching Agents by existing membership or invitation. */
+/** Group matching Agents by Channel membership. */
 export function agentPickerSuggestions({
   query,
   agents,
   memberships,
-  hostKind,
 }: {
   query: string;
   agents: readonly Agent[];
   memberships: readonly Pick<AgentMembership, "agentId">[];
-  hostKind: "session" | "channel";
 }): AgentPickerSuggestion[] {
   const memberAgentIds = new Set(memberships.map(({ agentId }) => agentId));
   const matchingAgents = agents.filter((agent) => agentMatchesMentionQuery(agent, query));
@@ -34,15 +32,21 @@ export function agentPickerSuggestions({
   for (const isMember of [true, false]) {
     for (const agent of matchingAgents) {
       if (memberAgentIds.has(agent.id) !== isMember) continue;
-      suggestions.push({
-        handle: agentHandleFromName(agent.name),
-        name: agent.name,
-        description: agent.persona ?? "Onboards during the first engagement",
-        group: isMember ? `In this ${hostKind}` : `Invite to ${hostKind}`,
-        agentId: agent.id,
-        ...(agent.avatar ? { avatar: agent.avatar } : {}),
-      });
+      suggestions.push(
+        suggestionForAgent(agent, isMember ? "In this channel" : "Invite to channel"),
+      );
     }
   }
   return suggestions;
+}
+
+function suggestionForAgent(agent: Agent, group: string): AgentPickerSuggestion {
+  return {
+    handle: agentHandleFromName(agent.name),
+    name: agent.name,
+    description: agent.persona ?? "Onboards during the first engagement",
+    group,
+    agentId: agent.id,
+    ...(agent.avatar ? { avatar: agent.avatar } : {}),
+  };
 }

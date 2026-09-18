@@ -4,23 +4,20 @@
 
 import { listSessionArtifacts, writeSessionArtifact } from "../artifacts";
 import type { SessionQuestionAnswer, StreamSessionRequest } from "@sessions/model/protocol";
-import { sessionSeedFromSnapshot, toSessionSnapshot } from "@sessions/model/reducer";
 import type {
-  QueuedMessage,
   SessionCompletion,
+  SessionLaunch,
   SessionMessage,
-  SessionSnapshot,
+  SessionState,
   SessionSystemMessage,
 } from "@sessions/model";
 import * as sessionRegistry from "@sessions/server/state/registry";
 import { loadSessionSnapshot, refreshSessionSnapshot } from "@sessions/server/state/snapshots";
 import { emitSessionTouched } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
-import { getSessionStreamHooks, prepareSessionMessage } from "@/server/sessionHooks";
 import { SessionStream, SessionStreamFinishedError } from "./sessionStream";
 import type { SessionStreamSubscription } from "./eventBus";
 
-export { SessionStream };
 export { getSessionDirectory } from "../providers";
 export { deleteSession, deleteSessionIfExists, releaseIdleSession } from "../state/registry";
 export { isSessionNotFoundError } from "../state/registry";
@@ -93,11 +90,9 @@ export function waitForSession(sessionId: string, timeoutMs?: number): Promise<S
 }
 
 /** Read the current canonical state, whether the session is live or persisted. */
-export async function getSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
+export async function getSessionSnapshot(sessionId: string): Promise<SessionState> {
   const stream = SessionStream.get(sessionId);
-  return stream
-    ? toSessionSnapshot(sessionId, stream.getSessionState())
-    : loadSessionSnapshot(sessionId);
+  return stream ? stream.getSessionState() : loadSessionSnapshot(sessionId);
 }
 
 export function isSessionRunning(sessionId: string): boolean {
@@ -111,7 +106,7 @@ export function getSessionRuntimeStatus(sessionId: string): {
   const stream = SessionStream.get(sessionId);
   return {
     running: stream !== undefined,
-    queuedCount: stream?.getQueuedMessages().length ?? 0,
+    queuedCount: stream?.getSessionState().queuedMessages.length ?? 0,
   };
 }
 
@@ -138,10 +133,7 @@ export async function answerSessionQuestion(
 }
 
 /** Discard one root user turn and every later conversation event while preserving files. */
-export async function rewindSession(
-  sessionId: string,
-  timestamp: string,
-): Promise<SessionSnapshot> {
+export async function rewindSession(sessionId: string, timestamp: string): Promise<SessionState> {
   if (SessionStream.isRunning(sessionId)) throw new Error("Stop this session before rewinding it.");
   await sessionRegistry.withSession(sessionId, (session) => session.rewind(timestamp));
 
@@ -199,11 +191,12 @@ export async function streamSession(
     return stream?.subscribe(request.afterEventId, request.mode);
   }
 
-  const message = await normalizeMessage(request.message);
+  const message = normalizeMessage(request.message);
+  const create = request.location;
   let retriedFinishedStream = false;
 
   for (;;) {
-    const stream = await acquireSessionStream(request.sessionId, message, request.location);
+    const stream = await acquireSessionStream(request.sessionId, message, create);
     // Subscribe eagerly before delivery. If another caller already opened the
     // turn, deliver() queues this message and this same subscription follows the
     // active stream through the queued turn instead of returning event-less.
@@ -227,11 +220,11 @@ export async function streamSession(
   }
 }
 
-type MessageInput = SessionMessage | { clientId?: string; systemMessage: SessionSystemMessage };
+type MessageInput =
+  | SessionLaunch["message"]
+  | { clientId?: string; systemMessage: SessionSystemMessage; immediate?: true };
 
 type SessionCreationOptions = Omit<sessionRegistry.CreateSessionOptions, "model">;
-type MessageDeliveryOptions = { immediate?: true };
-type DeliverOptions = MessageDeliveryOptions & { create?: SessionCreationOptions };
 
 /** Create a session through its required first message without subscribing. */
 export function createSession(
@@ -239,31 +232,23 @@ export function createSession(
   message: MessageInput,
   options: SessionCreationOptions,
 ) {
-  return deliver(sessionId, message, { create: options });
-}
-
-/** Deliver to an existing session without subscribing. */
-export function deliverSessionMessage(
-  sessionId: string,
-  message: MessageInput,
-  options?: MessageDeliveryOptions,
-) {
   return deliver(sessionId, message, options);
 }
 
-async function deliver(
-  sessionId: string,
-  message: MessageInput,
-  { create, immediate }: DeliverOptions = {},
-) {
-  const normalizedMessage = await normalizeMessage(message);
+/** Deliver to an existing session without subscribing. */
+export function deliverSessionMessage(sessionId: string, message: MessageInput) {
+  return deliver(sessionId, message);
+}
+
+async function deliver(sessionId: string, message: MessageInput, create?: SessionCreationOptions) {
+  const normalizedMessage = normalizeMessage(message);
   let retriedFinishedStream = false;
   let retriedStaleSession = false;
 
   for (;;) {
     try {
       const stream = await acquireSessionStream(sessionId, normalizedMessage, create);
-      const disposition = await stream.deliver(normalizedMessage, immediate);
+      const disposition = await stream.deliver(normalizedMessage);
       return {
         disposition,
         waitForCompletion: () => stream.waitForCompletion(),
@@ -295,7 +280,7 @@ const pendingStreamCreations = sharedMap<Promise<SessionStream>>("pending-sessio
 /** Single-flight get-or-create. SessionStream.deliver owns first-turn selection. */
 async function acquireSessionStream(
   sessionId: string,
-  message: QueuedMessage,
+  message: SessionMessage,
   create?: SessionCreationOptions,
 ): Promise<SessionStream> {
   const existing = SessionStream.get(sessionId);
@@ -313,7 +298,7 @@ async function acquireSessionStream(
 
 async function createStreamForMessage(
   sessionId: string,
-  message: QueuedMessage,
+  message: SessionMessage,
   create?: SessionCreationOptions,
 ): Promise<SessionStream> {
   if (create) {
@@ -322,27 +307,18 @@ async function createStreamForMessage(
       ...create,
       model,
     });
-    return SessionStream.getOrCreate(
-      sessionId,
-      created.session,
-      {
-        ...(created.artifactPath ? { artifacts: [created.artifactPath] } : {}),
-        ...(model ? { model } : {}),
-      },
-      getSessionStreamHooks(sessionId),
-    );
+    return SessionStream.getOrCreate(sessionId, created.session, {
+      ...(created.artifactPath ? { artifacts: [created.artifactPath] } : {}),
+      ...(model ? { model } : {}),
+    });
   }
 
   // Rebuild history before taking the execution lease so a replay failure
   // cannot strand a session as active. Refresh configuration immediately after.
   const snapshot = await loadSessionSnapshot(sessionId);
   const sdkSession = await sessionRegistry.acquireSession(sessionId);
-  const stream = SessionStream.getOrCreate(
-    sessionId,
-    sdkSession,
-    sessionSeedFromSnapshot(snapshot),
-    getSessionStreamHooks(sessionId),
-  );
+  const { lastSeenEventId: _lastSeenEventId, ...snapshotState } = snapshot;
+  const stream = SessionStream.getOrCreate(sessionId, sdkSession, snapshotState);
   // This replacement stream is now the session's current execution. Retained
   // completion receipts remain valid for existing waiters, but must no longer
   // answer future ID-based waits for an earlier execution.
@@ -350,7 +326,7 @@ async function createStreamForMessage(
   return stream;
 }
 
-async function normalizeMessage(message: MessageInput): Promise<QueuedMessage> {
+function normalizeMessage(message: MessageInput): SessionMessage {
   const clientId = message.clientId ?? crypto.randomUUID();
 
   if ("systemMessage" in message) {
@@ -358,14 +334,16 @@ async function normalizeMessage(message: MessageInput): Promise<QueuedMessage> {
       clientId,
       role: "system",
       content: message.systemMessage,
+      immediate: message.immediate,
     };
   }
 
-  return prepareSessionMessage({
+  return {
     clientId,
     role: "user",
     content: message.content,
     attachments: message.attachments,
     model: message.model,
-  });
+    immediate: message.immediate,
+  } satisfies Extract<SessionMessage, { role: "user" }>;
 }

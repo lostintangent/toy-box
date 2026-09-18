@@ -1,7 +1,5 @@
 import {
   agentHandleFromName,
-  agentHostId,
-  fileAgentHostSchema,
   type Agent,
   type AgentAvatar,
   type AgentExperience,
@@ -203,19 +201,6 @@ export class AgentDatabase {
     return rows.length > 0;
   }
 
-  async listSessionOwnedMembershipSessionIds(sessionId: string): Promise<string[]> {
-    const rows = await this.db<{ session_id: string }[]>`
-      SELECT session_id FROM agent_memberships
-      WHERE (host_kind = 'session' AND host_id = ${sessionId})
-         OR (
-           host_kind = 'file'
-           AND json_extract(host_id, '$.sessionId') = ${sessionId}
-         )
-      ORDER BY session_id
-    `;
-    return rows.map((row) => row.session_id);
-  }
-
   async listAgentMembershipSessionIds(agentId: string): Promise<string[]> {
     const rows = await this.db<{ session_id: string }[]>`
       SELECT session_id FROM agent_memberships
@@ -262,7 +247,7 @@ function hostColumns(host: AgentHost): {
   hostKind: AgentHost["kind"];
   hostId: string;
 } {
-  return { hostKind: host.kind, hostId: agentHostId(host) };
+  return { hostKind: host.kind, hostId: host.channelId };
 }
 
 type AgentRow = {
@@ -321,12 +306,5 @@ function membershipFromRow(row: AgentMembershipRow): AgentMembership {
 }
 
 function agentHostFromRow(row: AgentHostRow): AgentHost {
-  switch (row.host_kind) {
-    case "session":
-      return { kind: "session", sessionId: row.host_id };
-    case "channel":
-      return { kind: "channel", channelId: row.host_id };
-    case "file":
-      return fileAgentHostSchema.parse({ kind: "file", ...JSON.parse(row.host_id) });
-  }
+  return { kind: row.host_kind, channelId: row.host_id };
 }

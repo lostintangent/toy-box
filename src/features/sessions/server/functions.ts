@@ -28,7 +28,7 @@ import {
   streamSession as streamSessionEvents,
   waitForSession as waitForRuntimeSession,
 } from "@sessions/server/runtime";
-import type { ModelInfo, SessionCompletion, SessionSkill, SessionSnapshot } from "../model";
+import type { ModelInfo, SessionCompletion, SessionSkill, SessionState } from "../model";
 import { SESSION_ID_PREFIX } from "../model/constants";
 import {
   answerSessionQuestionInputSchema,
@@ -98,7 +98,7 @@ export const resolveSessionContext = createServerFn({ method: "POST" })
  *  which repopulates the cache for the next open). */
 export const querySession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(({ data }): Promise<SessionSnapshot> => getSessionSnapshot(data.sessionId));
+  .handler(({ data }): Promise<SessionState> => getSessionSnapshot(data.sessionId));
 
 /** Wait for the announced, live, or latest persisted execution of one session. */
 export const waitForSession = createServerFn({ method: "POST" })
@@ -135,8 +135,7 @@ export const createSession = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<{ sessionId: string }> => {
     const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
     await createRuntimeSession(sessionId, data.message, {
-      directory: data.directory,
-      useWorktree: data.useWorktree,
+      ...data.location,
       sessionType: "standard",
     });
     return { sessionId };
@@ -153,9 +152,7 @@ export const createDraftSession = createServerFn({ method: "POST" })
 export const deliverMessage = createServerFn({ method: "POST" })
   .validator(zodValidator(deliverMessageInputSchema))
   .handler(async ({ data }): Promise<{ disposition: "started" | "queued" }> => {
-    const receipt = await deliverSessionMessage(data.sessionId, data.message, {
-      immediate: data.immediate,
-    });
+    const receipt = await deliverSessionMessage(data.sessionId, data.message);
     return { disposition: receipt.disposition };
   });
 
@@ -198,7 +195,7 @@ export const abortSession = createServerFn({ method: "POST" })
 export const rewindSession = createServerFn({ method: "POST" })
   .validator(zodValidator(rewindSessionInputSchema))
   .handler(
-    ({ data }): Promise<SessionSnapshot> => rewindRuntimeSession(data.sessionId, data.timestamp),
+    ({ data }): Promise<SessionState> => rewindRuntimeSession(data.sessionId, data.timestamp),
   );
 
 export const deleteSession = createServerFn({ method: "POST" })

@@ -2,8 +2,7 @@ import { connectCopilotSession } from "@providers/server/copilot/connection";
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { WorkspaceEvent } from "@workspace/model/events";
-import type { SessionEvent, SessionMetadataUpdate } from "@sessions/model";
-import { sessionSeedFromSnapshot, toSessionSnapshot, type Session } from "@sessions/model/reducer";
+import type { SessionEvent, SessionMetadataUpdate, SessionState } from "@sessions/model";
 import { loadSessionFixture } from "./helpers";
 import * as realSessionRegistry from "@sessions/server/state/registry";
 import * as realBroadcast from "@workspace/server/events";
@@ -104,7 +103,7 @@ beforeEach(() => {
   workspaceEventListeners.clear();
 });
 
-const { SessionStream } = await import("@sessions/server/runtime");
+const { SessionStream } = await import("@sessions/server/runtime/sessionStream");
 
 const SESSION_ID = "golden-stream";
 
@@ -228,7 +227,7 @@ describe("stream golden replay", () => {
     );
     expect(agents).toHaveLength(7);
     const childCounts = agents
-      .map((tc) => tc.agent?.toolCalls?.length ?? 0)
+      .map((tc) => tc.subagent?.toolCalls?.length ?? 0)
       .filter((n) => n > 0)
       .sort((a, b) => a - b);
     expect(childCounts).toEqual([3, 4]);
@@ -237,7 +236,6 @@ describe("stream golden replay", () => {
     expect({ received, sideEffects }).toMatchSnapshot();
     expect({
       ...state,
-      pendingToolCalls: [...state.pendingToolCalls.entries()],
       lastSeenEventId:
         state.lastSeenEventId !== undefined && baseEventId !== undefined
           ? state.lastSeenEventId - baseEventId
@@ -257,7 +255,7 @@ describe("stream golden replay", () => {
       emit: (event: SdkSessionEvent) => void;
     };
 
-    const driveStream = (sessionId: string, initialState?: Partial<Session>): DrivenStream => {
+    const driveStream = (sessionId: string, initialState?: Partial<SessionState>): DrivenStream => {
       let handler: ((event: SdkSessionEvent) => void) | undefined;
       const fakeSession = {
         on: (h: (event: SdkSessionEvent) => void) => {
@@ -313,9 +311,8 @@ describe("stream golden replay", () => {
       await settle();
     };
 
-    const comparable = (state: Session): unknown => ({
+    const comparable = (state: SessionState): unknown => ({
       ...state,
-      pendingToolCalls: [...state.pendingToolCalls.entries()],
       lastSeenEventId: undefined,
     });
 
@@ -331,14 +328,12 @@ describe("stream golden replay", () => {
     await settle();
     expect(SessionStream.isRunning("golden-interrupted")).toBe(false);
 
-    const capturedSnapshot = toSessionSnapshot(
-      "golden-interrupted",
-      interrupted.stream.getSessionState(),
-    );
+    const capturedSnapshot = interrupted.stream.getSessionState();
+    const { lastSeenEventId: _lastSeenEventId, ...capturedState } = capturedSnapshot;
 
     // A new stream for the same session, seeded from the snapshot exactly as
     // delivery acquisition does on a cache hit, runs turn 2.
-    const seeded = driveStream("golden-interrupted", sessionSeedFromSnapshot(capturedSnapshot));
+    const seeded = driveStream("golden-interrupted", capturedState);
     await runTurnTwo(seeded);
 
     expect(comparable(seeded.stream.getSessionState())).toEqual(

@@ -1,7 +1,8 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as streamModule from "@sessions/server/runtime";
 import * as workerStateModule from "./database";
-import type { SessionSnapshot } from "@sessions/model";
+import type { SessionState } from "@sessions/model";
+import { createInitialSessionState } from "@sessions/model/reducer";
 
 const realStreamModule = { ...streamModule };
 const realWorkerStateModule = { ...workerStateModule };
@@ -12,14 +13,9 @@ type CreateArguments = Parameters<typeof streamModule.createSession>;
 const parentModel = { provider: "copilot", name: "gpt-5", reasoningEffort: "high" as const };
 const explicitModel = { provider: "copilot", name: "claude-sonnet-4.5" };
 const parentDirectory = "/repo/.worktrees/parent";
-const parentSnapshot: SessionSnapshot = {
-  id: "toy-box-parent",
-  messages: [],
-  queuedMessages: [],
+const parentSnapshot: SessionState = createInitialSessionState({
   model: parentModel,
-  status: "idle",
-  reasoningContent: "",
-};
+});
 const fileWorker = {
   type: "file",
   sessionId: "toy-box-worker",
@@ -167,7 +163,7 @@ describe("spawnWorker", () => {
     const receipt = await spawnWorker({
       worker: fileWorker,
       message: { content: "Do one focused job.", model: explicitModel },
-      directory: "/other",
+      location: { directory: "/other" },
     });
     workerCompletion.resolve({ status: "completed" });
     await receipt.waitForCompletion();
@@ -221,7 +217,7 @@ describe("spawnWorker", () => {
     const receipt = await spawnWorker({
       worker: sessionWorker,
       message: { content: "Investigate in parallel." },
-      useWorktree: true,
+      location: { useWorktree: true },
     });
     workerCompletion.resolve({ status: "completed", response: "Findings." });
 

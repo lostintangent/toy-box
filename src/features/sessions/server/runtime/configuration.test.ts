@@ -1,28 +1,27 @@
 import { describe, expect, jest, mock, onTestFinished, spyOn, test } from "bun:test";
 import type { SessionConnection } from "@providers/server/provider";
 import { AgentDatabase } from "@agents/server/database";
+import { ChannelDatabase } from "@channels/server/database";
 import * as state from "@/server/database";
 import * as sdk from "../providers";
 import * as registry from "../state/registry";
 import * as snapshots from "../state/snapshots";
 import { bindProviderSession } from "../state/sessions";
-import { getSessionConfiguration } from "@/server/sessionTools";
+import { getSessionConfiguration } from "@/server/sessionConfiguration";
 import * as settings from "@workspace/server/state/settings";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
-import { createSession, deliverSessionMessage, SessionStream } from "./index";
+import { createSession, deliverSessionMessage } from "./index";
+import { SessionStream } from "./sessionStream";
+import { createInitialSessionState } from "@sessions/model/reducer";
 
 async function setup(agentSession: boolean) {
   const sessionId = `configuration-${crypto.randomUUID()}`;
   const db = await state.createTestDatabase();
   spyOn(state, "getStateDatabase").mockResolvedValue(db);
   spyOn(sdk, "getSessionDirectory").mockResolvedValue(undefined);
-  spyOn(snapshots, "loadSessionSnapshot").mockImplementation(async (id) => ({
-    id,
-    messages: [],
-    queuedMessages: [],
-    status: "idle",
-    reasoningContent: "",
-  }));
+  spyOn(snapshots, "loadSessionSnapshot").mockImplementation(async () =>
+    createInitialSessionState(),
+  );
   const handles: ReturnType<typeof makeSession>[] = [];
   const create = spyOn(sdk, "createSession").mockImplementation(async () => {
     const handle = makeSession();
@@ -41,12 +40,15 @@ async function setup(agentSession: boolean) {
     persona: "Original persona",
     model: { provider: "copilot", name: "model-one" },
   }))!;
-  if (agentSession)
+  if (agentSession) await new ChannelDatabase(db).createChannel({ title: "Configuration" });
+  if (agentSession) {
+    const channel = (await new ChannelDatabase(db).listChannels()).channels[0]!;
     await agents.createMembership({
-      host: { kind: "session", sessionId: "parent" },
+      host: { kind: "channel", channelId: channel.id },
       agentId: agent.id,
       sessionId,
     });
+  }
   onTestFinished(() => {
     SessionStream.remove(sessionId);
     registry.evictCachedSessionIfStale(sessionId, new Error("Session not found"));
@@ -72,6 +74,56 @@ function makeSession() {
 }
 
 describe("Session-owned configuration lifetime", () => {
+  test("assigns role-specific tools to each non-Agent Session type", async () => {
+    const { sessionId } = await setup(false);
+    const toolsFor = async (
+      sessionType: "standard" | "hyper" | "automation" | "inbox" | "worker",
+    ) => (await getSessionConfiguration(sessionId, sessionType)).tools.map((tool) => tool.name);
+
+    const standard = await toolsFor("standard");
+    expect(standard).toEqual(
+      expect.arrayContaining([
+        "update_session_title",
+        "open_session",
+        "open_file",
+        "list_channels",
+        "create_agent",
+      ]),
+    );
+    expect(standard).not.toContain("create_session");
+    expect(standard).not.toContain("update_settings");
+
+    const hyper = await toolsFor("hyper");
+    expect(hyper).toEqual(
+      expect.arrayContaining([
+        "create_session",
+        "open_session",
+        "open_file",
+        "register_editor",
+        "update_settings",
+        "list_channels",
+        "create_agent",
+      ]),
+    );
+    expect(hyper).not.toContain("update_session_title");
+
+    const automation = await toolsFor("automation");
+    expect(automation).toEqual(expect.arrayContaining(["list_channels", "update_settings"]));
+    expect(automation).not.toContain("create_agent");
+    expect(automation).not.toContain("open_file");
+
+    const inbox = await toolsFor("inbox");
+    expect(inbox).toEqual(
+      expect.arrayContaining(["list_channels", "create_agent", "send_to_inbox"]),
+    );
+    expect(inbox).not.toContain("update_settings");
+
+    const worker = await toolsFor("worker");
+    expect(worker).not.toContain("list_channels");
+    expect(worker).not.toContain("create_agent");
+    expect(worker).not.toContain("open_file");
+  });
+
   test.each(["copilot", "codex"] as const)(
     "inherited Agent models preserve an existing %s provider when the workspace default changes",
     async (providerId) => {
@@ -118,6 +170,16 @@ describe("Session-owned configuration lifetime", () => {
       additionalInstructions: expect.stringContaining("Original persona"),
       model: { provider: "copilot", name: "model-one" },
     });
+    const initialToolNames = initialConfiguration.tools?.map((tool) => tool.name) ?? [];
+    expect(initialToolNames).toEqual(
+      expect.arrayContaining([
+        "read_channel",
+        "set_channel_status",
+        "finish_agent_turn",
+        "update_agent",
+      ]),
+    );
+    expect(initialToolNames).not.toContain("list_sessions");
     expect(agent.avatar).toBeUndefined();
 
     await agents.selfUpdateAgent(agent.id, {
@@ -132,7 +194,7 @@ describe("Session-owned configuration lifetime", () => {
       agentId: agent.id,
       model: { provider: "copilot", name: "model-two" },
     });
-    await deliverSessionMessage(sessionId, { content: "Continue" }, { immediate: true });
+    await deliverSessionMessage(sessionId, { content: "Continue", immediate: true });
     expect(resume).not.toHaveBeenCalled();
     expect(handles[0]!.disconnect).not.toHaveBeenCalled();
 
@@ -148,7 +210,7 @@ describe("Session-owned configuration lifetime", () => {
           file: { kind: "session", sessionId, path: "report.md" },
         },
       }),
-      deliverSessionMessage(sessionId, { content: "Follow up" }, { immediate: true }),
+      deliverSessionMessage(sessionId, { content: "Follow up", immediate: true }),
     ]);
     expect(resume).toHaveBeenCalledTimes(1);
     expect(handles[0]!.disconnect).toHaveBeenCalledTimes(1);

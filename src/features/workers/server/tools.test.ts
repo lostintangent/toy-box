@@ -47,8 +47,7 @@ describe("worker SDK tool", () => {
       ephemeral: false,
       name: "Runtime reviewer",
       message: { content: "Review the runtime", model },
-      directory: "/workspace",
-      useWorktree: true,
+      location: { directory: "/workspace", useWorktree: true },
     });
     expect(tool?.description).toContain("Retained children open as linked panes");
   });

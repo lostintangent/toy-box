@@ -53,7 +53,9 @@ export function ChannelMessageView({
             </div>
           ) : undefined
         }
-      />
+      >
+        <AgentMention content={message.content} onAccent />
+      </UserMessage>
     );
   }
 

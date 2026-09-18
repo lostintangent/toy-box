@@ -93,7 +93,8 @@ const waitForSessions = defineTool("wait_for_sessions", {
 
 const deliverMessage = defineTool("deliver_message", {
   description:
-    "Delivers a message to another session. " +
+    "Delivers a message to another Toy Box session. Never target the invoking session; " +
+    "subagent results return to their parent through the provider automatically. " +
     "If that session is already running, the message is queued automatically. " +
     "If it is idle, the session is resumed and the message starts immediately.",
   parameters: z.object({
@@ -103,10 +104,15 @@ const deliverMessage = defineTool("deliver_message", {
       .optional()
       .describe("Optional model and reasoning override for this message"),
   }),
-  handler: async ({ sessionId, message, model }) => {
+  handler: async ({ sessionId, message, model }, invocation) => {
+    if (sessionId === invocation.sessionId) {
+      throw new Error("deliver_message cannot target the invoking session.");
+    }
+
     const { deliverSessionMessage } = await import("@sessions/server/runtime");
 
     const { disposition } = await deliverSessionMessage(sessionId, {
+      clientId: invocation.toolCallId,
       content: message,
       model,
     });
@@ -115,7 +121,7 @@ const deliverMessage = defineTool("deliver_message", {
   },
 });
 
-export const coordinationTools = [checkSessionStatus, waitForSessions, deliverMessage];
+export const coordinationTools = [checkSessionStatus, waitForSessions, deliverMessage] as const;
 
 const sessionExecutionParameters = {
   model: modelConfigurationSchema
@@ -198,17 +204,3 @@ const deleteSessionTool = defineTool("delete_session", {
 export const hyperLifecycleTools = [createSessionTool];
 export const lifecycleTools = [deleteSessionTool];
 export const sessionLayoutTools = [openSession, closeSession];
-
-const sendSessionResponseTool = defineTool("send_session_response", {
-  description:
-    "Publishes a useful Markdown response with this agent's attribution in its session and ends the current turn.",
-  parameters: z.object({ message: z.string().trim().min(1).max(12_000) }).strict(),
-  isTerminal: true,
-  handler: async ({ message }, invocation) => {
-    const { sendAgentResponse } = await import("./agentHost");
-    await sendAgentResponse(invocation.sessionId, message);
-    return "Response published.";
-  },
-});
-
-export const sessionAgentTools = [sendSessionResponseTool];

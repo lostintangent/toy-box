@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import { agentHandleFromName, type Agent, type AgentMembership } from "@agents/model";
-import { getAgentMembership, listAgentProfiles } from "@agents/server";
+import { listAgentProfiles } from "@agents/server";
 import { mentionAgent } from "@agents/server/supervisor";
 import type {
   Channel,
@@ -21,11 +21,7 @@ import type {
 } from "@channels/model";
 import { resolveChannelAudience } from "@channels/model";
 import { resolveWorkspaceFile, workspaceFileFromAbsolutePath } from "@files/server/paths";
-import {
-  deleteSessionIfExists,
-  getSessionDirectory,
-  waitForSession,
-} from "@sessions/server/runtime";
+import { deleteSessionIfExists, getSessionDirectory } from "@sessions/server/runtime";
 import { getStateDatabase } from "@/server/database";
 import { broadcast } from "@workspace/server/events";
 import { ChannelDatabase, type ChannelMemberRecord } from "./database";
@@ -174,38 +170,6 @@ export async function readChannelForSession(channelId: string, beforeSequence?: 
   return readChannelBefore(database, channel, beforeSequence);
 }
 
-export async function listJoinedChannelsForAgent(sessionId: string): Promise<Channel[]> {
-  const agentId = await requireSessionAgentId(sessionId);
-  return new ChannelDatabase(await getStateDatabase()).listAgentChannels(agentId);
-}
-
-export async function readJoinedChannelForAgent(
-  sessionId: string,
-  channelId: string,
-  beforeSequence?: number,
-) {
-  const database = new ChannelDatabase(await getStateDatabase());
-  const { channel } = await requireJoinedChannel(database, sessionId, channelId);
-  return readChannelBefore(database, channel, beforeSequence);
-}
-
-export async function continueAgentInChannel(
-  sessionId: string,
-  channelId: string,
-  content: string,
-) {
-  const database = new ChannelDatabase(await getStateDatabase());
-  const { channel, member } = await requireJoinedChannel(database, sessionId, channelId);
-  await mentionAgent({
-    host: member.host,
-    agentId: member.agentId,
-    message: { systemMessage: { type: "agent_handoff", content } },
-    directory: channel.directory,
-    hostLabel: channel.title,
-  });
-  return waitForSession(member.sessionId);
-}
-
 export async function readChannelForAgent(sessionId: string) {
   const database = new ChannelDatabase(await getStateDatabase());
   const member = await requireChannelMember(database, sessionId);
@@ -270,29 +234,6 @@ async function requireChannelState(
   const state = await database.getState(channelId, CHANNEL_MESSAGE_LIMIT);
   if (!state) throw new Error("Channel not found.");
   return state;
-}
-
-async function requireSessionAgentId(sessionId: string): Promise<string> {
-  const membership = await getAgentMembership(sessionId);
-  if (membership?.host.kind !== "session") {
-    throw new Error("This Agent does not belong to a Session host.");
-  }
-  return membership.agentId;
-}
-
-async function requireJoinedChannel(
-  database: ChannelDatabase,
-  sessionId: string,
-  channelId: string,
-) {
-  const agentId = await requireSessionAgentId(sessionId);
-  const [channel, member] = await Promise.all([
-    database.getChannel(channelId),
-    database.getMember(channelId, agentId),
-  ]);
-  if (!channel) throw new Error("Channel not found.");
-  if (!member) throw new Error("This Agent is not a member of this Channel.");
-  return { channel, member };
 }
 
 /** Public membership facts intentionally omit every member's private session and read position. */
@@ -362,9 +303,6 @@ export async function setChannelAgentStatus(
 }
 
 export async function startChannelAgentTurn(membership: AgentMembership): Promise<void> {
-  if (membership.host.kind !== "channel") {
-    throw new Error("Channel Agent host received a non-Channel membership.");
-  }
   const database = new ChannelDatabase(await getStateDatabase());
   const member = await database.getMemberBySession(membership.sessionId);
   if (!member) return;
@@ -376,9 +314,6 @@ export async function finishChannelAgentTurn(
   membership: AgentMembership,
   waitingFor?: string,
 ): Promise<void> {
-  if (membership.host.kind !== "channel") {
-    throw new Error("Channel Agent host received a non-Channel membership.");
-  }
   const database = new ChannelDatabase(await getStateDatabase());
   const member = await database.getMemberBySession(membership.sessionId);
   if (!member) return;
@@ -502,16 +437,12 @@ async function postMessage({
       directory: channel.directory,
       hostLabel: channel.title,
     });
-  deliverChannelMessage(audience, wake);
+  await deliverChannelMessage(audience, wake);
   return message;
 }
 
 /** Atomically admit the shared Channel projection before announcing its current Agent identity. */
 export async function admitChannelAgent(_agent: Agent, membership: AgentMembership): Promise<void> {
-  if (membership.host.kind !== "channel") {
-    throw new Error("Channel Agent host received a non-Channel membership.");
-  }
-
   const database = new ChannelDatabase(await getStateDatabase());
   const change = await database.createMember({
     channelId: membership.host.channelId,
@@ -521,23 +452,25 @@ export async function admitChannelAgent(_agent: Agent, membership: AgentMembersh
   publishChannelMessage(membership.host.channelId, change);
 }
 
-function deliverChannelMessage(
+async function deliverChannelMessage(
   audience: {
     members: ChannelMember[];
     invitations: Array<Pick<Agent, "id">>;
   },
   wake: (agentId: string) => Promise<void>,
-): void {
-  for (const member of audience.members) {
-    void wake(member.agentId).catch((error) => {
-      console.error(`Failed to wake Channel Agent ${member.sessionId}:`, error);
-    });
-  }
-  for (const agent of audience.invitations) {
-    void wake(agent.id).catch((error) => {
-      console.error(`Failed to invite Channel Agent ${agent.id}:`, error);
-    });
-  }
+): Promise<void> {
+  await Promise.all([
+    ...audience.members.map((member) =>
+      wake(member.agentId).catch((error) => {
+        console.error(`Failed to wake Channel Agent ${member.sessionId}:`, error);
+      }),
+    ),
+    ...audience.invitations.map((agent) =>
+      wake(agent.id).catch((error) => {
+        console.error(`Failed to invite Channel Agent ${agent.id}:`, error);
+      }),
+    ),
+  ]);
 }
 
 export async function shareChannelArtifactFromAgent(

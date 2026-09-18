@@ -9,14 +9,14 @@
 
 import { isHistoryCurrent, readSessionHistory } from "../providers";
 import { listSessionArtifacts } from "../artifacts";
-import { replaySessionHistory, toSessionSnapshot } from "@sessions/model/reducer";
+import { replaySessionHistory } from "@sessions/model/reducer";
 import { sharedMap, sharedSet } from "@/shared/server/processState";
-import type { SessionSnapshot } from "@sessions/model";
+import type { SessionState } from "@sessions/model";
 
 const SNAPSHOT_CACHE_MAX_ENTRIES = 10;
 const SNAPSHOT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 export type CachedSnapshotEntry = {
-  snapshot: SessionSnapshot;
+  snapshot: SessionState;
   capturedAt: number;
 };
 
@@ -24,15 +24,15 @@ const snapshotCache = sharedMap<CachedSnapshotEntry>("session-snapshot-cache");
 const retainedSessionIds = sharedSet<string>("retained-session-snapshots");
 
 /** Load an idle session snapshot from cache, or replay provider history and cache it. */
-export async function loadSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
+export async function loadSessionSnapshot(sessionId: string): Promise<SessionState> {
   const cachedSnapshot = await getCachedSnapshot(sessionId);
   if (cachedSnapshot) return cachedSnapshot;
 
   const events = await readSessionHistory(sessionId);
   const artifacts = await listSessionArtifacts(sessionId);
-  const snapshot: SessionSnapshot = {
-    ...toSessionSnapshot(sessionId, replaySessionHistory(events)),
-    artifacts: artifacts.length ? artifacts : undefined,
+  const snapshot: SessionState = {
+    ...replaySessionHistory(events),
+    artifacts,
   };
 
   cacheSnapshot(sessionId, snapshot);
@@ -40,7 +40,7 @@ export async function loadSessionSnapshot(sessionId: string): Promise<SessionSna
 }
 
 /** Rebuild one idle snapshot from authoritative provider history without changing retention. */
-export async function refreshSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
+export async function refreshSessionSnapshot(sessionId: string): Promise<SessionState> {
   snapshotCache.delete(sessionId);
   return loadSessionSnapshot(sessionId);
 }
@@ -67,7 +67,7 @@ export async function retainSessionSnapshots(sessionIds: readonly string[]): Pro
 }
 
 /** Cache a private copy of a reduced session snapshot. */
-export function cacheSnapshot(sessionId: string, snapshot: SessionSnapshot): void {
+export function cacheSnapshot(sessionId: string, snapshot: SessionState): void {
   snapshotCache.delete(sessionId);
   snapshotCache.set(sessionId, { snapshot: structuredClone(snapshot), capturedAt: Date.now() });
 
@@ -81,7 +81,7 @@ export function cacheSnapshot(sessionId: string, snapshot: SessionSnapshot): voi
 }
 
 /** Return a fresh cached snapshot copy, evicting stale entries. */
-export async function getCachedSnapshot(sessionId: string): Promise<SessionSnapshot | undefined> {
+export async function getCachedSnapshot(sessionId: string): Promise<SessionState | undefined> {
   const entry = snapshotCache.get(sessionId);
   if (!entry) return undefined;
 
@@ -98,7 +98,7 @@ export async function getCachedSnapshot(sessionId: string): Promise<SessionSnaps
   const artifacts = await listSessionArtifacts(sessionId);
   return {
     ...structuredClone(entry.snapshot),
-    artifacts: artifacts.length ? artifacts : undefined,
+    artifacts,
   };
 }
 

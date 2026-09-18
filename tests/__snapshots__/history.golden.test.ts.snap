@@ -3,6 +3,7 @@
 exports[`history pipeline golden replay replaying a recorded session produces the final session state 1`] = `
 {
   "artifacts": [],
+  "canvases": [],
   "linkedSessionIds": [],
   "messages": [
     {
@@ -51,12 +52,6 @@ exports[`history pipeline golden replay replaying a recorded session produces th
           },
         },
         {
-          "agent": {
-            "model": {
-              "name": "gpt-5.5",
-              "provider": "copilot",
-            },
-          },
           "arguments": {
             "agent_type": "code-review",
             "description": "Review full diff",
@@ -71,14 +66,14 @@ exports[`history pipeline golden replay replaying a recorded session produces th
             "details": undefined,
             "success": true,
           },
-        },
-        {
-          "agent": {
+          "subagent": {
             "model": {
-              "name": "claude-haiku-4.5",
+              "name": "gpt-5.5",
               "provider": "copilot",
             },
           },
+        },
+        {
           "arguments": {
             "agent_type": "explore",
             "description": "Review attachments flow",
@@ -98,14 +93,14 @@ Intended behavior:
             "details": undefined,
             "success": true,
           },
-        },
-        {
-          "agent": {
+          "subagent": {
             "model": {
               "name": "claude-haiku-4.5",
               "provider": "copilot",
             },
           },
+        },
+        {
           "arguments": {
             "agent_type": "explore",
             "description": "Review tool semantics",
@@ -125,14 +120,14 @@ Intended behavior:
             "details": undefined,
             "success": true,
           },
-        },
-        {
-          "agent": {
+          "subagent": {
             "model": {
               "name": "claude-haiku-4.5",
               "provider": "copilot",
             },
           },
+        },
+        {
           "arguments": {
             "agent_type": "explore",
             "description": "Review diff parser",
@@ -152,14 +147,14 @@ Intended behavior:
             "details": undefined,
             "success": true,
           },
-        },
-        {
-          "agent": {
+          "subagent": {
             "model": {
               "name": "claude-haiku-4.5",
               "provider": "copilot",
             },
           },
+        },
+        {
           "arguments": {
             "agent_type": "explore",
             "description": "Review runtime state",
@@ -179,9 +174,33 @@ Focus areas:
             "details": undefined,
             "success": true,
           },
+          "subagent": {
+            "model": {
+              "name": "claude-haiku-4.5",
+              "provider": "copilot",
+            },
+          },
         },
         {
-          "agent": {
+          "arguments": {
+            "agent_type": "explore",
+            "description": "Review tests coverage",
+            "mode": "background",
+            "name": "coverage-review",
+            "prompt": 
+"You are an explore agent reviewing test coverage for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+
+Context: Changes include SDK blob attachments, semantic Attachment type, semantic ToolCall i…"
+,
+          },
+          "id": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+          "name": "agent",
+          "result": {
+            "content": "",
+            "details": undefined,
+            "success": true,
+          },
+          "subagent": {
             "content": "",
             "model": {
               "name": "claude-haiku-4.5",
@@ -292,27 +311,28 @@ index 0000000..0000000 100644
               },
             ],
           },
+        },
+        {
           "arguments": {
-            "agent_type": "explore",
-            "description": "Review tests coverage",
+            "agent_type": "rubber-duck",
+            "description": "Rubber duck design",
             "mode": "background",
-            "name": "coverage-review",
+            "name": "design-review",
             "prompt": 
-"You are an explore agent reviewing test coverage for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files.
+"You are a rubber-duck reviewer for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Provide high-signal design feedback only; ignore style/formatting.
 
-Context: Changes include SDK blob attachments, semantic Attachment type, semantic ToolCall i…"
+Evaluate the overall design decisions:
+- Se…"
 ,
           },
-          "id": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+          "id": "call_aIs3ubnSXyt6yavyLbThBQZk",
           "name": "agent",
           "result": {
             "content": "",
             "details": undefined,
             "success": true,
           },
-        },
-        {
-          "agent": {
+          "subagent": {
             "content": "I'll start by examining the uncommitted changes to understand the design context.",
             "model": {
               "name": "claude-opus-4.8",
@@ -391,25 +411,6 @@ index 375b1b8..9db9a3a 100644
               },
             ],
           },
-          "arguments": {
-            "agent_type": "rubber-duck",
-            "description": "Rubber duck design",
-            "mode": "background",
-            "name": "design-review",
-            "prompt": 
-"You are a rubber-duck reviewer for the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Provide high-signal design feedback only; ignore style/formatting.
-
-Evaluate the overall design decisions:
-- Se…"
-,
-          },
-          "id": "call_aIs3ubnSXyt6yavyLbThBQZk",
-          "name": "agent",
-          "result": {
-            "content": "",
-            "details": undefined,
-            "success": true,
-          },
         },
       ],
     },
@@ -420,12 +421,9 @@ Evaluate the overall design decisions:
     "reasoningEffort": "xhigh",
   },
   "openedFiles": [],
-  "pendingOptimisticUserMessage": undefined,
-  "pendingToolCalls": [],
   "queuedMessages": [],
   "reasoningContent": "",
   "status": "idle",
-  "title": undefined,
-  "todos": undefined,
+  "todos": [],
 }
 `;

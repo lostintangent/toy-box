@@ -7,9 +7,10 @@ import {
 } from "./server/functions";
 import { addSessionIfMissing } from "@sessions/queryCache";
 import { sessionQueries } from "@sessions/queries";
+import { createInitialSessionState } from "@sessions/model/reducer";
 import { applyWorkspaceEvent, workspaceQueries } from "@workspace/queries";
 import type { WorkspaceState } from "@workspace/model/state/reducer";
-import type { SessionSnapshot } from "@sessions/model";
+import type { SessionState } from "@sessions/model";
 import type { Automation, AutomationOptions } from "./model";
 
 export const automationMutations = {
@@ -47,14 +48,13 @@ export const automationMutations = {
         const automation = client
           .getQueryData<WorkspaceState>(workspaceQueries.stateKey())
           ?.automations.find((candidate) => candidate.id === automationId);
-        client.setQueryData<SessionSnapshot>(sessionQueries.detail(sessionId).queryKey, {
-          id: sessionId,
-          messages: [],
-          queuedMessages: [],
-          model: automation?.model,
-          status: "thinking",
-          reasoningContent: "",
-        });
+        client.setQueryData<SessionState>(
+          sessionQueries.detail(sessionId).queryKey,
+          createInitialSessionState({
+            model: automation?.model,
+            status: "thinking",
+          }),
+        );
         addSessionIfMissing(client, {
           sessionId,
           startTime: new Date(),

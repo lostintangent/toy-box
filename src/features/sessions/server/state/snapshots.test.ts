@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, mock, onTestFinished, spyOn, test } from "bun:test";
 import * as providers from "../providers";
 import { deleteSessionFiles, writeSessionArtifact } from "../artifacts";
-import type { SessionEvent, SessionSnapshot } from "@sessions/model";
+import type { SessionEvent, SessionState } from "@sessions/model";
+import { createInitialSessionState } from "@sessions/model/reducer";
 import {
   cacheSnapshot,
   evictCachedSnapshot,
@@ -12,14 +13,10 @@ import {
   retainSessionSnapshots,
 } from "@sessions/server/state/snapshots";
 
-function snapshot(sessionId: string): SessionSnapshot {
-  return {
-    id: sessionId,
+function snapshot(sessionId: string): SessionState {
+  return createInitialSessionState({
     messages: [{ role: "assistant", content: `final response for ${sessionId}` }],
-    queuedMessages: [],
-    status: "idle",
-    reasoningContent: "",
-  };
+  });
 }
 
 describe("cached snapshot freshness", () => {
@@ -48,12 +45,17 @@ describe.serial("snapshot cache", () => {
       await deleteSessionFiles(sessionId);
     });
     await writeSessionArtifact(sessionId, "current.html", "Current artifact");
+    await writeSessionArtifact(sessionId, "summary.brief", "Current brief");
+    await writeSessionArtifact(sessionId, "legacy.intent", "Unsupported legacy artifact");
     await withProviderHistory(async () => {
-      expect((await loadSessionSnapshot(sessionId)).artifacts).toEqual(["current.html"]);
+      expect((await loadSessionSnapshot(sessionId)).artifacts).toEqual([
+        "current.html",
+        "summary.brief",
+      ]);
       await deleteSessionFiles(sessionId);
-      expect((await getCachedSnapshot(sessionId))?.artifacts).toBeUndefined();
+      expect((await getCachedSnapshot(sessionId))?.artifacts).toEqual([]);
       evictCachedSnapshot(sessionId);
-      expect((await loadSessionSnapshot(sessionId)).artifacts).toBeUndefined();
+      expect((await loadSessionSnapshot(sessionId)).artifacts).toEqual([]);
     }, [{ type: "assistant_message", content: "Created deleted.md" }]);
   });
 

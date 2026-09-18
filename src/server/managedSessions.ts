@@ -6,8 +6,6 @@ import type { SessionsState, SessionType } from "@sessions/model";
 import { getStateDatabase } from "@/server/database";
 import { hasHyperSession } from "@workspace/server/state/hyperSessions";
 
-type DeleteSession = (sessionId: string) => Promise<void>;
-
 /** Read the public Session catalog with feature-owned visibility and relationships. */
 export async function readSessionCatalog(
   readCatalog: () => Promise<[SessionsState["sessions"], SessionsState["worktrees"]]>,
@@ -61,17 +59,8 @@ export async function resolveSessionType(sessionId: string): Promise<SessionType
 }
 
 /** Delete the managed Session resources owned by one Session before its own teardown. */
-export async function deleteOwnedSessions(
-  sessionId: string,
-  deleteSession: DeleteSession,
-): Promise<void> {
-  const [{ listSessionOwnedAgentSessionIds }, { deleteWorkersForSession }] = await Promise.all([
-    import("@agents/server"),
-    import("@workers/server"),
-  ]);
-  for (const childSessionId of await listSessionOwnedAgentSessionIds(sessionId)) {
-    await deleteSession(childSessionId);
-  }
+export async function deleteOwnedSessions(sessionId: string): Promise<void> {
+  const { deleteWorkersForSession } = await import("@workers/server");
   await deleteWorkersForSession(sessionId);
 }
 

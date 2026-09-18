@@ -21,12 +21,12 @@ describe("transcript artifact links", () => {
         rehypePlugins={transcriptRehypePlugins}
       >
         {
-          "Open [the artifact](nested/report.intent), [the docs](https://example.com), and [unsafe](javascript:alert(1))."
+          "Open [the artifact](nested/report.brief), [the docs](https://example.com), and [unsafe](javascript:alert(1))."
         }
       </Streamdown>,
     );
 
-    expect(markup).toContain('href="nested/report.intent"');
+    expect(markup).toContain('href="nested/report.brief"');
     expect(markup).toContain('href="https://example.com"');
     expect(markup).not.toContain("[blocked]");
     expect(markup).not.toContain("javascript:");

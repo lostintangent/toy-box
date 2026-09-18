@@ -248,8 +248,8 @@ export function WorkspaceGrid({ panes, resolvePaneClose }: WorkspaceGridProps) {
   function renderCell(index: number) {
     const pane = panes[index];
     if (!pane) return null;
-    const isMaximized = focusedPaneId === pane.id;
 
+    const isMaximized = focusedPaneId === pane.id;
     const onClosePane = resolvePaneClose(pane);
 
     return (
@@ -260,6 +260,7 @@ export function WorkspaceGrid({ panes, resolvePaneClose }: WorkspaceGridProps) {
         showWindowControls={count > 1}
         sessionOverlayId={resolveGridSessionOverlayId(pane, panes, isMaximized)}
         isMaximized={isMaximized}
+        isVisible={focusedPaneId === null || isMaximized}
         onMaximize={() => setFocusedPaneId(pane.id)}
         onRestore={restoreLayout}
       />
@@ -323,6 +324,7 @@ interface WorkspaceGridCellProps {
   showWindowControls: boolean;
   sessionOverlayId?: string;
   isMaximized: boolean;
+  isVisible: boolean;
   onMaximize: () => void;
   onRestore: () => void;
 }
@@ -333,6 +335,7 @@ function WorkspaceGridCell({
   showWindowControls,
   sessionOverlayId,
   isMaximized,
+  isVisible,
   onMaximize,
   onRestore,
 }: WorkspaceGridCellProps) {
@@ -391,8 +394,18 @@ function WorkspaceGridCell({
           ))}
       </div>
 
-      <WorkspacePaneView pane={pane} slots={{ actions: actionsSlot, status: statusSlot }}>
-        {sessionOverlayId && <SessionOverlay key={sessionOverlayId} sessionId={sessionOverlayId} />}
+      <WorkspacePaneView
+        pane={pane}
+        isVisible={isVisible}
+        slots={{ actions: actionsSlot, status: statusSlot }}
+      >
+        {sessionOverlayId && (
+          <SessionOverlay
+            key={sessionOverlayId}
+            sessionId={sessionOverlayId}
+            isVisible={isVisible}
+          />
+        )}
       </WorkspacePaneView>
       <div
         ref={setStatusSlot}

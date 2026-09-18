@@ -8,23 +8,29 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import type { ToolInvocation } from "@github/copilot-sdk";
 import * as streamModule from "@sessions/server/runtime";
 import * as registryModule from "@sessions/server/state/registry";
+import type { ToolInvocation } from "@sessions/server/tools/definition";
 import * as providers from "./providers";
 
 const realStreamModule = { ...streamModule };
 const realRegistryModule = { ...registryModule };
 
 type CreateSessionArguments = Parameters<typeof streamModule.createSession>;
+type DeliverSessionMessageArguments = Parameters<typeof streamModule.deliverSessionMessage>;
 
 const createSessionMock = mock(async (..._args: CreateSessionArguments) => ({
   disposition: "started" as const,
   waitForCompletion: async () => ({ status: "completed" as const }),
 }));
+const deliverSessionMessageMock = mock(async (..._args: DeliverSessionMessageArguments) => ({
+  disposition: "queued" as const,
+  waitForCompletion: async () => ({ status: "completed" as const }),
+}));
 mock.module("@sessions/server/runtime", () => ({
   ...realStreamModule,
   createSession: createSessionMock,
+  deliverSessionMessage: deliverSessionMessageMock,
 }));
 const updateSessionTitleMock = mock(async (_sessionId: string, _title: string) => true);
 mock.module("@sessions/server/state/registry", () => ({
@@ -32,7 +38,8 @@ mock.module("@sessions/server/state/registry", () => ({
   updateSessionTitle: updateSessionTitleMock,
 }));
 
-const { hyperLifecycleTools, sessionTitleTools, sessionHistoryTools } = await import("./tools");
+const { coordinationTools, hyperLifecycleTools, sessionTitleTools, sessionHistoryTools } =
+  await import("./tools");
 
 test("session discovery bounds results and searches titles across providers, newest first", async () => {
   const list = spyOn(providers, "listSessions").mockResolvedValue(
@@ -71,7 +78,36 @@ afterAll(() => {
 
 beforeEach(() => {
   createSessionMock.mockClear();
+  deliverSessionMessageMock.mockClear();
   updateSessionTitleMock.mockClear();
+});
+
+describe("SDK coordination tools", () => {
+  const deliverMessageTool = coordinationTools[2];
+
+  test("rejects self-delivery instead of turning a subagent reply into a new root prompt", async () => {
+    await expect(
+      deliverMessageTool.handler(
+        { sessionId: "toy-box-caller", message: "Ownership returned to parent." },
+        invocation("deliver_message"),
+      ),
+    ).rejects.toThrow("cannot target the invoking session");
+    expect(deliverSessionMessageMock).not.toHaveBeenCalled();
+  });
+
+  test("uses the source tool call as cross-session delivery identity", async () => {
+    const result = await deliverMessageTool.handler(
+      { sessionId: "toy-box-recipient", message: "Please review this", model: undefined },
+      invocation("deliver_message"),
+    );
+
+    expect(deliverSessionMessageMock).toHaveBeenCalledWith("toy-box-recipient", {
+      clientId: "tool-call",
+      content: "Please review this",
+      model: undefined,
+    });
+    expect(JSON.parse(String(result))).toEqual({ disposition: "queued" });
+  });
 });
 
 describe("SDK session title tool", () => {

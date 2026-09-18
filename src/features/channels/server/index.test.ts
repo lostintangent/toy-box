@@ -16,6 +16,7 @@ mock.module("@/server/database", () => ({
 }));
 
 const { AgentDatabase } = await import("@agents/server/database");
+const agentSupervisor = await import("@agents/server/supervisor");
 const { ChannelDatabase } = await import("./database");
 const {
   finishChannelAgentTurn,
@@ -31,6 +32,45 @@ const { publishChannelEvent, releaseChannelEvents } = await import("./events");
 
 const PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+test("an addressed Channel post settles after its Agent wake is ready", async () => {
+  currentDb = await createTestDatabase();
+  onTestFinished(async () => {
+    await currentDb?.close();
+    currentDb = undefined;
+  });
+
+  const channels = new ChannelDatabase(currentDb);
+  const channel = await channels.createChannel({ title: "Coordination" });
+  await new AgentDatabase(currentDb).createAgent({ name: "Reviewer" });
+  let releaseWake!: () => void;
+  let announceWake!: () => void;
+  const wakeStarted = new Promise<void>((resolve) => {
+    announceWake = resolve;
+  });
+  const wakeFinished = new Promise<void>((resolve) => {
+    releaseWake = resolve;
+  });
+  const mention = spyOn(agentSupervisor, "mentionAgent").mockImplementation(() => {
+    announceWake();
+    return wakeFinished;
+  });
+  onTestFinished(() => mention.mockRestore());
+
+  let settled = false;
+  const post = postChannelMessageFromSession("coordinator-session", {
+    id: "review-request",
+    channelId: channel.id,
+    content: "@reviewer please inspect this.",
+  }).then(() => {
+    settled = true;
+  });
+  await wakeStarted;
+  expect(settled).toBe(false);
+  releaseWake();
+  await post;
+  expect(settled).toBe(true);
+});
 
 test("an Agent can attach an image file to a durable Channel message", async () => {
   currentDb = await createTestDatabase();

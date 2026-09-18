@@ -37,19 +37,9 @@ export const agentMembershipStatusSchema = z
   })
   .strict();
 
-export const fileAgentHostSchema = z
-  .object({
-    kind: z.literal("file"),
-    sessionId: durableIdSchema,
-    path: z.string().min(1),
-  })
+export const agentHostSchema = z
+  .object({ kind: z.literal("channel"), channelId: durableIdSchema })
   .strict();
-
-export const agentHostSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("session"), sessionId: durableIdSchema }).strict(),
-  z.object({ kind: z.literal("channel"), channelId: durableIdSchema }).strict(),
-  fileAgentHostSchema,
-]);
 
 export type AgentAvatar = z.output<typeof agentAvatarSchema>;
 
@@ -64,7 +54,7 @@ export type Agent = {
   name: string;
   /** Established by the Agent during its first host engagement. */
   persona?: string;
-  /** Unset agents inherit the workspace default whenever a private turn starts. */
+  /** Unset Agents inherit the workspace default whenever a turn starts. */
   model?: ModelConfiguration;
   avatar?: AgentAvatar;
   experiences: AgentExperience[];
@@ -79,18 +69,6 @@ export type AgentMembership = {
   agentId: string;
   sessionId: string;
 };
-
-/** Stable identity within one Agent host kind. */
-export function agentHostId(host: AgentHost): string {
-  switch (host.kind) {
-    case "session":
-      return host.sessionId;
-    case "channel":
-      return host.channelId;
-    case "file":
-      return JSON.stringify({ sessionId: host.sessionId, path: host.path });
-  }
-}
 
 export type AgentEvent =
   | { type: "agent.changed" }
@@ -176,8 +154,6 @@ export const selfUpdateAgentInputSchema = z
     message: "A persona or avatar change is required.",
   });
 
-export const listAgentMembershipsInputSchema = z.object({ host: agentHostSchema }).strict();
-
 export type CreateAgentInput = z.output<typeof createAgentInputSchema>;
 export type UpdateAgentInput = z.output<typeof updateAgentInputSchema>;
 export type SelfUpdateAgentInput = z.output<typeof selfUpdateAgentInputSchema>;
@@ -219,16 +195,6 @@ export function extractAgentMentionHandles(content: string): {
     else handles.add(handle);
   }
   return { handles: [...handles], mentionAll };
-}
-
-/** Resolve explicit handles without giving regular Sessions Channel-style broadcast semantics. */
-export function findMentionedAgents<Candidate extends Pick<Agent, "name">>(
-  content: string,
-  agents: readonly Candidate[],
-): Candidate[] {
-  const { handles } = extractAgentMentionHandles(content);
-  const handleSet = new Set(handles);
-  return agents.filter(({ name }) => handleSet.has(agentHandleFromName(name)));
 }
 
 /** Find the incomplete mention immediately before a text caret. */

@@ -1,19 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import {
-  applySessionEvent,
-  createInitialSession,
-  prepareSessionForNextTurn,
-  sessionSeedFromSnapshot,
-  toSessionSnapshot,
-  type Session,
-} from "./reducer";
-import type { AssistantMessage, Message, SessionEvent } from "./index";
+import { applySessionEvent, createInitialSessionState, replaySessionHistory } from "./reducer";
+import type { AssistantMessage, SessionEvent, SessionQuestionBase, SessionState } from "./index";
 
-function reduceEvents(events: readonly SessionEvent[], initial = createInitialSession()): Session {
+function reduceEvents(
+  events: readonly SessionEvent[],
+  initial = createInitialSessionState(),
+): SessionState {
   return events.reduce(applySessionEvent, initial);
 }
 
-function assistantMessageAt(state: Session, index: number): AssistantMessage {
+function assistantAt(state: SessionState, index: number): AssistantMessage {
   const message = state.messages[index];
   if (message?.role !== "assistant") {
     throw new Error(`Expected assistant message at index ${index}`);
@@ -21,363 +17,357 @@ function assistantMessageAt(state: Session, index: number): AssistantMessage {
   return message;
 }
 
-function expectMessageIdentities(
-  previous: Message[],
-  next: Message[],
-  count = previous.length,
-): void {
-  for (let index = 0; index < count; index++) {
-    expect(next[index]).toBe(previous[index]);
-  }
+function requestQuestion(toolCallId: string, question: SessionQuestionBase): SessionEvent[] {
+  return [
+    {
+      type: "tool_start",
+      toolCallId,
+      toolName: "ask_user",
+      arguments: {},
+      question,
+    },
+    {
+      type: "question_requested",
+      toolCallId,
+      requestId: `request-${toolCallId}`,
+      question,
+    },
+  ];
 }
 
-describe("sessionReducer", () => {
-  describe("messages", () => {
-    test("replays a streamed turn with tool calls into interleaved assistant messages", () => {
+describe("session reducer", () => {
+  test("creates one normalized state shape", () => {
+    const messages = [{ role: "user" as const, content: "hello" }];
+    const state = createInitialSessionState({ messages, lastSeenEventId: 4 });
+
+    expect(state).toEqual({
+      messages,
+      queuedMessages: [],
+      todos: [],
+      linkedSessionIds: [],
+      canvases: [],
+      artifacts: [],
+      openedFiles: [],
+      status: "idle",
+      reasoningContent: "",
+      model: undefined,
+      lastSeenEventId: 4,
+    });
+    expect(state.messages).not.toBe(messages);
+  });
+
+  describe("messages and streaming", () => {
+    test("keeps text and tool groups in transcript order", () => {
       const state = reduceEvents([
         { type: "user_message", content: "hello" },
         { type: "status", status: "thinking" },
         {
           type: "tool_start",
-          toolCallId: "t1",
-          toolName: "read_file",
+          toolCallId: "read-1",
+          toolName: "read",
           arguments: { path: "README.md" },
         },
-        { type: "tool_end", toolCallId: "t1", success: true, result: "ok" },
+        {
+          type: "tool_end",
+          toolCallId: "read-1",
+          success: true,
+          result: "contents",
+          details: "read README.md",
+        },
         { type: "delta", content: "Done." },
         { type: "end", reason: "idle" },
       ]);
 
-      expect(state.messages).toHaveLength(3);
-      expect(state.messages[0]).toMatchObject({ role: "user", content: "hello" });
-      // First assistant message: tool call group
-      expect(state.messages[1].role).toBe("assistant");
-      expect(assistantMessageAt(state, 1).toolCalls).toHaveLength(1);
-      expect(assistantMessageAt(state, 1).toolCalls?.[0]).toMatchObject({
-        id: "t1",
-        name: "read_file",
-        result: {
-          content: "ok",
-          success: true,
+      expect(state.messages).toEqual([
+        {
+          role: "user",
+          content: "hello",
+          attachments: undefined,
+          timestamp: undefined,
         },
-      });
-      // Second assistant message: text after tool calls
-      expect(state.messages[2]).toMatchObject({ role: "assistant", content: "Done." });
-      expect(assistantMessageAt(state, 2).toolCalls).toBeUndefined();
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "read-1",
+              name: "read",
+              arguments: { path: "README.md" },
+              result: { content: "contents", success: true, details: "read README.md" },
+            },
+          ],
+        },
+        { role: "assistant", content: "Done." },
+      ]);
       expect(state.status).toBe("idle");
     });
 
-    test("committed assistant messages produce separate messages and finalize pending tool calls", () => {
-      // Replay interleaving: a committed message's tools attach via the
-      // pending map, and the next committed message is a turn boundary that
-      // must not drag the previous group's tool calls along.
+    test("committed messages close a tool group without carrying its tools forward", () => {
       const state = reduceEvents([
         { type: "assistant_message", content: "First" },
         {
           type: "tool_start",
-          toolCallId: "t1",
+          toolCallId: "glob-1",
           toolName: "glob",
           arguments: { pattern: "*.ts" },
         },
-        { type: "tool_end", toolCallId: "t1", success: true, result: "ok" },
+        { type: "tool_end", toolCallId: "glob-1", success: true, result: "a.ts" },
         { type: "assistant_message", content: "Second" },
       ]);
 
-      expect(state.messages).toHaveLength(2);
-      expect(state.messages[0]).toMatchObject({
-        role: "assistant",
+      expect(assistantAt(state, 0)).toMatchObject({
         content: "First",
+        toolCalls: [{ id: "glob-1", result: { content: "a.ts", success: true } }],
       });
-      expect(assistantMessageAt(state, 0).toolCalls).toHaveLength(1);
-      expect(assistantMessageAt(state, 0).toolCalls?.[0]).toMatchObject({
-        id: "t1",
-        name: "glob",
-        result: { content: "ok", success: true },
-      });
-      expect(state.messages[1]).toMatchObject({
-        role: "assistant",
-        content: "Second",
-      });
-      expect(assistantMessageAt(state, 1).toolCalls).toBeUndefined();
-      expect(state.pendingToolCalls.size).toBe(0);
+      expect(assistantAt(state, 1)).toEqual({ role: "assistant", content: "Second" });
     });
 
-    test("committed assistant messages append after thinking status", () => {
+    test("a committed native message replaces its matching streamed preview", () => {
       const state = reduceEvents([
-        { type: "user_message", content: "go" },
         { type: "status", status: "thinking" },
-        { type: "assistant_message", content: "Done." },
+        { type: "delta", messageId: "message-1", content: "Draft" },
+        { type: "assistant_message", messageId: "message-1", content: "Final answer" },
       ]);
 
-      expect(state.messages).toHaveLength(2);
-      expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Done." });
+      expect(state.messages).toEqual([
+        {
+          role: "assistant",
+          messageId: "message-1",
+          content: "Final answer",
+        },
+      ]);
       expect(state.status).toBe("responding");
     });
 
-    test("system messages create visible turn boundaries", () => {
+    test("different native message IDs preserve separate assistant messages", () => {
+      const state = reduceEvents([
+        { type: "delta", messageId: "message-1", content: "First" },
+        { type: "assistant_message", messageId: "message-2", content: "Second" },
+      ]);
+
+      expect(state.messages.map((message) => message.content)).toEqual(["First", "Second"]);
+    });
+
+    test.each([
+      {
+        chunks: ["Let me look", "Let me look at the turn", "Let me look at the turn closely"],
+        expected: "Let me look at the turn closely",
+      },
+      { chunks: ["cof", "fee"], expected: "coffee" },
+    ])("normalizes cumulative and incremental text chunks", ({ chunks, expected }) => {
+      const state = reduceEvents(chunks.map((content) => ({ type: "delta", content })));
+      expect(assistantAt(state, 0).content).toBe(expected);
+    });
+
+    test("reasoning stays separate and clears when response text starts", () => {
+      const state = reduceEvents([
+        { type: "reasoning", content: "Now I can" },
+        { type: "reasoning", content: "Now I can see the pattern" },
+        { type: "delta", content: "Answer" },
+      ]);
+
+      expect(state.reasoningContent).toBe("");
+      expect(state.status).toBe("responding");
+      expect(assistantAt(state, 0).content).toBe("Answer");
+    });
+
+    test("empty deltas do not create a boundary or lose a tool completion", () => {
+      const state = reduceEvents([
+        { type: "user_message", content: "go" },
+        {
+          type: "tool_start",
+          toolCallId: "edit-1",
+          toolName: "edit",
+          arguments: { path: "file.ts" },
+        },
+        { type: "delta", content: "" },
+        { type: "tool_end", toolCallId: "edit-1", success: true, result: "applied" },
+      ]);
+
+      expect(state.messages).toHaveLength(2);
+      expect(assistantAt(state, 1).toolCalls?.[0]).toMatchObject({
+        id: "edit-1",
+        result: { content: "applied", success: true },
+      });
+    });
+
+    test("system messages remain visible turn boundaries", () => {
       const content = {
         type: "file_edited",
-        file: { kind: "session", sessionId: "s1", path: "plan.md" },
+        file: { kind: "session", sessionId: "session-1", path: "plan.md" },
       } as const;
       const state = reduceEvents([
         { type: "system_message", content },
-        { type: "status", status: "thinking" },
-        { type: "assistant_message", content: "I reviewed the edit." },
+        { type: "assistant_message", content: "Reviewed." },
         { type: "system_message", content },
-        { type: "status", status: "thinking" },
-        { type: "assistant_message", content: "I reviewed the update." },
       ]);
 
-      expect(state.messages).toEqual([
-        { role: "system", content, timestamp: undefined },
-        { role: "assistant", content: "I reviewed the edit." },
-        { role: "system", content, timestamp: undefined },
-        { role: "assistant", content: "I reviewed the update." },
-      ]);
-      expect(state.status).toBe("responding");
-    });
-
-    test("opened files track the machine files the agent opens and closes", () => {
-      const file = { kind: "machine", path: "/repo/src/foo.ts" } as const;
-
-      const opened = reduceEvents([
-        { type: "file_opened", file },
-        { type: "file_opened", file },
-      ]);
-      expect(opened.openedFiles).toEqual([file]);
-
-      const closed = reduceEvents([
-        { type: "file_opened", file },
-        { type: "file_closed", file },
-      ]);
-      expect(closed.openedFiles).toEqual([]);
-    });
-
-    test("committed assistant messages reconcile streamed assistant text", () => {
-      const state = reduceEvents([
-        { type: "user_message", content: "go" },
-        { type: "status", status: "thinking" },
-        { type: "delta", content: "Done" },
-        { type: "delta", content: "Done." },
-        { type: "assistant_message", content: "Done." },
-      ]);
-
-      expect(state.messages).toHaveLength(2);
-      expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Done." });
-      expect(state.status).toBe("responding");
-    });
-
-    test("committed assistant messages reconcile after reasoning without a text delta", () => {
-      const state = reduceEvents([
-        { type: "user_message", content: "go" },
-        { type: "status", status: "thinking" },
-        { type: "reasoning", content: "Thinking..." },
-        { type: "assistant_message", content: "Done." },
-      ]);
-
-      expect(state.messages).toHaveLength(2);
-      expect(state.messages[1]).toMatchObject({ role: "assistant", content: "Done." });
-      expect(state.status).toBe("responding");
-      expect(state.reasoningContent).toBe("");
+      expect(state.messages.map(({ role }) => role)).toEqual(["system", "assistant", "system"]);
     });
   });
 
-  describe("streaming content", () => {
-    test("status updates do not create assistant messages", () => {
+  describe("tool calls and subagents", () => {
+    test("routes subagent output, tools, and model to its parent tool call", () => {
       const state = reduceEvents([
-        { type: "user_message", content: "go" },
-        { type: "status", status: "thinking" },
+        {
+          type: "tool_start",
+          toolCallId: "agent-1",
+          toolName: "agent",
+          arguments: { task: "review" },
+        },
+        { type: "reasoning", parentToolCallId: "agent-1", content: "Inspecting" },
+        { type: "assistant_message", parentToolCallId: "agent-1", content: "Found one issue." },
+        {
+          type: "model_changed",
+          parentToolCallId: "agent-1",
+          model: { provider: "copilot", name: "claude-haiku-4.5" },
+        },
+        {
+          type: "tool_start",
+          parentToolCallId: "agent-1",
+          toolCallId: "read-1",
+          toolName: "read",
+          arguments: { path: "a.ts" },
+        },
+        {
+          type: "tool_end",
+          parentToolCallId: "agent-1",
+          toolCallId: "read-1",
+          success: true,
+          result: "contents",
+        },
       ]);
 
-      expect(state.status).toBe("thinking");
-      expect(state.reasoningContent).toBe("");
-      expect(state.messages).toEqual([
-        { role: "user", content: "go", attachments: undefined, timestamp: undefined },
-      ]);
-    });
-
-    test("tracks reasoning status and clears it when a response starts", () => {
-      const initial = createInitialSession();
-      const afterReasoning = applySessionEvent(initial, {
-        type: "reasoning",
-        content: "thinking",
-      });
-      expect(afterReasoning.status).toBe("reasoning");
-      expect(afterReasoning.reasoningContent).toBe("thinking");
-
-      const afterDelta = applySessionEvent(afterReasoning, { type: "delta", content: "answer" });
-      expect(afterDelta.status).toBe("responding");
-      expect(afterDelta.reasoningContent).toBe("");
-    });
-
-    test("normalizes cumulative delta chunks without duplicating assistant content", () => {
-      const state = reduceEvents([
-        { type: "user_message", content: "go" },
-        { type: "status", status: "thinking" },
-        { type: "delta", content: "Let me look" },
-        { type: "delta", content: "Let me look at the turn" },
-        { type: "delta", content: "Let me look at the turn that corresponds" },
-      ]);
-
-      expect(state.messages[state.messages.length - 1]).toMatchObject({
-        role: "assistant",
-        content: "Let me look at the turn that corresponds",
-      });
-    });
-
-    test("preserves repeated boundary characters for incremental delta chunks", () => {
-      const state = reduceEvents([
-        { type: "user_message", content: "go" },
-        { type: "status", status: "thinking" },
-        { type: "delta", content: "cof" },
-        { type: "delta", content: "fee" },
-      ]);
-
-      expect(state.messages[state.messages.length - 1]).toMatchObject({
-        role: "assistant",
-        content: "coffee",
-      });
-    });
-
-    test("replaces only the growing assistant message for streamed deltas", () => {
-      let state = createInitialSession({
-        messages: [
-          { role: "user", content: "go" },
-          { role: "assistant", content: "First" },
+      const parent = assistantAt(state, 0).toolCalls?.[0];
+      expect(parent?.subagent).toEqual({
+        reasoningContent: "Inspecting",
+        content: "Found one issue.",
+        model: { provider: "copilot", name: "claude-haiku-4.5" },
+        toolCalls: [
+          {
+            id: "read-1",
+            name: "read",
+            arguments: { path: "a.ts" },
+            result: { content: "contents", success: true, details: undefined },
+          },
         ],
-        status: "responding",
       });
-      const previousState = state;
-      const previousMessages = state.messages;
-      const previousUserMessage = state.messages[0];
-      const previousAssistantMessage = assistantMessageAt(state, 1);
-
-      state = applySessionEvent(state, { type: "delta", content: " update" });
-
-      expect(state).not.toBe(previousState);
-      expect(state.messages).not.toBe(previousMessages);
-      expect(state.messages[0]).toBe(previousUserMessage);
-      expect(state.messages[1]).not.toBe(previousAssistantMessage);
-      expect(state.messages[1]).toMatchObject({ content: "First update" });
-      expect(previousAssistantMessage.content).toBe("First");
+      expect(state.model).toBeUndefined();
     });
 
-    test("normalizes cumulative reasoning chunks without duplication", () => {
-      const state = reduceEvents([
-        { type: "reasoning", content: "Now I can" },
-        { type: "reasoning", content: "Now I can see" },
-        { type: "reasoning", content: "Now I can see the pattern clearly." },
-      ]);
-
-      expect(state.reasoningContent).toBe("Now I can see the pattern clearly.");
-    });
-
-    test("routes scoped reasoning chunks into the matching agent tool call", () => {
+    test("unknown subagent tool events do not create a root assistant message", () => {
       const state = reduceEvents([
         { type: "status", status: "thinking" },
         {
           type: "tool_start",
-          toolCallId: "agent-1",
-          toolName: "agent",
-          arguments: { agent_type: "explore" },
+          parentToolCallId: "missing-parent",
+          toolCallId: "child-1",
+          toolName: "read",
+          arguments: {},
         },
-        { type: "reasoning", agentId: "agent-1", content: "Inspecting" },
-        { type: "reasoning", agentId: "agent-1", content: "Inspecting files" },
-      ]);
-
-      const message = assistantMessageAt(state, 0);
-      expect(message.toolCalls?.[0].agent?.reasoningContent).toBe("Inspecting files");
-      expect(state.reasoningContent).toBe("");
-      expect(state.status).toBe("thinking");
-    });
-
-    test("accumulates scoped assistant messages on the matching agent tool call", () => {
-      const state = reduceEvents([
-        { type: "status", status: "thinking" },
         {
-          type: "tool_start",
-          toolCallId: "agent-1",
-          toolName: "agent",
-          arguments: { agent_type: "explore" },
-        },
-        { type: "assistant_message", agentId: "agent-1", content: "Reading files" },
-        { type: "assistant_message", agentId: "agent-1", content: "Summarizing findings" },
-      ]);
-
-      const message = assistantMessageAt(state, 0);
-      expect(message.toolCalls?.[0].agent?.content).toBe("Reading files\n\nSummarizing findings");
-      expect(state.messages).toHaveLength(1);
-    });
-
-    test("empty deltas do not fragment messages or clear pending tool calls", () => {
-      let state = createInitialSession();
-      state = applySessionEvent(state, { type: "user_message", content: "go" });
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-      state = applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "t1",
-        toolName: "edit",
-        arguments: { path: "file.ts", old_str: "a", new_str: "b" },
-      });
-
-      // An empty delta arriving mid-tool-execution must be ignored.
-      // Previously it called ensureCleanAssistantMessage, which cleared
-      // pendingToolCalls and created a new message — dropping the tool
-      // call result when tool_end arrived afterward.
-      state = applySessionEvent(state, { type: "delta", content: "" });
-
-      expect(state.pendingToolCalls.size).toBe(1);
-      // Only user + 1 assistant message (no spurious empty message)
-      expect(state.messages).toHaveLength(2);
-      expect(assistantMessageAt(state, 1).toolCalls).toHaveLength(1);
-
-      // tool_end should find the tool call and attach the result
-      state = applySessionEvent(state, {
-        type: "tool_end",
-        toolCallId: "t1",
-        success: true,
-        result: "applied",
-      });
-      expect(assistantMessageAt(state, 1).toolCalls?.[0]).toMatchObject({
-        result: {
-          content: "applied",
+          type: "tool_end",
+          parentToolCallId: "missing-parent",
+          toolCallId: "child-1",
           success: true,
         },
+      ]);
+
+      expect(state.messages).toEqual([]);
+      expect(state.status).toBe("thinking");
+    });
+
+    test("late subagent events replace only the committed parent branch", () => {
+      const initial = createInitialSessionState({
+        messages: [
+          {
+            role: "assistant",
+            content: "Delegating.",
+            toolCalls: [{ id: "agent-1", name: "agent", arguments: {} }],
+          },
+          { role: "assistant", content: "Meanwhile." },
+        ],
+      });
+      const parentMessage = initial.messages[0];
+      const unaffectedMessage = initial.messages[1];
+
+      const next = applySessionEvent(initial, {
+        type: "tool_start",
+        parentToolCallId: "agent-1",
+        toolCallId: "child-1",
+        toolName: "bash",
+        arguments: { command: "ls" },
+      });
+
+      expect(next.messages[0]).not.toBe(parentMessage);
+      expect(next.messages[1]).toBe(unaffectedMessage);
+      expect(assistantAt(next, 0).toolCalls?.[0].subagent?.toolCalls?.[0].id).toBe("child-1");
+    });
+
+    test("late root completions update the original tool group after a boundary", () => {
+      const beforeCompletion = reduceEvents([
+        { type: "delta", content: "Starting a background review." },
+        {
+          type: "tool_start",
+          toolCallId: "agent-1",
+          toolName: "agent",
+          arguments: { mode: "background" },
+        },
+        { type: "delta", content: "Continuing." },
+      ]);
+      const originalToolMessage = beforeCompletion.messages[0];
+      const currentTextMessage = beforeCompletion.messages[1];
+
+      const completed = applySessionEvent(beforeCompletion, {
+        type: "tool_end",
+        toolCallId: "agent-1",
+        success: true,
+      });
+
+      expect(completed.messages[0]).not.toBe(originalToolMessage);
+      expect(completed.messages[1]).toBe(currentTextMessage);
+      expect(assistantAt(completed, 0).toolCalls?.[0].result).toEqual({
+        content: "",
+        success: true,
+        details: undefined,
       });
     });
   });
 
-  describe("tool calls", () => {
-    test("moves a root question through unanswered, pending, and answered states", () => {
+  describe("questions", () => {
+    test("moves a question through unanswered, pending, and answered states", () => {
       const question = {
-        question: "Which database should I use?",
+        question: "Which database?",
         choices: ["SQLite", "PostgreSQL"],
         allowFreeform: true,
       };
       let state = reduceEvents([
-        { type: "status", status: "thinking" },
         {
           type: "tool_start",
           toolCallId: "question-1",
           toolName: "ask_user",
-          arguments: { question: question.question, choices: question.choices },
+          arguments: {},
           question,
         },
       ]);
-
-      expect(assistantMessageAt(state, 0).toolCalls?.[0].question).toEqual({
+      expect(assistantAt(state, 0).toolCalls?.[0].question).toEqual({
         ...question,
         state: "unanswered",
       });
 
-      state = applySessionEvent(state, {
-        type: "question_requested",
-        toolCallId: "question-1",
-        requestId: "request-1",
-        question,
-      });
-      expect(state.status).toBe("waiting");
-      expect(assistantMessageAt(state, 0).toolCalls?.[0].question).toEqual({
+      state = reduceEvents(
+        [
+          {
+            type: "question_requested",
+            toolCallId: "question-1",
+            requestId: "request-1",
+            question,
+          },
+        ],
+        state,
+      );
+      expect(state.status).toBe("thinking");
+      expect(assistantAt(state, 0).toolCalls?.[0].question).toEqual({
         ...question,
         state: "pending",
         requestId: "request-1",
@@ -389,1009 +379,376 @@ describe("sessionReducer", () => {
         answer: "SQLite",
       });
       expect(state.status).toBe("thinking");
-      expect(assistantMessageAt(state, 0).toolCalls?.[0].question).toEqual({
+      expect(assistantAt(state, 0).toolCalls?.[0].question).toEqual({
         ...question,
         state: "answered",
         answer: "SQLite",
       });
     });
 
-    test("waits only while a blocking question remains pending", () => {
-      const request = (id: string, blocking: boolean): SessionEvent[] => {
-        const question = { question: id, allowFreeform: true, blocking };
-        return [
-          { type: "tool_start", toolCallId: id, toolName: "ask_user", arguments: {}, question },
-          { type: "question_requested", toolCallId: id, requestId: id, question },
-        ];
-      };
-      let state = reduceEvents(request("background", false));
-      expect(state.status).not.toBe("waiting");
+    test("nonblocking or unknown question events do not invent a status transition", () => {
+      const nonblocking = { question: "Optional", allowFreeform: true, blocking: false };
+      let state = reduceEvents([
+        { type: "status", status: "reasoning" },
+        ...requestQuestion("background", nonblocking),
+      ]);
+      expect(state.status).toBe("reasoning");
 
-      state = reduceEvents([...request("first", true), ...request("second", true)], state);
-      expect(state.status).toBe("waiting");
       state = applySessionEvent(state, {
-        type: "question_resolved",
-        toolCallId: "first",
-        answer: "Proceed",
+        type: "question_requested",
+        toolCallId: "missing",
+        requestId: "missing",
+        question: { question: "Missing?", allowFreeform: true },
       });
-      expect(state.status).toBe("waiting");
-
-      state = applySessionEvent(state, { type: "question_cancelled", toolCallId: "second" });
-      expect(state.status).toBe("thinking");
-      expect(assistantMessageAt(state, 0).toolCalls?.[0].question?.state).toBe("pending");
+      expect(state.status).toBe("reasoning");
     });
 
-    test("makes a pending question read-only when the turn ends", () => {
-      const question = { question: "Continue?", choices: ["Yes", "No"], allowFreeform: true };
+    test("turn end makes pending questions read-only", () => {
+      const question = { question: "Continue?", allowFreeform: true };
       const state = reduceEvents([
         {
-          type: "tool_start",
-          toolCallId: "question-1",
-          toolName: "ask_user",
-          arguments: { question: question.question, choices: question.choices },
-          question,
+          type: "message_queued",
+          message: { clientId: "queued-1", role: "user", content: "Next" },
         },
-        {
-          type: "question_requested",
-          toolCallId: "question-1",
-          requestId: "request-1",
-          question,
-        },
+        ...requestQuestion("question-1", question),
         { type: "end", reason: "idle" },
       ]);
 
       expect(state.status).toBe("idle");
-      expect(assistantMessageAt(state, 0).toolCalls?.[0].question).toEqual({
+      expect(state.queuedMessages).toEqual([]);
+      expect(assistantAt(state, 0).toolCalls?.[0].question).toEqual({
         ...question,
         state: "unanswered",
       });
     });
-
-    test("stores tool result details on completed tool calls", () => {
-      const state = reduceEvents([
-        {
-          type: "tool_start",
-          toolCallId: "patch-1",
-          toolName: "patch",
-          arguments: { patch: "*** Begin Patch\n*** End Patch" },
-        },
-        {
-          type: "tool_end",
-          toolCallId: "patch-1",
-          success: true,
-          result: "Modified 1 file(s)",
-          details: "diff --git a/file b/file",
-        },
-      ]);
-
-      const message = assistantMessageAt(state, 0);
-      expect(message.toolCalls?.[0]).toMatchObject({
-        result: {
-          content: "Modified 1 file(s)",
-          success: true,
-          details: "diff --git a/file b/file",
-        },
-      });
-    });
-
-    test("nests subagent tool calls under their pending parent agent call", () => {
-      const state = reduceEvents([
-        { type: "status", status: "thinking" },
-        {
-          type: "tool_start",
-          toolCallId: "agent-1",
-          toolName: "agent",
-          arguments: { agentName: "explore" },
-        },
-        {
-          type: "tool_start",
-          toolCallId: "child-1",
-          toolName: "read",
-          arguments: { path: "a.ts" },
-          agentId: "agent-1",
-        },
-        {
-          type: "tool_end",
-          toolCallId: "child-1",
-          success: true,
-          result: "contents",
-          agentId: "agent-1",
-        },
-        {
-          type: "tool_end",
-          toolCallId: "agent-1",
-          success: true,
-          result: "Review complete",
-        },
-      ]);
-
-      const message = assistantMessageAt(state, 0);
-      // The child is nested, not a top-level tool call.
-      expect(message.toolCalls).toHaveLength(1);
-      const parent = message.toolCalls?.[0];
-      expect(parent).toMatchObject({
-        id: "agent-1",
-        name: "agent",
-        result: { content: "Review complete", success: true },
-      });
-      expect(parent?.agent?.toolCalls).toHaveLength(1);
-      expect(parent?.agent?.toolCalls?.[0]).toMatchObject({
-        id: "child-1",
-        name: "read",
-        result: { content: "contents", success: true },
-      });
-    });
-
-    test("routes scoped model changes into the matching agent tool call", () => {
-      const state = reduceEvents([
-        { type: "status", status: "thinking" },
-        {
-          type: "tool_start",
-          toolCallId: "agent-1",
-          toolName: "agent",
-          arguments: { agent_type: "explore" },
-        },
-        {
-          type: "model_changed",
-          agentId: "agent-1",
-          model: { provider: "copilot", name: "claude-haiku-4.5" },
-        },
-      ]);
-
-      const message = assistantMessageAt(state, 0);
-      expect(message.toolCalls?.[0].agent?.model).toEqual({
-        provider: "copilot",
-        name: "claude-haiku-4.5",
-      });
-      expect(state.model).toBeUndefined();
-    });
-
-    test("replaces a committed parent as late subagent tool calls change", () => {
-      // Resume-mid-turn: the parent agent call arrived committed in a server
-      // snapshot (initial state), then live child events arrive for it.
-      let state = createInitialSession({
-        messages: [
-          {
-            role: "assistant",
-            content: "Kicking off review.",
-            toolCalls: [{ id: "agent-1", name: "agent", arguments: { agentName: "explore" } }],
-          },
-          { role: "assistant", content: "Continuing in the meantime." },
-        ],
-      });
-      const originalMessages = state.messages;
-      const originalParentMessage = assistantMessageAt(state, 0);
-      const unaffectedMessage = state.messages[1];
-
-      state = applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "child-1",
-        toolName: "bash",
-        arguments: { command: "ls" },
-        agentId: "agent-1",
-      });
-      const startedParentMessage = assistantMessageAt(state, 0);
-
-      expect(state.messages).not.toBe(originalMessages);
-      expect(startedParentMessage).not.toBe(originalParentMessage);
-      expect(state.messages[1]).toBe(unaffectedMessage);
-      expect(originalParentMessage.toolCalls?.[0].agent?.toolCalls).toBeUndefined();
-      expect(startedParentMessage.toolCalls?.[0].agent?.toolCalls?.[0].id).toBe("child-1");
-      expect(startedParentMessage.toolCalls?.[0].agent?.toolCalls?.[0].result).toBeUndefined();
-
-      state = applySessionEvent(state, {
-        type: "tool_end",
-        toolCallId: "child-1",
-        success: true,
-        result: "ok",
-        agentId: "agent-1",
-      });
-      const completedParentMessage = assistantMessageAt(state, 0);
-
-      expect(completedParentMessage).not.toBe(startedParentMessage);
-      expect(state.messages[1]).toBe(unaffectedMessage);
-      expect(completedParentMessage.toolCalls).toHaveLength(1);
-      expect(completedParentMessage.toolCalls?.[0].agent?.toolCalls).toHaveLength(1);
-      expect(completedParentMessage.toolCalls?.[0].agent?.toolCalls?.[0]).toMatchObject({
-        id: "child-1",
-        result: { content: "ok", success: true },
-      });
-      expect(startedParentMessage.toolCalls?.[0].agent?.toolCalls?.[0].result).toBeUndefined();
-    });
-
-    test("completes a committed root tool call after a message boundary (late background completion)", () => {
-      // A background agent task is started, the assistant moves on (text
-      // after the tool group commits the call and clears pending), and the
-      // deferred completion (subagent.completed → tool_end) arrives later.
-      let state = createInitialSession();
-      state = applySessionEvent(state, {
-        type: "delta",
-        content: "Kicking off a background review.",
-      });
-      state = applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "task-1",
-        toolName: "agent",
-        arguments: { mode: "background" },
-      });
-      state = applySessionEvent(state, { type: "delta", content: "Continuing while it runs." });
-
-      const previousMessages = state.messages;
-      const committedMessage = assistantMessageAt(state, 0);
-      const currentMessage = state.messages[1];
-      expect(state.pendingToolCalls.size).toBe(0);
-
-      state = applySessionEvent(state, {
-        type: "tool_end",
-        toolCallId: "task-1",
-        success: true,
-      });
-
-      const completedMessage = assistantMessageAt(state, 0);
-      expect(state.messages).not.toBe(previousMessages);
-      expect(completedMessage).not.toBe(committedMessage);
-      expect(state.messages[1]).toBe(currentMessage);
-      expect(completedMessage.toolCalls?.[0]).toMatchObject({
-        id: "task-1",
-        result: { content: "", success: true },
-      });
-      expect(committedMessage.toolCalls?.[0].result).toBeUndefined();
-    });
-
-    test("ignores child tool events whose parent is unknown", () => {
-      const state = reduceEvents([
-        { type: "status", status: "thinking" },
-        {
-          type: "tool_start",
-          toolCallId: "child-x",
-          toolName: "bash",
-          arguments: {},
-          agentId: "missing-parent",
-        },
-        {
-          type: "tool_end",
-          toolCallId: "child-x",
-          success: true,
-          result: "ok",
-          agentId: "missing-parent",
-        },
-      ]);
-
-      expect(assistantMessageAt(state, 0).toolCalls).toBeUndefined();
-    });
   });
 
-  describe("queued messages", () => {
-    test("a canonical user message removes its queue item and appends atomically", () => {
-      const state = applySessionEvent(
-        createInitialSession({
+  describe("queued and optimistic inputs", () => {
+    test("one client ID moves a queued user input into its canonical transcript entry", () => {
+      const state = reduceEvents(
+        [
+          {
+            type: "user_message",
+            clientId: "message-2",
+            content: "canonical second",
+            timestamp: "2026-02-09T00:00:00.400Z",
+          },
+        ],
+        createInitialSessionState({
           queuedMessages: [
-            { clientId: "q1", role: "user", content: "first queued" },
-            { clientId: "q2", role: "user", content: "second queued" },
+            { clientId: "message-1", role: "user", content: "first", status: "queued" },
+            { clientId: "message-2", role: "user", content: "second", status: "submitted" },
           ],
           messages: [{ role: "assistant", content: "ready" }],
         }),
+      );
+
+      expect(state.queuedMessages).toEqual([
+        { clientId: "message-1", role: "user", content: "first", status: "queued" },
+      ]);
+      expect(state.messages.at(-1)).toEqual({
+        role: "user",
+        clientId: "message-2",
+        content: "canonical second",
+        attachments: undefined,
+        timestamp: "2026-02-09T00:00:00.400Z",
+      });
+    });
+
+    test("canonical echoes replace only their matching optimistic user message", () => {
+      const state = reduceEvents([
+        { type: "user_message", clientId: "message-1", content: "first optimistic" },
+        { type: "user_message", clientId: "message-2", content: "second optimistic" },
         {
           type: "user_message",
-          clientId: "q2",
-          content: "second queued",
-          timestamp: "2026-08-14T20:00:00.000Z",
+          clientId: "message-2",
+          content: "canonical second",
+          eventId: 10,
         },
-      );
-
-      expect(state.queuedMessages).toEqual([
-        { clientId: "q1", role: "user", content: "first queued" },
       ]);
+
       expect(state.messages).toEqual([
-        { role: "assistant", content: "ready" },
         {
           role: "user",
-          content: "second queued",
+          clientId: "message-1",
+          content: "first optimistic",
           attachments: undefined,
-          timestamp: "2026-08-14T20:00:00.000Z",
-        },
-      ]);
-    });
-
-    test("adds queued message from cross-client queue update", () => {
-      let state = createInitialSession();
-
-      state = applySessionEvent(state, {
-        type: "message_queued",
-        message: { clientId: "q1", role: "user", content: "follow up" },
-      });
-
-      expect(state.queuedMessages).toHaveLength(1);
-      expect(state.queuedMessages[0]).toMatchObject({ clientId: "q1", content: "follow up" });
-    });
-
-    test("updates an existing queue entry when immediate delivery begins", () => {
-      let state = createInitialSession({
-        queuedMessages: [{ clientId: "q1", role: "user", content: "follow up" }],
-      });
-
-      state = applySessionEvent(state, {
-        type: "message_queued",
-        message: { clientId: "q1", role: "user", content: "follow up", immediate: true },
-      });
-
-      expect(state.queuedMessages).toEqual([
-        { clientId: "q1", role: "user", content: "follow up", immediate: true },
-      ]);
-    });
-
-    test("removes queued message on message_cancelled", () => {
-      let state = createInitialSession({
-        queuedMessages: [
-          { clientId: "q1", role: "user", content: "first" },
-          { clientId: "q2", role: "user", content: "second" },
-        ],
-      });
-
-      state = applySessionEvent(state, { type: "message_cancelled", clientId: "q1" });
-
-      expect(state.queuedMessages).toHaveLength(1);
-      expect(state.queuedMessages[0]).toMatchObject({ clientId: "q2", content: "second" });
-    });
-
-    test("a canonical system message removes its queue item by client ID", () => {
-      const content = {
-        type: "file_edited",
-        file: { kind: "session", sessionId: "s1", path: "plan.md" },
-      } as const;
-      const state = applySessionEvent(
-        createInitialSession({
-          queuedMessages: [
-            { clientId: "system-1", role: "system", content },
-            { clientId: "q1", role: "user", content: "keep queued" },
-          ],
-        }),
-        {
-          type: "system_message",
-          content,
-          clientId: "system-1",
-          timestamp: "2026-08-14T20:00:00.000Z",
-        },
-      );
-
-      expect(state.queuedMessages).toEqual([
-        { clientId: "q1", role: "user", content: "keep queued" },
-      ]);
-      expect(state.messages).toEqual([
-        {
-          role: "system",
-          content,
-          timestamp: "2026-08-14T20:00:00.000Z",
-        },
-      ]);
-    });
-  });
-
-  describe("lifecycle & status", () => {
-    test("prepareSessionForNextTurn preserves durable state while clearing turn-scoped state", () => {
-      const previousState = createInitialSession({
-        messages: [
-          { role: "user", content: "Open the ocean session" },
-          { role: "assistant", content: "Done." },
-        ],
-        queuedMessages: [{ clientId: "queued-1", role: "user", content: "Now summarize it" }],
-        todos: [{ id: "todo-1", title: "Inspect stream state", status: "in_progress" }],
-        linkedSessionIds: ["session-1", "session-2"],
-        status: "responding",
-        reasoningContent: "thinking...",
-        model: { provider: "copilot", name: "claude-sonnet-4.6" },
-      });
-      previousState.pendingToolCalls.set("tool-1", {
-        id: "tool-1",
-        name: "open_session",
-        arguments: { sessionId: "session-1" },
-      });
-
-      const nextState = prepareSessionForNextTurn(previousState);
-
-      expect(nextState).not.toBe(previousState);
-      expect(nextState.messages).toBe(previousState.messages);
-      expect(nextState.queuedMessages).toBe(previousState.queuedMessages);
-      expect(nextState.todos).toBe(previousState.todos);
-      expect(nextState.linkedSessionIds).toBe(previousState.linkedSessionIds);
-      expect(nextState.messages).toEqual([
-        { role: "user", content: "Open the ocean session" },
-        { role: "assistant", content: "Done." },
-      ]);
-      expect(nextState.todos).toEqual([
-        { id: "todo-1", title: "Inspect stream state", status: "in_progress" },
-      ]);
-      expect(nextState.linkedSessionIds).toEqual(["session-1", "session-2"]);
-      expect(nextState.model).toEqual({ provider: "copilot", name: "claude-sonnet-4.6" });
-      expect(nextState.queuedMessages).toEqual([
-        { clientId: "queued-1", role: "user", content: "Now summarize it" },
-      ]);
-
-      expect(nextState.reasoningContent).toBe("");
-      expect(nextState.status).toBe("thinking");
-      expect(nextState.pendingToolCalls.size).toBe(0);
-      expect(nextState.pendingOptimisticUserMessage).toBeUndefined();
-      expect(previousState.status).toBe("responding");
-      expect(previousState.reasoningContent).toBe("thinking...");
-      expect(previousState.pendingToolCalls.size).toBe(1);
-    });
-
-    test("end/error preserves a partial assistant message alongside the error notice", () => {
-      const before = reduceEvents([
-        { type: "user_message", content: "go" },
-        { type: "status", status: "thinking" },
-        { type: "delta", content: "partial resp" },
-        { type: "tool_start", toolName: "read", toolCallId: "read", arguments: {} },
-        { type: "tool_end", toolCallId: "read", success: true, result: "File contents" },
-      ]);
-      const state = applySessionEvent(before, {
-        type: "end",
-        reason: "error",
-        error: "You've hit your usage limit.",
-      });
-
-      expect(state.messages).toHaveLength(2);
-      expect(state.messages[1]).toMatchObject({
-        role: "assistant",
-        content: "partial resp",
-        error: "You've hit your usage limit.",
-      });
-      expect(assistantMessageAt(state, 1).toolCalls).toBe(assistantMessageAt(before, 1).toolCalls);
-      expect(assistantMessageAt(before, 1).error).toBeUndefined();
-      expect(state.status).toBe("idle");
-      expect(state.reasoningContent).toBe("");
-      expect(state.pendingToolCalls.size).toBe(0);
-    });
-
-    test("end/error appends an assistant message when none is trailing", () => {
-      const state = reduceEvents([
-        { type: "user_message", content: "go" },
-        { type: "end", reason: "error" },
-      ]);
-
-      expect(state.messages).toHaveLength(2);
-      expect(state.messages[1]).toMatchObject({
-        role: "assistant",
-        content: "",
-        error: "An error occurred. Please try again.",
-      });
-      expect(state.status).toBe("idle");
-    });
-
-    test("repeated and synthesized terminal events preserve the provider error without duplication", () => {
-      const state = reduceEvents([
-        { type: "user_message", content: "go" },
-        { type: "end", reason: "error", error: "You've hit your usage limit." },
-        { type: "end", reason: "error", error: "You've hit your usage limit." },
-        { type: "end", reason: "error" },
-        { type: "end", reason: "idle" },
-      ]);
-
-      expect(state.messages).toHaveLength(2);
-      expect(state.messages.at(-1)).toMatchObject({
-        role: "assistant",
-        content: "",
-        error: "You've hit your usage limit.",
-      });
-      expect(state.status).toBe("idle");
-    });
-
-    test.each<SessionEvent>([
-      { type: "delta", content: "Recovered" },
-      { type: "assistant_message", content: "Recovered" },
-      { type: "tool_start", toolName: "read", toolCallId: "retry-read", arguments: {} },
-    ])("a later $type cannot reuse a failed assistant message", (event) => {
-      const failed = reduceEvents([
-        { type: "user_message", content: "go" },
-        { type: "end", reason: "error", error: "You've hit your usage limit." },
-      ]);
-      const retried = applySessionEvent(prepareSessionForNextTurn(failed), event);
-      expect(retried.messages).toHaveLength(3);
-      expect(retried.messages[1]).toBe(failed.messages[1]);
-      expect(assistantMessageAt(retried, 2).error).toBeUndefined();
-    });
-
-    test("tracks compacting status and returns to thinking when done", () => {
-      let state = createInitialSession();
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-      expect(state.status).toBe("thinking");
-
-      state = applySessionEvent(state, { type: "status", status: "compacting" });
-      expect(state.status).toBe("compacting");
-
-      // Idempotent: duplicate status update is a no-op in practice.
-      state = applySessionEvent(state, { type: "status", status: "compacting" });
-      expect(state.status).toBe("compacting");
-
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-      expect(state.status).toBe("thinking");
-
-      // Re-applying the current status preserves it.
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-      expect(state.status).toBe("thinking");
-    });
-
-    test("tool events without a status transition preserve the current status", () => {
-      let state = createInitialSession();
-      const initialStatus = state.status;
-
-      state = applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "tc-2",
-        toolName: "search",
-        arguments: { query: "tanstack" },
-      });
-      expect(state.status).toEqual(initialStatus);
-    });
-  });
-
-  describe("event replay & dedup", () => {
-    test("tracks the replay cursor across streamed events", () => {
-      const initial = createInitialSession();
-      const afterThinking = applySessionEvent(initial, {
-        type: "status",
-        status: "thinking",
-        eventId: 10,
-      });
-      const afterToolStart = applySessionEvent(afterThinking, {
-        type: "tool_start",
-        toolCallId: "tc-1",
-        toolName: "glob",
-        arguments: { pattern: "*.ts" },
-        eventId: 11,
-      });
-      expect(afterToolStart.lastSeenEventId).toBe(11);
-    });
-
-    test("skips replayed events that are older than the current snapshot", () => {
-      let state = createInitialSession({
-        messages: [{ role: "user", content: "already synced" }],
-      });
-      state.lastSeenEventId = 20;
-
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "already synced",
-        eventId: 20,
-      });
-      state = applySessionEvent(state, {
-        type: "assistant_message",
-        content: "stale response",
-        eventId: 19,
-      });
-
-      expect(state.messages).toEqual([{ role: "user", content: "already synced" }]);
-      expect(state.lastSeenEventId).toBe(20);
-    });
-
-    test("keeps optimistic local events and newer stream events after stale-event filtering", () => {
-      let state = createInitialSession();
-      state.lastSeenEventId = 20;
-
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "optimistic",
-        clientId: "client-1",
-      });
-      state = applySessionEvent(state, {
-        type: "assistant_message",
-        content: "new response",
-        eventId: 21,
-      });
-
-      expect(state.messages).toEqual([
-        { role: "user", content: "optimistic" },
-        { role: "assistant", content: "new response", toolCalls: undefined },
-      ]);
-      expect(state.lastSeenEventId).toBe(21);
-    });
-
-    test("reconciles only the canonical event carrying the optimistic message's client ID", () => {
-      let state = createInitialSession();
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientId: "msg-1",
-        timestamp: "2026-02-09T00:00:00.000Z",
-      });
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "hello",
-        clientId: "msg-2",
-        eventId: 10,
-      });
-
-      expect(state.messages).toHaveLength(2);
-      expect(state.pendingOptimisticUserMessage).toEqual({ clientId: "msg-1", index: 0 });
-
-      state = applySessionEvent(state, {
-        type: "user_message",
-        content: "canonical hello",
-        attachments: [{ mimeType: "image/png", base64: "c2VydmVy" }],
-        clientId: "msg-1",
-        timestamp: "2026-02-09T00:00:00.500Z",
-        eventId: 11,
-      });
-
-      expect(state.messages).toEqual([
-        {
-          role: "user",
-          content: "canonical hello",
-          attachments: [{ mimeType: "image/png", base64: "c2VydmVy" }],
-          timestamp: "2026-02-09T00:00:00.500Z",
+          timestamp: undefined,
         },
         {
           role: "user",
-          content: "hello",
+          clientId: "message-2",
+          content: "canonical second",
           attachments: undefined,
           timestamp: undefined,
         },
       ]);
+    });
 
-      expect(state.pendingOptimisticUserMessage).toBeUndefined();
+    test("one queue entry advances through its explicit submission lifecycle", () => {
+      const message = {
+        clientId: "message-1",
+        role: "user" as const,
+        content: "next",
+      };
+      const state = reduceEvents([
+        { type: "message_queued", message },
+        { type: "message_queued", message: { ...message, immediate: true } },
+        {
+          type: "message_status_changed",
+          clientId: "message-1",
+          status: "submitting",
+        },
+        {
+          type: "message_status_changed",
+          clientId: "message-1",
+          status: "submitted",
+        },
+      ]);
+
+      expect(state.queuedMessages).toEqual([{ ...message, immediate: true, status: "submitted" }]);
+    });
+
+    test("canonical system inputs dequeue by the same client ID", () => {
+      const content = {
+        type: "file_edited",
+        file: { kind: "session", sessionId: "session-1", path: "plan.md" },
+      } as const;
+      const state = reduceEvents(
+        [{ type: "system_message", clientId: "system-1", content }],
+        createInitialSessionState({
+          queuedMessages: [
+            { clientId: "system-1", role: "system", content, status: "submitted" },
+            { clientId: "user-1", role: "user", content: "keep", status: "queued" },
+          ],
+        }),
+      );
+
+      expect(state.queuedMessages).toEqual([
+        { clientId: "user-1", role: "user", content: "keep", status: "queued" },
+      ]);
+      expect(state.messages).toEqual([
+        { role: "system", clientId: "system-1", content, timestamp: undefined },
+      ]);
     });
   });
 
-  describe("todos & metadata", () => {
-    test("applies bulk todo status patches to existing todos", () => {
-      let state = createInitialSession({
-        todos: [
-          { id: "oak-task", title: "oak task", status: "pending" },
-          { id: "pine-task", title: "pine task", status: "in_progress" },
-        ],
-      });
-
-      state = applySessionEvent(state, {
-        type: "todos_patch",
-        patches: [{ type: "update_all", status: "done" }],
-      });
-
-      expect(state.todos).toEqual([
-        { id: "oak-task", title: "oak task", status: "done" },
-        { id: "pine-task", title: "pine task", status: "done" },
+  describe("lifecycle and replay", () => {
+    test("error completion annotates partial output without mutating prior state", () => {
+      const before = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "delta", content: "partial" },
+        {
+          type: "tool_start",
+          toolCallId: "read-1",
+          toolName: "read",
+          arguments: {},
+        },
       ]);
+      const after = applySessionEvent(before, {
+        type: "end",
+        reason: "error",
+        error: "Usage limit",
+      });
+
+      expect(assistantAt(after, 1)).toMatchObject({
+        content: "partial",
+        error: "Usage limit",
+      });
+      expect(assistantAt(before, 1).error).toBeUndefined();
+      expect(after.status).toBe("idle");
     });
 
-    test("applies structured todo patches and clears transient state at end", () => {
-      let state = createInitialSession();
-      state = applySessionEvent(state, { type: "status", status: "thinking" });
-      state = applySessionEvent(state, { type: "reasoning", content: "analyzing" });
-      state = applySessionEvent(state, {
-        type: "tool_start",
-        toolCallId: "tc-3",
-        toolName: "read_file",
-        arguments: { path: "README.md" },
-      });
-      state = applySessionEvent(state, {
-        type: "todos_patch",
-        patches: [{ type: "upsert", id: "one", title: "one", status: "pending" }],
-      });
-      expect(state.todos).toEqual([{ id: "one", title: "one", status: "pending" }]);
-      expect(state.pendingToolCalls.size).toBe(1);
+    test("a later turn never reuses a failed assistant message", () => {
+      const failed = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "end", reason: "error", error: "Usage limit" },
+      ]);
+      const retried = reduceEvents(
+        [
+          { type: "status", status: "thinking" },
+          { type: "delta", content: "Recovered" },
+        ],
+        failed,
+      );
 
-      state = applySessionEvent(state, {
-        type: "todos_patch",
-        patches: [{ type: "upsert", id: "one", status: "done" }],
-      });
-      expect(state.todos).toEqual([{ id: "one", title: "one", status: "done" }]);
+      expect(retried.messages).toHaveLength(3);
+      expect(retried.messages[1]).toBe(failed.messages[1]);
+      expect(assistantAt(retried, 2)).toMatchObject({ content: "Recovered" });
+      expect(assistantAt(retried, 2).error).toBeUndefined();
+    });
 
-      state = applySessionEvent(state, {
-        type: "todos_patch",
-        patches: [{ type: "delete", id: "one" }],
+    test("event cursors reject stale replay without rejecting local optimistic events", () => {
+      let state = createInitialSessionState({
+        messages: [{ role: "user", content: "already synced" }],
+        lastSeenEventId: 20,
       });
-      expect(state.todos).toBeUndefined();
+      state = applySessionEvent(state, {
+        type: "assistant_message",
+        content: "stale",
+        eventId: 19,
+      });
+      state = applySessionEvent(state, {
+        type: "user_message",
+        clientId: "local-1",
+        content: "optimistic",
+      });
+      state = applySessionEvent(state, {
+        type: "assistant_message",
+        content: "new",
+        eventId: 21,
+      });
 
-      state = applySessionEvent(state, { type: "end", reason: "idle" });
+      expect(state.messages.map((message) => message.content)).toEqual([
+        "already synced",
+        "optimistic",
+        "new",
+      ]);
+      expect(state.lastSeenEventId).toBe(21);
+    });
+
+    test("history replay always settles transient state to idle", () => {
+      const state = replaySessionHistory([
+        { type: "reasoning", content: "thinking" },
+        { type: "delta", content: "answer" },
+      ]);
+
       expect(state.status).toBe("idle");
       expect(state.reasoningContent).toBe("");
-      expect(state.pendingToolCalls.size).toBe(0);
-    });
-
-    test("stores session title updates from metadata events", () => {
-      let state = createInitialSession();
-      state = applySessionEvent(state, { type: "session_title_changed", title: "Friendly title" });
-      expect(state.title).toBe("Friendly title");
+      expect(assistantAt(state, 0).content).toBe("answer");
     });
   });
 
-  describe("artifacts", () => {
-    test("replaces artifact membership idempotently and includes it in snapshots", () => {
-      let state = createInitialSession();
-
-      state = applySessionEvent(state, {
-        type: "artifacts_changed",
-        artifacts: ["report.md"],
-      });
-      const previous = state.artifacts;
-      state = applySessionEvent(state, {
-        type: "artifacts_changed",
-        artifacts: ["report.md"],
-      });
-      expect(state.artifacts).toBe(previous);
-      state = applySessionEvent(state, {
-        type: "artifacts_changed",
-        artifacts: ["report.md", "notes.md"],
-      });
-
-      expect(state.artifacts).toEqual(["report.md", "notes.md"]);
-      expect(toSessionSnapshot("session-1", state).artifacts).toEqual(state.artifacts);
-    });
-
-    test("removes deleted artifact paths", () => {
-      let state = createInitialSession({
-        artifacts: ["report.md", "notes.md"],
-      });
-
-      state = applySessionEvent(state, {
-        type: "artifacts_changed",
-        artifacts: ["notes.md"],
-      });
-
-      expect(state.artifacts).toEqual(["notes.md"]);
-      state = applySessionEvent(state, { type: "artifacts_changed", artifacts: [] });
-      expect(state.artifacts).toEqual([]);
-      expect(toSessionSnapshot("session-1", state).artifacts).toBeUndefined();
-    });
-  });
-
-  describe("canvases", () => {
-    test("stores opened canvases and bumps revision when the same instance opens again", () => {
-      let state = createInitialSession();
-
-      state = applySessionEvent(state, {
-        type: "canvas_opened",
-        canvas: {
-          extensionId: "user:documint",
-          canvasId: "documint-markdown-agent",
-          instanceId: "review-plan",
-          title: "Review Plan",
-          url: "http://127.0.0.1:51460/?instanceId=review-plan",
-          status: "session-state/plan.md",
-        },
-      });
-      state = applySessionEvent(state, {
-        type: "canvas_opened",
-        canvas: {
-          extensionId: "user:documint",
-          canvasId: "documint-markdown-agent",
-          instanceId: "review-plan",
-          title: "Review Plan",
-          url: "http://127.0.0.1:53950/?instanceId=review-plan",
-        },
-      });
-
-      expect(state.canvases).toEqual([
+  describe("session-owned resources", () => {
+    test("applies the todo patch algebra with an empty array as the stable empty state", () => {
+      let state = reduceEvents([
         {
-          key: JSON.stringify(["user:documint", "documint-markdown-agent", "review-plan"]),
-          extensionId: "user:documint",
-          canvasId: "documint-markdown-agent",
-          instanceId: "review-plan",
-          title: "Review Plan",
-          url: "http://127.0.0.1:53950/?instanceId=review-plan",
-          revision: 2,
+          type: "todos_patch",
+          patches: [
+            {
+              type: "replace_all",
+              items: [
+                { id: "one", title: "One", status: "pending" },
+                { id: "two", title: "Two", status: "pending" },
+              ],
+            },
+            { type: "update_all", status: "in_progress" },
+            { type: "upsert", id: "one", title: "First", status: "done" },
+            { type: "delete", id: "two" },
+            { type: "upsert", id: "three", title: "Three" },
+          ],
         },
       ]);
-      expect(toSessionSnapshot("session-1", state).canvases).toEqual(state.canvases);
-    });
 
-    test("keeps different canvas instances as separate panes", () => {
-      let state = createInitialSession();
-
-      state = applySessionEvent(state, {
-        type: "canvas_opened",
-        canvas: {
-          extensionId: "session:canvas-ontology",
-          extensionName: "canvas-ontology",
-          canvasId: "canvas-ontology",
-          instanceId: "canvas-ontology-main",
-          title: "Canvas surface ontology",
-          url: "http://127.0.0.1:52922/",
-        },
-      });
-      state = applySessionEvent(state, {
-        type: "canvas_opened",
-        canvas: {
-          extensionId: "session:canvas-ontology",
-          extensionName: "canvas-ontology",
-          canvasId: "canvas-ontology",
-          instanceId: "session-canvas-ontology-canvas-ontology",
-          title: "Canvas surface ontology",
-          url: "http://127.0.0.1:58480/",
-        },
-      });
-
-      expect(state.canvases).toEqual([
-        {
-          key: JSON.stringify([
-            "session:canvas-ontology",
-            "canvas-ontology",
-            "canvas-ontology-main",
-          ]),
-          extensionId: "session:canvas-ontology",
-          extensionName: "canvas-ontology",
-          canvasId: "canvas-ontology",
-          instanceId: "canvas-ontology-main",
-          title: "Canvas surface ontology",
-          url: "http://127.0.0.1:52922/",
-          revision: 1,
-        },
-        {
-          key: JSON.stringify([
-            "session:canvas-ontology",
-            "canvas-ontology",
-            "session-canvas-ontology-canvas-ontology",
-          ]),
-          extensionId: "session:canvas-ontology",
-          extensionName: "canvas-ontology",
-          canvasId: "canvas-ontology",
-          instanceId: "session-canvas-ontology-canvas-ontology",
-          title: "Canvas surface ontology",
-          url: "http://127.0.0.1:58480/",
-          revision: 1,
-        },
+      expect(state.todos).toEqual([
+        { id: "one", title: "First", status: "done" },
+        { id: "three", title: "Three", status: "pending" },
       ]);
-    });
-  });
 
-  describe("identity", () => {
-    test("returns a new state while preserving unchanged branches", () => {
-      const state = createInitialSession({
-        messages: [{ role: "user", content: "hello" }],
-        queuedMessages: [{ clientId: "queued-1", role: "user", content: "next" }],
-      });
-      const next = applySessionEvent(state, { type: "status", status: "thinking" });
-
-      expect(next).not.toBe(state);
-      expect(next.messages).toBe(state.messages);
-      expect(next.queuedMessages).toBe(state.queuedMessages);
-      expect(next.pendingToolCalls).toBe(state.pendingToolCalls);
-      expect(next.status).toBe("thinking");
-      expect(state.status).toBe("idle");
-    });
-
-    test("changes only the active row across 50 sequential tool calls", () => {
-      let state = createInitialSession();
-
-      for (let index = 1; index <= 50; index++) {
-        const beforeStart = state.messages;
-        state = applySessionEvent(state, {
-          type: "tool_start",
-          toolCallId: `bash-${index}`,
-          toolName: "bash",
-          arguments: { command: `echo ${index}` },
-        });
-
-        expectMessageIdentities(beforeStart, state.messages, Math.max(0, beforeStart.length - 1));
-        if (beforeStart.length > 0) {
-          expect(state.messages.at(-1)).not.toBe(beforeStart.at(-1));
-        }
-
-        const beforeCompletion = state.messages;
-        state = applySessionEvent(state, {
-          type: "tool_end",
-          toolCallId: `bash-${index}`,
-          success: true,
-          result: String(index),
-        });
-
-        expectMessageIdentities(beforeCompletion, state.messages, beforeCompletion.length - 1);
-        expect(state.messages.at(-1)).not.toBe(beforeCompletion.at(-1));
-
-        const beforeDelta = state.messages;
-        state = applySessionEvent(state, { type: "delta", content: `Finished ${index}.` });
-
-        expectMessageIdentities(beforeDelta, state.messages);
-        expect(state.messages).toHaveLength(beforeDelta.length + 1);
-      }
-    });
-  });
-});
-
-describe("toSessionSnapshot", () => {
-  test("maps live session state into the detail query snapshot shape", () => {
-    const state = createInitialSession({
-      messages: [{ role: "user", content: "hello" }],
-      queuedMessages: [{ clientId: "q1", role: "user", content: "next" }],
-      todos: [{ id: "t1", title: "todo", status: "pending" }],
-      linkedSessionIds: ["linked-1"],
-      artifacts: ["report.md"],
-      status: "responding",
-      reasoningContent: "thinking...",
-      model: { provider: "copilot", name: "gpt-5.5", contextTier: "future_tier" },
-    });
-    state.lastSeenEventId = 42;
-
-    expect(toSessionSnapshot("session-1", state)).toEqual({
-      id: "session-1",
-      messages: state.messages,
-      queuedMessages: state.queuedMessages,
-      model: { provider: "copilot", name: "gpt-5.5", contextTier: "future_tier" },
-      todos: state.todos,
-      linkedSessionIds: ["linked-1"],
-      artifacts: ["report.md"],
-      lastSeenEventId: 42,
-      status: "responding",
-      reasoningContent: "thinking...",
-    });
-  });
-
-  test("preserves the previous snapshot's id and falls back to its model configuration", () => {
-    const state = createInitialSession();
-    const snapshot = toSessionSnapshot("session-new", state, {
-      id: "session-existing",
-      messages: [],
-      queuedMessages: [],
-      status: "idle",
-      reasoningContent: "",
-      model: { provider: "copilot", name: "claude-opus-4.8" },
-    });
-
-    expect(snapshot.id).toBe("session-existing");
-    expect(snapshot.model).toEqual({ provider: "copilot", name: "claude-opus-4.8" });
-    // Empty linked sessions collapse to undefined rather than [].
-    expect(snapshot.linkedSessionIds).toBeUndefined();
-  });
-});
-
-describe("sessionSeedFromSnapshot", () => {
-  /** An idle session with every snapshot-visible field populated, as the
-   *  snapshot cached at clean close would produce it. */
-  function richIdleSession() {
-    const events: SessionEvent[] = [
-      { type: "user_message", content: "summarize the repo" },
-      { type: "status", status: "thinking" },
-      {
-        type: "tool_start",
-        toolCallId: "t1",
-        toolName: "read_file",
-        arguments: { path: "README.md" },
-      },
-      { type: "tool_end", toolCallId: "t1", success: true, result: "read it" },
-      { type: "delta", content: "Here is the summary." },
-      {
+      state = applySessionEvent(state, {
         type: "todos_patch",
-        patches: [{ type: "upsert", id: "1", title: "Ship it", status: "done" }],
-      },
-      {
-        type: "artifacts_changed",
-        artifacts: ["summary.md"],
-      },
-      { type: "linked_session_added", sessionId: "toy-box-child" },
-      {
-        type: "model_changed",
-        model: { provider: "copilot", name: "gpt-5", contextTier: "future_tier" },
-      },
-      { type: "end", reason: "idle" },
-    ];
+        patches: [
+          { type: "delete", id: "one" },
+          { type: "delete", id: "three" },
+        ],
+      });
+      expect(state.todos).toEqual([]);
+    });
 
-    return reduceEvents(events);
-  }
+    test("linked sessions and artifacts are idempotent ordered collections", () => {
+      const state = reduceEvents([
+        { type: "linked_session_added", sessionId: "child-1" },
+        { type: "linked_session_added", sessionId: "child-1" },
+        { type: "linked_session_added", sessionId: "child-2" },
+        { type: "linked_session_removed", sessionId: "child-1" },
+        { type: "artifacts_changed", artifacts: ["report.md", "notes.md"] },
+        { type: "artifacts_changed", artifacts: [] },
+      ]);
 
-  test("a seeded session round-trips to the same snapshot, minus per-stream fields", () => {
-    const original = toSessionSnapshot("session-seed", richIdleSession());
+      expect(state.linkedSessionIds).toEqual(["child-2"]);
+      expect(state.artifacts).toEqual([]);
+    });
 
-    const seeded = createInitialSession(sessionSeedFromSnapshot(original));
-    const roundTripped = toSessionSnapshot("session-seed", seeded);
+    test("canvas identity separates instances and bumps revisions in place", () => {
+      const state = reduceEvents([
+        {
+          type: "canvas_opened",
+          canvas: {
+            extensionId: "user:docs",
+            canvasId: "markdown",
+            instanceId: "review",
+            title: "Review",
+            url: "http://localhost:1000",
+          },
+        },
+        {
+          type: "canvas_opened",
+          canvas: {
+            extensionId: "user:docs",
+            canvasId: "markdown",
+            instanceId: "review",
+            title: "Review",
+            url: "http://localhost:2000",
+          },
+        },
+        {
+          type: "canvas_opened",
+          canvas: {
+            extensionId: "user:docs",
+            canvasId: "markdown",
+            instanceId: "notes",
+            title: "Notes",
+            url: "http://localhost:3000",
+          },
+        },
+      ]);
 
-    expect(roundTripped).toEqual({ ...original, lastSeenEventId: undefined });
-    expect(seeded.pendingToolCalls.size).toBe(0);
+      expect(state.canvases).toHaveLength(2);
+      expect(state.canvases[0]).toEqual({
+        key: JSON.stringify(["user:docs", "markdown", "review"]),
+        extensionId: "user:docs",
+        canvasId: "markdown",
+        instanceId: "review",
+        title: "Review",
+        url: "http://localhost:2000",
+        revision: 2,
+      });
+      expect(state.canvases[1]).toMatchObject({ instanceId: "notes", revision: 1 });
+    });
+
+    test("opened files are unique by workspace identity and can be closed", () => {
+      const file = { kind: "machine", path: "/repo/src/foo.ts" } as const;
+      const state = reduceEvents([
+        { type: "file_opened", file },
+        { type: "file_opened", file },
+        { type: "file_closed", file },
+      ]);
+
+      expect(state.openedFiles).toEqual([]);
+    });
+
+    test("session title events do not enter transcript state", () => {
+      const state = applySessionEvent(createInitialSessionState(), {
+        type: "session_title_changed",
+        title: "Workspace-owned title",
+      });
+
+      expect(state).toEqual(createInitialSessionState());
+      expect("title" in state).toBe(false);
+    });
   });
 
-  // Individual messages intentionally share structure with the snapshot
-  // (the client seeds its reducer from cached snapshots the same way); the
-  // collections themselves must be copied so new turns never grow a cached
-  // snapshot behind its readers.
-  test("new turns grow the seeded session's collections, not the snapshot's", () => {
-    const snapshot = toSessionSnapshot("session-clone", richIdleSession());
+  test("returns a new root while preserving unchanged branches", () => {
+    const state = createInitialSessionState({
+      messages: [{ role: "user", content: "hello" }],
+      queuedMessages: [{ clientId: "queued-1", role: "user", content: "next", status: "queued" }],
+    });
+    const next = applySessionEvent(state, { type: "status", status: "thinking" });
 
-    const seeded = createInitialSession(sessionSeedFromSnapshot(snapshot));
-    const originalMessageCount = snapshot.messages.length;
-    seeded.messages.push({ role: "user", content: "a new turn" });
-    (seeded.todos ?? []).push({ id: "2", title: "Injected", status: "pending" });
-    seeded.artifacts.push("/tmp/state/other.md");
-
-    expect(snapshot.messages).toHaveLength(originalMessageCount);
-    expect(snapshot.todos).toHaveLength(1);
-    expect(snapshot.artifacts).toEqual(["summary.md"]);
+    expect(next).not.toBe(state);
+    expect(next.messages).toBe(state.messages);
+    expect(next.queuedMessages).toBe(state.queuedMessages);
+    expect(next.status).toBe("thinking");
+    expect(state.status).toBe("idle");
   });
 });

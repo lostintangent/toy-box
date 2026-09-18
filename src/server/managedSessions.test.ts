@@ -55,7 +55,7 @@ describe("session type resolution", () => {
     const agents = new AgentDatabase(currentDb!);
     const agent = await agents.createAgent({ name: "Architect" });
     await agents.createMembership({
-      host: { kind: "session", sessionId: "toy-box-host" },
+      host: { kind: "channel", channelId: "channel" },
       agentId: agent.id,
       sessionId: agentSessionId,
     });
@@ -90,7 +90,7 @@ describe("Session catalog projection", () => {
       const agent = await agents.createAgent({ name: "Reviewer" });
       const admit = async () => {
         await agents.createMembership({
-          host: { kind: "session", sessionId: "parent" },
+          host: { kind: "channel", channelId: "channel" },
           agentId: agent.id,
           sessionId: "private-agent",
         });

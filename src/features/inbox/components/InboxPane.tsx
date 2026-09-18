@@ -16,7 +16,7 @@ import {
 import { sessionFile } from "@files/model";
 import { sessionMutations } from "@sessions/mutations";
 import { selectNonWorkerSessions, sessionQueries } from "@sessions/queries";
-import type { SessionMessage } from "@sessions/model";
+import type { UserMessage } from "@sessions/model";
 import type { InboxEntry } from "../model";
 import { inboxMutations } from "../mutations";
 import { inboxQueries } from "../queries";
@@ -95,28 +95,24 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
     if (!isLinked) onFocusPane?.(pane.id);
   }
 
-  function handleRun(message: SessionMessage) {
+  function handleRun(message: Pick<UserMessage, "content" | "attachments">) {
     const launch = createLaunchInput(message);
     void dispatchTaskMutation
       .mutateAsync(launch)
       .catch(() => restorePrompt(launch.message.content));
   }
 
-  function handleSend(message: SessionMessage) {
+  function handleSend(message: Pick<UserMessage, "content" | "attachments">) {
     const launch = createLaunchInput(message);
     void createSessionMutation
       .mutateAsync(launch)
       .catch(() => restorePrompt(launch.message.content));
   }
 
-  function createLaunchInput(message: SessionMessage) {
+  function createLaunchInput(message: Pick<UserMessage, "content" | "attachments">) {
     return {
-      message: {
-        ...message,
-        model: defaultModel ?? undefined,
-      },
-      directory,
-      useWorktree,
+      message: { ...message, model: defaultModel ?? undefined },
+      location: { directory, useWorktree },
     };
   }
 

@@ -29,14 +29,14 @@ export function applyChannelListEvent(queryClient: QueryClient, event: Workspace
           ? {
               channels: list.channels.filter(({ id }) => id !== event.channelId),
               memberships: list.memberships.filter(
-                ({ host }) => host.kind !== "channel" || host.channelId !== event.channelId,
+                ({ host }) => host.channelId !== event.channelId,
               ),
             }
           : list,
       );
       return;
     case "agent.membership.changed":
-      if (event.host.kind === "channel") void invalidateChannelListQuery(queryClient);
+      void invalidateChannelListQuery(queryClient);
       return;
     default:
       return;

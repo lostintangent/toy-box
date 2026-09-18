@@ -2,14 +2,7 @@
 // presence is the complete host discriminator.
 
 import { useEffect, useImperativeHandle, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { ArrowUp, ChevronDown, Play, Square } from "lucide-react";
-import { AgentPicker } from "@agents/components/AgentPicker";
-import { agentPickerSuggestions } from "@agents/components/agentPickerSuggestions";
-import { AgentInvitationChips } from "@agents/components/AgentInvitationChips";
-import { useAgentMentionInput } from "@agents/components/useAgentMentionInput";
-import { agentHandleFromName, findMentionedAgents } from "@agents/model";
-import { agentQueries } from "@agents/queries";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,11 +20,10 @@ import {
 import type { ModelConfiguration } from "../../model/modelConfiguration";
 import {
   type ModelInfo,
-  type QueuedMessage,
-  type QueuedUserMessage,
-  type SessionMessage,
   type SessionSkill,
+  type SessionState,
   type TodoItem,
+  type UserMessage,
 } from "../../model";
 import type { DiffStats } from "../../model/fileDiffs";
 import { ModelConfigurationPicker } from "./ModelPicker";
@@ -63,7 +55,10 @@ type ComposerPromptBinding =
     };
 
 type SessionComposerCommonProps = {
-  onSubmit: (message: SessionMessage, options?: { immediate?: true }) => void;
+  onSubmit: (
+    message: Pick<UserMessage, "content" | "attachments">,
+    options?: { immediate?: true },
+  ) => void;
   isStreaming?: boolean;
   onStop?: () => void;
   models: ModelInfo[];
@@ -75,12 +70,10 @@ type SessionComposerCommonProps = {
   showGlobalSkillBadges?: boolean;
   sessionDiff?: { total: DiffStats; byFile: FileDiffSummary[] };
   artifacts?: string[];
-  queuedMessages?: QueuedMessage[];
+  queuedMessages?: SessionState["queuedMessages"];
   /** Context that grounds a voice call in the current session. */
   sessionName?: string;
   lastMessage?: string;
-  /** Persistent Agents are operational mentions only in ordinary and Hyper sessions. */
-  enableAgentMentions?: boolean;
 };
 
 type SessionComposerProps = SessionComposerCommonProps &
@@ -132,7 +125,6 @@ type ComposerPromptProps = {
   // Parent-owned slots retain their element identity while draft text changes.
   leadingControls: React.ReactNode;
   voiceControl: React.ReactNode;
-  enableAgentMentions: boolean;
 };
 
 function ComposerPrompt({
@@ -149,7 +141,6 @@ function ComposerPrompt({
   showGlobalSkillBadges,
   leadingControls,
   voiceControl,
-  enableAgentMentions,
 }: ComposerPromptProps) {
   const isControlled = "prompt" in binding;
   const sessionId = isControlled ? undefined : binding.sessionId;
@@ -160,29 +151,6 @@ function ComposerPrompt({
   const prompt = isControlled ? binding.prompt : draft.prompt;
   const onPromptChange = isControlled ? binding.onPromptChange : draft.setPrompt;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { data: agents = [] } = useQuery({
-    ...agentQueries.list(),
-    enabled: enableAgentMentions,
-  });
-  const membershipHost = {
-    kind: "session" as const,
-    sessionId: sessionId ?? "disabled-session",
-  };
-  const { data: memberships = [] } = useQuery({
-    ...agentQueries.membershipList(membershipHost),
-    enabled: enableAgentMentions && sessionId !== undefined,
-  });
-  const mentionedAgents = findMentionedAgents(prompt, agents);
-  const memberAgentIds = new Set(memberships.map(({ agentId }) => agentId));
-  const invitations = mentionedAgents.filter(({ id }) => !memberAgentIds.has(id));
-  const mention = useAgentMentionInput({
-    value: prompt,
-    onValueChange: onPromptChange,
-    textareaRef,
-    enabled: enableAgentMentions,
-    suggestionsFor: (query) =>
-      agentPickerSuggestions({ query, agents, memberships, hostKind: "session" }),
-  });
   const isSubmitDisabled = !prompt.trim() && !hasAttachments;
   const submitButtonVariant = isSubmitDisabled ? "ghost" : "accent";
   const submitLabel = isStreaming ? "Queue message" : "Send message";
@@ -192,8 +160,7 @@ function ComposerPrompt({
     prompt,
     setPrompt: onPromptChange,
     resetAfterSubmit: () => {
-      const handles = mentionedAgents.map(({ name }) => `@${agentHandleFromName(name)}`);
-      onPromptChange(handles.length > 0 ? `${handles.join(" ")} ` : "");
+      onPromptChange("");
       if (!isControlled) draft.flush();
     },
     focus: () => textareaRef.current?.focus(),
@@ -201,12 +168,10 @@ function ComposerPrompt({
 
   function handleSkillSelect(skill: SessionSkill) {
     onPromptChange(`/${skill.name} `);
-    mention.close();
     textareaRef.current?.focus();
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (mention.handleKeyDown(event)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       onSubmit();
@@ -221,28 +186,16 @@ function ComposerPrompt({
         showGlobalSkillBadges={showGlobalSkillBadges}
         onSelect={handleSkillSelect}
       />
-      {mention.isOpen && (
-        <AgentPicker
-          suggestions={mention.suggestions}
-          activeIndex={mention.activeIndex}
-          onActiveIndexChange={mention.setActiveIndex}
-          onSelect={mention.selectSuggestion}
-          error={mention.error}
-        />
-      )}
       <InputGroupTextarea
         ref={textareaRef}
         value={prompt}
-        onChange={mention.handleChange}
-        onSelect={mention.handleSelect}
+        onChange={(event) => onPromptChange(event.currentTarget.value)}
         onKeyDown={handleKeyDown}
         onPaste={onPaste}
         placeholder="Ask a question or describe your idea..."
         className={cn(textareaMaxHeightClass, "min-h-14 overflow-y-auto py-2 text-sm")}
         rows={1}
       />
-
-      <AgentInvitationChips invitations={invitations} />
 
       <InputGroupAddon align="block-end" className="relative justify-between pt-0 pb-2">
         <TypingEffect value={prompt} />
@@ -398,7 +351,6 @@ export function SessionComposer(props: SessionComposerProps) {
     queuedMessages = [],
     sessionName,
     lastMessage,
-    enableAgentMentions = false,
   } = props;
   const promptHandle = useRef<ComposerPromptHandle>(null);
   const { isMobile } = useViewport();
@@ -428,7 +380,9 @@ export function SessionComposer(props: SessionComposerProps) {
     if (!isMobile) promptHandle.current?.focus();
   }, [isMobile]);
 
-  const handleEditQueuedMessage = (message: QueuedUserMessage) => {
+  const handleEditQueuedMessage = (
+    message: Extract<SessionState["queuedMessages"][number], { role: "user" }>,
+  ) => {
     promptHandle.current?.setPrompt(message.content);
     replaceAttachments(message.attachments ?? []);
     promptHandle.current?.focus();
@@ -508,7 +462,6 @@ export function SessionComposer(props: SessionComposerProps) {
             onPaste={handlePaste}
             skills={skills}
             showGlobalSkillBadges={showGlobalSkillBadges}
-            enableAgentMentions={enableAgentMentions}
             leadingControls={
               <>
                 <AttachImageButton onClick={openPicker} />

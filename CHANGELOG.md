@@ -1,6 +1,7 @@
-## 📅 v0.1.21 (09/16/26)
+## 📅 v0.1.21 (09/17/26)
 
 - Introduced support for Codex-based sessions
+- SVG/whiteboard files now support pinch-to-zoom
 - Added new tools for sessions/agents to search and read sessions
 - Added a customized "ink cloud" to the channel and inbox panes
 

@@ -83,7 +83,7 @@ describe("Agent database", () => {
   test("reuses one private membership per host and Agent", async () => {
     const agents = await openAgents();
     const agent = await agents.createAgent({ name: "Architect" });
-    const host = { kind: "session" as const, sessionId: "host-session" };
+    const host = { kind: "channel" as const, channelId: "host-channel" };
     const membership = await agents.createMembership({
       host,
       agentId: agent.id,
@@ -99,22 +99,5 @@ describe("Agent database", () => {
         sessionId: "another-session",
       }),
     ).rejects.toThrow();
-  });
-
-  test("treats file memberships as resources owned by their source Session", async () => {
-    const agents = await openAgents();
-    const agent = await agents.createAgent({ name: "Editor" });
-    const host = { kind: "file" as const, sessionId: "owner-session", path: "brief.md" };
-    await agents.createMembership({
-      host,
-      agentId: agent.id,
-      sessionId: "editor-session",
-    });
-    expect(await agents.getMembership(host, agent.id)).toMatchObject({
-      sessionId: "editor-session",
-    });
-    expect(await agents.listSessionOwnedMembershipSessionIds("owner-session")).toEqual([
-      "editor-session",
-    ]);
   });
 });

@@ -66,18 +66,6 @@ export class ChannelDatabase {
     };
   }
 
-  async listAgentChannels(agentId: string): Promise<Channel[]> {
-    const rows = await this.db<ChannelRow[]>`
-      SELECT channel.*
-      FROM channels AS channel
-      JOIN agent_memberships AS membership
-        ON membership.host_kind = 'channel' AND membership.host_id = channel.id
-      WHERE membership.agent_id = ${agentId}
-      ORDER BY channel.updated_at DESC, channel.id
-    `;
-    return rows.map(channelFromRow);
-  }
-
   async createChannel(input: CreateChannelInput): Promise<Channel> {
     const channel: Channel = {
       id: `${CHANNEL_ID_PREFIX}${crypto.randomUUID()}`,

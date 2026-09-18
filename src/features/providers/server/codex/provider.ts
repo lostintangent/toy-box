@@ -3,11 +3,16 @@ import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SessionConfiguration, SessionProvider } from "@providers/server/provider";
-import type { SessionSkill } from "@sessions/model";
-import { startCodexClient, stopCodexClient } from "./protocol/transport";
+import type { SessionEvent, SessionSkill } from "@sessions/model";
+import { startCodexClient, stopCodexClient, type CodexTransport } from "./protocol/transport";
 import { CodexConnection } from "./connection";
 import { readThreadHistory } from "./history";
-import { codexHistoryEvents, createCodexProjector } from "./projector";
+import {
+  codexHistoryEvents,
+  createCodexProjector,
+  isCodexSubagentSpawn,
+  scopeCodexSubagentEvent,
+} from "./projector";
 import type { Model, Thread, ThreadStartParams } from "./protocol";
 
 export const codexProvider: SessionProvider = {
@@ -41,8 +46,19 @@ export const codexProvider: SessionProvider = {
   },
   listSkills,
   async readHistory({ sessionId, nativeId }) {
-    const thread = await readThreadHistory(await startCodexClient(), nativeId);
-    return codexHistoryEvents(thread).flatMap(createCodexProjector(sessionId));
+    const rpc = await startCodexClient();
+    const thread = await readThreadHistory(rpc, nativeId);
+    const subagentCalls = thread.turns.flatMap((turn) =>
+      turn.items.flatMap((item) =>
+        isCodexSubagentSpawn(item) && item.status === "completed" && item.receiverThreadIds.length
+          ? [{ toolCallId: item.id, threadIds: item.receiverThreadIds }]
+          : [],
+      ),
+    );
+    return [
+      ...codexHistoryEvents(thread).flatMap(createCodexProjector(sessionId)),
+      ...(await readSubagentHistory(rpc, sessionId, subagentCalls)),
+    ];
   },
   async listSessions() {
     const rpc = await startCodexClient();
@@ -156,6 +172,60 @@ export const codexProvider: SessionProvider = {
   },
   stop: stopCodexClient,
 };
+
+async function readSubagentHistory(
+  rpc: CodexTransport,
+  sessionId: string,
+  calls: Array<{ toolCallId: string; threadIds: string[] }>,
+): Promise<SessionEvent[]> {
+  const histories = await Promise.all(
+    calls.map(async ({ toolCallId, threadIds }) => {
+      const threads = (
+        await Promise.all(
+          threadIds.map(async (threadId) => {
+            try {
+              return await readThreadHistory(rpc, threadId);
+            } catch {
+              // A closed native child must not make its root history unreadable.
+              return undefined;
+            }
+          }),
+        )
+      ).filter((thread): thread is Thread => thread !== undefined);
+      const failedTurn = threads
+        .map((thread) => thread.turns[0])
+        .find((turn) => turn?.status === "failed");
+      const activity = threads.flatMap((thread) => {
+        const initialTurn = thread.turns[0];
+        if (!initialTurn) return [];
+
+        const project = createCodexProjector(sessionId);
+        const scope = (event: SessionEvent) => {
+          const scoped = scopeCodexSubagentEvent(event, toolCallId);
+          return scoped ? [scoped] : [];
+        };
+        return [
+          ...project({ method: "thread/started", params: { thread } }).flatMap(scope),
+          ...project({
+            method: "turn/completed",
+            params: { threadId: thread.id, turn: initialTurn },
+          }).flatMap(scope),
+        ];
+      });
+
+      return [
+        ...activity,
+        {
+          type: "tool_end" as const,
+          toolCallId,
+          success: failedTurn === undefined,
+          ...(failedTurn?.error?.message ? { result: failedTurn.error.message } : {}),
+        },
+      ];
+    }),
+  );
+  return histories.flat();
+}
 
 function nativeConfiguration(
   configuration: SessionConfiguration,

@@ -5,14 +5,13 @@ import {
   useRef,
   useState,
   type MutableRefObject,
-  type ReactNode,
 } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
-import type { Message, SessionStatus } from "../../model";
+import type { Message as SessionTranscriptMessage, SessionStatus } from "../../model";
 import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
 import { ScrollToBottomButton } from "@/shared/components/ui/scroll-to-bottom-button";
 import { TranscriptPlaceholder } from "./TranscriptPlaceholder";
-import { Message as SessionMessage } from "./messages/Message";
+import { Message } from "./messages/Message";
 import { ReasoningDisplay, StatusIndicator } from "./SessionStatus";
 import {
   createMessageWindow,
@@ -25,7 +24,7 @@ type PendingMessageAnchor = {
   viewportOffset: number;
 };
 
-function isRenderableMessage(message: Message): boolean {
+function isRenderableMessage(message: SessionTranscriptMessage): boolean {
   return (
     message.role !== "assistant" ||
     Boolean(message.content || message.error || (message.toolCalls?.length ?? 0) > 0)
@@ -35,17 +34,17 @@ function isRenderableMessage(message: Message): boolean {
 export function SessionMessageList({
   messages,
   isStreaming,
+  isWaiting,
   status,
   reasoningContent,
   scrollToBottomRef,
-  activity,
 }: {
-  messages: Message[];
+  messages: SessionTranscriptMessage[];
   isStreaming: boolean;
+  isWaiting: boolean;
   status: SessionStatus;
   reasoningContent: string;
   scrollToBottomRef: MutableRefObject<(() => void) | null>;
-  activity?: ReactNode;
 }) {
   if (messages.length === 0) return <TranscriptPlaceholder />;
 
@@ -58,10 +57,10 @@ export function SessionMessageList({
       <VirtualizedMessageList
         messages={messages}
         isStreaming={isStreaming}
+        isWaiting={isWaiting}
         status={status}
         reasoningContent={reasoningContent}
         scrollToBottomRef={scrollToBottomRef}
-        activity={activity}
       />
       <SessionScrollToBottomButton />
     </StickToBottom>
@@ -78,17 +77,17 @@ function SessionScrollToBottomButton() {
 function VirtualizedMessageList({
   messages,
   isStreaming,
+  isWaiting,
   status,
   reasoningContent,
   scrollToBottomRef,
-  activity,
 }: {
-  messages: Message[];
+  messages: SessionTranscriptMessage[];
   isStreaming: boolean;
+  isWaiting: boolean;
   status: SessionStatus;
   reasoningContent: string;
   scrollToBottomRef: MutableRefObject<(() => void) | null>;
-  activity?: ReactNode;
 }) {
   const {
     contentRef: stickToBottomContentRef,
@@ -223,16 +222,13 @@ function VirtualizedMessageList({
                 key={`${message.role}-${absoluteIndex}`}
                 data-message-index={absoluteIndex}
               >
-                <SessionMessage message={message} isStreaming={isStreaming} isLast={isLast} />
+                <Message message={message} isStreaming={isStreaming} isLast={isLast} />
               </div>
             );
           })}
 
           {isStreaming && reasoningContent && <ReasoningDisplay content={reasoningContent} />}
-          {isStreaming && status !== "idle" && status !== "waiting" && (
-            <StatusIndicator status={status} />
-          )}
-          {activity}
+          {isStreaming && !isWaiting && status !== "idle" && <StatusIndicator status={status} />}
         </div>
       </div>
     </ScrollableFade>
