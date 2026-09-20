@@ -1,10 +1,5 @@
-import { parseSerializedModelConfiguration } from "@sessions/model/modelConfiguration";
-import {
-  computeNextAutomationRunAt,
-  createAutomationId,
-  type Automation,
-  type AutomationOptions,
-} from "../model";
+import { parseSerializedModelConfiguration } from "@providers/model";
+import { computeNextAutomationRunAt, type Automation, type AutomationOptions } from "../model";
 import { inStateTransaction } from "@/server/database";
 
 const DUE_AUTOMATION_RETRY_DELAY_MS = 60_000;
@@ -30,7 +25,7 @@ export class AutomationDatabase {
     const now = new Date();
     const nowIso = now.toISOString();
     const nextRunAt = computeNextAutomationRunAt(input.cron, now).toISOString();
-    const id = createAutomationId();
+    const id = crypto.randomUUID();
     const values = serializeOptions(input);
 
     await this.db`

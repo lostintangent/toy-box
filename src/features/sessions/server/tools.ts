@@ -1,8 +1,7 @@
 import { defineTool } from "@sessions/server/tools/definition";
 import { z } from "zod";
 import { sessionNameSchema } from "@sessions/model/protocol";
-import { modelConfigurationSchema } from "@sessions/model/modelConfiguration";
-import { SESSION_ID_PREFIX } from "@sessions/model/constants";
+import { modelConfigurationSchema } from "@providers/model";
 
 export const STANDARD_SESSION_INSTRUCTIONS =
   "Keep this session's title recognizable. Before completing the first turn, you MUST call `update_session_title` once with a concise 2-6 word title after understanding the user's initial intent. On later turns, call it again before responding only when the session's focus has changed materially, not for ordinary follow-ups or refinements. Do not mention routine title updates to the user.";
@@ -28,10 +27,29 @@ const updateSessionTitleTool = defineTool("update_session_title", {
 
 export const sessionTitleTools = [updateSessionTitleTool];
 
+export const modelTools = [
+  defineTool("list_models", {
+    description:
+      "Lists available providers and models with the IDs and options needed to configure sessions and channel members.",
+    parameters: z
+      .object({
+        provider: z
+          .enum(["copilot", "codex", "claude"])
+          .optional()
+          .describe("Optional provider filter. Omit it to return every available model."),
+      })
+      .strict(),
+    handler: async ({ provider }) => {
+      const models = await (await import("@providers/server")).listModels();
+      return provider ? models.filter((model) => model.provider === provider) : models;
+    },
+  }),
+] as const;
+
 export const sessionHistoryTools = [
   defineTool("list_sessions", {
     description:
-      "Discover Toy Box and native sessions across available providers. Returns session metadata, newest first, and the total number of matches. Search by title to narrow the results.",
+      "Discover Toy Box and native session histories across available providers. Returns session metadata, newest first, and the total number of matches. Search by title to narrow the results.",
     parameters: z.object({
       query: z.string().optional().describe("Optional case-insensitive title substring."),
       limit: z.number().int().min(1).max(100).optional().describe("Maximum results (default 20)."),
@@ -39,8 +57,10 @@ export const sessionHistoryTools = [
     handler: async ({ query, limit = 20 }) => {
       const title = query?.trim().toLowerCase();
       const sessions = (await (await import("./providers")).listSessions())
-        .filter((session) => !title || session.title?.toLowerCase().includes(title))
-        .sort((a, b) => b.modifiedTime.getTime() - a.modifiedTime.getTime());
+        .filter(
+          (session) => session.provider && (!title || session.title?.toLowerCase().includes(title)),
+        )
+        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
       return { sessions: sessions.slice(0, limit), total: sessions.length };
     },
   }),
@@ -79,14 +99,13 @@ const waitForSessions = defineTool("wait_for_sessions", {
       .describe("Optional maximum time to wait in milliseconds"),
   }),
   handler: async ({ sessionIds, timeoutMs }) => {
-    const { waitForSession } = await import("@sessions/server/runtime");
+    const { waitForSessions } = await import("@sessions/server/runtime");
+    const completions = await waitForSessions(sessionIds, timeoutMs);
     return JSON.stringify({
-      responses: await Promise.all(
-        sessionIds.map(async (sessionId) => {
-          const completion = await waitForSession(sessionId, timeoutMs);
-          return { sessionId, ...completion };
-        }),
-      ),
+      responses: completions.map((completion, index) => ({
+        sessionId: sessionIds[index]!,
+        ...completion,
+      })),
     });
   },
 });
@@ -149,7 +168,7 @@ const createSessionTool = defineTool("create_session", {
   }),
   handler: async (args) => {
     const { createSession } = await import("@sessions/server/runtime");
-    const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
+    const sessionId = crypto.randomUUID();
 
     await createSession(
       sessionId,

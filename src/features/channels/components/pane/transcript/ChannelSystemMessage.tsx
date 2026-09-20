@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import { FileUp, UserMinus, UserPlus } from "lucide-react";
-import type { Agent } from "@agents/model";
 import { isChannelSystemMessage } from "@channels/model";
-import type { ChannelMessage } from "@channels/model";
+import type { ChannelMember, ChannelMessage } from "@channels/model";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 
@@ -10,10 +9,10 @@ const DELETED_AGENT_LABEL = "Deleted agent";
 
 export function ChannelSystemMessageView({
   messages,
-  agents,
+  members,
 }: {
   messages: ChannelMessage[];
-  agents: Agent[];
+  members: ChannelMember[];
 }) {
   const { toggleFile } = useWorkspaceSurface();
   const message = messages[0]!;
@@ -27,7 +26,7 @@ export function ChannelSystemMessageView({
   switch (systemMessage.type) {
     case "member_joined":
     case "member_left": {
-      const names = membershipAgentNames(messages, agents);
+      const names = membershipAgentNames(messages);
       const joined = systemMessage.type === "member_joined";
       icon = joined ? (
         <UserPlus className="size-3.5 shrink-0" />
@@ -43,7 +42,7 @@ export function ChannelSystemMessageView({
       const actorName =
         actor.type === "user"
           ? "You"
-          : (agents.find(({ id }) => id === actor.agentId)?.name ?? DELETED_AGENT_LABEL);
+          : (members.find(({ id }) => id === actor.agentId)?.name ?? DELETED_AGENT_LABEL);
       const artifacts = messages.flatMap((message) => {
         if (!isChannelSystemMessage(message) || message.content.type !== "artifact_shared") {
           return [];
@@ -112,17 +111,14 @@ export function ChannelSystemMessageView({
   );
 }
 
-function membershipAgentNames(
-  messages: readonly ChannelMessage[],
-  agents: readonly Agent[],
-): string[] {
+function membershipAgentNames(messages: readonly ChannelMessage[]): string[] {
   return messages.flatMap((message) => {
     if (!isChannelSystemMessage(message)) return [];
     const content = message.content;
     if (content.type !== "member_joined" && content.type !== "member_left") {
       return [];
     }
-    return [agents.find(({ id }) => id === content.member.agentId)?.name ?? DELETED_AGENT_LABEL];
+    return [content.member.name];
   });
 }
 

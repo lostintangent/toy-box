@@ -17,16 +17,10 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/shared/components/ui/input-group";
-import type { ModelConfiguration } from "../../model/modelConfiguration";
-import {
-  type ModelInfo,
-  type SessionSkill,
-  type SessionState,
-  type TodoItem,
-  type UserMessage,
-} from "../../model";
+import type { ModelConfiguration, ModelInfo } from "@providers/model";
+import { type SessionSkill, type SessionState, type TodoItem, type UserMessage } from "../../model";
 import type { DiffStats } from "../../model/fileDiffs";
-import { ModelConfigurationPicker } from "./ModelPicker";
+import { ModelConfigurationPicker } from "@providers/components/ModelPicker";
 import {
   SessionLocationPicker,
   type SessionLocationPickerProps,

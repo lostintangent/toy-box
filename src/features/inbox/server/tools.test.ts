@@ -60,7 +60,7 @@ test("send_to_inbox writes its artifact to the session workspace and attaches th
   await createInboxEntry(sessionId);
 
   const fakeSession = {
-    identity: { sessionId, providerId: "copilot", nativeId: sessionId },
+    binding: { sessionId, providerId: "copilot", nativeId: sessionId },
     onEvent: () => () => {},
   } as unknown as SessionConnection;
   const stream = SessionStream.getOrCreate(sessionId, fakeSession);

@@ -40,14 +40,16 @@ test("catalog metadata retains the native repository display fields", async () =
 
   expect(await codexProvider.listSessions()).toEqual([
     {
-      sessionId: "native",
-      startTime: new Date(0),
-      modifiedTime: new Date(1000),
+      id: "native",
+      createdAt: new Date(0),
+      updatedAt: new Date(1000),
       title: "Repository session",
-      directory: "/repo",
-      gitRoot: "/repo",
-      repository: "git@github.com:owner/repo.git",
-      branch: "main",
+      context: {
+        directory: "/repo",
+        gitRoot: "/repo",
+        repository: "git@github.com:owner/repo.git",
+        branch: "main",
+      },
     },
   ]);
 });
@@ -98,9 +100,8 @@ test("history reads every stored turn page without acquiring the thread's writer
     rpc.close();
   });
   const events = await codexProvider.readHistory({
-    sessionId: "public",
-    nativeId: "native",
-    providerId: "codex",
+    id: "public",
+    provider: { id: "codex", sessionId: "native" },
   });
   expect(
     events.filter((event) => event.type === "user_message").map((event) => event.content),
@@ -140,7 +141,6 @@ test("new and resumed threads expose native plans and the configured session ski
   const configuration: SessionConfiguration = {
     directory: root,
     allowUserQuestions: true,
-    attachmentsDirectory: join(root, "attachments"),
     tools: [
       defineTool("echo", {
         description: "Echo a value",
@@ -162,7 +162,9 @@ test("new and resumed threads expose native plans and the configured session ski
   const created = await codexProvider.create("public", configuration);
   connections.push(created);
   await created.disconnect();
-  connections.push(await codexProvider.resume(created.identity, configuration));
+  connections.push(
+    await codexProvider.resume({ id: "public", provider: created.provider }, configuration),
+  );
   const requests = written.filter(
     ({ method }) => method === "thread/start" || method === "thread/resume",
   );

@@ -6,7 +6,7 @@ import { zodValidator } from "@tanstack/zod-adapter";
 import { useState, useEffect, useDeferredValue, lazy, Suspense } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { z } from "zod";
-import { useDrafts } from "@sessions/useDrafts";
+import { useSessions } from "@sessions/useSessions";
 import { useHyperSession, type HyperSessionState } from "@workspace/hooks/layout/useHyperSession";
 import { useWarmSessionSnapshots } from "@sessions/useWarmSessionSnapshots";
 import { useWorkspaceSync } from "@workspace/hooks/useWorkspaceSync";
@@ -46,11 +46,14 @@ import {
   type SidebarPanels,
 } from "@workspace/model/config/layoutPrefs";
 import { sessionMutations } from "@sessions/mutations";
-import { filterSessionList } from "@sessions/components/sidebar/sessionFilters";
-import type { SessionsState } from "@sessions/model";
-import { selectNonWorkerSessions, sessionQueries } from "@sessions/queries";
+import {
+  filterSessionList,
+  type SessionFilters,
+} from "@sessions/components/sidebar/sessionFilters";
+import { sessionQueries } from "@sessions/queries";
+import { providerQueries } from "@providers/queries";
+import { useHasModels } from "@providers/useModels";
 import { channelQueries } from "@channels/queries";
-import { agentQueries } from "@agents/queries";
 const Terminal = lazy(() =>
   import("@terminal/components/Terminal").then((m) => ({
     default: m.Terminal,
@@ -90,7 +93,7 @@ export const Route = createFileRoute("/")({
     await Promise.all([
       context.queryClient.ensureQueryData(sessionQueries.state()),
       context.queryClient.ensureQueryData(channelQueries.list()),
-      context.queryClient.ensureQueryData(agentQueries.list()),
+      context.queryClient.ensureQueryData(providerQueries.catalog()),
     ]);
     return loadWorkspaceLayout();
   },
@@ -110,13 +113,6 @@ async function loadWorkspaceLayout() {
 }
 
 type HyperLayoutState = Pick<HyperSessionState, "open" | "position">;
-
-function selectSessionList(state: SessionsState) {
-  return {
-    sessions: selectNonWorkerSessions(state),
-    worktreeSessionIds: Object.keys(state.worktrees),
-  };
-}
 
 function restoreHyperSessionState(
   sessionId: string | undefined,
@@ -276,11 +272,8 @@ function WorkspacePage() {
     ]),
   ];
 
-  const showExternalSessions = useWorkspaceSelector(
-    (workspace) => workspace.settings.showExternalSessions,
-  );
-  const hiddenProviders = useWorkspaceSelector(
-    (workspace) => workspace.settings.hiddenSessionProviders,
+  const disabledProviders = useWorkspaceSelector(
+    (workspace) => workspace.settings.disabledProviders,
   );
 
   // Layout state is restored from and persisted to the workspace layout cookie.
@@ -290,29 +283,33 @@ function WorkspacePage() {
   const [isTerminalOpen, setIsTerminalOpen] = useState(initialLayout.terminalOpen);
   const [sidebarPanels, setSidebarPanels] = useState<SidebarPanels>(initialLayout.panels);
 
-  const { data: sessionList, isLoading: isSessionsLoading } = useQuery({
-    ...sessionQueries.state(),
-    select: selectSessionList,
-  });
-  const sessions = sessionList?.sessions;
-  const worktreeSessionIds = sessionList?.worktreeSessionIds ?? [];
+  const hasModels = useHasModels();
   const { data: channelList } = useQuery(channelQueries.list());
   const channels = channelList?.channels;
-  const { apps, automationSessionIds, hyperSessionIds, inboxSessionIds } = useWorkspaceSelector(
+  const { apps, automations, hyperSessionIds, inboxSessionIds } = useWorkspaceSelector(
     (workspace) => ({
       apps: workspace.apps,
-      automationSessionIds: workspace.automations.map((automation) => automation.id),
+      automations: workspace.automations,
       hyperSessionIds: workspace.hyperSessionIds,
       inboxSessionIds: workspace.inboxEntries.map((entry) => entry.id),
     }),
   );
   useWorkspaceSync();
-  const { listedDrafts, isDraft, createDraft } = useDrafts({
-    hiddenSessionIds: hyperSessionIds,
+  const {
+    sessions,
+    isLoading: isSessionsLoading,
+    worktreeSessionIds,
+    createSession,
+  } = useSessions({
+    hiddenSessionIds: [
+      ...hyperSessionIds,
+      ...automations.map((automation) => automation.id),
+      ...inboxSessionIds,
+    ],
   });
 
   const managedSessionIds = new Set([
-    ...automationSessionIds,
+    ...automations.map((automation) => automation.id),
     ...inboxSessionIds,
     ...hyperSessionIds,
   ]);
@@ -363,9 +360,9 @@ function WorkspacePage() {
     handleWorkspaceRootOpen("channels", channelId, selectedChannelIds, toggleInWorkspace);
   }
 
-  // Create a durable draft, optionally with an initial artifact or alongside the workspace.
+  // Create a draft session, optionally with an initial artifact or alongside the workspace.
   const handleCreateSession: SidebarProps["onCreateSession"] = (options = {}) => {
-    const id = createDraft(options.artifact ? { artifact: options.artifact } : undefined);
+    const id = createSession(options.artifact ? { artifact: options.artifact } : undefined);
 
     if (options.addToWorkspace && openPanes.length > 0 && openPanes.length < MAX_WORKSPACE_PANES) {
       // Add to the workspace.
@@ -376,16 +373,16 @@ function WorkspacePage() {
     }
   };
 
-  // Keep URL session IDs aligned with available sessions.
-  // This prevents stale open panes when another client deletes a session.
+  // Close panes when their session is deleted or its provider leaves discovery.
   useEffect(() => {
     if (isSessionsLoading) return;
     if (selectedSessionIds.length === 0) return;
 
-    const availableSessionIds = new Set(sessions?.map((session) => session.sessionId) ?? []);
-    for (const draft of listedDrafts) availableSessionIds.add(draft.sessionId);
-    for (const sessionId of hyperSessionIds) availableSessionIds.add(sessionId);
-    for (const sessionId of automationSessionIds) availableSessionIds.add(sessionId);
+    const availableSessionIds = new Set(sessions?.map((session) => session.id) ?? []);
+    for (const automation of automations) {
+      if (!disabledProviders.includes(automation.model.provider))
+        availableSessionIds.add(automation.id);
+    }
 
     const validSessionIds = selectedSessionIds.filter((sessionId) =>
       availableSessionIds.has(sessionId),
@@ -401,15 +398,7 @@ function WorkspacePage() {
       }),
       replace: true,
     });
-  }, [
-    automationSessionIds,
-    hyperSessionIds,
-    isSessionsLoading,
-    listedDrafts,
-    navigate,
-    selectedSessionIds,
-    sessions,
-  ]);
+  }, [automations, disabledProviders, isSessionsLoading, navigate, selectedSessionIds, sessions]);
 
   // Saved apps are durable URL roots, so a deletion from another client must
   // remove only the stale app root without disturbing adjacent panes.
@@ -449,7 +438,11 @@ function WorkspacePage() {
   }, [channels, navigate, selectedChannelIds]);
 
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState<SessionFilters>({
+    query: "",
+    hiddenProviders: [],
+    showExternalSessions: true,
+  });
   const toggleSidebar = () => setIsSidebarCollapsed((collapsed) => !collapsed);
 
   function toggleTerminal() {
@@ -462,6 +455,7 @@ function WorkspacePage() {
     requireReset: true,
   });
   useHotkey("Control+N", () => handleCreateSession(), {
+    enabled: hasModels,
     requireReset: true,
   });
   useHotkey("Control+`", toggleTerminal, { requireReset: true });
@@ -470,18 +464,16 @@ function WorkspacePage() {
     setIsTerminalOpen(false);
   }
 
-  const deferredFilter = useDeferredValue(filter);
+  const deferredFilter = useDeferredValue(filter.query);
 
   // Managed sessions are presented by their automation, inbox, hyper, or parent surface.
-  const listedSessions = (sessions ?? []).filter(
-    (session) => !managedSessionIds.has(session.sessionId) && !isDraft(session.sessionId),
-  );
+  const listedSessions = (sessions ?? []).filter((session) => !managedSessionIds.has(session.id));
 
   useWarmSessionSnapshots();
 
   const filteredSessions = filterSessionList(listedSessions, {
-    showExternalSessions,
-    hiddenProviders,
+    ...filter,
+    hiddenProviders: [...filter.hiddenProviders, ...disabledProviders],
     query: deferredFilter,
   });
 
@@ -491,8 +483,7 @@ function WorkspacePage() {
     }
   }
 
-  const renameTargetSession =
-    sessions?.find((session) => session.sessionId === renameTargetId) ?? null;
+  const renameTargetSession = sessions?.find((session) => session.id === renameTargetId) ?? null;
 
   function handleSessionRename(sessionId: string) {
     setRenameTargetId(sessionId);
@@ -512,7 +503,9 @@ function WorkspacePage() {
     }
   }
 
-  const hyperSessionId = hyperSessionIds[0];
+  const hyperSessionId = hyperSessionIds.find((id) =>
+    sessions?.some((session) => session.id === id),
+  );
   const restoredHyperSession = restoreHyperSessionState(hyperSessionId, {
     position: initialLayout.hyperPosition,
     open: initialLayout.hyperOpen,
@@ -521,7 +514,7 @@ function WorkspacePage() {
   const hyper = useHyperSession({
     initialState: restoredHyperSession,
     hyperSessionId,
-    createDraft,
+    createSession,
     openSessionInWorkspace,
   });
   const hyperSession = hyper.state;
@@ -654,10 +647,9 @@ function WorkspacePage() {
     openSessionIds: sidebarOpenSessionIds,
     worktreeSessionIds,
     emptyMessage:
-      deferredFilter || hiddenProviders.length || !showExternalSessions
+      deferredFilter || filter.hiddenProviders.length || !filter.showExternalSessions
         ? "No sessions match your filters"
         : undefined,
-    draftSessions: listedDrafts,
     panels: sidebarPanels,
     onPanelExpanded: handlePanelExpanded,
     onCreateSession: handleCreateSession,
@@ -740,11 +732,11 @@ function WorkspacePage() {
       </WorkspaceSurfaceProvider>
       {renameTargetSession && (
         <NameDialog
-          key={renameTargetSession.sessionId}
+          key={renameTargetSession.id}
           name={renameTargetSession.title ?? ""}
           title="Rename session"
           description="Change how this session appears in the session list."
-          mutation={sessionMutations.renameSession(renameTargetSession.sessionId)}
+          mutation={sessionMutations.renameSession(renameTargetSession.id)}
           onOpenChange={handleRenameDialogOpenChange}
         />
       )}

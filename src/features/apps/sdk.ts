@@ -10,10 +10,11 @@ import type {
   SessionCompletion,
   SessionLaunch,
   SessionLocation,
-  SessionMetadata,
+  Session,
+  SessionContext,
   SessionWorktree,
 } from "@sessions/model";
-import type { ContextTier, ModelConfiguration } from "@sessions/model/modelConfiguration";
+import type { ContextTier, ModelConfiguration, ModelInfo } from "@providers/model";
 import type { WorkspaceSessionState } from "@workspace/model/state/reducer";
 
 export type {
@@ -21,11 +22,13 @@ export type {
   AppShare,
   ContextTier,
   ModelConfiguration,
+  ModelInfo,
   Message,
   SessionCompletion,
   SessionLaunch,
   SessionLocation,
-  SessionMetadata,
+  Session,
+  SessionContext,
   SessionWorktree,
   WorkspaceFile,
   WorkspaceFileMode,
@@ -176,7 +179,7 @@ export type WorkspaceFileState = {
   cancelWorker(workerSessionId: string): Promise<void>;
 };
 
-export type AppSession = SessionMetadata & {
+export type AppSession = Session & {
   status: WorkspaceSessionState["status"];
   /**
    * How the session is governed: an ordinary conversation, a scheduled
@@ -196,16 +199,7 @@ export type AppWorkspace = {
     }
   >;
   shares: AppShare[];
-  models: Array<{
-    id: string;
-    name: string;
-    provider: string;
-    providerName?: string;
-    supportedReasoningEfforts?: string[];
-    defaultReasoningEffort?: string;
-    /** Ordered with the model's default tier first. */
-    supportedContextTiers?: ContextTier[];
-  }>;
+  models: readonly ModelInfo[];
   defaultModel: ModelConfiguration | null;
   openSessionIds: string[];
   openFiles: WorkspaceFile[];

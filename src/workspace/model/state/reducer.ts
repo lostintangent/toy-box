@@ -31,7 +31,6 @@ export type WorkspaceEnvironment = {
  * Shared lifecycle and composer state for one session. Missing means idle.
  */
 export type WorkspaceSessionState =
-  | { status: "draft"; createdAt: number; prompt?: DraftPrompt; artifactPath?: string }
   | { status: "running" | "waiting" | "unread"; prompt?: DraftPrompt }
   | { status: "idle"; prompt: DraftPrompt };
 
@@ -53,19 +52,14 @@ export function createEmptyWorkspaceState(): WorkspaceState {
 
 export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEvent): WorkspaceState {
   switch (event.type) {
-    case "agent.changed":
-    case "agent.membership.changed":
     case "channel.upserted":
     case "channel.deleted":
+    case "channel.members.changed":
       return state;
     case "settings.changed":
       return areSettingsEqual(state.settings, event.settings)
         ? state
         : { ...state, settings: event.settings };
-    case "session.drafted": {
-      const next = reduceSessionInWorkspace(state, event.sessionId, event);
-      return event.hyper ? setHyperSessionMembership(next, event.sessionId, true) : next;
-    }
     case "session.deleted": {
       const next = reduceSessionInWorkspace(state, event.sessionId, event);
       const withoutHyper = setHyperSessionMembership(next, event.sessionId, false);
@@ -83,6 +77,9 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
     case "session.read":
       return reduceSessionInWorkspace(state, event.sessionId, event);
     case "session.upserted":
+      return event.session.sessionType === "hyper"
+        ? setHyperSessionMembership(state, event.session.id, true)
+        : state;
     case "session.touched":
       return state;
     case "inbox.entry.upserted":
@@ -167,7 +164,6 @@ export type WorkspaceSessionEvent = Extract<
   WorkspaceEvent,
   {
     type:
-      | "session.drafted"
       | "session.prompt.drafted"
       | "session.running"
       | "session.waiting"
@@ -184,24 +180,6 @@ export function reduceWorkspaceSessionState(
   event: WorkspaceSessionEvent,
 ): WorkspaceSessionState | undefined {
   switch (event.type) {
-    case "session.drafted": {
-      if (isWorkspaceSessionLive(state?.status) || state?.status === "unread") {
-        return state;
-      }
-      if (
-        state?.status === "draft" &&
-        state.createdAt === event.createdAt &&
-        state.artifactPath === event.artifactPath
-      ) {
-        return state;
-      }
-      return {
-        status: "draft",
-        createdAt: event.createdAt,
-        prompt: state?.prompt,
-        ...(event.artifactPath ? { artifactPath: event.artifactPath } : {}),
-      };
-    }
     case "session.prompt.drafted":
       if (state?.prompt && sameDraftPrompt(state.prompt, event.prompt)) return state;
       return state ? { ...state, prompt: event.prompt } : { status: "idle", prompt: event.prompt };
@@ -213,7 +191,7 @@ export function reduceWorkspaceSessionState(
         : { status, ...(state?.prompt ? { prompt: state.prompt } : {}) };
     }
     case "session.idle":
-      if (!state || state.status === "draft") return state;
+      if (!state) return state;
       return idleSessionState(state.prompt);
     case "session.unread":
       return state?.status === "unread"

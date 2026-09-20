@@ -45,7 +45,8 @@ export const codexProvider: SessionProvider = {
       }));
   },
   listSkills,
-  async readHistory({ sessionId, nativeId }) {
+  async readHistory({ id, provider }) {
+    const nativeId = provider?.sessionId ?? id;
     const rpc = await startCodexClient();
     const thread = await readThreadHistory(rpc, nativeId);
     const subagentCalls = thread.turns.flatMap((turn) =>
@@ -56,8 +57,8 @@ export const codexProvider: SessionProvider = {
       ),
     );
     return [
-      ...codexHistoryEvents(thread).flatMap(createCodexProjector(sessionId)),
-      ...(await readSubagentHistory(rpc, sessionId, subagentCalls)),
+      ...codexHistoryEvents(thread).flatMap(createCodexProjector(id)),
+      ...(await readSubagentHistory(rpc, id, subagentCalls)),
     ];
   },
   async listSessions() {
@@ -76,15 +77,17 @@ export const codexProvider: SessionProvider = {
       cursor = page.nextCursor;
     } while (cursor);
     return sessions.map((thread) => ({
-      sessionId: thread.id,
-      startTime: new Date(thread.createdAt * 1000),
-      modifiedTime: new Date(thread.updatedAt * 1000),
+      id: thread.id,
+      createdAt: new Date(thread.createdAt * 1000),
+      updatedAt: new Date(thread.updatedAt * 1000),
       title: thread.name ?? thread.preview,
-      directory: threadDirectory(thread),
-      // Codex reports Git membership but not its root; directory lookup resolves the actual root.
-      gitRoot: thread.gitInfo ? thread.cwd : undefined,
-      repository: thread.gitInfo?.originUrl ?? undefined,
-      branch: thread.gitInfo?.branch ?? undefined,
+      context: {
+        directory: threadDirectory(thread),
+        // Codex reports Git membership but not its root; directory lookup resolves the actual root.
+        gitRoot: thread.gitInfo ? thread.cwd : undefined,
+        repository: thread.gitInfo?.originUrl ?? undefined,
+        branch: thread.gitInfo?.branch ?? undefined,
+      },
     }));
   },
   async create(sessionId, configuration) {
@@ -111,9 +114,9 @@ export const codexProvider: SessionProvider = {
         },
       ],
     });
-    return new CodexConnection(
+    const connection = new CodexConnection(
       rpc,
-      { sessionId, nativeId: result.thread.id, providerId: "codex" },
+      { id: sessionId, provider: { id: "codex", sessionId: result.thread.id } },
       configuration,
       {
         provider: "codex",
@@ -122,18 +125,26 @@ export const codexProvider: SessionProvider = {
       },
       skills,
     );
+    try {
+      if (configuration.name) await connection.rename(configuration.name);
+      return connection;
+    } catch (error) {
+      await connection.disconnect();
+      await rpc.request("thread/delete", { threadId: result.thread.id }).catch(console.error);
+      throw error;
+    }
   },
-  async resume(identity, configuration) {
+  async resume(session, configuration) {
     const rpc = await startCodexClient();
     const skills = await listSkills(configuration.directory, configuration.skillDirectories);
     const result = await rpc.request("thread/resume", {
-      threadId: identity.nativeId,
+      threadId: session.provider?.sessionId ?? session.id,
       ...nativeConfiguration(configuration, skills),
       excludeTurns: true,
     });
     return new CodexConnection(
       rpc,
-      identity,
+      session,
       configuration,
       {
         provider: "codex",

@@ -1,7 +1,7 @@
 import { SidebarList as AnimatedSidebarList } from "@/shared/components/sidebar/SidebarList";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
-import type { SessionMetadata } from "../../model";
+import type { Session } from "../../model";
 import { SessionListItem } from "./SessionListItem";
 import { groupSessions } from "./sessionGrouping";
 
@@ -18,7 +18,7 @@ const SKELETON_ROW_KEYS = [
 
 type SessionListProps = {
   className?: string;
-  sessions: SessionMetadata[];
+  sessions: Session[];
   isLoading: boolean;
   onSessionSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
   onSessionRename: (sessionId: string) => void;
@@ -26,7 +26,6 @@ type SessionListProps = {
   openSessionIds: string[];
   worktreeSessionIds: string[];
   emptyMessage?: string;
-  draftSessions: SessionMetadata[];
 };
 
 export function SessionList({
@@ -39,17 +38,11 @@ export function SessionList({
   openSessionIds,
   worktreeSessionIds,
   emptyMessage,
-  draftSessions,
 }: SessionListProps) {
   const pinnedSessionIds = useWorkspaceSelector((workspace) => workspace.settings.pinnedSessionIds);
   const updateSetting = useUpdateWorkspaceSetting();
   const pinnedSessionIdSet = new Set(pinnedSessionIds);
-  const draftSessionIdSet = new Set(draftSessions.map((draft) => draft.sessionId));
-  const sessionGroups = groupSessions(
-    [...sessions, ...draftSessions],
-    pinnedSessionIds,
-    new Date(),
-  );
+  const sessionGroups = groupSessions(sessions, pinnedSessionIds, new Date());
 
   function handleSessionPinToggle(sessionId: string) {
     updateSetting(
@@ -84,26 +77,19 @@ export function SessionList({
                 </div>
               </div>
             ) : null,
-            ...group.sessions.map((session) => {
-              const isDraft = draftSessionIdSet.has(session.sessionId);
-              const isActive = openSessionIds.includes(session.sessionId);
-              return (
-                <SessionListItem
-                  key={`session:${session.sessionId}`}
-                  session={session}
-                  onSelect={onSessionSelect}
-                  onPinToggle={
-                    isDraft ? undefined : () => handleSessionPinToggle(session.sessionId)
-                  }
-                  onRename={isDraft ? undefined : () => onSessionRename(session.sessionId)}
-                  onDelete={() => onSessionDelete(session.sessionId)}
-                  isActive={isActive}
-                  isPinned={!isDraft && pinnedSessionIdSet.has(session.sessionId)}
-                  isWorktree={worktreeSessionIds.includes(session.sessionId)}
-                  isDraft={isDraft}
-                />
-              );
-            }),
+            ...group.sessions.map((session) => (
+              <SessionListItem
+                key={`session:${session.id}`}
+                session={session}
+                onSelect={onSessionSelect}
+                onPinToggle={() => handleSessionPinToggle(session.id)}
+                onRename={() => onSessionRename(session.id)}
+                onDelete={() => onSessionDelete(session.id)}
+                isActive={openSessionIds.includes(session.id)}
+                isPinned={pinnedSessionIdSet.has(session.id)}
+                isWorktree={worktreeSessionIds.includes(session.id)}
+              />
+            )),
           ])}
     </AnimatedSidebarList>
   );

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { AutomationPanel } from "@automations/components/AutomationPanel";
 import { AutomationDialog } from "@automations/components/AutomationDialog";
 import { cn } from "@/shared/utils";
-import type { SessionMetadata } from "@sessions/model";
+import type { Session } from "@sessions/model";
+import type { SessionFilters } from "@sessions/components/sidebar/sessionFilters";
 import { AppsPanel } from "@apps/components/AppsPanel";
 import { SettingsDialog } from "./SettingsDialog";
 import { SidebarHeader } from "./SidebarHeader";
@@ -34,10 +35,10 @@ function layerClass(visible: boolean): string {
 }
 
 export type SidebarProps = {
-  filter: string;
-  onFilterChange: (value: string) => void;
+  filter: SessionFilters;
+  onFilterChange: (value: SessionFilters) => void;
 
-  sessions: SessionMetadata[];
+  sessions: Session[];
   isSessionsLoading: boolean;
   onSessionSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
   onSessionRename: (sessionId: string) => void;
@@ -45,7 +46,6 @@ export type SidebarProps = {
   openSessionIds: string[];
   worktreeSessionIds: string[];
   emptyMessage?: string;
-  draftSessions: SessionMetadata[];
 
   panels: SidebarPanels;
   onPanelExpanded: (panel: keyof SidebarPanels, expanded: boolean) => void;
@@ -97,7 +97,6 @@ export function Sidebar({
   openSessionIds,
   worktreeSessionIds,
   emptyMessage,
-  draftSessions,
 
   panels,
   onPanelExpanded,
@@ -179,7 +178,6 @@ export function Sidebar({
             openSessionIds={openSessionIds}
             worktreeSessionIds={worktreeSessionIds}
             emptyMessage={emptyMessage}
-            draftSessions={draftSessions}
           />
 
           <ChannelsPanel

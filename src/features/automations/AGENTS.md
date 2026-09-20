@@ -4,7 +4,7 @@ Automations let users turn a prompt into dependable recurring work that runs wit
 
 ## Domain model
 
-An automation is a durable definition containing a title, prompt, model, cron schedule, and optional working directory, plus `nextRunAt` and `lastRunAt` lifecycle metadata. Its `toy-box-auto-…` ID is also the stable ID of the session it manages. That identity persists across occurrences, while each run replaces the previous idle SDK conversation so it starts with a clean transcript. No separate run ID or reusable-session option exists.
+An automation is a durable definition containing a title, prompt, model, cron schedule, and optional working directory, plus `nextRunAt` and `lastRunAt` lifecycle metadata. Its UUID is also the stable public ID of the session it manages. That identity persists across occurrences, while each run replaces the previous idle provider conversation so it starts with a clean transcript. No separate run ID or reusable-session option exists. Automation membership comes from its durable definition, never from the ID's spelling.
 
 The public operations are `list`, `create`, `update`, `delete`, and `run`. `server/functions.ts` is their validated ingress from both UI clients and SDK automation tools; the rest of `server/` owns persistence, publication, managed-session teardown, and dispatch. Trusted server orchestration calls that underlying lifecycle directly only when it already owns validated domain values.
 

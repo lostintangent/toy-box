@@ -7,7 +7,7 @@ export function applyChannelListEvent(queryClient: QueryClient, event: Workspace
   switch (event.type) {
     case "channel.upserted":
       queryClient.setQueryData<ChannelList>(channelQueries.listKey(), (list) => {
-        if (!list) return { channels: [event.channel], memberships: [] };
+        if (!list) return { channels: [event.channel], members: [] };
         const next = list.channels.filter(({ id }) => id !== event.channel.id);
         next.push(event.channel);
         return {
@@ -28,14 +28,12 @@ export function applyChannelListEvent(queryClient: QueryClient, event: Workspace
         list
           ? {
               channels: list.channels.filter(({ id }) => id !== event.channelId),
-              memberships: list.memberships.filter(
-                ({ host }) => host.channelId !== event.channelId,
-              ),
+              members: list.members.filter(({ channelId }) => channelId !== event.channelId),
             }
           : list,
       );
       return;
-    case "agent.membership.changed":
+    case "channel.members.changed":
       void invalidateChannelListQuery(queryClient);
       return;
     default:

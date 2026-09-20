@@ -1,4 +1,3 @@
-import { isAutomationId } from "@automations/model";
 import {
   ownerSessionId,
   sessionFile,
@@ -45,7 +44,7 @@ export type EditorWorkspacePane = {
   id: string;
   file: WorkspaceFile;
   title: string;
-  mode: WorkspaceFileMode;
+  mode?: WorkspaceFileMode;
 };
 
 export type AppWorkspacePane = {
@@ -116,7 +115,7 @@ export function createLinkedSessionPane(
 
 export function createEditorPane(
   file: WorkspaceFile,
-  mode = getDefaultEditorPaneMode(file),
+  mode?: WorkspaceFileMode,
 ): EditorWorkspacePane {
   return {
     kind: "editor",
@@ -323,12 +322,20 @@ export function resolveEditorAutoFocus(
   seenPaneIds: ReadonlySet<string>,
   panes: WorkspacePane[],
   autoFocusArtifacts: Settings["autoFocusArtifacts"],
+  automationSessionIds: readonly string[] = [],
   forceFocusPaneIds?: ReadonlySet<string>,
 ): EditorAutoFocusResolution {
   return {
     focusPane: isSingleSessionLayout(panes)
       ? panes
-          .filter((pane) => shouldAutoFocusEditorPane(pane, autoFocusArtifacts, forceFocusPaneIds))
+          .filter((pane) =>
+            shouldAutoFocusEditorPane(
+              pane,
+              autoFocusArtifacts,
+              automationSessionIds,
+              forceFocusPaneIds,
+            ),
+          )
           .find((pane) => !seenPaneIds.has(pane.id))
       : undefined,
     seenPaneIds: new Set(panes.map((pane) => pane.id)),
@@ -342,6 +349,7 @@ function isSingleSessionLayout(panes: WorkspacePane[]): boolean {
 function shouldAutoFocusEditorPane(
   pane: WorkspacePane,
   autoFocusArtifacts: Settings["autoFocusArtifacts"],
+  automationSessionIds: readonly string[],
   forceFocusPaneIds?: ReadonlySet<string>,
 ): pane is EditorWorkspacePane {
   if (!isEditorPane(pane)) return false;
@@ -350,15 +358,20 @@ function shouldAutoFocusEditorPane(
   const owner = ownerSessionId(pane.file);
   return (
     owner !== undefined &&
-    matchesSessionFeatureScope(autoFocusArtifacts, getArtifactSessionType(owner))
+    matchesSessionFeatureScope(
+      autoFocusArtifacts,
+      automationSessionIds.includes(owner) ? "automation" : "session",
+    )
   );
 }
 
-function getArtifactSessionType(sourceSessionId: string): "session" | "automation" {
-  return isAutomationId(sourceSessionId) ? "automation" : "session";
-}
-
-function getDefaultEditorPaneMode(file: WorkspaceFile): WorkspaceFileMode {
-  const owner = ownerSessionId(file);
-  return owner !== undefined && isAutomationId(owner) ? "read" : "edit";
+/** Explicit display choices override the owner's default without storing derived state. */
+export function resolveEditorPaneMode(
+  pane: EditorWorkspacePane,
+  automationSessionIds: readonly string[],
+): WorkspaceFileMode {
+  const owner = ownerSessionId(pane.file);
+  return (
+    pane.mode ?? (owner !== undefined && automationSessionIds.includes(owner) ? "read" : "edit")
+  );
 }

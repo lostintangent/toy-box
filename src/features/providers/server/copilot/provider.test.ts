@@ -24,23 +24,25 @@ test("catalog metadata retains the native repository display fields", async () =
 
   expect(await copilotProvider.listSessions()).toEqual([
     {
-      sessionId: "native",
-      startTime: new Date(0),
-      modifiedTime: new Date(1),
+      id: "native",
+      createdAt: new Date(0),
+      updatedAt: new Date(1),
       title: "Repository session",
-      directory: "/repo/src",
-      gitRoot: "/repo",
-      repository: "owner/repo",
-      branch: "main",
+      context: {
+        directory: "/repo/src",
+        gitRoot: "/repo",
+        repository: "owner/repo",
+        branch: "main",
+      },
     },
   ]);
 });
 
-test("creation initializes the native working directory without reading metadata back", async () => {
+test("creation uses the canonical ID and initializes the working directory", async () => {
   const setWorkingDirectory = mock(async (_input: { workingDirectory: string }) => {});
   const start = spyOn(client, "startCopilotClient").mockResolvedValue({
-    createSession: async () => ({
-      sessionId: "public",
+    createSession: async ({ sessionId }: { sessionId: string }) => ({
+      sessionId,
       rpc: { metadata: { setWorkingDirectory } },
     }),
   } as unknown as CopilotClient);
@@ -49,17 +51,15 @@ test("creation initializes the native working directory without reading metadata
   const connection = await copilotProvider.create("public", {
     directory: "/repo",
     allowUserQuestions: false,
-    attachmentsDirectory: "/attachments",
     tools: [],
     instructions: "",
     skillDirectories: [],
   });
 
   expect(setWorkingDirectory).toHaveBeenCalledWith({ workingDirectory: "/repo" });
-  expect(connection.identity).toEqual({
+  expect(connection.provider).toEqual({
+    id: "copilot",
     sessionId: "public",
-    nativeId: "public",
-    providerId: "copilot",
   });
 });
 
@@ -102,9 +102,8 @@ test("read-only history preserves attachments and projector state across native 
 
   expect(
     await copilotProvider.readHistory({
-      sessionId: "public",
-      nativeId: "native",
-      providerId: "copilot",
+      id: "public",
+      provider: { id: "copilot", sessionId: "native" },
     }),
   ).toEqual([
     {

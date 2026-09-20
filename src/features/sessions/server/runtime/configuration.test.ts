@@ -1,20 +1,23 @@
 import { describe, expect, jest, mock, onTestFinished, spyOn, test } from "bun:test";
 import type { SessionConnection } from "@providers/server/provider";
-import { AgentDatabase } from "@agents/server/database";
+import type { ChannelAgentMetadata } from "@channels/model";
 import { ChannelDatabase } from "@channels/server/database";
+import { WorkerDatabase } from "@workers/server/database";
+import { smallJsonSchema } from "@/shared/smallJson";
 import * as state from "@/server/database";
 import * as sdk from "../providers";
 import * as registry from "../state/registry";
 import * as snapshots from "../state/snapshots";
-import { bindProviderSession } from "../state/sessions";
+import { setSessionProvider } from "../state/sessions";
 import { getSessionConfiguration } from "@/server/sessionConfiguration";
 import * as settings from "@workspace/server/state/settings";
+import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
 import { createSession, deliverSessionMessage } from "./index";
 import { SessionStream } from "./sessionStream";
 import { createInitialSessionState } from "@sessions/model/reducer";
 
-async function setup(agentSession: boolean) {
+async function setup(channelWorker: boolean) {
   const sessionId = `configuration-${crypto.randomUUID()}`;
   const db = await state.createTestDatabase();
   spyOn(state, "getStateDatabase").mockResolvedValue(db);
@@ -33,20 +36,20 @@ async function setup(agentSession: boolean) {
     handles.push(handle);
     return handle.session;
   });
-  const agents = new AgentDatabase(db);
-  const createdAgent = await agents.createAgent({ name: "Critic" });
-  const agent = (await agents.updateAgent({
-    agentId: createdAgent.id,
-    persona: "Original persona",
-    model: { provider: "copilot", name: "model-one" },
-  }))!;
-  if (agentSession) await new ChannelDatabase(db).createChannel({ title: "Configuration" });
-  if (agentSession) {
-    const channel = (await new ChannelDatabase(db).listChannels()).channels[0]!;
-    await agents.createMembership({
-      host: { kind: "channel", channelId: channel.id },
-      agentId: agent.id,
+  const channels = new ChannelDatabase(db);
+  if (channelWorker) {
+    const channel = await channels.createChannel({ title: "Configuration" });
+    await channels.createMember({
+      type: "channel",
+      channelId: channel.id,
       sessionId,
+      ephemeral: false,
+      name: "Critic",
+      metadata: {
+        seenThrough: 0,
+        role: "Original role",
+        model: { provider: "copilot", name: "model-one" },
+      },
     });
   }
   onTestFinished(() => {
@@ -55,14 +58,25 @@ async function setup(agentSession: boolean) {
     mock.restore();
     return db.close();
   });
-  return { sessionId, agents, agent, create, resume, handles };
+  return { sessionId, db, create, resume, handles };
+}
+
+async function setChannelAgentMetadata(
+  database: Bun.SQL,
+  sessionId: string,
+  metadata: ChannelAgentMetadata,
+): Promise<void> {
+  const workers = new WorkerDatabase(database);
+  const worker = await workers.get(sessionId);
+  if (worker?.type !== "channel") throw new Error("Channel Worker not found.");
+  await workers.update(sessionId, { name: worker.name, metadata: smallJsonSchema.parse(metadata) });
 }
 
 function makeSession() {
   const send = mock(async () => crypto.randomUUID());
   const disconnect = mock(async () => {});
   const session = {
-    identity: { sessionId: "test", providerId: "copilot", nativeId: "test" },
+    provider: { id: "copilot", sessionId: "test" },
     onEvent: () => () => {},
     setModel: async () => {},
     rename: async () => true,
@@ -74,11 +88,24 @@ function makeSession() {
 }
 
 describe("Session-owned configuration lifetime", () => {
-  test("assigns role-specific tools to each non-Agent Session type", async () => {
-    const { sessionId } = await setup(false);
+  test("assigns role-specific tools to each Session type", async () => {
+    const { sessionId, db } = await setup(false);
+    const workerSessionId = `${sessionId}-worker`;
+    await new WorkerDatabase(db).create({
+      type: "app",
+      appId: "app-a",
+      sessionId: workerSessionId,
+      ephemeral: true,
+    });
     const toolsFor = async (
       sessionType: "standard" | "hyper" | "automation" | "inbox" | "worker",
-    ) => (await getSessionConfiguration(sessionId, sessionType)).tools.map((tool) => tool.name);
+    ) =>
+      (
+        await getSessionConfiguration(
+          sessionType === "worker" ? workerSessionId : sessionId,
+          sessionType,
+        )
+      ).tools.map((tool) => tool.name);
 
     const standard = await toolsFor("standard");
     expect(standard).toEqual(
@@ -86,8 +113,9 @@ describe("Session-owned configuration lifetime", () => {
         "update_session_title",
         "open_session",
         "open_file",
+        "list_models",
         "list_channels",
-        "create_agent",
+        "create_channel_members",
       ]),
     );
     expect(standard).not.toContain("create_session");
@@ -101,65 +129,77 @@ describe("Session-owned configuration lifetime", () => {
         "open_file",
         "register_editor",
         "update_settings",
+        "list_models",
         "list_channels",
-        "create_agent",
+        "create_channel_members",
       ]),
     );
     expect(hyper).not.toContain("update_session_title");
 
     const automation = await toolsFor("automation");
-    expect(automation).toEqual(expect.arrayContaining(["list_channels", "update_settings"]));
-    expect(automation).not.toContain("create_agent");
+    expect(automation).toEqual(
+      expect.arrayContaining(["list_models", "list_channels", "update_settings"]),
+    );
+    expect(automation).not.toContain("create_channel_members");
     expect(automation).not.toContain("open_file");
 
     const inbox = await toolsFor("inbox");
     expect(inbox).toEqual(
-      expect.arrayContaining(["list_channels", "create_agent", "send_to_inbox"]),
+      expect.arrayContaining([
+        "list_models",
+        "list_channels",
+        "create_channel_members",
+        "send_to_inbox",
+      ]),
     );
     expect(inbox).not.toContain("update_settings");
 
     const worker = await toolsFor("worker");
     expect(worker).not.toContain("list_channels");
-    expect(worker).not.toContain("create_agent");
+    expect(worker).toContain("list_models");
+    expect(worker).not.toContain("create_channel_members");
     expect(worker).not.toContain("open_file");
   });
 
   test.each(["copilot", "codex"] as const)(
-    "inherited Agent models preserve an existing %s provider when the workspace default changes",
+    "inherited Channel agent models preserve an existing %s provider when the workspace default changes",
     async (providerId) => {
-      const { sessionId, agent, agents } = await setup(true);
-      await agents.updateAgent({ agentId: agent.id, model: null });
+      const { sessionId, db } = await setup(true);
+      await setChannelAgentMetadata(db, sessionId, {
+        seenThrough: 0,
+        role: "Original role",
+      });
       const defaultModel = {
         provider: providerId === "copilot" ? "codex" : "copilot",
         name: "new-default",
       };
       spyOn(settings, "getSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, defaultModel });
-      expect(await getSessionConfiguration(sessionId, "agent")).toMatchObject({
+      expect(await getSessionConfiguration(sessionId, "worker")).toMatchObject({
         model: defaultModel,
       });
 
-      await bindProviderSession({ sessionId, providerId, nativeId: "existing-native-session" });
-      expect(await getSessionConfiguration(sessionId, "agent")).not.toHaveProperty("model");
+      await setSessionProvider(sessionId, { id: providerId, sessionId: "existing-native-session" });
+      expect(await getSessionConfiguration(sessionId, "worker")).not.toHaveProperty("model");
 
       const sameProviderDefault = { provider: providerId, name: "updated-model" };
       spyOn(settings, "getSettings").mockResolvedValue({
         ...DEFAULT_SETTINGS,
         defaultModel: sameProviderDefault,
       });
-      expect(await getSessionConfiguration(sessionId, "agent")).toMatchObject({
+      expect(await getSessionConfiguration(sessionId, "worker")).toMatchObject({
         model: sameProviderDefault,
       });
     },
   );
 
-  test("Agents refresh changed configuration only between executions", async () => {
-    const { sessionId, agent, agents, create, resume, handles } = await setup(true);
+  test("Channel agents refresh changed configuration only between executions", async () => {
+    const { sessionId, db, create, resume, handles } = await setup(true);
     const receipt = await createSession(
       sessionId,
       {
         systemMessage: { type: "channel_message", senderName: "You" },
       },
-      { sessionType: "agent" },
+      { sessionType: "worker" },
     );
     expect(create).toHaveBeenCalledTimes(1);
     const initialConfiguration = create.mock.calls[0]![1];
@@ -167,38 +207,31 @@ describe("Session-owned configuration lifetime", () => {
       "discover other sessions",
     );
     expect(initialConfiguration).toMatchObject({
-      additionalInstructions: expect.stringContaining("Original persona"),
+      additionalInstructions: expect.stringContaining("Original role"),
       model: { provider: "copilot", name: "model-one" },
     });
     const initialToolNames = initialConfiguration.tools?.map((tool) => tool.name) ?? [];
     expect(initialToolNames).toEqual(
       expect.arrayContaining([
         "read_channel",
+        "list_models",
+        "create_channel_members",
         "set_channel_status",
         "finish_agent_turn",
         "update_agent",
       ]),
     );
     expect(initialToolNames).not.toContain("list_sessions");
-    expect(agent.avatar).toBeUndefined();
-
-    await agents.selfUpdateAgent(agent.id, {
-      persona: "Evolved persona",
+    await setChannelAgentMetadata(db, sessionId, {
+      seenThrough: 0,
+      role: "Evolved role",
       avatar: { mark: "M5 12h14M12 5v14", color: "#7c3aed" },
-    });
-    await agents.manageExperience(agent.id, {
-      action: "add",
-      content: "Prefer evidence.",
-    });
-    await agents.updateAgent({
-      agentId: agent.id,
       model: { provider: "copilot", name: "model-two" },
     });
     await deliverSessionMessage(sessionId, { content: "Continue", immediate: true });
     expect(resume).not.toHaveBeenCalled();
     expect(handles[0]!.disconnect).not.toHaveBeenCalled();
 
-    // Ordinary Session completion needs neither an Agent acknowledgment nor an avatar.
     SessionStream.get(sessionId)!.finish();
     expect(await receipt.waitForCompletion()).toMatchObject({
       status: "completed",
@@ -219,9 +252,8 @@ describe("Session-owned configuration lifetime", () => {
       model: { provider: "copilot", name: "model-two" },
       disableMemory: true,
     });
-    expect(configuration.additionalInstructions).toContain("Evolved persona");
+    expect(configuration.additionalInstructions).toContain("Evolved role");
     expect(configuration.additionalInstructions).toContain("#7c3aed self-authored mark");
-    expect(configuration.additionalInstructions).toContain("Prefer evidence.");
     expect(handles[1]!.send).toHaveBeenCalledTimes(2);
 
     SessionStream.get(sessionId)!.finish();
@@ -231,11 +263,15 @@ describe("Session-owned configuration lifetime", () => {
     expect(handles[1]!.send).toHaveBeenCalledTimes(3);
   });
 
-  test("bounded SDK operations do not refresh changed Agent configuration", async () => {
-    const { sessionId, agent, agents, resume, handles } = await setup(true);
-    await createSession(sessionId, { content: "Start" }, { sessionType: "agent" });
+  test("bounded SDK operations do not refresh changed Channel agent configuration", async () => {
+    const { sessionId, db, resume, handles } = await setup(true);
+    await createSession(sessionId, { content: "Start" }, { sessionType: "worker" });
     SessionStream.get(sessionId)!.finish();
-    await agents.updateAgent({ agentId: agent.id, persona: "Changed persona" });
+    await setChannelAgentMetadata(db, sessionId, {
+      seenThrough: 0,
+      role: "Changed role",
+      model: { provider: "copilot", name: "model-one" },
+    });
 
     await registry.withSession(sessionId, (session) => session.rename("Renamed"));
 
@@ -247,6 +283,26 @@ describe("Session-owned configuration lifetime", () => {
     expect(handles[0]!.disconnect).toHaveBeenCalledTimes(1);
   });
 
+  test("automatic titles publish only accepted changes without a native event echo", async () => {
+    const { sessionId, handles } = await setup(false);
+    await deliverSessionMessage(sessionId, { content: "First" });
+    const rename = spyOn(handles[0]!.session, "rename")
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const titles: string[] = [];
+    onTestFinished(
+      subscribeWorkspaceEvents((event) => {
+        if (event.type === "session.upserted" && event.session.id === sessionId)
+          titles.push(event.session.title!);
+      }),
+    );
+
+    expect(await registry.updateSessionTitle(sessionId, "New focus")).toBe(true);
+    expect(await registry.updateSessionTitle(sessionId, "Preserve the owner's title")).toBe(false);
+    expect(rename).toHaveBeenCalledWith("New focus", true);
+    expect(titles).toEqual(["New focus"]);
+  });
+
   test("ordinary Sessions retain their cached SDK sessions between executions", async () => {
     const { sessionId, resume, handles } = await setup(false);
     await deliverSessionMessage(sessionId, { content: "First" });
@@ -255,6 +311,30 @@ describe("Session-owned configuration lifetime", () => {
     expect(resume).toHaveBeenCalledTimes(1);
     expect(handles[0]!.disconnect).not.toHaveBeenCalled();
     expect(handles[0]!.send).toHaveBeenCalledTimes(2);
+  });
+
+  test("deletion waits for the native connection's final history flush", async () => {
+    const { sessionId, handles } = await setup(false);
+    await deliverSessionMessage(sessionId, { content: "First" });
+    let history: string | undefined = "Transcript";
+    const disconnecting = Promise.withResolvers<void>();
+    const disconnected = Promise.withResolvers<void>();
+    handles[0]!.disconnect.mockImplementation(async () => {
+      disconnecting.resolve();
+      await disconnected.promise;
+      history = "Final native flush";
+    });
+    spyOn(sdk, "deleteSession").mockImplementation(async () => {
+      history = undefined;
+    });
+
+    const deletion = registry.deleteSession(sessionId);
+    await disconnecting.promise;
+    expect(SessionStream.get(sessionId)).toBeUndefined();
+    expect(history).toBe("Transcript");
+    disconnected.resolve();
+    await deletion;
+    expect(history).toBeUndefined();
   });
 
   test("disconnects after the idle window and waits for detach before resuming", async () => {

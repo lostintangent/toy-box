@@ -5,7 +5,6 @@ import { getRequest } from "@tanstack/react-start/server";
 import { zodValidator } from "@tanstack/zod-adapter";
 import type { RealtimeToken } from "@tanstack/ai";
 import type { ServerRequest } from "nitro/types";
-import { listModels as listProviderModels } from "@providers/server";
 import {
   listSessions as listProviderSessions,
   listSkills as listProviderSkills,
@@ -26,14 +25,13 @@ import {
   rewindSession as rewindRuntimeSession,
   steerQueuedMessage as steerRuntimeQueuedMessage,
   streamSession as streamSessionEvents,
-  waitForSession as waitForRuntimeSession,
+  waitForSessions,
 } from "@sessions/server/runtime";
-import type { ModelInfo, SessionCompletion, SessionSkill, SessionState } from "../model";
-import { SESSION_ID_PREFIX } from "../model/constants";
+import type { SessionCompletion, SessionSkill, SessionState } from "../model";
 import {
   answerSessionQuestionInputSchema,
   sessionLaunchSchema,
-  createDraftSessionInputSchema,
+  createSessionInputSchema,
   deliverMessageInputSchema,
   listSkillsInputSchema,
   sendSystemMessageInputSchema,
@@ -57,12 +55,6 @@ const withSessionId = createMiddleware({ type: "function" }).validator(
 /** Fetch durable session list metadata in a single round-trip. */
 export const getSessionsState = createServerFn({ method: "GET" }).handler(() =>
   readSessionCatalog(() => Promise.all([listProviderSessions(), getAllSessionWorktrees()])),
-);
-
-export const listModels = createServerFn({ method: "GET" }).handler(
-  async (): Promise<ModelInfo[]> => {
-    return listProviderModels();
-  },
 );
 
 /** Mint a short-lived OpenAI Realtime client secret for voice input. */
@@ -103,9 +95,10 @@ export const querySession = createServerFn({ method: "POST" })
 /** Wait for the announced, live, or latest persisted execution of one session. */
 export const waitForSession = createServerFn({ method: "POST" })
   .validator(zodValidator(waitForSessionInputSchema))
-  .handler(
-    ({ data }): Promise<SessionCompletion> => waitForRuntimeSession(data.sessionId, data.timeoutMs),
-  );
+  .handler(async ({ data }): Promise<SessionCompletion> => {
+    const [completion] = await waitForSessions([data.sessionId], data.timeoutMs);
+    return completion!;
+  });
 
 export const streamSession = createServerFn({ method: "POST" })
   .validator(zodValidator(streamSessionRequestSchema))
@@ -130,10 +123,10 @@ export const streamSession = createServerFn({ method: "POST" })
  *  Clients receive progress through the broadcast plane alone (upsert →
  *  running → idle/unread), the same way automation and agent-spawned sessions
  *  surface. Resolves once the turn has opened, not when it completes. */
-export const createSession = createServerFn({ method: "POST" })
+export const startSession = createServerFn({ method: "POST" })
   .validator(zodValidator(sessionLaunchSchema))
   .handler(async ({ data }): Promise<{ sessionId: string }> => {
-    const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
+    const sessionId = crypto.randomUUID();
     await createRuntimeSession(sessionId, data.message, {
       ...data.location,
       sessionType: "standard",
@@ -142,10 +135,10 @@ export const createSession = createServerFn({ method: "POST" })
   });
 
 /** Reserve a provider-independent draft and its optional initial artifact. */
-export const createDraftSession = createServerFn({ method: "POST" })
-  .validator(zodValidator(createDraftSessionInputSchema))
+export const createSession = createServerFn({ method: "POST" })
+  .validator(zodValidator(createSessionInputSchema))
   .handler(({ data: { sessionId, ...options } }) =>
-    sessionRegistry.createDraftSession(sessionId, options),
+    sessionRegistry.createSessionRecord(sessionId, options),
   );
 
 /** Deliver a follow-up message, optionally requesting immediate delivery. */

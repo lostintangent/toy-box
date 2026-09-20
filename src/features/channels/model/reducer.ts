@@ -30,15 +30,13 @@ export function reduceChannelState(state: ChannelState, event: ChannelEvent): Ch
       switch (content.type) {
         case "member_joined":
           next.members = [
-            ...state.members.filter(({ sessionId }) => sessionId !== content.member.sessionId),
+            ...state.members.filter(({ id }) => id !== content.member.id),
             content.member,
           ];
           break;
 
         case "member_left":
-          next.members = state.members.filter(
-            ({ sessionId }) => sessionId !== content.member.sessionId,
-          );
+          next.members = state.members.filter(({ id }) => id !== content.member.id);
           break;
 
         case "artifact_shared":
@@ -63,9 +61,13 @@ export function reduceChannelState(state: ChannelState, event: ChannelEvent): Ch
       });
       return next;
 
+    case "member":
+      next.members = [...state.members.filter(({ id }) => id !== event.member.id), event.member];
+      return next;
+
     case "status":
       next.members = state.members.map((member) =>
-        member.sessionId === event.sessionId ? { ...member, status: event.status } : member,
+        member.id === event.agentId ? { ...member, status: event.status } : member,
       );
       return next;
   }

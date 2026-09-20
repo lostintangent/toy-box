@@ -10,22 +10,16 @@ import { hasHyperSession } from "@workspace/server/state/hyperSessions";
 export async function readSessionCatalog(
   readCatalog: () => Promise<[SessionsState["sessions"], SessionsState["worktrees"]]>,
 ): Promise<SessionsState> {
-  const [{ listAgentSessionIds }, { getWorkerSessionParents }] = await Promise.all([
-    import("@agents/server"),
-    import("@workers/server/database"),
-  ]);
-  const readOwnership = () => Promise.all([listAgentSessionIds(), getWorkerSessionParents()]);
+  const { getWorkerSessionParents } = await import("@workers/server/database");
+  const readOwnership = () => getWorkerSessionParents();
   // Ownership precedes SDK creation and outlives SDK deletion. Read it on both
   // sides so a concurrent change cannot expose a backing Session as ordinary.
-  const [agentsBefore, workersBefore] = await readOwnership();
+  const workersBefore = await readOwnership();
   const [sessions, worktrees] = await readCatalog();
-  const [agentsAfter, workersAfter] = await readOwnership();
-  const unlisted = new Set([...agentsBefore, ...agentsAfter]);
+  const workersAfter = await readOwnership();
   return {
-    sessions: sessions.filter(({ sessionId }) => !unlisted.has(sessionId)),
-    worktrees: Object.fromEntries(
-      Object.entries(worktrees).filter(([sessionId]) => !unlisted.has(sessionId)),
-    ),
+    sessions,
+    worktrees,
     workerSessionParents: { ...workersBefore, ...workersAfter },
   };
 }
@@ -39,8 +33,7 @@ export async function resolveSessionType(sessionId: string): Promise<SessionType
           SELECT
             EXISTS(SELECT 1 FROM automations WHERE id = ${sessionId}) AS automation,
             EXISTS(SELECT 1 FROM inbox WHERE id = ${sessionId}) AS inbox,
-            EXISTS(SELECT 1 FROM workers WHERE session_id = ${sessionId}) AS worker,
-            EXISTS(SELECT 1 FROM agent_memberships WHERE session_id = ${sessionId}) AS agent
+            EXISTS(SELECT 1 FROM workers WHERE session_id = ${sessionId}) AS worker
         `
       )[0]
     : undefined;
@@ -50,7 +43,6 @@ export async function resolveSessionType(sessionId: string): Promise<SessionType
   if (row?.inbox) types.push("inbox");
   if (hasHyperSession(sessionId)) types.push("hyper");
   if (row?.worker) types.push("worker");
-  if (row?.agent) types.push("agent");
 
   if (types.length > 1) {
     throw new Error(`Session ${sessionId} has conflicting types: ${types.join(", ")}`);
@@ -66,17 +58,18 @@ export async function deleteOwnedSessions(sessionId: string): Promise<void> {
 
 /** Remove feature ownership after the shared Session resource is gone. */
 export async function detachManagedSession(sessionId: string): Promise<void> {
-  const [{ unregisterWorkerSession }, { detachAgentSession }] = await Promise.all([
-    import("@workers/server/database"),
-    import("@agents/server/supervisor"),
-  ]);
-  await unregisterWorkerSession(sessionId);
-  await detachAgentSession(sessionId);
+  const { getPersistedWorker, unregisterWorkerSession } = await import("@workers/server/database");
+  const worker = await getPersistedWorker(sessionId);
+  if (worker?.type === "channel") {
+    const { detachChannelAgentSession } = await import("@channels/server");
+    await detachChannelAgentSession(sessionId);
+  } else if (worker) {
+    await unregisterWorkerSession(sessionId);
+  }
 }
 
 type SessionTypeClaims = {
   automation: number;
   inbox: number;
   worker: number;
-  agent: number;
 };

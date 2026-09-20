@@ -1,91 +1,74 @@
-// Durable public identity. A session is a draft until it binds to native history.
-import type { DraftSession } from "@sessions/model";
-import type { SessionIdentity } from "@providers/server/provider";
+// Sessions owns durable IDs and provider associations; providers own native metadata and history.
+import type { Session } from "@sessions/model";
 import { getStateDatabase } from "@/server/database";
 
-export async function getDraftSessions(): Promise<DraftSession[]> {
+export async function readSessions(): Promise<Session[]> {
   const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return [];
-  const rows = await db<DraftSessionRow[]>`
-    SELECT * FROM sessions WHERE provider_id IS NULL ORDER BY created_at DESC
-  `;
-  return rows.map(draftSessionFromRow);
+  return (await db<SessionRow[]>`SELECT * FROM sessions`).map(sessionFromRow);
 }
 
-export async function getDraftSession(sessionId: string): Promise<DraftSession | null> {
+export async function readSession(id: string): Promise<Session | undefined> {
   const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return null;
-  const [row] = await db<DraftSessionRow[]>`
-    SELECT * FROM sessions WHERE session_id = ${sessionId} AND provider_id IS NULL
-  `;
-  return row ? draftSessionFromRow(row) : null;
+  if (!db) return undefined;
+  const [row] = await db<SessionRow[]>`SELECT * FROM sessions WHERE session_id = ${id}`;
+  return row ? sessionFromRow(row) : undefined;
 }
 
-export async function persistDraftSession(draft: DraftSession): Promise<void> {
+export async function insertSession(
+  session: Pick<Session, "id" | "createdAt" | "artifactPath">,
+): Promise<void> {
   const db = await getStateDatabase();
   await db`
     INSERT INTO sessions (session_id, artifact_path, created_at)
-    VALUES (${draft.sessionId}, ${draft.artifactPath ?? null}, ${draft.createdAt})
+    VALUES (${session.id}, ${session.artifactPath ?? null}, ${session.createdAt.getTime()})
   `;
 }
 
-export async function readProviderBindings(): Promise<SessionIdentity[]> {
+export async function setSessionProvider(
+  id: string,
+  provider: NonNullable<Session["provider"]>,
+): Promise<void> {
   const db = await getStateDatabase();
-  const rows = await db<BindingRow[]>`SELECT * FROM sessions WHERE provider_id IS NOT NULL`;
-  return rows.map(identity);
-}
-
-export async function readProviderBinding(sessionId: string): Promise<SessionIdentity | undefined> {
-  const db = await getStateDatabase();
-  const [row] = await db<BindingRow[]>`
-    SELECT * FROM sessions WHERE session_id = ${sessionId} AND provider_id IS NOT NULL
-  `;
-  return row ? identity(row) : undefined;
-}
-
-export async function bindProviderSession(binding: SessionIdentity): Promise<void> {
-  const db = await getStateDatabase();
+  const nativeId = provider.sessionId && provider.sessionId !== id ? provider.sessionId : null;
   await db`INSERT INTO sessions (session_id, provider_id, native_id, created_at)
-    VALUES (${binding.sessionId}, ${binding.providerId}, ${binding.nativeId}, ${Date.now()})
+    VALUES (${id}, ${provider.id}, ${nativeId}, ${Date.now()})
     ON CONFLICT(session_id) DO UPDATE SET
       provider_id = excluded.provider_id, native_id = excluded.native_id
     WHERE sessions.provider_id IS NULL`;
-  const persisted = await readProviderBinding(binding.sessionId);
-  if (persisted?.providerId !== binding.providerId || persisted.nativeId !== binding.nativeId) {
-    throw new Error("Session is already bound to a different provider history.");
+  const persisted = await readSession(id);
+  if (
+    persisted?.provider?.id !== provider.id ||
+    (persisted.provider.sessionId ?? id) !== (nativeId ?? id)
+  ) {
+    throw new Error("Session already uses a different provider history.");
   }
 }
 
-export async function deleteSessionRecord(sessionId: string): Promise<void> {
+export async function deleteSessionRecord(id: string): Promise<void> {
   const db = await getStateDatabase({ createIfMissing: false });
   if (!db) return;
-  await db`DELETE FROM sessions WHERE session_id = ${sessionId}`;
+  await db`DELETE FROM sessions WHERE session_id = ${id}`;
 }
 
-type DraftSessionRow = {
+type SessionRow = {
   session_id: string;
+  provider_id: string | null;
+  native_id: string | null;
   artifact_path: string | null;
   created_at: number;
 };
 
-function draftSessionFromRow(row: DraftSessionRow): DraftSession {
+function sessionFromRow(row: SessionRow): Session {
   return {
-    sessionId: row.session_id,
-    createdAt: row.created_at,
+    id: row.session_id,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.created_at),
+    ...(row.provider_id
+      ? {
+          provider: { id: row.provider_id, ...(row.native_id ? { sessionId: row.native_id } : {}) },
+        }
+      : {}),
     ...(row.artifact_path ? { artifactPath: row.artifact_path } : {}),
-  };
-}
-
-type BindingRow = {
-  session_id: string;
-  provider_id: string;
-  native_id: string;
-};
-
-function identity(row: BindingRow): SessionIdentity {
-  return {
-    sessionId: row.session_id,
-    providerId: row.provider_id,
-    nativeId: row.native_id,
   };
 }

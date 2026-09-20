@@ -2,8 +2,6 @@ import { Suspense, useRef, type RefObject } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { CatchBoundary, ClientOnly } from "@tanstack/react-router";
 import { AlertCircle } from "lucide-react";
-import type { Agent } from "@agents/model";
-import { agentQueries } from "@agents/queries";
 import type { Channel } from "@channels/model";
 import { channelQueries } from "@channels/queries";
 import { useChannel } from "@channels/useChannel";
@@ -24,14 +22,13 @@ export function ChannelPane({
   variant: PaneVariant;
 }) {
   const {
-    data: { channels, memberships },
+    data: { channels, members },
   } = useSuspenseQuery(channelQueries.list());
-  const { data: agents } = useSuspenseQuery(agentQueries.list());
   const scrollToBottomRef = useRef<() => void>(null);
   const channel = channels.find(({ id }) => id === channelId);
 
   if (!channel) return <ChannelUnavailable />;
-  const members = memberships.filter(({ host }) => host.channelId === channelId);
+  const channelMembers = members.filter((member) => member.channelId === channelId);
   const detailFallback = (
     <div className="min-h-0 flex-1">
       <TranscriptSkeleton />
@@ -45,7 +42,6 @@ export function ChannelPane({
           <Suspense fallback={detailFallback}>
             <ChannelDetail
               channel={channel}
-              agents={agents}
               isVisible={isVisible}
               variant={variant}
               scrollToBottomRef={scrollToBottomRef}
@@ -56,8 +52,7 @@ export function ChannelPane({
         <div className="shrink-0 border-t bg-background px-4 pt-4 md:pb-4">
           <ChannelComposer
             channel={channel}
-            members={members}
-            agents={agents}
+            members={channelMembers}
             onSubmit={() => scrollToBottomRef.current?.()}
           />
         </div>
@@ -68,13 +63,11 @@ export function ChannelPane({
 
 function ChannelDetail({
   channel,
-  agents,
   isVisible,
   variant,
   scrollToBottomRef,
 }: {
   channel: Channel;
-  agents: Agent[];
   isVisible: boolean;
   variant: PaneVariant;
   scrollToBottomRef: RefObject<(() => void) | null>;
@@ -87,7 +80,6 @@ function ChannelDetail({
         <ChannelMenu
           channel={channel}
           members={state.members}
-          agents={agents}
           artifacts={state.artifacts}
           variant={variant}
         />
@@ -96,7 +88,6 @@ function ChannelDetail({
         <ChannelTranscript
           messages={state.messages}
           members={state.members}
-          agents={agents}
           scrollToBottomRef={scrollToBottomRef}
           onLoadPrevious={loadPrevious}
         />

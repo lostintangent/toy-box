@@ -188,8 +188,8 @@ Use `useWorkspace(selector)` for the smallest reactive workspace projection the
 component needs:
 
 ```ts
-type AppSession = SessionMetadata & {
-  status: "draft" | "running" | "waiting" | "idle" | "unread";
+type AppSession = Session & {
+  status: "running" | "waiting" | "idle" | "unread";
   kind: "standard" | "automation" | "hyper";
   worktree?: SessionWorktree;
   children: AppSession[];
@@ -206,19 +206,7 @@ type AppWorkspace = {
     accepts: string[];
   }>;
   shares: AppShare[];
-  models: Array<{
-    id: string;
-    name: string;
-    provider: string;
-    providerName?: string;
-    supportedReasoningEfforts?: string[];
-    defaultReasoningEffort?: string;
-    /** Ordered with the model's default tier first. */
-    supportedContextTiers?: Array<{
-      name: string;
-      tokenWindow: number;
-    }>;
-  }>;
+  models: readonly ModelInfo[];
   defaultModel: ModelConfiguration | null;
   openSessionIds: string[];
   openFiles: WorkspaceFile[];
@@ -232,13 +220,15 @@ type AppWorkspace = {
 const sessions = useWorkspace((workspace) => workspace.sessions);
 ```
 
-`AppSession` and `SessionMetadata` are exported by `@toy-box/sdk`. The session
-metadata passes through unchanged: `sessionId`, optional `provider` and `title`,
-`startTime` and `modifiedTime` as `Date` values, optional `directory`, and available
-native `gitRoot`, `repository`, and `branch` display metadata.
-The status type is shared with the workspace. Use `session.sessionId` with session actions and controls,
-`session.directory` for its directory, and a display fallback such
-as `session.title ?? "Untitled session"` when needed.
+`AppSession`, `Session`, `SessionContext`, `ModelInfo`, and `ModelConfiguration` are
+exported by `@toy-box/sdk`. The session catalog fields pass
+through unchanged: `id`, optional `provider: { id, sessionId? }`, optional `title`,
+`createdAt` and `updatedAt` as `Date` values, and optional `context` containing
+`directory`, `gitRoot`, `repository`, and `branch`.
+No provider means the session has not started. The status type is shared with the
+workspace. Use `session.id` with session actions and controls,
+`session.context?.directory` for its directory, and a display fallback such as
+`session.title ?? "Untitled session"` when needed.
 Git fields are presentation metadata, not inputs to session creation.
 
 Use this data to render live session status, durable child-session trees,

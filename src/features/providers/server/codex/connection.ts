@@ -1,12 +1,8 @@
 import { SessionConnectionUnavailableError } from "@providers/server/provider";
-import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
-import type { SessionEvent, SessionMessage, SessionSkill } from "@sessions/model";
+import type { ModelConfiguration } from "@providers/model";
+import type { Session, SessionEvent, SessionMessage, SessionSkill } from "@sessions/model";
 import type { SessionQuestionAnswer } from "@sessions/model/protocol";
-import type {
-  SessionIdentity,
-  SessionConfiguration,
-  SessionConnection,
-} from "@providers/server/provider";
+import type { SessionConfiguration, SessionConnection } from "@providers/server/provider";
 import { normalizeToolResult, type ToolResult } from "@sessions/server/tools/definition";
 import type {
   DynamicToolCallParams,
@@ -28,7 +24,7 @@ import {
   itemTimestamp,
   scopeCodexSubagentEvent,
 } from "./projector";
-import { encodeInput } from "./inputs";
+import { encodeInput } from "./messages";
 import { readThreadHistory } from "./history";
 
 type PendingQuestion = {
@@ -48,7 +44,8 @@ type SubagentProjection = {
 };
 
 export class CodexConnection implements SessionConnection {
-  readonly identity: SessionIdentity;
+  readonly provider: { id: string; sessionId: string };
+  private readonly sessionId: string;
   #listeners = new Set<(event: SessionEvent) => void>();
   #dispose: (() => void)[];
   #project: ReturnType<typeof createCodexProjector>;
@@ -62,14 +59,15 @@ export class CodexConnection implements SessionConnection {
 
   constructor(
     private readonly rpc: CodexTransport,
-    identity: SessionIdentity,
+    session: Pick<Session, "id" | "provider">,
     private readonly configuration: SessionConfiguration,
     model: ModelConfiguration,
     private readonly skills: readonly SessionSkill[],
   ) {
-    this.identity = identity;
+    this.sessionId = session.id;
+    this.provider = { id: "codex", sessionId: session.provider?.sessionId ?? session.id };
     this.#model = model;
-    this.#project = createCodexProjector(identity.sessionId);
+    this.#project = createCodexProjector(session.id);
     this.#dispose = [
       rpc.onNotification((notification) => this.#notification(notification)),
       rpc.onRequest((request) => this.#request(request)),
@@ -88,12 +86,12 @@ export class CodexConnection implements SessionConnection {
   async send(message: SessionMessage): Promise<void> {
     if (this.#disconnected)
       throw new SessionConnectionUnavailableError("Codex session disconnected.");
-    const input = await encodeInput(this.configuration.attachmentsDirectory, message, this.skills);
+    const input = encodeInput(message, this.skills);
     if (message.immediate) {
       if (!this.#turn)
         throw new Error("The Codex turn has ended. Send this message as a new turn.");
       await this.rpc.request("turn/steer", {
-        threadId: this.identity.nativeId,
+        threadId: this.provider.sessionId,
         expectedTurnId: this.#turn.id,
         clientUserMessageId: message.clientId,
         input,
@@ -101,7 +99,7 @@ export class CodexConnection implements SessionConnection {
     } else {
       this.#terminalTurn = undefined;
       await this.rpc.request("turn/start", {
-        threadId: this.identity.nativeId,
+        threadId: this.provider.sessionId,
         clientUserMessageId: message.clientId,
         input,
         model: this.#model.name,
@@ -141,7 +139,7 @@ export class CodexConnection implements SessionConnection {
     this.#cancelRequests();
     if (this.#turn)
       await this.rpc.request("turn/interrupt", {
-        threadId: this.identity.nativeId,
+        threadId: this.provider.sessionId,
         turnId: this.#turn.id,
       });
   }
@@ -153,23 +151,23 @@ export class CodexConnection implements SessionConnection {
     for (const dispose of this.#dispose) dispose();
     this.#listeners.clear();
     this.#subagents.clear();
-    await this.rpc.request("thread/unsubscribe", { threadId: this.identity.nativeId });
+    await this.rpc.request("thread/unsubscribe", { threadId: this.provider.sessionId });
   }
 
   async rename(name: string, automatic?: true): Promise<boolean> {
     if (automatic) {
       const { thread } = await this.rpc.request("thread/read", {
-        threadId: this.identity.nativeId,
+        threadId: this.provider.sessionId,
       });
       if (thread.name) return false;
     }
-    await this.rpc.request("thread/name/set", { threadId: this.identity.nativeId, name });
+    await this.rpc.request("thread/name/set", { threadId: this.provider.sessionId, name });
     return true;
   }
 
   async rewind(timestamp: string): Promise<void> {
     if (this.#turn) throw new Error("Stop the session before rewinding it.");
-    const thread = await readThreadHistory(this.rpc, this.identity.nativeId);
+    const thread = await readThreadHistory(this.rpc, this.provider.sessionId);
     const index = thread.turns.findIndex((turn) =>
       turn.items.some(
         (item, i) => item.type === "userMessage" && itemTimestamp(turn, i) === timestamp,
@@ -189,7 +187,7 @@ export class CodexConnection implements SessionConnection {
         threadId: thread.id,
         numTurns: thread.turns.length - index,
       });
-    this.#project = createCodexProjector(this.identity.sessionId);
+    this.#project = createCodexProjector(this.sessionId);
     this.#subagents.clear();
   }
 
@@ -208,7 +206,7 @@ export class CodexConnection implements SessionConnection {
     if (!params || typeof params !== "object" || !("threadId" in params)) return;
     const threadId = params.threadId;
     if (typeof threadId !== "string") return;
-    if (threadId !== this.identity.nativeId) {
+    if (threadId !== this.provider.sessionId) {
       this.#subagentNotification(threadId, notification);
       return;
     }
@@ -243,7 +241,7 @@ export class CodexConnection implements SessionConnection {
         this.#turn?.id === turnId
       ) {
         void this.rpc
-          .request("turn/interrupt", { threadId: this.identity.nativeId, turnId })
+          .request("turn/interrupt", { threadId: this.provider.sessionId, turnId })
           .catch((error) => {
             if (this.#turn?.id === turnId) this.#fail(error);
           });
@@ -266,7 +264,7 @@ export class CodexConnection implements SessionConnection {
     for (const threadId of threadIds) {
       this.#subagents.set(threadId, {
         call,
-        project: createCodexProjector(this.identity.sessionId),
+        project: createCodexProjector(this.sessionId),
       });
     }
   }
@@ -312,7 +310,7 @@ export class CodexConnection implements SessionConnection {
       !request.params ||
       typeof request.params !== "object" ||
       !("threadId" in request.params) ||
-      request.params.threadId !== this.identity.nativeId
+      request.params.threadId !== this.provider.sessionId
     )
       return false;
     if (request.method === "item/tool/call") {
@@ -359,7 +357,7 @@ export class CodexConnection implements SessionConnection {
       const parsed = tool.parameters ? tool.parameters.parse(args) : args;
       result = normalizeToolResult(
         await tool.handler(parsed, {
-          sessionId: this.identity.sessionId,
+          sessionId: this.sessionId,
           toolCallId: callId,
           toolName: name,
           arguments: args,

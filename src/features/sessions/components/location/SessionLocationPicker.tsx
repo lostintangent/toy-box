@@ -35,7 +35,7 @@ function ReadonlySessionLocationPicker({
   worktreeActions,
 }: SessionLocationPickerProps) {
   const { context, error } = useSessionContext({
-    workingDirectory: value ?? undefined,
+    directory: value ?? undefined,
     repository,
     gitRoot,
     branch,
@@ -52,13 +52,13 @@ function ReadonlySessionLocationPicker({
           branch={context.branch}
           repository={context.repository}
           gitRoot={context.gitRoot}
-          cwd={context.workingDirectory}
+          cwd={context.directory}
           className={className}
           {...worktreeActions}
         />
       ) : (
         <SessionDirectoryPicker
-          value={context.workingDirectory}
+          value={context.directory}
           repository={context.repository}
           gitRoot={context.gitRoot}
           className={className}

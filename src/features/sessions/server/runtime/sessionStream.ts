@@ -11,7 +11,7 @@ import { evictCachedSessionIfStale, releaseSession } from "@sessions/server/stat
 import { cacheSnapshot, loadSessionSnapshot } from "@sessions/server/state/snapshots";
 import { setSessionStatus } from "@workspace/server/state";
 import { systemMessageCoalesceKey } from "@sessions/model/systemMessages";
-import { areModelConfigurationsEqual } from "@sessions/model/modelConfiguration";
+import { areModelConfigurationsEqual, type ModelConfiguration } from "@providers/model";
 import type { SessionQuestionAnswer, SessionSubscriptionMode } from "@sessions/model/protocol";
 import { applySessionEvent, createInitialSessionState } from "@sessions/model/reducer";
 import { hasBlockingSessionQuestion, hasPendingSessionQuestion } from "@sessions/model/questions";
@@ -21,7 +21,6 @@ import type {
   SessionMessage,
   SessionState,
 } from "@sessions/model";
-import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
 import { emitSessionNameUpdate } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
 import { createSessionEventBus, type SessionStreamSubscription } from "./eventBus";
@@ -80,7 +79,7 @@ export class SessionStream {
   }
 
   /**
-   * Remove the live runtime after its durable session is deleted elsewhere.
+   * Remove the live runtime as part of deleting its durable session.
    * Subscribers receive a terminal event, but a deleted session publishes no
    * idle/unread update. Completion waiters still settle cleanly.
    */

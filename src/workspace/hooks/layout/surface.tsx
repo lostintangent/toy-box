@@ -1,3 +1,5 @@
+import { useQuery } from "@tanstack/react-query";
+import { sessionQueries } from "@sessions/queries";
 import { useEffect, useRef, type ReactNode } from "react";
 import { createAtom, createStoreContext } from "@tanstack/react-store";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
@@ -66,32 +68,38 @@ export function WorkspaceSurfaceProvider({
   const autoFocusArtifacts = useWorkspaceSelector(
     (workspace) => workspace.settings.autoFocusArtifacts,
   );
-  const draftEditorPaneIds = useWorkspaceSelector((workspace) =>
-    Object.entries(workspace.sessionStates).flatMap(([sessionId, state]) =>
-      state.status === "draft" && state.artifactPath
-        ? [createEditorPaneId(sessionFile(sessionId, state.artifactPath))]
-        : [],
-    ),
+  const automationSessionIds = useWorkspaceSelector((workspace) =>
+    workspace.automations.map(({ id }) => id),
   );
+  const { data: initialEditorPaneIds = [] } = useQuery({
+    ...sessionQueries.state(),
+    select: (state) =>
+      state.sessions.flatMap((session) =>
+        !session.provider && session.artifactPath
+          ? [createEditorPaneId(sessionFile(session.id, session.artifactPath))]
+          : [],
+      ),
+  });
   const seenPaneIdsRef = useRef<ReadonlySet<string> | null>(null);
 
   // Panes present when a surface mounts are not newly opened, except for an
   // artifact-first draft whose artifact is the surface's initial destination.
   if (seenPaneIdsRef.current === null) {
-    const draftEditorPaneIdSet = new Set(draftEditorPaneIds);
+    const initialEditorPaneIdSet = new Set(initialEditorPaneIds);
     seenPaneIdsRef.current = new Set(
-      panes.filter((pane) => !draftEditorPaneIdSet.has(pane.id)).map((pane) => pane.id),
+      panes.filter((pane) => !initialEditorPaneIdSet.has(pane.id)).map((pane) => pane.id),
     );
   }
 
   // Keep this surface's focus valid and let newly opened artifacts claim it.
   useEffect(() => {
-    const draftEditorPaneIdSet = new Set(draftEditorPaneIds);
+    const initialEditorPaneIdSet = new Set(initialEditorPaneIds);
     const { focusPane, seenPaneIds } = resolveEditorAutoFocus(
       seenPaneIdsRef.current!,
       panes,
       autoFocusArtifacts,
-      draftEditorPaneIdSet,
+      automationSessionIds,
+      initialEditorPaneIdSet,
     );
     seenPaneIdsRef.current = seenPaneIds;
 
@@ -100,7 +108,13 @@ export function WorkspaceSurfaceProvider({
       if (currentIsVisible) return current;
       return focusPane?.id ?? null;
     });
-  }, [autoFocusArtifacts, draftEditorPaneIds, panes, workspaceSurface.focusedPaneAtom]);
+  }, [
+    autoFocusArtifacts,
+    automationSessionIds,
+    initialEditorPaneIds,
+    panes,
+    workspaceSurface.focusedPaneAtom,
+  ]);
 
   return (
     <StoreProvider

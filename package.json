@@ -1,6 +1,6 @@
 {
   "name": "@lostintangent/toy-box",
-  "version": "0.1.21",
+  "version": "0.2.0",
   "description": "Your personal coding agent server",
   "bin": {
     "toy-box": "toy-box"
@@ -29,11 +29,13 @@
   },
   "dependencies": {},
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.277",
     "@base-ui/react": "^1.8.0",
     "@github/copilot": "1.0.83",
     "@github/copilot-sdk": "1.0.13",
     "@lostintangent/documint": "latest",
     "@lostintangent/leafnode": "^0.0.1",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@streamdown/code": "^1.1.1",
     "@tailwindcss/oxide": "^4.3.3",
     "@tailwindcss/typography": "^0.5.20",

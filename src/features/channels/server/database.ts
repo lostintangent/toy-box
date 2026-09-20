@@ -1,7 +1,7 @@
-import type { AgentMembership } from "@agents/model";
-import { AgentDatabase } from "@agents/server/database";
 import {
+  agentHandleFromName,
   channelAttachmentSchema,
+  channelAgentMetadataSchema,
   channelMemberStatusSchema,
   channelSystemMessageContentSchema,
   type Channel,
@@ -20,6 +20,9 @@ import {
 } from "@channels/model";
 import { machineFile, sessionFile } from "@files/model";
 import { inStateTransaction } from "@/server/database";
+import { smallJsonSchema } from "@/shared/smallJson";
+import type { Worker } from "@workers/model";
+import { WorkerDatabase } from "@workers/server/database";
 
 const CHANNEL_ID_PREFIX = "toy-box-channel-";
 
@@ -40,29 +43,18 @@ type AppendSystemMessageInput = {
 
 type AppendMessageInput = AppendConversationMessageInput | AppendSystemMessageInput;
 
-/** Channel-owned persistence state that never enters shared member projections. */
-export type ChannelMemberRecord = ChannelMember & { seenThrough: number };
-
 /** Durable Channels, ordered messages, member read positions, and shared file references. */
 export class ChannelDatabase {
   constructor(private readonly db: Bun.SQL) {}
 
   async listChannels(): Promise<ChannelList> {
-    const [channels, memberships] = await Promise.all([
+    const [channels, workers] = await Promise.all([
       this.db<ChannelRow[]>`SELECT * FROM channels ORDER BY updated_at DESC, id`,
-      this.db<ChannelMembershipRow[]>`
-        SELECT
-          membership.host_id AS channel_id, membership.agent_id,
-          membership.session_id
-        FROM agent_memberships AS membership
-        JOIN channels AS channel ON channel.id = membership.host_id
-        WHERE membership.host_kind = 'channel'
-        ORDER BY membership.host_id, membership.session_id
-      `,
+      new WorkerDatabase(this.db).list("channel"),
     ]);
     return {
       channels: channels.map(channelFromRow),
-      memberships: memberships.map(membershipFromRow),
+      members: workers.map(channelMemberFromWorker),
     };
   }
 
@@ -145,44 +137,19 @@ export class ChannelDatabase {
     return listMembers(this.db, channelId);
   }
 
-  async getMemberBySession(sessionId: string): Promise<ChannelMemberRecord | null> {
-    return getMemberBySession(this.db, sessionId);
+  async getMember(agentId: string) {
+    return getMember(this.db, agentId);
   }
 
-  async getMember(channelId: string, agentId: string): Promise<ChannelMemberRecord | null> {
-    const [row] = await this.db<ChannelMemberRow[]>`
-      SELECT
-        membership.host_id AS channel_id, member.seen_through, member.status,
-        membership.agent_id, membership.session_id
-      FROM channel_members AS member
-      JOIN agent_memberships AS membership ON membership.session_id = member.session_id
-      WHERE membership.host_kind = 'channel'
-        AND membership.host_id = ${channelId}
-        AND membership.agent_id = ${agentId}
-    `;
-    return row ? memberFromRow(row) : null;
-  }
-
-  async createMember(input: { channelId: string; agentId: string; sessionId: string }) {
+  async createMember(worker: Extract<Worker, { type: "channel" }>) {
     return inStateTransaction(this.db, async (db) => {
-      const membership = await new AgentDatabase(db).createMembership({
-        host: { kind: "channel", channelId: input.channelId },
-        agentId: input.agentId,
-        sessionId: input.sessionId,
-      });
-      const rows = await db<{ session_id: string }[]>`
-        INSERT INTO channel_members (session_id, seen_through)
-        SELECT ${membership.sessionId}, 0 FROM channels WHERE id = ${input.channelId}
-        RETURNING session_id
-      `;
-      if (rows.length === 0) throw new Error("Channel not found.");
-      const member: ChannelMember = {
-        ...membership,
-        host: { kind: "channel", channelId: input.channelId },
-      };
+      await requireChannel(db, worker.channelId);
+      await assertAgentNameAvailable(db, worker.channelId, worker.name);
+      await new WorkerDatabase(db).create(worker);
+      const member = channelMemberFromWorker(worker);
       const change = await appendMessage(db, {
         id: crypto.randomUUID(),
-        channelId: input.channelId,
+        channelId: worker.channelId,
         sender: { type: "system" },
         content: { type: "member_joined", member },
       });
@@ -190,12 +157,57 @@ export class ChannelDatabase {
     });
   }
 
+  async updateMember(
+    agentId: string,
+    input: {
+      name?: ChannelMember["name"];
+      role?: ChannelMember["role"];
+      model?: ChannelMember["model"] | null;
+      avatar?: ChannelMember["avatar"];
+    },
+  ) {
+    return inStateTransaction(this.db, async (db) => {
+      const worker = await requireChannelWorker(db, agentId);
+      const current = channelAgentMetadataSchema.parse(worker.metadata);
+      const { model: _currentModel, ...metadataWithoutModel } = current;
+      const metadata = smallJsonSchema.parse(
+        channelAgentMetadataSchema.parse({
+          ...(input.model === null ? metadataWithoutModel : current),
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.role !== undefined ? { role: input.role } : {}),
+          ...(input.avatar !== undefined ? { avatar: input.avatar } : {}),
+        }),
+      );
+      const name = input.name ?? worker.name;
+      await assertAgentNameAvailable(db, worker.channelId, name, worker.sessionId);
+      if (!(await new WorkerDatabase(db).update(worker.sessionId, { name, metadata }))) {
+        throw new Error("Agent not found.");
+      }
+      const [channel] = await db<Pick<ChannelRow, "revision">[]>`
+        UPDATE channels SET revision = revision + 1
+        WHERE id = ${worker.channelId}
+        RETURNING revision
+      `;
+      if (!channel) throw new Error("Channel not found.");
+      return {
+        member: channelMemberFromWorker({ ...worker, name, metadata }),
+        revision: channel.revision,
+      };
+    });
+  }
+
   async markMemberSeen(member: ChannelMember, sequence: number): Promise<void> {
-    await this.db`
-      UPDATE channel_members
-      SET seen_through = ${sequence}
-      WHERE session_id = ${member.sessionId} AND seen_through < ${sequence}
-    `;
+    await inStateTransaction(this.db, async (db) => {
+      const worker = await requireChannelWorker(db, member.id);
+      const metadata = channelAgentMetadataSchema.parse(worker.metadata);
+      if (metadata.seenThrough >= sequence) return;
+      await new WorkerDatabase(db).update(worker.sessionId, {
+        name: worker.name,
+        metadata: smallJsonSchema.parse(
+          channelAgentMetadataSchema.parse({ ...metadata, seenThrough: sequence }),
+        ),
+      });
+    });
   }
 
   async setMemberStatus(member: ChannelMember, status?: ChannelMemberStatus) {
@@ -206,15 +218,15 @@ export class ChannelDatabase {
     return changeMemberStatus(this.db, member, undefined, "waiting");
   }
 
-  async deleteMemberBySession(sessionId: string) {
+  async deleteMember(agentId: string) {
     return inStateTransaction(this.db, async (db) => {
-      const member = await getMemberBySession(db, sessionId);
+      const member = await getMember(db, agentId);
       if (!member) return null;
-      if (!(await new AgentDatabase(db).deleteMembershipBySession(sessionId))) return null;
+      if (!(await new WorkerDatabase(db).delete(agentId))) return null;
       const publicMember = channelMemberFromRecord(member);
       const change = await appendMessage(db, {
         id: crypto.randomUUID(),
-        channelId: member.host.channelId,
+        channelId: member.channelId,
         sender: { type: "system" },
         content: { type: "member_left", member: publicMember },
       });
@@ -222,10 +234,10 @@ export class ChannelDatabase {
     });
   }
 
-  async listMemberSessionIds(channelId: string): Promise<string[]> {
+  async listMemberIds(channelId: string): Promise<string[]> {
     const rows = await this.db<{ session_id: string }[]>`
-      SELECT session_id FROM agent_memberships
-      WHERE host_kind = 'channel' AND host_id = ${channelId}
+      SELECT session_id FROM workers
+      WHERE worker_type = 'channel' AND channel_id = ${channelId}
       ORDER BY session_id
     `;
     return rows.map((row) => row.session_id);
@@ -394,52 +406,35 @@ async function changeMemberStatus(
   requiredState?: ChannelMemberStatus["state"],
 ) {
   return inStateTransaction(db, async (transaction) => {
-    const encodedStatus = status ? JSON.stringify(status) : null;
-    const rows = await transaction<{ session_id: string }[]>`
-      UPDATE channel_members
-      SET status = ${encodedStatus}
-      WHERE session_id = ${member.sessionId}
-        AND status IS NOT ${encodedStatus}
-        AND (${requiredState ?? null} IS NULL OR json_extract(status, '$.state') = ${requiredState ?? null})
-      RETURNING session_id
-    `;
-    if (rows.length === 0) return null;
+    const worker = await requireChannelWorker(transaction, member.id);
+    const metadata = channelAgentMetadataSchema.parse(worker.metadata);
+    if (requiredState && metadata.status?.state !== requiredState) return null;
+    const nextStatus = status ? channelMemberStatusSchema.parse(status) : undefined;
+    if (JSON.stringify(metadata.status) === JSON.stringify(nextStatus)) return null;
+    const { status: _currentStatus, ...rest } = metadata;
+    await new WorkerDatabase(transaction).update(worker.sessionId, {
+      name: worker.name,
+      metadata: smallJsonSchema.parse(
+        channelAgentMetadataSchema.parse(nextStatus ? { ...rest, status: nextStatus } : rest),
+      ),
+    });
     const [channel] = await transaction<Pick<ChannelRow, "revision">[]>`
       UPDATE channels SET revision = revision + 1
-      WHERE id = ${member.host.channelId}
+      WHERE id = ${member.channelId}
       RETURNING revision
     `;
     if (!channel) throw new Error("Channel membership is incomplete.");
-    return { status, revision: channel.revision };
+    return { status: nextStatus, revision: channel.revision };
   });
 }
 
-async function getMemberBySession(
-  db: Bun.SQL,
-  sessionId: string,
-): Promise<ChannelMemberRecord | null> {
-  const [row] = await db<ChannelMemberRow[]>`
-    SELECT
-      membership.host_id AS channel_id, member.seen_through, member.status,
-      membership.agent_id, membership.session_id
-    FROM channel_members AS member
-    JOIN agent_memberships AS membership ON membership.session_id = member.session_id
-    WHERE membership.session_id = ${sessionId} AND membership.host_kind = 'channel'
-  `;
-  return row ? memberFromRow(row) : null;
+async function getMember(db: Bun.SQL, agentId: string) {
+  const worker = await new WorkerDatabase(db).get(agentId);
+  return worker?.type === "channel" ? channelMemberRecordFromWorker(worker) : null;
 }
 
 async function listMembers(db: Bun.SQL, channelId: string): Promise<ChannelMember[]> {
-  const rows = await db<ChannelMemberRow[]>`
-    SELECT
-      membership.host_id AS channel_id, member.seen_through, member.status,
-      membership.agent_id, membership.session_id
-    FROM channel_members AS member
-    JOIN agent_memberships AS membership ON membership.session_id = member.session_id
-    WHERE membership.host_kind = 'channel' AND membership.host_id = ${channelId}
-    ORDER BY membership.session_id
-  `;
-  return rows.map((row) => channelMemberFromRecord(memberFromRow(row)));
+  return (await new WorkerDatabase(db).listForChannel(channelId)).map(channelMemberFromWorker);
 }
 
 async function listMessagesBefore(
@@ -496,16 +491,6 @@ type ChannelRow = {
   updated_at: string;
 };
 
-type ChannelMemberRow = {
-  channel_id: string;
-  agent_id: string;
-  session_id: string;
-  seen_through: number;
-  status: string | null;
-};
-
-type ChannelMembershipRow = Omit<ChannelMemberRow, "seen_through" | "status">;
-
 type ChannelMessageRow = {
   id: string;
   channel_id: string;
@@ -538,26 +523,64 @@ function channelFromRow(row: ChannelRow): Channel {
   };
 }
 
-function memberFromRow(row: ChannelMemberRow): ChannelMemberRecord {
-  return {
-    host: { kind: "channel", channelId: row.channel_id },
-    agentId: row.agent_id,
-    sessionId: row.session_id,
-    seenThrough: row.seen_through,
-    ...(row.status ? { status: channelMemberStatusSchema.parse(JSON.parse(row.status)) } : {}),
-  };
-}
-
-function channelMemberFromRecord({ seenThrough: _seenThrough, ...member }: ChannelMemberRecord) {
+function channelMemberFromRecord({
+  seenThrough: _seenThrough,
+  ...member
+}: ChannelMember & { seenThrough: number }) {
   return member;
 }
 
-function membershipFromRow(row: ChannelMembershipRow): AgentMembership {
+function channelMemberRecordFromWorker(worker: Extract<Worker, { type: "channel" }>) {
+  const metadata = channelAgentMetadataSchema.parse(worker.metadata);
+  if (!worker.name) throw new Error("Channel agents require a name.");
   return {
-    host: { kind: "channel", channelId: row.channel_id },
-    agentId: row.agent_id,
-    sessionId: row.session_id,
+    channelId: worker.channelId,
+    id: worker.sessionId,
+    name: worker.name,
+    ...(metadata.role ? { role: metadata.role } : {}),
+    ...(metadata.model ? { model: metadata.model } : {}),
+    ...(metadata.avatar ? { avatar: metadata.avatar } : {}),
+    ...(metadata.status ? { status: metadata.status } : {}),
+    seenThrough: metadata.seenThrough,
   };
+}
+
+export function channelMemberFromWorker(
+  worker: Extract<Worker, { type: "channel" }>,
+): ChannelMember {
+  return channelMemberFromRecord(channelMemberRecordFromWorker(worker));
+}
+
+async function requireChannelWorker(
+  db: Bun.SQL,
+  sessionId: string,
+): Promise<Extract<Worker, { type: "channel" }>> {
+  const worker = await new WorkerDatabase(db).get(sessionId);
+  if (worker?.type !== "channel") throw new Error("Channel agent not found.");
+  return worker;
+}
+
+async function requireChannel(db: Bun.SQL, channelId: string): Promise<void> {
+  const rows = await db<{ id: string }[]>`SELECT id FROM channels WHERE id = ${channelId}`;
+  if (rows.length === 0) throw new Error("Channel not found.");
+}
+
+async function assertAgentNameAvailable(
+  db: Bun.SQL,
+  channelId: string,
+  name: string | undefined,
+  exceptSessionId?: string,
+): Promise<void> {
+  if (!name) throw new Error("Channel agents require a name.");
+  const handle = agentHandleFromName(name);
+  const workers = await new WorkerDatabase(db).listForChannel(channelId);
+  const conflict = workers.find(
+    (worker) =>
+      worker.sessionId !== exceptSessionId &&
+      worker.name &&
+      agentHandleFromName(worker.name) === handle,
+  );
+  if (conflict) throw new Error(`${conflict.name} already uses the @${handle} mention.`);
 }
 
 function artifactFromRow(row: ChannelArtifactRow): ChannelArtifact {

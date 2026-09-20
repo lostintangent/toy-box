@@ -1,8 +1,8 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
-import { addDraftSession, applyWorkspaceAction } from ".";
+import { applyWorkspaceAction } from ".";
 import { deleteSessionState } from "./sessions";
-import { deleteHyperState, getHyperSessionIds } from "./hyperSessions";
+import { addHyperSession, deleteHyperState, getHyperSessionIds } from "./hyperSessions";
 import type { WorkspaceEvent } from "@workspace/model/events";
 
 function captureSessionEvents(sessionId: string): WorkspaceEvent[] {
@@ -15,7 +15,7 @@ function captureSessionEvents(sessionId: string): WorkspaceEvent[] {
 }
 
 describe("hyper session state", () => {
-  test("projects a Hyper draft atomically and promotes it idempotently", () => {
+  test("promotes Hyper membership idempotently", () => {
     const sessionId = `hyper-${crypto.randomUUID()}`;
     onTestFinished(() => {
       deleteSessionState(sessionId);
@@ -23,16 +23,14 @@ describe("hyper session state", () => {
     });
     const events = captureSessionEvents(sessionId);
 
-    addDraftSession({ sessionId, createdAt: 0 }, true);
-    addDraftSession({ sessionId, createdAt: 0 }, true);
+    addHyperSession(sessionId);
+    addHyperSession(sessionId);
     expect(getHyperSessionIds()).toContain(sessionId);
 
     applyWorkspaceAction({ type: "session.hyper.promoted", sessionId });
     applyWorkspaceAction({ type: "session.hyper.promoted", sessionId });
     expect(getHyperSessionIds()).not.toContain(sessionId);
 
-    expect(events).toHaveLength(2);
-    expect(events[0]).toMatchObject({ type: "session.drafted", sessionId, hyper: true });
-    expect(events[1]).toEqual({ type: "session.hyper.promoted", sessionId });
+    expect(events).toEqual([{ type: "session.hyper.promoted", sessionId }]);
   });
 });

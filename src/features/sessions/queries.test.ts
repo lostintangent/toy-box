@@ -5,20 +5,20 @@ import { selectNonWorkerSessions, sessionQueries, skillQueries } from "./queries
 describe("session list projection", () => {
   test("excludes managed worker sessions while preserving canonical metadata", () => {
     const standard = {
-      sessionId: "standard",
-      startTime: new Date(0),
-      modifiedTime: new Date(0),
+      id: "standard",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
       title: "Standard",
     };
-    const workers = ["session-worker", "file-worker", "app-worker"].map((sessionId) => ({
+    const workers = ["session-worker", "file-worker", "app-worker"].map((id) => ({
       ...standard,
-      sessionId,
+      id,
       title: "Implementation detail",
     }));
     const state = {
       sessions: [...workers, standard],
       worktrees: {},
-      workerSessionParents: Object.fromEntries(workers.map(({ sessionId }) => [sessionId, null])),
+      workerSessionParents: Object.fromEntries(workers.map(({ id }) => [id, null])),
     };
 
     expect(selectNonWorkerSessions(state)).toEqual([standard]);

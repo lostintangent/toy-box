@@ -23,11 +23,11 @@ export function SessionMetadataBadges({
   isWorktree = false,
   className,
 }: SessionMetadataBadgesProps) {
-  const { context, error } = useSessionContext({ workingDirectory: cwd, repository, gitRoot });
+  const { context, error } = useSessionContext({ directory: cwd, repository, gitRoot });
   const location = resolveSessionLocation({
     repository: context.repository,
     gitRoot: context.gitRoot,
-    cwd: context.workingDirectory,
+    cwd: context.directory,
   });
   const hasMessageCount = typeof messageCount === "number" && messageCount > 0;
   if (!location && !hasMessageCount) return null;

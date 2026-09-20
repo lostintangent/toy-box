@@ -50,7 +50,6 @@ function sessionState(events: SessionEvent[]) {
 
 function setup(tools: SessionConfiguration["tools"] = []) {
   const sessionId = `toy-box-test-${crypto.randomUUID()}`;
-  const attachmentsDirectory = join(tmpdir(), sessionId, "attachments");
   const written: Record<string, unknown>[] = [];
   const responses = new Map<string, (value: unknown) => void>();
   const events: SessionEvent[] = [];
@@ -93,11 +92,10 @@ function setup(tools: SessionConfiguration["tools"] = []) {
   const startClient = spyOn(transport, "startCodexClient").mockResolvedValue(rpc);
   const connection = new CodexConnection(
     rpc,
-    { sessionId, providerId: "codex", nativeId: "native" },
+    { id: sessionId, provider: { id: "codex", sessionId: "native" } },
     {
       directory: "/tmp",
       allowUserQuestions: true,
-      attachmentsDirectory,
       tools,
       instructions: "Test",
       skillDirectories: [],
@@ -119,11 +117,10 @@ function setup(tools: SessionConfiguration["tools"] = []) {
     await connection.disconnect();
     rpc.close();
     startClient.mockRestore();
-    await rm(join(tmpdir(), sessionId), { recursive: true, force: true });
   });
   return {
     connection,
-    readHistory: () => codexProvider.readHistory(connection.identity),
+    readHistory: () => codexProvider.readHistory({ id: sessionId, provider: connection.provider }),
     rpc,
     notify,
     notifyThread,
@@ -164,18 +161,6 @@ test("a late turn/start response never reactivates a completed Codex turn", asyn
     connection.send({ role: "user", clientId: "steer", content: "Late", immediate: true }),
   ).rejects.toThrow("turn has ended");
   expect(written.some(({ method }) => method === "turn/steer")).toBe(false);
-});
-
-test("native plan notifications reach the shared session state", () => {
-  const { notify, events } = setup();
-  notify("turn/plan/updated", {
-    turnId: turn.id,
-    explanation: null,
-    plan: [{ step: "Validate the provider", status: "inProgress" }],
-  });
-  expect(sessionState(events).todos).toEqual([
-    { id: "codex-plan-0", title: "Validate the provider", status: "in_progress" },
-  ]);
 });
 
 test("native subagent activity stays nested under one agent call live and after replay", async () => {
@@ -232,6 +217,8 @@ test("native subagent activity stays nested under one agent call live and after 
     turnId: childTurn.id,
     item: { ...command, status: "inProgress", aggregatedOutput: null, exitCode: null },
   });
+  for (const method of ["item/reasoning/summaryTextDelta", "item/reasoning/textDelta"])
+    notifyThread("child", method, { turnId: childTurn.id, itemId: "thought", delta: "ha" });
 
   const active = sessionState(events);
   const activeAgent = active.messages
@@ -241,6 +228,8 @@ test("native subagent activity stays nested under one agent call live and after 
   expect(activeAgent.name).toBe("agent");
   expect(activeAgent.result).toBeUndefined();
   expect(activeAgent.subagent?.toolCalls).toHaveLength(1);
+  expect(activeAgent.subagent?.reasoningContent).toBe("haha");
+  expect(active.reasoningContent).toBe("");
 
   notifyThread("child", "item/completed", { turnId: childTurn.id, item: command });
   notifyThread("child", "item/completed", { turnId: childTurn.id, item: childReply });
@@ -325,14 +314,12 @@ test("native subagent activity stays nested under one agent call live and after 
   expect(failedAgent.result).toMatchObject({ success: false, content: "Child failed" });
 });
 
-test("imported local media is restored while missing media retains its file reference", async () => {
+test("imported local images are restored while missing images retain their file reference", async () => {
   const { readHistory, setThread } = setup();
   const directory = await mkdtemp(join(tmpdir(), "toy-box-media-test-"));
   onTestFinished(() => rm(directory, { recursive: true, force: true }));
   const image = join(directory, "image.png");
-  const audio = join(directory, "audio.wav");
   await Bun.write(image, "image bytes");
-  await Bun.write(audio, "audio bytes");
   setThread({
     id: "native",
     historyMode: "legacy",
@@ -344,7 +331,6 @@ test("imported local media is restored while missing media retains its file refe
             ...userItem,
             content: [
               { type: "localImage", path: image },
-              { type: "localAudio", path: audio },
               { type: "localImage", path: join(directory, "missing.png") },
             ],
           },
@@ -355,7 +341,7 @@ test("imported local media is restored while missing media retains its file refe
   const message = (await readHistory()).find((event) => event.type === "user_message");
   expect(
     message?.attachments?.map(({ base64 }) => Buffer.from(base64, "base64").toString()),
-  ).toEqual(["image bytes", "audio bytes"]);
+  ).toEqual(["image bytes"]);
   expect(message?.content).toContain("missing.png");
 });
 
@@ -529,7 +515,7 @@ test("native question resolution cancels only unanswered questions in the batch"
   ).toBe(false);
 });
 
-test("Codex replays attachments and system messages entirely from native input", async () => {
+test("Codex replays images and system messages entirely from native input", async () => {
   const { connection, readHistory, setThread, written } = setup();
   const message: SessionMessage = {
     role: "user",
@@ -537,7 +523,7 @@ test("Codex replays attachments and system messages entirely from native input",
     content: "Review",
     attachments: [
       { mimeType: "image/png", base64: "aW1hZ2U=" },
-      { mimeType: "text/plain", base64: "bm90ZXM=" },
+      { mimeType: "image/jpeg", base64: "anBlZw==" },
     ],
   };
   await connection.send(message);

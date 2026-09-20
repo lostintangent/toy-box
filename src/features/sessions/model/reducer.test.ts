@@ -122,22 +122,21 @@ describe("session reducer", () => {
       expect(assistantAt(state, 1)).toEqual({ role: "assistant", content: "Second" });
     });
 
-    test("a committed native message replaces its matching streamed preview", () => {
-      const state = reduceEvents([
-        { type: "status", status: "thinking" },
-        { type: "delta", messageId: "message-1", content: "Draft" },
-        { type: "assistant_message", messageId: "message-1", content: "Final answer" },
-      ]);
+    test.each([undefined, "message-1"])(
+      "a committed message replaces its streamed preview, including shorter text (ID: %s)",
+      (messageId) => {
+        const state = reduceEvents([
+          { type: "status", status: "thinking" },
+          { type: "delta", messageId, content: "Final answer draft" },
+          { type: "assistant_message", messageId, content: "Final answer" },
+        ]);
 
-      expect(state.messages).toEqual([
-        {
-          role: "assistant",
-          messageId: "message-1",
-          content: "Final answer",
-        },
-      ]);
-      expect(state.status).toBe("responding");
-    });
+        expect(state.messages).toEqual([
+          { role: "assistant", ...(messageId ? { messageId } : {}), content: "Final answer" },
+        ]);
+        expect(state.status).toBe("responding");
+      },
+    );
 
     test("different native message IDs preserve separate assistant messages", () => {
       const state = reduceEvents([
@@ -149,19 +148,52 @@ describe("session reducer", () => {
     });
 
     test.each([
-      {
-        chunks: ["Let me look", "Let me look at the turn", "Let me look at the turn closely"],
-        expected: "Let me look at the turn closely",
-      },
+      { chunks: ["ha", "ha"], expected: "haha" },
+      { chunks: ["ab", "abc"], expected: "ababc" },
       { chunks: ["cof", "fee"], expected: "coffee" },
-    ])("normalizes cumulative and incremental text chunks", ({ chunks, expected }) => {
+    ])("appends text chunks verbatim: $expected", ({ chunks, expected }) => {
       const state = reduceEvents(chunks.map((content) => ({ type: "delta", content })));
       expect(assistantAt(state, 0).content).toBe(expected);
     });
 
+    test.each([undefined, "agent-1"])(
+      "reasoning deltas append and complete reasoning replaces them (parent: %s)",
+      (parentToolCallId) => {
+        const initial = parentToolCallId
+          ? reduceEvents([
+              {
+                type: "tool_start",
+                toolCallId: parentToolCallId,
+                toolName: "agent",
+                arguments: {},
+              },
+            ])
+          : createInitialSessionState();
+        const reasoning = (state: SessionState) =>
+          parentToolCallId
+            ? assistantAt(state, 0).toolCalls?.[0]?.subagent?.reasoningContent
+            : state.reasoningContent;
+        const streaming = reduceEvents(
+          [
+            { type: "reasoning_delta", content: "ha", parentToolCallId },
+            { type: "reasoning_delta", content: "ha", parentToolCallId },
+          ],
+          initial,
+        );
+        expect(reasoning(streaming)).toBe("haha");
+        const completed = applySessionEvent(streaming, {
+          type: "reasoning",
+          content: "ha",
+          parentToolCallId,
+        });
+        expect(reasoning(completed)).toBe("ha");
+        if (parentToolCallId) expect(completed.reasoningContent).toBe("");
+      },
+    );
+
     test("reasoning stays separate and clears when response text starts", () => {
       const state = reduceEvents([
-        { type: "reasoning", content: "Now I can" },
+        { type: "reasoning_delta", content: "Now I can" },
         { type: "reasoning", content: "Now I can see the pattern" },
         { type: "delta", content: "Answer" },
       ]);

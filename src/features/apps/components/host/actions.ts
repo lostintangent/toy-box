@@ -1,6 +1,6 @@
 import {
   abortSession,
-  createSession,
+  startSession,
   deleteSession,
   deliverMessage,
   waitForSession,
@@ -62,7 +62,7 @@ export function bindAppActions({
   return {
     async createSession(input) {
       const { open, ...launch } = input;
-      const result = await createSession({ data: launch });
+      const result = await startSession({ data: launch });
       if (open) openPane(createLinkedSessionPane(result.sessionId));
       return result;
     },

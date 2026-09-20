@@ -7,20 +7,19 @@ import { RelativeTime } from "@/shared/components/ui/relative-time";
 import { DestructiveConfirmationDialog } from "@/shared/components/sidebar/DestructiveConfirmationDialog";
 import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { SidebarSessionItem } from "./SidebarSessionItem";
-import type { SessionMetadata } from "../../model";
+import type { Session } from "../../model";
 import { sessionMutations } from "../../mutations";
 import { SessionMetadataBadges } from "../location/SessionMetadataBadges";
 
 type SessionListItemProps = {
-  session: SessionMetadata;
+  session: Session;
   onSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
-  onPinToggle?: () => void;
-  onRename?: () => void;
+  onPinToggle: () => void;
+  onRename: () => void;
   onDelete: () => void;
   isActive?: boolean;
   isPinned?: boolean;
   isWorktree?: boolean;
-  isDraft?: boolean;
 };
 
 export function SessionListItem({
@@ -32,49 +31,55 @@ export function SessionListItem({
   isActive = false,
   isPinned = false,
   isWorktree = false,
-  isDraft = false,
 }: SessionListItemProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const activity = useWorkspaceSessionActivity(session.sessionId);
-  const sessionLabel = session.title || (isDraft ? "Draft session" : "New session");
+  const isDraft = !session.provider;
+  const activity = useWorkspaceSessionActivity(session.id);
+  const sessionLabel =
+    session.title ||
+    (isDraft && session.artifactPath
+      ? session.artifactPath.toLowerCase().endsWith(".md")
+        ? "New document"
+        : "New whiteboard"
+      : isDraft
+        ? "Draft session"
+        : "New session");
   const isTitleLoading = !isDraft && !session.title && activity.running;
 
   const handleClick = (event: React.MouseEvent) => {
-    onSelect(session.sessionId, event.metaKey || event.ctrlKey);
+    onSelect(session.id, event.metaKey || event.ctrlKey);
   };
 
-  const showBadges = Boolean(session.directory);
+  const showBadges = Boolean(session.context?.directory);
 
   return (
     <>
       <SidebarSessionItem
-        sessionId={session.sessionId}
+        sessionId={session.id}
         activity={activity}
         title={sessionLabel}
         titleContent={<SessionListItemTitle title={sessionLabel} loading={isTitleLoading} />}
         icon={
           isPinned ? <Pin className="size-3.5 shrink-0 text-user-accent" aria-hidden /> : undefined
         }
-        time={!isDraft && <RelativeTime date={session.modifiedTime} />}
+        time={!isDraft && <RelativeTime date={session.updatedAt} />}
         badge={
           showBadges && (
             <SessionMetadataBadges
-              cwd={session.directory}
-              repository={session.repository}
-              gitRoot={session.gitRoot}
+              cwd={session.context?.directory}
+              repository={session.context?.repository}
+              gitRoot={session.context?.gitRoot}
               isWorktree={isWorktree}
             />
           )
         }
         menuItems={
           <>
-            {onPinToggle && (
-              <DropdownMenuItem onClick={onPinToggle}>
-                {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-                {isPinned ? "Unpin session" : "Pin session"}
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem disabled={!onRename} onClick={onRename}>
+            <DropdownMenuItem disabled={isDraft} onClick={onPinToggle}>
+              {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+              {isPinned ? "Unpin session" : "Pin session"}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={isDraft} onClick={onRename}>
               <Pencil className="h-3.5 w-3.5" />
               Rename session
             </DropdownMenuItem>
@@ -94,7 +99,7 @@ export function SessionListItem({
         <DestructiveConfirmationDialog
           title="Delete session?"
           description="This will permanently delete this session and all its messages. This action cannot be undone."
-          mutation={sessionMutations.deleteSession(session.sessionId)}
+          mutation={sessionMutations.deleteSession(session.id)}
           onSubmit={onDelete}
           onOpenChange={setDeleteOpen}
         />

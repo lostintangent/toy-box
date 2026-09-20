@@ -1,11 +1,11 @@
-import type { SessionMetadata } from "../../model";
+import type { Session } from "../../model";
 
 type SessionTimeGroupKey = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
 
 type SessionGroup = {
   key: string;
   label?: string;
-  sessions: SessionMetadata[];
+  sessions: Session[];
 };
 
 const GROUP_LABELS: Record<SessionTimeGroupKey, string> = {
@@ -17,20 +17,16 @@ const GROUP_LABELS: Record<SessionTimeGroupKey, string> = {
 };
 
 export function groupSessions(
-  sessions: SessionMetadata[],
+  sessions: Session[],
   pinnedSessionIds: string[],
   now: Date,
 ): SessionGroup[] {
   const sortedSessions = [...sessions].sort(
-    (left, right) => right.modifiedTime.getTime() - left.modifiedTime.getTime(),
+    (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
   );
   const pinnedSessionIdSet = new Set(pinnedSessionIds);
-  const pinnedSessions = sortedSessions.filter((session) =>
-    pinnedSessionIdSet.has(session.sessionId),
-  );
-  const unpinnedSessions = sortedSessions.filter(
-    (session) => !pinnedSessionIdSet.has(session.sessionId),
-  );
+  const pinnedSessions = sortedSessions.filter((session) => pinnedSessionIdSet.has(session.id));
+  const unpinnedSessions = sortedSessions.filter((session) => !pinnedSessionIdSet.has(session.id));
   const hasPinnedGroup = pinnedSessions.length > 0;
   const groups: SessionGroup[] = hasPinnedGroup
     ? [{ key: "pinned", label: "Pinned", sessions: pinnedSessions }]
@@ -49,14 +45,14 @@ function startOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-function getSessionTimeGroup(modifiedTime: Date, now: Date): SessionTimeGroupKey {
+function getSessionTimeGroup(updatedAt: Date, now: Date): SessionTimeGroupKey {
   const todayStart = startOfDay(now);
   const yesterdayStart = new Date(todayStart);
   yesterdayStart.setDate(yesterdayStart.getDate() - 1);
   const rollingWeekStart = new Date(todayStart);
   rollingWeekStart.setDate(rollingWeekStart.getDate() - 7);
   const monthStart = startOfMonth(now);
-  const modified = modifiedTime.getTime();
+  const modified = updatedAt.getTime();
 
   if (modified >= todayStart.getTime()) return "today";
   if (modified >= yesterdayStart.getTime()) return "yesterday";
@@ -66,7 +62,7 @@ function getSessionTimeGroup(modifiedTime: Date, now: Date): SessionTimeGroupKey
 }
 
 export function groupSessionsByTime(
-  sessions: SessionMetadata[],
+  sessions: Session[],
   now: Date = new Date(),
   labelToday = false,
 ): SessionGroup[] {
@@ -74,7 +70,7 @@ export function groupSessionsByTime(
   let previousTimeGroup: SessionTimeGroupKey | null = null;
 
   for (const session of sessions) {
-    const timeGroup = getSessionTimeGroup(session.modifiedTime, now);
+    const timeGroup = getSessionTimeGroup(session.updatedAt, now);
     const currentGroup = groups.at(-1);
     if (timeGroup === previousTimeGroup && currentGroup) {
       currentGroup.sessions.push(session);

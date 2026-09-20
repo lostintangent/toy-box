@@ -2,8 +2,8 @@
 
 Workspace is Toy Box's application composition layer. It owns two sibling capabilities:
 
-- the shared projection and update plane that composes authoritative facts from Sessions, Agents,
-  Channels, Inbox, Automations, Workers, Files, and Apps without becoming another source of truth;
+- the shared projection and update plane that composes authoritative facts from Sessions, Channels,
+  Inbox, Automations, Workers, Files, and Apps without becoming another source of truth;
   and
 - the browser-local shell that composes feature-owned panes into the desktop, mobile, and Hyper
   layouts.
@@ -29,10 +29,16 @@ owning feature cache to recover from its authoritative snapshot.
 Feature-specific Query factories may select from the shared cache, but must not create competing
 copies of the same server state.
 
+`disabledProviders` controls model and session discovery, with Claude disabled by default.
+Provider availability changes are published after persistence, then invalidate the provider catalog
+and session list on every client. Other preferences retain their existing optimistic updates.
+Sidebar text, provider, and external-session filters are browser-local route state; they do not
+write workspace settings or alter open panes.
+
 [`model/state/reducer.ts`](model/state/reducer.ts) applies the same `WorkspaceEvent` transitions on
 the server and in each browser. The sparse `sessionStates` map retains only meaningful shared
-activity: a draft, active work, unread completion, or a pending draft prompt. Ordinary read-idle
-sessions have no entry.
+activity: active work, unread completion, or an unsent composer prompt. Draft sessions
+live in the Sessions catalog; ordinary read-idle sessions have no workspace activity entry.
 
 [`queries.ts`](queries.ts) is the canonical TanStack Query interface to that projection. It owns
 snapshot identity, optimistic workspace commands, and a per-`QueryClient` event journal that keeps
@@ -41,7 +47,7 @@ narrow reactive selectors and the two client command hooks; it does not copy ser
 
 [`hooks/useWorkspaceSync.ts`](hooks/useWorkspaceSync.ts) is the single browser sink for the
 at-most-once workspace SSE stream. On initial connection or reconnect it refreshes the aggregate
-snapshot plus durable Session, Agent, and Channel queries, then applies subsequent events to their
+snapshot plus durable Session and Channel queries, then applies subsequent events to their
 owning Query caches. Events announce accepted changes; they are synchronization hints, not durable
 truth or a replay log.
 
@@ -143,8 +149,8 @@ is the reusable follow-up surface for session-backed output shown without its so
   placement, focus, and chrome.
 - [Sessions](../features/sessions/AGENTS.md), [Channels](../features/channels/AGENTS.md),
   [Inbox](../features/inbox/AGENTS.md), [Files](../features/files/AGENTS.md), and
-  [Apps](../features/apps/AGENTS.md) own the data and behavior rendered in their panes. Agents owns
-  the reusable identity and membership UI composed inside Session and Channel panes.
+  [Apps](../features/apps/AGENTS.md) own the data and behavior rendered in their panes. Channels owns
+  its Agent identity and membership UI.
 - [Terminal](../features/terminal/AGENTS.md) owns its PTY and connection lifecycle; the main route
   owns only shared drawer visibility and size, while each responsive layout owns placement and
   transient presentation mechanics.

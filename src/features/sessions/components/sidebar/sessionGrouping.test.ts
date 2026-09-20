@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionMetadata } from "../../model";
+import type { Session } from "../../model";
 import { groupSessions, groupSessionsByTime } from "./sessionGrouping";
 
-function createSession(sessionId: string, modifiedTime: Date): SessionMetadata {
+function createSession(id: string, updatedAt: Date): Session {
   return {
-    sessionId,
-    startTime: modifiedTime,
-    modifiedTime,
-    title: sessionId,
+    id,
+    createdAt: updatedAt,
+    updatedAt,
+    title: id,
   };
 }
 
@@ -18,7 +18,7 @@ function localDate(year: number, month: number, day: number, hour = 12): Date {
 function summarizeGroups(groups: ReturnType<typeof groupSessionsByTime>) {
   return groups.map((group) => ({
     label: group.label,
-    sessions: group.sessions.map((session) => session.sessionId),
+    sessions: group.sessions.map((session) => session.id),
   }));
 }
 

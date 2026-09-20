@@ -1,31 +1,39 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
-import { AgentDatabase } from "@agents/server/database";
 import { machineFile, sessionFile } from "@files/model";
+import type { Worker } from "@workers/model";
 import { createTestDatabase } from "@/server/database";
 import { ChannelDatabase } from "./database";
 
 async function openChannels() {
   const database = await createTestDatabase();
   onTestFinished(() => database.close());
+  return new ChannelDatabase(database);
+}
+
+function channelAgent(
+  channelId: string,
+  sessionId: string,
+  name: string,
+): Extract<Worker, { type: "channel" }> {
   return {
-    agents: new AgentDatabase(database),
-    channels: new ChannelDatabase(database),
+    type: "channel",
+    channelId,
+    sessionId,
+    ephemeral: false,
+    name,
+    metadata: { seenThrough: 0 },
   };
 }
 
 describe("channel database", () => {
   test("stores structural membership and an ordered transcript", async () => {
-    const { agents, channels } = await openChannels();
+    const channels = await openChannels();
     const channel = await channels.createChannel({
       title: "Release room",
       directory: "/workspace/project",
     });
-    const critic = await agents.createAgent({ name: "Critic" });
-    const { member } = await channels.createMember({
-      channelId: channel.id,
-      agentId: critic.id,
-      sessionId: "critic-session",
-    });
+    const critic = channelAgent(channel.id, "critic-session", "Critic");
+    const { member } = await channels.createMember(critic);
     await channels.createChannel({ title: "Another room" });
 
     const { message: first } = await channels.appendMessage({
@@ -40,20 +48,14 @@ describe("channel database", () => {
       channelId: channel.id,
       sender: {
         type: "agent",
-        agentId: critic.id,
+        agentId: critic.sessionId,
       },
       content: "The empty state is clear.",
     });
 
     expect(first.sequence).toBe(2);
     expect(await channels.listMembers(channel.id)).toEqual([member]);
-    expect((await channels.listChannels()).memberships).toEqual([
-      {
-        host: { kind: "channel", channelId: channel.id },
-        agentId: critic.id,
-        sessionId: "critic-session",
-      },
-    ]);
+    expect((await channels.listChannels()).members).toEqual([member]);
     expect((await channels.getChannel(channel.id))?.latestSequence).toBe(3);
     const messages = await channels.listMessagesAfter(channel.id);
     expect(messages[1]?.attachments).toEqual(first.attachments);
@@ -67,7 +69,7 @@ describe("channel database", () => {
         content: "@critic Please check the invitation flow.",
       },
       {
-        sender: { type: "agent", agentId: critic.id },
+        sender: { type: "agent", agentId: critic.sessionId },
         content: "The empty state is clear.",
       },
     ]);
@@ -80,7 +82,7 @@ describe("channel database", () => {
   });
 
   test("serializes concurrent writers on the shared SQLite connection", async () => {
-    const { channels } = await openChannels();
+    const channels = await openChannels();
     const channel = await channels.createChannel({ title: "Concurrent room" });
 
     const changes = await Promise.all(
@@ -104,12 +106,10 @@ describe("channel database", () => {
   });
 
   test("sets and clears one current reaction per Agent without advancing transcript state", async () => {
-    const { agents, channels } = await openChannels();
+    const channels = await openChannels();
     const channel = await channels.createChannel({ title: "Reaction room" });
-    const [reviewer, designer] = await Promise.all([
-      agents.createAgent({ name: "Reviewer" }),
-      agents.createAgent({ name: "Designer" }),
-    ]);
+    const reviewerId = "reviewer-session";
+    const designerId = "designer-session";
     await channels.appendMessage({
       id: "message-1",
       channelId: channel.id,
@@ -122,20 +122,20 @@ describe("channel database", () => {
       channels.setMessageReaction({
         channelId: channel.id,
         sequence: 1,
-        agentId: reviewer.id,
+        agentId: reviewerId,
         reaction: "love",
       }),
       channels.setMessageReaction({
         channelId: channel.id,
         sequence: 1,
-        agentId: designer.id,
+        agentId: designerId,
         reaction: "done",
       }),
     ]);
     await channels.setMessageReaction({
       channelId: channel.id,
       sequence: 1,
-      agentId: reviewer.id,
+      agentId: reviewerId,
       reaction: "agree",
     });
 
@@ -143,37 +143,34 @@ describe("channel database", () => {
     expect(reactions).toHaveLength(2);
     expect(reactions).toEqual(
       expect.arrayContaining([
-        { agentId: designer.id, reaction: "done" },
-        { agentId: reviewer.id, reaction: "agree" },
+        { agentId: designerId, reaction: "done" },
+        { agentId: reviewerId, reaction: "agree" },
       ]),
     );
     await channels.setMessageReaction({
       channelId: channel.id,
       sequence: 1,
-      agentId: reviewer.id,
+      agentId: reviewerId,
       reaction: null,
     });
     await channels.setMessageReaction({
       channelId: channel.id,
       sequence: 1,
-      agentId: reviewer.id,
+      agentId: reviewerId,
       reaction: null,
     });
     expect((await channels.listMessagesAfter(channel.id))[0]?.reactions).toEqual([
-      { agentId: designer.id, reaction: "done" },
+      { agentId: designerId, reaction: "done" },
     ]);
     expect(await channels.getChannel(channel.id)).toEqual(channelBeforeReactions);
   });
 
   test("tracks independent human and Agent read positions", async () => {
-    const { agents, channels } = await openChannels();
+    const channels = await openChannels();
     const channel = await channels.createChannel({ title: "Planning" });
-    const agent = await agents.createAgent({ name: "Planner" });
-    const { member } = await channels.createMember({
-      channelId: channel.id,
-      agentId: agent.id,
-      sessionId: "planner-session",
-    });
+    const { member } = await channels.createMember(
+      channelAgent(channel.id, "planner-session", "Planner"),
+    );
     await channels.appendMessage({
       id: "message-1",
       channelId: channel.id,
@@ -182,7 +179,7 @@ describe("channel database", () => {
     });
 
     await channels.markMemberSeen(member, 2);
-    expect((await channels.getMemberBySession("planner-session"))?.seenThrough).toBe(2);
+    expect((await channels.getMember("planner-session"))?.seenThrough).toBe(2);
     expect((await channels.getChannel(channel.id))?.seenThrough).toBe(0);
     await channels.markUserSeen(channel.id, 2);
     expect((await channels.getChannel(channel.id))?.seenThrough).toBe(2);
@@ -193,11 +190,50 @@ describe("channel database", () => {
       sender: { type: "user" },
       content: "Then propose mitigations.",
     });
-    expect((await channels.getMemberBySession("planner-session"))?.seenThrough).toBe(2);
+    expect((await channels.getMember("planner-session"))?.seenThrough).toBe(2);
+  });
+
+  test("profile updates preserve collaboration state", async () => {
+    const channels = await openChannels();
+    const channel = await channels.createChannel({ title: "Profile room" });
+    const { member } = await channels.createMember(
+      channelAgent(channel.id, "critic-session", "Critic"),
+    );
+    const status = { state: "working", text: "Reviewing the direction", workingOn: 1 } as const;
+    await channels.markMemberSeen(member, 1);
+    await channels.setMemberStatus(member, status);
+
+    const change = await channels.updateMember(member.id, {
+      role: "Tests product decisions against user needs.",
+    });
+
+    expect(change.member).toMatchObject({ role: expect.any(String), status });
+    expect(await channels.getMember(member.id)).toMatchObject({ seenThrough: 1, status });
+  });
+
+  test("treats equivalent status values as unchanged", async () => {
+    const channels = await openChannels();
+    const channel = await channels.createChannel({ title: "Status room" });
+    const { member } = await channels.createMember(
+      channelAgent(channel.id, "critic-session", "Critic"),
+    );
+    await channels.setMemberStatus(member, {
+      state: "working",
+      text: "Reviewing the direction",
+      workingOn: 1,
+    });
+
+    expect(
+      await channels.setMemberStatus(member, {
+        workingOn: 1,
+        text: "Reviewing the direction",
+        state: "working",
+      }),
+    ).toBeNull();
   });
 
   test("indexes channel artifacts by file identity", async () => {
-    const { channels } = await openChannels();
+    const channels = await openChannels();
     const channel = await channels.createChannel({ title: "Artifacts" });
     await channels.shareArtifact({
       id: "share-1",
@@ -231,31 +267,28 @@ describe("channel database", () => {
   });
 
   test("deleting a member retains sender attribution in prior messages", async () => {
-    const { agents, channels } = await openChannels();
+    const channels = await openChannels();
     const channel = await channels.createChannel({ title: "Durable log" });
-    const agent = await agents.createAgent({ name: "Reviewer" });
-    const { member } = await channels.createMember({
-      channelId: channel.id,
-      agentId: agent.id,
-      sessionId: "reviewer-session",
-    });
+    const { member } = await channels.createMember(
+      channelAgent(channel.id, "reviewer-session", "Reviewer"),
+    );
     await channels.appendMessage({
       id: "message-1",
       channelId: channel.id,
       sender: {
         type: "agent",
-        agentId: agent.id,
+        agentId: member.id,
       },
       content: "The contract is coherent.",
     });
 
-    expect(await channels.deleteMemberBySession(member.sessionId)).toMatchObject({
-      member: { agentId: agent.id, sessionId: "reviewer-session" },
+    expect(await channels.deleteMember(member.id)).toMatchObject({
+      member: { id: member.id, name: "Reviewer" },
     });
     const messages = await channels.listMessagesAfter(channel.id);
     expect(messages.find(({ id }) => id === "message-1")?.sender).toEqual({
       type: "agent",
-      agentId: agent.id,
+      agentId: member.id,
     });
     expect(messages.at(-1)?.content).toEqual({ type: "member_left", member });
   });

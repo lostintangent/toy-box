@@ -4,7 +4,7 @@ import {
   deliverSessionMessage,
   registerPendingSessionCompletion,
   rejectPendingSessionCompletion,
-  waitForSession,
+  waitForSessions,
 } from "./index";
 import { SessionStream } from "./sessionStream";
 import * as realSnapshotCache from "@sessions/server/state/snapshots";
@@ -83,7 +83,7 @@ async function collectStreamEvents(
 /** A provider connection with inert operations unless the test supplies behavior. */
 function makeFakeSession(overrides: Partial<SessionConnection> = {}): SessionConnection {
   return {
-    identity: { sessionId: "test", providerId: "test", nativeId: "test" },
+    provider: { id: "test", sessionId: "test" },
     onEvent: () => () => {},
     send: async () => {},
     setModel: async () => {},
@@ -592,7 +592,7 @@ describe("SessionStream queued messages", () => {
     const submission = Promise.withResolvers<void>();
     const sent: SessionMessage[] = [];
     const connection = {
-      identity: { sessionId, nativeId: sessionId, providerId: "copilot" },
+      provider: { id: "copilot", sessionId },
       onEvent: (listener: typeof publish) => {
         publish = listener;
         return () => {};
@@ -1314,15 +1314,17 @@ describe("streamSession", () => {
       sessionId,
       message: userMessage("Start the client follow-up"),
     }))!;
-    const completion = waitForSession(sessionId);
+    const completion = waitForSessions([sessionId]);
 
     emit({ type: "assistant_message", content: "Client follow-up result" });
     emit({ type: "end", reason: "idle" });
 
-    await expect(completion).resolves.toEqual({
-      status: "completed",
-      response: "Client follow-up result",
-    });
+    await expect(completion).resolves.toEqual([
+      {
+        status: "completed",
+        response: "Client follow-up result",
+      },
+    ]);
     await expect(earlier.promise).resolves.toEqual({
       status: "completed",
       response: "Earlier result",
@@ -1511,10 +1513,10 @@ describe("delivery receipts", () => {
     const receipt = await importedDeliver(sessionId, userMessage("Start the follow-up"));
 
     expect(receipt.disposition).toBe("started");
-    const completion = waitForSession(sessionId);
+    const completion = waitForSessions([sessionId]);
     finishStream(sessionId);
 
-    await expect(completion).resolves.toEqual({ status: "completed" });
+    await expect(completion).resolves.toEqual([{ status: "completed" }]);
     await expect(earlier.promise).resolves.toEqual({
       status: "completed",
       response: "Earlier result",
@@ -1965,18 +1967,19 @@ describe("SessionStream.waitForCompletion", () => {
   });
 });
 
-describe("waitForSession", () => {
-  test("waits for a session announced before its live stream exists", async () => {
-    const receipt = registerPendingSessionCompletion("session-pending-wait");
-    const first = waitForSession("session-pending-wait");
+describe("waitForSessions", () => {
+  test("waits for announced sessions and preserves input order", async () => {
+    const first = registerPendingSessionCompletion("session-pending-first");
+    const second = registerPendingSessionCompletion("session-pending-second");
+    const completion = waitForSessions(["session-pending-first", "session-pending-second"]);
 
-    expect(waitForSession("session-pending-wait")).toBe(first);
-    receipt.resolve({ status: "completed", response: "Pending result" });
+    second.resolve({ status: "completed", response: "Second result" });
+    first.resolve({ status: "completed", response: "First result" });
 
-    await expect(first).resolves.toEqual({
-      status: "completed",
-      response: "Pending result",
-    });
+    await expect(completion).resolves.toEqual([
+      { status: "completed", response: "First result" },
+      { status: "completed", response: "Second result" },
+    ]);
   });
 
   test("retains an announced completion for a waiter that arrives after settlement", async () => {
@@ -1985,28 +1988,29 @@ describe("waitForSession", () => {
 
     receipt.resolve(result);
 
-    expect(waitForSession("session-fast-completion")).toBe(receipt.promise);
-    await expect(waitForSession("session-fast-completion")).resolves.toEqual(result);
+    await expect(waitForSessions(["session-fast-completion"])).resolves.toEqual([result]);
   });
 
   test("times out one waiter without settling the announced session", async () => {
     const receipt = registerPendingSessionCompletion("session-pending-timeout");
 
-    await expect(waitForSession("session-pending-timeout", 1)).resolves.toEqual({
-      status: "timed_out",
-    });
+    await expect(waitForSessions(["session-pending-timeout"], 1)).resolves.toEqual([
+      { status: "timed_out" },
+    ]);
 
-    const completion = waitForSession("session-pending-timeout");
+    const completion = waitForSessions(["session-pending-timeout"]);
     receipt.resolve({ status: "completed", response: "Finished later" });
-    await expect(completion).resolves.toEqual({
-      status: "completed",
-      response: "Finished later",
-    });
+    await expect(completion).resolves.toEqual([
+      {
+        status: "completed",
+        response: "Finished later",
+      },
+    ]);
   });
 
   test("rejects waiters when an announced session is canceled", async () => {
     registerPendingSessionCompletion("session-pending-canceled");
-    const completion = waitForSession("session-pending-canceled");
+    const completion = waitForSessions(["session-pending-canceled"]);
     const error = new Error("Canceled");
 
     expect(rejectPendingSessionCompletion("session-pending-canceled", error)).toBe(true);

@@ -113,7 +113,7 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
       }
 
       // A committed message closes the current tool group. Native IDs select
-      // its streamed preview; older events fall back to activity status.
+      // its streamed preview; unidentified completions match the active reply.
       const reconcileLiveMessage =
         state.status === "thinking" ||
         state.status === "reasoning" ||
@@ -161,17 +161,21 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
       return;
     }
 
-    case "reasoning": {
+    case "reasoning":
+    case "reasoning_delta": {
+      const append = event.type === "reasoning_delta";
       if (event.parentToolCallId) {
         updateSubagentActivity(state, event.parentToolCallId, (activity) => ({
           ...activity,
-          reasoningContent: mergeStreamingText(activity.reasoningContent ?? "", event.content),
+          reasoningContent: append
+            ? (activity.reasoningContent ?? "") + event.content
+            : event.content,
         }));
         return;
       }
 
       state.status = "reasoning";
-      state.reasoningContent = mergeStreamingText(state.reasoningContent, event.content);
+      state.reasoningContent = append ? state.reasoningContent + event.content : event.content;
       return;
     }
 
@@ -510,10 +514,7 @@ function upsertCommittedAssistantMessage(
   ) {
     replaceMessage(state, state.messages.length - 1, {
       ...last,
-      content:
-        messageId !== undefined
-          ? content
-          : reconcileCommittedAssistantContent(last.content, content),
+      content,
     });
     return;
   }
@@ -524,30 +525,7 @@ function upsertCommittedAssistantMessage(
   });
 }
 
-function reconcileCommittedAssistantContent(existing: string, incoming: string): string {
-  if (!incoming) return existing;
-  if (!existing) return incoming;
-  if (incoming.startsWith(existing)) return incoming;
-  if (existing.startsWith(incoming)) return existing;
-  return incoming;
-}
-
-function mergeStreamingText(existing: string, incoming: string): string {
-  if (incoming.length === 0) return existing;
-  if (existing.length === 0) return incoming;
-
-  // Some SDKs emit cumulative "text so far" chunks instead of strict
-  // incremental deltas. Normalize to avoid duplicating already-rendered text.
-  if (incoming.startsWith(existing)) {
-    return incoming;
-  }
-
-  return existing + incoming;
-}
-
-// Unlike mergeStreamingText (which splices deltas of ONE growing message),
-// subagent assistant_message events are whole committed messages — joined as
-// separate paragraphs.
+// Subagent assistant messages are whole committed messages, joined as separate paragraphs.
 function appendCommittedSubagentContent(existing: string, incoming: string): string {
   if (incoming.length === 0) return existing;
   if (existing.length === 0) return incoming;
@@ -559,7 +537,7 @@ function appendAssistantDelta(state: SessionState, content: string): void {
   if (!last || last.role !== "assistant") return;
   replaceMessage(state, state.messages.length - 1, {
     ...last,
-    content: mergeStreamingText(last.content, content),
+    content: last.content + content,
   });
 }
 

@@ -1,18 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionMetadata } from "./index";
+import type { Session } from "./index";
 import { getRecentDirectories } from "./recentDirectories";
 
-function createSession(
-  sessionId: string,
-  modifiedTime: number,
-  directory?: string,
-): SessionMetadata {
+function createSession(sessionId: string, updatedAt: number, directory?: string): Session {
   return {
-    sessionId,
-    startTime: new Date(modifiedTime),
-    modifiedTime: new Date(modifiedTime),
+    id: sessionId,
+    createdAt: new Date(updatedAt),
+    updatedAt: new Date(updatedAt),
     title: sessionId,
-    directory,
+    context: { directory },
   };
 }
 
@@ -21,8 +17,7 @@ describe("recent directories", () => {
     const sessions = [
       {
         ...createSession("older-repo", 1, "/repo"),
-        repository: "owner/repo",
-        gitRoot: "/repo",
+        context: { directory: "/repo", repository: "owner/repo", gitRoot: "/repo" },
       },
       createSession("other", 2, "/other"),
       createSession("newer-repo", 3, " /repo "),
@@ -32,11 +27,7 @@ describe("recent directories", () => {
       { cwd: "/repo", repository: "owner/repo", gitRoot: "/repo" },
       { cwd: "/other", repository: undefined, gitRoot: undefined },
     ]);
-    expect(sessions.map((session) => session.sessionId)).toEqual([
-      "older-repo",
-      "other",
-      "newer-repo",
-    ]);
+    expect(sessions.map((session) => session.id)).toEqual(["older-repo", "other", "newer-repo"]);
   });
 
   test("ignores missing directories and limits the source history", () => {
@@ -59,12 +50,11 @@ describe("recent directories", () => {
     const directories = getRecentDirectories([
       {
         ...createSession("newer", 2, "/repo"),
-        gitRoot: "/repo",
+        context: { directory: "/repo", gitRoot: "/repo" },
       },
       {
         ...createSession("older", 1, "/repo"),
-        gitRoot: "/repo",
-        repository: "old/remote",
+        context: { directory: "/repo", gitRoot: "/repo", repository: "old/remote" },
       },
     ]);
 

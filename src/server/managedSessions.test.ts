@@ -11,12 +11,13 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-const { AgentDatabase } = await import("@agents/server/database");
 const { AutomationDatabase } = await import("@automations/server/database");
+const { ChannelDatabase } = await import("@channels/server/database");
 const { createInboxEntry } = await import("@inbox/server/database");
 const { registerWorkerSession, unregisterWorkerSession } = await import("@workers/server/database");
 const { addHyperSession, deleteHyperState } = await import("@workspace/server/state/hyperSessions");
-const { readSessionCatalog, resolveSessionType } = await import("./managedSessions");
+const { detachManagedSession, readSessionCatalog, resolveSessionType } =
+  await import("./managedSessions");
 
 async function openSessionTypeTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
@@ -43,7 +44,7 @@ describe("session type resolution", () => {
     const inboxId = `toy-box-${crypto.randomUUID()}`;
     const hyperId = `toy-box-${crypto.randomUUID()}`;
     const workerId = `toy-box-${crypto.randomUUID()}`;
-    const agentSessionId = `toy-box-${crypto.randomUUID()}`;
+    const channelWorkerId = `toy-box-${crypto.randomUUID()}`;
     await createInboxEntry(inboxId);
     addHyperSession(hyperId);
     await registerWorkerSession({
@@ -52,12 +53,13 @@ describe("session type resolution", () => {
       appId: "app-a",
       ephemeral: true,
     });
-    const agents = new AgentDatabase(currentDb!);
-    const agent = await agents.createAgent({ name: "Architect" });
-    await agents.createMembership({
-      host: { kind: "channel", channelId: "channel" },
-      agentId: agent.id,
-      sessionId: agentSessionId,
+    await registerWorkerSession({
+      type: "channel",
+      channelId: "channel",
+      sessionId: channelWorkerId,
+      ephemeral: false,
+      name: "Architect",
+      metadata: { seenThrough: 0 },
     });
     onTestFinished(() => deleteHyperState(hyperId));
 
@@ -65,7 +67,7 @@ describe("session type resolution", () => {
     expect(await resolveSessionType(inboxId)).toBe("inbox");
     expect(await resolveSessionType(hyperId)).toBe("hyper");
     expect(await resolveSessionType(workerId)).toBe("worker");
-    expect(await resolveSessionType(agentSessionId)).toBe("agent");
+    expect(await resolveSessionType(channelWorkerId)).toBe("worker");
   });
 
   test("rejects conflicting managed records", async () => {
@@ -86,13 +88,14 @@ describe("Session catalog projection", () => {
     "keeps backing Sessions classified during concurrent %s",
     async (change) => {
       await openSessionTypeTestDatabase();
-      const agents = new AgentDatabase(currentDb!);
-      const agent = await agents.createAgent({ name: "Reviewer" });
       const admit = async () => {
-        await agents.createMembership({
-          host: { kind: "channel", channelId: "channel" },
-          agentId: agent.id,
-          sessionId: "private-agent",
+        await registerWorkerSession({
+          type: "channel",
+          channelId: "channel",
+          sessionId: "channel-worker",
+          ephemeral: false,
+          name: "Reviewer",
+          metadata: { seenThrough: 0 },
         });
         await registerWorkerSession({
           type: "session",
@@ -102,10 +105,10 @@ describe("Session catalog projection", () => {
         });
       };
       if (change === "deletion") await admit();
-      const sessions = ["ordinary", "private-agent", "worker"].map((sessionId) => ({
-        sessionId,
-        startTime: new Date(0),
-        modifiedTime: new Date(0),
+      const sessions = ["ordinary", "channel-worker", "worker"].map((sessionId) => ({
+        id: sessionId,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
         title: sessionId,
       }));
       const worktree = { branch: "work", baseBranch: "main", path: "/repo/work" };
@@ -114,17 +117,39 @@ describe("Session catalog projection", () => {
         if (change === "creation") {
           await admit();
         } else {
-          await agents.deleteMembershipBySession("private-agent");
+          await unregisterWorkerSession("channel-worker");
           await unregisterWorkerSession("worker");
         }
-        return [sessions, { "private-agent": worktree, worker: worktree }];
+        return [sessions, { "channel-worker": worktree, worker: worktree }];
       });
 
       expect(catalog).toEqual({
-        sessions: [sessions[0], sessions[2]],
-        worktrees: { worker: worktree },
-        workerSessionParents: { worker: "parent" },
+        sessions,
+        worktrees: { "channel-worker": worktree, worker: worktree },
+        workerSessionParents: { "channel-worker": null, worker: "parent" },
       });
     },
   );
+});
+
+test("detaching a never-started Channel Agent removes its Worker", async () => {
+  await openSessionTypeTestDatabase();
+  const channels = new ChannelDatabase(currentDb!);
+  const channel = await channels.createChannel({ title: "Dormant team" });
+  const { member } = await channels.createMember({
+    type: "channel",
+    channelId: channel.id,
+    sessionId: "dormant-reviewer",
+    ephemeral: false,
+    name: "Reviewer",
+    metadata: { seenThrough: 0 },
+  });
+
+  await detachManagedSession(member.id);
+
+  expect(await channels.getMember(member.id)).toBeNull();
+  expect((await channels.listMessagesAfter(channel.id)).map(({ content }) => content)).toEqual([
+    { type: "member_joined", member },
+    { type: "member_left", member },
+  ]);
 });

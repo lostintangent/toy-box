@@ -3,7 +3,7 @@
 // updates from the authoritative workspace snapshot.
 
 import type { WorkspaceEvent } from "@workspace/model/events";
-import type { SessionMetadataUpdate } from "@sessions/model";
+import type { SessionUpdate } from "@sessions/model";
 import { sharedSet } from "@/shared/server/processState";
 
 type WorkspaceEventListener = (event: WorkspaceEvent) => void;
@@ -21,7 +21,7 @@ export function broadcast(event: WorkspaceEvent): void {
   }
 }
 
-export function emitSessionUpsert(session: SessionMetadataUpdate): void {
+export function emitSessionUpsert(session: SessionUpdate): void {
   broadcast({ type: "session.upserted", session });
 }
 
@@ -31,7 +31,7 @@ export function emitSessionDelete(sessionId: string): void {
 
 export function emitSessionNameUpdate(sessionId: string, name: string): void {
   emitSessionUpsert({
-    sessionId,
+    id: sessionId,
     title: name,
   });
 }

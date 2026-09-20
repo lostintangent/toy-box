@@ -1,9 +1,6 @@
 import { z } from "zod";
 import { hexColorSchema, isHexColor } from "@/shared/utils";
-import {
-  areModelConfigurationsEqual,
-  modelConfigurationSchema,
-} from "@sessions/model/modelConfiguration";
+import { areModelConfigurationsEqual, modelConfigurationSchema } from "@providers/model";
 
 const SESSION_FEATURE_SCOPE_VALUES = ["always", "sessions", "automations", "never"] as const;
 
@@ -13,8 +10,7 @@ const SETTINGS_SHAPE = {
   terminalShell: z.string(),
   useWorktree: z.boolean(),
   autoFocusArtifacts: z.enum(SESSION_FEATURE_SCOPE_VALUES),
-  showExternalSessions: z.boolean(),
-  hiddenSessionProviders: z.array(z.string()),
+  disabledProviders: z.array(z.string()),
   pinnedSessionIds: z.array(z.string()),
 };
 
@@ -28,8 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalShell: "",
   useWorktree: false,
   autoFocusArtifacts: "automations",
-  showExternalSessions: true,
-  hiddenSessionProviders: [],
+  disabledProviders: ["claude"],
   pinnedSessionIds: [],
 };
 
@@ -46,7 +41,7 @@ export function normalizeSettings(value: unknown): Settings {
     }),
   ) as Settings;
   settings.pinnedSessionIds = [...new Set(settings.pinnedSessionIds)].sort();
-  settings.hiddenSessionProviders = [...new Set(settings.hiddenSessionProviders)].sort();
+  settings.disabledProviders = [...new Set(settings.disabledProviders)].sort();
   return settings;
 }
 
@@ -55,7 +50,7 @@ export function areSettingsEqual(left: Settings, right: Settings): boolean {
     if (key === "defaultModel") {
       return areModelConfigurationsEqual(left.defaultModel, right.defaultModel);
     }
-    if (key === "pinnedSessionIds" || key === "hiddenSessionProviders") {
+    if (key === "pinnedSessionIds" || key === "disabledProviders") {
       return areStringSetsEqual(left[key], right[key]);
     }
     return Object.is(left[key], right[key]);

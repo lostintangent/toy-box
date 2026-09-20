@@ -18,8 +18,7 @@ describe("settings", () => {
       terminalShell: "/bin/zsh",
       useWorktree: true,
       autoFocusArtifacts: "sessions",
-      showExternalSessions: false,
-      hiddenSessionProviders: ["codex"],
+      disabledProviders: ["claude"],
       pinnedSessionIds: ["session-a", "session-b"],
     };
 
@@ -35,18 +34,6 @@ describe("settings", () => {
     });
   });
 
-  test("provider visibility is a durable set and new providers remain visible by default", () => {
-    const settings = normalizeSettings({ hiddenSessionProviders: ["copilot", "codex", "copilot"] });
-    expect(settings.hiddenSessionProviders).toEqual(["codex", "copilot"]);
-    expect(normalizeSettings({}).hiddenSessionProviders).toEqual([]);
-    expect(
-      areSettingsEqual(settings, { ...settings, hiddenSessionProviders: ["copilot", "codex"] }),
-    ).toBe(true);
-    expect(areSettingsEqual(settings, { ...settings, hiddenSessionProviders: ["codex"] })).toBe(
-      false,
-    );
-  });
-
   test("defaults invalid persisted fields independently", () => {
     const defaults = normalizeSettings({});
 
@@ -57,10 +44,20 @@ describe("settings", () => {
         terminalShell: 42,
         useWorktree: "yes",
         autoFocusArtifacts: "occasionally",
-        showExternalSessions: "sometimes",
         pinnedSessionIds: [42],
       }),
     ).toEqual(defaults);
+  });
+
+  test("provider enablement defaults Claude off and preserves an explicitly empty set", () => {
+    expect(normalizeSettings({}).disabledProviders).toEqual(["claude"]);
+    expect(normalizeSettings({ disabledProviders: [] }).disabledProviders).toEqual([]);
+    const settings = normalizeSettings({ disabledProviders: ["copilot", "claude", "copilot"] });
+    expect(settings.disabledProviders).toEqual(["claude", "copilot"]);
+    expect(
+      areSettingsEqual(settings, { ...settings, disabledProviders: ["copilot", "claude"] }),
+    ).toBe(true);
+    expect(areSettingsEqual(settings, { ...settings, disabledProviders: [] })).toBe(false);
   });
 
   test("validates complete settings at the transport boundary", () => {

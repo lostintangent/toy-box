@@ -5,7 +5,7 @@
  * work while visible, reduce stream events, and expose user commands. Mutations
  * carry request/response commands; the long-lived event stream stays explicit.
  *
- * Draft start: a draft (see useDrafts) owns a public ID and artifacts,
+ * First turn: a draft session owns a public ID and artifacts,
  * and its first send creates the selected provider's history with
  * `location` carrying its directory and worktree choice. Submission seeds its
  * catalog entry and applies the ordinary `running` transition optimistically;
@@ -14,14 +14,14 @@
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ModelConfiguration } from "./model/modelConfiguration";
+import type { ModelConfiguration } from "@providers/model";
 import { applySessionEvent, createInitialSessionState } from "./model/reducer";
-import type { SessionEvent, SessionLaunch, SessionState, UserMessage } from "./model";
+import type { Session, SessionEvent, SessionLaunch, SessionState, UserMessage } from "./model";
 import type { SessionSubscriptionMode, StreamSessionRequest } from "./model/protocol";
 import { sessionMutations } from "./mutations";
 import { sessionQueries } from "./queries";
 import {
-  addSessionIfMissing,
+  cancelSessionsStateQuery,
   invalidateSessionsStateQuery,
   upsertSessionInState,
 } from "./queryCache";
@@ -43,12 +43,12 @@ interface SessionConfig {
   /** Browser default, used when no model has been projected for the session.
    *  Once the session has its own model, that always wins over this default. */
   defaultModel?: ModelConfiguration;
-  /** Working directory for the session. Only sent as a draft's initial location. */
+  /** Working directory for the session. Only sent as the first turn's location. */
   directory?: string;
   /** Run the session in an isolated git worktree. Initial-location only. */
   useWorktree?: boolean;
-  /** Optional artifact already owned by this draft. */
-  draftArtifactPath?: string;
+  /** Catalog record; its provider determines whether history exists yet. */
+  session?: Session;
 }
 
 export function useSession(
@@ -60,12 +60,12 @@ export function useSession(
     defaultModel,
     directory: sessionDirectory,
     useWorktree: sessionUseWorktree,
-    draftArtifactPath,
+    session,
   }: SessionConfig,
 ) {
   const queryClient = useQueryClient();
   const sessionQuery = sessionQueries.detail(sessionId);
-  const isDraft = workspaceSessionStatus === "draft";
+  const isDraft = session !== undefined && !session.provider;
   const isSessionLive = isWorkspaceSessionLive(workspaceSessionStatus);
   const isSessionUnread = workspaceSessionStatus === "unread";
   const pageIsVisible = usePageVisibility();
@@ -78,7 +78,7 @@ export function useSession(
   // published to React immediately for discrete events or once per frame for
   // rapid text deltas.
   const [publishedSession, setPublishedSession] = useState(() =>
-    createInitialSessionState(draftArtifactPath ? { artifacts: [draftArtifactPath] } : {}),
+    createInitialSessionState(session?.artifactPath ? { artifacts: [session.artifactPath] } : {}),
   );
   const sessionRef = useRef(publishedSession);
   const rafIdRef = useRef<number | null>(null);
@@ -130,7 +130,7 @@ export function useSession(
   const applyEvent = (event: SessionEvent) => {
     sessionRef.current = applySessionEvent(sessionRef.current, event);
 
-    if (event.type === "delta" || event.type === "reasoning") {
+    if (event.type === "delta" || event.type === "reasoning_delta") {
       scheduleStatePublish();
     } else {
       publishState();
@@ -288,9 +288,14 @@ export function useSession(
       immediate,
     } satisfies SessionLaunch["message"] & { clientId: string };
 
+    if (isDraft) void cancelSessionsStateQuery(queryClient);
     upsertSessionInState(queryClient, {
-      sessionId,
-      modifiedTime: now.toISOString(),
+      id: sessionId,
+      updatedAt: now.toISOString(),
+      ...(isDraft && {
+        provider: model ? { id: model.provider } : undefined,
+        context: { directory: sessionDirectory },
+      }),
     });
 
     // Server running state owns the send-vs-queue distinction. The controller
@@ -303,19 +308,10 @@ export function useSession(
     // Start a new streaming response. Seed the session's model
     // with what we're about to send — this mirrors the server, which seeds its
     // stream state the same way and therefore never re-announces the initial
-    // model via a model_changed event. Without this, a draft's picker would
-    // blank out when the draft starts running.
+    // model via a model_changed event. This keeps the picker stable
+    // while the first turn starts.
     if (model) {
       sessionRef.current = { ...sessionRef.current, model };
-    }
-    if (isDraft) {
-      addSessionIfMissing(queryClient, {
-        sessionId,
-        provider: model?.provider,
-        startTime: now,
-        modifiedTime: now,
-        directory: sessionDirectory,
-      });
     }
     applyWorkspaceEvent(queryClient, { type: "session.running", sessionId });
     applyEvent({
@@ -344,7 +340,7 @@ export function useSession(
       console.error("Streaming error:", error);
       applyEvent({ type: "end", reason: "error" });
       if (isDraft) {
-        // Creation may have failed before or after binding the provider. Read
+        // Creation may have failed before or after creating native history. Read
         // the authoritative lifecycle rather than guessing whether to undo it.
         await repairWorkspaceStateQuery(queryClient);
         await invalidateSessionsStateQuery(queryClient);
@@ -374,7 +370,7 @@ export function useSession(
     [],
   );
 
-  // A draft has no provider-history snapshot until its first turn. Live state
+  // A draft session has no provider-history snapshot until its first turn. Live state
   // wins while connected; an idle started session adopts the latest snapshot.
   useEffect(() => {
     if (isDraft) return;

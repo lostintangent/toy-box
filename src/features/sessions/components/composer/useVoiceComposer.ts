@@ -1,4 +1,10 @@
-import { modelCatalogKey, modelConfigurationKey } from "../../model/modelConfiguration";
+import {
+  modelCatalogKey,
+  modelConfigurationKey,
+  resolveModelConfigurationForModel,
+  type ModelConfiguration,
+  type ModelInfo,
+} from "@providers/model";
 // Voice-driven prompt composing.
 //
 // A voice call is an ephemeral realtime session whose whole job is to fill the
@@ -11,11 +17,6 @@ import { openaiRealtime } from "@tanstack/ai-openai";
 import { useRealtimeChat } from "@tanstack/ai-react";
 import { z } from "zod";
 import { createVoiceToken } from "@sessions/server/functions";
-import {
-  resolveModelConfigurationForModel,
-  type ModelConfiguration,
-} from "../../model/modelConfiguration";
-import type { ModelInfo } from "../../model";
 
 /** Current composer state and actions, read through a ref by the voice tools.
  *  Session presence determines whether sending ends the call or leaves it open

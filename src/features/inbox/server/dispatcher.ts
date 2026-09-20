@@ -1,13 +1,12 @@
 // Inbox-managed session dispatch and completion supervision.
 
 import { createSession, releaseIdleSession } from "@sessions/server/runtime";
-import { SESSION_ID_PREFIX } from "@sessions/model/constants";
 import type { SessionCompletion, SessionLaunch } from "@sessions/model";
 import { createPendingInboxEntry, deleteInboxEntry, getInboxEntry } from "./index";
 
 /** Accept an Inbox task and open its ordinary session runtime without attaching a client. */
 export async function dispatchInboxTask(input: SessionLaunch): Promise<{ sessionId: string }> {
-  const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
+  const sessionId = crypto.randomUUID();
   await createPendingInboxEntry(sessionId);
 
   let waitForCompletion: () => Promise<SessionCompletion>;

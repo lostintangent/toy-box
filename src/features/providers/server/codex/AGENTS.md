@@ -21,10 +21,10 @@ here. No additional OpenAI npm SDK or Toy Box login is required.
   controller cancels its handlers when interrupted, completed, or disconnected.
 - `projector.ts` exposes one native event-to-SessionEvents function for live notifications
   and history. `codexHistoryEvents` adapts stored turns into `turn/completed` notifications;
-  the projector owns stable timestamps and native-ID deduplication. `inputs.ts` handles
-  skill inputs, media, and staged attachments. Native text-element display spans
-  preserve structured system messages and general file attachments; native images
-  carry their own bytes. Live and reopened inputs use only native history.
+  the projector owns stable timestamps and native-ID deduplication. `messages.ts` handles
+  skill and image inputs. Native text-element display spans preserve structured system
+  messages; native image inputs carry their own bytes. Live and reopened inputs use
+  only native history, with no staged attachment files.
   Failed turns project their `Turn.error.message` through the same `turn/completed` case
   live and during history replay. Retrying `error` notifications are not transcript
   failures; the final `turn/completed` outcome is authoritative.

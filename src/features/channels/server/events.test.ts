@@ -11,7 +11,7 @@ function update(revision: number): ChannelEvent {
   return {
     type: "status",
     revision,
-    sessionId: `session-${revision}`,
+    agentId: `session-${revision}`,
     status: { state: "working", text: `Task ${revision}` },
   };
 }

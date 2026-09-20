@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode } from "react";
+import { useHasModels } from "@providers/useModels";
 import {
   CircleHelp,
   FolderOpen,
@@ -35,12 +36,14 @@ function SidebarAction({
   onClick,
   variant = "ghost",
   className,
+  disabled,
   children,
 }: {
   label: string;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
   variant?: "ghost" | "accent";
   className?: string;
+  disabled?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -53,6 +56,7 @@ function SidebarAction({
             size="icon"
             className={cn(SIDEBAR_ACTION_SIZE, className)}
             onClick={onClick}
+            disabled={disabled}
             aria-label={label}
             suppressHydrationWarning
           >
@@ -106,11 +110,13 @@ export function NewSessionButton({
   onCreateSession: (options?: SidebarCreateOptions) => void;
   className?: string;
 }) {
+  const hasModels = useHasModels();
   return (
     <SidebarAction
       label="New session"
       variant="accent"
       className={className}
+      disabled={!hasModels}
       onClick={(event) => onCreateSession({ addToWorkspace: event.metaKey || event.ctrlKey })}
     >
       <Plus />
@@ -120,9 +126,15 @@ export function NewSessionButton({
 
 export function HyperButton({ onToggle, isOpen }: { onToggle: () => void; isOpen: boolean }) {
   const hyperSessionId = useWorkspaceSelector((workspace) => workspace.hyperSessionIds[0]);
+  const hasModels = useHasModels();
 
   return (
-    <SidebarAction label="Toggle hyper session" onClick={onToggle} className="relative inline-flex">
+    <SidebarAction
+      label="Toggle hyper session"
+      onClick={onToggle}
+      disabled={!hasModels}
+      className="relative inline-flex"
+    >
       {hyperSessionId ? (
         <HyperSessionStatus sessionId={hyperSessionId} isOpen={isOpen} />
       ) : (

@@ -160,7 +160,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       // replies and child tools carry their parent tool-call identity.
       if (event.agentId) return [];
       const content = event.data.deltaContent;
-      return content ? [{ type: "reasoning", content }] : [];
+      return content ? [{ type: "reasoning_delta", content }] : [];
     }
     case "skill.invoked": {
       if (event.data.trigger === "context-load" || event.agentId) return [];

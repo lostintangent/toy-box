@@ -2,7 +2,7 @@ import { describe, expect, mock, onTestFinished, test } from "bun:test";
 import type { Automation } from "@automations/model";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import { createTestDatabase } from "@/server/database";
-import { deleteHyperState } from "./hyperSessions";
+import { addHyperSession, deleteHyperState } from "./hyperSessions";
 import { deleteSessionState, getSessionState } from "./sessions";
 import type { WorkspaceEvent } from "@workspace/model/events";
 import { sessionFile } from "@files/model";
@@ -18,15 +18,9 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-const {
-  addDraftSession,
-  applyWorkspaceAction,
-  changeSettings,
-  getWorkspaceState,
-  setSessionStatus,
-  unpinSession,
-} = await import(".");
-const { persistDraftSession } = await import("@sessions/server/state/sessions");
+const { applyWorkspaceAction, changeSettings, getWorkspaceState, setSessionStatus, unpinSession } =
+  await import(".");
+const { insertSession } = await import("@sessions/server/state/sessions");
 
 async function openWorkspaceTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
@@ -126,7 +120,7 @@ describe("workspace state", () => {
     const sessionId = `workspace-snapshot-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));
 
-    addDraftSession({ sessionId, createdAt: 0 }, true);
+    addHyperSession(sessionId);
     applyWorkspaceAction({
       type: "session.prompt.drafted",
       sessionId,
@@ -135,29 +129,19 @@ describe("workspace state", () => {
 
     const state = await snapshot();
     expect(state.sessionStates[sessionId]).toMatchObject({
-      status: "draft",
+      status: "idle",
       prompt: { text: "hello", origin: "client-a" },
     });
     expect(state.hyperSessionIds).toContain(sessionId);
   });
 
-  test("projects durable artifact drafts into snapshots without caching them", async () => {
+  test("session creation belongs to the catalog, not workspace activity", async () => {
     await openWorkspaceTestDatabase();
-    const draft = {
-      sessionId: `workspace-draft-${crypto.randomUUID()}`,
-      artifactPath: "document.md",
-      createdAt: 42,
-    };
-    onTestFinished(() => cleanup(draft.sessionId));
-    await persistDraftSession(draft);
+    const id = crypto.randomUUID();
+    await insertSession({ id, artifactPath: "document.md", createdAt: new Date(42) });
 
-    expect(getSessionState(draft.sessionId)).toBeUndefined();
-    expect((await snapshot()).sessionStates[draft.sessionId]).toEqual({
-      status: "draft",
-      artifactPath: draft.artifactPath,
-      createdAt: draft.createdAt,
-    });
-    expect(getSessionState(draft.sessionId)).toBeUndefined();
+    expect(getSessionState(id)).toBeUndefined();
+    expect((await snapshot()).sessionStates[id]).toBeUndefined();
   });
 
   test("snapshot composes durable automation definitions", async () => {

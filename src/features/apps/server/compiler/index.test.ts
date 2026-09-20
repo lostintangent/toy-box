@@ -38,7 +38,7 @@ describe("app compiler", () => {
           useFile,
           useWorkspace,
           type AppSession,
-          type SessionMetadata,
+          type Session,
           type ModelConfiguration,
           type SessionLaunch,
           type WorkspaceFile,
@@ -51,15 +51,15 @@ describe("app compiler", () => {
         const CountSchema = z.number().int().catch(0);
 
         function SessionRow({ session }: { session: AppSession }) {
-          const metadata: SessionMetadata = session;
+          const metadata: Session = session;
           return (
-            <section data-session={metadata.sessionId} data-provider={metadata.provider}>
+            <section data-session={metadata.id} data-provider={metadata.provider?.id}>
               {metadata.title ?? "Untitled session"}
-              {metadata.directory}
-              <time>{metadata.modifiedTime.toISOString()}</time>
+              {metadata.context?.directory}
+              <time>{metadata.updatedAt.toISOString()}</time>
               <AppSessionStatus status={session.status} />
-              <AppSessionToggle sessionId={metadata.sessionId} />
-              {session.children.map((child) => <SessionRow key={child.sessionId} session={child} />)}
+              <AppSessionToggle sessionId={metadata.id} />
+              {session.children.map((child) => <SessionRow key={child.id} session={child} />)}
             </section>
           );
         }
@@ -90,7 +90,7 @@ describe("app compiler", () => {
               <style>{"[data-toybox-app='test-app'] .meter { accent-color: rebeccapurple; }"}</style>
               <AppFilePicker value={file} extensions={[".md"]} onValueChange={setFile} />
               <AppAlert>Something went wrong.</AppAlert>
-              {sessions.map((session) => <SessionRow key={session.sessionId} session={session} />)}
+              {sessions.map((session) => <SessionRow key={session.id} session={session} />)}
               <AppSharePicker mimeType="text/plain" content="Hello" />
               <button
                 onClick={async () => {

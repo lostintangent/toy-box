@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ArrowUp } from "lucide-react";
-import { AgentInvitationChips } from "@agents/components/AgentInvitationChips";
-import { AgentPicker } from "@agents/components/AgentPicker";
+import { AgentPicker } from "@channels/components/agents/AgentPicker";
 import {
   agentPickerSuggestions,
   type AgentPickerSuggestion,
-} from "@agents/components/agentPickerSuggestions";
-import { useAgentMentionInput } from "@agents/components/useAgentMentionInput";
-import type { Agent, AgentMembership } from "@agents/model";
-import { resolveChannelAudience, type Channel } from "@channels/model";
+} from "@channels/components/agents/agentPickerSuggestions";
+import { useAgentMentionInput } from "@channels/components/agents/useAgentMentionInput";
+import type { Channel, ChannelMember } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import {
   AttachImageButton,
@@ -30,12 +28,10 @@ import { generateUUID } from "@/shared/utils";
 export function ChannelComposer({
   channel,
   members,
-  agents,
   onSubmit,
 }: {
   channel: Channel;
-  members: AgentMembership[];
-  agents: Agent[];
+  members: ChannelMember[];
   onSubmit: () => void;
 }) {
   const [content, setContent] = useState("");
@@ -52,17 +48,12 @@ export function ChannelComposer({
     removeAttachment,
   } = useImageAttachments();
   const { mutate: postMessage } = useMutation(channelMutations.post());
-  const invitations = resolveChannelAudience({
-    content,
-    sender: { type: "user" },
-    members,
-    agents,
-  }).invitations;
   const mention = useAgentMentionInput({
     value: content,
     onValueChange: setContent,
     textareaRef,
-    suggestionsFor: (query) => channelMentionSuggestions(query, agents, members),
+    suggestionsFor: (query) => channelMentionSuggestions(query, members),
+    channelId: channel.id,
   });
 
   useEffect(() => {
@@ -129,7 +120,6 @@ export function ChannelComposer({
             className="max-h-18 min-h-14 overflow-y-auto py-2 text-sm"
             rows={1}
           />
-          <AgentInvitationChips invitations={invitations} />
           <InputGroupAddon align="block-end" className="relative justify-between pt-0 pb-2">
             <TypingEffect value={content} />
             <div className="relative flex items-center gap-1">
@@ -162,15 +152,10 @@ export function ChannelComposer({
 
 function channelMentionSuggestions(
   query: string,
-  agents: readonly Agent[],
-  members: readonly AgentMembership[],
+  members: readonly ChannelMember[],
 ): AgentPickerSuggestion[] {
   const normalizedQuery = query.toLowerCase();
-  const suggestions = agentPickerSuggestions({
-    query,
-    agents,
-    memberships: members,
-  });
+  const suggestions = agentPickerSuggestions(query, members);
   if (members.length > 0 && "everyone".includes(normalizedQuery)) {
     suggestions.unshift({
       handle: "everyone",

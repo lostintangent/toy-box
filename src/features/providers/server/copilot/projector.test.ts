@@ -1636,7 +1636,7 @@ describe("projector", () => {
           sdkEvent({ type: "assistant.reasoning_delta", data: { deltaContent: "Hmm" } }),
           context,
         ),
-      ).toEqual([{ type: "reasoning", content: "Hmm" }]);
+      ).toEqual([{ type: "reasoning_delta", content: "Hmm" }]);
     });
 
     test("drops transient subagent text and reasoning deltas", () => {

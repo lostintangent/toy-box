@@ -25,7 +25,7 @@ test("SSR renders the native repository badge before directory lookup", () => {
 test("a CWD-only session reuses resolved directory metadata for its repository badge", () => {
   const client = new QueryClient();
   client.setQueryData(sessionQueries.context("/repo/project").queryKey, {
-    workingDirectory: "/repo/project",
+    directory: "/repo/project",
     gitRoot: "/repo/project",
     repository: "owner/project",
   });

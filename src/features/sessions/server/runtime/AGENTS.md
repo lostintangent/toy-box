@@ -40,14 +40,14 @@ The runtime exposes the session operations directly:
 1. **Create** provider history through the first message. A draft already owns a public ID and optional files, and creation binds its ID to the selected provider without changing workspace identity.
 2. **Deliver** a message to an existing session. The runtime decides whether it starts immediately or queues behind active execution; a queued user message may request immediate delivery.
 3. **Stream** through a subscription to ordered live events, with cursor replay after reconnect.
-4. **Wait** for completion. `waitForSession` covers the announced, live, or latest persisted execution by session ID; a delivery receipt binds a supervisor to the exact execution it started.
+4. **Wait** for completion. `waitForSessions` covers the announced, live, or latest persisted execution for each session ID; a delivery receipt binds a supervisor to the exact execution it started.
 5. **Control** by renaming, steering or cancelling queued input, aborting, rewinding an idle conversation, deleting, or applying worktree operations.
 
 Control is a category, not one runtime method. Abort, queue steering, and queue cancellation act on live execution; rename, deletion, and worktree commands delegate through the session API to the registry or resource owner described in the state guide. Rewind resolves the selected user-message timestamp against the provider's current rewind boundaries, removes that root user turn and every later conversation event while preserving files, and lets the provider reject a concurrent busy session. Queue status supplies the submission claim shared by normal draining and steering; steering uses the provider connection without opening another turn boundary.
 
 Once a session has turn-bearing history, resume is not a separate operation. Delivering to an idle session resumes its persisted provider connection; delivering to an active session queues. Callers do not choose whether a new turn starts or a message enters the active mailbox, though an active user delivery may request immediate dispatch.
 
-`streamSession` is the connected composite: it subscribes before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can start a draft's first turn or create a session with its required first message, deliver to an existing session, or subscribe without delivering. Headless callers use `createSession`, `deliverSessionMessage`, and `waitForSession` directly. Scenario supervisors compose those operations with their own policy.
+`streamSession` is the connected composite: it subscribes before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can start a draft's first turn or create a session with its required first message, deliver to an existing session, or subscribe without delivering. Headless callers use `createSession`, `deliverSessionMessage`, and `waitForSessions` directly. Scenario supervisors compose those operations with their own policy.
 
 ## Live execution
 
@@ -58,8 +58,8 @@ A managed feature may announce work before its live stream exists. `registerPend
 Managed features supervise sessions because their terminal policies differ. The runtime centralizes execution and exact completion; scenario-specific policy stays with its owner rather than entering an enum, strategy interface, or alternate execution model.
 
 1. Acquisition is single-flight. Before a new execution acquires a provider connection, the registry refreshes
-   configuration when its application-supplied lifetime requires it. This lets a private Channel Agent
-   receive current identity and experience instructions between executions. Active delivery never
+   configuration when its application-supplied lifetime requires it. This lets a Channel-owned Worker
+   receive current identity and collaboration instructions between executions. Active delivery never
    refreshes that session. A caller joins an existing stream, shares an in-progress creation, creates a
    new provider connection, or resumes an idle session from its reduced snapshot and cached provider
    connection.

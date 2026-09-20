@@ -36,7 +36,7 @@ export const cancelWorkerInputSchema = z
 export type SpawnWorkerInput = z.infer<typeof spawnWorkerInputSchema>;
 export type CancelWorkerInput = z.infer<typeof cancelWorkerInputSchema>;
 
-/** A supervised session plus the resource that owns its lifecycle. */
+/** A Session identity whose lifecycle belongs to another resource. */
 export type Worker = {
   sessionId: string;
   ephemeral: boolean;
@@ -46,6 +46,7 @@ export type Worker = {
   | { type: "session"; parentSessionId: string }
   | { type: "file"; file: SessionFile }
   | { type: "app"; appId: string }
+  | { type: "channel"; channelId: string }
 );
 
 export type WorkerEvent =
@@ -59,6 +60,7 @@ export function workerParentSessionId(worker: Worker): string | undefined {
     case "file":
       return worker.file.sessionId;
     case "app":
+    case "channel":
       return;
   }
 }

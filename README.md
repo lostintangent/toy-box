@@ -8,12 +8,12 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
 
 ## Features
 
-- **Supports GitHub Copilot and Codex:** Use either installed CLI with its existing login. Choose the provider in the model picker; sessions, tools, skills, and workflows share the same workspace.
+- **Supports GitHub Copilot, OpenAI Codex, and Claude Code:** Use an installed CLI with its existing login. Choose the provider in the model picker; sessions, tools, skills, and workflows share the same workspace.
 - **Live, multi-device sessions:** Start or resume work from desktop or mobile, watch and steer it from every connected client, answer agent questions, manage queued follow-ups, and pin important sessions.
 - **Rich composer:** Choose the model and reasoning effort, attach images, invoke skills, dictate by voice, and start sessions in a working directory or isolated Git worktree.
 - **Multi-pane workspace:** Open up to four sessions, local files, artifacts, apps, terminals, or agent-provided canvases together, with live previews and an adaptive mobile layout.
 - **Multi-agent orchestration:** Delegate parallel work to child sessions and use the floating Hyper workspace for a dedicated orchestration thread.
-- **Agent channels:** Create persistent teammates with distinct personas and durable experience, then bring them together in shared channels to collaborate through messages, reactions, screenshots, and artifacts.
+- **Agent channels:** Create channel-specific teammates with distinct roles, then collaborate through messages, reactions, statuses, screenshots, and shared artifacts.
 - **Collaborative artifacts:** Browse and edit Markdown, HTML, JSON, and SVG alongside the agent, or use structured briefs to review and launch consequential work.
 - **Toy Box apps:** Build session-scoped `.toy` React artifacts or install reusable, stateful apps from trusted GitHub Gists. Apps can compose sessions, files, panes, workers, and shared content.
 - **Scheduled automations:** Configure recurring prompts that automate routine work and produce reviewable artifacts such as reports, analyses, and news digests.
@@ -25,10 +25,13 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
 
 - [GitHub Copilot CLI](https://github.com/github/copilot)
 - [Codex CLI](https://developers.openai.com/codex/cli/)
+- [Claude Code](https://code.claude.com/docs/en/setup) **2.1.278+** (`claude update` to upgrade)
 
 1. Install Toy Box: `npm install -g @lostintangent/toy-box`
 1. Start the agent server: `toy-box`
 1. Open `http://localhost:3000` in your browser
+
+Restart Toy Box and reload the page after installing, removing, or updating a provider to refresh the model catalog.
 
 ## Access From Anywhere
 

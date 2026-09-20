@@ -4,7 +4,7 @@ import {
   abortSession,
   applySessionWorktree,
   cancelQueuedMessage,
-  createDraftSession,
+  startSession,
   createSession,
   deleteSession,
   deliverMessage,
@@ -25,7 +25,7 @@ import { applyWorkspaceEvent } from "@workspace/queries";
 import type { SessionLaunch } from "./model";
 import type { SessionQuestionAnswer } from "./model/protocol";
 
-type CreateDraftSessionVariables = {
+type CreateSessionVariables = {
   sessionId: string;
   createdAt: number;
   artifact?: { path: string; content: string };
@@ -33,15 +33,15 @@ type CreateDraftSessionVariables = {
 };
 
 export const sessionMutations = {
-  createSession: () =>
+  startSession: () =>
     mutationOptions({
-      mutationFn: (launch: SessionLaunch) => createSession({ data: launch }),
+      mutationFn: (launch: SessionLaunch) => startSession({ data: launch }),
     }),
 
-  createDraftSession: () =>
+  createSession: () =>
     mutationOptions({
-      mutationFn: ({ sessionId, artifact, hyper }: CreateDraftSessionVariables) =>
-        createDraftSession({
+      mutationFn: ({ sessionId, artifact, hyper }: CreateSessionVariables) =>
+        createSession({
           data: {
             sessionId,
             ...(artifact ? { artifact } : {}),
@@ -49,12 +49,18 @@ export const sessionMutations = {
           },
         }),
       onMutate: ({ sessionId, createdAt, artifact, hyper }, { client }) => {
+        // Cancel any older catalog read before inserting the new ID synchronously.
+        void cancelSessionsStateQuery(client);
+        const timestamp = new Date(createdAt).toISOString();
         applyWorkspaceEvent(client, {
-          type: "session.drafted",
-          sessionId,
-          createdAt,
-          ...(artifact ? { artifactPath: artifact.path } : {}),
-          ...(hyper ? { hyper: true } : {}),
+          type: "session.upserted",
+          session: {
+            id: sessionId,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            ...(artifact ? { artifactPath: artifact.path } : {}),
+            sessionType: hyper ? "hyper" : "standard",
+          },
         });
       },
       onError: (_error, { sessionId }, _context, { client }) => {
@@ -87,7 +93,7 @@ export const sessionMutations = {
       onMutate: async (name, { client }) => {
         await cancelSessionsStateQuery(client);
         const previousSessionsState = snapshotSessionsState(client);
-        upsertSessionInState(client, { sessionId, title: name });
+        upsertSessionInState(client, { id: sessionId, title: name });
         return { previousSessionsState };
       },
       onError: (_error, _variables, context, { client }) => {

@@ -38,7 +38,7 @@ describe("workspace query selectors", () => {
     const changedPrompt = { text: "changed", origin: "client-a", updatedAt: 2 };
     seedWorkspace(queryClient, {
       ...createEmptyWorkspaceState(),
-      sessionStates: { "session-a": { status: "draft", createdAt: 1, prompt } },
+      sessionStates: { "session-a": { status: "idle", prompt } },
     });
     const status = observe(
       queryClient,
@@ -53,8 +53,7 @@ describe("workspace query selectors", () => {
       ...workspace,
       sessionStates: {
         "session-a": {
-          status: "draft",
-          createdAt: 1,
+          status: "idle",
           prompt: changedPrompt,
         },
       },
@@ -72,11 +71,11 @@ describe("workspace query selectors", () => {
     expect(selectedPrompt.updates()).toBe(1);
   });
 
-  test("activity begins when a draft starts running", () => {
+  test("activity begins when a session starts running", () => {
     const queryClient = createQueryClient();
     seedWorkspace(queryClient, {
       ...createEmptyWorkspaceState(),
-      sessionStates: { "session-a": { status: "draft", createdAt: 1 } },
+      sessionStates: {},
     });
     const activity = observe(queryClient, (workspace) =>
       selectWorkspaceSessionActivity(workspace, "session-a"),

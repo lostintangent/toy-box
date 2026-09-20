@@ -1,12 +1,16 @@
 import { z } from "zod";
-import type { Agent, AgentMembership } from "@agents/model";
-import {
-  agentHandleFromName,
-  agentMembershipStatusSchema,
-  extractAgentMentionHandles,
-} from "@agents/model";
 import { workspaceFileSchema } from "@files/model";
+import { modelConfigurationSchema } from "@providers/model";
 import { attachmentSchema, messageAttachmentsSchema } from "@sessions/model/protocol";
+import {
+  agentAvatarSchema,
+  agentHandleFromName,
+  agentNameSchema,
+  agentRoleSchema,
+  extractAgentMentionHandles,
+} from "./agent";
+
+export * from "./agent";
 
 const durableIdSchema = z.string().trim().min(1).max(255);
 const channelTitleSchema = z.string().trim().min(1).max(100);
@@ -32,8 +36,10 @@ export type Channel = {
 
 export type ChannelList = {
   channels: Channel[];
-  memberships: AgentMembership[];
+  members: ChannelMember[];
 };
+
+const channelStatusTextSchema = z.string().trim().min(1).max(100);
 
 const channelStatusTargetSchema = z
   .object({
@@ -58,25 +64,35 @@ const channelStatusTargetSchema = z
 export const channelMemberStatusSchema = z.discriminatedUnion("state", [
   channelStatusTargetSchema.safeExtend({
     state: z.literal("working"),
-    text: agentMembershipStatusSchema.shape.text,
+    text: channelStatusTextSchema,
   }),
-  agentMembershipStatusSchema.extend({ state: z.literal("waiting") }),
+  z.object({ state: z.literal("waiting"), text: channelStatusTextSchema }).strict(),
 ]);
 export type ChannelMemberStatus = z.output<typeof channelMemberStatusSchema>;
 
+/** Channel-owned configuration and collaboration state stored on its Worker. */
+export const channelAgentMetadataSchema = z
+  .object({
+    role: agentRoleSchema.optional(),
+    model: modelConfigurationSchema.optional(),
+    avatar: agentAvatarSchema.optional(),
+    seenThrough: z.number().int().nonnegative(),
+    status: channelMemberStatusSchema.optional(),
+  })
+  .strict();
+export type ChannelAgentMetadata = z.output<typeof channelAgentMetadataSchema>;
+
 export const setChannelStatusInputSchema = channelStatusTargetSchema.safeExtend({
-  status: agentMembershipStatusSchema.shape.text.describe(
-    "A very brief description of the work being performed.",
-  ),
+  status: channelStatusTextSchema.describe("A very brief description of the work being performed."),
 });
 export type SetChannelStatusInput = z.output<typeof setChannelStatusInputSchema>;
 
-const channelMemberSchema = z
-  .object({
-    host: z.object({ kind: z.literal("channel"), channelId: durableIdSchema }).strict(),
-    agentId: durableIdSchema,
-    sessionId: durableIdSchema,
-    status: channelMemberStatusSchema.optional(),
+const channelMemberSchema = channelAgentMetadataSchema
+  .omit({ seenThrough: true })
+  .extend({
+    channelId: durableIdSchema,
+    id: durableIdSchema,
+    name: agentNameSchema,
   })
   .strict();
 export type ChannelMember = z.output<typeof channelMemberSchema>;
@@ -163,7 +179,8 @@ export type ChannelEvent = (
       agentId: string;
       reaction: ChannelReaction["reaction"] | null;
     }
-  | { type: "status"; sessionId: string; status?: ChannelMember["status"] }
+  | { type: "member"; member: ChannelMember }
+  | { type: "status"; agentId: string; status?: ChannelMember["status"] }
 ) & { revision: number };
 
 export const createChannelInputSchema = z
@@ -175,7 +192,7 @@ export const createChannelInputSchema = z
 
 export const channelIdentitySchema = z.object({ channelId: durableIdSchema }).strict();
 
-export const removeChannelMemberInputSchema = z.object({ sessionId: durableIdSchema }).strict();
+export const removeChannelMemberInputSchema = z.object({ agentId: durableIdSchema }).strict();
 
 export const renameChannelInputSchema = z
   .object({ channelId: durableIdSchema, title: channelTitleSchema })
@@ -209,37 +226,24 @@ export function channelHasUnread(channel: Channel): boolean {
 }
 
 /** Complete delivery policy, shared by the composer preview and both posting paths. */
-export function resolveChannelAudience<
-  Member extends Pick<AgentMembership, "agentId">,
-  Candidate extends Pick<Agent, "id" | "name"> = Agent,
->({
+export function resolveChannelAudience<Member extends Pick<ChannelMember, "id" | "name">>({
   content,
   sender,
   members,
-  agents,
 }: {
   content: string;
   sender: Exclude<ChannelMessageSender, { type: "system" }>;
   members: readonly Member[];
-  agents: readonly Candidate[];
-}): { members: Member[]; invitations: Candidate[] } {
+}): Member[] {
   const { handles, mentionAll } = extractAgentMentionHandles(content);
   const mentionedHandles = new Set(handles);
   const mentionedIds = new Set(
-    agents
+    members
       .filter(({ name }) => mentionedHandles.has(agentHandleFromName(name)))
       .map(({ id }) => id),
   );
   const hasMentions = mentionAll || handles.length > 0;
   const broadcast = mentionAll || (sender.type === "user" && !hasMentions);
   const senderId = sender.type === "agent" ? sender.agentId : undefined;
-  const memberIds = new Set(members.map(({ agentId }) => agentId));
-  return {
-    members: members.filter(
-      ({ agentId }) => agentId !== senderId && (broadcast || mentionedIds.has(agentId)),
-    ),
-    invitations: agents.filter(
-      ({ id }) => id !== senderId && !memberIds.has(id) && mentionedIds.has(id),
-    ),
-  };
+  return members.filter(({ id }) => id !== senderId && (broadcast || mentionedIds.has(id)));
 }

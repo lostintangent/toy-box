@@ -3,17 +3,10 @@
 // the boundary cannot drift.
 
 import { z } from "zod";
-import { modelConfigurationSchema } from "./modelConfiguration";
+import { modelConfigurationSchema } from "@providers/model";
 import { sessionSystemMessageSchema } from "./systemMessages";
 
-export const sessionTypeSchema = z.enum([
-  "standard",
-  "automation",
-  "inbox",
-  "hyper",
-  "worker",
-  "agent",
-]);
+export const sessionTypeSchema = z.enum(["standard", "automation", "inbox", "hyper", "worker"]);
 
 export type SessionType = z.infer<typeof sessionTypeSchema>;
 
@@ -45,7 +38,7 @@ export const rewindSessionInputSchema = sessionInputSchema.extend({
   timestamp: z.string().min(1),
 });
 
-export const createDraftSessionInputSchema = sessionInputSchema.extend({
+export const createSessionInputSchema = sessionInputSchema.extend({
   artifact: z
     .object({
       path: z.string(),
@@ -56,7 +49,7 @@ export const createDraftSessionInputSchema = sessionInputSchema.extend({
 });
 
 export const attachmentSchema = z.object({
-  mimeType: z.string(),
+  mimeType: z.string().startsWith("image/"),
   base64: z.string(),
 });
 

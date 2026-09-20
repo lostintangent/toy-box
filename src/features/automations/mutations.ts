@@ -5,12 +5,12 @@ import {
   runAutomation,
   updateAutomation,
 } from "./server/functions";
-import { addSessionIfMissing } from "@sessions/queryCache";
+import { upsertSessionInState } from "@sessions/queryCache";
 import { sessionQueries } from "@sessions/queries";
 import { createInitialSessionState } from "@sessions/model/reducer";
 import { applyWorkspaceEvent, workspaceQueries } from "@workspace/queries";
 import type { WorkspaceState } from "@workspace/model/state/reducer";
-import type { SessionState } from "@sessions/model";
+import type { SessionState, SessionsState } from "@sessions/model";
 import type { Automation, AutomationOptions } from "./model";
 
 export const automationMutations = {
@@ -55,10 +55,18 @@ export const automationMutations = {
             status: "thinking",
           }),
         );
-        addSessionIfMissing(client, {
-          sessionId,
-          startTime: new Date(),
-          modifiedTime: new Date(),
+        if (
+          client
+            .getQueryData<SessionsState>(sessionQueries.stateKey())
+            ?.sessions.some(({ id }) => id === sessionId)
+        )
+          return;
+        upsertSessionInState(client, {
+          id: sessionId,
+          provider: automation ? { id: automation.model.provider } : undefined,
+          sessionType: "automation",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
           title: automation?.title ?? "",
         });
       },

@@ -4,11 +4,13 @@ import { z } from "zod";
 import type { Channel, ChannelList, ChannelMessage, ChannelState } from "@channels/model";
 import {
   channelIdentitySchema,
+  createChannelMemberInputSchema,
   createChannelInputSchema,
   markChannelReadInputSchema,
   postChannelMessageInputSchema,
   removeChannelMemberInputSchema,
   renameChannelInputSchema,
+  updateAgentInputSchema,
 } from "@channels/model";
 import * as channels from ".";
 
@@ -33,6 +35,14 @@ export const createChannel = createServerFn({ method: "POST" })
   .validator(zodValidator(createChannelInputSchema))
   .handler(({ data }): Promise<Channel> => channels.createChannel(data));
 
+export const createChannelMember = createServerFn({ method: "POST" })
+  .validator(zodValidator(createChannelMemberInputSchema))
+  .handler(({ data }) => channels.createChannelMember(data));
+
+export const updateChannelAgent = createServerFn({ method: "POST" })
+  .validator(zodValidator(updateAgentInputSchema))
+  .handler(({ data }) => channels.updateChannelAgent(data));
+
 export const renameChannel = createServerFn({ method: "POST" })
   .validator(zodValidator(renameChannelInputSchema))
   .handler(({ data }): Promise<Channel> => channels.renameChannel(data));
@@ -43,7 +53,7 @@ export const deleteChannel = createServerFn({ method: "POST" })
 
 export const removeChannelMember = createServerFn({ method: "POST" })
   .validator(zodValidator(removeChannelMemberInputSchema))
-  .handler(({ data }): Promise<void> => channels.removeChannelMember(data.sessionId));
+  .handler(({ data }): Promise<void> => channels.removeChannelMember(data.agentId));
 
 export const markChannelRead = createServerFn({ method: "POST" })
   .validator(zodValidator(markChannelReadInputSchema))

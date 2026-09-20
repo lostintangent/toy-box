@@ -167,7 +167,7 @@ projection. Model identity is `{ provider, name }`; the catalog includes provide
 display names for grouping. Apps pass that configuration through ordinary Session
 operations and contain no native-provider selection or execution branches.
 
-`AppSession` extends shared `SessionMetadata` with workspace status, governance kind,
+`AppSession` extends shared `Session` with workspace status, governance kind,
 worktree, and child sessions. Metadata retains its canonical names and values, including
 `sessionId`, optional `title` and `directory`, and available native Git display fields;
 apps choose display fallbacks. Creation still receives only the directory and worktree choice.

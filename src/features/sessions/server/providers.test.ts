@@ -2,151 +2,153 @@ import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
 import * as database from "@/server/database";
 import { copilotProvider } from "@providers/server/copilot/provider";
 import { codexProvider } from "@providers/server/codex/provider";
+import { sessionProviders, getSessionProvider } from "@providers/server";
 import {
   createSession,
   listSkills,
   listSessions,
-  resolveSessionIdentity,
+  resolveSession,
   resumeSession,
 } from "./providers";
 import {
-  bindProviderSession,
+  setSessionProvider,
   deleteSessionRecord,
-  getDraftSession,
-  persistDraftSession,
+  readSession,
+  insertSession,
 } from "./state/sessions";
 import type { SessionConnection } from "@providers/server/provider";
-import { deleteSessionFiles, sessionAttachmentsDirectory } from "./artifacts";
+import { deleteSessionFiles } from "./artifacts";
 
 async function setup() {
   const db = await database.createTestDatabase();
   spyOn(database, "getStateDatabase").mockResolvedValue(db);
+  for (const provider of sessionProviders) spyOn(provider, "isInstalled").mockReturnValue(false);
   onTestFinished(async () => {
     mock.restore();
     await db.close();
   });
 }
 
-test.each(["copilot", "codex"] as const)(
-  "%s receives session-owned skills, storage, and interactive policy on creation and resume",
+test.each(sessionProviders.map((provider) => provider.id))(
+  "%s receives session-owned skills and interactive policy on creation and resume",
   async (providerId) => {
     await setup();
-    const provider = providerId === "copilot" ? copilotProvider : codexProvider;
+    const provider = getSessionProvider(providerId);
     const sessionId = `toy-box-test-${crypto.randomUUID()}`;
     onTestFinished(() => deleteSessionFiles(sessionId));
-    const identity = { sessionId, providerId, nativeId: "native" };
-    const connection = { identity } as SessionConnection;
+    const session = { id: sessionId, provider: { id: providerId, sessionId: "native" } };
+    const connection = { provider: session.provider } as SessionConnection;
     const create = spyOn(provider, "create").mockResolvedValue(connection);
     const resume = spyOn(provider, "resume").mockResolvedValue(connection);
     const skills = spyOn(provider, "listSkills").mockResolvedValue([]);
     const result = await createSession(sessionId, {
       sessionType: "hyper",
       directory: "/tmp",
+      name: "Named session",
       model: { provider: providerId, name: "model" },
       additionalInstructions: "Follow the host's instructions.",
     });
     expect(result).toBe(connection);
     const configuration = create.mock.calls[0]![1];
+    expect(configuration.name).toBe("Named session");
     expect(configuration.allowUserQuestions).toBe(true);
     expect(configuration.instructions).toContain("Follow the host's instructions.");
-    expect(configuration.attachmentsDirectory).toBe(sessionAttachmentsDirectory(sessionId));
     expect(
       configuration.skillDirectories.some((path) => path.endsWith("create-toy-box-editor")),
     ).toBe(true);
     await listSkills("/tmp", "hyper", providerId);
     expect(skills).toHaveBeenCalledWith("/tmp", configuration.skillDirectories);
 
-    await resumeSession(sessionId, { sessionType: "agent", directory: "/tmp" });
+    await resumeSession(sessionId, { sessionType: "worker", directory: "/tmp" });
     const resumed = resume.mock.calls[0]![1];
     expect(resumed.allowUserQuestions).toBe(false);
-    expect(resumed.attachmentsDirectory).toBe(configuration.attachmentsDirectory);
     expect(resumed.skillDirectories.some((path) => path.endsWith("create-toy-box-editor"))).toBe(
       false,
     );
   },
 );
 
-test("public IDs bind once and discovered native sessions resolve back to them", async () => {
+test("public IDs keep their provider and discovered native sessions resolve back to them", async () => {
   await setup();
-  const identity = { sessionId: "toy-box-reserved", providerId: "codex", nativeId: "native-uuid" };
-  const draft = { sessionId: identity.sessionId, artifactPath: "report.md", createdAt: 42 };
-  await persistDraftSession(draft);
-  const rename = mock(async () => {
-    expect(await getDraftSession(identity.sessionId)).toEqual(draft);
-    return true;
+  const session = {
+    id: "11111111-1111-4111-8111-111111111111",
+    provider: { id: "codex", sessionId: "native-uuid" },
+  };
+  const draft = {
+    id: session.id,
+    artifactPath: "report.md",
+    createdAt: new Date(42),
+    updatedAt: new Date(42),
+  };
+  await insertSession(draft);
+  const create = spyOn(codexProvider, "create").mockImplementation(async () => {
+    expect(await readSession(session.id)).toEqual(draft);
+    return { provider: session.provider } as SessionConnection;
   });
-  spyOn(codexProvider, "create").mockResolvedValue({
-    identity,
-    rename,
-  } as unknown as SessionConnection);
-  await createSession(identity.sessionId, {
+  await createSession(session.id, {
     directory: "/tmp",
     sessionType: "standard",
     model: { name: "model", provider: "codex" },
     name: "Prepared session",
   });
-  expect(rename).toHaveBeenCalledWith("Prepared session");
-  expect(await getDraftSession(identity.sessionId)).toBeNull();
-  expect(await resolveSessionIdentity(identity.sessionId)).toEqual(identity);
-  await expect(bindProviderSession({ ...identity, nativeId: "different" })).rejects.toThrow(
-    "different provider history",
-  );
+  expect(create.mock.calls[0]![1].name).toBe("Prepared session");
+  expect((await readSession(session.id))?.provider).toEqual(session.provider);
+  expect(await resolveSession(session.id)).toEqual(session);
+  await expect(
+    setSessionProvider(session.id, { ...session.provider, sessionId: "different" }),
+  ).rejects.toThrow("different provider history");
   spyOn(copilotProvider, "isInstalled").mockReturnValue(false);
   spyOn(codexProvider, "isInstalled").mockReturnValue(true);
   spyOn(codexProvider, "listSessions").mockResolvedValue(
-    ["native-uuid", "external"].map((sessionId) => ({
-      sessionId,
-      startTime: new Date(0),
-      modifiedTime: new Date(0),
+    ["native-uuid", "external"].map((id) => ({
+      id,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
     })),
   );
-  expect((await listSessions()).map((session) => session.sessionId)).toEqual([
-    "toy-box-reserved",
+  expect((await listSessions()).map((session) => session.id)).toEqual([
+    session.id,
     "codex:external",
   ]);
-  expect(await resolveSessionIdentity("codex:external")).toEqual({
-    sessionId: "codex:external",
-    providerId: "codex",
-    nativeId: "external",
+  expect(await resolveSession("codex:external")).toEqual({
+    id: "codex:external",
+    provider: { id: "codex", sessionId: "external" },
   });
 });
 
-test("failed native preparation preserves the draft for retry", async () => {
+test("failed native preparation leaves the session a draft for retry", async () => {
   await setup();
-  const identity = { sessionId: "toy-box-retry", providerId: "codex", nativeId: "native" };
-  const draft = { sessionId: identity.sessionId, artifactPath: "report.md", createdAt: 42 };
-  await persistDraftSession(draft);
-  const rename = mock(async () => true).mockRejectedValueOnce(new Error("Naming failed"));
-  const disconnect = mock(async () => {});
-  spyOn(codexProvider, "create").mockResolvedValue({
-    identity,
-    rename,
-    disconnect,
-  } as unknown as SessionConnection);
-  const remove = spyOn(codexProvider, "delete").mockResolvedValue(undefined);
+  const session = { id: "retry", provider: { id: "codex", sessionId: "native" } };
+  const draft = {
+    id: session.id,
+    artifactPath: "report.md",
+    createdAt: new Date(42),
+    updatedAt: new Date(42),
+  };
+  await insertSession(draft);
+  spyOn(codexProvider, "create")
+    .mockRejectedValueOnce(new Error("Creation failed"))
+    .mockResolvedValue({ provider: session.provider } as SessionConnection);
   const options = {
     directory: "/tmp",
     sessionType: "standard" as const,
     model: { name: "model", provider: "codex" },
     name: "Prepared session",
   };
-  await expect(createSession(identity.sessionId, options)).rejects.toThrow("Naming failed");
-  expect(disconnect).toHaveBeenCalledTimes(1);
-  expect(remove).toHaveBeenCalledWith(identity.nativeId);
-  expect(await getDraftSession(identity.sessionId)).toEqual(draft);
+  await expect(createSession(session.id, options)).rejects.toThrow("Creation failed");
+  expect(await readSession(session.id)).toEqual(draft);
 
-  await createSession(identity.sessionId, options);
-  expect(await getDraftSession(identity.sessionId)).toBeNull();
-  expect(await resolveSessionIdentity(identity.sessionId)).toEqual(identity);
+  await createSession(session.id, options);
+  expect((await readSession(session.id))?.provider).toEqual(session.provider);
+  expect(await resolveSession(session.id)).toEqual(session);
 });
 
 test("imported identities are uniform and existing sessions cannot change providers", async () => {
   await setup();
-  await expect(resolveSessionIdentity("unknown")).rejects.toThrow("Session not found");
-  expect(await resolveSessionIdentity("copilot:external")).toEqual({
-    sessionId: "copilot:external",
-    providerId: "copilot",
-    nativeId: "external",
+  await expect(resolveSession("unknown")).rejects.toThrow("Session not found");
+  expect(await resolveSession("copilot:external")).toEqual({
+    id: "copilot:external",
+    provider: { id: "copilot", sessionId: "external" },
   });
   await expect(
     resumeSession("copilot:external", {
@@ -162,31 +164,31 @@ test.each([
   ["copilot", "deletion"],
   ["codex", "creation"],
   ["codex", "deletion"],
-] as const)(
-  "%s discovery preserves public identity during concurrent %s",
-  async (providerId, change) => {
-    await setup();
-    const provider = providerId === "copilot" ? copilotProvider : codexProvider;
-    spyOn(copilotProvider, "isInstalled").mockReturnValue(providerId === "copilot");
-    spyOn(codexProvider, "isInstalled").mockReturnValue(providerId === "codex");
-    const binding = { sessionId: "managed-session", providerId, nativeId: "native-session" };
-    if (change === "deletion") await bindProviderSession(binding);
-    spyOn(provider, "listSessions").mockImplementation(async () => {
-      if (change === "creation") await bindProviderSession(binding);
-      else await deleteSessionRecord(binding.sessionId);
-      return [
-        {
-          sessionId: binding.nativeId,
-          startTime: new Date(0),
-          modifiedTime: new Date(0),
-          title: "Managed session",
-        },
-      ];
-    });
+] as const)("%s discovery preserves public ID during concurrent %s", async (providerId, change) => {
+  await setup();
+  const provider = providerId === "copilot" ? copilotProvider : codexProvider;
+  spyOn(copilotProvider, "isInstalled").mockReturnValue(providerId === "copilot");
+  spyOn(codexProvider, "isInstalled").mockReturnValue(providerId === "codex");
+  const session = {
+    id: "managed-session",
+    provider: { id: providerId, sessionId: "native-session" },
+  };
+  if (change === "deletion") await setSessionProvider(session.id, session.provider);
+  spyOn(provider, "listSessions").mockImplementation(async () => {
+    if (change === "creation") await setSessionProvider(session.id, session.provider);
+    else await deleteSessionRecord(session.id);
+    return [
+      {
+        id: session.provider.sessionId,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        title: "Managed session",
+      },
+    ];
+  });
 
-    expect((await listSessions()).map(({ sessionId }) => sessionId)).toEqual([binding.sessionId]);
-  },
-);
+  expect((await listSessions()).map(({ id }) => id)).toEqual([session.id]);
+});
 
 test.each(["copilot", "codex"] as const)(
   "%s discovery waits for a discoverable native history to acquire its public ID",
@@ -195,7 +197,10 @@ test.each(["copilot", "codex"] as const)(
     const provider = providerId === "copilot" ? copilotProvider : codexProvider;
     spyOn(copilotProvider, "isInstalled").mockReturnValue(providerId === "copilot");
     spyOn(codexProvider, "isInstalled").mockReturnValue(providerId === "codex");
-    const identity = { sessionId: "managed-session", providerId, nativeId: "native-session" };
+    const session = {
+      id: "managed-session",
+      provider: { id: providerId, sessionId: "native-session" },
+    };
     const creating = Promise.withResolvers<void>();
     const created = Promise.withResolvers<Awaited<ReturnType<typeof provider.create>>>();
     const discovered = Promise.withResolvers<void>();
@@ -207,15 +212,15 @@ test.each(["copilot", "codex"] as const)(
       discovered.resolve();
       return [
         {
-          sessionId: identity.nativeId,
-          startTime: new Date(0),
-          modifiedTime: new Date(0),
+          id: session.provider.sessionId,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
         },
       ];
     });
-    const creation = createSession(identity.sessionId, {
+    const creation = createSession(session.id, {
       directory: "/tmp",
-      sessionType: "agent",
+      sessionType: "worker",
       model: { provider: providerId, name: "model" },
     });
     await creating.promise;
@@ -229,20 +234,20 @@ test.each(["copilot", "codex"] as const)(
       await Bun.sleep(0);
       expect(published).toBe(false);
     } finally {
-      created.resolve({ identity } as SessionConnection);
+      created.resolve({ provider: session.provider } as SessionConnection);
       await creation;
     }
-    expect((await catalog).map(({ sessionId }) => sessionId)).toEqual([identity.sessionId]);
+    expect((await catalog).map(({ id }) => id)).toEqual([session.id]);
   },
 );
 
-test.each(["already bound", "other provider"] as const)(
+test.each(["known session", "other provider"] as const)(
   "%s catalog entries do not wait for unrelated native creation",
   async (kind) => {
     await setup();
     spyOn(copilotProvider, "isInstalled").mockReturnValue(true);
     spyOn(codexProvider, "isInstalled").mockReturnValue(true);
-    const identity = { sessionId: "creating", providerId: "codex", nativeId: "new-native" };
+    const session = { id: "creating", provider: { id: "codex", sessionId: "new-native" } };
     const created = Promise.withResolvers<Awaited<ReturnType<typeof codexProvider.create>>>();
     const creating = Promise.withResolvers<void>();
     spyOn(codexProvider, "create").mockImplementation(() => {
@@ -250,25 +255,21 @@ test.each(["already bound", "other provider"] as const)(
       return created.promise;
     });
     const existing = {
-      sessionId: "known-native",
-      startTime: new Date(0),
-      modifiedTime: new Date(0),
+      id: "known-native",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
     };
-    if (kind === "already bound")
-      await bindProviderSession({
-        sessionId: "known-public",
-        providerId: "codex",
-        nativeId: existing.sessionId,
-      });
+    if (kind === "known session")
+      await setSessionProvider("known-public", { id: "codex", sessionId: existing.id });
     spyOn(copilotProvider, "listSessions").mockResolvedValue(
       kind === "other provider" ? [existing] : [],
     );
     spyOn(codexProvider, "listSessions").mockResolvedValue(
-      kind === "already bound" ? [existing] : [],
+      kind === "known session" ? [existing] : [],
     );
-    const creation = createSession(identity.sessionId, {
+    const creation = createSession(session.id, {
       directory: "/tmp",
-      sessionType: "agent",
+      sessionType: "worker",
       model: { provider: "codex", name: "model" },
     });
     await creating.promise;
@@ -279,11 +280,11 @@ test.each(["already bound", "other provider"] as const)(
           throw new Error("Catalog blocked on an unrelated creation");
         }),
       ]);
-      expect(catalog.map(({ sessionId }) => sessionId)).toEqual([
-        kind === "already bound" ? "known-public" : "copilot:known-native",
+      expect(catalog.map(({ id }) => id)).toEqual([
+        kind === "known session" ? "known-public" : "copilot:known-native",
       ]);
     } finally {
-      created.resolve({ identity } as SessionConnection);
+      created.resolve({ provider: session.provider } as SessionConnection);
       await creation;
     }
   },

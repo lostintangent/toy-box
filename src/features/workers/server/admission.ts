@@ -13,7 +13,6 @@ import { getStateDatabase } from "@/server/database";
 import { AppDatabase } from "@apps/server/database";
 import { resolveWorkspaceFile } from "@files/server/paths";
 import { workspaceFileId } from "@files/model";
-import { SESSION_ID_PREFIX } from "@sessions/model/constants";
 import type { SessionLaunch, SessionLocation } from "@sessions/model";
 
 type SessionWorkerInput = SessionLaunch & {
@@ -25,7 +24,7 @@ type SessionWorkerInput = SessionLaunch & {
 type WorkerSessionReceipt = Awaited<ReturnType<typeof supervisor.spawnWorker>>;
 
 export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId: string }> {
-  const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
+  const sessionId = crypto.randomUUID();
   const details = {
     sessionId,
     ...(input.name === undefined ? {} : { name: input.name }),
@@ -81,7 +80,7 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId:
 export async function spawnSessionWorker(
   input: SessionWorkerInput,
 ): Promise<{ sessionId: string }> {
-  const sessionId = `${SESSION_ID_PREFIX}${crypto.randomUUID()}`;
+  const sessionId = crypto.randomUUID();
   const worker: Worker = {
     type: "session",
     sessionId,

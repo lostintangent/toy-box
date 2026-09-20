@@ -1,14 +1,22 @@
 import { mutationOptions } from "@tanstack/react-query";
-import type { ChannelState, CreateChannelInput, PostChannelMessageInput } from "@channels/model";
+import type {
+  ChannelState,
+  CreateChannelMemberInput,
+  CreateChannelInput,
+  PostChannelMessageInput,
+  UpdateAgentInput,
+} from "@channels/model";
 import { channelQueries } from "@channels/queries";
 import { applyChannelListEvent } from "@channels/queryCache";
 import {
   createChannel,
+  createChannelMember,
   deleteChannel,
   markChannelRead,
   postChannelMessage,
   removeChannelMember,
   renameChannel,
+  updateChannelAgent,
 } from "@channels/server/functions";
 
 export const channelMutations = {
@@ -17,6 +25,14 @@ export const channelMutations = {
       mutationFn: (input: CreateChannelInput) => createChannel({ data: input }),
       onSuccess: (channel, _input, _result, { client }) =>
         applyChannelListEvent(client, { type: "channel.upserted", channel }),
+    }),
+  createMember: () =>
+    mutationOptions({
+      mutationFn: (input: CreateChannelMemberInput) => createChannelMember({ data: input }),
+    }),
+  updateAgent: () =>
+    mutationOptions({
+      mutationFn: (input: UpdateAgentInput) => updateChannelAgent({ data: input }),
     }),
   rename: (channelId: string) =>
     mutationOptions({
@@ -31,9 +47,9 @@ export const channelMutations = {
         applyChannelListEvent(client, { type: "channel.deleted", channelId });
       },
     }),
-  removeMember: (sessionId: string) =>
+  removeMember: (agentId: string) =>
     mutationOptions({
-      mutationFn: () => removeChannelMember({ data: { sessionId } }),
+      mutationFn: () => removeChannelMember({ data: { agentId } }),
     }),
   markRead: () =>
     mutationOptions({

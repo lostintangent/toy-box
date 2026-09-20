@@ -1,6 +1,5 @@
-import { AgentAvatar } from "@agents/components/AgentAvatar";
-import { AgentMention } from "@agents/components/AgentMention";
-import type { Agent } from "@agents/model";
+import { AgentAvatar } from "@channels/components/agents/AgentAvatar";
+import { AgentMention } from "@channels/components/agents/AgentMention";
 import { isChannelSystemMessage } from "@channels/model";
 import type { ChannelMember, ChannelMessage, ChannelReaction } from "@channels/model";
 import { AttachmentGallery } from "@sessions/components/AttachmentGallery";
@@ -19,25 +18,23 @@ type DisplayedReaction = {
 export function ChannelMessageView({
   messages,
   members,
-  agents,
 }: {
   messages: ChannelMessage[];
   members: ChannelMember[];
-  agents: Agent[];
 }) {
   const message = messages[0]!;
   if (isChannelSystemMessage(message)) {
-    return <ChannelSystemMessageView messages={messages} agents={agents} />;
+    return <ChannelSystemMessageView messages={messages} members={members} />;
   }
 
   const reactions: DisplayedReaction[] = [...(message.reactions ?? [])];
   for (const member of members) {
     if (member.status?.state !== "working") continue;
     if (member.status.lookingAt === message.sequence) {
-      reactions.push({ agentId: member.agentId, reaction: "looking" });
+      reactions.push({ agentId: member.id, reaction: "looking" });
     }
     if (member.status.workingOn === message.sequence) {
-      reactions.push({ agentId: member.agentId, reaction: "working" });
+      reactions.push({ agentId: member.id, reaction: "working" });
     }
   }
 
@@ -49,7 +46,7 @@ export function ChannelMessageView({
         extraActions={
           reactions.length ? (
             <div className="mr-1">
-              <ChannelMessageReactions reactions={reactions} agents={agents} />
+              <ChannelMessageReactions reactions={reactions} members={members} />
             </div>
           ) : undefined
         }
@@ -59,7 +56,7 @@ export function ChannelMessageView({
     );
   }
 
-  const agent = agents.find(({ id }) => id === sender.agentId);
+  const agent = members.find(({ id }) => id === sender.agentId);
   const agentName = agent?.name ?? DELETED_AGENT_LABEL;
   const attachments = message.attachments ?? [];
   return (
@@ -82,7 +79,7 @@ export function ChannelMessageView({
         )}
         {reactions.length ? (
           <div className="mt-2">
-            <ChannelMessageReactions reactions={reactions} agents={agents} />
+            <ChannelMessageReactions reactions={reactions} members={members} />
           </div>
         ) : null}
       </div>
@@ -102,15 +99,15 @@ const REACTION_PRESENTATION = {
 
 function ChannelMessageReactions({
   reactions,
-  agents,
+  members,
 }: {
   reactions: DisplayedReaction[];
-  agents: Agent[];
+  members: ChannelMember[];
 }) {
   const groups = new Map<DisplayedReaction["reaction"], string[]>();
   for (const reaction of reactions) {
     const names = groups.get(reaction.reaction) ?? [];
-    names.push(agents.find(({ id }) => id === reaction.agentId)?.name ?? DELETED_AGENT_LABEL);
+    names.push(members.find(({ id }) => id === reaction.agentId)?.name ?? DELETED_AGENT_LABEL);
     groups.set(reaction.reaction, names);
   }
 

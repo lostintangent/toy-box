@@ -15,7 +15,7 @@ test("Channel list events are idempotent and project unread state for unopened C
   };
   queryClient.setQueryData<ChannelList>(channelQueries.listKey(), {
     channels: [channel],
-    memberships: [],
+    members: [],
   });
 
   const unreadEvent = {
@@ -42,12 +42,11 @@ test("Channel membership changes refresh the list projection", () => {
   const queryClient = new QueryClient();
   queryClient.setQueryData<ChannelList>(channelQueries.listKey(), {
     channels: [],
-    memberships: [],
+    members: [],
   });
 
   applyChannelListEvent(queryClient, {
-    type: "agent.membership.changed",
-    host: { kind: "channel", channelId: "channel" },
+    type: "channel.members.changed",
   });
 
   expect(queryClient.getQueryState(channelQueries.listKey())?.isInvalidated).toBe(true);

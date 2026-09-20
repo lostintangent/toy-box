@@ -1,6 +1,6 @@
 import type { Thread, ThreadTurnsListResponse, Turn } from "./protocol";
 import type { CodexTransport } from "./protocol/transport";
-import { hydrateThreadInputs } from "./inputs";
+import { hydrateThreadInputs } from "./messages";
 
 /** Read stored turns without attaching to the thread's execution. */
 export async function readThreadHistory(rpc: CodexTransport, threadId: string): Promise<Thread> {

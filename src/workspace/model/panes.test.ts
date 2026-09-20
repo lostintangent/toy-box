@@ -16,6 +16,7 @@ import {
   deriveWorkspaceRootPanes,
   INBOX_PANE,
   resolveEditorAutoFocus,
+  resolveEditorPaneMode,
   type WorkspacePane,
 } from "@workspace/model/panes";
 import { machineFile, sessionFile } from "@files/model";
@@ -225,7 +226,7 @@ describe("workspace pane derivation", () => {
       id: "editor:session:A:preview.html",
       file: sessionFile("A", "preview.html"),
       title: "preview.html",
-      mode: "edit",
+      mode: undefined,
     });
   });
 
@@ -233,10 +234,13 @@ describe("workspace pane derivation", () => {
     expect(createEditorPane(sessionFile("A", "plan.md")).title).toBe("Plan");
   });
 
-  test("defaults automation artifacts to read mode", () => {
-    const sourceSessionId = "toy-box-auto-11111111-1111-4111-8111-111111111111";
+  test("automation membership supplies the default mode without overriding explicit choices", () => {
+    const sourceSessionId = "11111111-1111-4111-8111-111111111111";
+    const pane = createEditorPane(sessionFile(sourceSessionId, "plan.md"));
 
-    expect(createEditorPane(sessionFile(sourceSessionId, "plan.md")).mode).toBe("read");
+    expect(resolveEditorPaneMode(pane, [sourceSessionId])).toBe("read");
+    expect(resolveEditorPaneMode(pane, [])).toBe("edit");
+    expect(resolveEditorPaneMode({ ...pane, mode: "edit" }, [sourceSessionId])).toBe("edit");
   });
 
   test("publishes artifacts with linked panes and preserves artifact modes", () => {
@@ -328,7 +332,7 @@ describe("workspace pane derivation", () => {
 });
 
 describe("artifact auto-focus", () => {
-  const automationSessionId = "toy-box-auto-22222222-2222-4222-8222-222222222222";
+  const automationSessionId = "22222222-2222-4222-8222-222222222222";
   const chatPane = selectedSessionPane(automationSessionId);
   const artifactPane = createEditorPane(sessionFile(automationSessionId, "report.md"));
   const regularChatPane = selectedSessionPane("session-1");
@@ -353,6 +357,7 @@ describe("artifact auto-focus", () => {
       new Set([chatPane.id]),
       [chatPane, artifactPane],
       "automations",
+      [automationSessionId],
     );
 
     expect(focusPane).toEqual(artifactPane);
@@ -363,6 +368,7 @@ describe("artifact auto-focus", () => {
         new Set([regularChatPane.id]),
         [regularChatPane, regularEditorPane],
         "automations",
+        [automationSessionId],
       ).focusPane,
     ).toBeUndefined();
   });
@@ -373,12 +379,14 @@ describe("artifact auto-focus", () => {
         new Set([regularChatPane.id]),
         [regularChatPane, regularEditorPane],
         "sessions",
+        [automationSessionId],
       ).focusPane,
     ).toEqual(regularEditorPane);
 
     expect(
-      resolveEditorAutoFocus(new Set([chatPane.id]), [chatPane, artifactPane], "sessions")
-        .focusPane,
+      resolveEditorAutoFocus(new Set([chatPane.id]), [chatPane, artifactPane], "sessions", [
+        automationSessionId,
+      ]).focusPane,
     ).toBeUndefined();
   });
 
@@ -402,6 +410,7 @@ describe("artifact auto-focus", () => {
         new Set([regularChatPane.id]),
         [regularChatPane, regularEditorPane],
         "never",
+        [],
         new Set([regularEditorPane.id]),
       ).focusPane,
     ).toEqual(regularEditorPane);

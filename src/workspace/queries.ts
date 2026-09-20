@@ -4,8 +4,11 @@ import {
   getWorkspaceState,
   updateSettings as requestSettingsUpdate,
 } from "./server/functions";
-import { applyWorkspaceEventToSessionQueries } from "@sessions/queryCache";
-import { applyAgentEvent } from "@agents/queryCache";
+import {
+  applyWorkspaceEventToSessionQueries,
+  invalidateSessionsStateQuery,
+} from "@sessions/queryCache";
+import { providerQueries } from "@providers/queries";
 import { applyChannelListEvent } from "@channels/queryCache";
 import { areSettingsEqual, type Settings } from "./model/config/settings";
 import type { WorkspaceEvent } from "./model/events";
@@ -31,13 +34,22 @@ export const workspaceQueries = {
 };
 
 export function applyWorkspaceEvent(queryClient: QueryClient, event: WorkspaceEvent): void {
+  const disabledProviders = queryClient.getQueryData<WorkspaceState>(workspaceQueries.stateKey())
+    ?.settings.disabledProviders;
   recordWorkspaceQueryEvent(queryClient, event);
   applyWorkspaceEventToSessionQueries(queryClient, event);
-  applyAgentEvent(queryClient, event);
   applyChannelListEvent(queryClient, event);
   queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), (state) =>
     state ? reduceWorkspaceState(state, event) : state,
   );
+  if (
+    event.type === "settings.changed" &&
+    (disabledProviders?.length !== event.settings.disabledProviders.length ||
+      disabledProviders.some((id) => !event.settings.disabledProviders.includes(id)))
+  ) {
+    void queryClient.invalidateQueries({ queryKey: providerQueries.all() });
+    void invalidateSessionsStateQuery(queryClient);
+  }
 }
 
 export function dispatchWorkspaceAction(queryClient: QueryClient, action: WorkspaceAction): void {
@@ -58,11 +70,17 @@ export function updateWorkspaceSetting<Key extends keyof Settings>(
 
   const settings = { ...workspace.settings, [key]: value };
   if (areSettingsEqual(workspace.settings, settings)) return;
-  applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
+  // Catalog reads use persisted availability. Publish this preference after the
+  // save so a refetch cannot cache the old provider selection indefinitely.
+  if (key !== "disabledProviders")
+    applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
 
-  void requestSettingsUpdate({ data: { [key]: value } }).catch(() =>
-    repairWorkspaceStateQuery(queryClient),
-  );
+  void requestSettingsUpdate({ data: { [key]: value } })
+    .then((settings) => {
+      if (key === "disabledProviders")
+        applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
+    })
+    .catch(() => repairWorkspaceStateQuery(queryClient));
 }
 
 export function invalidateWorkspaceStateQuery(queryClient: QueryClient): Promise<void> {

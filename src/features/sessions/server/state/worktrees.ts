@@ -150,7 +150,7 @@ async function deleteSessionWorktreeRecord(sessionId: string): Promise<void> {
 // Git mechanics
 
 async function createGitWorktree(gitRoot: string, sessionId: string): Promise<SessionWorktree> {
-  const shortId = sessionId.replace(/^toy-box-/, "").slice(0, 12);
+  const shortId = sessionId.slice(0, 12);
   const branch = `toy-box/${shortId}`;
   const path = join(homedir(), ".toy-box", "worktrees", shortId);
   const baseBranch = await git(gitRoot, "rev-parse", "--abbrev-ref", "HEAD");

@@ -2,7 +2,7 @@ import { describe, expect, onTestFinished, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import { workspaceQueries } from "@workspace/queries";
 import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model/state/reducer";
-import type { SessionMetadata, SessionState } from "./model";
+import type { Session, SessionState } from "./model";
 import { createInitialSessionState } from "./model/reducer";
 import { sessionMutations } from "./mutations";
 import type { SessionsState } from "./model";
@@ -11,25 +11,25 @@ import { snapshotSessionsState } from "./queryCache";
 
 const sessionId = "session-a";
 const session = {
-  sessionId,
-  startTime: new Date("2026-08-01T12:00:00.000Z"),
-  modifiedTime: new Date("2026-08-01T12:01:00.000Z"),
+  id: sessionId,
+  createdAt: new Date("2026-08-01T12:00:00.000Z"),
+  updatedAt: new Date("2026-08-01T12:01:00.000Z"),
   title: "Original name",
-} satisfies SessionMetadata;
+} satisfies Session;
 
 describe("session mutation options", () => {
-  test("publishes a draft before its creation request resolves", async () => {
+  test("publishes a draft session before its creation request resolves", async () => {
     const queryClient = createWorkspaceQueryClient();
     let resolveRequest!: () => void;
     const request = new Promise<void>((resolve) => {
       resolveRequest = resolve;
     });
-    const createDraftMutation = new MutationObserver(queryClient, {
-      ...sessionMutations.createDraftSession(),
+    const createMutation = new MutationObserver(queryClient, {
+      ...sessionMutations.createSession(),
       mutationFn: () => request,
     });
 
-    const creation = createDraftMutation.mutate({
+    const creation = createMutation.mutate({
       sessionId,
       createdAt: 42,
       artifact: { path: "plan.md", content: "# Plan" },
@@ -38,30 +38,37 @@ describe("session mutation options", () => {
 
     expect(readWorkspaceState(queryClient)).toEqual({
       ...createEmptyWorkspaceState(),
-      sessionStates: {
-        [sessionId]: { status: "draft", createdAt: 42, artifactPath: "plan.md" },
-      },
       hyperSessionIds: [sessionId],
     });
+
+    expect(readSessionsState(queryClient).sessions).toEqual([
+      {
+        id: sessionId,
+        createdAt: new Date(42),
+        updatedAt: new Date(42),
+        artifactPath: "plan.md",
+      },
+    ]);
 
     resolveRequest();
     await creation;
   });
 
-  test("removes the optimistic draft when creation fails", async () => {
+  test("removes the optimistic session when creation fails", async () => {
     const queryClient = createWorkspaceQueryClient();
-    const createDraftMutation = new MutationObserver(queryClient, {
-      ...sessionMutations.createDraftSession(),
+    const createMutation = new MutationObserver(queryClient, {
+      ...sessionMutations.createSession(),
       mutationFn: async () => {
-        throw new Error("draft creation failed");
+        throw new Error("creation failed");
       },
     });
 
-    await expect(createDraftMutation.mutate({ sessionId, createdAt: 42 })).rejects.toThrow(
-      "draft creation failed",
+    await expect(createMutation.mutate({ sessionId, createdAt: 42 })).rejects.toThrow(
+      "creation failed",
     );
 
     expect(readWorkspaceState(queryClient)).toEqual(createEmptyWorkspaceState());
+    expect(readSessionsState(queryClient).sessions).toEqual([]);
   });
 
   test("trusts successful queue events and invalidates rejected queue commands", async () => {
@@ -229,7 +236,7 @@ function createSessionListQueryClient(): QueryClient {
   });
   queryClient.setQueryData(workspaceQueries.stateKey(), {
     ...createEmptyWorkspaceState(),
-    sessionStates: { [sessionId]: { status: "draft", createdAt: 1 } },
+    sessionStates: { [sessionId]: { status: "unread" } },
   });
   onTestFinished(() => queryClient.clear());
   return queryClient;
@@ -248,7 +255,7 @@ function readSessionsState(queryClient: QueryClient): SessionsState {
   return state;
 }
 
-function readSession(queryClient: QueryClient): SessionMetadata {
+function readSession(queryClient: QueryClient): Session {
   const cachedSession = readSessionsState(queryClient).sessions[0];
   if (!cachedSession) throw new Error("Session was not cached");
   return cachedSession;

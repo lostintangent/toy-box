@@ -38,20 +38,23 @@ export const copilotProvider: SessionProvider = {
   async listSessions() {
     return (await (await startCopilotClient()).listSessions()).map(
       ({ sessionId, startTime, modifiedTime, summary, context }) => ({
-        sessionId,
-        startTime,
-        modifiedTime,
+        id: sessionId,
+        createdAt: startTime,
+        updatedAt: modifiedTime,
         title: summary,
-        directory: sessionDirectory(context),
-        gitRoot: context?.gitRoot,
-        repository: context?.repository,
-        branch: context?.branch,
+        context: {
+          directory: sessionDirectory(context),
+          gitRoot: context?.gitRoot,
+          repository: context?.repository,
+          branch: context?.branch,
+        },
       }),
     );
   },
-  async readHistory({ sessionId, nativeId }) {
+  async readHistory({ id, provider }) {
+    const nativeId = provider?.sessionId ?? id;
     const client = await startCopilotClient();
-    const project = createSdkEventProjector(sessionId);
+    const project = createSdkEventProjector(id);
     const events: SessionEvent[] = [];
     let cursor: string | undefined;
     let hasMore: boolean;
@@ -80,28 +83,33 @@ export const copilotProvider: SessionProvider = {
   async create(sessionId, configuration) {
     const client = await startCopilotClient();
     const session = await client.createSession({
-      sessionId,
       ...nativeConfiguration(sessionId, configuration),
+      sessionId,
     });
     try {
       // TODO: Remove once SDK creation initializes Git context from workingDirectory.
       await session.rpc.metadata.setWorkingDirectory({
         workingDirectory: configuration.directory,
       });
-      return await connect(session, sessionId, configuration.allowUserQuestions);
+      const connection = await connect(session, sessionId, configuration.allowUserQuestions);
+      if (configuration.name) await connection.rename(configuration.name);
+      return connection;
     } catch (error) {
       await client.deleteSession(session.sessionId).catch(console.error);
       throw error;
     }
   },
-  async resume(identity, configuration) {
-    const session = await (
+  async resume(session, configuration) {
+    const native = await (
       await startCopilotClient()
-    ).resumeSession(identity.nativeId, nativeConfiguration(identity.sessionId, configuration));
+    ).resumeSession(
+      session.provider?.sessionId ?? session.id,
+      nativeConfiguration(session.id, configuration),
+    );
     // The SDK restores the persisted model on resume despite a supplied override.
     if (configuration.model)
-      await session.setModel(configuration.model.name, toSdkSetModelOptions(configuration.model));
-    return connect(session, identity.sessionId, configuration.allowUserQuestions);
+      await native.setModel(configuration.model.name, toSdkSetModelOptions(configuration.model));
+    return connect(native, session.id, configuration.allowUserQuestions);
   },
   async readDirectory(nativeId) {
     return sessionDirectory(

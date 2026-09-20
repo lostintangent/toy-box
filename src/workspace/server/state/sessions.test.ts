@@ -14,27 +14,20 @@ function clean(sessionId: string): void {
 }
 
 describe("workspace session storage", () => {
-  test("stores every session fact in one record", () => {
+  test("stores activity and the shared prompt in one record", () => {
     const sessionId = `workspace-session-${crypto.randomUUID()}`;
     const now = Date.now();
     onTestFinished(() => clean(sessionId));
 
-    applySessionState({
-      type: "session.drafted",
-      sessionId,
-      createdAt: now,
-    });
     const prompt = setSessionPrompt(sessionId, "hello", "client-a", now);
 
     expect(prompt).toEqual({ text: "hello", origin: "client-a", updatedAt: now });
     expect(getSessionState(sessionId)).toEqual({
-      status: "draft",
-      createdAt: now,
+      status: "idle",
       prompt: { text: "hello", origin: "client-a", updatedAt: now },
     });
     expect(getSessionStates()[sessionId]).toEqual({
-      status: "draft",
-      createdAt: now,
+      status: "idle",
       prompt: { text: "hello", origin: "client-a", updatedAt: now },
     });
   });
@@ -56,23 +49,13 @@ describe("workspace session storage", () => {
     });
   });
 
-  test("expires old prompts without dropping an artifact-backed draft", () => {
+  test("expires idle prompts without retaining workspace activity", () => {
     const sessionId = `workspace-artifact-draft-${crypto.randomUUID()}`;
     onTestFinished(() => clean(sessionId));
 
-    applySessionState({
-      type: "session.drafted",
-      sessionId,
-      createdAt: 1,
-      artifactPath: "document.md",
-    });
     setSessionPrompt(sessionId, "old", "client-a", 1);
 
-    expect(getSessionState(sessionId, DAY_MS + 2)).toEqual({
-      status: "draft",
-      createdAt: 1,
-      artifactPath: "document.md",
-    });
+    expect(getSessionState(sessionId, DAY_MS + 2)).toBeUndefined();
   });
 
   test("expires old prompts without dropping live status", () => {

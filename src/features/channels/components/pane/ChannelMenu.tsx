@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { FilePenLine, Trash2, Users, X } from "lucide-react";
-import { AgentEditor } from "@agents/components/AgentEditor";
-import { AgentMembershipItem } from "@agents/components/AgentMembershipItem";
-import type { Agent } from "@agents/model";
+import { AgentEditor } from "@channels/components/agents/AgentEditor";
+import { AgentItem } from "@channels/components/agents/AgentItem";
 import type { Channel, ChannelArtifact, ChannelMember } from "@channels/model";
 import { useEditorDisplay } from "@files/components/editor/kinds";
 import { workspaceFileId } from "@files/model";
@@ -31,29 +30,19 @@ import { DeleteChannelDialog } from "../DeleteChannelDialog";
 export function ChannelMenu({
   channel,
   members,
-  agents,
   artifacts,
   variant,
 }: {
   channel: Channel;
   members: ChannelMember[];
-  agents: Agent[];
   artifacts: ChannelArtifact[];
   variant: PaneVariant;
 }) {
   const { toggleFile } = useWorkspaceSurface();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [editingAgentId, setEditingAgentId] = useState<string>();
+  const [editingAgent, setEditingAgent] = useState<ChannelMember>();
   const [removingMember, setRemovingMember] = useState<ChannelMember>();
-  const memberAgents = members
-    .flatMap((membership) => {
-      const agent = agents.find(({ id }) => id === membership.agentId);
-      return agent ? [{ membership, agent }] : [];
-    })
-    .sort((left, right) => left.agent.name.localeCompare(right.agent.name));
-  const removingAgent = removingMember
-    ? agents.find(({ id }) => id === removingMember.agentId)
-    : undefined;
+  const memberAgents = [...members].sort((left, right) => left.name.localeCompare(right.name));
   const memberCount = memberAgents.length;
   const label = `${memberCount} ${memberCount === 1 ? "agent" : "agents"} in #${channel.title}`;
   const trigger =
@@ -113,12 +102,10 @@ export function ChannelMenu({
           )}
           {memberAgents.length > 0 ? (
             <div role="list" aria-label={`Agents in #${channel.title}`}>
-              {memberAgents.map(({ membership, agent }) => (
-                <AgentMembershipItem
-                  key={membership.sessionId}
-                  membership={membership}
+              {memberAgents.map((agent) => (
+                <AgentItem
+                  key={agent.id}
                   agent={agent}
-                  status={membership.status}
                   action={
                     <div className="flex items-center">
                       <PopoverClose
@@ -130,7 +117,7 @@ export function ChannelMenu({
                             className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
                             aria-label={`Edit ${agent.name}`}
                             title={`Edit ${agent.name}`}
-                            onClick={() => setEditingAgentId(agent.id)}
+                            onClick={() => setEditingAgent(agent)}
                           />
                         }
                       >
@@ -145,7 +132,7 @@ export function ChannelMenu({
                             className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
                             aria-label={`Remove ${agent.name} from #${channel.title}`}
                             title={`Remove ${agent.name}`}
-                            onClick={() => setRemovingMember(membership)}
+                            onClick={() => setRemovingMember(agent)}
                           />
                         }
                       >
@@ -178,20 +165,20 @@ export function ChannelMenu({
         </PopoverContent>
       </Popover>
 
-      {editingAgentId && (
-        <AgentEditor agentId={editingAgentId} onClose={() => setEditingAgentId(undefined)} />
+      {editingAgent && (
+        <AgentEditor agent={editingAgent} onClose={() => setEditingAgent(undefined)} />
       )}
       {confirmingDelete && (
         <DeleteChannelDialog channel={channel} onOpenChange={setConfirmingDelete} />
       )}
-      {removingMember && removingAgent && (
+      {removingMember && (
         <DestructiveConfirmationDialog
-          key={removingMember.sessionId}
-          title={`Remove ${removingAgent.name}?`}
-          description={`This removes ${removingAgent.name} from #${channel.title} and deletes their private Channel session. Their Agent and experiences are preserved.`}
+          key={removingMember.id}
+          title={`Remove ${removingMember.name}?`}
+          description={`This removes ${removingMember.name} from #${channel.title} and deletes their private channel session. Their messages and reactions remain attributed to Deleted agent.`}
           confirmLabel="Remove"
           pendingLabel="Removing…"
-          mutation={channelMutations.removeMember(removingMember.sessionId)}
+          mutation={channelMutations.removeMember(removingMember.id)}
           onOpenChange={(open) => {
             if (!open) setRemovingMember(undefined);
           }}

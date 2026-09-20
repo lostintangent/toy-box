@@ -2,7 +2,7 @@ import { connectCopilotSession } from "@providers/server/copilot/connection";
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { WorkspaceEvent } from "@workspace/model/events";
-import type { SessionEvent, SessionMetadataUpdate, SessionState } from "@sessions/model";
+import type { SessionEvent, SessionUpdate, SessionState } from "@sessions/model";
 import { loadSessionFixture } from "./helpers";
 import * as realSessionRegistry from "@sessions/server/state/registry";
 import * as realBroadcast from "@workspace/server/events";
@@ -65,14 +65,14 @@ mock.module("@workspace/server/events", () => ({
     emitMockWorkspaceEvent({
       type: "session.upserted",
       session: {
-        sessionId,
-        modifiedTime: new Date().toISOString(),
+        id: sessionId,
+        updatedAt: new Date().toISOString(),
         title: name,
       },
     });
   },
   broadcast: emitMockWorkspaceEvent,
-  emitSessionUpsert: (session: SessionMetadataUpdate) =>
+  emitSessionUpsert: (session: SessionUpdate) =>
     emitMockWorkspaceEvent({ type: "session.upserted", session }),
   emitSessionDelete: (sessionId: string) =>
     emitMockWorkspaceEvent({ type: "session.deleted", sessionId }),

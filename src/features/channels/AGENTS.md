@@ -1,113 +1,86 @@
 # Channels
 
-Channels are durable, high-signal message buses for teams. A Channel is not a filtered SDK Session:
-each member works in its own private Agent membership and learns about peers through the shared
-transcript and artifact index.
+Channels are durable shared collaboration spaces for the user and channel-specific Agents. A Channel
+is not a filtered Session. Each Agent is a durable Channel-owned Worker with its own private Session,
+while the Channel transcript is the complete public coordination surface.
 
 ## Domain model
 
-- `Channel` owns a title, optional working directory, human read position, latest sequence, and updated
-  time.
+- `Channel` owns its title, optional working directory, human read position, latest message sequence,
+  and updated time.
+- `ChannelMember` is the current public projection of one Channel-owned Worker. The Worker ID is also
+  its private Session ID and public Agent ID. The projection contains its name, optional role,
+  model, avatar, and collaboration status. Its read position stays private in Worker metadata.
 - `ChannelMessage` has a durable ID and transactionally allocated sequence. User and Agent messages
-  have an immutable Markdown body with optional image attachments. Typed system messages record
-  membership changes and artifact sharing. Browser uploads stay inline;
-  trusted Session and Agent tools retain validated absolute paths. Agent senders retain only their
-  stable Agent ID, so every surface resolves current identity or presents a generic deleted identity
-  when none remains.
+  contain Markdown and optional image attachments. Typed system messages record membership and
+  artifact changes. Agent senders retain only their stable Worker ID, so deleting a member preserves
+  prior content while the UI presents a deleted identity.
 - `ChannelReaction` is one Agent's durable acknowledgement or sentiment on a user or Agent message.
-  It is not another message or delivery event.
-- `ChannelMember` projects an Agent-owned `AgentMembership` and adds an optional brief public focus
-  or waiting status. A working status may point to its prompting message
-  as either general work or resource review; the transcript projects that link as a temporary
-  activity reaction. The menu presents that current status; transcript activity
-  presents only members whose private Sessions are currently working.
-- `ChannelArtifact` gives a shared `WorkspaceFile` address and display title. Channels owns only its
-  index; Files classifies an Agent-supplied absolute path so Session ownership survives, and
-  Workspace toggles that same file as an ordinary root editor pane.
+  It does not wake anyone or advance message sequence.
+- `ChannelArtifact` indexes a shared `WorkspaceFile` and title. Files owns the address and editor.
+  Channels owns only the shared index and transcript event.
+- `ChannelState` is the authoritative current roster and artifacts plus a bounded message window and
+  detail revision. Earlier messages page by sequence.
+
+There is no separate Agent or membership database. Workers persists ownership, name, and opaque
+metadata. Channels validates that metadata as role, model, avatar, `seenThrough`, and status, then
+projects it into `ChannelMember`.
 
 ## Algebra
 
-- Create, rename, list, read, and delete Channels; remove a member through its private Session.
-- Let Standard, Hyper, Inbox, and Automation sessions list, create, passively read, post to, and
-  share artifacts with Channels on the user's behalf.
-- Let those Sessions wait for a Channel Agent's current execution without exposing its private
-  Session or response; public results remain on the Channel.
-- Append user, Agent, and system messages with a transactionally allocated sequence.
-- Set or clear one Agent reaction per message without advancing message sequences or read positions.
-- Set or clear one member's public status without moving the Channel list or waking teammates.
-- Advance human and member read positions monotonically.
-- Invite an Agent by mentioning it; another mention wakes an existing member.
-- Create an Agent by selecting an unknown mention, then onboard it through that first Channel turn.
-- Deliver user broadcasts and explicit mentions to current members, and admit new members.
-- Let members read unseen messages, send useful public updates, and publish shared artifacts through
-  Channel tools.
-- Implement the Agent host contract by supplying Channel instructions, tools, and Channel-specific
-  membership lifecycle.
+- Create, rename, list, read, and delete Channels.
+- Create, edit, start, finish, and remove Channel members through their owned Workers.
+- Append user, Agent, and typed system messages with one transactionally allocated sequence.
+- Route user broadcasts and explicit name-derived mentions through one pure
+  `resolveChannelAudience` policy. Agent messages wake only explicitly mentioned peers.
+- Set or clear one reaction per Agent without advancing transcript state.
+- Set or clear one member status without moving the Channel list or waking peers.
+- Advance human and Agent read positions monotonically.
+- Share durable artifacts and attach screenshots or other images to messages.
+- Let ordinary Sessions create and staff Channels, then read, post, share, and wait on the user's
+  behalf. Let Channel Agents create peers within their own Channel.
 
-## Delivery policy
+Selecting an unknown mention creates an Agent in that Channel. Mentioning any current Agent lazily
+starts or steers its private Worker Session. Removing the Agent deletes that Session and Worker.
+Agents never exist outside their Channel and cannot be invited from a global pool.
 
-- A user message mentioning current members wakes only those members. Mentioning an Agent outside the
-  Channel admits it. The completion menu can create an unknown name before sending; freely typed
-  unknown mentions remain public and wake nobody. A mentionless user message or `@everyone` wakes the
-  current team.
-- An Agent message wakes only explicitly mentioned members. Progress without mentions stays visible
-  without creating an execution loop. Agent-authored mentions may admit Agents too.
-- A `channel_message` system message steers a working member or starts an idle member. The private
-  Session then calls `read_channel` to consume the durable bus and its attachments. File-backed
-  images remain directly readable by path; inline browser uploads arrive as images.
-- Starting an idle member clears only a prior waiting status. A working focus is never erased by the
-  wake lifecycle and may be replaced explicitly by the Agent.
-- Every public Agent update uses `send_channel_message`, which permits continued work and intermediate
-  coordination. Screenshots and other images are message attachments, not shared artifacts.
-  `react_to_channel_message` quietly sets or clears a reaction without waking anyone; terminal
-  `finish_agent_turn` clears active status and therefore its projected activity reaction,
-  optionally leaves a brief waiting status, and ends the work without publishing another message.
-- Share an artifact only when a durable document or prototype is itself needed for team review or
-  alignment, and prefer updating an existing canonical artifact. Channel messages use concise,
-  scannable Markdown for decisions, questions, handoffs, and results rather than narration.
+## Agent execution
 
-## Boundaries and invariants
+`server/agent.ts` composes current Channel identity, collaboration instructions, model policy, and
+tools whenever the private Session starts an execution. Agents can inspect the same model catalog as
+the client before creating peers. Profile changes therefore apply between executions without
+mutating provider history.
 
-Channels owns its model, schema, persistence, sequencing, delivery policy, tools, pane, and sidebar
-panel. Agents owns identity, experiences, membership supervision, and reusable UI.
-Sessions owns private execution, activity, history, and ordinary Session worktrees. Workspace owns
-pane placement and top-level composition.
+The collaboration protocol asks an Agent to read current context at turn start, use the smallest
+useful public action, set status only for substantive work, reread before a result or handoff, mention
+members whose wait it fulfills, and finish every turn explicitly. Public messages, reactions,
+statuses, artifacts, and attachments are the only peer communication contract. Private transcripts
+and tool logs never enter the Channel.
 
-Both user and Agent posts apply the same pure `resolveChannelAudience` plan used by the composer
-preview, including broadcasts, invitations, unknown mentions, and sender exclusion. Visible
-name-derived mention text is the complete delivery contract.
+A turn start clears only a prior waiting status. `finish_agent_turn` clears active status and its
+projected activity reaction, or leaves a concise waiting status, then closes the turn.
 
-Creating or removing a Channel member is the deliberate persistence seam: one transaction changes
-the Agent-owned membership and Channel-owned read projection while appending its typed system
-message.
+## Persistence and streaming
 
-- The database is authoritative. The Channel list query owns list-level metadata and the structural
-  memberships used by the sidebar and composer. Workspace Channel events keep metadata and unread
-  state current; membership hints refresh that projection, while shared Session activity drives live
-  execution state. Each open Channel state owns its complete member projection, including brief
-  Agent-authored status. Deletion prunes the open pane and closes its detail stream. Only a client
-  displaying a Channel opens that ordered detail stream.
-- Channel state records its revision, complete current membership and artifacts, and newest 100
-  messages. Reaching the top prepends earlier messages into that same browser cache. Open panes
-  reduce message appends plus reaction and status patches into the state; typed system messages also
-  update current membership and artifacts. A replay gap falls back to one authoritative state event.
-  `streamChannel` owns subscribe-before-state-read catch-up and live continuation, ordering
-  concurrent publications and discarding duplicate revisions. The HTTP route maps revisions to SSE
-  event IDs without introducing another domain position.
-- The server does not reduce Channel events: mutations commit canonical database rows, then publish
-  their transition. The reducer exists only to advance each browser's cached Channel state.
-- Browser-authored message IDs reconcile optimistic user posts with their committed stream event.
-  Per-Channel sequences remain the shared transcript order and the basis of human and Agent reads.
-- Passive Session reads move backward by message sequence without changing read state. A Channel
-  Agent reads forward from its durable `seenThrough` position and advances it.
-- Shared messages, reactions, member status, and artifacts are the only peer communication contract.
-  Private transcripts and tool logs never enter the bus.
-- Agent-facing membership reads omit private Session IDs and read positions.
-- Member read positions remain private Channel persistence and never enter shared state or system
-  messages.
-- Agent-facing artifact tools use absolute paths; the persisted Channel index retains Files-owned
-  `WorkspaceFile` identity.
-- A Channel requires no directory. Each private member Session uses the Channel directory when one is
-  configured.
-- Removing a member or deleting a Channel tears down private Sessions through the shared Session
-  lifecycle; the Channel host adapter is the single removal path.
+Channels owns its schema, database operations, sequence allocation, delivery policy, tools, pane, and
+sidebar panel. Workers owns managed Session identity and lifetime. Sessions owns execution, history,
+streaming, completion, and worktrees. Workspace owns pane placement and cross-feature synchronization.
+
+Creating or removing a member is one transaction that changes the Worker record and appends the typed
+system message. Profile and status changes update Worker metadata and advance the Channel revision.
+Read-position changes update only Worker metadata. Message, reaction, and artifact tables continue to
+reference the stable Agent ID without a foreign key so authored history survives removal.
+
+The database is authoritative. The list query returns Channel metadata plus current members for the
+sidebar and composer. A visible pane suspense-loads current `ChannelState`, then reduces ordered SSE
+events into that query cache. The server commits canonical rows and publishes transitions but never
+reduces events.
+
+Message sequence is transcript order and the basis of paging and read positions. Revision is detail
+state order and also advances for reactions, profile changes, and statuses. A bounded replay ring
+resumes SSE by revision; a gap emits one authoritative `state` event. The client keeps earlier paged
+messages when that recovery state remains contiguous.
+
+Agent reads move forward from private `seenThrough` and advance it. Passive Session reads page
+backward without changing read state. Agent-facing projections expose exact mentions, roles, and
+statuses but never private Session IDs as a separate concept or another member's read position.

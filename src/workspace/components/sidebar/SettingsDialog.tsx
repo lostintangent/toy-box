@@ -1,6 +1,7 @@
 import { Checkbox } from "@/shared/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/shared/components/ui/dialog";
 import { Input } from "@/shared/components/ui/input";
+import { Separator } from "@/shared/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -10,6 +11,7 @@ import {
 } from "@/shared/components/ui/select";
 import { isAccentColor, isSessionFeatureScope } from "@workspace/model/config/settings";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
+import { useProviders } from "@providers/useProviders";
 
 const AUTO_FOCUS_ARTIFACT_OPTIONS = {
   always: "Always",
@@ -27,6 +29,7 @@ export function SettingsDialog({
 }) {
   const settings = useWorkspaceSelector((workspace) => workspace.settings);
   const updateSetting = useUpdateWorkspaceSetting();
+  const { providers, setEnabled } = useProviders();
   const { accentColor, terminalShell, useWorktree, autoFocusArtifacts } = settings;
 
   return (
@@ -113,6 +116,23 @@ export function SettingsDialog({
               Start new sessions in a worktree
             </label>
           </div>
+          <Separator />
+          <fieldset className="grid gap-3">
+            <legend className="mb-3 text-sm font-medium">Model Providers</legend>
+            {providers.map(({ id, name, installed, enabled }) => (
+              <label key={id} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={enabled}
+                  disabled={!installed}
+                  onCheckedChange={(checked) => setEnabled(id, checked)}
+                />
+                <span className={installed ? undefined : "text-muted-foreground"}>{name}</span>
+                {!installed && (
+                  <span className="ml-auto text-xs text-muted-foreground">Not installed</span>
+                )}
+              </label>
+            ))}
+          </fieldset>
         </div>
       </DialogContent>
     </Dialog>

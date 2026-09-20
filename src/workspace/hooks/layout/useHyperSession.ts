@@ -29,12 +29,12 @@ function createHyperSessionState(sessionId: string): HyperSessionState {
 export function useHyperSession({
   initialState,
   hyperSessionId,
-  createDraft,
+  createSession,
   openSessionInWorkspace,
 }: {
   initialState: HyperSessionState | null;
   hyperSessionId: string | undefined;
-  createDraft: (options?: { hyper?: true }) => string;
+  createSession: (options?: { hyper?: true }) => string;
   openSessionInWorkspace: (sessionId: string) => void;
 }) {
   const dispatchWorkspaceAction = useDispatchWorkspaceAction();
@@ -42,7 +42,7 @@ export function useHyperSession({
   const state = surface?.sessionId === hyperSessionId ? surface : null;
 
   function getOrCreateSessionId() {
-    return hyperSessionId ?? createDraft({ hyper: true });
+    return hyperSessionId ?? createSession({ hyper: true });
   }
 
   function toggle() {

@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, onTestFinished, setSystemTime, spyOn, test } from "bun:test";
+import { z } from "zod";
 import { createTestDatabase } from "@/server/database";
 import { AutomationDatabase } from "./database";
 
@@ -52,7 +53,7 @@ describe("automation database", () => {
     });
     expect(reloaded?.cron).toBe("0 9 * * *");
     expect(reloaded?.id).toBe(created.id);
-    expect(reloaded?.id).toStartWith("toy-box-auto-");
+    expect(z.uuid().safeParse(reloaded?.id).success).toBe(true);
     expect(reloaded?.cwd).toBe("/Users/test/project");
   });
 

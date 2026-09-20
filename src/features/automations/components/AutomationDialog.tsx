@@ -13,11 +13,13 @@ import { Input } from "@/shared/components/ui/input";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import { Textarea } from "@/shared/components/ui/textarea";
 import { SessionDirectoryPicker } from "@sessions/components/location/directory/SessionDirectoryPicker";
-import { normalizeModelConfiguration } from "@sessions/model/modelConfiguration";
-import { ModelConfigurationPicker } from "@sessions/components/composer/ModelPicker";
-import { useModels } from "@sessions/useModels";
-import type { ModelInfo } from "@sessions/model";
-import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
+import {
+  normalizeModelConfiguration,
+  type ModelInfo,
+  type ModelConfiguration,
+} from "@providers/model";
+import { ModelConfigurationPicker } from "@providers/components/ModelPicker";
+import { useModels } from "@providers/useModels";
 import { automationMutations } from "../mutations";
 import {
   type Automation,

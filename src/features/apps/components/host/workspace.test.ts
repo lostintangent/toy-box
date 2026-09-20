@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionsState } from "@sessions/model";
-import type { ModelInfo } from "@sessions/model";
+import type { ModelInfo } from "@providers/model";
 import { createEmptyWorkspaceState } from "@workspace/model/state/reducer";
 import { createLinkedSessionPane } from "@workspace/model/panes";
 import { projectAppWorkspace } from "./workspace";
@@ -97,46 +97,48 @@ describe("app workspace projection", () => {
     const sessionsState: SessionsState = {
       sessions: [
         {
-          sessionId: "standard",
-          provider: "codex",
-          startTime: new Date("2026-07-28T00:00:00.000Z"),
-          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+          id: "standard",
+          provider: { id: "codex" },
+          createdAt: new Date("2026-07-28T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-28T01:00:00.000Z"),
           title: "Standard work",
-          directory: "/repo",
-          repository: "owner/repo",
-          gitRoot: "/repo",
-          branch: "main",
+          context: {
+            directory: "/repo",
+            repository: "owner/repo",
+            gitRoot: "/repo",
+            branch: "main",
+          },
         },
         {
-          sessionId: "automation",
-          startTime: new Date("2026-07-28T00:00:00.000Z"),
-          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+          id: "automation",
+          createdAt: new Date("2026-07-28T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-28T01:00:00.000Z"),
           title: "Managed work",
         },
         {
-          sessionId: "hyper",
-          startTime: new Date("2026-07-28T00:00:00.000Z"),
-          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+          id: "hyper",
+          createdAt: new Date("2026-07-28T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-28T01:00:00.000Z"),
         },
         {
-          sessionId: "app-worker",
-          startTime: new Date("2026-07-28T00:00:00.000Z"),
-          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+          id: "app-worker",
+          createdAt: new Date("2026-07-28T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-28T01:00:00.000Z"),
           title: "Hidden worker",
         },
         {
-          sessionId: "session-worker",
-          startTime: new Date("2026-07-28T00:00:00.000Z"),
-          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+          id: "session-worker",
+          createdAt: new Date("2026-07-28T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-28T01:00:00.000Z"),
           title: "Implement feature",
-          directory: "/tmp/worktree",
+          context: { directory: "/tmp/worktree" },
         },
         {
-          sessionId: "nested-worker",
-          startTime: new Date("2026-07-28T00:00:00.000Z"),
-          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+          id: "nested-worker",
+          createdAt: new Date("2026-07-28T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-28T01:00:00.000Z"),
           title: "Review feature",
-          directory: "/tmp/worktree",
+          context: { directory: "/tmp/worktree" },
         },
       ],
       worktrees: {
@@ -182,27 +184,29 @@ describe("app workspace projection", () => {
     expect(projection).toEqual({
       sessions: [
         {
-          sessionId: "standard",
-          provider: "codex",
-          startTime: new Date("2026-07-28T00:00:00.000Z"),
-          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+          id: "standard",
+          provider: { id: "codex" },
+          createdAt: new Date("2026-07-28T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-28T01:00:00.000Z"),
           title: "Standard work",
           status: "running",
           kind: "standard",
-          directory: "/repo",
-          repository: "owner/repo",
-          gitRoot: "/repo",
-          branch: "main",
+          context: {
+            directory: "/repo",
+            repository: "owner/repo",
+            gitRoot: "/repo",
+            branch: "main",
+          },
           worktree: undefined,
           children: [
             {
-              sessionId: "session-worker",
-              startTime: new Date("2026-07-28T00:00:00.000Z"),
-              modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+              id: "session-worker",
+              createdAt: new Date("2026-07-28T00:00:00.000Z"),
+              updatedAt: new Date("2026-07-28T01:00:00.000Z"),
               title: "Implement feature",
               status: "unread",
               kind: "standard",
-              directory: "/tmp/worktree",
+              context: { directory: "/tmp/worktree" },
               worktree: {
                 path: "/tmp/worktree",
                 branch: "toy-box/session-worker",
@@ -210,13 +214,13 @@ describe("app workspace projection", () => {
               },
               children: [
                 {
-                  sessionId: "nested-worker",
-                  startTime: new Date("2026-07-28T00:00:00.000Z"),
-                  modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+                  id: "nested-worker",
+                  createdAt: new Date("2026-07-28T00:00:00.000Z"),
+                  updatedAt: new Date("2026-07-28T01:00:00.000Z"),
                   title: "Review feature",
                   status: "idle",
                   kind: "standard",
-                  directory: "/tmp/worktree",
+                  context: { directory: "/tmp/worktree" },
                   worktree: undefined,
                   children: [],
                 },
@@ -225,9 +229,9 @@ describe("app workspace projection", () => {
           ],
         },
         {
-          sessionId: "automation",
-          startTime: new Date("2026-07-28T00:00:00.000Z"),
-          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+          id: "automation",
+          createdAt: new Date("2026-07-28T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-28T01:00:00.000Z"),
           title: "Managed work",
           status: "unread",
           kind: "automation",
@@ -235,9 +239,9 @@ describe("app workspace projection", () => {
           children: [],
         },
         {
-          sessionId: "hyper",
-          startTime: new Date("2026-07-28T00:00:00.000Z"),
-          modifiedTime: new Date("2026-07-28T01:00:00.000Z"),
+          id: "hyper",
+          createdAt: new Date("2026-07-28T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-28T01:00:00.000Z"),
           status: "running",
           kind: "hyper",
           worktree: undefined,

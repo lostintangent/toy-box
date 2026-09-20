@@ -1,13 +1,13 @@
 import type { ComponentProps } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { Circle, CircleHelp, Loader2, PanelTop, Sparkles } from "lucide-react";
-import { ModelConfigurationPicker } from "@sessions/components/composer/ModelPicker";
+import { ModelConfigurationPicker } from "@providers/components/ModelPicker";
 import { Badge } from "@/shared/components/ui/badge";
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
 import { Textarea } from "@/shared/components/ui/textarea";
 import type { AppSession } from "@apps/sdk";
-import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
+import type { ModelConfiguration } from "@providers/model";
 import { cn } from "@/shared/utils";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { useAppHost } from "../../host/context";
@@ -118,15 +118,7 @@ export function AppSessionStatus({
       ) : (
         <Circle aria-hidden="true" className="size-2.5" />
       )}
-      {running
-        ? "Running"
-        : waiting
-          ? "Waiting"
-          : finished
-            ? "Finished"
-            : status === "draft"
-              ? "Draft"
-              : "Idle"}
+      {running ? "Running" : waiting ? "Waiting" : finished ? "Finished" : "Idle"}
     </Badge>
   );
 }

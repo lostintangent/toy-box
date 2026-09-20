@@ -1,5 +1,5 @@
 import { mkdir, rm } from "node:fs/promises";
-import { dirname, extname, join } from "node:path";
+import { dirname, extname } from "node:path";
 import { resolveSessionArtifactPath, sessionArtifactDirectory } from "@files/server/paths";
 import { SESSION_ARTIFACT_EXTENSIONS } from "../model/constants";
 
@@ -7,10 +7,6 @@ export function sessionArtifactsDirectory(sessionId: string): string {
   const path = sessionArtifactDirectory(sessionId);
   if (!path) throw new Error("Invalid session ID.");
   return path;
-}
-
-export function sessionAttachmentsDirectory(sessionId: string): string {
-  return join(dirname(sessionArtifactsDirectory(sessionId)), "attachments");
 }
 
 export async function ensureSessionFiles(sessionId: string): Promise<void> {

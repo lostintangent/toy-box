@@ -13,7 +13,7 @@ mock.module("@/server/database", () => ({
 
 const {
   getEphemeralWorkerSessionIds,
-  getWorkerAppId,
+  getPersistedWorker,
   getWorkerSessionParents,
   getWorkerSessionIdsForApp,
   getWorkerSessionIdsForParent,
@@ -80,41 +80,41 @@ describe("worker ownership", () => {
     ]);
   });
 
-  test("keeps the first owner when a worker is registered twice", async () => {
+  test("round-trips owner details, names, and metadata", async () => {
     await openWorkersTestDatabase();
 
     await registerWorkerSession({
-      type: "session",
-      sessionId: "toy-box-worker",
-      parentSessionId: "toy-box-parent-a",
-      ephemeral: false,
+      type: "file",
+      sessionId: "toy-box-file-worker",
+      file: { kind: "session", sessionId: "toy-box-parent", path: "notes.md" },
+      ephemeral: true,
+      name: "Editor",
+      metadata: { task: "Review notes" },
     });
     await registerWorkerSession({
-      type: "app",
-      sessionId: "toy-box-worker",
-      appId: "app-b",
-      ephemeral: true,
+      type: "channel",
+      sessionId: "toy-box-channel-worker",
+      channelId: "channel-a",
+      ephemeral: false,
+      name: "Critic",
+      metadata: { seenThrough: 4 },
     });
 
-    expect(await getWorkerSessionParents()).toEqual({
-      "toy-box-worker": "toy-box-parent-a",
+    expect(await getPersistedWorker("toy-box-file-worker")).toEqual({
+      type: "file",
+      sessionId: "toy-box-file-worker",
+      file: { kind: "session", sessionId: "toy-box-parent", path: "notes.md" },
+      ephemeral: true,
+      name: "Editor",
+      metadata: { task: "Review notes" },
     });
-    const rows = await currentDb!<
-      {
-        worker_type: string;
-        parent_session_id: string | null;
-        app_id: string | null;
-        ephemeral: number;
-      }[]
-    >`
-      SELECT worker_type, parent_session_id, app_id, ephemeral
-      FROM workers WHERE session_id = ${"toy-box-worker"}
-    `;
-    expect(rows[0]).toEqual({
-      worker_type: "session",
-      parent_session_id: "toy-box-parent-a",
-      app_id: null,
-      ephemeral: 0,
+    expect(await getPersistedWorker("toy-box-channel-worker")).toEqual({
+      type: "channel",
+      sessionId: "toy-box-channel-worker",
+      channelId: "channel-a",
+      ephemeral: false,
+      name: "Critic",
+      metadata: { seenThrough: 4 },
     });
   });
 
@@ -144,7 +144,6 @@ describe("worker ownership", () => {
       "toy-box-session-worker",
     ]);
     expect(await getWorkerSessionIdsForApp("app-a")).toEqual(["toy-box-app-worker"]);
-    expect(await getWorkerAppId("toy-box-app-worker")).toBe("app-a");
   });
 
   test("unregisters workers and treats missing records as a no-op", async () => {
@@ -167,6 +166,6 @@ describe("worker ownership", () => {
     expect(await getWorkerSessionIdsForParent("toy-box-parent")).toEqual([]);
     expect(await getWorkerSessionIdsForApp("app-a")).toEqual([]);
     expect(await getEphemeralWorkerSessionIds()).toEqual([]);
-    expect(await getWorkerAppId("missing-worker")).toBeUndefined();
+    expect(await getPersistedWorker("missing-worker")).toBeNull();
   });
 });

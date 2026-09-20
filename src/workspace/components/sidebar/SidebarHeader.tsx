@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { modelQueries } from "@sessions/queries";
-import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
+import { useProviders } from "@providers/useProviders";
+import type { SessionFilters } from "@sessions/components/sidebar/sessionFilters";
 import { ChevronDown, Clock3, FileText, Filter, Hash, Shapes, X } from "lucide-react";
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
@@ -29,26 +28,14 @@ export function SidebarHeader({
 }: {
   /** The row's first item: an action that survives collapse, or a spacer holding its place. */
   leadingSlot?: ReactNode;
-  filter: string;
-  onFilterChange: (value: string) => void;
+  filter: SessionFilters;
+  onFilterChange: (value: SessionFilters) => void;
   sessionCount: number;
   onCreateSession: (options?: SidebarCreateOptions) => void;
   onCreateAutomation: () => void;
   onCreateChannel: () => void;
 }) {
-  const showExternalSessions = useWorkspaceSelector(
-    (workspace) => workspace.settings.showExternalSessions,
-  );
-  const hiddenProviders = useWorkspaceSelector(
-    (workspace) => workspace.settings.hiddenSessionProviders,
-  );
-  const updateSetting = useUpdateWorkspaceSetting();
-  const { data: providers = [] } = useQuery({
-    ...modelQueries.list(),
-    select: (models) => [
-      ...new Map(models.map((model) => [model.provider, model.providerName ?? model.provider])),
-    ],
-  });
+  const { providers, hasModels } = useProviders();
 
   function createArtifactDraft(path: string, content = "") {
     onCreateSession({ artifact: { path, content } });
@@ -63,11 +50,12 @@ export function SidebarHeader({
       <div className="relative flex-1">
         <DropdownMenu>
           <DropdownMenuTrigger
+            disabled={!hasModels}
             render={
               <button
                 className={cn(
-                  "absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 hover:text-foreground",
-                  hiddenProviders.length || !showExternalSessions
+                  "absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
+                  filter.hiddenProviders.length || !filter.showExternalSessions
                     ? "text-foreground"
                     : "text-muted-foreground",
                 )}
@@ -80,47 +68,51 @@ export function SidebarHeader({
             <ChevronDown className="h-3 w-3" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                Model Providers
+              </DropdownMenuLabel>
+              {providers
+                .filter((provider) => provider.installed && provider.enabled)
+                .map(({ id, name }) => (
+                  <DropdownMenuCheckboxItem
+                    key={id}
+                    checked={!filter.hiddenProviders.includes(id)}
+                    onCheckedChange={(checked) =>
+                      onFilterChange({
+                        ...filter,
+                        hiddenProviders: checked
+                          ? filter.hiddenProviders.filter((provider) => provider !== id)
+                          : [...filter.hiddenProviders, id],
+                      })
+                    }
+                  >
+                    {name}
+                  </DropdownMenuCheckboxItem>
+                ))}
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
             <DropdownMenuCheckboxItem
-              checked={showExternalSessions}
-              onCheckedChange={(checked) => updateSetting("showExternalSessions", checked)}
+              checked={filter.showExternalSessions}
+              onCheckedChange={(checked) =>
+                onFilterChange({ ...filter, showExternalSessions: checked })
+              }
             >
               Show external sessions
             </DropdownMenuCheckboxItem>
-            {providers.length > 0 && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel>Providers</DropdownMenuLabel>
-                  {providers.map(([id, name]) => (
-                    <DropdownMenuCheckboxItem
-                      key={id}
-                      checked={!hiddenProviders.includes(id)}
-                      onCheckedChange={(checked) =>
-                        updateSetting(
-                          "hiddenSessionProviders",
-                          checked
-                            ? hiddenProviders.filter((provider) => provider !== id)
-                            : [...hiddenProviders, id],
-                        )
-                      }
-                    >
-                      {name}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuGroup>
-              </>
-            )}
           </DropdownMenuContent>
         </DropdownMenu>
         <Input
-          value={filter}
-          onChange={(e) => onFilterChange(e.target.value)}
+          disabled={!hasModels}
+          value={filter.query}
+          onChange={(e) => onFilterChange({ ...filter, query: e.target.value })}
           placeholder={`Filter sessions (${sessionCount})`}
-          className={cn("h-8 pl-12", filter ? "pr-8" : "pr-2")}
+          className={cn("h-8 pl-12", filter.query ? "pr-8" : "pr-2")}
         />
-        {filter && (
+        {filter.query && (
           <button
-            onClick={() => onFilterChange("")}
+            disabled={!hasModels}
+            onClick={() => onFilterChange({ ...filter, query: "" })}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             aria-label="Clear filter"
             suppressHydrationWarning
@@ -133,6 +125,7 @@ export function SidebarHeader({
         <NewSessionButton onCreateSession={onCreateSession} className="size-7 rounded-r-none" />
         <DropdownMenu>
           <DropdownMenuTrigger
+            disabled={!hasModels}
             render={
               <Button
                 size="icon-sm"

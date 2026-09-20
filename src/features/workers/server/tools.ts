@@ -1,6 +1,6 @@
 import { defineTool } from "@sessions/server/tools/definition";
 import { z } from "zod";
-import { modelConfigurationSchema } from "@sessions/model/modelConfiguration";
+import { modelConfigurationSchema } from "@providers/model";
 import { workerNameSchema } from "../model";
 
 const spawnWorkerTool = defineTool("spawn_worker", {

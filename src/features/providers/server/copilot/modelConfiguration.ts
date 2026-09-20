@@ -1,5 +1,5 @@
 import type { CopilotSession, SessionConfig as SdkSessionConfig } from "@github/copilot-sdk";
-import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
+import type { ModelConfiguration } from "@providers/model";
 
 type SdkSetModelOptions = NonNullable<Parameters<CopilotSession["setModel"]>[1]>;
 type SdkSessionModelOptions = Pick<SdkSessionConfig, "model" | "reasoningEffort" | "contextTier">;

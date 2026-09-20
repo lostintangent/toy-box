@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Circle, Hash, Pencil, Plus, Trash2 } from "lucide-react";
-import { AgentStatus } from "@agents/components/AgentStatus";
-import { agentQueries } from "@agents/queries";
+import { AgentStatus } from "@channels/components/agents/AgentStatus";
 import { channelHasUnread } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import { channelQueries } from "@channels/queries";
@@ -30,9 +29,8 @@ export function ChannelsPanel({
   onCreate: () => void;
 }) {
   const {
-    data: { channels, memberships },
+    data: { channels, members },
   } = useSuspenseQuery(channelQueries.list());
-  const { data: agents } = useSuspenseQuery(agentQueries.list());
   const [renameChannelId, setRenameChannelId] = useState<string>();
   const [deleteChannelId, setDeleteChannelId] = useState<string>();
   if (channels.length === 0) return null;
@@ -66,9 +64,7 @@ export function ChannelsPanel({
         }
       >
         {channels.map((channel) => {
-          const channelMemberships = memberships.filter(
-            ({ host }) => host.channelId === channel.id,
-          );
+          const channelMembers = members.filter((member) => member.channelId === channel.id);
 
           return (
             <SidebarListItem
@@ -77,7 +73,7 @@ export function ChannelsPanel({
               titleContent={
                 <span className="flex items-center gap-3">
                   <span>{channel.title}</span>
-                  <AgentStatus memberships={channelMemberships} agents={agents} variant="compact" />
+                  <AgentStatus members={channelMembers} variant="compact" />
                 </span>
               }
               icon={

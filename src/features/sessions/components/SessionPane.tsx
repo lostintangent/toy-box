@@ -1,9 +1,8 @@
-import { normalizeModelConfiguration } from "../model/modelConfiguration";
+import { normalizeModelConfiguration, type ModelConfiguration } from "@providers/model";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import type { UserMessage } from "../model";
-import type { ModelConfiguration } from "../model/modelConfiguration";
 import { getRecentDirectories } from "../model/recentDirectories";
 import { sessionMutations } from "../mutations";
 import { sessionQueries, skillQueries } from "../queries";
@@ -14,7 +13,7 @@ import {
 } from "./location/SessionLocationPicker";
 import { SessionMetadataBadges } from "./location/SessionMetadataBadges";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import { useModels } from "../useModels";
+import { useModels } from "@providers/useModels";
 import { EditDiffsProvider, useEditDiffs } from "./transcript/editDiffs";
 import { SessionComposer } from "./composer/SessionComposer";
 import { CurrentSessionProvider, type SessionPaneMode } from "./CurrentSessionContext";
@@ -47,16 +46,10 @@ export function SessionPane({
   const workspaceSessionStatus = useWorkspaceSelector(
     (workspace) => workspace.sessionStates[sessionId]?.status ?? "idle",
   );
-  const draftArtifactPath = useWorkspaceSelector((workspace) => {
-    const session = workspace.sessionStates[sessionId];
-    return session?.status === "draft" ? session.artifactPath : undefined;
-  });
   const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);
   const isHyper = useWorkspaceSelector((workspace) =>
     workspace.hyperSessionIds.includes(sessionId),
   );
-  const isDraft = workspaceSessionStatus === "draft";
-  const { models: catalog, defaultModel, setDefaultModel } = useModels();
   // In the "compact" variant (the pager) the session surfaces its location picker
   // + message badges in the host's title bar and hides them from the composer; in
   // "normal" (the grid) it keeps them inline. See WorkspacePaneView.
@@ -66,38 +59,41 @@ export function SessionPane({
   // Session location
   // ---------------------------------------------------------------------------
   // An untouched draft follows the latest directory; null preserves an explicit clear.
-  const [draftDirectorySelection, setDraftDirectorySelection] = useState<string | null | undefined>(
+  const [directorySelection, setDirectorySelection] = useState<string | null | undefined>(
     undefined,
   );
   // Subscribe only to this session's durable metadata and worktree.
   const { data: sessionRecord, isLoading: isSessionRecordLoading } = useQuery({
     ...sessionQueries.state(),
     enabled: !isPassive,
-    select: (state) => ({
-      metadata: state.sessions.find((session) => session.sessionId === sessionId),
-      worktree: state.worktrees[sessionId],
-      recentDirectory: isDraft ? getRecentDirectories(state.sessions)[0]?.cwd : undefined,
-    }),
+    select: (state) => {
+      const session = state.sessions.find((session) => session.id === sessionId);
+      return {
+        session,
+        worktree: state.worktrees[sessionId],
+        recentDirectory:
+          session && !session.provider && directorySelection === undefined
+            ? getRecentDirectories(state.sessions)[0]?.cwd
+            : undefined,
+      };
+    },
   });
-  const sessionMetadata = sessionRecord?.metadata;
-  const selectedDirectory = sessionMetadata?.directory;
-  const selectedRepository = sessionMetadata?.repository;
-  const selectedGitRoot = sessionMetadata?.gitRoot;
-  const draftDirectory =
-    draftDirectorySelection === undefined
+  const session = sessionRecord?.session;
+  const isDraft = session !== undefined && !session.provider;
+  const { models, defaultModel, setDefaultModel } = useModels(session?.provider?.id);
+  const selectedDirectory = session?.context?.directory;
+  const selectedRepository = session?.context?.repository;
+  const selectedGitRoot = session?.context?.gitRoot;
+  const initialDirectory =
+    directorySelection === undefined
       ? sessionRecord?.recentDirectory
-      : (draftDirectorySelection ?? undefined);
-  const effectiveDirectory = isDraft ? draftDirectory : selectedDirectory;
+      : (directorySelection ?? undefined);
+  const effectiveDirectory = isDraft ? initialDirectory : selectedDirectory;
 
   // Worktree choice belongs to a draft's initial location.
   const [useWorktree, setUseWorktree] = useState(isDraft ? defaultUseWorktree : false);
 
-  const sessionDefaultModel = isDraft
-    ? defaultModel
-    : normalizeModelConfiguration(
-        catalog.filter((model) => model.provider === sessionMetadata?.provider),
-        defaultModel,
-      );
+  const fallbackModel = normalizeModelConfiguration(models, defaultModel);
 
   // The hook owns reduced session state. The default model and location seed a
   // draft's first turn; directory also scopes skill discovery.
@@ -122,18 +118,16 @@ export function SessionPane({
     workspaceSessionStatus,
     mode: isPassive ? "passive" : "active",
     isVisible,
-    defaultModel: sessionDefaultModel ?? undefined,
+    defaultModel: fallbackModel ?? undefined,
     directory: effectiveDirectory,
     useWorktree: isDraft ? useWorktree : undefined,
-    draftArtifactPath,
+    session,
   });
 
   // Drafts start with the workspace default. Existing sessions reveal their
   // model only after hydration; if history has none, the default then becomes
   // the next-message fallback instead of flashing before session state loads.
-  const provider = isDraft ? undefined : (sessionModel?.provider ?? sessionMetadata?.provider);
-  const models = provider ? catalog.filter((model) => model.provider === provider) : catalog;
-  const fallbackModel = normalizeModelConfiguration(models, defaultModel);
+  const provider = isDraft ? undefined : (sessionModel?.provider ?? session?.provider?.id);
   const displayedModel = isDraft || hasLoadedSessionState ? (sessionModel ?? fallbackModel) : null;
 
   // Update both this session and the workspace-wide default.
@@ -157,10 +151,10 @@ export function SessionPane({
 
     panePublications.actions.publishSessionPanes(
       sessionId,
-      isDraft ? [] : linkedSessionIds,
-      isDraft ? [] : canvases,
+      linkedSessionIds,
+      canvases,
       artifacts,
-      isDraft ? [] : openedFiles,
+      openedFiles,
     );
   }, [
     artifacts,
@@ -197,14 +191,14 @@ export function SessionPane({
     isDraft || isExistingLocationLoading || Boolean(selectedDirectory) || isWorktreeSession;
   const locationPickerProps: SessionLocationPickerProps | undefined = shouldShowLocationPicker
     ? {
-        value: isDraft ? draftDirectorySelection : selectedDirectory,
+        value: isDraft ? directorySelection : selectedDirectory,
         repository: selectedRepository,
         gitRoot: selectedGitRoot,
         isLoading: isExistingLocationLoading,
-        onValueChange: isDraft ? setDraftDirectorySelection : undefined,
+        onValueChange: isDraft ? setDirectorySelection : undefined,
         useWorktree: isDraft ? useWorktree : undefined,
         onUseWorktreeChange: isDraft ? setUseWorktree : undefined,
-        branch: sessionMetadata?.branch,
+        branch: session?.context?.branch,
         worktreeActions: isWorktreeSession
           ? {
               worktreeBranch: worktree?.branch,
@@ -311,7 +305,7 @@ export function SessionPane({
             sessionDiff={editDiffs}
             artifacts={mode === "active" ? artifacts : []}
             queuedMessages={queuedMessages}
-            sessionName={sessionMetadata?.title}
+            sessionName={session?.title}
             lastMessage={lastVoiceMessage}
           />
         </div>

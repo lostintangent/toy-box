@@ -3,8 +3,7 @@ import type { SessionsState } from "@sessions/model";
 import { selectNonWorkerSessions } from "@sessions/queries";
 import type { WorkspaceState } from "@workspace/model/state/reducer";
 import type { WorkspacePane } from "@workspace/model/panes";
-import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
-import type { ModelInfo } from "@sessions/model";
+import type { ModelConfiguration, ModelInfo } from "@providers/model";
 import type { AppSession, AppWorkspace } from "@apps/sdk";
 
 type AppWorkspaceSource = {
@@ -34,7 +33,7 @@ export function projectAppWorkspace(
         : "standard";
   const childrenByParent = new Map<string, SessionsState["sessions"]>();
   for (const session of sessions.sessions) {
-    const parentSessionId = sessions.workerSessionParents[session.sessionId];
+    const parentSessionId = sessions.workerSessionParents[session.id];
     if (!parentSessionId) continue;
     const children = childrenByParent.get(parentSessionId) ?? [];
     children.push(session);
@@ -44,16 +43,16 @@ export function projectAppWorkspace(
   function projectSession(session: SessionsState["sessions"][number]): AppSession {
     return {
       ...session,
-      status: workspace.sessionStates[session.sessionId]?.status ?? "idle",
-      kind: sessionKind(session.sessionId),
-      worktree: sessions.worktrees[session.sessionId],
-      children: (childrenByParent.get(session.sessionId) ?? []).map(projectSession),
+      status: workspace.sessionStates[session.id]?.status ?? "idle",
+      kind: sessionKind(session.id),
+      worktree: sessions.worktrees[session.id],
+      children: (childrenByParent.get(session.id) ?? []).map(projectSession),
     };
   }
 
   const next: AppWorkspace = {
     sessions: selectNonWorkerSessions(sessions)
-      .filter(({ sessionId }) => !inboxIds.has(sessionId))
+      .filter(({ id }) => !inboxIds.has(id))
       .map(projectSession),
     apps: workspace.apps.map(({ id, definitionId, title, revision, updatedAt }) => ({
       id,
@@ -64,25 +63,7 @@ export function projectAppWorkspace(
       accepts: definitions.get(definitionId)?.accepts ?? [],
     })),
     shares: appId ? workspace.appShares.filter((share) => share.targetAppId === appId) : [],
-    models: models.map(
-      ({
-        id,
-        name,
-        provider,
-        providerName,
-        supportedReasoningEfforts,
-        defaultReasoningEffort,
-        supportedContextTiers,
-      }) => ({
-        id,
-        name,
-        provider,
-        providerName,
-        supportedReasoningEfforts: supportedReasoningEfforts && [...supportedReasoningEfforts],
-        defaultReasoningEffort,
-        supportedContextTiers: supportedContextTiers && [...supportedContextTiers],
-      }),
-    ),
+    models,
     defaultModel,
     openSessionIds: openPanes
       .filter((pane) => pane.kind === "session")

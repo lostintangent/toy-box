@@ -29,7 +29,6 @@
       "@inbox/*": ["./src/features/inbox/*"],
       "@briefs/*": ["./src/features/briefs/*"],
       "@sessions/*": ["./src/features/sessions/*"],
-      "@agents/*": ["./src/features/agents/*"],
       "@channels/*": ["./src/features/channels/*"],
       "@terminal/*": ["./src/features/terminal/*"],
       "@whiteboard/*": ["./src/features/whiteboard/*"],

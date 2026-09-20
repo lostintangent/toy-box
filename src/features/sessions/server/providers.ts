@@ -4,22 +4,17 @@ import {
   listSessions as listNativeSessions,
   sessionProviders,
 } from "@providers/server";
-import type { SessionMetadata, SessionType } from "../model";
-import type { ModelConfiguration } from "../model/modelConfiguration";
-import { normalizeModelConfiguration } from "../model/modelConfiguration";
-import type {
-  SessionIdentity,
-  SessionConfiguration,
-  SessionProvider,
-} from "@providers/server/provider";
-import { bindProviderSession, readProviderBinding, readProviderBindings } from "./state/sessions";
+import type { Session, SessionType } from "../model";
+import { normalizeModelConfiguration, type ModelConfiguration } from "@providers/model";
+import type { SessionConfiguration, SessionProvider } from "@providers/server/provider";
+import { setSessionProvider, readSession, readSessions } from "./state/sessions";
 import { buildSessionSystemPrompt } from "./instructions";
 import { getSessionSkillDirectories } from "./bundledSkills";
-import { ensureSessionFiles, sessionAttachmentsDirectory } from "./artifacts";
+import { ensureSessionFiles } from "./artifacts";
 import { sharedSet } from "@/shared/server/processState";
 
 // A native history can become discoverable before its create request returns.
-// Only unbound histories from that provider need to wait for their public IDs.
+// Only unknown histories from that provider need to wait for their public IDs.
 const pendingCreations = sharedSet<{
   providerId: string;
   completion: ReturnType<SessionProvider["create"]>;
@@ -32,53 +27,66 @@ type ConfigurationOptions = Pick<SessionConfiguration, "model" | "directory" | "
   additionalInstructions?: string;
 };
 
-/** Imported native sessions use the same namespaced identity for every provider. */
-export async function resolveSessionIdentity(sessionId: string): Promise<SessionIdentity> {
-  const binding = await readProviderBinding(sessionId);
-  if (binding) return binding;
+/** External histories have stable public addresses without claiming a local record. */
+export async function resolveSession(
+  id: string,
+): Promise<Pick<Session, "id"> & Required<Pick<Session, "provider">>> {
+  const session = await readSession(id);
+  if (session?.provider) return { id, provider: session.provider };
   for (const provider of sessionProviders) {
-    if (sessionId.startsWith(`${provider.id}:`)) {
-      return {
-        sessionId,
-        providerId: provider.id,
-        nativeId: sessionId.slice(provider.id.length + 1),
-      };
+    if (id.startsWith(`${provider.id}:`)) {
+      return { id, provider: { id: provider.id, sessionId: id.slice(provider.id.length + 1) } };
     }
   }
-  throw new Error(`Session not found: ${sessionId}.`);
+  throw new Error(`Session not found: ${id}.`);
 }
 
-export async function listSessions(): Promise<SessionMetadata[]> {
-  const bindingsBefore = await readProviderBindings();
-  const sessions = await listNativeSessions();
-  // Native discovery can overlap creation or deletion. Keep public identity
-  // from either side so managed sessions never reappear as imported histories.
-  const bindingsAfter = await readProviderBindings();
+export async function listSessions(): Promise<Session[]> {
+  const before = await readSessions();
+  const nativeSessions = await listNativeSessions();
+  // Preserve public IDs across native discovery overlapping creation or deletion.
+  let records = await readSessions();
   const byNative = new Map(
-    [...bindingsBefore, ...bindingsAfter].map((binding) => [
-      `${binding.providerId}:${binding.nativeId}`,
-      binding.sessionId,
-    ]),
+    [...before, ...records]
+      .filter((session) => session.provider)
+      .map((session) => [
+        `${session.provider!.id}:${session.provider!.sessionId ?? session.id}`,
+        session,
+      ]),
   );
-  const unboundProviders = new Set(
-    sessions
-      .filter((session) => !byNative.has(`${session.provider}:${session.sessionId}`))
-      .map((session) => session.provider),
+  const unknownProviders = new Set(
+    nativeSessions
+      .filter((session) => !byNative.has(`${session.provider!.id}:${session.id}`))
+      .map((session) => session.provider!.id),
   );
   const pending = [...pendingCreations].filter((creation) =>
-    unboundProviders.has(creation.providerId),
+    unknownProviders.has(creation.providerId),
   );
   if (pending.length) {
     await Promise.allSettled(pending.map((creation) => creation.completion));
-    for (const binding of await readProviderBindings())
-      byNative.set(`${binding.providerId}:${binding.nativeId}`, binding.sessionId);
+    records = await readSessions();
+    for (const session of records) {
+      if (session.provider)
+        byNative.set(`${session.provider.id}:${session.provider.sessionId ?? session.id}`, session);
+    }
   }
-  return sessions.map((session) => ({
-    ...session,
-    sessionId:
-      byNative.get(`${session.provider}:${session.sessionId}`) ??
-      `${session.provider}:${session.sessionId}`,
-  }));
+  return [
+    ...records.filter((session) => !session.provider),
+    ...nativeSessions.map((native) => {
+      const record = byNative.get(`${native.provider!.id}:${native.id}`);
+      const id = record?.id ?? `${native.provider!.id}:${native.id}`;
+      return {
+        ...native,
+        id,
+        createdAt: record?.createdAt ?? native.createdAt,
+        provider: {
+          id: native.provider!.id,
+          ...(native.id !== id ? { sessionId: native.id } : {}),
+        },
+        ...(record?.artifactPath ? { artifactPath: record.artifactPath } : {}),
+      };
+    }),
+  ];
 }
 
 export async function listSkills(
@@ -107,7 +115,6 @@ function configuration(sessionId: string, options: ConfigurationOptions): Sessio
     tools: options.tools ?? [],
     instructions: buildSessionSystemPrompt(sessionId, options),
     skillDirectories: getSessionSkillDirectories(options.sessionType),
-    attachmentsDirectory: sessionAttachmentsDirectory(sessionId),
   };
 }
 
@@ -115,7 +122,7 @@ export async function createSession(
   sessionId: string,
   options: ConfigurationOptions & { name?: string },
 ) {
-  if (await readProviderBinding(sessionId)) throw new Error("Session already exists.");
+  if ((await readSession(sessionId))?.provider) throw new Error("Session already exists.");
   const model = options.model ?? (await defaultModel());
   const provider = getSessionProvider(model.provider);
   const creation = {
@@ -141,48 +148,49 @@ async function createNativeSession(
   configuration: SessionConfiguration,
   name?: string,
 ) {
-  const connection = await provider.create(sessionId, configuration);
+  const connection = await provider.create(sessionId, { ...configuration, name });
   try {
-    if (name) await connection.rename(name);
-    await bindProviderSession(connection.identity);
+    await setSessionProvider(sessionId, connection.provider);
   } catch (error) {
     await connection.disconnect().catch(console.error);
-    await provider.delete(connection.identity.nativeId).catch(console.error);
+    await provider.delete(connection.provider.sessionId ?? sessionId).catch(console.error);
     throw error;
   }
   return connection;
 }
 
 export async function resumeSession(sessionId: string, options: ConfigurationOptions) {
-  const identity = await resolveSessionIdentity(sessionId);
-  if (options.model && options.model.provider !== identity.providerId) {
+  const session = await resolveSession(sessionId);
+  if (options.model && options.model.provider !== session.provider.id) {
     throw new Error(
       "An existing session cannot change providers. Start a new session to use that model.",
     );
   }
   await ensureSessionFiles(sessionId);
-  return getSessionProvider(identity.providerId).resume(
-    identity,
-    configuration(sessionId, options),
-  );
+  return getSessionProvider(session.provider.id).resume(session, configuration(sessionId, options));
 }
 
 export async function deleteSession(sessionId: string) {
-  const identity = await resolveSessionIdentity(sessionId);
-  await getSessionProvider(identity.providerId).delete(identity.nativeId);
+  const session = await resolveSession(sessionId);
+  await getSessionProvider(session.provider.id).delete(session.provider.sessionId ?? session.id);
 }
 
 export async function getSessionDirectory(sessionId: string) {
-  const identity = await resolveSessionIdentity(sessionId);
-  return getSessionProvider(identity.providerId).readDirectory(identity.nativeId);
+  const session = await resolveSession(sessionId);
+  return getSessionProvider(session.provider.id).readDirectory(
+    session.provider.sessionId ?? session.id,
+  );
 }
 
 export async function readSessionHistory(sessionId: string) {
-  const identity = await resolveSessionIdentity(sessionId);
-  return getSessionProvider(identity.providerId).readHistory(identity);
+  const session = await resolveSession(sessionId);
+  return getSessionProvider(session.provider.id).readHistory(session);
 }
 
 export async function isHistoryCurrent(sessionId: string, capturedAt: number) {
-  const identity = await resolveSessionIdentity(sessionId);
-  return getSessionProvider(identity.providerId).isHistoryCurrent(identity.nativeId, capturedAt);
+  const session = await resolveSession(sessionId);
+  return getSessionProvider(session.provider.id).isHistoryCurrent(
+    session.provider.sessionId ?? session.id,
+    capturedAt,
+  );
 }

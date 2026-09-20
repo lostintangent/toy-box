@@ -15,7 +15,7 @@ import { Button } from "@/shared/components/ui/button";
 import type { AppActions } from "@apps/sdk";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import { useModels } from "@sessions/useModels";
+import { useModels } from "@providers/useModels";
 import { createEmptySessionsState, sessionQueries } from "@sessions/queries";
 import { paneSourceSessionId, type WorkspacePane } from "@workspace/model/panes";
 import { AppHostProvider } from "./context";
@@ -52,7 +52,7 @@ export function AppHost({
     surface.panePublications,
     (published) => published[publisherPaneId] ?? NO_LINKED_PANES,
   );
-  const activeSessionIds = new Set(sessionsState.sessions.map(({ sessionId }) => sessionId));
+  const activeSessionIds = new Set(sessionsState.sessions.map(({ id }) => id));
   const validLinkedPanes = linkedPanes.filter((candidate) => {
     const sessionId = paneSourceSessionId(candidate);
     return sessionId === undefined || activeSessionIds.has(sessionId);

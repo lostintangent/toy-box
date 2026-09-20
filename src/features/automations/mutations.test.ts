@@ -10,7 +10,7 @@ import type { Automation, AutomationOptions } from "./model";
 import { automationMutations } from "./mutations";
 
 const automation = {
-  id: "toy-box-auto-11111111-1111-4111-8111-111111111111",
+  id: "11111111-1111-4111-8111-111111111111",
   title: "Daily summary",
   prompt: "Summarize the repository.",
   model: { provider: "copilot", name: "gpt-5" },
@@ -95,9 +95,9 @@ describe("automation mutation options", () => {
     expect(readSessionSnapshot(startedClient)).toEqual(startedSnapshot);
     expect(readSessions(startedClient).sessions).toEqual([
       {
-        sessionId: automation.id,
-        startTime: expect.any(Date),
-        modifiedTime: expect.any(Date),
+        id: automation.id,
+        createdAt: expect.any(Date),
+        updatedAt: expect.any(Date),
         title: automation.title,
       },
     ]);
@@ -133,9 +133,9 @@ function createQueryClient(seed?: Automation): QueryClient {
     sessions: seed
       ? [
           {
-            sessionId: seed.id,
-            startTime: new Date(seed.createdAt),
-            modifiedTime: new Date(seed.updatedAt),
+            id: seed.id,
+            createdAt: new Date(seed.createdAt),
+            updatedAt: new Date(seed.updatedAt),
             title: seed.title,
           },
         ]

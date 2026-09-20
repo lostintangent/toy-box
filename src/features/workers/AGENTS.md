@@ -1,62 +1,60 @@
 # Workers
 
-Workers are anonymous, owner-bound collaborators backed by ordinary Sessions. They let a session
-delegate work, a file run concurrent background edits, or an app run private implementation work
-without introducing another execution model.
-
-A Worker is not a persistent Agent: it has no portable identity, experiences, mention handle, or
-cross-host membership. It is not an independent Session either: its owner controls its
-capabilities, visibility, and teardown.
+Workers are owner-bound Session identities. They let a Session delegate work, a file run a background
+edit, an app run private implementation work, or a Channel retain a teammate without introducing
+another execution model.
 
 ## Model
 
-A Worker is one backing Session plus an immutable owner and lifetime. Both share one ID. An optional
-name and metadata describe local work; they do not create an identity.
+A `Worker` reserves one Session ID plus an immutable owner and lifetime. Task Workers create their
+backing Session immediately. A Channel Worker creates it lazily when first mentioned. Its optional
+`name` and opaque `metadata` are owner-provided details, not another generic identity model.
 
-- A session-owned Worker inherits its parent's model and execution directory unless overridden,
-  including the parent's worktree path. It is retained by default and opens as a linked child.
-- A file-owned Worker belongs to one session file and is always ephemeral.
-- An app-owned Worker belongs to one saved app, receives app-scoped tools, and is ephemeral by
-  default.
+- A session-owned Worker inherits its parent's model and directory unless overridden and is retained
+  by default.
+- A file-owned Worker belongs to one exact session file and is always ephemeral.
+- An app-owned Worker belongs to one saved app and is ephemeral by default.
+- A channel-owned Worker is durable until removed from that Channel. Channels interprets its name and
+  metadata as Agent identity, read position, and collaboration status.
 
-`ephemeral` is the complete lifetime policy: delete after the current execution when true; retain for
-follow-up until explicit or owner deletion when false. Worktree isolation is orthogonal. Sessions
-owns the worktree; Worker lifetime decides whether its Session and worktree survive completion.
+`ephemeral` is the complete lifetime policy. An ephemeral Worker's Session is deleted after its
+current execution. A durable Worker survives for follow-up until explicit or owner deletion.
+Worktree isolation remains a Session concern.
 
-`model/` owns the Worker value, ownership helpers, and schemas for untrusted file and app commands.
-`server/tools.ts` owns `spawn_worker`; the application session catalog only selects which roles
-receive it. The tool injects its invoking session as a trusted owner.
+The Worker model deliberately knows no Agent role, Channel status, file editor task, or app state.
+Owners validate and interpret metadata at their own boundary. This is the same pattern used by
+`useFile`: Files selects its Workers by owner, presents their names and metadata, and invokes generic
+spawn or cancel operations.
 
 ## Algebra
 
-Workers owns three operations:
+Workers owns three capabilities:
 
-- **Spawn** validates or injects the owner, publishes active work, and creates the backing Session.
-- **Cancel** verifies external ownership, clears active work, rejects waiters, and stops startup or
-  execution.
-- **Delete** removes ephemeral work after completion and recursively removes work with its owner.
+- **Spawn** validates or injects an owner, publishes active work, and creates its backing Session.
+- **Cancel** verifies ownership, clears active work, and stops startup or execution.
+- **Delete** removes the backing Session and its durable ownership record.
 
-All ingress converges in `server/admission.ts`; `server/supervisor.ts` composes Session creation with
-inheritance, worktree choice, cancellation guards, exact completion, and cleanup. The supervisor
-persists Worker ownership before creating the backing Session; failed creation rolls it back through
-the ordinary Session teardown path. Startup deletes ephemeral Workers abandoned by an earlier process.
+Untrusted file and app creation enters through `server/admission.ts`. `server/supervisor.ts` composes
+Session creation with inheritance, cancellation, exact completion, and ephemeral cleanup. Channel
+Workers are created by Channels before their first mention and begin their backing Session lazily on
+that mention.
 
 Waiting remains a Session operation. Admission registers completion before publishing
-`worker.started`, and the Session runtime retains the settlement briefly, so a fast ephemeral Worker
-cannot disappear before `waitForSession` observes its result.
+`worker.started`, so fast ephemeral work cannot disappear before `waitForSessions` observes it.
 
 ## Boundaries
 
-`server/schema.ts` defines the Worker table, while `server/database.ts` persists ownership and
-lifetime for classification, deletion, and recovery.
-`server/registry.ts` contains only active work and publishes `worker.started` and `worker.finished` to
-the workspace stream. Workers has no query cache: the workspace snapshot is the client projection.
-`components/WorkersMenu.tsx` owns activity, Session preview, and cancellation UI; Files and Apps only
-select their owned Workers and mount it.
+- `model/` owns the Worker value, owner variants, and externally validated spawn and cancel inputs.
+- `server/schema.ts` and `server/database.ts` persist the owner, lifetime, name, and metadata needed to
+  classify, recover, and delete a Worker.
+- `server/registry.ts` contains only currently admitted background work and publishes
+  `worker.started` and `worker.finished`. Durable Channel membership is not active work.
+- `components/WorkersMenu.tsx` presents active background work. Files and Apps select the Workers they
+  own. Channels presents its durable Workers as Agents.
+- Sessions owns execution, history, streaming, completion, provider configuration, and worktrees.
+- Owners own all interpretation of their metadata and any richer public projection.
 
-- Sessions owns execution, history, streaming, completion, and worktrees.
-- The central Session projector translates `spawn_worker` completion into the generic linked-session
-  event so live and replayed transcripts retain one interpretation path.
-- Files and Apps initiate and present work but do not coordinate Worker lifecycle internals.
-- Sessions and Apps request owner cleanup through Workers-owned operations.
-- Agents owns persistent identity, experiences, and membership; neither feature wraps the other.
+The Worker table is the only durable ownership record. An owner may compose `WorkerDatabase` into its
+own transaction and resolve its own Session configuration or lifecycle behavior at the application
+composition boundary. There is no second generic membership table, host abstraction, or parallel
+managed-session type.

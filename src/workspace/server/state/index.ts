@@ -2,19 +2,13 @@
 
 import type { Settings } from "../../model/config/settings";
 import type { WorkspaceAction } from "../../model/state/actions";
-import type { DraftSession } from "@sessions/model";
 import { finishWorkersForSession, getWorkers } from "@workers/server/registry";
 import { normalizeSettings } from "../../model/config/settings";
-import {
-  reduceWorkspaceSessionState,
-  type WorkspaceSessionEvent,
-  type WorkspaceState,
-} from "../../model/state/reducer";
+import { type WorkspaceSessionEvent, type WorkspaceState } from "../../model/state/reducer";
 import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 import { broadcast } from "@workspace/server/events";
-import { addHyperSession, deleteHyperState, getHyperSessionIds } from "./hyperSessions";
+import { deleteHyperState, getHyperSessionIds } from "./hyperSessions";
 import { applySessionState, getSessionStates, setSessionPrompt } from "./sessions";
-import { getDraftSessions } from "@sessions/server/state/sessions";
 import { getSettings, persistSettings } from "./settings";
 
 export { getEnvironment } from "./environment";
@@ -31,15 +25,8 @@ export async function getWorkspaceState(
     | "environment"
   >,
 ): Promise<WorkspaceState> {
-  const [drafts, settings] = await Promise.all([getDraftSessions(), getSettings()]);
+  const settings = await getSettings();
   const sessionStates = getSessionStates();
-  for (const draft of drafts) {
-    const state = reduceWorkspaceSessionState(sessionStates[draft.sessionId], {
-      type: "session.drafted",
-      ...draft,
-    });
-    if (state) sessionStates[draft.sessionId] = state;
-  }
   return {
     settings,
     sessionStates,
@@ -75,17 +62,6 @@ async function commitSettingsChange(update: Partial<Settings>): Promise<Settings
     broadcast({ type: "settings.changed", settings });
   }
   return settings;
-}
-
-export function addDraftSession(draft: DraftSession, hyper?: true): void {
-  const event = {
-    type: "session.drafted",
-    ...draft,
-    ...(hyper ? { hyper } : {}),
-  } as const;
-  const changed = applySessionState(event);
-  const hyperChanged = hyper ? addHyperSession(draft.sessionId) : false;
-  if (changed || hyperChanged) broadcast(event);
 }
 
 export function deleteSessionWorkspaceState(sessionId: string): void {

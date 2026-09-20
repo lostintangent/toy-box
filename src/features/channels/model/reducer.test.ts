@@ -107,9 +107,9 @@ describe("Channel state reducer", () => {
 
   test("reduces system messages and member status into current state", () => {
     const member = {
-      host: { kind: "channel", channelId: "channel" } as const,
-      agentId: "reviewer",
-      sessionId: "reviewer-session",
+      channelId: "channel",
+      id: "reviewer-session",
+      name: "Reviewer",
     };
     const joined = reduceChannelState(state(), {
       type: "message",
@@ -125,7 +125,7 @@ describe("Channel state reducer", () => {
     const working = reduceChannelState(joined, {
       type: "status",
       revision: 2,
-      sessionId: member.sessionId,
+      agentId: member.id,
       status: { state: "working", text: "Reviewing the protocol", lookingAt: 1 },
     });
     const artifact = {

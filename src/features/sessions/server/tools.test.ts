@@ -8,9 +8,11 @@ import {
   spyOn,
   test,
 } from "bun:test";
+import { z } from "zod";
 import * as streamModule from "@sessions/server/runtime";
 import * as registryModule from "@sessions/server/state/registry";
 import type { ToolInvocation } from "@sessions/server/tools/definition";
+import * as modelProviders from "@providers/server";
 import * as providers from "./providers";
 
 const realStreamModule = { ...streamModule };
@@ -38,34 +40,72 @@ mock.module("@sessions/server/state/registry", () => ({
   updateSessionTitle: updateSessionTitleMock,
 }));
 
-const { coordinationTools, hyperLifecycleTools, sessionTitleTools, sessionHistoryTools } =
-  await import("./tools");
+const {
+  coordinationTools,
+  hyperLifecycleTools,
+  modelTools,
+  sessionTitleTools,
+  sessionHistoryTools,
+} = await import("./tools");
+
+test("model discovery returns the client catalog with provider and option metadata", async () => {
+  const catalog = [
+    {
+      id: "claude-opus-5",
+      name: "Claude Opus 5",
+      provider: "copilot",
+      providerName: "GitHub Copilot",
+      supportedReasoningEfforts: ["low", "medium", "high"],
+      defaultReasoningEffort: "medium",
+      supportedContextTiers: [
+        { name: "default", tokenWindow: 128_000 },
+        { name: "long_context", tokenWindow: 1_000_000 },
+      ],
+    },
+    {
+      id: "gpt-6-astra",
+      name: "GPT-6 Astra",
+      provider: "codex",
+      providerName: "OpenAI Codex",
+      supportedReasoningEfforts: ["medium", "high", "max"],
+      defaultReasoningEffort: "medium",
+    },
+  ];
+  const list = spyOn(modelProviders, "listModels").mockResolvedValue(catalog);
+  onTestFinished(() => list.mockRestore());
+
+  const [tool] = modelTools;
+  expect(await tool.handler({ provider: undefined }, invocation(tool.name))).toEqual(catalog);
+  expect(await tool.handler({ provider: "codex" }, invocation(tool.name))).toEqual([catalog[1]]);
+  expect(tool.parameters?.safeParse({ provider: "other" }).success).toBe(false);
+});
 
 test("session discovery bounds results and searches titles across providers, newest first", async () => {
-  const list = spyOn(providers, "listSessions").mockResolvedValue(
-    Array.from({ length: 25 }, (_, index) => ({
-      sessionId: `session-${index}`,
-      provider: index % 3 ? "codex" : "copilot",
+  const list = spyOn(providers, "listSessions").mockResolvedValue([
+    ...Array.from({ length: 25 }, (_, index) => ({
+      id: `session-${index}`,
+      provider: { id: index % 3 ? "codex" : "copilot" },
       title: index % 2 ? "Other session" : "Mobile Pager Dots",
-      startTime: new Date(index),
-      modifiedTime: new Date(index),
+      createdAt: new Date(index),
+      updatedAt: new Date(index),
     })),
-  );
+    { id: "draft", createdAt: new Date(30), updatedAt: new Date(30) },
+  ]);
   onTestFinished(() => list.mockRestore());
   const tool = sessionHistoryTools[0];
   const all = (await tool.handler({}, invocation(tool.name))) as {
-    sessions: { sessionId: string; provider: string }[];
+    sessions: { id: string; provider: { id: string } }[];
     total: number;
   };
   expect(all.total).toBe(25);
   expect(all.sessions).toHaveLength(20);
-  expect(all.sessions[0]?.sessionId).toBe("session-24");
+  expect(all.sessions[0]?.id).toBe("session-24");
   const filtered = await tool.handler({ query: " PAGER ", limit: 2 }, invocation(tool.name));
   expect(filtered).toMatchObject({
     total: 13,
     sessions: [
-      { sessionId: "session-24", provider: "copilot" },
-      { sessionId: "session-22", provider: "codex" },
+      { id: "session-24", provider: { id: "copilot" } },
+      { id: "session-22", provider: { id: "codex" } },
     ],
   });
   expect(tool.parameters?.safeParse({ limit: 101 }).success).toBe(false);
@@ -140,7 +180,7 @@ describe("SDK lifecycle tools", () => {
       sessionId: string;
       opened: boolean;
     };
-    expect(sessionId).toStartWith("toy-box-");
+    expect(z.uuid().safeParse(sessionId).success).toBe(true);
     expect(opened).toBe(false);
     expect(createSessionMock).toHaveBeenCalledWith(
       sessionId,
@@ -170,7 +210,7 @@ describe("SDK lifecycle tools", () => {
     );
 
     expect(JSON.parse(String(result))).toEqual({
-      sessionId: expect.stringMatching(/^toy-box-/),
+      sessionId: createSessionMock.mock.calls[0]?.[0],
       opened: true,
     });
     expect(createSessionMock.mock.calls[0]?.[1]).toEqual({ content: "Work elsewhere", model });

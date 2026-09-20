@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { z } from "zod";
 import * as streamModule from "@sessions/server/runtime";
 import * as workspaceModule from "@workspace/server/state";
 import type { SessionCompletion } from "@sessions/model";
@@ -90,7 +91,7 @@ describe("dispatchInboxTask", () => {
       location: { directory: "/repo", useWorktree: false },
     });
 
-    expect(result.sessionId).toStartWith("toy-box-");
+    expect(z.uuid().safeParse(result.sessionId).success).toBe(true);
     expect(calls).toEqual([`inbox:${result.sessionId}`, `session:${result.sessionId}`]);
     expect(createSessionMock).toHaveBeenCalledWith(
       result.sessionId,

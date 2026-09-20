@@ -17,9 +17,9 @@ The projector resolves persisted attachment references from native `session.bina
 events or inline blobs returned by `sessions.readPersistedEvents()`. The native reader restores
 attachment bytes without activating the session.
 
-Copilot accepts caller-supplied session IDs, so native and public IDs normally match.
-The registry still persists a provider binding, and all tool handlers receive the
-public ID. Explicit/automatic names and conversation-only rewind use native SDK RPCs.
+Copilot uses the Sessions-owned UUID as its native session ID.
+The registry persists the provider and resolves native identity for resume, history, and deletion.
+Explicit/automatic names and conversation-only rewind use native SDK RPCs.
 Skills include native discovery and the role-scoped bundled directories supplied by
 Sessions. Native permissions follow Toy Box's existing trusted-owner policy.
 

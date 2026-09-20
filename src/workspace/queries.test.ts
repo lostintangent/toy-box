@@ -3,6 +3,9 @@ import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { Automation } from "@automations/model";
 import { applyWorkspaceEvent, createWorkspaceQuerySource, workspaceQueries } from "./queries";
 import { createEmptyWorkspaceState, type WorkspaceState } from "./model/state/reducer";
+import { providerQueries } from "@providers/queries";
+import { sessionQueries, createEmptySessionsState } from "@sessions/queries";
+import { createInitialSessionState } from "@sessions/model/reducer";
 
 const automation = {
   id: "automation-a",
@@ -53,6 +56,32 @@ describe("workspace query cache", () => {
 
     expect(readWorkspaceState(firstQueryClient).sessionStates["session-a"]?.status).toBe("running");
     expect(readWorkspaceState(secondQueryClient).sessionStates["session-a"]).toBeUndefined();
+  });
+
+  test("provider settings refresh catalogs on every client without invalidating histories", () => {
+    const clients = [createQueryClient(), createQueryClient()];
+    const initial = createEmptyWorkspaceState();
+    const modelKey = providerQueries.catalog().queryKey;
+    const sessionKey = sessionQueries.stateKey();
+    const historyKey = sessionQueries.detail("open-session").queryKey;
+    for (const client of clients) {
+      client.setQueryData(workspaceQueries.stateKey(), initial);
+      client.setQueryData(modelKey, { providers: [], models: [] });
+      client.setQueryData(sessionKey, createEmptySessionsState());
+      client.setQueryData(historyKey, createInitialSessionState());
+      applyWorkspaceEvent(client, {
+        type: "settings.changed",
+        settings: { ...initial.settings, accentColor: "#123abc" },
+      });
+      expect(client.getQueryState(modelKey)?.isInvalidated).toBe(false);
+      applyWorkspaceEvent(client, {
+        type: "settings.changed",
+        settings: { ...initial.settings, disabledProviders: ["claude", "copilot"] },
+      });
+      expect(client.getQueryState(modelKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(historyKey)?.isInvalidated).toBe(false);
+    }
   });
 
   test("preserves cache identity for structurally equal entity echoes", () => {

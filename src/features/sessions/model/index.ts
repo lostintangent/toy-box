@@ -1,35 +1,32 @@
 import type { JSONType } from "zod";
 import type { WorkspaceFile } from "@files/model";
-import type { ModelConfiguration } from "./modelConfiguration";
+import type { ModelConfiguration } from "@providers/model";
 import type { SessionSystemMessage } from "./systemMessages";
 import type { Attachment, SessionType } from "./protocol";
 
 export type SessionContext = {
-  workingDirectory: string;
-  gitRoot?: string;
-  repository?: string;
-  branch?: string;
-};
-
-export type SessionMetadata = {
-  sessionId: string;
-  /** Drafts do not have a provider until their first turn starts. */
-  provider?: string;
-  startTime: Date;
-  modifiedTime: Date;
-  title?: string;
   directory?: string;
   gitRoot?: string;
   repository?: string;
   branch?: string;
 };
 
-export type ModelInfo = import("./modelConfiguration").ModelOptionInfo & {
+/** Identity and catalog metadata. A session without a provider has not started. */
+export type Session = {
   id: string;
-  name: string;
-  provider: string;
-  providerName?: string;
+  provider?: {
+    id: string;
+    /** Native ID override; omitted when the provider uses this session's ID. */
+    sessionId?: string;
+  };
+  context?: SessionContext;
+  title?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  /** Initial artifact, supplied as the first turn's subject. */
+  artifactPath?: string;
 };
+
 export type { SessionSystemMessage } from "./systemMessages";
 export type { Attachment, SessionLaunch, SessionLocation, SessionType } from "./protocol";
 
@@ -49,7 +46,7 @@ export type SessionWorktree = {
 };
 
 export type SessionsState = {
-  sessions: SessionMetadata[];
+  sessions: Session[];
   worktrees: Record<string, SessionWorktree>;
   /** Worker session ID to its parent session ID, or null for app-owned workers. */
   workerSessionParents: Record<string, string | null>;
@@ -198,13 +195,6 @@ export type DraftPrompt = {
   origin: string;
 };
 
-/** Durable public identity and optional artifact, before a provider is selected. */
-export type DraftSession = {
-  sessionId: string;
-  createdAt: number;
-  artifactPath?: string;
-};
-
 export type SessionEvent = (
   | {
       type: "user_message";
@@ -226,7 +216,9 @@ export type SessionEvent = (
       messageId?: string;
       parentToolCallId?: string;
     }
+  // Deltas append verbatim; complete messages and reasoning replace their previews.
   | { type: "delta"; content: string; messageId?: string }
+  | { type: "reasoning_delta"; content: string; parentToolCallId?: string }
   | { type: "reasoning"; content: string; parentToolCallId?: string }
   | {
       type: "tool_start";
@@ -278,14 +270,11 @@ export type SessionEvent = (
   eventId?: number;
 };
 
-export type SessionMetadataUpdate = {
-  provider?: string;
-  sessionId: string;
-  startTime?: string;
-  modifiedTime?: string;
-  title?: string;
-  directory?: string;
-  worktree?: SessionWorktree;
-  parentSessionId?: string;
-  sessionType?: SessionType;
-};
+export type SessionUpdate = Pick<Session, "id"> &
+  Partial<Omit<Session, "id" | "createdAt" | "updatedAt">> & {
+    createdAt?: string;
+    updatedAt?: string;
+    worktree?: SessionWorktree;
+    parentSessionId?: string;
+    sessionType?: SessionType;
+  };

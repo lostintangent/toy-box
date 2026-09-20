@@ -17,13 +17,6 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_channels_updated_at
       ON channels(updated_at DESC, id);
 
-    CREATE TABLE IF NOT EXISTS channel_members (
-      session_id   TEXT PRIMARY KEY REFERENCES agent_memberships(session_id) ON DELETE CASCADE,
-      seen_through INTEGER NOT NULL DEFAULT 0
-        CHECK (typeof(seen_through) = 'integer' AND seen_through >= 0),
-      status       TEXT CHECK (status IS NULL OR json_valid(status))
-    );
-
     CREATE TABLE IF NOT EXISTS channel_messages (
       id                   TEXT PRIMARY KEY,
       channel_id           TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,

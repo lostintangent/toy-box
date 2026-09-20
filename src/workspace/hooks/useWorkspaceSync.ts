@@ -4,8 +4,8 @@ import { usePageVisibility } from "@/shared/hooks/usePageVisibility";
 import { invalidateSessionsStateQuery } from "@sessions/queryCache";
 import { applyWorkspaceEvent, invalidateWorkspaceStateQuery } from "@workspace/queries";
 import type { WorkspaceEvent } from "@workspace/model/events";
-import { invalidateAgentQueries } from "@agents/queryCache";
 import { invalidateChannelListQuery } from "@channels/queryCache";
+import { providerQueries } from "@providers/queries";
 
 /** Keeps shared Query projections aligned with the workspace update stream. */
 export function useWorkspaceSync(): void {
@@ -21,8 +21,8 @@ export function useWorkspaceSync(): void {
       void Promise.all([
         invalidateWorkspaceStateQuery(queryClient),
         invalidateSessionsStateQuery(queryClient),
-        invalidateAgentQueries(queryClient),
         invalidateChannelListQuery(queryClient),
+        queryClient.invalidateQueries({ queryKey: providerQueries.all() }),
       ]).catch((error) => {
         console.error("Failed to refresh shared state:", error);
       });

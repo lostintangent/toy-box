@@ -81,8 +81,15 @@ export function rejectPendingSessionCompletion(sessionId: string, error: unknown
   return receipt.reject(error);
 }
 
-/** Monitor the announced, live, or latest persisted execution for one session ID. */
-export function waitForSession(sessionId: string, timeoutMs?: number): Promise<SessionCompletion> {
+/** Monitor the announced, live, or latest persisted execution for each session ID. */
+export function waitForSessions(
+  sessionIds: readonly string[],
+  timeoutMs?: number,
+): Promise<SessionCompletion[]> {
+  return Promise.all(sessionIds.map((sessionId) => waitForSession(sessionId, timeoutMs)));
+}
+
+function waitForSession(sessionId: string, timeoutMs?: number): Promise<SessionCompletion> {
   const pending = pendingSessionCompletions.get(sessionId);
   if (!pending) return SessionStream.waitForCompletion(sessionId, timeoutMs);
   if (timeoutMs === undefined) return pending.promise;

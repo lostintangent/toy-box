@@ -2,29 +2,29 @@ import { describe, expect, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { SessionContext, SessionMetadata } from "../../../model";
+import type { SessionContext, Session } from "../../../model";
 import { createEmptySessionsState, sessionQueries } from "../../../queries";
 import { SessionLocationPicker } from "../SessionLocationPicker";
 import { SessionDirectoryPicker } from "./SessionDirectoryPicker";
 
-function createSession(cwd: string): SessionMetadata {
+function createSession(cwd: string): Session {
   return {
-    sessionId: "session-1",
-    startTime: new Date(0),
-    modifiedTime: new Date(1),
+    id: "session-1",
+    createdAt: new Date(0),
+    updatedAt: new Date(1),
     title: "Session",
-    directory: cwd,
+    context: { directory: cwd },
   };
 }
 
 function renderPicker(
   props: ComponentProps<typeof SessionDirectoryPicker>,
-  sessions?: SessionMetadata[],
+  sessions?: Session[],
   context?: SessionContext,
 ) {
   const queryClient = new QueryClient();
   if (context) {
-    queryClient.setQueryData(sessionQueries.context(context.workingDirectory).queryKey, context);
+    queryClient.setQueryData(sessionQueries.context(context.directory).queryKey, context);
   }
   if (sessions) {
     queryClient.setQueryData(sessionQueries.stateKey(), {
@@ -54,8 +54,11 @@ describe("SessionDirectoryPicker", () => {
     const markup = renderPicker({ onValueChange: () => {} }, [
       {
         ...createSession("/repo/project"),
-        gitRoot: "/repo/project",
-        repository: "owner/project",
+        context: {
+          directory: "/repo/project",
+          gitRoot: "/repo/project",
+          repository: "owner/project",
+        },
       },
     ]);
 
@@ -75,7 +78,7 @@ describe("SessionDirectoryPicker", () => {
     const markup = renderPicker(
       { value: null, repository: "owner/project", onValueChange: () => {} },
       [createSession("/repo/project")],
-      { workingDirectory: "/repo/project", repository: "owner/project" },
+      { directory: "/repo/project", repository: "owner/project" },
     );
 
     expect(markup).toContain("Select directory");
@@ -95,7 +98,7 @@ describe("SessionDirectoryPicker", () => {
 
   test("shows a newly selected repository without session or MRU metadata", () => {
     const markup = renderPicker({ value: "/new/project", onValueChange: () => {} }, [], {
-      workingDirectory: "/new/project",
+      directory: "/new/project",
       gitRoot: "/new/project",
       repository: "owner/project",
     });
@@ -113,7 +116,7 @@ describe("SessionDirectoryPicker", () => {
         onValueChange: () => {},
       },
       [],
-      { workingDirectory: "/repo/project" },
+      { directory: "/repo/project" },
     );
     expect(markup).toContain("lucide-git-branch");
     expect(markup).toContain('aria-label="Repository: owner/project"');
@@ -121,7 +124,7 @@ describe("SessionDirectoryPicker", () => {
 
   test("a directory without metadata does not borrow another directory's cached result", () => {
     const markup = renderPicker({ value: "/folder", onValueChange: () => {} }, [], {
-      workingDirectory: "/repo/project",
+      directory: "/repo/project",
       gitRoot: "/repo/project",
       repository: "owner/project",
     });
@@ -130,28 +133,33 @@ describe("SessionDirectoryPicker", () => {
     expect(markup).toContain('aria-label="Working directory: /folder"');
   });
 
-  test.each(["catalog", "query"])(
+  test.each(["catalog", "query", "branch-only catalog"])(
     "%s metadata renders existing-session branch controls",
     (source) => {
       const client = new QueryClient();
       const context = {
-        workingDirectory: "/repo/project",
+        directory: "/repo/project",
         gitRoot: "/repo/project",
         repository: "owner/project",
         branch: "main",
       };
-      if (source === "query") {
-        client.setQueryData(sessionQueries.context(context.workingDirectory).queryKey, context);
+      if (source !== "catalog") {
+        client.setQueryData(sessionQueries.context(context.directory).queryKey, {
+          ...context,
+          branch: source === "query" ? context.branch : undefined,
+        });
       }
       const markup = renderToStaticMarkup(
         createElement(
           QueryClientProvider,
           { client },
           createElement(SessionLocationPicker, {
-            value: context.workingDirectory,
+            value: context.directory,
             ...(source === "catalog"
               ? { repository: context.repository, gitRoot: context.gitRoot, branch: context.branch }
-              : {}),
+              : source === "branch-only catalog"
+                ? { branch: context.branch }
+                : {}),
           }),
         ),
       );

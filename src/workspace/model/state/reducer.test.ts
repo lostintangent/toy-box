@@ -14,43 +14,6 @@ const sessionId = "session-a";
 const prompt = { text: "hello", origin: "client-a", updatedAt: 3 };
 
 describe("workspace session state", () => {
-  test("starts an artifact draft's first turn without retaining draft metadata", () => {
-    let state: WorkspaceSessionState | undefined;
-
-    state = transition(state, {
-      type: "session.drafted",
-      sessionId,
-      createdAt: 1,
-      artifactPath: "document.md",
-    });
-    expect(state).toEqual({
-      status: "draft",
-      createdAt: 1,
-      artifactPath: "document.md",
-    });
-
-    state = transition(state, { type: "session.prompt.drafted", sessionId, prompt });
-    expect(state).toEqual({
-      status: "draft",
-      createdAt: 1,
-      artifactPath: "document.md",
-      prompt,
-    });
-
-    state = transition(state, { type: "session.running", sessionId });
-    expect(state).toEqual({ status: "running", prompt });
-  });
-
-  test("leaves a draft unchanged when its first turn fails to start", () => {
-    const draft: WorkspaceSessionState = {
-      status: "draft",
-      createdAt: 1,
-      artifactPath: "document.md",
-      prompt,
-    };
-    expect(transition(draft, { type: "session.idle", sessionId })).toBe(draft);
-  });
-
   test("makes running, waiting, unread, and idle mutually exclusive", () => {
     let state = transition(undefined, { type: "session.running", sessionId });
     expect(state).toEqual({ status: "running" });
@@ -84,26 +47,6 @@ describe("workspace session state", () => {
     expect(transition({ status: "running" }, { type: "session.idle", sessionId })).toBeUndefined();
     expect(transition({ status: "waiting" }, { type: "session.idle", sessionId })).toBeUndefined();
   });
-
-  test("ignores stale draft events after a session starts running", () => {
-    const running: WorkspaceSessionState = { status: "running" };
-    expect(
-      transition(running, {
-        type: "session.drafted",
-        sessionId,
-        createdAt: 1,
-      }),
-    ).toBe(running);
-
-    const waiting: WorkspaceSessionState = { status: "waiting" };
-    expect(
-      transition(waiting, {
-        type: "session.drafted",
-        sessionId,
-        createdAt: 1,
-      }),
-    ).toBe(waiting);
-  });
 });
 
 describe("workspace state reducer", () => {
@@ -130,29 +73,25 @@ describe("workspace state reducer", () => {
     ).toBe(state);
   });
 
-  test("updates session and hyper state atomically and idempotently", () => {
+  test("projects Hyper membership from catalog creation idempotently", () => {
     let state = createEmptyWorkspaceState();
     const event: WorkspaceEvent = {
-      type: "session.drafted",
-      sessionId,
-      createdAt: 1,
-      hyper: true,
+      type: "session.upserted",
+      session: { id: sessionId, sessionType: "hyper" },
     };
 
     state = reduceWorkspaceState(state, event);
     const duplicate = reduceWorkspaceState(state, event);
 
     expect(duplicate).toBe(state);
-    expect(state.sessionStates[sessionId]).toEqual({ status: "draft", createdAt: 1 });
+    expect(state.sessionStates[sessionId]).toBeUndefined();
     expect(state.hyperSessionIds).toEqual([sessionId]);
   });
 
   test("delete clears every workspace fact for a session", () => {
     let state = reduceWorkspaceState(createEmptyWorkspaceState(), {
-      type: "session.drafted",
-      sessionId,
-      createdAt: 1,
-      hyper: true,
+      type: "session.upserted",
+      session: { id: sessionId, sessionType: "hyper" },
     });
     state = reduceWorkspaceState(state, {
       type: "worker.started",

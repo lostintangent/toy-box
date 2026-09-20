@@ -1,5 +1,5 @@
 import type { ModelInfo } from "@github/copilot-sdk";
-import type { ContextTier, ModelOptionInfo } from "@sessions/model/modelConfiguration";
+import type { ContextTier, ModelOptionInfo } from "@providers/model";
 export type ModelCatalogInfo = ModelInfo & ModelOptionInfo;
 
 /** Decorate SDK models with context-window metadata derived from current catalog limits. */

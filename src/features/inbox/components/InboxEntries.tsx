@@ -9,7 +9,7 @@ import { useDispatchWorkspaceAction, useWorkspaceSessionActivity } from "@worksp
 import { cn } from "@/shared/utils";
 import { createEditorPaneId, type EditorWorkspacePane } from "@workspace/model/panes";
 import { sessionFile } from "@files/model";
-import type { SessionMetadata } from "@sessions/model";
+import type { Session } from "@sessions/model";
 import type { InboxEntry } from "../model";
 import { inboxMutations } from "../mutations";
 
@@ -20,11 +20,11 @@ export function InboxEntries({
   onArtifactSelect,
 }: {
   entries: InboxEntry[];
-  sessions: SessionMetadata[];
+  sessions: Session[];
   linkedEditorPane?: EditorWorkspacePane;
   onArtifactSelect: (entry: InboxEntry) => void;
 }) {
-  const sessionsById = new Map(sessions.map((session) => [session.sessionId, session]));
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
 
   return (
     <section aria-labelledby="workspace-inbox-heading" className="space-y-2">
@@ -65,7 +65,7 @@ function InboxEntryRow({
   onSelect,
 }: {
   entry: InboxEntry;
-  session?: SessionMetadata;
+  session?: Session;
   linked: boolean;
   onSelect: () => void;
 }) {

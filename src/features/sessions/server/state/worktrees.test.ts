@@ -90,17 +90,17 @@ describe("session worktrees", () => {
       throw new Error(`Unexpected Git command: ${args.join(" ")}`);
     };
 
-    const sessionId = "toy-box-worktree-test";
-    const path = join(homedir(), ".toy-box", "worktrees", "worktree-tes");
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    const path = join(homedir(), ".toy-box", "worktrees", "11111111-111");
     await expect(createSessionWorktree(sessionId, "/source/subdirectory")).resolves.toEqual({
       path,
-      branch: "toy-box/worktree-tes",
+      branch: "toy-box/11111111-111",
       baseBranch: "main",
     });
     expect(await getAllSessionWorktrees()).toEqual({
       [sessionId]: {
         path,
-        branch: "toy-box/worktree-tes",
+        branch: "toy-box/11111111-111",
         baseBranch: "main",
         linesAdded: undefined,
         linesRemoved: undefined,

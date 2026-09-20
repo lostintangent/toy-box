@@ -1,20 +1,20 @@
 import * as childProcess from "node:child_process";
 import type { SessionContext } from "@sessions/model";
 
-export async function resolveSessionContext(workingDirectory: string): Promise<SessionContext> {
-  const gitRoot = await detectGitRoot(workingDirectory);
-  if (!gitRoot) return { workingDirectory };
+export async function resolveSessionContext(directory: string): Promise<SessionContext> {
+  const gitRoot = await detectGitRoot(directory);
+  if (!gitRoot) return { directory };
 
-  const branch = await git(workingDirectory, "symbolic-ref", "--quiet", "--short", "HEAD").catch(
+  const branch = await git(directory, "symbolic-ref", "--quiet", "--short", "HEAD").catch(
     (error: unknown) => {
       if (error instanceof Error && "code" in error && error.code === 1) return undefined;
       throw error;
     },
   );
   return {
-    workingDirectory,
+    directory,
     gitRoot,
-    repository: await getRepositoryName(workingDirectory),
+    repository: await getRepositoryName(directory),
     branch,
   };
 }

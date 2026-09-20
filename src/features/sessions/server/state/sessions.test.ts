@@ -11,15 +11,8 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-const {
-  deleteSessionRecord,
-  getDraftSession,
-  getDraftSessions,
-  persistDraftSession,
-  bindProviderSession,
-  readProviderBinding,
-  readProviderBindings,
-} = await import("./sessions");
+const { deleteSessionRecord, insertSession, setSessionProvider, readSession, readSessions } =
+  await import("./sessions");
 
 describe("session database", () => {
   async function setup() {
@@ -31,64 +24,58 @@ describe("session database", () => {
     return currentDb;
   }
 
-  test("drafts retain their public identity when bound to native history", async () => {
+  test("starting a session keeps its ID, creation time and initial artifact", async () => {
     await setup();
-    const plainDraft = {
-      sessionId: "toy-box-plain-draft",
-      createdAt: 41,
-    };
-    const artifactDraft = {
-      sessionId: "toy-box-artifact-draft",
-      artifactPath: "document.md",
-      createdAt: 42,
-    };
+    const plain = { id: "plain", createdAt: new Date(41) };
+    const artifact = { id: "artifact", artifactPath: "document.md", createdAt: new Date(42) };
+    await insertSession(plain);
+    await insertSession(artifact);
 
-    await persistDraftSession(plainDraft);
-    await persistDraftSession(artifactDraft);
-
-    expect(await getDraftSessions()).toEqual([artifactDraft, plainDraft]);
-    expect(await getDraftSession(plainDraft.sessionId)).toEqual(plainDraft);
-    expect(await readProviderBindings()).toEqual([]);
-    const identity = {
-      sessionId: artifactDraft.sessionId,
-      providerId: "codex",
-      nativeId: "native-artifact-session",
-    };
-    await bindProviderSession(identity);
-    expect(await getDraftSession(artifactDraft.sessionId)).toBeNull();
-    expect(await getDraftSessions()).toEqual([plainDraft]);
-    expect(await readProviderBinding(artifactDraft.sessionId)).toEqual(identity);
-    expect(await readProviderBindings()).toEqual([identity]);
-    await expect(persistDraftSession(artifactDraft)).rejects.toThrow();
-    await deleteSessionRecord(plainDraft.sessionId);
-    expect(await getDraftSessions()).toEqual([]);
+    expect(await readSession(plain.id)).toEqual({ ...plain, updatedAt: plain.createdAt });
+    expect((await readSessions()).every((session) => !session.provider)).toBe(true);
+    const provider = { id: "codex", sessionId: "native-artifact" };
+    await setSessionProvider(artifact.id, provider);
+    expect(await readSession(artifact.id)).toEqual({
+      ...artifact,
+      updatedAt: artifact.createdAt,
+      provider,
+    });
+    expect(
+      (await readSessions()).filter((session) => !session.provider).map(({ id }) => id),
+    ).toEqual([plain.id]);
+    await expect(insertSession(artifact)).rejects.toThrow();
+    await deleteSessionRecord(plain.id);
+    expect((await readSessions()).map(({ id }) => id)).toEqual([artifact.id]);
   });
 
-  test("native identity is exclusive until deletion releases the public ID", async () => {
-    await setup();
-    const identity = { sessionId: "automation", providerId: "copilot", nativeId: "first-run" };
-    await bindProviderSession(identity);
-    await bindProviderSession(identity);
-    await expect(bindProviderSession({ ...identity, nativeId: "second-run" })).rejects.toThrow(
-      "different provider history",
-    );
-    await expect(bindProviderSession({ ...identity, sessionId: "other" })).rejects.toThrow();
-    expect(await readProviderBindings()).toEqual([identity]);
+  test("native history is exclusive until deletion releases the canonical ID", async () => {
+    const db = await setup();
+    const id = "automation";
+    await setSessionProvider(id, { id: "copilot", sessionId: id });
+    await setSessionProvider(id, { id: "copilot" });
+    const [row] = await db`SELECT native_id FROM sessions WHERE session_id = ${id}`;
+    expect(row.native_id).toBeNull();
+    expect((await readSession(id))?.provider).toEqual({ id: "copilot" });
+    await expect(
+      setSessionProvider(id, { id: "copilot", sessionId: "second-run" }),
+    ).rejects.toThrow("different provider history");
+    await expect(setSessionProvider("other", { id: "copilot", sessionId: id })).rejects.toThrow();
+    expect(await readSessions()).toHaveLength(1);
 
-    await deleteSessionRecord(identity.sessionId);
-    expect(await readProviderBinding(identity.sessionId)).toBeUndefined();
-    const next = { ...identity, providerId: "codex", nativeId: "second-run" };
-    await bindProviderSession(next);
-    expect(await readProviderBindings()).toEqual([next]);
+    await deleteSessionRecord(id);
+    expect(await readSession(id)).toBeUndefined();
+    const provider = { id: "codex", sessionId: "second-run" };
+    await setSessionProvider(id, provider);
+    expect((await readSession(id))?.provider).toEqual(provider);
   });
 
-  test("storage rejects partial provider bindings", async () => {
+  test("storage permits a canonical native ID but requires its provider", async () => {
     const db = await setup();
     const insert = async (provider: string | null, nativeId: string | null) => {
       await db`INSERT INTO sessions (session_id, provider_id, native_id, created_at)
         VALUES (${crypto.randomUUID()}, ${provider}, ${nativeId}, 1)`;
     };
-    await expect(insert("codex", null)).rejects.toThrow();
+    await insert("copilot", null);
     await expect(insert(null, "native")).rejects.toThrow();
   });
 });

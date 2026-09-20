@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
-import type { SessionMetadata, SessionState } from "./model";
+import type { Session, SessionState } from "./model";
 import { createInitialSessionState } from "./model/reducer";
 import type { SessionsState } from "./model";
-import { createEmptySessionsState, sessionQueries } from "./queries";
+import { createEmptySessionsState, selectNonWorkerSessions, sessionQueries } from "./queries";
 import {
-  addSessionIfMissing,
   applyWorkspaceEventToSessionQueries,
   removeSessionFromState,
   restoreSessionsState,
@@ -13,11 +12,11 @@ import {
   upsertSessionInState,
 } from "./queryCache";
 
-function createSession(sessionId: string): SessionMetadata {
+function createSession(sessionId: string): Session {
   return {
-    sessionId,
-    startTime: new Date("2026-02-14T00:00:00.000Z"),
-    modifiedTime: new Date("2026-02-14T01:00:00.000Z"),
+    id: sessionId,
+    createdAt: new Date("2026-02-14T00:00:00.000Z"),
+    updatedAt: new Date("2026-02-14T01:00:00.000Z"),
     title: "Existing session",
   };
 }
@@ -34,24 +33,31 @@ function readState(queryClient: QueryClient): SessionsState {
 }
 
 describe("session query cache", () => {
-  test("creation and title updates retain one session and its directory", () => {
+  test("first-turn promotion and renaming retain the session's identity and initial artifact", () => {
     const queryClient = new QueryClient();
     const sessionId = "toy-box-upserted-session";
 
     applyWorkspaceEventToSessionQueries(queryClient, {
       type: "session.upserted",
       session: {
-        sessionId,
-        startTime: new Date(100).toISOString(),
-        modifiedTime: new Date(200).toISOString(),
+        id: sessionId,
+        createdAt: new Date(100).toISOString(),
+        updatedAt: new Date(100).toISOString(),
         sessionType: "standard",
-        directory: "/repo",
+        artifactPath: "document.md",
       },
+    });
+    expect(readState(queryClient).sessions[0]?.provider).toBeUndefined();
+    upsertSessionInState(queryClient, {
+      id: sessionId,
+      provider: { id: "codex" },
+      updatedAt: new Date(200).toISOString(),
+      context: { directory: "/repo" },
     });
     applyWorkspaceEventToSessionQueries(queryClient, {
       type: "session.upserted",
       session: {
-        sessionId,
+        id: sessionId,
         title: "Named session",
       },
     });
@@ -59,11 +65,13 @@ describe("session query cache", () => {
     const state = readState(queryClient);
     expect(state.sessions).toHaveLength(1);
     expect(state.sessions[0]).toMatchObject({
-      sessionId,
-      startTime: new Date(100),
-      modifiedTime: new Date(200),
+      id: sessionId,
+      createdAt: new Date(100),
+      updatedAt: new Date(200),
       title: "Named session",
-      directory: "/repo",
+      provider: { id: "codex" },
+      context: { directory: "/repo" },
+      artifactPath: "document.md",
     });
   });
 
@@ -77,8 +85,8 @@ describe("session query cache", () => {
     applyWorkspaceEventToSessionQueries(queryClient, {
       type: "session.upserted",
       session: {
-        sessionId,
-        modifiedTime: "2026-02-14T02:00:00.000Z",
+        id: sessionId,
+        updatedAt: "2026-02-14T02:00:00.000Z",
         title: "Updated",
         parentSessionId: "parent",
         sessionType: "worker",
@@ -93,9 +101,9 @@ describe("session query cache", () => {
     const state = readState(queryClient);
     expect(state.sessions).toHaveLength(1);
     expect(state.sessions[0]).toMatchObject({
-      sessionId,
+      id: sessionId,
       title: "Updated",
-      modifiedTime: new Date("2026-02-14T02:00:00.000Z"),
+      updatedAt: new Date("2026-02-14T02:00:00.000Z"),
     });
     expect(state.workerSessionParents).toEqual({ [sessionId]: "parent" });
     expect(state.worktrees[sessionId]).toMatchObject({ branch: "feature" });
@@ -106,30 +114,33 @@ describe("session query cache", () => {
     const sessionId = "toy-box-app-worker";
 
     upsertSessionInState(queryClient, {
-      sessionId,
+      id: sessionId,
       sessionType: "worker",
     });
 
     expect(readState(queryClient).workerSessionParents).toEqual({ [sessionId]: null });
   });
 
-  test("does not admit private Agent sessions to the list", () => {
+  test("retains Channel worker metadata without projecting it as an ordinary session", () => {
     const queryClient = new QueryClient();
 
     upsertSessionInState(queryClient, {
-      sessionId: "private-agent-session",
-      sessionType: "agent",
+      id: "channel-worker-session",
+      sessionType: "worker",
       worktree: { branch: "agent", baseBranch: "main", path: "/tmp/agent" },
     });
 
-    expect(readState(queryClient)).toEqual(createEmptySessionsState());
+    const state = readState(queryClient);
+    expect(state.workerSessionParents).toEqual({ "channel-worker-session": null });
+    expect(state.worktrees).toHaveProperty("channel-worker-session");
+    expect(selectNonWorkerSessions(state)).toEqual([]);
   });
 
   test("does not synthesize a missing session from an unclassified metadata patch", () => {
     const queryClient = new QueryClient();
 
     upsertSessionInState(queryClient, {
-      sessionId: "unprojected-session",
+      id: "unprojected-session",
       title: "Partial update",
     });
 
@@ -146,8 +157,8 @@ describe("session query cache", () => {
     applyWorkspaceEventToSessionQueries(queryClient, {
       type: "session.upserted",
       session: {
-        sessionId,
-        modifiedTime: "2026-02-14T02:00:00.000Z",
+        id: sessionId,
+        updatedAt: "2026-02-14T02:00:00.000Z",
       },
     });
 
@@ -162,10 +173,12 @@ describe("session query cache", () => {
       sessions: [
         {
           ...createSession(sessionId),
-          directory: "/repo/src",
-          gitRoot: "/repo",
-          repository: "owner/repo",
-          branch: "main",
+          context: {
+            directory: "/repo/src",
+            gitRoot: "/repo",
+            repository: "owner/repo",
+            branch: "main",
+          },
         },
       ],
     });
@@ -173,7 +186,7 @@ describe("session query cache", () => {
     applyWorkspaceEventToSessionQueries(queryClient, {
       type: "session.upserted",
       session: {
-        sessionId,
+        id: sessionId,
         title: "Renamed session",
       },
     });
@@ -181,11 +194,13 @@ describe("session query cache", () => {
     const state = readState(queryClient);
     expect(state.sessions[0]).toMatchObject({
       title: "Renamed session",
-      modifiedTime: new Date("2026-02-14T01:00:00.000Z"),
-      directory: "/repo/src",
-      gitRoot: "/repo",
-      repository: "owner/repo",
-      branch: "main",
+      updatedAt: new Date("2026-02-14T01:00:00.000Z"),
+      context: {
+        directory: "/repo/src",
+        gitRoot: "/repo",
+        repository: "owner/repo",
+        branch: "main",
+      },
     });
   });
 
@@ -206,7 +221,7 @@ describe("session query cache", () => {
 
     applyWorkspaceEventToSessionQueries(queryClient, {
       type: "session.deleted",
-      sessionId,
+      sessionId: sessionId,
     });
 
     const state = readState(queryClient);
@@ -225,7 +240,7 @@ describe("session query cache", () => {
     }
     applyWorkspaceEventToSessionQueries(queryClient, {
       type: "session.touched",
-      sessionId,
+      sessionId: sessionId,
     });
 
     expect(queryClient.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(true);
@@ -237,36 +252,19 @@ describe("session query cache", () => {
     ).toBe(false);
   });
 
-  test("automation insertion adds a missing session without replacing existing metadata", () => {
-    const queryClient = new QueryClient();
-    const existing = createSession("automation-session");
-    seedState(queryClient, { sessions: [existing] });
-
-    addSessionIfMissing(queryClient, {
-      ...existing,
-      title: "Replacement",
-    });
-    addSessionIfMissing(queryClient, createSession("new-automation-session"));
-
-    expect(readState(queryClient).sessions).toEqual([
-      createSession("new-automation-session"),
-      existing,
-    ]);
-  });
-
   test("optimistic session changes can restore their previous state", () => {
     const queryClient = new QueryClient();
     const existing = createSession("optimistic-session");
     seedState(queryClient, { sessions: [existing] });
     const previousState = snapshotSessionsState(queryClient);
 
-    removeSessionFromState(queryClient, existing.sessionId);
+    removeSessionFromState(queryClient, existing.id);
     expect(readState(queryClient).sessions).toEqual([]);
 
     if (!previousState) throw new Error("Expected seeded sessions state");
     restoreSessionsState(queryClient, previousState);
     upsertSessionInState(queryClient, {
-      sessionId: existing.sessionId,
+      id: existing.id,
       title: "Optimistic rename",
     });
     expect(readState(queryClient).sessions[0]?.title).toBe("Optimistic rename");

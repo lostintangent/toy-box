@@ -1,7 +1,8 @@
 import { Component, Suspense, type ReactNode } from "react";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import type { EditorWorkspacePane } from "@workspace/model/panes";
+import { resolveEditorPaneMode, type EditorWorkspacePane } from "@workspace/model/panes";
+import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { PaneActions, PaneStatus } from "@workspace/components/panes/shell/PaneSlots";
 import { WorkersMenu } from "@workers/components/WorkersMenu";
 import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
@@ -18,7 +19,13 @@ type EditorPaneProps = {
 /** Composes one workspace file's lifecycle — content, workers, actions, and renderer. */
 export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
   const { panePublications } = useWorkspaceSurface();
-  const { file, title, mode } = pane;
+  const { file, title } = pane;
+  const mode = useWorkspaceSelector((workspace) =>
+    resolveEditorPaneMode(
+      pane,
+      workspace.automations.map(({ id }) => id),
+    ),
+  );
   const kind = useEditorKind(file);
   const { editable = true } = kind;
   const { workers, spawnWorker, ...fileState } = useFile(file, mode);

@@ -10,7 +10,7 @@ import {
 } from "bun:test";
 import { join } from "node:path";
 import * as runtimeWorkersModule from "./supervisor";
-import { waitForSession } from "@sessions/server/runtime";
+import { waitForSessions } from "@sessions/server/runtime";
 import { sessionFile } from "@files/model";
 import * as filePathsModule from "@files/server/paths";
 import * as databaseModule from "@/server/database";
@@ -92,12 +92,12 @@ describe("workers", () => {
     const completion = deferred<SessionCompletion>();
     completions.push(completion.promise);
     const events: WorkspaceEvent[] = [];
-    let eventWait: Promise<SessionCompletion> | undefined;
+    let eventWait: Promise<SessionCompletion[]> | undefined;
     const unsubscribe = subscribeWorkspaceEvents((event) => {
       if (!event.type.startsWith("worker.")) return;
       events.push(event);
       if (event.type === "worker.started") {
-        eventWait = waitForSession(event.worker.sessionId);
+        eventWait = waitForSessions([event.worker.sessionId]);
       }
     });
     onTestFinished(unsubscribe);
@@ -137,7 +137,7 @@ describe("workers", () => {
     expect(spawnWorkerMock.mock.calls[0]![0].message.content).toContain(import.meta.path);
 
     completion.resolve({ status: "completed" });
-    await expect(eventWait).resolves.toEqual({ status: "completed" });
+    await expect(eventWait).resolves.toEqual([{ status: "completed" }]);
     await waitFor(() => expect(hasWorker(sessionId)).toBe(false));
     expect(events.at(-1)).toEqual({ type: "worker.finished", sessionId });
   });
@@ -167,9 +167,9 @@ describe("workers", () => {
       location: { directory: "/repo", useWorktree: true },
     });
 
-    const wait = waitForSession(worker.sessionId);
+    const wait = waitForSessions([worker.sessionId]);
     completion.resolve({ status: "completed", response: "Looks good." });
-    await expect(wait).resolves.toEqual({ status: "completed", response: "Looks good." });
+    await expect(wait).resolves.toEqual([{ status: "completed", response: "Looks good." }]);
   });
 
   test("shares an admitted worker's session completion with every waiter", async () => {
@@ -178,14 +178,14 @@ describe("workers", () => {
     const worker = await spawnWorker(input);
     onTestFinished(() => finishWorker(worker.sessionId));
 
-    const firstObserver = waitForSession(worker.sessionId);
-    expect(waitForSession(worker.sessionId)).toBe(firstObserver);
+    const firstObserver = waitForSessions([worker.sessionId]);
+    const secondObserver = waitForSessions([worker.sessionId]);
 
     completion.resolve({ status: "completed", response: "The row was appended." });
-    await expect(firstObserver).resolves.toEqual({
-      status: "completed",
-      response: "The row was appended.",
-    });
+    await expect(Promise.all([firstObserver, secondObserver])).resolves.toEqual([
+      [{ status: "completed", response: "The row was appended." }],
+      [{ status: "completed", response: "The row was appended." }],
+    ]);
     await waitFor(() => expect(hasWorker(worker.sessionId)).toBe(false));
   });
 
@@ -456,7 +456,8 @@ describe("workers", () => {
     const worker = await spawnWorker(input);
     onTestFinished(() => finishWorker(worker.sessionId));
     const request = { type: "file" as const, file, workerSessionId: worker.sessionId };
-    const completionWait = waitForSession(worker.sessionId);
+    const completionWait = waitForSessions([worker.sessionId]);
+    void completionWait.catch(() => {});
 
     await expect(cancelWorker(request)).resolves.toBe(true);
     await expect(completionWait).rejects.toBeInstanceOf(

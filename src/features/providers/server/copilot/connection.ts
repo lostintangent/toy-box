@@ -1,5 +1,5 @@
 import type { CopilotSession, SessionEvent as SdkEvent } from "@github/copilot-sdk";
-import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
+import type { ModelConfiguration } from "@providers/model";
 import type { SessionConnection } from "@providers/server/provider";
 import { encodeSystemMessage, systemMessagePrompt } from "@sessions/model/systemMessages";
 import { toSdkAttachments } from "./attachments";
@@ -13,7 +13,7 @@ export function connectCopilotSession(
 ): SessionConnection {
   const pendingInputs = new Map<string, string>();
   return {
-    identity: { sessionId, providerId: "copilot", nativeId: native.sessionId ?? sessionId },
+    provider: { id: "copilot", sessionId: native.sessionId ?? sessionId },
     onEvent(listener) {
       const project = createSdkEventProjector(sessionId);
       return native.on((event: SdkEvent) => {

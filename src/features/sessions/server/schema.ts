@@ -7,9 +7,11 @@ export async function initializeSessionSchema(db: Bun.SQL): Promise<void> {
       native_id TEXT,
       created_at INTEGER NOT NULL,
       artifact_path TEXT,
-      CHECK ((provider_id IS NULL) = (native_id IS NULL)),
-      UNIQUE(provider_id, native_id)
+      CHECK (provider_id IS NOT NULL OR native_id IS NULL)
     );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS session_native_identity
+      ON sessions (provider_id, COALESCE(native_id, session_id));
 
     CREATE TABLE IF NOT EXISTS worktrees (
       session_id           TEXT PRIMARY KEY,

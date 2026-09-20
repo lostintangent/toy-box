@@ -21,22 +21,18 @@ import {
   emitSessionNameUpdate,
   emitSessionUpsert,
 } from "@workspace/server/events";
-import {
-  addDraftSession,
-  deleteSessionWorkspaceState,
-  unpinSession,
-} from "@workspace/server/state";
+import { deleteSessionWorkspaceState, unpinSession } from "@workspace/server/state";
 import { createSessionWorktree, deleteSessionWorktree } from "./worktrees";
-import { deleteSessionRecord, getDraftSession, persistDraftSession } from "./sessions";
+import { deleteSessionRecord, readSession, insertSession } from "./sessions";
 import {
   deleteOwnedSessions,
   detachManagedSession,
   resolveSessionType,
 } from "@/server/managedSessions";
 import { sharedMap } from "@/shared/server/processState";
-import { hasHyperSession } from "@workspace/server/state/hyperSessions";
+import { addHyperSession, hasHyperSession } from "@workspace/server/state/hyperSessions";
 import type { SessionType } from "@sessions/model";
-import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
+import type { ModelConfiguration } from "@providers/model";
 
 // Release idle native connections explicitly while preserving durable history.
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -65,18 +61,19 @@ export type CreateSessionOptions = {
 // ── Creation ──────────────────────────────────────────────────────────
 
 /** Claim public identity before creating any files or selecting a provider. */
-export async function createDraftSession(
+export async function createSessionRecord(
   sessionId: string,
   options: { artifact?: { path: string; content: string }; hyper?: true },
 ): Promise<void> {
   const artifact = options.artifact;
 
-  const draft = {
-    sessionId,
-    createdAt: Date.now(),
+  const createdAt = new Date();
+  const record = {
+    id: sessionId,
+    createdAt,
     ...(artifact ? { artifactPath: artifact.path } : {}),
   };
-  await persistDraftSession(draft);
+  await insertSession(record);
   try {
     await ensureSessionFiles(sessionId);
     if (artifact) await writeSessionArtifact(sessionId, artifact.path, artifact.content);
@@ -84,7 +81,13 @@ export async function createDraftSession(
     await deleteSessionRecord(sessionId);
     throw error;
   }
-  addDraftSession(draft, options.hyper);
+  if (options.hyper) addHyperSession(sessionId);
+  emitSessionUpsert({
+    ...record,
+    createdAt: createdAt.toISOString(),
+    updatedAt: createdAt.toISOString(),
+    sessionType: options.hyper ? "hyper" : "standard",
+  });
 }
 
 /** Create and publish a new provider session with a caller-provided ID. */
@@ -98,7 +101,7 @@ export async function createSession(
   const name = requested.name;
   const directory = requested.directory;
   const useWorktree = requested.useWorktree;
-  const draft = await getDraftSession(sessionId);
+  const record = await readSession(sessionId);
   const { configurationKey, ...sessionConfiguration } = await getSessionConfiguration(
     sessionId,
     sessionType,
@@ -119,7 +122,7 @@ export async function createSession(
       directory: executionDirectory ?? homedir(),
       sessionType,
       ...sessionConfiguration,
-      artifactPath: draft?.artifactPath,
+      artifactPath: record?.artifactPath,
     });
   } catch (error) {
     if (worktree) await deleteSessionWorktree(sessionId).catch(console.error);
@@ -130,12 +133,17 @@ export async function createSession(
 
   // Publish the execution directory immediately so clients can resolve its location.
   emitSessionUpsert({
-    sessionId,
-    provider: session.identity.providerId,
-    startTime: now,
-    modifiedTime: now,
+    id: sessionId,
+    provider: {
+      id: session.provider.id,
+      ...(session.provider.sessionId && session.provider.sessionId !== sessionId
+        ? { sessionId: session.provider.sessionId }
+        : {}),
+    },
+    createdAt: record?.createdAt.toISOString() ?? now,
+    updatedAt: now,
     title: name ?? "",
-    directory: executionDirectory,
+    context: { directory: executionDirectory },
     worktree,
     parentSessionId: requested.parentSessionId,
     sessionType,
@@ -143,7 +151,7 @@ export async function createSession(
 
   return {
     session,
-    ...(draft?.artifactPath ? { artifactPath: draft.artifactPath } : {}),
+    ...(record?.artifactPath ? { artifactPath: record.artifactPath } : {}),
   };
 }
 
@@ -288,7 +296,9 @@ export async function renameSession(sessionId: string, name: string): Promise<vo
 
 /** Update an inferred title without replacing a name explicitly assigned by its creator or user. */
 export async function updateSessionTitle(sessionId: string, title: string): Promise<boolean> {
-  return withSession(sessionId, (session) => session.rename(title, true));
+  const applied = await withSession(sessionId, (session) => session.rename(title, true));
+  if (applied) emitSessionNameUpdate(sessionId, title);
+  return applied;
 }
 
 // ── Deletion ───────────────────────────────────────────────────────────
@@ -296,7 +306,10 @@ export async function updateSessionTitle(sessionId: string, title: string): Prom
 /** Delete a session and the complete tree of managed sessions it owns. */
 export async function deleteSession(sessionId: string): Promise<void> {
   await deleteOwnedSessions(sessionId);
-  await deleteSingleSession(sessionId);
+  await removeSessionRuntime(sessionId);
+  const record = await readSession(sessionId);
+  if (!record || record.provider) await deleteProviderSession(sessionId);
+  await removeDeletedSessionState(sessionId);
 }
 
 /** Delete a session when present, while preserving real teardown failures. */
@@ -306,6 +319,7 @@ export async function deleteSessionIfExists(sessionId: string): Promise<boolean>
     return true;
   } catch (error) {
     if (!evictCachedSessionIfStale(sessionId, error)) throw error;
+    await removeSessionRuntime(sessionId);
     await removeDeletedSessionState(sessionId);
     return false;
   }
@@ -313,23 +327,7 @@ export async function deleteSessionIfExists(sessionId: string): Promise<boolean>
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-async function deleteSingleSession(sessionId: string): Promise<void> {
-  const cached = cachedSessions.get(sessionId);
-  if (cached) cancelSessionRelease(cached);
-  try {
-    if (!(await getDraftSession(sessionId))) await deleteProviderSession(sessionId);
-  } catch (error) {
-    if (cached) scheduleSessionRelease(sessionId, cached);
-    throw error;
-  }
-  await removeDeletedSessionState(sessionId);
-}
-
 async function removeDeletedSessionState(sessionId: string): Promise<void> {
-  await removeDeletedSessionStream(sessionId);
-
-  const cached = cachedSessions.get(sessionId);
-  if (cached) await disconnectCachedSession(sessionId, cached);
   await deleteSessionWorktree(sessionId);
   await deleteSessionFiles(sessionId);
   await deleteSessionRecord(sessionId);
@@ -340,11 +338,14 @@ async function removeDeletedSessionState(sessionId: string): Promise<void> {
   emitSessionDelete(sessionId);
 }
 
-async function removeDeletedSessionStream(sessionId: string): Promise<void> {
+async function removeSessionRuntime(sessionId: string): Promise<void> {
   // Dynamic import keeps the registry from forming a static cycle with the
   // runtime stream, which imports this module to create and resume provider sessions.
   const { SessionStream } = await import("../runtime/sessionStream");
   SessionStream.remove(sessionId);
+  // Native teardown can flush history; it must finish before history is deleted.
+  const cached = cachedSessions.get(sessionId);
+  if (cached) await disconnectCachedSession(sessionId, cached);
 }
 
 async function evictDeletedSessionSnapshot(sessionId: string): Promise<void> {

@@ -1,19 +1,24 @@
-import type { SessionMetadata } from "../../model";
-import { SESSION_ID_PREFIX } from "../../model/constants";
+import type { Session } from "../../model";
+
+export type SessionFilters = {
+  query: string;
+  hiddenProviders: readonly string[];
+  showExternalSessions: boolean;
+};
 
 /** Apply visibility before the display limit so each provider can show its own history. */
 export function filterSessionList(
-  sessions: readonly SessionMetadata[],
-  filters: { showExternalSessions: boolean; hiddenProviders: readonly string[]; query: string },
-): SessionMetadata[] {
+  sessions: readonly Session[],
+  filters: SessionFilters,
+): Session[] {
   const query = filters.query.trim().toLowerCase();
   return sessions
     .filter(
       (session) =>
-        (filters.showExternalSessions || session.sessionId.startsWith(SESSION_ID_PREFIX)) &&
-        (!session.provider || !filters.hiddenProviders.includes(session.provider)) &&
+        (filters.showExternalSessions || !session.id.includes(":")) &&
+        (!session.provider || !filters.hiddenProviders.includes(session.provider.id)) &&
         (!query || session.title?.toLowerCase().includes(query)),
     )
-    .sort((left, right) => right.modifiedTime.getTime() - left.modifiedTime.getTime())
+    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
     .slice(0, 50);
 }

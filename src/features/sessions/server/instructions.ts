@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 import { sessionArtifactsDirectory } from "./artifacts";
-import type { ModelConfiguration } from "@sessions/model/modelConfiguration";
+import type { ModelConfiguration } from "@providers/model";
 
 export function buildSessionSystemPrompt(
   sessionId: string,

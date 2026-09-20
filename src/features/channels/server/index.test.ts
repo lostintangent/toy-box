@@ -1,10 +1,12 @@
 import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChannelEvent } from "@channels/model";
+import type { Worker } from "@workers/model";
 import { createTestDatabase } from "@/server/database";
 import * as sessions from "@sessions/server/providers";
+import * as sessionRuntime from "@sessions/server/runtime";
 
 let currentDb: Bun.SQL | undefined;
 
@@ -15,10 +17,10 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-const { AgentDatabase } = await import("@agents/server/database");
-const agentSupervisor = await import("@agents/server/supervisor");
 const { ChannelDatabase } = await import("./database");
 const {
+  createChannel,
+  createChannelMembersFromAgent,
   finishChannelAgentTurn,
   postChannelMessageFromSession,
   readChannelForSession,
@@ -33,6 +35,37 @@ const { publishChannelEvent, releaseChannelEvents } = await import("./events");
 const PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
+function channelAgent(
+  channelId: string,
+  sessionId: string,
+  name: string,
+): Extract<Worker, { type: "channel" }> {
+  return {
+    type: "channel",
+    channelId,
+    sessionId,
+    ephemeral: false,
+    name,
+    metadata: { seenThrough: 0 },
+  };
+}
+
+test("creating a Channel creates its workspace directory", async () => {
+  currentDb = await createTestDatabase();
+  const root = await mkdtemp(join(tmpdir(), "toy-box-channel-create-"));
+  onTestFinished(async () => {
+    await currentDb?.close();
+    currentDb = undefined;
+    await rm(root, { recursive: true, force: true });
+  });
+  const directory = join(root, "nested", "workspace");
+
+  const channel = await createChannel({ title: "Bitmap studio", directory });
+
+  expect(channel.directory).toBe(directory);
+  expect((await stat(directory)).isDirectory()).toBe(true);
+});
+
 test("an addressed Channel post settles after its Agent wake is ready", async () => {
   currentDb = await createTestDatabase();
   onTestFinished(async () => {
@@ -42,7 +75,10 @@ test("an addressed Channel post settles after its Agent wake is ready", async ()
 
   const channels = new ChannelDatabase(currentDb);
   const channel = await channels.createChannel({ title: "Coordination" });
-  await new AgentDatabase(currentDb).createAgent({ name: "Reviewer" });
+  const { member } = await channels.createMember(
+    channelAgent(channel.id, "reviewer-session", "Reviewer"),
+  );
+  await channels.setMemberStatus(member, { state: "waiting", text: "a review request" });
   let releaseWake!: () => void;
   let announceWake!: () => void;
   const wakeStarted = new Promise<void>((resolve) => {
@@ -51,11 +87,15 @@ test("an addressed Channel post settles after its Agent wake is ready", async ()
   const wakeFinished = new Promise<void>((resolve) => {
     releaseWake = resolve;
   });
-  const mention = spyOn(agentSupervisor, "mentionAgent").mockImplementation(() => {
+  const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockImplementation(async () => {
     announceWake();
-    return wakeFinished;
+    await wakeFinished;
+    return {
+      disposition: "queued",
+      waitForCompletion: async () => ({ status: "completed" }),
+    };
   });
-  onTestFinished(() => mention.mockRestore());
+  onTestFinished(() => deliver.mockRestore());
 
   let settled = false;
   const post = postChannelMessageFromSession("coordinator-session", {
@@ -70,6 +110,7 @@ test("an addressed Channel post settles after its Agent wake is ready", async ()
   releaseWake();
   await post;
   expect(settled).toBe(true);
+  expect((await channels.getMember(member.id))?.status).toBeUndefined();
 });
 
 test("an Agent can attach an image file to a durable Channel message", async () => {
@@ -83,15 +124,8 @@ test("an Agent can attach an image file to a durable Channel message", async () 
 
   const channels = new ChannelDatabase(currentDb);
   const channel = await channels.createChannel({ title: "Visual review" });
-  const agent = await new AgentDatabase(currentDb).createAgent({
-    name: "Designer",
-  });
   const sessionId = "designer-session";
-  await channels.createMember({
-    channelId: channel.id,
-    agentId: agent.id,
-    sessionId,
-  });
+  await channels.createMember(channelAgent(channel.id, sessionId, "Designer"));
   const screenshot = join(directory, "screenshot.png");
   await Bun.write(screenshot, Buffer.from(PNG_BASE64, "base64"));
 
@@ -102,11 +136,60 @@ test("an Agent can attach an image file to a durable Channel message", async () 
 
   expect(message).toMatchObject({
     sequence: 2,
-    sender: { type: "agent", agentId: agent.id },
+    sender: { type: "agent", agentId: sessionId },
     content: "The layout is ready for review.",
     attachments: [screenshot],
   });
   expect((await channels.listMessagesAfter(channel.id)).at(-1)).toEqual(message);
+});
+
+test("a Channel Agent can create peers in its own Channel", async () => {
+  currentDb = await createTestDatabase();
+  onTestFinished(async () => {
+    await currentDb?.close();
+    currentDb = undefined;
+  });
+
+  const channels = new ChannelDatabase(currentDb);
+  const channel = await channels.createChannel({ title: "Product studio" });
+  const { member: creator } = await channels.createMember(
+    channelAgent(channel.id, "strategist-session", "Strategist"),
+  );
+
+  const peers = await createChannelMembersFromAgent(creator.id, [
+    {
+      name: "Designer",
+      role: "Turns product direction into clear interaction design.",
+      model: { provider: "copilot", name: "designer-model" },
+    },
+    {
+      name: "Engineer",
+      role: "Builds the agreed product direction.",
+    },
+  ]);
+
+  expect(peers).toMatchObject([
+    {
+      channelId: channel.id,
+      name: "Designer",
+      role: "Turns product direction into clear interaction design.",
+      model: { provider: "copilot", name: "designer-model" },
+    },
+    {
+      channelId: channel.id,
+      name: "Engineer",
+      role: "Builds the agreed product direction.",
+    },
+  ]);
+  expect((await channels.listMembers(channel.id)).map(({ name }) => name)).toEqual([
+    "Designer",
+    "Engineer",
+    "Strategist",
+  ]);
+  expect((await channels.listMessagesAfter(channel.id)).at(-1)).toMatchObject({
+    sender: { type: "system" },
+    content: { type: "member_joined", member: { id: peers[1]!.id } },
+  });
 });
 
 test("a Session can seed and passively read Channel context", async () => {
@@ -178,12 +261,9 @@ test("a Channel Agent publishes focus and settles temporary turn state", async (
 
   const channels = new ChannelDatabase(currentDb);
   const channel = await channels.createChannel({ title: "Protocol review" });
-  const agent = await new AgentDatabase(currentDb).createAgent({ name: "Reviewer" });
-  const { member } = await channels.createMember({
-    channelId: channel.id,
-    agentId: agent.id,
-    sessionId: "reviewer-session",
-  });
+  const { member } = await channels.createMember(
+    channelAgent(channel.id, "reviewer-session", "Reviewer"),
+  );
   const first = await channels.appendMessage({
     id: "message-1",
     channelId: channel.id,
@@ -203,48 +283,48 @@ test("a Channel Agent publishes focus and settles temporary turn state", async (
     content: "Keep this decision.",
   });
 
-  await setChannelAgentStatus(member.sessionId, {
+  await setChannelAgentStatus(member.id, {
     status: "Reviewing the protocol",
     lookingAt: first.message.sequence,
   });
-  expect(await channels.getMemberBySession(member.sessionId)).toMatchObject({
+  expect(await channels.getMember(member.id)).toMatchObject({
     status: {
       state: "working",
       text: "Reviewing the protocol",
       lookingAt: first.message.sequence,
     },
   });
-  await setChannelAgentStatus(member.sessionId, {
+  await setChannelAgentStatus(member.id, {
     status: "Implementing the revision",
     workingOn: second.message.sequence,
   });
-  await setChannelMessageReactionFromAgent(member.sessionId, {
+  await setChannelMessageReactionFromAgent(member.id, {
     sequence: third.message.sequence,
     reaction: "love",
   });
-  await finishChannelAgentTurn(member, "implementation feedback");
+  await finishChannelAgentTurn(member.id, "implementation feedback");
 
-  expect(await channels.getMemberBySession(member.sessionId)).toMatchObject({
+  expect(await channels.getMember(member.id)).toMatchObject({
     status: { state: "waiting", text: "implementation feedback" },
   });
   const messages = await channels.listMessagesAfter(channel.id);
   expect(messages.find(({ id }) => id === first.message.id)?.reactions).toBeUndefined();
   expect(messages.find(({ id }) => id === second.message.id)?.reactions).toBeUndefined();
   expect(messages.find(({ id }) => id === third.message.id)?.reactions).toEqual([
-    { agentId: agent.id, reaction: "love" },
+    { agentId: member.id, reaction: "love" },
   ]);
   expect(await readChannelForSession(channel.id)).toMatchObject({
     members: [
       {
-        agentId: agent.id,
+        memberId: member.id,
         status: { state: "waiting", text: "implementation feedback" },
       },
     ],
   });
 
-  await setChannelAgentStatus(member.sessionId, { status: "Checking the revision" });
-  await finishChannelAgentTurn(member);
-  expect((await channels.getMemberBySession(member.sessionId))?.status).toBeUndefined();
+  await setChannelAgentStatus(member.id, { status: "Checking the revision" });
+  await finishChannelAgentTurn(member.id);
+  expect((await channels.getMember(member.id))?.status).toBeUndefined();
 });
 
 test("a Channel stream orders and deduplicates published transitions", async () => {

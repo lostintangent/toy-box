@@ -7,7 +7,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { initializeAgentSchema } from "@agents/server/schema";
 import { initializeAppSchema } from "@apps/server/schema";
 import { initializeAutomationSchema } from "@automations/server/schema";
 import { initializeChannelSchema } from "@channels/server/schema";
@@ -79,12 +78,11 @@ async function initializeSchema(db: Bun.SQL, path: string): Promise<void> {
   // Feature schemas are composed here so one connection still owns ordering
   // and transaction behavior without owning each feature's persistence model.
   await initializeSessionSchema(db);
-  await initializeAgentSchema(db);
+  await initializeWorkerSchema(db);
   await initializeChannelSchema(db);
   await initializeAutomationSchema(db);
   await initializeInboxSchema(db);
   await initializeAppSchema(db);
-  await initializeWorkerSchema(db);
   await initializeWorkspaceSchema(db);
 }
 

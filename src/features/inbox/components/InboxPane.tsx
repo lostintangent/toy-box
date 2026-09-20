@@ -4,7 +4,7 @@ import { useSelector } from "@tanstack/react-store";
 import { SessionComposer } from "@sessions/components/composer/SessionComposer";
 import type { SessionLocationPickerProps } from "@sessions/components/location/SessionLocationPicker";
 import { getRecentDirectories } from "@sessions/model/recentDirectories";
-import { useModels } from "@sessions/useModels";
+import { useModels } from "@providers/useModels";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import {
@@ -35,7 +35,7 @@ const TRAVELER: Traveler = { color: "var(--agent-accent)", interval: 3 };
  *  Send leaves an ordinary new session in the normal list. */
 export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => void }) {
   const dispatchTaskMutation = useMutation(inboxMutations.dispatchTask());
-  const createSessionMutation = useMutation(sessionMutations.createSession());
+  const createSessionMutation = useMutation(sessionMutations.startSession());
   const { panePublications } = useWorkspaceSurface();
   const { data: sessions = [] } = useQuery({
     ...sessionQueries.state(),
@@ -43,7 +43,7 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
   });
   const { data: entries } = useSuspenseQuery(inboxQueries.list());
   const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);
-  const { models, defaultModel, setDefaultModel } = useModels();
+  const { models, hasModels, defaultModel, setDefaultModel } = useModels();
   const linkedEditorPane = useSelector(panePublications, (linkedPanes) =>
     linkedPanes[INBOX_PANE.id]?.find(isEditorPane),
   );
@@ -133,16 +133,18 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
               traveler={TRAVELER}
               className="mx-auto h-32 w-80"
             />
-            <SessionComposer
-              prompt={prompt}
-              onPromptChange={setPrompt}
-              onSubmit={handleSend}
-              onRun={handleRun}
-              models={models}
-              model={defaultModel}
-              onModelChange={setDefaultModel}
-              locationPicker={locationPicker}
-            />
+            {hasModels && (
+              <SessionComposer
+                prompt={prompt}
+                onPromptChange={setPrompt}
+                onSubmit={handleSend}
+                onRun={handleRun}
+                models={models}
+                model={defaultModel}
+                onModelChange={setDefaultModel}
+                locationPicker={locationPicker}
+              />
+            )}
           </div>
           <InboxEntries
             entries={entries}

@@ -21,7 +21,7 @@ import type {
   TurnStartedNotification,
 } from "./protocol";
 import type { RpcNotification, RpcRequest } from "./protocol/transport";
-import { decodeInput } from "./inputs";
+import { decodeInput } from "./messages";
 import { fileChangesDiff } from "./fileChanges";
 
 /** The native collaboration call that creates a visible child execution. */
@@ -39,6 +39,7 @@ export function scopeCodexSubagentEvent(
   switch (event.type) {
     case "assistant_message":
     case "reasoning":
+    case "reasoning_delta":
     case "tool_start":
     case "tool_end":
     case "model_changed":
@@ -98,7 +99,7 @@ export function createCodexProjector(sessionId: string) {
       case "item/reasoning/summaryTextDelta":
       case "item/reasoning/textDelta": {
         const { delta } = params as ReasoningTextDeltaNotification;
-        return delta ? [{ type: "reasoning", content: delta }] : [];
+        return delta ? [{ type: "reasoning_delta", content: delta }] : [];
       }
       case "turn/plan/updated":
         events.push({

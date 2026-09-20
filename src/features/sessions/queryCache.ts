@@ -6,8 +6,8 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 import type { WorkspaceEvent } from "@workspace/model/events";
-import type { SessionMetadata, SessionMetadataUpdate, SessionsState } from "./model";
-import { createEmptySessionsState, projectsSessionListMetadata, sessionQueries } from "./queries";
+import type { Session, SessionUpdate, SessionsState } from "./model";
+import { createEmptySessionsState, sessionQueries } from "./queries";
 import { createInitialSessionState } from "./model/reducer";
 
 export function applyWorkspaceEventToSessionQueries(
@@ -52,23 +52,10 @@ export function restoreSessionsState(queryClient: QueryClient, state: SessionsSt
   queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), state);
 }
 
-export function addSessionIfMissing(queryClient: QueryClient, session: SessionMetadata): void {
-  updateSessionsState(queryClient, (state) => {
-    if (state.sessions.some((existing) => existing.sessionId === session.sessionId)) {
-      return state;
-    }
-
-    return {
-      ...state,
-      sessions: [session, ...state.sessions],
-    };
-  });
-}
-
 export function removeSessionFromState(queryClient: QueryClient, sessionId: string): void {
   updateSessionsState(queryClient, (state) => {
     if (
-      !state.sessions.some((session) => session.sessionId === sessionId) &&
+      !state.sessions.some((session) => session.id === sessionId) &&
       !Object.hasOwn(state.workerSessionParents, sessionId) &&
       !(sessionId in state.worktrees)
     ) {
@@ -79,29 +66,21 @@ export function removeSessionFromState(queryClient: QueryClient, sessionId: stri
     const { [sessionId]: _workerParent, ...workerSessionParents } = state.workerSessionParents;
     return {
       ...state,
-      sessions: state.sessions.filter((session) => session.sessionId !== sessionId),
+      sessions: state.sessions.filter((session) => session.id !== sessionId),
       workerSessionParents,
       worktrees: remainingWorktrees,
     };
   });
 }
 
-export function upsertSessionInState(
-  queryClient: QueryClient,
-  sessionUpdate: SessionMetadataUpdate,
-): void {
+export function upsertSessionInState(queryClient: QueryClient, sessionUpdate: SessionUpdate): void {
   updateSessionsState(queryClient, (state) => {
-    if (sessionUpdate.sessionType && !projectsSessionListMetadata(sessionUpdate.sessionType)) {
-      return state;
-    }
-    const sessionIndex = state.sessions.findIndex(
-      (session) => session.sessionId === sessionUpdate.sessionId,
-    );
+    const sessionIndex = state.sessions.findIndex((session) => session.id === sessionUpdate.id);
     // Partial metadata updates may patch a projected Session, but only a
     // role-classified creation update has enough information to admit one.
     if (sessionIndex === -1 && !sessionUpdate.sessionType) return state;
     const existing = sessionIndex === -1 ? undefined : state.sessions[sessionIndex];
-    const session = mergeSessionMetadata(existing, sessionUpdate);
+    const session = mergeSession(existing, sessionUpdate);
 
     const sessions = sessionIndex === -1 ? [session, ...state.sessions] : [...state.sessions];
     if (sessionIndex !== -1) sessions[sessionIndex] = session;
@@ -109,16 +88,16 @@ export function upsertSessionInState(
     const worktrees = sessionUpdate.worktree
       ? {
           ...state.worktrees,
-          [sessionUpdate.sessionId]: sessionUpdate.worktree,
+          [sessionUpdate.id]: sessionUpdate.worktree,
         }
       : state.worktrees;
     const parentSessionId = sessionUpdate.parentSessionId ?? null;
     const workerSessionParents =
       sessionUpdate.sessionType === "worker" &&
-      state.workerSessionParents[sessionUpdate.sessionId] !== parentSessionId
+      state.workerSessionParents[sessionUpdate.id] !== parentSessionId
         ? {
             ...state.workerSessionParents,
-            [sessionUpdate.sessionId]: parentSessionId,
+            [sessionUpdate.id]: parentSessionId,
           }
         : state.workerSessionParents;
     return {
@@ -150,26 +129,17 @@ function updateSessionsState(
   );
 }
 
-function mergeSessionMetadata(
-  existing: SessionMetadata | undefined,
-  update: SessionMetadataUpdate,
-): SessionMetadata {
-  const now = new Date();
-  const fallbackModifiedTime = existing?.modifiedTime ?? now;
-  const modifiedTime = parseEventDate(update.modifiedTime, fallbackModifiedTime);
-  const fallbackStartTime = existing?.startTime ?? modifiedTime;
-  const startTime = parseEventDate(update.startTime, fallbackStartTime);
-
+function mergeSession(existing: Session | undefined, update: SessionUpdate): Session {
+  const updatedAt = parseEventDate(update.updatedAt, existing?.updatedAt ?? new Date());
   return {
     ...existing,
-    sessionId: update.sessionId,
-    startTime,
-    modifiedTime,
-    title: update.title ?? existing?.title ?? "",
-    ...((update.provider ?? existing?.provider)
-      ? { provider: update.provider ?? existing?.provider }
-      : {}),
-    directory: update.directory ?? existing?.directory,
+    id: update.id,
+    createdAt: parseEventDate(update.createdAt, existing?.createdAt ?? updatedAt),
+    updatedAt,
+    title: update.title ?? existing?.title,
+    provider: update.provider ?? existing?.provider,
+    context: update.context ? { ...existing?.context, ...update.context } : existing?.context,
+    artifactPath: update.artifactPath ?? existing?.artifactPath,
   };
 }
 

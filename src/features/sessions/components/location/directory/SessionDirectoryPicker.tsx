@@ -97,7 +97,7 @@ function EditableSessionDirectoryPicker({
   const { context, error } = useSessionContext(
     effectiveValue
       ? {
-          workingDirectory: effectiveValue,
+          directory: effectiveValue,
           repository: selectedDirectory?.repository ?? repository,
           gitRoot: selectedDirectory?.gitRoot ?? gitRoot,
         }
@@ -116,7 +116,7 @@ function EditableSessionDirectoryPicker({
   const selectedLocation = resolveSessionLocation({
     repository: context.repository,
     gitRoot: context.gitRoot,
-    cwd: context.workingDirectory,
+    cwd: context.directory,
   });
 
   function handlePickDirectory() {
