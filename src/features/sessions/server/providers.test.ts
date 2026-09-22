@@ -3,6 +3,7 @@ import * as database from "@/server/database";
 import { copilotProvider } from "@providers/server/copilot/provider";
 import { codexProvider } from "@providers/server/codex/provider";
 import { sessionProviders, getSessionProvider } from "@providers/server";
+import * as cli from "@providers/server/cli";
 import {
   createSession,
   listSkills,
@@ -22,7 +23,7 @@ import { deleteSessionFiles } from "./artifacts";
 async function setup() {
   const db = await database.createTestDatabase();
   spyOn(database, "getStateDatabase").mockResolvedValue(db);
-  for (const provider of sessionProviders) spyOn(provider, "isInstalled").mockReturnValue(false);
+  spyOn(cli, "isInstalled").mockReturnValue(false);
   onTestFinished(async () => {
     mock.restore();
     await db.close();
@@ -97,8 +98,7 @@ test("public IDs keep their provider and discovered native sessions resolve back
   await expect(
     setSessionProvider(session.id, { ...session.provider, sessionId: "different" }),
   ).rejects.toThrow("different provider history");
-  spyOn(copilotProvider, "isInstalled").mockReturnValue(false);
-  spyOn(codexProvider, "isInstalled").mockReturnValue(true);
+  spyOn(cli, "isInstalled").mockImplementation((id) => id === "codex");
   spyOn(codexProvider, "listSessions").mockResolvedValue(
     ["native-uuid", "external"].map((id) => ({
       id,
@@ -167,8 +167,7 @@ test.each([
 ] as const)("%s discovery preserves public ID during concurrent %s", async (providerId, change) => {
   await setup();
   const provider = providerId === "copilot" ? copilotProvider : codexProvider;
-  spyOn(copilotProvider, "isInstalled").mockReturnValue(providerId === "copilot");
-  spyOn(codexProvider, "isInstalled").mockReturnValue(providerId === "codex");
+  spyOn(cli, "isInstalled").mockImplementation((id) => id === providerId);
   const session = {
     id: "managed-session",
     provider: { id: providerId, sessionId: "native-session" },
@@ -195,8 +194,7 @@ test.each(["copilot", "codex"] as const)(
   async (providerId) => {
     await setup();
     const provider = providerId === "copilot" ? copilotProvider : codexProvider;
-    spyOn(copilotProvider, "isInstalled").mockReturnValue(providerId === "copilot");
-    spyOn(codexProvider, "isInstalled").mockReturnValue(providerId === "codex");
+    spyOn(cli, "isInstalled").mockImplementation((id) => id === providerId);
     const session = {
       id: "managed-session",
       provider: { id: providerId, sessionId: "native-session" },
@@ -245,8 +243,7 @@ test.each(["known session", "other provider"] as const)(
   "%s catalog entries do not wait for unrelated native creation",
   async (kind) => {
     await setup();
-    spyOn(copilotProvider, "isInstalled").mockReturnValue(true);
-    spyOn(codexProvider, "isInstalled").mockReturnValue(true);
+    spyOn(cli, "isInstalled").mockImplementation((id) => id === "copilot" || id === "codex");
     const session = { id: "creating", provider: { id: "codex", sessionId: "new-native" } };
     const created = Promise.withResolvers<Awaited<ReturnType<typeof codexProvider.create>>>();
     const creating = Promise.withResolvers<void>();

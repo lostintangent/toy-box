@@ -25,7 +25,7 @@ export function AgentPicker({
   if (suggestions.length === 0) {
     return (
       <div className="absolute bottom-full left-0 z-30 mb-2 w-full rounded-xl border bg-popover p-3 text-xs text-muted-foreground shadow-lg sm:w-96">
-        Type a name to create an Agent.
+        Type a name to create a member.
       </div>
     );
   }
@@ -50,7 +50,9 @@ export function AgentPicker({
                 onMouseEnter={() => onActiveIndexChange(index)}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-lg px-2 py-2",
-                  index === activeIndex ? "bg-accent text-accent-foreground" : "hover:bg-accent/60",
+                  index === activeIndex
+                    ? "bg-accent/50 text-accent-foreground"
+                    : "hover:bg-accent/50 hover:text-accent-foreground",
                 )}
               >
                 <button
@@ -74,7 +76,7 @@ export function AgentPicker({
                   ) : (
                     <AgentAvatar
                       name={suggestion.name}
-                      avatar={suggestion.agent?.avatar}
+                      avatar={suggestion.avatar}
                       className="size-7"
                     />
                   )}

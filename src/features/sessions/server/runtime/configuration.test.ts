@@ -8,12 +8,12 @@ import * as state from "@/server/database";
 import * as sdk from "../providers";
 import * as registry from "../state/registry";
 import * as snapshots from "../state/snapshots";
-import { setSessionProvider } from "../state/sessions";
+import { insertSession, readSession, setSessionProvider } from "../state/sessions";
 import { getSessionConfiguration } from "@/server/sessionConfiguration";
 import * as settings from "@workspace/server/state/settings";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
-import { createSession, deliverSessionMessage } from "./index";
+import { createSession, deliverSessionMessage, recreateSession } from "./index";
 import { SessionStream } from "./sessionStream";
 import { createInitialSessionState } from "@sessions/model/reducer";
 
@@ -38,7 +38,11 @@ async function setup(channelWorker: boolean) {
   });
   const channels = new ChannelDatabase(db);
   if (channelWorker) {
-    const channel = await channels.createChannel({ title: "Configuration" });
+    const channel = await channels.createChannel({
+      name: "Configuration",
+      purpose: "Verify channel agent configuration.",
+      model: { provider: "copilot", name: "gpt-5.5" },
+    });
     await channels.createMember({
       type: "channel",
       channelId: channel.id,
@@ -52,8 +56,8 @@ async function setup(channelWorker: boolean) {
       },
     });
   }
-  onTestFinished(() => {
-    SessionStream.remove(sessionId);
+  onTestFinished(async () => {
+    await SessionStream.remove(sessionId);
     registry.evictCachedSessionIfStale(sessionId, new Error("Session not found"));
     mock.restore();
     return db.close();
@@ -72,20 +76,129 @@ async function setChannelAgentMetadata(
   await workers.update(sessionId, { name: worker.name, metadata: smallJsonSchema.parse(metadata) });
 }
 
-function makeSession() {
+function makeSession(
+  provider: SessionConnection["provider"] = { id: "copilot", sessionId: "test" },
+) {
   const send = mock(async () => crypto.randomUUID());
+  const abort = mock(async () => {});
   const disconnect = mock(async () => {});
   const session = {
-    provider: { id: "copilot", sessionId: "test" },
+    provider,
     onEvent: () => () => {},
     setModel: async () => {},
+    abort,
     rename: async () => true,
     send,
     disconnect,
     rpc: { name: { set: async () => {} } },
   } as unknown as SessionConnection;
-  return { session, send, disconnect };
+  return { session, send, abort, disconnect };
 }
+
+describe("Session recreation", () => {
+  test("recreation can switch providers while retaining the public session ID", async () => {
+    const { sessionId, create, resume } = await setup(false);
+    const previousProvider = {
+      id: "copilot",
+      sessionId: "previous-native-id",
+    };
+    const previous = makeSession(previousProvider);
+    await insertSession({ id: sessionId, createdAt: new Date(0), artifactPath: "old.md" });
+    await setSessionProvider(sessionId, previousProvider);
+    resume.mockResolvedValueOnce(previous.session);
+    await deliverSessionMessage(sessionId, { content: "Previous conversation" });
+    SessionStream.get(sessionId)!.finish();
+
+    const deletedProviders: Array<SessionConnection["provider"] | undefined> = [];
+    spyOn(sdk, "deleteSession").mockImplementation(async (id) => {
+      expect(previous.disconnect).toHaveBeenCalledTimes(1);
+      deletedProviders.push((await readSession(id))?.provider);
+    });
+    const replacement = makeSession({ id: "codex", sessionId: "replacement-native-id" });
+    create.mockImplementationOnce(async (id) => {
+      await setSessionProvider(id, replacement.session.provider);
+      return replacement.session;
+    });
+
+    const model = { provider: "codex", name: "new-model" };
+    await recreateSession(
+      sessionId,
+      { clientId: "first-message", content: "Start fresh", model },
+      { name: "Recreated session" },
+    );
+
+    expect(deletedProviders).toEqual([previousProvider]);
+    const record = await readSession(sessionId);
+    expect(record).toMatchObject({
+      id: sessionId,
+      provider: replacement.session.provider,
+    });
+    expect(record?.artifactPath).toBeUndefined();
+    expect(SessionStream.get(sessionId)!.getSessionState().model).toEqual(model);
+    expect(replacement.send).toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: "first-message", content: "Start fresh" }),
+    );
+  });
+
+  test("recreation projects its draft before announcing a live runtime", async () => {
+    const { sessionId, create } = await setup(false);
+    let deletionPublished = false;
+    const projected = Promise.withResolvers<void>();
+    let running = false;
+    onTestFinished(
+      subscribeWorkspaceEvents((event) => {
+        if (event.type === "session.deleted" && event.sessionId === sessionId)
+          deletionPublished = true;
+        if (event.type === "session.upserted" && event.session.id === sessionId)
+          projected.resolve();
+        if (event.type === "session.running" && event.sessionId === sessionId) running = true;
+      }),
+    );
+
+    const providerCreation = Promise.withResolvers<void>();
+    onTestFinished(() => providerCreation.resolve());
+    create.mockImplementationOnce(async () => {
+      await providerCreation.promise;
+      return makeSession().session;
+    });
+
+    const replacement = recreateSession(
+      sessionId,
+      { content: "Second", model: { provider: "copilot", name: "gpt-5" } },
+      { name: "Daily summary", sessionType: "automation" },
+    );
+    await projected.promise;
+    expect(await readSession(sessionId)).toBeDefined();
+    expect(deletionPublished).toBe(false);
+    expect(running).toBe(false);
+
+    providerCreation.resolve();
+    await replacement;
+    expect(running).toBe(true);
+  });
+
+  test("removes the replacement draft when its provider cannot be created", async () => {
+    const { sessionId, create } = await setup(false);
+    const events: string[] = [];
+    onTestFinished(
+      subscribeWorkspaceEvents((event) => {
+        if (event.type === "session.upserted" && event.session.id === sessionId)
+          events.push(event.type);
+        if (event.type === "session.deleted" && event.sessionId === sessionId)
+          events.push(event.type);
+      }),
+    );
+    create.mockRejectedValueOnce(new Error("Provider unavailable"));
+
+    await expect(recreateSession(sessionId, { content: "Start fresh" }, {})).rejects.toThrow(
+      "Provider unavailable",
+    );
+
+    expect(await readSession(sessionId)).toBeUndefined();
+    expect(SessionStream.get(sessionId)).toBeUndefined();
+    expect(events).toEqual(["session.upserted", "session.deleted"]);
+  });
+});
 
 describe("Session-owned configuration lifetime", () => {
   test("assigns role-specific tools to each Session type", async () => {
@@ -215,12 +328,12 @@ describe("Session-owned configuration lifetime", () => {
       expect.arrayContaining([
         "read_channel",
         "list_models",
-        "create_channel_members",
         "set_channel_status",
         "finish_agent_turn",
         "update_agent",
       ]),
     );
+    expect(initialToolNames).not.toContain("create_channel_members");
     expect(initialToolNames).not.toContain("list_sessions");
     await setChannelAgentMetadata(db, sessionId, {
       seenThrough: 0,

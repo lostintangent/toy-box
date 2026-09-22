@@ -66,6 +66,10 @@ export function reduceChannelState(state: ChannelState, event: ChannelEvent): Ch
       return next;
 
     case "status":
+      if (state.lead.id === event.agentId) {
+        next.lead = { ...state.lead, status: event.status };
+        return next;
+      }
       next.members = state.members.map((member) =>
         member.id === event.agentId ? { ...member, status: event.status } : member,
       );

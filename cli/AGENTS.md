@@ -8,7 +8,7 @@ The CLI bundles two parts into one Bun binary: the browser app and the Nitro ser
 
 The server build goes to Nitro. Its `bun` preset turns it into one runnable entry, `.output/server/index.mjs`, that owns SSR, server functions, API and stream endpoints, and the terminal WebSocket route. On its own it is an ordinary Bun server you could run directly.
 
-`bun run build:cli` delegates this composition to `cli/build.ts`. After the web build,
+`bun run build:cli` delegates this composition to `cli/build/index.ts`. After the web build,
 it writes a temporary, declaration-only `app-type-library/node_modules` tree for the app
 compiler. Public app packages come from the shared runtime dependency catalog;
 compiler-only and type-support packages are listed alongside the writer. `Bun.build()`
@@ -20,6 +20,11 @@ disk. The npm package ships only this binary and its metadata, currently for App
 silicon on macOS; new platforms mean extending the build matrix, not changing the model.
 
 The shape is fan out, then collapse. `vite build` fans the app into browser and server builds; `Bun.build()` collapses the Nitro server, browser assets, launcher, and Bun runtime into one native file.
+
+Nitro generates gzip and Brotli browser assets. Before its server bundle reads the public asset
+manifest, a build hook calls `build/publicAssets.ts` to remove originals with both compressed variants.
+Assets without both variants remain unchanged. Production clients must accept gzip or Brotli for
+those compressed assets; the server's executable code and SSR bundles are separate and retained.
 
 ## Process startup
 

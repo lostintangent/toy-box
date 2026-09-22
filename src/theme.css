@@ -15,7 +15,7 @@
   /* Opaque equivalent of bg-muted/50 over the application background. */
   --color-panel: color-mix(in srgb, var(--muted) 50%, var(--background));
   --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-foreground: contrast-color(var(--accent));
   --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-input: var(--input);
@@ -28,8 +28,6 @@
   --color-diff-removed-bg-strong: var(--diff-removed-bg-strong);
   --color-diff-modified-old-bg: var(--diff-modified-old-bg);
   --color-diff-modified-new-bg: var(--diff-modified-new-bg);
-  --color-user-accent: var(--user-accent);
-  --color-user-accent-foreground: contrast-color(var(--user-accent));
   --color-unread: var(--unread);
 
   /* Micro label size — below text-xs (12px); badges, counts, eyebrow headings. */

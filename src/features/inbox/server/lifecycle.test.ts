@@ -1,28 +1,16 @@
-import { expect, mock, onTestFinished, test } from "bun:test";
+import { expect, onTestFinished, spyOn, test } from "bun:test";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
-import { createTestDatabase } from "@/server/database";
+import * as state from "@/server/database";
+import * as sessionRuntime from "@sessions/server/runtime";
 import { deleteSessionState } from "@workspace/server/state/sessions";
 import type { WorkspaceEvent } from "@workspace/model/events";
-
-let currentDb: Bun.SQL | undefined;
-
-mock.module("@/server/database", () => ({
-  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
-    if (!currentDb && options?.createIfMissing === false) return null;
-    if (!currentDb) throw new Error("Test database has not been opened");
-    return currentDb;
-  },
-}));
-mock.module("@sessions/server/runtime", () => ({
-  deleteSessionIfExists: async () => false,
-}));
-
-const database = await import("./database");
-const { createPendingInboxEntry, deleteInboxEntry, listInboxEntries, sendToInbox } =
-  await import("./index");
+import * as database from "./database";
+import { createPendingInboxEntry, deleteInboxEntry, listInboxEntries, sendToInbox } from "./index";
 
 test("entry lifecycle publishes the state-bearing Inbox transitions", async () => {
-  currentDb = await createTestDatabase();
+  const db = await state.createTestDatabase();
+  const readDatabase = spyOn(state, "getStateDatabase").mockResolvedValue(db);
+  const deleteSession = spyOn(sessionRuntime, "deleteSessionIfExists").mockResolvedValue(false);
   const sessionId = `toy-box-${crypto.randomUUID()}`;
   const events: WorkspaceEvent[] = [];
   const unsubscribe = subscribeWorkspaceEvents((event) => {
@@ -33,8 +21,9 @@ test("entry lifecycle publishes the state-bearing Inbox transitions", async () =
     unsubscribe();
     deleteSessionState(sessionId);
     await database.deleteInboxEntry(sessionId);
-    await currentDb?.close();
-    currentDb = undefined;
+    readDatabase.mockRestore();
+    deleteSession.mockRestore();
+    await db.close();
   });
 
   const pending = await createPendingInboxEntry(sessionId);

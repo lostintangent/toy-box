@@ -5,12 +5,9 @@ import {
   runAutomation,
   updateAutomation,
 } from "./server/functions";
-import { upsertSessionInState } from "@sessions/queryCache";
-import { sessionQueries } from "@sessions/queries";
-import { createInitialSessionState } from "@sessions/model/reducer";
+import { invalidateSessionQueries, recreateSessionInCache } from "@sessions/queryCache";
 import { applyWorkspaceEvent, workspaceQueries } from "@workspace/queries";
-import type { WorkspaceState } from "@workspace/model/state/reducer";
-import type { SessionState, SessionsState } from "@sessions/model";
+import { isWorkspaceSessionLive, type WorkspaceState } from "@workspace/model/state/reducer";
 import type { Automation, AutomationOptions } from "./model";
 
 export const automationMutations = {
@@ -39,37 +36,24 @@ export const automationMutations = {
       },
     }),
 
-  run: (automationId: string) =>
+  run: (automation: Automation) =>
     mutationOptions({
-      mutationFn: () => runAutomation({ data: { automationId } }),
-      onSuccess: ({ sessionId, started }, _variables, _onMutateResult, { client }) => {
-        if (!started) return;
+      mutationFn: (clientId: string) =>
+        runAutomation({ data: { automationId: automation.id, clientId } }),
+      onMutate: (clientId, { client }) => {
+        const status = client.getQueryData<WorkspaceState>(workspaceQueries.stateKey())
+          ?.sessionStates[automation.id]?.status;
+        if (isWorkspaceSessionLive(status)) return;
 
-        const automation = client
-          .getQueryData<WorkspaceState>(workspaceQueries.stateKey())
-          ?.automations.find((candidate) => candidate.id === automationId);
-        client.setQueryData<SessionState>(
-          sessionQueries.detail(sessionId).queryKey,
-          createInitialSessionState({
-            model: automation?.model,
-            status: "thinking",
-          }),
+        return recreateSessionInCache(
+          client,
+          automation.id,
+          { clientId, content: automation.prompt, model: automation.model },
+          { title: automation.title, sessionType: "automation" },
         );
-        if (
-          client
-            .getQueryData<SessionsState>(sessionQueries.stateKey())
-            ?.sessions.some(({ id }) => id === sessionId)
-        )
-          return;
-        upsertSessionInState(client, {
-          id: sessionId,
-          provider: automation ? { id: automation.model.provider } : undefined,
-          sessionType: "automation",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          title: automation?.title ?? "",
-        });
       },
+      onSettled: (_result, _error, _variables, _onMutateResult, { client }) =>
+        invalidateSessionQueries(client, automation.id),
     }),
 };
 

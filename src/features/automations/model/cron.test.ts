@@ -1,70 +1,47 @@
 import { describe, expect, test } from "bun:test";
-import {
-  cronToSimpleSchedule,
-  DEFAULT_SIMPLE_SCHEDULE,
-  normalizeSimpleSchedule,
-  simpleScheduleToCron,
-} from "./cron";
+import { cronToSchedule, scheduleToCron } from "./cron";
 
-describe("automation simple schedules", () => {
-  test("serializes daily schedule with weekday list", () => {
-    const cron = simpleScheduleToCron({
-      ...DEFAULT_SIMPLE_SCHEDULE,
-      kind: "daily",
-      minute: 5,
-      hour: 9,
-      daysOfWeek: [1, 3, 5],
-    });
-
-    expect(cron).toBe("5 9 * * 1,3,5");
+describe("automation schedules", () => {
+  test.each([
+    ["5 9 * * 1,3,5", "daily"],
+    ["15 14 * * 2", "daily"],
+    ["0 * * * *", "interval"],
+    ["0 */6 * * 1,2,3,4,5", "interval"],
+    ["0 */24 * * *", "interval"],
+  ] as const)("round trips %s through %s editing", (cron, mode) => {
+    const schedule = cronToSchedule(cron);
+    expect(schedule.mode).toBe(mode);
+    expect(scheduleToCron(schedule)).toBe(cron);
   });
 
-  test("serializes interval schedule", () => {
-    const cron = simpleScheduleToCron({
-      ...DEFAULT_SIMPLE_SCHEDULE,
-      kind: "interval",
-      minute: 0,
-      intervalHours: 6,
-      daysOfWeek: [1, 2, 3, 4, 5],
-    });
-
-    expect(cron).toBe("0 */6 * * 1,2,3,4,5");
+  test("parses a time and deduplicates weekday names and Sunday aliases", () => {
+    const schedule = cronToSchedule("5 9 * * mon,wed,7,0,mon");
+    expect(schedule.time).toBe("09:05");
+    expect(schedule.daysOfWeek).toEqual([0, 1, 3]);
+    expect(scheduleToCron(schedule)).toBe("5 9 * * 0,1,3");
   });
 
-  test("parses supported cron expressions", () => {
-    expect(cronToSimpleSchedule("5 9 * * *")?.kind).toBe("daily");
-    expect(cronToSimpleSchedule("0 * * * *")?.kind).toBe("interval");
-    expect(cronToSimpleSchedule("0 */4 * * 1,3,5")?.kind).toBe("interval");
-    expect(cronToSimpleSchedule("15 14 * * 2")?.kind).toBe("daily");
+  test("only serializes the selected mode's inputs", () => {
+    const daily = cronToSchedule("35 14 * * 1,3,5");
+    const interval = { ...daily, mode: "interval" as const, intervalHours: 6 };
+    expect(scheduleToCron(interval)).toBe("0 */6 * * 1,3,5");
+    expect(scheduleToCron({ ...interval, mode: "daily" })).toBe("35 14 * * 1,3,5");
+    expect(scheduleToCron({ ...interval, mode: "cron", cron: "*/5 * * * *" })).toBe("*/5 * * * *");
   });
 
-  test("parses weekday names and sunday alias", () => {
-    expect(cronToSimpleSchedule("0 9 * * mon,wed")?.daysOfWeek).toEqual([1, 3]);
-    expect(cronToSimpleSchedule("0 9 * * 7")?.daysOfWeek).toEqual([0]);
-  });
-
-  test("returns null for unsupported advanced cron syntax", () => {
-    expect(cronToSimpleSchedule("*/5 * * * *")).toBeNull();
-    expect(cronToSimpleSchedule("0 9 1 * *")).toBeNull();
-    expect(cronToSimpleSchedule("15 */4 * * *")).toBeNull();
-    expect(cronToSimpleSchedule("0 9 * * constructor")).toBeNull();
-  });
-
-  test("normalizes simple schedule bounds", () => {
-    expect(
-      normalizeSimpleSchedule({
-        ...DEFAULT_SIMPLE_SCHEDULE,
-        minute: -10,
-        hour: 30,
-        intervalHours: 50,
-        daysOfWeek: [9, 3, -1, 3],
-      }),
-    ).toEqual({
-      ...DEFAULT_SIMPLE_SCHEDULE,
-      minute: 0,
-      hour: 23,
-      intervalHours: 24,
-      daysOfWeek: [0, 3, 6],
-    });
+  test.each([
+    "*/5 * * * *",
+    "0 9 1 * *",
+    "15 */4 * * *",
+    "0 9 * * constructor",
+    "60 9 * * *",
+    "0 24 * * *",
+    "0 */25 * * *",
+    "0 9 * * 8",
+    "",
+  ])("preserves advanced or unfinished cron %s for raw editing", (cron) => {
+    const schedule = cronToSchedule(cron);
+    expect(schedule.mode).toBe("cron");
+    expect(scheduleToCron(schedule)).toBe(cron);
   });
 });

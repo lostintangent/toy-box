@@ -18,7 +18,6 @@ import type { Model, Thread, ThreadStartParams } from "./protocol";
 export const codexProvider: SessionProvider = {
   id: "codex",
   name: "OpenAI Codex",
-  isInstalled: () => !!Bun.which("codex"),
   async listModels() {
     const rpc = await startCodexClient();
     const auth = await rpc.request("account/read", {});

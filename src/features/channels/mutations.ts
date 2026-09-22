@@ -36,8 +36,8 @@ export const channelMutations = {
     }),
   rename: (channelId: string) =>
     mutationOptions({
-      mutationFn: (title: string) => renameChannel({ data: { channelId, title } }),
-      onSuccess: (channel, _title, _result, { client }) =>
+      mutationFn: (name: string) => renameChannel({ data: { channelId, name } }),
+      onSuccess: (channel, _name, _result, { client }) =>
         applyChannelListEvent(client, { type: "channel.upserted", channel }),
     }),
   delete: (channelId: string) =>

@@ -5,13 +5,16 @@ installed `app.tsx`. Both must default-export a React component and receive the
 same deliberately small set of libraries, Toy Box design system, and portable
 app SDK.
 
+App code runs in the browser and may use standard Web APIs, including `fetch`,
+subject to ordinary browser security such as CORS. Use the SDK for Toy Box-owned
+capabilities.
+
 ## Available Libraries
 
 App modules may import from:
 
 - `react` for component rendering, mount-local interaction state, and effects
-  around external resources. Use `useState` for independent values and
-  `useReducer` when several values form one transition model.
+  around external resources.
 
 <!-- TODO: Remove the alias requirement below when Bun's built-in React Compiler
 preserves lowercase JSX member expressions such as `<m.div>` instead of lowering
@@ -31,7 +34,12 @@ them to intrinsic elements. -->
   user's reduced-motion preference.
 - `zod` for app-local parsing when a surface consumes untrusted text or external data.
 - `@toy-box/sdk` for the design-system components and SDK hooks described below.
-- `lucide-react` for the curated icons listed in `SKILL.md`.
+- `lucide-react` for `Archive`, `ArrowLeft`, `ArrowRight`, `Bot`, `Check`,
+  `ChevronDown`, `ChevronLeft`, `ChevronRight`, `Circle`, `CircleDot`, `Clock`,
+  `Feather`, `File`, `FolderOpen`, `GripVertical`, `Kanban`, `Loader2`,
+  `MessageSquare`, `MoreHorizontal`, `PanelTop`, `Pencil`, `Plus`, `Regex`,
+  `Search`, `Settings`, `Sparkles`, `Trash2`, and `X`. The same names are valid
+  installed-app manifest icons.
 
 Tailwind requires no import. Static utility classes in the TSX are compiled and
 scoped to the app. Artifact validation and installed-app registration report
@@ -41,10 +49,29 @@ unsupported imports and TypeScript errors with source-positioned diagnostics.
 
 ### Theme and Tailwind
 
-Apps inherit Toy Box's colors, typography, and light or dark appearance. Use
-static Tailwind utility classes in the app source; Toy Box compiles and scopes them
-under the app root. Keep each class complete in source instead of constructing
-names such as `bg-${color}-500`.
+Apps inherit Toy Box's colors, typography, and light or dark appearance. Prefer
+the existing semantic Tailwind color utilities and provided components so the
+app follows the active theme automatically. Use static Tailwind utility classes
+in the app source. Toy Box compiles and scopes them under the app root. Keep each
+class complete in source instead of constructing names such as
+`bg-${color}-500`.
+
+The supported semantic color families are `background`/`foreground`,
+`card`/`card-foreground`, `popover`/`popover-foreground`,
+`primary`/`primary-foreground`, `secondary`/`secondary-foreground`,
+`muted`/`muted-foreground`, `accent`/`accent-foreground`, `destructive`,
+`border`, `input`, and `ring`.
+
+`accent` is the workspace's configurable emphasis color. Pair a solid
+`bg-accent` with `text-accent-foreground`. Do not assume `text-accent` contrasts
+with the page background, and give important selected or saved states a
+non-color cue such as a border, fill, shape, or weight change.
+
+Use the accent deliberately for primary actions, selected states, and other
+high-salience cues. `AppButton` supports an `accent` variant for a solid action,
+and provided control variants already use the accent for applicable hover and
+selected states. A product-specific static Tailwind color is appropriate when it
+meaningfully supports the app's identity. Verify it in both light and dark themes.
 
 `AppShell` is a CSS container, so use container variants such as `@md:` and
 `@4xl:` for pane-responsive layouts rather than viewport variants such as `md:`
@@ -63,26 +90,41 @@ create stylesheet sidecars.
   render visible titles, icons, and controls as children rather than using the
   native tooltip-only `title` attribute.
 
+Apps run inside a pane in the broader Toy Box workspace. Prefer normal or
+pane-relative layout. Use viewport-fixed positioning only when it is genuinely
+part of the interaction, and verify it in hosted desktop and mobile panes.
+
 ### Controls and Feedback
 
-- `AppButton`, `AppInput`, `AppTextarea`, and `AppBadge` provide Toy Box's
-  themed controls and variants. Prefer them when their semantics fit; use
-  ordinary HTML for app-specific composition.
+- `AppButton`, `AppInput`, `AppTextarea`, `AppSelect`, `AppToggle`, and
+  `AppBadge` provide Toy Box's themed controls and variants. Prefer them when
+  their semantics fit; use ordinary HTML for app-specific composition.
+- Compose `AppSelect` from `AppSelectTrigger`, `AppSelectValue`,
+  `AppSelectContent`, and `AppSelectItem`. Control it with `value` and
+  `onValueChange` when the selection belongs to app state. `AppToggle` uses
+  `pressed` and `onPressedChange` for the same controlled pattern.
+- `AppScrollableFade` is the standard scrollable container and the preferred
+  treatment for text labels that may overflow. It scrolls horizontally by
+  default and fades overflowing edges. Add `whitespace-nowrap` for a single-line
+  label instead of truncating content that should remain readable. Set
+  `axis="vertical"` and constrain `rootClassName` for a vertical region.
 - `AppEmptyState` gives empty collections and initial screens consistent
   spacing, typography, and muted treatment. Pass `title`, optional
   `description`, and optional children for an action or illustration.
 - `AppAlert` gives failures consistent alert semantics and destructive styling.
   Render the error as its children and use `className` only for surrounding
   layout.
-- `AppSessionStatus` renders a session's standard Draft, Running, Waiting, Idle, or
+- `AppSkeleton` gives loading placeholders the standard animated muted surface.
+  Set its dimensions with `className` to match the content being loaded.
+- `AppSessionStatus` renders a session's standard Running, Waiting, Idle, or
   Finished badge. Pass the reactive `session.status` value directly.
 - `AppSessionToggle` renders the current surface's standard Open/Close control
   for a session. Pass its `sessionId`; the component subscribes to pane state
   and performs the toggle itself. Pass children only when a compact or
   app-specific button label is more useful than the standard control.
-
-These components accept their corresponding native element props and
-`className`.
+- `AppSessionPreview` wraps session content with the standard desktop hover
+  preview. Pass its `sessionId`; previewing is passive and does not mark the
+  session read.
 
 ### Pickers
 
@@ -106,10 +148,8 @@ These components accept their corresponding native element props and
   to show and create only those file types. Use
   `type MachineFile = Extract<WorkspaceFile, { kind: "machine" }>` when storing
   that narrower value.
-- Use `AppSharePicker` to offer content to another saved app. Pass
-  `{ mimeType, content, label?, className?, disabled? }`; it discovers compatible
-  instances, performs the share, opens the receiver on the current surface, and
-  shows `No supporting apps` when none accept that MIME type. Both artifact and
+- Use `AppSharePicker` to offer MIME-typed JSON to a compatible saved app. Pass
+  `{ mimeType, content, label?, className?, disabled? }`. Both artifact and
   installed apps may send shares.
 
 ## SDK APIs
@@ -161,21 +201,11 @@ synchronous and derive the change only from its arguments and values captured be
 the call. Keep schema revisions compatible with existing instances; use `get_app`
 to inspect them before intentionally changing the state shape.
 
-Interaction state that should reset with the mounted component belongs in React:
-
-```ts
-import { useReducer, useState } from "react";
-
-const [query, setQuery] = useState("");
-const [form, dispatch] = useReducer(formReducer, initialForm);
-```
-
-Use a reducer only when it makes coupled transitions clearer; do not wrap ordinary
-fields in a reducer mechanically. A single `app.tsx` may define module-level child
-components, and state can flow through props or React context when needed. Do not
-create module-level mutable state, which would leak between app instances and
-multiple mounts. Do not mirror app or workspace values into refs or effects;
-reserve effects for external resources with explicit cleanup.
+Interaction state that should reset with the mounted component belongs in React.
+A single `app.tsx` may define module-level child components, but module-level
+mutable state leaks between instances and mounts. Derive app and workspace values
+during render instead of mirroring them into local state. Reserve effects for
+external resources and clean up ongoing resources.
 
 Artifact apps have no durable app state. Keep their surface data in React or in
 an explicitly selected file or session. React state resets when the artifact

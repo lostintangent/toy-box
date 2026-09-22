@@ -3,6 +3,7 @@ import type { ModelInfo, ProviderCatalog } from "@providers/model";
 import { getSettings } from "@workspace/server/state/settings";
 import { sharedMap } from "@/shared/server/processState";
 import type { SessionProvider } from "./provider";
+import * as cli from "./cli";
 import { copilotProvider } from "./copilot/provider";
 import { codexProvider } from "./codex/provider";
 import { claudeProvider } from "./claude/provider";
@@ -82,6 +83,6 @@ function providerInfo() {
   return sessionProviders.map((provider) => ({
     id: provider.id,
     name: provider.name,
-    installed: provider.isInstalled(),
+    installed: cli.isInstalled(provider.id),
   }));
 }

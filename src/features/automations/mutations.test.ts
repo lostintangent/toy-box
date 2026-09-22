@@ -1,10 +1,9 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
-import { MutationObserver, QueryClient } from "@tanstack/react-query";
-import type { SessionsState } from "@sessions/model";
+import { MutationObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
+import type { SessionsState, SessionState } from "@sessions/model";
 import { createEmptySessionsState, sessionQueries } from "@sessions/queries";
 import { workspaceQueries } from "@workspace/queries";
 import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model/state/reducer";
-import type { SessionState } from "@sessions/model";
 import { createInitialSessionState } from "@sessions/model/reducer";
 import type { Automation, AutomationOptions } from "./model";
 import { automationMutations } from "./mutations";
@@ -27,7 +26,7 @@ const automationOptions = {
   cron: automation.cron,
 } satisfies AutomationOptions;
 
-describe("automation mutation options", () => {
+describe("automation client behavior", () => {
   test("projects created and updated definitions into workspace state", async () => {
     const queryClient = createQueryClient();
 
@@ -35,7 +34,7 @@ describe("automation mutation options", () => {
       ...automationMutations.create(),
       mutationFn: async () => automation,
     }).mutate(automationOptions);
-    expect(readAutomations(queryClient)).toEqual([automation]);
+    expect(readWorkspace(queryClient).automations).toEqual([automation]);
 
     const updatedAutomation = {
       ...automation,
@@ -47,11 +46,11 @@ describe("automation mutation options", () => {
       mutationFn: async () => updatedAutomation,
     }).mutate(automationOptions);
 
-    expect(readAutomations(queryClient)).toEqual([updatedAutomation]);
+    expect(readWorkspace(queryClient).automations).toEqual([updatedAutomation]);
   });
 
   test("treats idempotent deletion as authoritative absence", async () => {
-    const queryClient = createQueryClient(automation);
+    const queryClient = createQueryClient(automation, { status: "running" });
     await new MutationObserver(queryClient, {
       ...automationMutations.delete(automation.id),
       mutationFn: async () => false,
@@ -61,70 +60,143 @@ describe("automation mutation options", () => {
     expect(readSessions(queryClient).sessions).toEqual([]);
   });
 
-  test("leaves cached state unchanged when a request fails", async () => {
+  test("shows the prompt before dispatch and preserves streaming through request completion", async () => {
     const queryClient = createQueryClient(automation);
-    const updateMutation = new MutationObserver(queryClient, {
-      ...automationMutations.update(automation.id),
-      mutationFn: async () => {
-        throw new Error("network unavailable");
+    const request = Promise.withResolvers<{ sessionId: string; started: boolean }>();
+    const dispatched = Promise.withResolvers<void>();
+    queryClient.setQueryData(sessionQueries.detail(automation.id).queryKey, {
+      ...createInitialSessionState(),
+      messages: [{ role: "assistant", content: "Previous run" }],
+      lastSeenEventId: 100,
+    });
+    const runMutation = new MutationObserver(queryClient, {
+      ...automationMutations.run(automation),
+      mutationFn: () => {
+        dispatched.resolve();
+        return request.promise;
       },
     });
 
-    await expect(updateMutation.mutate(automationOptions)).rejects.toThrow("network unavailable");
-    expect(readAutomations(queryClient)).toEqual([automation]);
-    expect(readSessions(queryClient).sessions).toHaveLength(1);
-  });
-
-  test("primes a genuinely started run without replacing an overlapping run", async () => {
-    const startedClient = createQueryClient(automation);
-    startedClient.setQueryData<SessionState>(sessionQueries.detail(automation.id).queryKey, {
-      ...createInitialSessionState(),
-      messages: [{ role: "assistant", content: "Old transcript" }],
-    });
-
-    await new MutationObserver(startedClient, {
-      ...automationMutations.run(automation.id),
-      mutationFn: async () => ({ sessionId: automation.id, started: true }),
-    }).mutate();
-
-    const startedSnapshot = {
-      ...createInitialSessionState(),
-      model: automation.model,
-      status: "thinking",
-    } satisfies SessionState;
-    expect(readSessionSnapshot(startedClient)).toEqual(startedSnapshot);
-    expect(readSessions(startedClient).sessions).toEqual([
-      {
-        id: automation.id,
-        createdAt: expect.any(Date),
-        updatedAt: expect.any(Date),
-        title: automation.title,
-      },
+    const result = runMutation.mutate("requested-run");
+    await dispatched.promise;
+    expect(readWorkspace(queryClient).sessionStates).toEqual({});
+    expect(readSessions(queryClient).sessions[0]?.provider).toBeUndefined();
+    const optimistic = readSessionSnapshot(queryClient)!;
+    expect(optimistic.model).toEqual(automation.model);
+    expect(optimistic.status).toBe("thinking");
+    expect(optimistic.messages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        clientId: "requested-run",
+        content: automation.prompt,
+      }),
     ]);
 
-    const overlappingClient = createQueryClient(automation);
-    const previousSnapshot = {
-      ...createInitialSessionState(),
-      messages: [{ role: "assistant", content: "Current transcript" }],
-      status: "thinking",
-    } satisfies SessionState;
-    overlappingClient.setQueryData(sessionQueries.detail(automation.id).queryKey, previousSnapshot);
-    await new MutationObserver(overlappingClient, {
-      ...automationMutations.run(automation.id),
-      mutationFn: async () => ({ sessionId: automation.id, started: false }),
-    }).mutate();
-
-    expect(readSessionSnapshot(overlappingClient)).toBe(previousSnapshot);
+    const streamed: SessionState = {
+      ...optimistic,
+      messages: [...optimistic.messages, { role: "assistant", content: "Live response" }],
+    };
+    queryClient.setQueryData(sessionQueries.detail(automation.id).queryKey, streamed);
+    request.resolve({ sessionId: automation.id, started: true });
+    await result;
+    expect(readSessionSnapshot(queryClient)).toEqual(streamed);
   });
+
+  test.each(["started", "overlapped", "failed"])(
+    "reconciles an optimistic run after it %s",
+    async (outcome) => {
+      const queryClient = createQueryClient(automation);
+      queryClient.setQueryData(sessionQueries.detail(automation.id).queryKey, {
+        ...createInitialSessionState(),
+        messages: [{ role: "assistant", content: "Old transcript" }],
+      });
+      const sessions = {
+        ...readSessions(queryClient),
+        sessions: [
+          {
+            id: automation.id,
+            title: automation.title,
+            provider: { id: automation.model.provider },
+            createdAt: new Date("2026-08-02T09:00:00Z"),
+            updatedAt: new Date("2026-08-02T09:00:00Z"),
+          },
+        ],
+      } satisfies SessionsState;
+      const snapshot = {
+        ...createInitialSessionState(),
+        messages: [
+          {
+            role: "assistant",
+            content: outcome === "failed" ? "Previous run" : "Latest server response",
+          },
+        ],
+      } satisfies SessionState;
+      const unsubscribeSessions = new QueryObserver(queryClient, {
+        queryKey: sessionQueries.stateKey(),
+        queryFn: async () => sessions,
+        staleTime: Infinity,
+      }).subscribe(() => {});
+      const unsubscribeDetail = new QueryObserver(queryClient, {
+        queryKey: sessionQueries.detail(automation.id).queryKey,
+        queryFn: async () => snapshot,
+        staleTime: Infinity,
+      }).subscribe(() => {});
+      onTestFinished(() => {
+        unsubscribeSessions();
+        unsubscribeDetail();
+      });
+
+      const result = new MutationObserver(queryClient, {
+        ...automationMutations.run(automation),
+        mutationFn: async () => {
+          if (outcome === "failed") throw new Error("Could not start");
+          return { sessionId: automation.id, started: outcome === "started" };
+        },
+      }).mutate("requested-run");
+      if (outcome === "failed") await expect(result).rejects.toThrow("Could not start");
+      else await result;
+
+      expect(readSessionSnapshot(queryClient)).toEqual(snapshot);
+      expect(readSessions(queryClient)).toEqual(sessions);
+      expect(readWorkspace(queryClient).sessionStates).toEqual({});
+    },
+  );
+
+  test.each(["running", "waiting"] as const)(
+    "preserves the current conversation when Run is clicked while %s",
+    async (status) => {
+      const queryClient = createQueryClient(automation, { status });
+      const sessions = readSessions(queryClient);
+      const snapshot = {
+        ...createInitialSessionState(),
+        messages: [{ role: "assistant", content: "Current transcript" }],
+        status: "thinking",
+      } satisfies SessionState;
+      queryClient.setQueryData(sessionQueries.detail(automation.id).queryKey, snapshot);
+      await new MutationObserver(queryClient, {
+        ...automationMutations.run(automation),
+        mutationFn: async () => {
+          expect(readSessionSnapshot(queryClient)).toEqual(snapshot);
+          expect(readSessions(queryClient)).toEqual(sessions);
+          return { sessionId: automation.id, started: false };
+        },
+      }).mutate("requested-run");
+
+      expect(readSessionSnapshot(queryClient)).toEqual(snapshot);
+    },
+  );
 });
 
-function createQueryClient(seed?: Automation): QueryClient {
+function createQueryClient(
+  seed?: Automation,
+  sessionState?: WorkspaceState["sessionStates"][string],
+): QueryClient {
   const queryClient = new QueryClient();
   const workspace: WorkspaceState = seed
     ? {
         ...createEmptyWorkspaceState(),
         automations: [seed],
-        sessionStates: { [seed.id]: { status: "running" } },
+        sessionStates: sessionState ? { [seed.id]: sessionState } : {},
       }
     : createEmptyWorkspaceState();
   queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), workspace);
@@ -137,6 +209,7 @@ function createQueryClient(seed?: Automation): QueryClient {
             createdAt: new Date(seed.createdAt),
             updatedAt: new Date(seed.updatedAt),
             title: seed.title,
+            provider: { id: seed.model.provider },
           },
         ]
       : [],
@@ -145,22 +218,14 @@ function createQueryClient(seed?: Automation): QueryClient {
   return queryClient;
 }
 
-function readAutomations(queryClient: QueryClient): Automation[] {
-  return readWorkspace(queryClient).automations;
-}
-
 function readWorkspace(queryClient: QueryClient): WorkspaceState {
-  const workspace = queryClient.getQueryData<WorkspaceState>(workspaceQueries.stateKey());
-  if (!workspace) throw new Error("Workspace state was not cached");
-  return workspace;
+  return queryClient.getQueryData<WorkspaceState>(workspaceQueries.stateKey())!;
 }
 
 function readSessions(queryClient: QueryClient): SessionsState {
-  const sessions = queryClient.getQueryData<SessionsState>(sessionQueries.stateKey());
-  if (!sessions) throw new Error("Sessions state was not cached");
-  return sessions;
+  return queryClient.getQueryData<SessionsState>(sessionQueries.stateKey())!;
 }
 
 function readSessionSnapshot(queryClient: QueryClient): SessionState | undefined {
-  return queryClient.getQueryData<SessionState>(["sessions", "detail", automation.id]);
+  return queryClient.getQueryData<SessionState>(sessionQueries.detail(automation.id).queryKey);
 }

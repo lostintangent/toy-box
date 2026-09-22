@@ -12,6 +12,7 @@ import type { WorkspaceAction } from "./state/actions";
 export type WorkspaceEvent =
   | WorkspaceAction
   | WorkerEvent
+  | { type: "workspace.connected"; revision: string }
   | { type: "channel.upserted"; channel: Channel }
   | { type: "channel.deleted"; channelId: string }
   | { type: "channel.members.changed" }

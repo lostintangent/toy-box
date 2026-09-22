@@ -4,7 +4,11 @@
 
 import type { SessionsState, SessionType } from "@sessions/model";
 import { getStateDatabase } from "@/server/database";
-import { hasHyperSession } from "@workspace/server/state/hyperSessions";
+import { getHyperSessionIds, hasHyperSession } from "@workspace/server/state/hyperSessions";
+import { getSessionStates } from "@workspace/server/state/sessions";
+import { getSettings } from "@workspace/server/state/settings";
+
+const RECENT_SESSION_LIMIT = 250;
 
 /** Read the public Session catalog with feature-owned visibility and relationships. */
 export async function readSessionCatalog(
@@ -16,11 +20,35 @@ export async function readSessionCatalog(
   // sides so a concurrent change cannot expose a backing Session as ordinary.
   const workersBefore = await readOwnership();
   const [sessions, worktrees] = await readCatalog();
-  const workersAfter = await readOwnership();
+  const [workersAfter, settings, database] = await Promise.all([
+    readOwnership(),
+    getSettings(),
+    getStateDatabase({ createIfMissing: false }),
+  ]);
+  const managed = database
+    ? await database<{ id: string }[]>`SELECT id FROM automations UNION SELECT id FROM inbox`
+    : [];
+  const workerSessionParents = { ...workersBefore, ...workersAfter };
+  const retainedSessionIds = new Set([
+    ...Object.keys(workerSessionParents),
+    ...managed.map(({ id }) => id),
+    ...getHyperSessionIds(),
+    ...settings.pinnedSessionIds,
+  ]);
+  // Managed sessions and pins do not consume the ordinary-history budget.
+  const recentSessions = sessions
+    .filter(({ id }) => !retainedSessionIds.has(id))
+    .sort(
+      (left, right) =>
+        right.updatedAt.getTime() - left.updatedAt.getTime() || left.id.localeCompare(right.id),
+    )
+    .slice(0, RECENT_SESSION_LIMIT);
+  for (const { id } of recentSessions) retainedSessionIds.add(id);
+  for (const id of Object.keys(getSessionStates())) retainedSessionIds.add(id);
   return {
-    sessions,
+    sessions: sessions.filter(({ id, provider }) => retainedSessionIds.has(id) || !provider),
     worktrees,
-    workerSessionParents: { ...workersBefore, ...workersAfter },
+    workerSessionParents,
   };
 }
 

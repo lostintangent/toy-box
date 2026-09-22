@@ -1,10 +1,16 @@
-import { agentHandleFromName, agentMatchesMentionQuery, type ChannelMember } from "@channels/model";
+import {
+  agentHandleFromName,
+  agentMatchesMentionQuery,
+  type AgentAvatar,
+  type ChannelMember,
+} from "@channels/model";
 
 export type AgentPickerSuggestion = {
   handle: string;
   name: string;
   description: string;
   group: string;
+  avatar?: AgentAvatar;
   agent?: ChannelMember;
   kind?: "everyone" | "create";
 };
@@ -26,6 +32,7 @@ function suggestionForAgent(agent: ChannelMember): AgentPickerSuggestion {
     name: agent.name,
     description: agent.role ?? "Onboards during the first engagement",
     group: "In this channel",
+    ...(agent.avatar ? { avatar: agent.avatar } : {}),
     agent,
   };
 }

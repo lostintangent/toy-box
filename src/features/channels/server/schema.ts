@@ -3,8 +3,13 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
   await db.unsafe(`
     CREATE TABLE IF NOT EXISTS channels (
       id              TEXT PRIMARY KEY,
-      title           TEXT NOT NULL,
+      name            TEXT NOT NULL,
+      purpose         TEXT,
       directory       TEXT,
+      model           TEXT NOT NULL CHECK (json_valid(model)),
+      lead_session_id TEXT NOT NULL UNIQUE,
+      checklist       TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(checklist)),
+      preview_url     TEXT,
       latest_sequence INTEGER NOT NULL DEFAULT 0
         CHECK (typeof(latest_sequence) = 'integer' AND latest_sequence >= 0),
       revision        INTEGER NOT NULL DEFAULT 0

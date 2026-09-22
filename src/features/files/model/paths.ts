@@ -1,3 +1,4 @@
+import { defaultStringifySearch } from "@tanstack/react-router";
 import { encodeFileRoute, type WorkspaceFile } from ".";
 
 export function getPathBasename(path: string): string {
@@ -44,6 +45,8 @@ export function toRelativePath(absolutePath: string, cwd?: string): string {
 
 export const createFileServeUrl = (file: WorkspaceFile) => createFileRouteUrl("/api/serve", file);
 export const createFileWatchUrl = (file: WorkspaceFile) => createFileRouteUrl("/api/watch", file);
+export const createWorkspaceFileUrl = (file: WorkspaceFile) =>
+  `/${defaultStringifySearch({ files: [file] })}`;
 
 /** Build a trailing-slash URL for resolving sibling file embeds. */
 export function createFileServeBaseUrl(file: WorkspaceFile): string {

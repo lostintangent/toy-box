@@ -6,19 +6,23 @@ export type SessionFilters = {
   showExternalSessions: boolean;
 };
 
-/** Apply visibility before the display limit so each provider can show its own history. */
+/** Keep pins visible; apply filters before limiting ordinary results to fifty. */
 export function filterSessionList(
   sessions: readonly Session[],
   filters: SessionFilters,
+  pinnedSessionIds: readonly string[] = [],
 ): Session[] {
   const query = filters.query.trim().toLowerCase();
+  const pinned = new Set(pinnedSessionIds);
+  let recentCount = 0;
   return sessions
     .filter(
       (session) =>
-        (filters.showExternalSessions || !session.id.includes(":")) &&
-        (!session.provider || !filters.hiddenProviders.includes(session.provider.id)) &&
-        (!query || session.title?.toLowerCase().includes(query)),
+        pinned.has(session.id) ||
+        ((filters.showExternalSessions || !session.id.includes(":")) &&
+          (!session.provider || !filters.hiddenProviders.includes(session.provider.id)) &&
+          (!query || session.title?.toLowerCase().includes(query))),
     )
     .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
-    .slice(0, 50);
+    .filter(({ id }) => pinned.has(id) || recentCount++ < 50);
 }

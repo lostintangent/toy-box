@@ -11,8 +11,8 @@ export function DeleteChannelDialog({
 }) {
   return (
     <DestructiveConfirmationDialog
-      title={`Delete #${channel.title}?`}
-      description="This removes the shared transcript and artifact index, and deletes each member's private channel session. Files in the working directory are not deleted."
+      title={`Delete #${channel.name}?`}
+      description="This removes the shared transcript and artifact index, and deletes the lead and each member's private channel session. Files in the working directory are not deleted."
       mutation={channelMutations.delete(channel.id)}
       onOpenChange={onOpenChange}
     />

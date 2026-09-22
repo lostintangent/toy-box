@@ -2,11 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import ts from "app-typescript";
-import { APP_DEPENDENCIES } from "../src/features/apps/runtime";
-import { readCompilerOptions } from "../src/features/apps/server/compiler/config";
+import { APP_DEPENDENCIES } from "../../src/features/apps/runtime";
+import { readCompilerOptions } from "../../src/features/apps/server/compiler/config";
 
 async function buildCli(): Promise<void> {
-  const projectRoot = resolve(Bun.fileURLToPath(new URL("../", import.meta.url)));
+  const projectRoot = resolve(Bun.fileURLToPath(new URL("../../", import.meta.url)));
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "toy-box-build-"));
   const appTypeLibrary = join(temporaryDirectory, "app-type-library");
 

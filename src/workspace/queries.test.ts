@@ -84,6 +84,33 @@ describe("workspace query cache", () => {
     }
   });
 
+  test("pin changes refresh session membership while identical echoes keep it fresh", () => {
+    const client = createQueryClient();
+    const initial = createEmptyWorkspaceState();
+    client.setQueryData(workspaceQueries.stateKey(), initial);
+    const sessionKey = sessionQueries.stateKey();
+    const providerKey = providerQueries.catalog().queryKey;
+    const historyKey = sessionQueries.detail("old-pin").queryKey;
+    client.setQueryData(providerKey, { providers: [], models: [] });
+    client.setQueryData(historyKey, createInitialSessionState());
+
+    for (const pinnedSessionIds of [["old-pin"], []]) {
+      client.setQueryData(sessionKey, createEmptySessionsState());
+      const event = {
+        type: "settings.changed" as const,
+        settings: { ...initial.settings, pinnedSessionIds },
+      };
+      applyWorkspaceEvent(client, event);
+      expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(providerKey)?.isInvalidated).toBe(false);
+      expect(client.getQueryState(historyKey)?.isInvalidated).toBe(false);
+
+      client.setQueryData(sessionKey, createEmptySessionsState());
+      applyWorkspaceEvent(client, event);
+      expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(false);
+    }
+  });
+
   test("preserves cache identity for structurally equal entity echoes", () => {
     const queryClient = createQueryClient();
     const entry = { id: "entry-a", createdAt: "2026-01-01T00:00:00.000Z" };

@@ -60,6 +60,7 @@ mock.module("@sessions/server/state/registry", () => ({
   deleteSessionIfExists: unused,
 }));
 mock.module("@workspace/server/events", () => ({
+  getWorkspaceRevision: unused,
   emitSessionNameUpdate: (sessionId: string, name: string) => {
     sideEffects.push(`title:${sessionId}:${name}`);
     emitMockWorkspaceEvent({

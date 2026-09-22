@@ -16,8 +16,9 @@ creating another source of transcript truth.
   reaches a terminal state.
   Accepted explicit and automatic title changes publish workspace metadata here; callers do not
   depend on a provider echoing a native rename event.
-  One deletion path releases the live runtime, provider persistence, worktree, session record, cached
-  snapshot, managed relationships, pin, and workspace projection before publishing the deletion.
+  One teardown path releases the live runtime, provider persistence, worktree, session record, cached
+  snapshot, managed relationships, pin, and workspace projection. Permanent deletion publishes that
+  the identity is gone; stable-ID recreation suppresses that publication and inserts the replacement.
   Native connections finish disconnecting before their history is deleted, so a final flush cannot
   recreate a deleted session.
 - `snapshots.ts` reconstructs `SessionState` through provider history projection and the canonical

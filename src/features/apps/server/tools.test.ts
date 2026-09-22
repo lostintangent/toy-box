@@ -56,6 +56,7 @@ test("app-owned state tools read and update only their owning app", async () => 
   expect(JSON.parse(String(readResult))).toMatchObject({
     ...owned,
     schema: { type: "object" },
+    previewUrl: `/?apps=${encodeURIComponent(JSON.stringify([owned.id]))}`,
   });
 
   await expect(
@@ -113,6 +114,9 @@ test("artifact validation compiles the invoking session's current .toy file", as
   expect(JSON.parse(String(valid))).toMatchObject({
     valid: true,
     path: "board.toy",
+    previewUrl: `/?files=${encodeURIComponent(
+      JSON.stringify([{ kind: "session", sessionId, path: "board.toy" }]),
+    )}`,
   });
 
   await Bun.write(artifactPath, "export default function Board() { return <MissingComponent />; }");

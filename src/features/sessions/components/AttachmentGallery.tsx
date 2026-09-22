@@ -57,7 +57,7 @@ export function AttachmentGallery({
             className={cn(
               thumbnailSizeClasses[size],
               "flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted transition-colors",
-              dataUrl && "hover:border-user-accent",
+              dataUrl && "hover:border-accent",
             )}
           >
             {dataUrl ? (
@@ -151,7 +151,7 @@ function AttachmentCarouselControls({
           </Button>
           <span
             aria-live="polite"
-            className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-user-accent px-2 py-0.5 text-xs text-user-accent-foreground"
+            className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-accent px-2 py-0.5 text-xs text-accent-foreground"
           >
             {currentPage + 1} of {totalPages}
           </span>

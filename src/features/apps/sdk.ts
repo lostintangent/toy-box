@@ -1,6 +1,13 @@
 /** Complete compile-time contract for the authored `@toy-box/sdk` module. */
 
-import type { ComponentProps, ReactElement, ReactNode } from "react";
+import type {
+  ComponentProps,
+  ComponentPropsWithoutRef,
+  ForwardRefExoticComponent,
+  ReactElement,
+  ReactNode,
+  RefAttributes,
+} from "react";
 import type { JSONType } from "zod";
 import type { WorkspaceFile, WorkspaceFileMode } from "@files/model";
 import type { AppInstance, AppShare } from "@apps/model";
@@ -57,6 +64,8 @@ export declare function AppEmptyState(
 
 export declare function AppAlert(props: ComponentProps<"div">): ReactElement;
 
+export declare function AppSkeleton(props: ComponentProps<"div">): ReactElement;
+
 type AppButtonProps = ComponentProps<"button"> & {
   variant?:
     | "default"
@@ -71,6 +80,54 @@ type AppButtonProps = ComponentProps<"button"> & {
 };
 
 export declare function AppButton(props: AppButtonProps): ReactElement;
+
+export declare function AppToggle(
+  props: Omit<ComponentProps<"button">, "value"> & {
+    pressed?: boolean;
+    defaultPressed?: boolean;
+    onPressedChange?: (pressed: boolean) => void;
+    variant?: "default" | "outline" | null;
+    size?: "default" | "sm" | "lg" | null;
+  },
+): ReactElement;
+
+export declare function AppSelect<Value>(props: {
+  children?: ReactNode;
+  value?: Value | null;
+  defaultValue?: Value | null;
+  onValueChange?: (value: Value) => void;
+  name?: string;
+  required?: boolean;
+  disabled?: boolean;
+}): ReactElement;
+
+export declare function AppSelectTrigger(
+  props: ComponentProps<"button"> & { size?: "sm" | "default" },
+): ReactElement;
+
+export declare function AppSelectValue(
+  props: ComponentProps<"span"> & { placeholder?: ReactNode },
+): ReactElement;
+
+export declare function AppSelectContent(
+  props: ComponentProps<"div"> & {
+    side?: "top" | "right" | "bottom" | "left";
+    sideOffset?: number;
+    align?: "start" | "center" | "end";
+    alignOffset?: number;
+  },
+): ReactElement;
+
+export declare function AppSelectItem<Value>(
+  props: ComponentProps<"div"> & { value: Value; disabled?: boolean },
+): ReactElement;
+
+export declare const AppScrollableFade: ForwardRefExoticComponent<
+  ComponentPropsWithoutRef<"div"> & {
+    axis?: "horizontal" | "vertical";
+    rootClassName?: string;
+  } & RefAttributes<HTMLElement>
+>;
 
 export declare function AppSessionToggle(
   props: Omit<AppButtonProps, "aria-pressed" | "onClick" | "type"> & {

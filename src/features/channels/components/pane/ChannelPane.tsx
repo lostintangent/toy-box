@@ -6,10 +6,9 @@ import type { Channel } from "@channels/model";
 import { channelQueries } from "@channels/queries";
 import { useChannel } from "@channels/useChannel";
 import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
-import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
 import { TranscriptSkeleton } from "@sessions/components/transcript/TranscriptSkeleton";
 import { ChannelComposer } from "./ChannelComposer";
-import { ChannelMenu } from "./ChannelMenu";
+import { ChannelOverview } from "./ChannelOverview";
 import { ChannelTranscript } from "./transcript/ChannelTranscript";
 
 export function ChannelPane({
@@ -30,14 +29,14 @@ export function ChannelPane({
   if (!channel) return <ChannelUnavailable />;
   const channelMembers = members.filter((member) => member.channelId === channelId);
   const detailFallback = (
-    <div className="min-h-0 flex-1">
+    <div className="col-start-1 row-start-1 min-h-0">
       <TranscriptSkeleton />
     </div>
   );
 
   return (
     <CatchBoundary getResetKey={() => channelId} errorComponent={ChannelPaneError}>
-      <div className="flex h-full min-h-0 flex-col bg-background">
+      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_auto] grid-rows-[minmax(0,1fr)_auto] bg-background">
         <ClientOnly fallback={detailFallback}>
           <Suspense fallback={detailFallback}>
             <ChannelDetail
@@ -49,7 +48,7 @@ export function ChannelPane({
           </Suspense>
         </ClientOnly>
 
-        <div className="shrink-0 border-t bg-background px-4 pt-4 md:pb-4">
+        <div className="col-start-1 row-start-2 shrink-0 border-t bg-background px-4 pt-4 md:pb-4">
           <ChannelComposer
             channel={channel}
             members={channelMembers}
@@ -76,18 +75,17 @@ function ChannelDetail({
 
   return (
     <>
-      <PaneActions>
-        <ChannelMenu
-          channel={channel}
-          members={state.members}
-          artifacts={state.artifacts}
-          variant={variant}
-        />
-      </PaneActions>
-      <div className="min-h-0 flex-1">
+      <ChannelOverview
+        channel={channel}
+        lead={state.lead}
+        members={state.members}
+        artifacts={state.artifacts}
+        variant={variant}
+      />
+      <div className="col-start-1 row-start-1 min-h-0">
         <ChannelTranscript
           messages={state.messages}
-          members={state.members}
+          agents={[state.lead, ...state.members]}
           scrollToBottomRef={scrollToBottomRef}
           onLoadPrevious={loadPrevious}
         />

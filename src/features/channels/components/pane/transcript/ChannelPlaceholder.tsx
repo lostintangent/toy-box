@@ -2,7 +2,7 @@ import { CloudPlaceholder, type Ink } from "@/shared/components/ink-cloud/CloudP
 
 /** Two inks converging: the user's rising from below, the agents' descending from above. */
 const INKS: Ink[] = [
-  { color: "var(--user-accent)", home: { x: 0, y: 26 }, drift: { x: 0, y: -44 } },
+  { color: "var(--accent)", home: { x: 0, y: 26 }, drift: { x: 0, y: -44 } },
   { color: "var(--agent-accent)", home: { x: 0, y: -26 }, drift: { x: 0, y: 44 } },
 ];
 
@@ -13,8 +13,8 @@ export function ChannelPlaceholder() {
       className="absolute inset-0"
       inks={INKS}
       reaction="stir"
-      title="Start a group conversation"
-      description="Describe the focus of this channel, and then when ready, type @ to invite and create agents"
+      title="Your lead is getting started"
+      description="Send a message or type @ to add a member"
     />
   );
 }

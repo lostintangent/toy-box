@@ -8,7 +8,11 @@ test("Channel list events are idempotent and project unread state for unopened C
   const queryClient = new QueryClient();
   const channel: Channel = {
     id: "channel",
-    title: "Planning",
+    name: "Planning",
+    purpose: "Prepare the release plan.",
+    model: { provider: "copilot", name: "gpt-5.5" },
+    leadId: "lead",
+    checklist: [],
     latestSequence: 0,
     seenThrough: 0,
     updatedAt: "2026-09-05T12:00:00.000Z",

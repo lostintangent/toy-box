@@ -98,7 +98,7 @@ function WorkerItem({
         role="listitem"
         onMouseEnter={preview.onMouseEnter}
         onMouseLeave={preview.onMouseLeave}
-        className="flex items-center gap-2 rounded-sm px-2 py-1 text-xs hover:bg-accent"
+        className="flex items-center gap-2 rounded-sm px-2 py-1 text-xs hover:bg-accent/50 hover:text-accent-foreground"
       >
         {running ? (
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
@@ -108,10 +108,11 @@ function WorkerItem({
         <span className="min-w-0 flex-1 truncate">{name}</span>
         <InputGroupButton
           size="icon-xs"
+          variant="destructive-ghost"
           aria-label={`${action} ${name}`}
           title={`${action} worker`}
           disabled={cancelMutation.isPending}
-          className="size-5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          className="size-5"
           onMouseEnter={(event) => {
             event.stopPropagation();
             preview.close();

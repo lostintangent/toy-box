@@ -9,7 +9,9 @@ import {
   installAppInputSchema,
   updateAppInputSchema,
 } from "@apps/model";
+import { createWorkspaceAppUrl } from "@apps/model/paths";
 import { sessionFile } from "@files/model";
+import { createWorkspaceFileUrl } from "@files/model/paths";
 
 const listAppDefinitionsTool = defineTool("list_app_definitions", {
   description: "Lists installed Toy Box app definitions, including state schemas and defaults.",
@@ -43,7 +45,7 @@ const listAppsTool = defineTool("list_apps", {
 
 const getAppTool = defineTool("get_app", {
   description:
-    "Gets an app's complete state, revision, and JSON Schema. Pass its revision as update_app.expectedRevision.",
+    "Gets an app's complete state, revision, JSON Schema, and direct preview URL. Pass its revision as update_app.expectedRevision.",
   parameters: appIdInputSchema,
   handler: async ({ appId }) => {
     return JSON.stringify(await getApp(appId));
@@ -74,7 +76,7 @@ const registerAppTool = defineTool("register_app", {
 
 const validateArtifactAppTool = defineTool("validate_artifact_app", {
   description:
-    "Typechecks and compiles a .toy app in the current session without registering or saving it.",
+    "Typechecks and compiles a .toy app in the current session without registering it, then returns its direct preview URL.",
   parameters: z
     .object({
       path: artifactAppPathSchema.describe(
@@ -85,8 +87,9 @@ const validateArtifactAppTool = defineTool("validate_artifact_app", {
   handler: async ({ path }, invocation) => {
     try {
       const apps = await import("@apps/server");
-      await apps.getArtifactAppBundle(sessionFile(invocation.sessionId, path));
-      return JSON.stringify({ valid: true, path });
+      const file = sessionFile(invocation.sessionId, path);
+      await apps.getArtifactAppBundle(file);
+      return JSON.stringify({ valid: true, path, previewUrl: createWorkspaceFileUrl(file) });
     } catch (error) {
       return JSON.stringify({
         valid: false,
@@ -98,7 +101,8 @@ const validateArtifactAppTool = defineTool("validate_artifact_app", {
 });
 
 const createAppTool = defineTool("create_app", {
-  description: "Creates a saved instance of an installed Toy Box app definition.",
+  description:
+    "Creates a saved instance of an installed Toy Box app definition and returns its direct preview URL.",
   parameters: createAppInputSchema,
   handler: async (input) => {
     const apps = await import("@apps/server");
@@ -108,13 +112,14 @@ const createAppTool = defineTool("create_app", {
       definitionId: app.definitionId,
       title: app.title,
       saved: true,
+      previewUrl: createWorkspaceAppUrl(app.id),
     });
   },
 });
 
 const installAppTool = defineTool("install_app", {
   description:
-    "Installs an app definition from a public GitHub Gist and creates its first saved instance.",
+    "Installs an app definition from a public GitHub Gist and creates its first saved instance with a direct preview URL.",
   parameters: installAppInputSchema,
   handler: async (input) => {
     const apps = await import("@apps/server");
@@ -125,6 +130,7 @@ const installAppTool = defineTool("install_app", {
       appId: app.id,
       title: app.title,
       saved: true,
+      previewUrl: createWorkspaceAppUrl(app.id),
     });
   },
 });
@@ -168,7 +174,7 @@ export function createAppStateTools(appId?: string): Tool<any>[] {
     listAppsTool,
     defineTool("get_app", {
       description:
-        "Gets the owning app's state, revision, and JSON Schema. Pass its revision as update_app.expectedRevision.",
+        "Gets the owning app's state, revision, JSON Schema, and direct preview URL. Pass its revision as update_app.expectedRevision.",
       parameters: z.object({}).strict(),
       handler: async () => JSON.stringify(await getApp(appId)),
     }),
@@ -200,5 +206,5 @@ async function getApp(appId: string) {
   const [app, definitions] = await Promise.all([apps.getApp(appId), apps.listAppDefinitions()]);
   const definition = definitions.find(({ id }) => id === app.definitionId);
   if (!definition) throw new Error(`App definition "${app.definitionId}" was not found.`);
-  return { ...app, schema: definition.state.schema };
+  return { ...app, schema: definition.state.schema, previewUrl: createWorkspaceAppUrl(app.id) };
 }

@@ -510,7 +510,9 @@ function Row({
       style={{ paddingLeft: depth * 14 + 8 }}
       className={cn(
         "group flex items-center gap-1 rounded-sm pr-2 text-sm",
-        selected && "bg-accent text-accent-foreground",
+        selected
+          ? "bg-accent text-accent-foreground"
+          : "hover:bg-accent/50 hover:text-accent-foreground",
       )}
     >
       {onToggle ? (
@@ -519,11 +521,11 @@ function Row({
           onClick={onToggle}
           aria-label={expanded ? "Collapse" : "Expand"}
           aria-expanded={expanded}
-          className="shrink-0 rounded p-0.5 hover:bg-accent"
+          className="shrink-0 rounded p-0.5"
         >
           <ChevronRight
             className={cn(
-              "h-3.5 w-3.5 text-muted-foreground transition-transform",
+              "h-3.5 w-3.5 text-muted-foreground transition-transform group-hover:text-accent-foreground",
               expanded && "rotate-90",
             )}
           />
@@ -537,10 +539,15 @@ function Row({
         disabled={!onActivate}
         className={cn(
           "flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left",
-          onActivate ? "hover:text-accent-foreground" : "pointer-events-none",
+          !onActivate && "pointer-events-none",
         )}
       >
-        <Icon className={cn("h-4 w-4 shrink-0 text-muted-foreground", spin && "animate-spin")} />
+        <Icon
+          className={cn(
+            "h-4 w-4 shrink-0 text-muted-foreground group-hover:text-accent-foreground",
+            spin && "animate-spin",
+          )}
+        />
         <span className={cn("truncate", muted && "text-muted-foreground")}>{label}</span>
       </button>
       {onCreateFile && (

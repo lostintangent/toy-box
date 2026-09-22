@@ -11,40 +11,33 @@ continuity, and an SDK for composing workspace sessions, files, and panes. It ha
 two storage and ownership models:
 
 - **Artifact apps** are `*.toy` files in the current session's artifacts folder.
-  Each file is a stateless, session-owned artifact with no manifest,
-  registration, saved instance, pending shares, or app-owned workers.
-- An **installed app** is a reusable `app.tsx` plus `app.json` definition under
-  `~/.toy-box/apps/`. Its saved instances have durable state and global workspace
-  identity.
+  Each file is session-owned and has no manifest, registration, saved instance,
+  durable app state, pending shares, or app-owned workers.
+- An **installed definition** is a reusable `app.tsx` plus `app.json` under
+  `~/.toy-box/apps/`. Each saved instance has its own durable state and global
+  workspace identity.
 
-Use ordinary filesystem tools to author either kind. Use
-`validate_artifact_app` for artifact apps and `register_app` for installed apps.
-These app files are authored extensions, not Toy Box repository changes. Do not
-invoke repository code-review skills or run repository build, lint, typecheck,
-or test commands; artifact validation and installed-app registration are the
-complete code-quality gates.
+Use ordinary filesystem tools to author either kind. These app files are
+authored extensions, not Toy Box repository changes. Do not invoke repository
+code-review skills or run repository build, lint, typecheck, or test commands.
+Artifact validation and installed-app registration are the complete
+code-quality gates.
 Do not inspect Toy Box source code or its database to discover the app contract,
 and never edit SQLite directly.
 
+Before writing TSX for either kind, read
+[references/runtime.md](references/runtime.md) completely. It is the
+authoritative contract for available libraries, the design system, and the app
+SDK.
+
 ## Mental Model
 
-- An **artifact app** is an ordinary session file rendered by the existing editor
-  pane. Its React state is mount-local and resets when the surface remounts.
-- A **definition** is trusted code, metadata, and one state contract stored on disk.
-  Registering it validates and activates the current files. Revising it changes
-  every instance that uses it.
-- An **instance** is a saved, reopenable use of a definition with its own title
-  and small durable JSON state. One definition may have many instances.
 - A **share** is MIME-typed JSON content any app surface can offer to a saved app.
   Definitions declare what they accept; pending shares survive while the receiving
   app is closed and do not execute until that app deliberately acts on them.
-- The **design system** combines inherited theme tokens, scoped Tailwind, and
-  provided components for common controls, feedback, model selection, and
-  file and location selection.
-- The **SDK** provides reactive app state and workspace data, the shared live-file
-  lifecycle, and actions over sessions, files, and panes. Portable actions and
-  outgoing shares work in both app kinds; durable state, received shares, and
-  app-owned workers require a saved instance.
+- The **SDK** is the app's boundary to Toy Box-owned workspace state, files,
+  sessions, workers, panes, shares, and saved app state. It does not replace
+  standard browser APIs. Available SDK capabilities depend on the app kind.
 - Ordinary sessions are durable and user-visible. Workers are hidden sessions
   owned by a session, app, or file; their owner governs them independently of
   whether they are ephemeral.
@@ -65,20 +58,13 @@ uniquely named `.toy` files in the same session.
 
 ## Author or Revise an Artifact App
 
-1. Before writing TSX, read
-   [references/runtime.md](references/runtime.md) completely. It is the
-   authoritative contract for available libraries, the design system, and which
-   SDK capabilities each app kind owns.
-2. Choose a concise relative path ending in `.toy`, then create or patch that
+1. Choose a concise relative path ending in `.toy`, then create or patch that
    file inside the current session's artifacts folder from the system instructions.
    For a revision, read and preserve unrelated behavior in the existing file.
-3. Build one coherent surface. Use React state for interaction and mount-local
-   data. Use `useWorkspace`, `useFile`, and `useAppActions` for portable host
-   capabilities, and `AppSharePicker` to send content to compatible saved apps.
-   Do not use `useApp`, received shares, or app-owned worker actions; those require
-   a saved app instance. File-owned workers remain available through `useFile` for
-   session files the artifact presents.
-4. After every complete write, call `validate_artifact_app` with the path
+2. Build one coherent surface. Keep interaction state local and use only the
+   portable capabilities described by the runtime reference. Artifact apps have
+   no saved instance, durable app state, received shares, or app-owned workers.
+3. After every complete write, call `validate_artifact_app` with the path
    relative to the session artifacts folder:
 
    ```json
@@ -87,10 +73,10 @@ uniquely named `.toy` files in the same session.
 
    Validation reads the current file, derives stateless SDK types, typechecks,
    and compiles it without registering or saving anything. On failure, patch the
-   source-positioned diagnostics and validate again. On success, the file is
-   ready to render through its ordinary session editor pane.
+   source-positioned diagnostics and validate again. On success, use the returned
+   preview URL for hands-on QA.
 
-5. Toy Box surfaces session artifacts automatically. Never call `open_file` for
+4. Toy Box surfaces session artifacts automatically. Never call `open_file` for
    a `.toy` file; that tool is only for machine files and would create a second,
    non-executing pane for the same path. Exercise the artifact only when browser
    controls are actually available because successful validation proves
@@ -130,13 +116,8 @@ An installed definition contains exactly two files:
 ```
 
 Use a lowercase ID containing only letters, digits, and hyphens. `description`
-and `icon` are optional. Supported icons are `Archive`, `ArrowLeft`,
-`ArrowRight`, `Bot`, `Check`, `ChevronDown`, `ChevronLeft`, `ChevronRight`,
-`Circle`, `CircleDot`, `Clock`, `Feather`, `File`, `FolderOpen`,
-`GripVertical`, `Kanban`, `Loader2`, `MessageSquare`, `MoreHorizontal`,
-`PanelTop`, `Pencil`, `Plus`, `Regex`, `Search`, `Settings`, `Sparkles`,
-`Trash2`, and `X`. These exact names are also available as `lucide-react`
-imports in `app.tsx`.
+and `icon` are optional. Choose an icon from the curated names in the runtime
+reference.
 
 `color` is an optional six-digit hex color for new instances' Apps-panel icons
 and defaults to neutral gray. `state.schema` is JSON Schema; omit the redundant
@@ -152,34 +133,26 @@ Both the schema and each state value must fit under 64 KiB.
 1. Call `list_app_definitions` before choosing an ID. For a revision, read the
    existing `app.json` and `app.tsx`; use `list_apps` and `get_app` when
    instance state matters.
-2. Before writing TSX, read
-   [references/runtime.md](references/runtime.md) completely. It is the
-   authoritative contract for available libraries, the design system, and the
-   app SDK.
-3. Design one coherent surface. Keep reopenable user data in app state and
-   interaction-only state local to the mounted component. Choose how agent work
-   should live:
-   - Use `createSession` for durable, user-visible work that belongs in the
-     session list.
-   - Use `spawnWorker` for hidden implementation work whose result belongs in
-     the app. It is ephemeral by default; retain it only for multi-turn work.
-   - Use `useFile(...).spawnWorker` when the result belongs in a
-     session file the app is presenting.
-4. Create or patch only `app.json` and `app.tsx`. Preserve unrelated manifest
+2. Design one coherent surface. Keep reopenable user data in app state and
+   interaction-only state local to the mounted component. Use the runtime
+   ownership guidance to choose durable sessions, app-owned workers, or
+   file-owned workers.
+3. Create or patch only `app.json` and `app.tsx`. Preserve unrelated manifest
    values and behavior when revising a definition.
-5. After all writes, call `register_app` with
+4. After all writes, call `register_app` with
    `{ "id": "<definition-id>" }`. Registration synchronously validates the
    manifest and state default, derives the TSX state type from the schema,
    typechecks and compiles the TSX, and returns the result:
    - On failure, read the source-positioned diagnostics, patch the files, and
      register again. The active revision remains unchanged.
    - On success, the new revision is active for every instance.
-6. Call `create_app` only when the request needs a new saved instance; revising a
+5. Call `create_app` only when the request needs a new saved instance; revising a
    definition already updates its existing instances. Use `update_app` only for
    an instance's title, icon color, or state. Deleting an instance cancels its
    app-owned worker sessions but does not delete ordinary sessions it created.
-   Open and exercise the app when possible because successful registration proves
-   compilation, not runtime behavior.
+   Use the `previewUrl` returned by `create_app` or `get_app` to open and exercise
+   the app when possible because successful registration proves compilation, not
+   runtime behavior.
 
 ## Promote an Artifact App
 

@@ -25,8 +25,8 @@ import { InboxEntries } from "./InboxEntries";
 
 /** Requests leaving the composer and fanning out to their routes. */
 const DISPATCH_INKS: Ink[] = [
-  { color: "var(--user-accent)", home: { x: -36, y: 4 }, drift: { x: -56, y: -40 } },
-  { color: "var(--user-accent)", home: { x: 36, y: 4 }, drift: { x: 56, y: -40 } },
+  { color: "var(--accent)", home: { x: -36, y: 4 }, drift: { x: -56, y: -40 } },
+  { color: "var(--accent)", home: { x: 36, y: 4 }, drift: { x: 56, y: -40 } },
 ];
 /** An agent carrying a request through, now and then. */
 const TRAVELER: Traveler = { color: "var(--agent-accent)", interval: 3 };

@@ -2,29 +2,35 @@ import {
   agentHandleFromName,
   channelAttachmentSchema,
   channelAgentMetadataSchema,
-  channelMemberStatusSchema,
+  channelAgentStatusSchema,
+  channelLead,
+  channelChecklistItemSchema,
   channelSystemMessageContentSchema,
+  CHANNEL_LEAD_PROFILE,
+  unassignChannelChecklist,
   type Channel,
+  type ChannelAgentStatus,
   type ChannelAttachment,
   type ChannelArtifact,
+  type ChannelLead,
   type ChannelList,
   type ChannelMember,
-  type ChannelMemberStatus,
   type ChannelMessage,
   type ChannelReaction,
   type ChannelMessageSender,
   type ChannelState,
   type ChannelSystemMessageContent,
+  type ChannelChecklistItem,
   type CreateChannelInput,
   type RenameChannelInput,
+  type UpdateChannelInput,
 } from "@channels/model";
 import { machineFile, sessionFile } from "@files/model";
+import { modelConfigurationSchema } from "@providers/model";
 import { inStateTransaction } from "@/server/database";
 import { smallJsonSchema } from "@/shared/smallJson";
 import type { Worker } from "@workers/model";
 import { WorkerDatabase } from "@workers/server/database";
-
-const CHANNEL_ID_PREFIX = "toy-box-channel-";
 
 type AppendConversationMessageInput = {
   id: string;
@@ -43,7 +49,20 @@ type AppendSystemMessageInput = {
 
 type AppendMessageInput = AppendConversationMessageInput | AppendSystemMessageInput;
 
-/** Durable Channels, ordered messages, member read positions, and shared file references. */
+export type ChannelAgentRecord =
+  | (ChannelLead & {
+      channelId: string;
+      seenThrough: number;
+      isLead: true;
+    })
+  | (ChannelMember & {
+      seenThrough: number;
+      isLead: false;
+    });
+
+type ChannelAgentReference = Pick<ChannelAgentRecord, "id" | "channelId">;
+
+/** Durable Channels, ordered messages, agent read positions, and shared file references. */
 export class ChannelDatabase {
   constructor(private readonly db: Bun.SQL) {}
 
@@ -52,30 +71,51 @@ export class ChannelDatabase {
       this.db<ChannelRow[]>`SELECT * FROM channels ORDER BY updated_at DESC, id`,
       new WorkerDatabase(this.db).list("channel"),
     ]);
+    const channelsById = new Map(channels.map((row) => [row.id, row]));
     return {
       channels: channels.map(channelFromRow),
-      members: workers.map(channelMemberFromWorker),
+      members: workers.flatMap((worker) => {
+        const channel = channelsById.get(worker.channelId);
+        return !channel || worker.sessionId === channel.lead_session_id
+          ? []
+          : [channelMemberFromWorker(worker)];
+      }),
     };
   }
 
   async createChannel(input: CreateChannelInput): Promise<Channel> {
     const channel: Channel = {
-      id: `${CHANNEL_ID_PREFIX}${crypto.randomUUID()}`,
-      title: input.title,
+      id: crypto.randomUUID(),
+      name: input.name,
+      ...(input.purpose ? { purpose: input.purpose } : {}),
       ...(input.directory ? { directory: input.directory } : {}),
+      model: input.model,
+      leadId: crypto.randomUUID(),
+      checklist: [],
       latestSequence: 0,
       seenThrough: 0,
       updatedAt: new Date().toISOString(),
     };
-    await this.db`
-      INSERT INTO channels (
-        id, title, directory, latest_sequence, revision, seen_through, updated_at
-      )
-      VALUES (
-        ${channel.id}, ${channel.title}, ${channel.directory ?? null},
-        ${channel.latestSequence}, 0, ${channel.seenThrough}, ${channel.updatedAt}
-      )
-    `;
+    await inStateTransaction(this.db, async (db) => {
+      await db`
+        INSERT INTO channels (
+          id, name, purpose, directory, model, lead_session_id,
+          latest_sequence, revision, seen_through, updated_at
+        )
+        VALUES (
+          ${channel.id}, ${channel.name}, ${channel.purpose ?? null}, ${channel.directory ?? null},
+          ${JSON.stringify(channel.model)}, ${channel.leadId}, ${channel.latestSequence}, 0,
+          ${channel.seenThrough}, ${channel.updatedAt}
+        )
+      `;
+      await new WorkerDatabase(db).create({
+        type: "channel",
+        channelId: channel.id,
+        sessionId: channel.leadId,
+        ephemeral: false,
+        metadata: smallJsonSchema.parse(channelAgentMetadataSchema.parse({ seenThrough: 0 })),
+      });
+    });
     return channel;
   }
 
@@ -87,7 +127,7 @@ export class ChannelDatabase {
   async renameChannel(input: RenameChannelInput): Promise<Channel | null> {
     const [row] = await this.db<ChannelRow[]>`
       UPDATE channels
-      SET title = ${input.title}, updated_at = ${new Date().toISOString()}
+      SET name = ${input.name}, updated_at = ${new Date().toISOString()}
       WHERE id = ${input.channelId}
       RETURNING *
     `;
@@ -95,10 +135,15 @@ export class ChannelDatabase {
   }
 
   async deleteChannel(channelId: string): Promise<boolean> {
-    const rows = await this.db<{ id: string }[]>`
-      DELETE FROM channels WHERE id = ${channelId} RETURNING id
-    `;
-    return rows.length > 0;
+    return inStateTransaction(this.db, async (db) => {
+      const workerDatabase = new WorkerDatabase(db);
+      const workers = await workerDatabase.listForChannel(channelId);
+      for (const worker of workers) await workerDatabase.delete(worker.sessionId);
+      const rows = await db<{ id: string }[]>`
+        DELETE FROM channels WHERE id = ${channelId} RETURNING id
+      `;
+      return rows.length > 0;
+    });
   }
 
   async markUserSeen(channelId: string, sequence: number): Promise<Channel | null> {
@@ -120,13 +165,17 @@ export class ChannelDatabase {
 
   async getState(channelId: string, messageLimit: number): Promise<ChannelState | null> {
     return inStateTransaction(this.db, async (db) => {
-      const [row] = await db<Pick<ChannelRow, "revision">[]>`
-        SELECT revision FROM channels WHERE id = ${channelId}
-      `;
+      const [row] = await db<ChannelRow[]>`SELECT * FROM channels WHERE id = ${channelId}`;
       if (!row) return null;
+      const workers = await new WorkerDatabase(db).listForChannel(channelId);
+      const leadWorker = workers.find(({ sessionId }) => sessionId === row.lead_session_id);
+      if (!leadWorker) throw new Error("Channel lead is incomplete.");
       return {
         revision: row.revision,
-        members: await listMembers(db, channelId),
+        lead: channelLeadFromWorker(leadWorker),
+        members: workers
+          .filter(({ sessionId }) => sessionId !== row.lead_session_id)
+          .map(channelMemberFromWorker),
         messages: await listMessagesBefore(db, channelId, undefined, messageLimit),
         artifacts: await listArtifacts(db, channelId),
       };
@@ -138,13 +187,18 @@ export class ChannelDatabase {
   }
 
   async getMember(agentId: string) {
-    return getMember(this.db, agentId);
+    const agent = await getAgent(this.db, agentId);
+    return agent?.isLead ? null : agent;
+  }
+
+  async getAgent(agentId: string) {
+    return getAgent(this.db, agentId);
   }
 
   async createMember(worker: Extract<Worker, { type: "channel" }>) {
     return inStateTransaction(this.db, async (db) => {
       await requireChannel(db, worker.channelId);
-      await assertAgentNameAvailable(db, worker.channelId, worker.name);
+      await assertMemberNameAvailable(db, worker.channelId, worker.name);
       await new WorkerDatabase(db).create(worker);
       const member = channelMemberFromWorker(worker);
       const change = await appendMessage(db, {
@@ -167,7 +221,7 @@ export class ChannelDatabase {
     },
   ) {
     return inStateTransaction(this.db, async (db) => {
-      const worker = await requireChannelWorker(db, agentId);
+      const worker = await requireChannelMemberWorker(db, agentId);
       const current = channelAgentMetadataSchema.parse(worker.metadata);
       const { model: _currentModel, ...metadataWithoutModel } = current;
       const metadata = smallJsonSchema.parse(
@@ -179,7 +233,7 @@ export class ChannelDatabase {
         }),
       );
       const name = input.name ?? worker.name;
-      await assertAgentNameAvailable(db, worker.channelId, name, worker.sessionId);
+      await assertMemberNameAvailable(db, worker.channelId, name, worker.sessionId);
       if (!(await new WorkerDatabase(db).update(worker.sessionId, { name, metadata }))) {
         throw new Error("Agent not found.");
       }
@@ -196,9 +250,9 @@ export class ChannelDatabase {
     });
   }
 
-  async markMemberSeen(member: ChannelMember, sequence: number): Promise<void> {
+  async markAgentSeen(agent: ChannelAgentReference, sequence: number): Promise<void> {
     await inStateTransaction(this.db, async (db) => {
-      const worker = await requireChannelWorker(db, member.id);
+      const worker = await requireChannelWorker(db, agent.id);
       const metadata = channelAgentMetadataSchema.parse(worker.metadata);
       if (metadata.seenThrough >= sequence) return;
       await new WorkerDatabase(db).update(worker.sessionId, {
@@ -210,23 +264,81 @@ export class ChannelDatabase {
     });
   }
 
-  async setMemberStatus(member: ChannelMember, status?: ChannelMemberStatus) {
-    return changeMemberStatus(this.db, member, status);
+  async setAgentStatus(agent: ChannelAgentReference, status?: ChannelAgentStatus) {
+    return changeAgentStatus(this.db, agent, status);
   }
 
-  async clearWaitingMemberStatus(member: ChannelMember) {
-    return changeMemberStatus(this.db, member, undefined, "waiting");
+  async clearWaitingAgentStatus(agent: ChannelAgentReference) {
+    return changeAgentStatus(this.db, agent, undefined, "waiting");
+  }
+
+  async updateChannel(leadId: string, input: UpdateChannelInput) {
+    return inStateTransaction(this.db, async (db) => {
+      const [channel] = await db<ChannelRow[]>`
+        SELECT * FROM channels WHERE lead_session_id = ${leadId}
+      `;
+      if (!channel) throw new Error("Only the channel lead can update the channel.");
+      const purpose = input.purpose === undefined ? channel.purpose : input.purpose;
+      const checklist =
+        input.checklist ?? channelChecklistItemSchema.array().parse(JSON.parse(channel.checklist));
+      if (input.checklist) {
+        const agentIds = new Set(
+          (await new WorkerDatabase(db).listForChannel(channel.id)).map(
+            ({ sessionId }) => sessionId,
+          ),
+        );
+        assertChecklistOwners(checklist, agentIds);
+      }
+      const previewUrl =
+        input.previewUrl === undefined ? channel.preview_url : (input.previewUrl ?? null);
+      const serializedChecklist = JSON.stringify(checklist);
+      if (
+        purpose === channel.purpose &&
+        serializedChecklist === channel.checklist &&
+        previewUrl === channel.preview_url
+      ) {
+        return {
+          changed: false,
+          channel: channelFromRow(channel),
+        };
+      }
+      const [updated] = await db<ChannelRow[]>`
+        UPDATE channels
+        SET purpose = ${purpose}, checklist = ${serializedChecklist}, preview_url = ${previewUrl}
+        WHERE id = ${channel.id}
+        RETURNING *
+      `;
+      if (!updated) throw new Error("Channel not found.");
+      return {
+        changed: true,
+        channel: channelFromRow(updated),
+      };
+    });
   }
 
   async deleteMember(agentId: string) {
     return inStateTransaction(this.db, async (db) => {
-      const member = await getMember(db, agentId);
-      if (!member) return null;
+      const agent = await getAgent(db, agentId);
+      if (!agent || agent.isLead) return null;
       if (!(await new WorkerDatabase(db).delete(agentId))) return null;
-      const publicMember = channelMemberFromRecord(member);
+      const [channel] = await db<Pick<ChannelRow, "checklist">[]>`
+        SELECT checklist FROM channels WHERE id = ${agent.channelId}
+      `;
+      if (!channel) throw new Error("Channel not found.");
+      const checklist = unassignChannelChecklist(
+        channelChecklistItemSchema.array().parse(JSON.parse(channel.checklist)),
+        agentId,
+      );
+      const serializedChecklist = JSON.stringify(checklist);
+      if (serializedChecklist !== channel.checklist) {
+        await db`
+          UPDATE channels SET checklist = ${serializedChecklist} WHERE id = ${agent.channelId}
+        `;
+      }
+      const publicMember = channelMemberFromRecord(agent);
       const change = await appendMessage(db, {
         id: crypto.randomUUID(),
-        channelId: member.channelId,
+        channelId: agent.channelId,
         sender: { type: "system" },
         content: { type: "member_left", member: publicMember },
       });
@@ -234,7 +346,7 @@ export class ChannelDatabase {
     });
   }
 
-  async listMemberIds(channelId: string): Promise<string[]> {
+  async listAgentIds(channelId: string): Promise<string[]> {
     const rows = await this.db<{ session_id: string }[]>`
       SELECT session_id FROM workers
       WHERE worker_type = 'channel' AND channel_id = ${channelId}
@@ -334,11 +446,11 @@ export class ChannelDatabase {
           ${input.file.kind === "session" ? input.file.sessionId : null},
           ${input.file.path}, ${input.title}, ${new Date().toISOString()}
         )
-        ON CONFLICT
-        DO UPDATE SET title = excluded.title
+        ON CONFLICT DO UPDATE SET title = excluded.title
+        WHERE channel_artifacts.title <> excluded.title
         RETURNING kind, session_id, path, title
       `;
-      if (!row) throw new Error("Channel not found.");
+      if (!row) return { artifact: { file: input.file, title: input.title } };
       const artifact = artifactFromRow(row);
       const change = await appendMessage(db, {
         id: input.id,
@@ -399,17 +511,17 @@ async function appendMessage(db: Bun.SQL, input: AppendMessageInput) {
   };
 }
 
-async function changeMemberStatus(
+async function changeAgentStatus(
   db: Bun.SQL,
-  member: ChannelMember,
-  status: ChannelMemberStatus | undefined,
-  requiredState?: ChannelMemberStatus["state"],
+  agent: ChannelAgentReference,
+  status: ChannelAgentStatus | undefined,
+  requiredState?: ChannelAgentStatus["state"],
 ) {
   return inStateTransaction(db, async (transaction) => {
-    const worker = await requireChannelWorker(transaction, member.id);
+    const worker = await requireChannelWorker(transaction, agent.id);
     const metadata = channelAgentMetadataSchema.parse(worker.metadata);
     if (requiredState && metadata.status?.state !== requiredState) return null;
-    const nextStatus = status ? channelMemberStatusSchema.parse(status) : undefined;
+    const nextStatus = status ? channelAgentStatusSchema.parse(status) : undefined;
     if (JSON.stringify(metadata.status) === JSON.stringify(nextStatus)) return null;
     const { status: _currentStatus, ...rest } = metadata;
     await new WorkerDatabase(transaction).update(worker.sessionId, {
@@ -420,21 +532,31 @@ async function changeMemberStatus(
     });
     const [channel] = await transaction<Pick<ChannelRow, "revision">[]>`
       UPDATE channels SET revision = revision + 1
-      WHERE id = ${member.channelId}
+      WHERE id = ${agent.channelId}
       RETURNING revision
     `;
-    if (!channel) throw new Error("Channel membership is incomplete.");
+    if (!channel) throw new Error("Channel agent is incomplete.");
     return { status: nextStatus, revision: channel.revision };
   });
 }
 
-async function getMember(db: Bun.SQL, agentId: string) {
+async function getAgent(db: Bun.SQL, agentId: string): Promise<ChannelAgentRecord | null> {
   const worker = await new WorkerDatabase(db).get(agentId);
-  return worker?.type === "channel" ? channelMemberRecordFromWorker(worker) : null;
+  if (worker?.type !== "channel") return null;
+  const [channel] = await db<Pick<ChannelRow, "lead_session_id">[]>`
+    SELECT lead_session_id FROM channels WHERE id = ${worker.channelId}
+  `;
+  return channel ? channelAgentFromWorker(worker, channel.lead_session_id) : null;
 }
 
 async function listMembers(db: Bun.SQL, channelId: string): Promise<ChannelMember[]> {
-  return (await new WorkerDatabase(db).listForChannel(channelId)).map(channelMemberFromWorker);
+  const [channel] = await db<Pick<ChannelRow, "lead_session_id">[]>`
+    SELECT lead_session_id FROM channels WHERE id = ${channelId}
+  `;
+  if (!channel) return [];
+  return (await new WorkerDatabase(db).listForChannel(channelId))
+    .filter(({ sessionId }) => sessionId !== channel.lead_session_id)
+    .map(channelMemberFromWorker);
 }
 
 async function listMessagesBefore(
@@ -483,8 +605,13 @@ async function listArtifacts(db: Bun.SQL, channelId: string): Promise<ChannelArt
 
 type ChannelRow = {
   id: string;
-  title: string;
+  name: string;
+  purpose: string | null;
   directory: string | null;
+  model: string;
+  lead_session_id: string;
+  checklist: string;
+  preview_url: string | null;
   latest_sequence: number;
   revision: number;
   seen_through: number;
@@ -515,8 +642,13 @@ type ChannelArtifactRow =
 function channelFromRow(row: ChannelRow): Channel {
   return {
     id: row.id,
-    title: row.title,
+    name: row.name,
+    ...(row.purpose ? { purpose: row.purpose } : {}),
     ...(row.directory ? { directory: row.directory } : {}),
+    model: modelConfigurationSchema.parse(JSON.parse(row.model)),
+    leadId: row.lead_session_id,
+    checklist: channelChecklistItemSchema.array().parse(JSON.parse(row.checklist)),
+    ...(row.preview_url ? { previewUrl: row.preview_url } : {}),
     latestSequence: row.latest_sequence,
     seenThrough: row.seen_through,
     updatedAt: row.updated_at,
@@ -525,14 +657,15 @@ function channelFromRow(row: ChannelRow): Channel {
 
 function channelMemberFromRecord({
   seenThrough: _seenThrough,
+  isLead: _isLead,
   ...member
-}: ChannelMember & { seenThrough: number }) {
+}: Extract<ChannelAgentRecord, { isLead: false }>) {
   return member;
 }
 
 function channelMemberRecordFromWorker(worker: Extract<Worker, { type: "channel" }>) {
   const metadata = channelAgentMetadataSchema.parse(worker.metadata);
-  if (!worker.name) throw new Error("Channel agents require a name.");
+  if (!worker.name) throw new Error("Channel members require a name.");
   return {
     channelId: worker.channelId,
     id: worker.sessionId,
@@ -542,6 +675,26 @@ function channelMemberRecordFromWorker(worker: Extract<Worker, { type: "channel"
     ...(metadata.avatar ? { avatar: metadata.avatar } : {}),
     ...(metadata.status ? { status: metadata.status } : {}),
     seenThrough: metadata.seenThrough,
+    isLead: false as const,
+  };
+}
+
+function channelLeadFromWorker(worker: Extract<Worker, { type: "channel" }>): ChannelLead {
+  const metadata = channelAgentMetadataSchema.parse(worker.metadata);
+  return channelLead(worker.sessionId, metadata.status);
+}
+
+export function channelAgentFromWorker(
+  worker: Extract<Worker, { type: "channel" }>,
+  leadId: string,
+): ChannelAgentRecord {
+  if (worker.sessionId !== leadId) return channelMemberRecordFromWorker(worker);
+  const metadata = channelAgentMetadataSchema.parse(worker.metadata);
+  return {
+    ...channelLead(worker.sessionId, metadata.status),
+    channelId: worker.channelId,
+    seenThrough: metadata.seenThrough,
+    isLead: true,
   };
 }
 
@@ -560,19 +713,36 @@ async function requireChannelWorker(
   return worker;
 }
 
+async function requireChannelMemberWorker(
+  db: Bun.SQL,
+  sessionId: string,
+): Promise<Extract<Worker, { type: "channel" }>> {
+  const worker = await requireChannelWorker(db, sessionId);
+  const [channel] = await db<Pick<ChannelRow, "lead_session_id">[]>`
+    SELECT lead_session_id FROM channels WHERE id = ${worker.channelId}
+  `;
+  if (!channel || channel.lead_session_id === sessionId) {
+    throw new Error("Channel member not found.");
+  }
+  return worker;
+}
+
 async function requireChannel(db: Bun.SQL, channelId: string): Promise<void> {
   const rows = await db<{ id: string }[]>`SELECT id FROM channels WHERE id = ${channelId}`;
   if (rows.length === 0) throw new Error("Channel not found.");
 }
 
-async function assertAgentNameAvailable(
+async function assertMemberNameAvailable(
   db: Bun.SQL,
   channelId: string,
   name: string | undefined,
   exceptSessionId?: string,
 ): Promise<void> {
-  if (!name) throw new Error("Channel agents require a name.");
+  if (!name) throw new Error("Channel members require a name.");
   const handle = agentHandleFromName(name);
+  if (handle === agentHandleFromName(CHANNEL_LEAD_PROFILE.name)) {
+    throw new Error(`The intrinsic lead already uses the @${handle} mention.`);
+  }
   const workers = await new WorkerDatabase(db).listForChannel(channelId);
   const conflict = workers.find(
     (worker) =>
@@ -632,4 +802,16 @@ function reactionsByMessage(rows: ChannelReactionRow[]): Map<number, ChannelReac
     reactions.set(row.message_sequence, messageReactions);
   }
   return reactions;
+}
+
+function assertChecklistOwners(
+  checklist: readonly ChannelChecklistItem[],
+  agentIds: ReadonlySet<string>,
+): void {
+  for (const item of checklist) {
+    if (item.ownerId && !agentIds.has(item.ownerId)) {
+      throw new Error("Checklist owners must be the channel lead or a current member.");
+    }
+    if (item.children) assertChecklistOwners(item.children, agentIds);
+  }
 }

@@ -83,7 +83,7 @@ export function FillPicker({
                 className={cn(
                   "p-1 rounded transition-all",
                   currentStyle === style
-                    ? "bg-accent ring-1 ring-accent"
+                    ? "bg-accent text-accent-foreground ring-1 ring-accent"
                     : "hover:bg-foreground/10",
                 )}
               >
@@ -112,7 +112,7 @@ export function FillPicker({
                 className={cn(
                   "w-6 h-6 rounded border transition-all",
                   fill?.color === color && currentStyle !== "none"
-                    ? "border-user-accent ring-1 ring-user-accent ring-offset-1 ring-offset-background"
+                    ? "border-accent ring-1 ring-accent ring-offset-1 ring-offset-background"
                     : "border-foreground/20 hover:border-foreground/40",
                 )}
                 style={{ backgroundColor: color }}

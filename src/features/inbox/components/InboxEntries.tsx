@@ -178,12 +178,12 @@ function InboxEntryAction({
       )}
       <Button
         type="button"
-        variant="ghost"
+        variant="destructive-ghost"
         size="icon"
         disabled={deleting}
         aria-label={label ? `Delete inbox entry: ${label}` : "Delete inbox entry"}
         className={cn(
-          "absolute inset-0 h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive",
+          "absolute inset-0 h-8 w-8",
           hasStatus &&
             "pointer-events-none opacity-0 transition-opacity group-hover/inbox:pointer-events-auto group-hover/inbox:opacity-100 group-focus-within/inbox:pointer-events-auto group-focus-within/inbox:opacity-100",
         )}

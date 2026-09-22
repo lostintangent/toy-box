@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
+import { createIsomorphicFn } from "@tanstack/react-start";
 import type { CSSProperties, ReactNode } from "react";
 import { domMax, LazyMotion, MotionConfig } from "motion/react";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
@@ -9,6 +10,11 @@ import { TooltipProvider } from "@/shared/components/ui/tooltip";
 import appCss from "./styles.css?url";
 
 const APP_TITLE = import.meta.env.VITE_APP_TITLE;
+
+const readWorkspaceRevision = createIsomorphicFn().server(async () => {
+  const { getWorkspaceRevision } = await import("@workspace/server/events");
+  return getWorkspaceRevision();
+});
 
 type RouterContext = {
   queryClient: QueryClient;
@@ -24,6 +30,8 @@ function RouteLoadingIndicator() {
 }
 
 export const Route = createRootRouteWithContext<RouterContext>()({
+  // Capture before any route loader reads the snapshots sent through SSR.
+  beforeLoad: async () => ({ workspaceRevision: await readWorkspaceRevision() }),
   loader: async ({ context }) => {
     await context.queryClient.ensureQueryData(workspaceQueries.state());
   },
@@ -55,8 +63,8 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 
 function RootDocument({ children }: { children: ReactNode }) {
   const accentColor = useWorkspaceSelector((workspace) => workspace.settings.accentColor);
-  const style: CSSProperties & { "--user-accent": string } = {
-    "--user-accent": accentColor,
+  const style: CSSProperties & { "--accent": string } = {
+    "--accent": accentColor,
   };
 
   // Motion+ uses full motion elements, which are incompatible with LazyMotion strict mode.

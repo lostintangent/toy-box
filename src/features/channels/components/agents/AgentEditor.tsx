@@ -94,8 +94,8 @@ function AgentForm({ agent, onClose }: { agent: ChannelMember; onClose: () => vo
         <DialogFooter>
           <Button
             type="button"
-            variant="ghost"
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive sm:mr-auto"
+            variant="destructive-ghost"
+            className="sm:mr-auto"
             onClick={() => setConfirmingDelete(true)}
           >
             <Trash2 /> Remove agent

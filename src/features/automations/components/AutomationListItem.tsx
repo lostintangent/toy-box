@@ -24,22 +24,21 @@ export function AutomationListItem({
   onEdit,
 }: AutomationListItemProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const runMutation = useMutation(automationMutations.run(automation.id));
+  const runMutation = useMutation(automationMutations.run(automation));
   const activity = useWorkspaceSessionActivity(automation.id);
-  const { running: isRunning, unread: hasUnreadActivity } = activity;
+  const isRunning = activity.running || runMutation.isPending;
+  const hasUnreadActivity = activity.unread;
   const canOpenSession = Boolean(automation.lastRunAt) || isRunning || hasUnreadActivity;
 
   function handleRun() {
-    runMutation.mutate(undefined, {
-      onSuccess: ({ sessionId }) => onOpenSession(sessionId),
-    });
+    runMutation.mutate(crypto.randomUUID());
   }
 
   return (
     <>
       <SidebarSessionItem
         sessionId={automation.id}
-        activity={activity}
+        activity={{ ...activity, running: isRunning }}
         title={automation.title}
         time={
           isRunning ? (

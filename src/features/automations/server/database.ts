@@ -66,13 +66,15 @@ export class AutomationDatabase {
     return rows.length > 0;
   }
 
-  async recordRunFinish(automationId: string, finishedAt: Date): Promise<void> {
+  async recordRunFinish(automationId: string, finishedAt: Date): Promise<Automation | null> {
     const finishedAtIso = finishedAt.toISOString();
-    await this.db`
+    const [row] = await this.db<AutomationRow[]>`
       UPDATE automations
       SET last_run_at = ${finishedAtIso}, updated_at = ${finishedAtIso}
       WHERE id = ${automationId}
+      RETURNING *
     `;
+    return row ? automationFromRow(row) : null;
   }
 
   async claimDue(): Promise<Automation[]> {

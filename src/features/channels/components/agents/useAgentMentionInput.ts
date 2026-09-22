@@ -42,7 +42,7 @@ export function useAgentMentionInput({
           handle: token.query,
           name: newAgentName,
           description: "Create and onboard through this conversation",
-          group: "New agent",
+          group: "New member",
           kind: "create",
         }
       : undefined;

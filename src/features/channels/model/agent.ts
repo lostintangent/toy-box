@@ -34,6 +34,15 @@ export const agentAvatarSchema = z
 
 export type AgentAvatar = z.output<typeof agentAvatarSchema>;
 
+export const CHANNEL_LEAD_PROFILE = {
+  name: "Lead",
+  role: "Own the channel purpose and coordinate the work.",
+  avatar: {
+    mark: "M12 3l2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3z",
+    color: "#0891b2",
+  },
+} as const;
+
 export const createChannelMemberInputSchema = z
   .object({
     channelId: durableIdSchema,

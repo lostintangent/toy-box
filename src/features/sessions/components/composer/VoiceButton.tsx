@@ -1,7 +1,6 @@
 import { Loader2, Mic, PhoneOff } from "lucide-react";
 import { InputGroupButton } from "@/shared/components/ui/input-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
-import { cn } from "@/shared/utils";
 import { useVoiceComposer, type VoiceComposerContext } from "./useVoiceComposer";
 
 export function VoiceButton({ context }: { context: VoiceComposerContext }) {
@@ -17,14 +16,12 @@ export function VoiceButton({ context }: { context: VoiceComposerContext }) {
           <InputGroupButton
             type="button"
             size="icon-xs"
+            variant={isConnected ? "destructive-ghost" : "ghost"}
             aria-label={label}
             aria-pressed={isConnected}
             onClick={() => void (isConnected ? disconnect() : connect())}
             disabled={isConnecting}
             suppressHydrationWarning
-            className={cn(
-              isConnected && "text-destructive hover:text-destructive hover:bg-destructive/10",
-            )}
           >
             {isConnecting ? (
               <Loader2 className="h-4 w-4 animate-spin" />

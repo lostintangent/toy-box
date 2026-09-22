@@ -370,11 +370,9 @@ export function useSession(
     [],
   );
 
-  // A draft session has no provider-history snapshot until its first turn. Live state
-  // wins while connected; an idle started session adopts the latest snapshot.
+  // Live state wins while connected. Otherwise adopt the cached snapshot, including
+  // a replacement draft with its optimistic first message.
   useEffect(() => {
-    if (isDraft) return;
-
     if (!isStreaming && sessionSnapshot) {
       // Keep the locally picked model when older history has none.
       const restoredSession = {
@@ -385,7 +383,7 @@ export function useSession(
       setPublishedSession(restoredSession);
       setHasLoadedSessionState(true);
     }
-  }, [isDraft, isStreaming, sessionSnapshot]);
+  }, [isStreaming, sessionSnapshot]);
 
   // Reconcile the subscriber whenever its visibility or the session's
   // workspace state changes. Effect events keep transport implementation

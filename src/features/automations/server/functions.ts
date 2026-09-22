@@ -1,17 +1,14 @@
-// Validated automation operations shared by the UI and SDK tools.
+// Validated automation commands for UI clients. Reads use the workspace snapshot.
 
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import {
   automationIdInputSchema,
   automationOptionsSchema,
+  runAutomationInputSchema,
   updateAutomationInputSchema,
 } from "../model";
 import * as lifecycle from "./index";
-
-export const listAutomations = createServerFn({ method: "GET" }).handler(() =>
-  lifecycle.listAutomations(),
-);
 
 export const createAutomation = createServerFn({ method: "POST" })
   .validator(zodValidator(automationOptionsSchema))
@@ -19,11 +16,9 @@ export const createAutomation = createServerFn({ method: "POST" })
 
 export const updateAutomation = createServerFn({ method: "POST" })
   .validator(zodValidator(updateAutomationInputSchema))
-  .handler(async ({ data }) => {
+  .handler(({ data }) => {
     const { automationId, ...options } = data;
-    const automation = await lifecycle.updateAutomation(automationId, options);
-    if (!automation) throw new Error("Automation not found");
-    return automation;
+    return lifecycle.updateAutomation(automationId, options);
   });
 
 export const deleteAutomation = createServerFn({ method: "POST" })
@@ -31,5 +26,5 @@ export const deleteAutomation = createServerFn({ method: "POST" })
   .handler(({ data }) => lifecycle.deleteAutomation(data.automationId));
 
 export const runAutomation = createServerFn({ method: "POST" })
-  .validator(zodValidator(automationIdInputSchema))
-  .handler(({ data }) => lifecycle.runAutomation(data.automationId));
+  .validator(zodValidator(runAutomationInputSchema))
+  .handler(({ data }) => lifecycle.runAutomation(data.automationId, data.clientId));

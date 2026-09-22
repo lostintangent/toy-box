@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { getProviderCatalog } from "./server/functions";
+import { getProviderCatalog, getProviderVersions } from "./server/functions";
 
 export const providerQueries = {
   all: () => ["providers"] as const,
@@ -9,5 +9,11 @@ export const providerQueries = {
       queryKey: providerQueries.all(),
       queryFn: getProviderCatalog,
       staleTime: Infinity,
+    }),
+
+  versions: () =>
+    queryOptions({
+      queryKey: [...providerQueries.all(), "versions"],
+      queryFn: getProviderVersions,
     }),
 };

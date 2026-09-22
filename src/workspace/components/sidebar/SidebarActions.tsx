@@ -170,7 +170,7 @@ export function TerminalToggle({
             size="sm"
             className={cn(
               SIDEBAR_ACTION_SIZE,
-              "min-w-6 p-0 hover:bg-accent hover:text-accent-foreground",
+              "min-w-6 p-0 hover:bg-accent/50 hover:text-accent-foreground",
             )}
             aria-label="Toggle terminal"
           >
@@ -204,7 +204,7 @@ function HyperSessionStatus({ sessionId, isOpen }: { sessionId: string; isOpen: 
         <MessageCirclePlus />
       )}
       {!running && !waiting && !isOpen && (
-        <span className="absolute right-px top-px h-2.5 w-2.5 rounded-full bg-user-accent ring-2 ring-inset ring-background" />
+        <span className="absolute right-px top-px h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-inset ring-background" />
       )}
     </>
   );

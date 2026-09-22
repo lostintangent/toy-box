@@ -30,9 +30,17 @@ describe("app compiler", () => {
         import {
           AppAlert,
           AppFilePicker,
+          AppScrollableFade,
+          AppSelect,
+          AppSelectContent,
+          AppSelectItem,
+          AppSelectTrigger,
+          AppSelectValue,
           AppSessionStatus,
           AppSessionToggle,
           AppSharePicker,
+          AppSkeleton,
+          AppToggle,
           createId,
           useApp,
           useFile,
@@ -66,6 +74,7 @@ describe("app compiler", () => {
 
         export default function TestApp() {
           const [count, setCount] = useState(CountSchema.parse(1));
+          const [filter, setFilter] = useState("all");
           const id = createId();
           const label = useMemo(() => "React " + React.version, []);
           const increment = useCallback(() => setCount((value) => value + 1), []);
@@ -89,7 +98,24 @@ describe("app compiler", () => {
             <>
               <style>{"[data-toybox-app='test-app'] .meter { accent-color: rebeccapurple; }"}</style>
               <AppFilePicker value={file} extensions={[".md"]} onValueChange={setFile} />
+              <AppSelect value={filter} onValueChange={setFilter}>
+                <AppSelectTrigger aria-label="Filter">
+                  <AppSelectValue />
+                </AppSelectTrigger>
+                <AppSelectContent>
+                  <AppSelectItem value="all">All</AppSelectItem>
+                  <AppSelectItem value="open">Open</AppSelectItem>
+                </AppSelectContent>
+              </AppSelect>
+              <AppToggle
+                pressed={filter === "open"}
+                onPressedChange={(pressed) => setFilter(pressed ? "open" : "all")}
+              >
+                Open only
+              </AppToggle>
+              <AppScrollableFade className="whitespace-nowrap">{label}</AppScrollableFade>
               <AppAlert>Something went wrong.</AppAlert>
+              <AppSkeleton className="h-4 w-32" />
               {sessions.map((session) => <SessionRow key={session.id} session={session} />)}
               <AppSharePicker mimeType="text/plain" content="Hello" />
               <button

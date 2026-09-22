@@ -22,7 +22,6 @@ import { createSdkEventProjector } from "./projector";
 export const copilotProvider: SessionProvider = {
   id: "copilot",
   name: "GitHub Copilot",
-  isInstalled: () => !!Bun.which("copilot"),
   async listModels() {
     return adaptModelCatalog(await (await startCopilotClient()).listModels()).map(
       ({ id, name, supportedReasoningEfforts, defaultReasoningEffort, supportedContextTiers }) => ({

@@ -203,8 +203,8 @@ function ComposerPrompt({
                 render={
                   <InputGroupButton
                     size="icon-xs"
+                    variant="destructive-ghost"
                     aria-label="Stop turn"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
                     onClick={onStop}
                     suppressHydrationWarning
                   >
@@ -245,7 +245,7 @@ function ComposerPrompt({
                         disabled={isSubmitDisabled}
                         variant={submitButtonVariant}
                         suppressHydrationWarning
-                        className="w-4 rounded-s-none border-l border-background data-[popup-open]:bg-user-accent/90"
+                        className="w-4 rounded-s-none border-l border-background data-[popup-open]:bg-accent/90"
                       />
                     }
                   >
@@ -286,7 +286,7 @@ function ComposerPrompt({
                       disabled={isSubmitDisabled}
                       variant={submitButtonVariant}
                       suppressHydrationWarning
-                      className="w-4 rounded-s-none data-[popup-open]:bg-user-accent/90"
+                      className="w-4 rounded-s-none data-[popup-open]:bg-accent/90"
                     />
                   }
                 >

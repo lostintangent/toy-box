@@ -63,9 +63,15 @@ export type CreateSessionOptions = {
 /** Claim public identity before creating any files or selecting a provider. */
 export async function createSessionRecord(
   sessionId: string,
-  options: { artifact?: { path: string; content: string }; hyper?: true },
+  options: {
+    artifact?: { path: string; content: string };
+    hyper?: true;
+    sessionType?: SessionType;
+    title?: string;
+  },
 ): Promise<void> {
   const artifact = options.artifact;
+  const sessionType = options.sessionType ?? (options.hyper ? "hyper" : "standard");
 
   const createdAt = new Date();
   const record = {
@@ -86,7 +92,8 @@ export async function createSessionRecord(
     ...record,
     createdAt: createdAt.toISOString(),
     updatedAt: createdAt.toISOString(),
-    sessionType: options.hyper ? "hyper" : "standard",
+    title: options.title,
+    sessionType,
   });
 }
 
@@ -304,30 +311,39 @@ export async function updateSessionTitle(sessionId: string, title: string): Prom
 // ── Deletion ───────────────────────────────────────────────────────────
 
 /** Delete a session and the complete tree of managed sessions it owns. */
-export async function deleteSession(sessionId: string): Promise<void> {
+export async function deleteSession(
+  sessionId: string,
+  options?: { publish?: boolean },
+): Promise<void> {
   await deleteOwnedSessions(sessionId);
   await removeSessionRuntime(sessionId);
   const record = await readSession(sessionId);
   if (!record || record.provider) await deleteProviderSession(sessionId);
-  await removeDeletedSessionState(sessionId);
+  await removeDeletedSessionState(sessionId, options);
 }
 
 /** Delete a session when present, while preserving real teardown failures. */
-export async function deleteSessionIfExists(sessionId: string): Promise<boolean> {
+export async function deleteSessionIfExists(
+  sessionId: string,
+  options?: { publish?: boolean },
+): Promise<boolean> {
   try {
-    await deleteSession(sessionId);
+    await deleteSession(sessionId, options);
     return true;
   } catch (error) {
     if (!evictCachedSessionIfStale(sessionId, error)) throw error;
     await removeSessionRuntime(sessionId);
-    await removeDeletedSessionState(sessionId);
+    await removeDeletedSessionState(sessionId, options);
     return false;
   }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-async function removeDeletedSessionState(sessionId: string): Promise<void> {
+async function removeDeletedSessionState(
+  sessionId: string,
+  { publish = true }: { publish?: boolean } = {},
+): Promise<void> {
   await deleteSessionWorktree(sessionId);
   await deleteSessionFiles(sessionId);
   await deleteSessionRecord(sessionId);
@@ -335,14 +351,14 @@ async function removeDeletedSessionState(sessionId: string): Promise<void> {
   await unpinSession(sessionId);
   deleteSessionWorkspaceState(sessionId);
   await evictDeletedSessionSnapshot(sessionId);
-  emitSessionDelete(sessionId);
+  if (publish) emitSessionDelete(sessionId);
 }
 
 async function removeSessionRuntime(sessionId: string): Promise<void> {
   // Dynamic import keeps the registry from forming a static cycle with the
   // runtime stream, which imports this module to create and resume provider sessions.
   const { SessionStream } = await import("../runtime/sessionStream");
-  SessionStream.remove(sessionId);
+  await SessionStream.remove(sessionId);
   // Native teardown can flush history; it must finish before history is deleted.
   const cached = cachedSessions.get(sessionId);
   if (cached) await disconnectCachedSession(sessionId, cached);

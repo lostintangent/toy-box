@@ -257,9 +257,7 @@ export function Sidebar({
         onOpenFile={onOpenFile}
       />
 
-      {createAutomationOpen && (
-        <AutomationDialog mode="create" onOpenChange={setCreateAutomationOpen} />
-      )}
+      {createAutomationOpen && <AutomationDialog onOpenChange={setCreateAutomationOpen} />}
 
       {createChannelOpen && (
         <CreateChannelDialog

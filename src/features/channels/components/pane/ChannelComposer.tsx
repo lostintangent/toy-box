@@ -7,7 +7,13 @@ import {
   type AgentPickerSuggestion,
 } from "@channels/components/agents/agentPickerSuggestions";
 import { useAgentMentionInput } from "@channels/components/agents/useAgentMentionInput";
-import type { Channel, ChannelMember } from "@channels/model";
+import {
+  agentHandleFromName,
+  agentMatchesMentionQuery,
+  channelLead,
+  type Channel,
+  type ChannelMember,
+} from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import {
   AttachImageButton,
@@ -52,7 +58,7 @@ export function ChannelComposer({
     value: content,
     onValueChange: setContent,
     textareaRef,
-    suggestionsFor: (query) => channelMentionSuggestions(query, members),
+    suggestionsFor: (query) => channelMentionSuggestions(query, channel, members),
     channelId: channel.id,
   });
 
@@ -116,7 +122,7 @@ export function ChannelComposer({
             onSelect={mention.handleSelect}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={`Message #${channel.title}, or @mention an agent`}
+            placeholder={`Message #${channel.name}, or @mention an agent`}
             className="max-h-18 min-h-14 overflow-y-auto py-2 text-sm"
             rows={1}
           />
@@ -152,15 +158,26 @@ export function ChannelComposer({
 
 function channelMentionSuggestions(
   query: string,
+  channel: Channel,
   members: readonly ChannelMember[],
 ): AgentPickerSuggestion[] {
   const normalizedQuery = query.toLowerCase();
   const suggestions = agentPickerSuggestions(query, members);
-  if (members.length > 0 && "everyone".includes(normalizedQuery)) {
+  const lead = channelLead(channel.leadId);
+  if (agentMatchesMentionQuery(lead, query)) {
+    suggestions.unshift({
+      handle: agentHandleFromName(lead.name),
+      name: lead.name,
+      description: lead.role,
+      group: "Channel",
+      avatar: lead.avatar,
+    });
+  }
+  if ("everyone".includes(normalizedQuery)) {
     suggestions.unshift({
       handle: "everyone",
       name: "Everyone",
-      description: `Wake all ${members.length} current ${members.length === 1 ? "agent" : "agents"}`,
+      description: "Wake everyone in the channel",
       group: "Channel",
       kind: "everyone",
     });

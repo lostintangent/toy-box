@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { writeAppTypeLibrary } from "./build";
+import { writeAppTypeLibrary } from "./index";
 
-const projectRoot = resolve(Bun.fileURLToPath(new URL("../", import.meta.url)));
+const projectRoot = resolve(Bun.fileURLToPath(new URL("../../", import.meta.url)));
 
 test("writes the app compiler's package-shaped transitive type library", async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "toy-box-app-types-test-"));

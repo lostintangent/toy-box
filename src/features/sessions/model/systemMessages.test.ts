@@ -44,5 +44,12 @@ describe("Session system messages", () => {
     expect(systemMessageLabel(channelMessage)).toBe("Message from Research Scout");
     expect(systemMessageCoalesceKey(channelMessage)).toBe("channel_message");
     expect(systemMessagePrompt(channelMessage)).toContain("Call `read_channel`");
+
+    const channelStarted = { type: "channel_started" } as const;
+    expect(systemMessageLabel(channelStarted)).toBe("Channel started");
+    expect(systemMessageCoalesceKey(channelStarted)).toBeUndefined();
+    expect(systemMessagePrompt(channelStarted)).toBe(
+      "This channel was just created. Begin working toward its purpose.",
+    );
   });
 });

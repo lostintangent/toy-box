@@ -101,7 +101,7 @@ function QueuedMessageRow({
       className={cn(
         "relative flex touch-manipulation items-center gap-2 rounded-lg bg-secondary-background px-3 py-2 text-sm text-muted-foreground transition-colors",
         canSteer && "cursor-pointer",
-        isHolding && "select-none bg-user-accent/30",
+        isHolding && "select-none bg-accent/30",
       )}
       style={{
         transitionDuration: isHolding ? `${LONG_PRESS_DELAY_MS}ms` : "150ms",

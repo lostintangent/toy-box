@@ -2,7 +2,7 @@
 // in development, such as live session streams, pending acquisitions, and
 // global broadcast listener sets.
 
-function getProcessValue<T>(name: string, create: () => T): T {
+export function getProcessValue<T>(name: string, create: () => T): T {
   const key = Symbol.for(`toy-box.${name}`);
   const store = globalThis as typeof globalThis & Record<symbol, T | undefined>;
   return (store[key] ??= create());

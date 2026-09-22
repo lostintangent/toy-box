@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { FileUp, UserMinus, UserPlus } from "lucide-react";
 import { isChannelSystemMessage } from "@channels/model";
-import type { ChannelMember, ChannelMessage } from "@channels/model";
+import type { ChannelAgent, ChannelMessage } from "@channels/model";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 
@@ -9,10 +9,10 @@ const DELETED_AGENT_LABEL = "Deleted agent";
 
 export function ChannelSystemMessageView({
   messages,
-  members,
+  agents,
 }: {
   messages: ChannelMessage[];
-  members: ChannelMember[];
+  agents: ChannelAgent[];
 }) {
   const { toggleFile } = useWorkspaceSurface();
   const message = messages[0]!;
@@ -42,7 +42,7 @@ export function ChannelSystemMessageView({
       const actorName =
         actor.type === "user"
           ? "You"
-          : (members.find(({ id }) => id === actor.agentId)?.name ?? DELETED_AGENT_LABEL);
+          : (agents.find(({ id }) => id === actor.agentId)?.name ?? DELETED_AGENT_LABEL);
       const artifacts = messages.flatMap((message) => {
         if (!isChannelSystemMessage(message) || message.content.type !== "artifact_shared") {
           return [];

@@ -19,9 +19,7 @@ const listAutomationsTool = defineTool("list_automations", {
     const { listAutomations } = await import("./index");
     const automations = await listAutomations();
 
-    return JSON.stringify({
-      automations,
-    });
+    return { automations };
   },
 });
 
@@ -33,7 +31,7 @@ const createAutomationTool = defineTool("create_automation", {
   handler: async (input) => {
     const { createAutomation } = await import("./index");
     const automation = await createAutomation(input);
-    return JSON.stringify({ automation });
+    return { automation };
   },
 });
 
@@ -46,8 +44,7 @@ const updateAutomationTool = defineTool("update_automation", {
   handler: async ({ automationId, ...input }) => {
     const { updateAutomation } = await import("./index");
     const automation = await updateAutomation(automationId, input);
-    if (!automation) throw new Error("Automation not found");
-    return JSON.stringify({ automation });
+    return { automation };
   },
 });
 
@@ -59,8 +56,7 @@ const runAutomationTool = defineTool("run_automation", {
   parameters: automationIdInputSchema,
   handler: async ({ automationId }) => {
     const { runAutomation } = await import("./index");
-    const result = await runAutomation(automationId);
-    return JSON.stringify({ sessionId: result.sessionId, started: result.started });
+    return runAutomation(automationId);
   },
 });
 

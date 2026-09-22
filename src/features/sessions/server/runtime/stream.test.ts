@@ -366,7 +366,8 @@ describe("SessionStream lifecycle", () => {
     mockStreamRuntimeModules({ workspace: { setSessionStatus } });
 
     const { SessionStream: ImportedSessionStream } = await import("./sessionStream");
-    const fakeSession = makeFakeSession();
+    const abort = mock(async () => {});
+    const fakeSession = makeFakeSession({ abort });
 
     const stream = ImportedSessionStream.getOrCreate("session-remove-semantics", fakeSession);
     const events = stream.subscribe();
@@ -374,13 +375,14 @@ describe("SessionStream lifecycle", () => {
     await stream.deliver(userMessage("queued"));
     setSessionStatus.mockClear();
 
-    ImportedSessionStream.remove("session-remove-semantics");
+    await ImportedSessionStream.remove("session-remove-semantics");
 
     const emittedEvents = await collectStreamEvents(events);
     expect(emittedEvents.map((event) => event.type)).toEqual(["message_queued", "end"]);
     expect(emittedEvents.at(-1)).toMatchObject({ type: "end", reason: "idle" });
     expect(stream.getSessionState().queuedMessages).toEqual([]);
     expect(ImportedSessionStream.isRunning("session-remove-semantics")).toBe(false);
+    expect(abort).toHaveBeenCalledTimes(1);
     // Deleted sessions leave the list, so no idle/unread global broadcast events are emitted.
     expect(setSessionStatus).toHaveBeenCalledTimes(0);
   });
@@ -1942,7 +1944,7 @@ describe("SessionStream.waitForCompletion", () => {
     const stream = createStreamWithAssistantResponse("session-delete-wait", "Deleted result");
     const waitPromise = stream.waitForCompletion();
 
-    SessionStream.remove("session-delete-wait");
+    await SessionStream.remove("session-delete-wait");
 
     await expect(waitPromise).resolves.toEqual({
       status: "completed",

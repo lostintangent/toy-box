@@ -105,7 +105,7 @@ and `components/runtime/sdk/` supplies its browser implementation. The host chec
 that implementation against the public contract before exposing it to compiled apps.
 `runtime.ts` is the single dependency catalog used by both the compiler allowlist and
 the browser bridge. Development compilation reads declarations from the repository;
-`cli/build.ts` follows the exact transitive declaration graph rooted at `sdk.ts` and
+`cli/build/index.ts` follows the exact transitive declaration graph rooted at `sdk.ts` and
 stages it as a Bun executable asset for standalone compilation.
 
 Static Tailwind classes use the shared Toy Box theme; custom CSS may live in a scoped

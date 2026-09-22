@@ -16,8 +16,7 @@
    * only the value can live in one place.
    */
   :root {
-    --resize-accent:
-      transparent 0%, var(--user-accent) 20%, var(--user-accent) 80%, transparent 100%;
+    --resize-accent: transparent 0%, var(--accent) 20%, var(--accent) 80%, transparent 100%;
     --resize-accent-y: linear-gradient(to bottom, var(--resize-accent));
     --resize-accent-x: linear-gradient(to right, var(--resize-accent));
   }
@@ -92,8 +91,7 @@ code {
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --accent: #facc15;
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
@@ -111,7 +109,7 @@ code {
   /* Unread-activity indicator (session + automation list dots). blue-500. */
   --unread: oklch(0.623 0.214 259.815);
 
-  /* Agents' ink, alongside the user's --user-accent. cyan-500, the avatar tint. */
+  /* Agents' ink, alongside the user's --accent. cyan-500, the avatar tint. */
   --agent-accent: oklch(0.715 0.143 215.221);
 }
 
@@ -129,8 +127,6 @@ code {
     --secondary-foreground: oklch(0.985 0 0);
     --muted: oklch(0.269 0 0);
     --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
     --border: oklch(0.3 0 0);
     --input: oklch(1 0 0 / 15%);

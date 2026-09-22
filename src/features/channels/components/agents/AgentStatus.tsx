@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ChannelMember } from "@channels/model";
+import type { ChannelAgent } from "@channels/model";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { selectWorkspaceSessionActivity, useWorkspaceSelector } from "@workspace/hooks/state";
 import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
@@ -8,22 +8,22 @@ import { cn } from "@/shared/utils";
 import { AgentAvatar } from "./AgentAvatar";
 
 type WorkingAgent = {
-  agent: ChannelMember;
+  agent: ChannelAgent;
   status?: string;
 };
 
 /** Present currently working Channel agents. */
 export function AgentStatus({
-  members,
+  agents,
   variant = "normal",
 }: {
-  members: readonly ChannelMember[];
+  agents: readonly ChannelAgent[];
   variant?: "normal" | "compact";
 }) {
   const running = useWorkspaceSelector((workspace) =>
-    members.map(({ id }) => selectWorkspaceSessionActivity(workspace, id).running),
+    agents.map(({ id }) => selectWorkspaceSessionActivity(workspace, id).running),
   );
-  const working: WorkingAgent[] = members
+  const working: WorkingAgent[] = agents
     .flatMap((agent, index) => {
       if (!running[index]) return [];
       const status = agent.status?.state === "working" ? agent.status.text : undefined;

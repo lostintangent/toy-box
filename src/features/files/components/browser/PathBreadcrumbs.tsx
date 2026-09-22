@@ -15,7 +15,7 @@ export function PathBreadcrumbs({
       <button
         type="button"
         onClick={() => onNavigate("/")}
-        className="shrink-0 rounded px-1 py-0.5 hover:bg-accent hover:text-foreground"
+        className="shrink-0 rounded px-1 py-0.5 hover:bg-accent/50 hover:text-accent-foreground"
       >
         /
       </button>
@@ -34,7 +34,7 @@ export function PathBreadcrumbs({
               <button
                 type="button"
                 onClick={() => onNavigate(segmentPath)}
-                className="truncate rounded px-1 py-0.5 hover:bg-accent hover:text-foreground"
+                className="truncate rounded px-1 py-0.5 hover:bg-accent/50 hover:text-accent-foreground"
               >
                 {segment}
               </button>

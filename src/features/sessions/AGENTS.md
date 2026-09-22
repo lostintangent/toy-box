@@ -38,6 +38,12 @@ with Worker ownership needed to hide managed sessions from ordinary roots while 
 children, previews, and activity. Automation, Inbox, and Hyper remain ordinary addressable entries.
 Every new Session role must explicitly choose its projection policy.
 
+`src/server/managedSessions.ts` at the application composition boundary selects the 250 most recent
+ordinary, unpinned sessions, plus all managed and pinned sessions. Drafts and sessions with shared
+activity are retained as well. This bounds browsing metadata without deleting history; old ordinary
+sessions outside the catalog do not reopen through a URL. The sidebar filters the retained catalog
+before displaying up to 50 ordinary matches, while keeping pins visible outside that display limit.
+
 `Session.context` carries its execution `directory` and available native catalog Git fields.
 Session IDs, including automation IDs, are plain UUIDs. Imported histories use `provider:nativeId`, which
 the sidebar uses to distinguish external sessions without inspecting provider-native namespaces.
@@ -57,10 +63,20 @@ back when the request fails.
 
 `queryCache.ts` applies shared workspace session events to session-owned queries. The workspace
 event stream is a synchronization hint; the list query and session snapshot remain the recovery
-sources. An idle conversation rewind refreshes the initiating client's snapshot and emits a
+sources. Its `recreateSessionInCache` operation cancels older reads and replaces the catalog entry
+and transcript with a fresh draft containing the first message. Callers pass that message's
+`clientId` to their server operation and call `invalidateSessionQueries` when it settles, so
+success, overlap, and failure reconcile from authoritative state. This cache operation has no
+React lifetime and is shared by mutation owners such as Automations.
+
+An idle conversation rewind refreshes the initiating client's snapshot and emits a
 `session.touched` hint so other clients refresh its detail and list metadata; it never rewinds files.
-A deletion cancels pending history reads and clears any cached transcript, so an Automation can
-reuse its public ID without appending its next execution to the previous run in an open pane.
+Deletion cancels pending history reads and clears the cached transcript. A replacement upsert
+with a different `createdAt` does the same for an existing provider session and starts fresh
+catalog metadata. Acknowledging an optimistic draft retains its starting message, which the
+canonical echo replaces by `clientId`. The browser adopts the replacement snapshot while it
+is a draft, before subscribing to its first turn.
+The public ID and mounted workspace pane remain stable.
 
 `useSession.ts` owns one mounted session's browser lifecycle. It reads snapshots and subscribes
 while visible, reduces ordered events, batches text deltas to animation frames, and
@@ -68,10 +84,10 @@ exposes delivery and control operations. The long-lived async event stream delib
 explicit instead of being disguised as a mutation. Ending a browser subscription never stops
 server work; abort is a separate operation.
 
-Ordinary Sessions remain unbranded coordinators. Their Channel tools can create Channels and
-channel-specific Agents, discover available model configurations, read Channel context and rosters,
-post user-attributed messages, share artifacts, and wait for Channel Agent work. Agent identity and
-`@mention` delivery belong to Channels.
+Ordinary Sessions remain unbranded coordinators. Their Channel tools can create Channels with an
+intrinsic lead, create channel-specific members, discover available model configurations, read
+Channel context and rosters, post user-attributed messages, share artifacts, and wait for lead or
+member work. Collaboration identity and `@mention` delivery belong to Channels.
 
 `useSessions.ts` owns the catalog and optimistic creation, including reuse of an untouched
 draft session. `useDraftPrompt.ts` synchronizes unsent composer text. First submission in
@@ -105,7 +121,7 @@ does not own session data or streaming behavior.
 
 `server/` is Toy Box's foundational session implementation:
 
-- [`runtime/`](server/runtime/AGENTS.md) is the public server capability for creation, delivery,
+- [`runtime/`](server/runtime/AGENTS.md) is the public server capability for creation, recreation, delivery,
   streaming, snapshots, completion, queue control, abort, idle conversation rewind, and deletion.
   `SessionStream` remains its live implementation detail.
 - `providers.ts` prepares provider configuration, dispatches native operations, and binds public/native
@@ -128,8 +144,8 @@ does not own session data or streaming behavior.
 
 Automations, Inbox, and Workers build on `@sessions/server/runtime`. They add scheduling, ownership,
 admission, and retention policy without importing provider details, snapshot storage, or the registry
-implementation. Channel Agents are durable Channel-owned Workers whose configuration carries their
-local identity and collaboration tools. Shared workspace projection and process
+implementation. Channel leads and members are durable Channel-owned Workers whose configuration
+carries their local identity and collaboration tools. Shared workspace projection and process
 infrastructure remain outside the feature because they compose multiple domains rather than define
 Session execution.
 
@@ -145,7 +161,7 @@ Session execution.
   owns the connected stream lifecycle.
 - Managed features may govern a session's lifecycle, but they do not redefine session execution,
   transcript state, native event projection, registry, or UI primitives.
-- The application rebuilds private Channel Agent configuration for comparison between executions.
+- The application rebuilds private Channel agent configuration for comparison between executions.
   Single-flight runtime acquisition replaces the idle provider connection only when that effective
   configuration changed; active delivery keeps its existing session. Callers do not coordinate
   configuration refresh. This preserves durable history, workspace identity, and worktree state.

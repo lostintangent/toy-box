@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Circle, Hash, Pencil, Plus, Trash2 } from "lucide-react";
 import { AgentStatus } from "@channels/components/agents/AgentStatus";
-import { channelHasUnread } from "@channels/model";
+import { channelHasUnread, channelLead } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import { channelQueries } from "@channels/queries";
 import { NameDialog } from "@/shared/components/sidebar/NameDialog";
@@ -69,11 +69,14 @@ export function ChannelsPanel({
           return (
             <SidebarListItem
               key={channel.id}
-              title={channel.title}
+              title={channel.name}
               titleContent={
                 <span className="flex items-center gap-3">
-                  <span>{channel.title}</span>
-                  <AgentStatus members={channelMembers} variant="compact" />
+                  <span>{channel.name}</span>
+                  <AgentStatus
+                    agents={[channelLead(channel.leadId), ...channelMembers]}
+                    variant="compact"
+                  />
                 </span>
               }
               icon={
@@ -102,7 +105,7 @@ export function ChannelsPanel({
               status={
                 channelHasUnread(channel) && !openChannelIds.includes(channel.id)
                   ? {
-                      ariaLabel: `${channel.title} has unread messages`,
+                      ariaLabel: `${channel.name} has unread messages`,
                       tooltip: "Channel has unread messages",
                       icon: <Circle className="h-2.5 w-2.5 fill-unread text-unread" aria-hidden />,
                     }
@@ -118,7 +121,7 @@ export function ChannelsPanel({
       {renaming && (
         <NameDialog
           key={renaming.id}
-          name={renaming.title}
+          name={renaming.name}
           title="Rename channel"
           description="Change how this channel appears in the channel list."
           mutation={channelMutations.rename(renaming.id)}

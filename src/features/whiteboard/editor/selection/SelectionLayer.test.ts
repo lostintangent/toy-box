@@ -23,7 +23,7 @@ describe("SVG selection layer", () => {
     renderSelectionFrame(overlay, [first], { left: 0, top: 0 }, true);
 
     const outline = overlay.getElementsByTagName("polygon")[0];
-    expect(outline?.getAttribute("stroke")).toBe("var(--user-accent)");
+    expect(outline?.getAttribute("stroke")).toBe("var(--accent)");
     expect(outline?.getAttribute("stroke-width")).toBe("2");
     expect(outline?.getAttribute("stroke-dasharray")).toBe("4 3");
 

@@ -90,7 +90,7 @@ function createEngine(canvas: HTMLCanvasElement, painter: TypingEffectPainter): 
 
   return {
     pulse() {
-      ink = getComputedStyle(canvas).getPropertyValue("--user-accent").trim();
+      ink = getComputedStyle(canvas).getPropertyValue("--accent").trim();
       painter.pulse();
 
       if (frame === 0) {

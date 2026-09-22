@@ -141,7 +141,7 @@ function appendOutline(
   const polygon = overlay.ownerDocument.createElementNS(SVG_NAMESPACE, "polygon");
   polygon.setAttribute("points", corners.map((point) => `${point.x},${point.y}`).join(" "));
   polygon.setAttribute("fill", "none");
-  polygon.setAttribute("stroke", "var(--user-accent)");
+  polygon.setAttribute("stroke", "var(--accent)");
   polygon.setAttribute("stroke-width", "2");
   polygon.setAttribute("stroke-dasharray", "4 3");
   overlay.appendChild(polygon);
@@ -153,7 +153,7 @@ function appendRotationGuide(overlay: SVGSVGElement, start: Point, end: Point): 
   line.setAttribute("y1", String(start.y));
   line.setAttribute("x2", String(end.x));
   line.setAttribute("y2", String(end.y));
-  line.setAttribute("stroke", "var(--user-accent)");
+  line.setAttribute("stroke", "var(--accent)");
   line.setAttribute("stroke-width", "1.5");
   overlay.appendChild(line);
 }
@@ -164,7 +164,7 @@ function appendHandle(overlay: SVGSVGElement, point: Point): void {
   circle.setAttribute("cy", String(point.y));
   circle.setAttribute("r", String(HANDLE_RADIUS));
   circle.setAttribute("fill", "var(--background)");
-  circle.setAttribute("stroke", "var(--user-accent)");
+  circle.setAttribute("stroke", "var(--accent)");
   circle.setAttribute("stroke-width", "1.5");
   overlay.appendChild(circle);
 }

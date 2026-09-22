@@ -14,7 +14,6 @@ import { createClaudeProjector } from "./projector";
 export const claudeProvider: SessionProvider = {
   id: "claude",
   name: "Claude Agent",
-  isInstalled: () => !!Bun.which("claude"),
   async listModels() {
     const native = startClaudeQuery({ persistSession: false, cwd: homedir() });
     try {

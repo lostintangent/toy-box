@@ -17,6 +17,12 @@ the workspace consumes the same provider-owned catalog and configuration.
   Its `setEnabled` operation is used by Settings. Claude starts disabled. Sidebar filters are local
   UI state and never change provider enablement.
 - `components/ModelPicker.tsx` owns the controlled model and configuration pickers.
+- `components/ProviderSettings.tsx` owns enablement and CLI updates in Settings. Version reads
+  share one query for all installed providers while Settings is open, outside catalog loading. Disabled
+  providers still show their version but cannot be updated.
+  `server/cli.ts` owns installation checks through `Bun.which(providerId)` and the shared `--version`
+  and `update` commands. Updates compare versions before and after; unchanged does not prove an installation
+  is current (some installers require manual updates). Restart Toy Box to use updated runtimes.
 - `server/provider.ts` defines `SessionProvider`, `SessionConnection`, and the configuration
   supplied by Sessions. Connections expose the provider reference used by `Session.provider`;
   history and resume receive the relevant identity fields from the same `Session` type.

@@ -9,45 +9,34 @@ export function AgentItem({ agent, action }: { agent: ChannelMember; action?: Re
   const preview = useSessionPreview();
 
   return (
-    <SessionPreview
-      sessionId={agent.id}
-      side="left"
-      sideOffset={10}
-      nativeButton={false}
-      {...preview}
-    >
-      <div
-        role="listitem"
-        onMouseEnter={preview.onMouseEnter}
-        onMouseLeave={preview.onMouseLeave}
-        className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted"
-      >
-        <AgentAvatar name={agent.name} avatar={agent.avatar} className="size-5" />
-        <span className="flex min-w-0 flex-1 flex-col">
-          <ScrollableFade className="whitespace-nowrap text-xs">
-            <span className="shrink-0">{agent.name}</span>
+    <div role="listitem" className="flex min-w-0 items-center gap-2 py-1 text-left">
+      <SessionPreview sessionId={agent.id} side="left" sideOffset={10} {...preview}>
+        <button
+          type="button"
+          aria-label={`Preview ${agent.name}'s session`}
+          title={`Preview ${agent.name}'s session`}
+          onMouseEnter={preview.onMouseEnter}
+          onMouseLeave={preview.onMouseLeave}
+          className="shrink-0 rounded-full"
+        >
+          <AgentAvatar name={agent.name} avatar={agent.avatar} className="size-5" />
+        </button>
+      </SessionPreview>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <ScrollableFade className="whitespace-nowrap text-xs">
+          <span className="shrink-0">{agent.name}</span>
+        </ScrollableFade>
+        {agent.status && (
+          <ScrollableFade className="whitespace-nowrap text-2xs text-muted-foreground">
+            <span className="shrink-0">
+              {agent.status.state === "waiting"
+                ? `Waiting for ${agent.status.text}`
+                : agent.status.text}
+            </span>
           </ScrollableFade>
-          {agent.status && (
-            <ScrollableFade className="whitespace-nowrap text-2xs text-muted-foreground">
-              <span className="shrink-0">
-                {agent.status.state === "waiting"
-                  ? `Waiting for ${agent.status.text}`
-                  : agent.status.text}
-              </span>
-            </ScrollableFade>
-          )}
-        </span>
-        {action && (
-          <span
-            onMouseEnter={(event) => {
-              event.stopPropagation();
-              preview.close();
-            }}
-          >
-            {action}
-          </span>
         )}
-      </div>
-    </SessionPreview>
+      </span>
+      {action}
+    </div>
   );
 }

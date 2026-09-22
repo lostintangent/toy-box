@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { machineFile } from "@files/model";
 import type { ChannelEvent, ChannelState } from ".";
+import { channelLead } from ".";
 import { mergeChannelMessages, reduceChannelState } from "./reducer";
 
 function state(): ChannelState {
-  return { revision: 0, members: [], messages: [], artifacts: [] };
+  return { revision: 0, lead: channelLead("lead"), members: [], messages: [], artifacts: [] };
 }
 
 describe("Channel state reducer", () => {
@@ -164,6 +165,18 @@ describe("Channel state reducer", () => {
     expect(shared.artifacts).toEqual([artifact]);
     expect(left.members).toEqual([]);
     expect(left.messages.map(({ id }) => id)).toEqual(["joined", "shared", "left"]);
+  });
+
+  test("reduces lead status without adding the lead to members", () => {
+    const working = reduceChannelState(state(), {
+      type: "status",
+      revision: 1,
+      agentId: "lead",
+      status: { state: "working", text: "Shaping the plan" },
+    });
+
+    expect(working.lead.status).toEqual({ state: "working", text: "Shaping the plan" });
+    expect(working.members).toEqual([]);
   });
 
   test("merges history by durable identity and sequence", () => {

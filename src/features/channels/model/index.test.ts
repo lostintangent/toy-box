@@ -2,37 +2,43 @@ import { describe, expect, test } from "bun:test";
 import type { ChannelMember } from "./index";
 import {
   agentHandleFromName,
+  channelLead,
   findAgentMentionToken,
   resolveChannelAudience,
   selfUpdateAgentInputSchema,
   setChannelStatusInputSchema,
   splitAgentMentionText,
+  updateChannelInputSchema,
 } from "./index";
 
 const members: ChannelMember[] = [
   { channelId: "channel", id: "critic", name: "Critic" },
   { channelId: "channel", id: "builder", name: "Builder" },
 ];
+const lead = channelLead("lead");
 
 const user = { type: "user" } as const;
 const critic = { type: "agent", agentId: "critic" } as const;
+const leadSender = { type: "agent", agentId: lead.id } as const;
 
-function audience(content: string, sender: typeof user | typeof critic = user) {
-  return resolveChannelAudience({ content, sender, members });
+function audience(content: string, sender: typeof user | typeof critic | typeof leadSender = user) {
+  return resolveChannelAudience({ content, sender, lead, members });
 }
 
 describe("channel delivery policy", () => {
-  test("a user wakes everyone unless addressing specific agents", () => {
-    expect(audience("Please review")).toEqual(members);
-    expect(audience("@critic Please review")).toEqual([members[0]]);
-    expect(audience("@everyone Please review")).toEqual(members);
-    expect(audience("@critci Please review")).toEqual([]);
+  test("unmentioned messages route to the intrinsic lead", () => {
+    expect(audience("Please review")).toEqual([lead]);
+    expect(audience("Here is my review", critic)).toEqual([lead]);
+    expect(audience("Here is the plan", leadSender)).toEqual([]);
   });
 
-  test("an agent only wakes addressed peers and never itself", () => {
-    expect(audience("Here is my review", critic)).toEqual([]);
+  test("mentions route to exact agents without waking the sender", () => {
+    expect(audience("@critic Please review")).toEqual([members[0]]);
+    expect(audience("@lead Please review")).toEqual([lead]);
+    expect(audience("@everyone Please review")).toEqual([lead, ...members]);
+    expect(audience("@critci Please review")).toEqual([]);
     expect(audience("@critic @builder please check", critic)).toEqual([members[1]]);
-    expect(audience("@everyone please check", critic)).toEqual([members[1]]);
+    expect(audience("@everyone please check", critic)).toEqual([lead, members[1]]);
     expect(audience("@builder @builder", critic)).toEqual([members[1]]);
   });
 });
@@ -75,4 +81,15 @@ test("a working status points to at most one assigned message", () => {
       workingOn: 1,
     }).success,
   ).toBe(false);
+});
+
+test("channel previews accept only HTTP and root-relative URLs", () => {
+  expect(updateChannelInputSchema.safeParse({ previewUrl: "http://127.0.0.1:3000" }).success).toBe(
+    true,
+  );
+  expect(updateChannelInputSchema.safeParse({ previewUrl: "/?files=%5B%5D" }).success).toBe(true);
+  expect(updateChannelInputSchema.safeParse({ previewUrl: "javascript:alert(1)" }).success).toBe(
+    false,
+  );
+  expect(updateChannelInputSchema.safeParse({ previewUrl: "//example.com" }).success).toBe(false);
 });

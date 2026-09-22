@@ -11,7 +11,7 @@ import {
 } from "@/shared/components/ui/select";
 import { isAccentColor, isSessionFeatureScope } from "@workspace/model/config/settings";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
-import { useProviders } from "@providers/useProviders";
+import { ProviderSettings } from "@providers/components/ProviderSettings";
 
 const AUTO_FOCUS_ARTIFACT_OPTIONS = {
   always: "Always",
@@ -29,7 +29,6 @@ export function SettingsDialog({
 }) {
   const settings = useWorkspaceSelector((workspace) => workspace.settings);
   const updateSetting = useUpdateWorkspaceSetting();
-  const { providers, setEnabled } = useProviders();
   const { accentColor, terminalShell, useWorktree, autoFocusArtifacts } = settings;
 
   return (
@@ -69,7 +68,7 @@ export function SettingsDialog({
             <div className="relative flex h-9 items-center gap-2 rounded-md border border-input bg-transparent px-3 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
               <span
                 aria-hidden="true"
-                className="size-4 shrink-0 rounded-full border border-black/10 bg-user-accent"
+                className="size-4 shrink-0 rounded-full border border-black/10 bg-accent"
               />
               <code className="text-xs text-muted-foreground uppercase">{accentColor}</code>
               <input
@@ -117,22 +116,7 @@ export function SettingsDialog({
             </label>
           </div>
           <Separator />
-          <fieldset className="grid gap-3">
-            <legend className="mb-3 text-sm font-medium">Model Providers</legend>
-            {providers.map(({ id, name, installed, enabled }) => (
-              <label key={id} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={enabled}
-                  disabled={!installed}
-                  onCheckedChange={(checked) => setEnabled(id, checked)}
-                />
-                <span className={installed ? undefined : "text-muted-foreground"}>{name}</span>
-                {!installed && (
-                  <span className="ml-auto text-xs text-muted-foreground">Not installed</span>
-                )}
-              </label>
-            ))}
-          </fieldset>
+          <ProviderSettings />
         </div>
       </DialogContent>
     </Dialog>

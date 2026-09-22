@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
 import type { Session, SessionState } from "./model";
-import { createInitialSessionState } from "./model/reducer";
+import { applySessionEvent, createInitialSessionState } from "./model/reducer";
 import type { SessionsState } from "./model";
 import { createEmptySessionsState, selectNonWorkerSessions, sessionQueries } from "./queries";
 import {
   applyWorkspaceEventToSessionQueries,
+  recreateSessionInCache,
   removeSessionFromState,
   restoreSessionsState,
   snapshotSessionsState,
@@ -166,6 +167,27 @@ describe("session query cache", () => {
     expect(state.sessions[0]?.title).toBe("Existing session");
   });
 
+  test.each(["running", "waiting", "unread"] as const)(
+    "%s activity refreshes an omitted session without refetching known sessions",
+    (status) => {
+      const client = new QueryClient();
+      seedState(client, { sessions: [createSession("recent")] });
+
+      applyWorkspaceEventToSessionQueries(client, {
+        type: `session.${status}`,
+        sessionId: "recent",
+      });
+      expect(client.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(false);
+
+      applyWorkspaceEventToSessionQueries(client, {
+        type: `session.${status}`,
+        sessionId: "older",
+      });
+      expect(client.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(true);
+      client.clear();
+    },
+  );
+
   test("renaming preserves catalog metadata and its modified time", () => {
     const queryClient = new QueryClient();
     const sessionId = "toy-box-modified-preserved";
@@ -274,11 +296,138 @@ describe("session query cache", () => {
   });
 });
 
-describe("session deletion cache boundary", () => {
-  test("retires the transcript and cursor before a managed ID is reused", async () => {
+describe("session replacement and deletion cache boundary", () => {
+  test("optimistic recreation replaces execution state and cancels older reads", async () => {
+    const client = new QueryClient();
+    const sessionId = "recreated-session";
+    const queryKey = sessionQueries.detail(sessionId).queryKey;
+    const otherSession = createSession("other-session");
+    seedState(client, {
+      sessions: [
+        {
+          ...createSession(sessionId),
+          provider: { id: "copilot", sessionId: "previous-native-id" },
+          context: { directory: "/previous" },
+          artifactPath: "old.md",
+        },
+        otherSession,
+      ],
+      workerSessionParents: { [sessionId]: "previous-parent" },
+      worktrees: {
+        [sessionId]: { path: "/previous", branch: "old", baseBranch: "main" },
+      },
+    });
+    const previous = {
+      ...createInitialSessionState({
+        messages: [{ role: "assistant", content: "Previous run" }],
+        artifacts: ["old.md"],
+        model: { provider: "copilot", name: "previous-model" },
+      }),
+      lastSeenEventId: 100,
+    };
+    client.setQueryData(queryKey, previous);
+    const catalog = Promise.withResolvers<SessionsState>();
+    const history = Promise.withResolvers<SessionState>();
+    const oldCatalog = readState(client);
+    const reads = Promise.allSettled([
+      client.fetchQuery({ queryKey: sessionQueries.stateKey(), queryFn: () => catalog.promise }),
+      client.fetchQuery({ queryKey, queryFn: () => history.promise }),
+    ]);
+    const message = {
+      clientId: "first-message",
+      content: "Start fresh",
+      model: { provider: "codex", name: "new-model" },
+    };
+
+    await recreateSessionInCache(client, sessionId, message, {
+      title: "Replacement",
+      sessionType: "standard",
+    });
+    const replacement = readState(client);
+    expect(replacement).toEqual({
+      sessions: [
+        {
+          id: sessionId,
+          title: "Replacement",
+          createdAt: expect.any(Date),
+          updatedAt: expect.any(Date),
+        },
+        otherSession,
+      ],
+      workerSessionParents: {},
+      worktrees: {},
+    });
+    const optimistic = client.getQueryData<SessionState>(queryKey)!;
+    expect(optimistic).toMatchObject({
+      model: message.model,
+      status: "thinking",
+      artifacts: [],
+    });
+    expect(optimistic.messages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        clientId: message.clientId,
+        content: message.content,
+      }),
+    ]);
+    expect(optimistic.lastSeenEventId).toBeUndefined();
+
+    catalog.resolve(oldCatalog);
+    history.resolve(previous);
+    await reads;
+    expect(readState(client)).toEqual(replacement);
+    expect(client.getQueryData<SessionState>(queryKey)).toEqual(optimistic);
+    client.clear();
+  });
+
+  test("the server acknowledges an optimistic draft and replaces its starting message by client ID", async () => {
+    const client = new QueryClient();
+    const sessionId = "new-session";
+    const queryKey = sessionQueries.detail(sessionId).queryKey;
+    await recreateSessionInCache(client, sessionId, {
+      clientId: "first-message",
+      content: "Cached prompt",
+    });
+    applyWorkspaceEventToSessionQueries(client, {
+      type: "session.upserted",
+      session: {
+        id: sessionId,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        sessionType: "standard",
+      },
+    });
+    const acknowledged = client.getQueryData<SessionState>(queryKey)!;
+    expect(acknowledged.messages).toEqual([
+      expect.objectContaining({ clientId: "first-message", content: "Cached prompt" }),
+    ]);
+    const streamed = applySessionEvent(acknowledged, {
+      type: "user_message",
+      clientId: "first-message",
+      content: "Authoritative prompt",
+    });
+    expect(streamed.messages).toHaveLength(1);
+    expect(streamed.messages[0]).toMatchObject({ content: "Authoritative prompt" });
+    client.clear();
+  });
+
+  test("a replacement upsert retires the previous transcript without removing the session", async () => {
     const client = new QueryClient();
     const sessionId = "automation";
     const queryKey = sessionQueries.detail(sessionId).queryKey;
+    seedState(client, {
+      sessions: [
+        {
+          ...createSession(sessionId),
+          provider: { id: "copilot", sessionId: "previous-native-id" },
+          context: { directory: "/previous" },
+          artifactPath: "old.md",
+        },
+      ],
+      workerSessionParents: { [sessionId]: "previous-parent" },
+      worktrees: {
+        [sessionId]: { path: "/previous", branch: "old", baseBranch: "main" },
+      },
+    });
     const previous = {
       ...createInitialSessionState({
         messages: [{ role: "assistant", content: "Previous run" }],
@@ -291,13 +440,38 @@ describe("session deletion cache boundary", () => {
     const history = Promise.withResolvers<typeof previous>();
     const read = client.fetchQuery({ queryKey, queryFn: () => history.promise });
 
-    applyWorkspaceEventToSessionQueries(client, { type: "session.deleted", sessionId });
-    const empty = createInitialSessionState();
-    expect(client.getQueryData<SessionState>(queryKey)).toEqual(empty);
+    applyWorkspaceEventToSessionQueries(client, {
+      type: "session.upserted",
+      session: {
+        id: sessionId,
+        createdAt: "2026-02-15T00:00:00.000Z",
+        updatedAt: "2026-02-15T00:00:00.000Z",
+        title: "Replacement run",
+        sessionType: "automation",
+      },
+    });
+    const retired = client.getQueryData<SessionState>(queryKey)!;
+    expect(retired.messages).toEqual([]);
+    expect(retired.artifacts).toEqual([]);
+    expect(retired.model).toBeUndefined();
+    expect(retired.lastSeenEventId).toBeUndefined();
+    expect(readState(client).sessions).toEqual([
+      {
+        id: sessionId,
+        createdAt: new Date("2026-02-15T00:00:00.000Z"),
+        updatedAt: new Date("2026-02-15T00:00:00.000Z"),
+        title: "Replacement run",
+        provider: undefined,
+        context: undefined,
+        artifactPath: undefined,
+      },
+    ]);
+    expect(readState(client).workerSessionParents).toEqual({});
+    expect(readState(client).worktrees).toEqual({});
 
     history.resolve(previous);
     await read.catch(() => {});
-    expect(client.getQueryData<SessionState>(queryKey)).toEqual(empty);
+    expect(client.getQueryData<SessionState>(queryKey)).toEqual(retired);
     client.clear();
   });
 

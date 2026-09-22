@@ -2,12 +2,13 @@ import { isAbsolute, resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import type {
   Channel,
+  ChannelAgent,
+  ChannelAgentStatus,
   ChannelAttachment,
   ChannelArtifact,
   ChannelEvent,
   ChannelList,
   ChannelMember,
-  ChannelMemberStatus,
   ChannelMessage,
   ChannelMessageSender,
   ChannelReaction,
@@ -19,10 +20,12 @@ import type {
   SetChannelStatusInput,
   SelfUpdateAgentInput,
   UpdateAgentInput,
+  UpdateChannelInput,
 } from "@channels/model";
 import {
   agentHandleFromName,
   channelAgentMetadataSchema,
+  channelLead,
   resolveChannelAudience,
 } from "@channels/model";
 import { resolveWorkspaceFile, workspaceFileFromAbsolutePath } from "@files/server/paths";
@@ -41,7 +44,7 @@ import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 import { smallJsonSchema } from "@/shared/smallJson";
 import { broadcast } from "@workspace/server/events";
 import type { Worker } from "@workers/model";
-import { ChannelDatabase } from "./database";
+import { ChannelDatabase, type ChannelAgentRecord } from "./database";
 import {
   publishChannelEvent,
   releaseChannelEvents,
@@ -88,15 +91,13 @@ export async function createChannelMembers(
   return created;
 }
 
-export async function createChannelMembersFromAgent(
+export async function createChannelMembersFromLead(
   sessionId: string,
   members: readonly Omit<CreateChannelMemberInput, "channelId">[],
 ): Promise<ChannelMember[]> {
-  const member = await requireChannelMember(
-    new ChannelDatabase(await getStateDatabase()),
-    sessionId,
-  );
-  return createChannelMembers(member.channelId, members);
+  const agent = await requireChannelAgent(new ChannelDatabase(await getStateDatabase()), sessionId);
+  if (!agent.isLead) throw new Error("Only the channel lead can create members.");
+  return createChannelMembers(agent.channelId, members);
 }
 
 export async function updateChannelAgent(input: UpdateAgentInput): Promise<ChannelMember> {
@@ -117,6 +118,19 @@ export async function updateCurrentChannelAgent(
   publishChannelMember(change.member, change.revision);
   broadcastChannelMembers();
   return change.member;
+}
+
+export async function updateChannelFromLead(sessionId: string, input: UpdateChannelInput) {
+  const change = await new ChannelDatabase(await getStateDatabase()).updateChannel(
+    sessionId,
+    input,
+  );
+  if (change.changed) broadcast({ type: "channel.upserted", channel: change.channel });
+  return {
+    ...(change.channel.purpose ? { purpose: change.channel.purpose } : {}),
+    checklist: change.channel.checklist,
+    ...(change.channel.previewUrl ? { previewUrl: change.channel.previewUrl } : {}),
+  };
 }
 
 export async function getChannelState(channelId: string): Promise<ChannelState> {
@@ -188,6 +202,9 @@ export async function createChannel(input: CreateChannelInput): Promise<Channel>
   if (input.directory) await mkdir(input.directory, { recursive: true });
   const channel = await new ChannelDatabase(await getStateDatabase()).createChannel(input);
   broadcast({ type: "channel.upserted", channel });
+  void wakeChannelAgent(channel.leadId, { type: "channel_started" }).catch((error) => {
+    console.error(`Failed to start the lead for Channel ${channel.id}:`, error);
+  });
   return channel;
 }
 
@@ -201,7 +218,7 @@ export async function renameChannel(input: RenameChannelInput): Promise<Channel>
 
 export async function deleteChannel(channelId: string): Promise<boolean> {
   const database = new ChannelDatabase(await getStateDatabase());
-  for (const agentId of await database.listMemberIds(channelId)) {
+  for (const agentId of await database.listAgentIds(channelId)) {
     await deleteSessionIfExists(agentId);
   }
   if (!(await database.deleteChannel(channelId))) return false;
@@ -252,38 +269,39 @@ export async function readChannelForSession(channelId: string, beforeSequence?: 
   return readChannelBefore(database, channel, beforeSequence);
 }
 
-export async function waitForChannelMembers(
+export async function waitForChannelAgents(
   channelId: string,
-  memberIds: readonly string[],
+  agentIds: readonly string[],
   timeoutMs?: number,
 ) {
-  const members = await new ChannelDatabase(await getStateDatabase()).listMembers(channelId);
-  const channelMemberIds = new Set(members.map(({ id }) => id));
-  if (memberIds.some((memberId) => !channelMemberIds.has(memberId))) {
-    throw new Error("One or more member IDs do not belong to this channel.");
+  const agentIdsInChannel = new Set(
+    await new ChannelDatabase(await getStateDatabase()).listAgentIds(channelId),
+  );
+  if (agentIds.some((agentId) => !agentIdsInChannel.has(agentId))) {
+    throw new Error("One or more agent IDs do not belong to this channel.");
   }
-  const completions = await waitForSessions(memberIds, timeoutMs);
-  return completions.map(({ status }, index) => ({ memberId: memberIds[index]!, status }));
+  const completions = await waitForSessions(agentIds, timeoutMs);
+  return completions.map(({ status }, index) => ({ agentId: agentIds[index]!, status }));
 }
 
 export async function readChannelForAgent(sessionId: string) {
   const database = new ChannelDatabase(await getStateDatabase());
-  const member = await requireChannelMember(database, sessionId);
-  const channel = await database.getChannel(member.channelId);
+  const agent = await requireChannelAgent(database, sessionId);
+  const channel = await database.getChannel(agent.channelId);
   if (!channel) throw new Error("Channel not found.");
   const messages = await database.listMessagesAfter(
     channel.id,
-    member.seenThrough,
+    agent.seenThrough,
     CHANNEL_MESSAGE_LIMIT,
   );
-  const readThrough = messages.at(-1)?.sequence ?? member.seenThrough;
+  const readThrough = messages.at(-1)?.sequence ?? agent.seenThrough;
   const result = await readChannel(
     database,
     channel,
     messages,
     readThrough < channel.latestSequence,
   );
-  await database.markMemberSeen(member, readThrough);
+  await database.markAgentSeen(agent, readThrough);
   return result;
 }
 
@@ -306,11 +324,21 @@ async function readChannel(
   messages: ChannelMessage[],
   hasMore: boolean,
 ) {
-  const [members, artifacts] = await Promise.all([
+  const [lead, members, artifacts] = await Promise.all([
+    database.getAgent(channel.leadId),
     database.listMembers(channel.id),
     database.listArtifacts(channel.id),
   ]);
+  if (!lead?.isLead) throw new Error("Channel lead is incomplete.");
   return {
+    channel: {
+      name: channel.name,
+      ...(channel.purpose ? { purpose: channel.purpose } : {}),
+      checklist: channel.checklist,
+      ...(channel.previewUrl ? { previewUrl: channel.previewUrl } : {}),
+      ...(channel.directory ? { directory: channel.directory } : {}),
+    },
+    lead: publicChannelLead(lead),
     members: members.map(publicChannelMember),
     messages,
     artifacts: artifacts.map(publicChannelArtifact),
@@ -327,14 +355,21 @@ async function requireChannelState(
   return state;
 }
 
-/** Public collaboration facts omit each member's private read position and runtime details. */
+/** Public collaboration facts omit each agent's private read position and runtime details. */
 function publicChannelMember(member: ChannelMember) {
+  return { memberId: member.id, ...publicChannelAgent(member) };
+}
+
+function publicChannelLead(lead: ChannelAgent) {
+  return { leadId: lead.id, ...publicChannelAgent(lead) };
+}
+
+function publicChannelAgent(agent: ChannelAgent) {
   return {
-    memberId: member.id,
-    name: member.name,
-    mention: `@${agentHandleFromName(member.name)}`,
-    role: member.role,
-    ...(member.status ? { status: member.status } : {}),
+    name: agent.name,
+    mention: `@${agentHandleFromName(agent.name)}`,
+    role: agent.role,
+    ...(agent.status ? { status: agent.status } : {}),
   };
 }
 
@@ -352,16 +387,13 @@ export async function sendChannelMessageFromAgent(
     attachmentPaths?: readonly string[];
   },
 ): Promise<ChannelMessage> {
-  const member = await requireChannelMember(
-    new ChannelDatabase(await getStateDatabase()),
-    sessionId,
-  );
+  const agent = await requireChannelAgent(new ChannelDatabase(await getStateDatabase()), sessionId);
   return postMessage({
     id: crypto.randomUUID(),
-    channelId: member.channelId,
+    channelId: agent.channelId,
     sender: {
       type: "agent",
-      agentId: member.id,
+      agentId: agent.id,
     },
     content: input.content,
     attachments: await resolveAttachmentPaths(sessionId, input.attachmentPaths),
@@ -373,32 +405,32 @@ export async function setChannelMessageReactionFromAgent(
   input: { sequence: number; reaction: ChannelReaction["reaction"] | null },
 ): Promise<ChannelReaction["reaction"] | null> {
   const database = new ChannelDatabase(await getStateDatabase());
-  const member = await requireChannelMember(database, sessionId);
-  return setChannelMemberReaction(database, member, input.sequence, input.reaction);
+  const agent = await requireChannelAgent(database, sessionId);
+  return setChannelAgentReaction(database, agent, input.sequence, input.reaction);
 }
 
 export async function setChannelAgentStatus(
   sessionId: string,
   input: SetChannelStatusInput,
-): Promise<ChannelMemberStatus> {
+): Promise<ChannelAgentStatus> {
   const database = new ChannelDatabase(await getStateDatabase());
-  const member = await requireChannelMember(database, sessionId);
-  const status: ChannelMemberStatus = {
+  const agent = await requireChannelAgent(database, sessionId);
+  const status: ChannelAgentStatus = {
     state: "working",
     text: input.status,
     ...(input.lookingAt ? { lookingAt: input.lookingAt } : {}),
     ...(input.workingOn ? { workingOn: input.workingOn } : {}),
   };
-  await setChannelMemberStatus(database, member, status);
+  await setChannelAgentStatusValue(database, agent, status);
   return status;
 }
 
 async function startChannelAgentTurn(sessionId: string): Promise<void> {
   const database = new ChannelDatabase(await getStateDatabase());
-  const member = await database.getMember(sessionId);
-  if (!member) return;
-  const change = await database.clearWaitingMemberStatus(member);
-  if (change) publishChannelStatus(member, change);
+  const agent = await database.getAgent(sessionId);
+  if (!agent) return;
+  const change = await database.clearWaitingAgentStatus(agent);
+  if (change) publishChannelStatus(agent, change);
 }
 
 export async function finishChannelAgentTurn(
@@ -406,26 +438,26 @@ export async function finishChannelAgentTurn(
   waitingFor?: string,
 ): Promise<void> {
   const database = new ChannelDatabase(await getStateDatabase());
-  const member = await database.getMember(sessionId);
-  if (!member) return;
-  await setChannelMemberStatus(
+  const agent = await database.getAgent(sessionId);
+  if (!agent) return;
+  await setChannelAgentStatusValue(
     database,
-    member,
+    agent,
     waitingFor ? { state: "waiting", text: waitingFor } : undefined,
   );
 }
 
-async function setChannelMemberReaction(
+async function setChannelAgentReaction(
   database: ChannelDatabase,
-  member: ChannelMember,
+  agent: ChannelAgent & { channelId: string },
   sequence: number,
   reaction: ChannelReaction["reaction"] | null,
 ): Promise<ChannelReaction["reaction"] | null> {
-  const channelId = member.channelId;
+  const channelId = agent.channelId;
   const change = await database.setMessageReaction({
     channelId,
     sequence,
-    agentId: member.id,
+    agentId: agent.id,
     reaction,
   });
   if (!change) return null;
@@ -434,30 +466,30 @@ async function setChannelMemberReaction(
     type: "reaction",
     revision: change.revision,
     sequence,
-    agentId: member.id,
+    agentId: agent.id,
     reaction: currentReaction,
   });
   return currentReaction;
 }
 
-async function setChannelMemberStatus(
+async function setChannelAgentStatusValue(
   database: ChannelDatabase,
-  member: ChannelMember,
-  status?: ChannelMemberStatus,
+  agent: ChannelAgentRecord,
+  status?: ChannelAgentStatus,
 ): Promise<void> {
-  const change = await database.setMemberStatus(member, status);
+  const change = await database.setAgentStatus(agent, status);
   if (!change) return;
-  publishChannelStatus(member, change);
+  publishChannelStatus(agent, change);
 }
 
 function publishChannelStatus(
-  member: ChannelMember,
-  change: { revision: number; status?: ChannelMemberStatus },
+  agent: ChannelAgent & { channelId: string },
+  change: { revision: number; status?: ChannelAgentStatus },
 ): void {
-  publishChannelEvent(member.channelId, {
+  publishChannelEvent(agent.channelId, {
     type: "status",
     revision: change.revision,
-    agentId: member.id,
+    agentId: agent.id,
     ...(change.status ? { status: change.status } : {}),
   });
 }
@@ -501,9 +533,11 @@ async function postMessage({
     database.listMembers(channelId),
   ]);
   if (!channel) throw new Error("Channel not found.");
+  const lead = channelLead(channel.leadId);
   const audience = resolveChannelAudience({
     content,
     sender,
+    lead,
     members,
   });
   const message = await appendMessage(database, {
@@ -516,7 +550,7 @@ async function postMessage({
 
   const senderName =
     sender.type === "agent"
-      ? (members.find(({ id }) => id === sender.agentId)?.name ?? "an agent")
+      ? ([lead, ...members].find(({ id }) => id === sender.agentId)?.name ?? "an agent")
       : "the user";
   await Promise.all(
     audience.map((member) =>
@@ -533,13 +567,13 @@ export async function shareChannelArtifactFromAgent(
   input: { path: string; title: string },
 ) {
   const database = new ChannelDatabase(await getStateDatabase());
-  const member = await requireChannelMember(database, sessionId);
-  const channel = await database.getChannel(member.channelId);
+  const agent = await requireChannelAgent(database, sessionId);
+  const channel = await database.getChannel(agent.channelId);
   if (!channel) throw new Error("Channel not found.");
   const workspaceDirectory = (await getSessionDirectory(sessionId)) ?? channel.directory;
   return shareChannelArtifact(database, channel.id, workspaceDirectory, {
     ...input,
-    actor: { type: "agent", agentId: member.id },
+    actor: { type: "agent", agentId: agent.id },
   });
 }
 
@@ -576,29 +610,31 @@ async function shareChannelArtifact(
   if (!absolutePath || !(await Bun.file(absolutePath).exists())) {
     throw new Error("Share an existing file using an absolute or workspace-relative path.");
   }
-  const change = await database.shareArtifact({
+  const result = await database.shareArtifact({
     id: crypto.randomUUID(),
     channelId,
     file: workspaceFileFromAbsolutePath(absolutePath),
     title: input.title,
     actor: input.actor,
   });
-  publishChannelMessage(channelId, change);
-  return publicChannelArtifact(change.artifact);
+  if ("message" in result) publishChannelMessage(channelId, result);
+  return publicChannelArtifact(result.artifact);
 }
 
 export async function detachChannelAgentSession(sessionId: string): Promise<void> {
   const database = new ChannelDatabase(await getStateDatabase());
+  const agent = await database.getAgent(sessionId);
+  if (agent?.isLead) return;
   const change = await database.deleteMember(sessionId);
   if (!change) return;
   publishChannelMessage(change.member.channelId, change);
   broadcastChannelMembers();
 }
 
-async function requireChannelMember(database: ChannelDatabase, sessionId: string) {
-  const member = await database.getMember(sessionId);
-  if (!member) throw new Error("This agent session does not belong to a channel.");
-  return member;
+async function requireChannelAgent(database: ChannelDatabase, sessionId: string) {
+  const agent = await database.getAgent(sessionId);
+  if (!agent) throw new Error("This agent session does not belong to a channel.");
+  return agent;
 }
 
 async function appendMessage(
@@ -628,9 +664,9 @@ async function wakeChannelAgent(
 ): Promise<void> {
   return withAgentTurn(agentId, async () => {
     const database = new ChannelDatabase(await getStateDatabase());
-    const member = await database.getMember(agentId);
-    if (!member) throw new Error("Channel agent not found.");
-    const channel = await database.getChannel(member.channelId);
+    const agent = await database.getAgent(agentId);
+    if (!agent) throw new Error("Channel agent not found.");
+    const channel = await database.getChannel(agent.channelId);
     if (!channel) throw new Error("Channel not found.");
 
     try {
@@ -647,7 +683,7 @@ async function wakeChannelAgent(
       {
         directory: channel.directory,
         sessionType: "worker",
-        name: `${member.name} · ${channel.title}`,
+        name: `${agent.name} · ${channel.name}`,
       },
     );
     await startChannelAgentTurn(agentId);

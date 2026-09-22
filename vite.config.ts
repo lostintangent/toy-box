@@ -1,9 +1,12 @@
-import { defineConfig, lazyPlugins } from "vite-plus";
+import { type Connect, defineConfig, lazyPlugins } from "vite-plus";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { nitro } from "nitro/vite";
 import { resolve } from "node:path";
+import { constants } from "node:zlib";
+import compression from "compression";
 import tailwindcss from "@tailwindcss/vite";
+import { removeUncompressedAssets } from "./cli/build/publicAssets";
 
 export default defineConfig(({ mode }) => {
   const isProduction = mode === "production";
@@ -42,6 +45,23 @@ export default defineConfig(({ mode }) => {
 
     plugins: lazyPlugins(() => [
       tailwindcss(),
+      {
+        name: "toy-box:dev-compression",
+        apply: "serve",
+        configureServer(server) {
+          server.middlewares.use(
+            compression({
+              level: 1,
+              brotli: { params: { [constants.BROTLI_PARAM_QUALITY]: 1 } },
+              // Vite owns these assets; Nitro owns HTML, JSON, and live streams.
+              filter: (_request, response) =>
+                /^(?:text\/(?:javascript|css)|application\/javascript)(?:;|$)/i.test(
+                  String(response.getHeader("Content-Type") ?? ""),
+                ),
+            }) as Connect.NextHandleFunction,
+          );
+        },
+      },
       nitro({
         preset: "bun",
         devServer: { runner: "self" },
@@ -51,6 +71,21 @@ export default defineConfig(({ mode }) => {
           publicDir: ".output/server/public",
         },
         serveStatic: isProduction,
+        compressPublicAssets: { gzip: true, brotli: true },
+        hooks: {
+          "rollup:before"(nitro, config) {
+            if (nitro.options.dev) return;
+            config.plugins = [
+              config.plugins,
+              {
+                name: "toy-box:compressed-public-assets",
+                // Nitro copies and compresses assets before bundling its server.
+                // Prune here so its generated manifest only references retained files.
+                buildStart: () => removeUncompressedAssets(nitro.options.output.publicDir),
+              },
+            ];
+          },
+        },
       }),
       tanstackStart({ router: { virtualRouteConfig: "./src/routes.ts" } }),
       viteReact({ compiler: true }),

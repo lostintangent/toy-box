@@ -11,7 +11,7 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AgentStatus } from "@channels/components/agents/AgentStatus";
 import { isChannelSystemMessage } from "@channels/model";
-import type { ChannelMember, ChannelMessage } from "@channels/model";
+import type { ChannelAgent, ChannelMessage } from "@channels/model";
 import { TranscriptSkeleton } from "@sessions/components/transcript/TranscriptSkeleton";
 import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
 import { ScrollToBottomButton } from "@/shared/components/ui/scroll-to-bottom-button";
@@ -21,12 +21,12 @@ import { ChannelPlaceholder } from "./ChannelPlaceholder";
 
 export function ChannelTranscript({
   messages,
-  members,
+  agents,
   scrollToBottomRef,
   onLoadPrevious,
 }: {
   messages: ChannelMessage[];
-  members: ChannelMember[];
+  agents: ChannelAgent[];
   scrollToBottomRef: RefObject<(() => void) | null>;
   onLoadPrevious: () => Promise<void>;
 }) {
@@ -112,7 +112,7 @@ export function ChannelTranscript({
           <div className="@container min-h-full px-4 py-5">
             <ChannelPlaceholder />
             <div className="space-y-2 empty:hidden pt-4">
-              <AgentStatus members={members} />
+              <AgentStatus agents={agents} />
             </div>
           </div>
         ) : (
@@ -127,10 +127,10 @@ export function ChannelTranscript({
                   data-index={virtualItem.index}
                   className="absolute top-0 left-0 w-full px-4"
                 >
-                  <ChannelMessageView messages={messageGroup} members={members} />
+                  <ChannelMessageView messages={messageGroup} agents={agents} />
                   {isLast && (
                     <div className="space-y-2 empty:hidden pt-4">
-                      <AgentStatus members={members} />
+                      <AgentStatus agents={agents} />
                     </div>
                   )}
                 </div>

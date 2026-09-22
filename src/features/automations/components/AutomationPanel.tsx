@@ -76,7 +76,6 @@ export function AutomationPanel({
       {editing && (
         <AutomationDialog
           key={editing.id}
-          mode="edit"
           automation={editing}
           onOpenChange={(open) => {
             if (!open) setEditAutomationId(undefined);

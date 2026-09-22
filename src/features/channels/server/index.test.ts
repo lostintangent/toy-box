@@ -20,7 +20,7 @@ mock.module("@/server/database", () => ({
 const { ChannelDatabase } = await import("./database");
 const {
   createChannel,
-  createChannelMembersFromAgent,
+  createChannelMembersFromLead,
   finishChannelAgentTurn,
   postChannelMessageFromSession,
   readChannelForSession,
@@ -29,11 +29,16 @@ const {
   setChannelMessageReactionFromAgent,
   shareChannelArtifactFromSession,
   streamChannel,
+  updateChannelFromLead,
 } = await import("./index");
 const { publishChannelEvent, releaseChannelEvents } = await import("./events");
 
 const PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const CHANNEL_DEFAULTS = {
+  purpose: "Coordinate the work to a useful result.",
+  model: { provider: "copilot", name: "gpt-5.5" },
+} as const;
 
 function channelAgent(
   channelId: string,
@@ -59,11 +64,42 @@ test("creating a Channel creates its workspace directory", async () => {
     await rm(root, { recursive: true, force: true });
   });
   const directory = join(root, "nested", "workspace");
+  const delivered = spyOn(sessionRuntime, "deliverSessionMessage").mockRejectedValue(
+    new Error("Session not found"),
+  );
+  let started!: (value: Parameters<typeof sessionRuntime.createSession>) => void;
+  const leadStarted = new Promise<Parameters<typeof sessionRuntime.createSession>>((resolve) => {
+    started = resolve;
+  });
+  const create = spyOn(sessionRuntime, "createSession").mockImplementation(async (...args) => {
+    started(args);
+    return {
+      disposition: "started",
+      waitForCompletion: async () => ({ status: "completed" }),
+    };
+  });
+  onTestFinished(() => {
+    delivered.mockRestore();
+    create.mockRestore();
+  });
 
-  const channel = await createChannel({ title: "Bitmap studio", directory });
+  const channel = await createChannel({
+    name: "Bitmap studio",
+    directory,
+    model: CHANNEL_DEFAULTS.model,
+  });
+  const [leadId, message, options] = await leadStarted;
 
   expect(channel.directory).toBe(directory);
+  expect(channel.purpose).toBeUndefined();
   expect((await stat(directory)).isDirectory()).toBe(true);
+  expect(leadId).toBe(channel.leadId);
+  expect(message).toEqual({ systemMessage: { type: "channel_started" } });
+  expect(options).toMatchObject({
+    directory,
+    sessionType: "worker",
+    name: "Lead · Bitmap studio",
+  });
 });
 
 test("an addressed Channel post settles after its Agent wake is ready", async () => {
@@ -74,11 +110,11 @@ test("an addressed Channel post settles after its Agent wake is ready", async ()
   });
 
   const channels = new ChannelDatabase(currentDb);
-  const channel = await channels.createChannel({ title: "Coordination" });
+  const channel = await channels.createChannel({ name: "Coordination", ...CHANNEL_DEFAULTS });
   const { member } = await channels.createMember(
     channelAgent(channel.id, "reviewer-session", "Reviewer"),
   );
-  await channels.setMemberStatus(member, { state: "waiting", text: "a review request" });
+  await channels.setAgentStatus(member, { state: "waiting", text: "a review request" });
   let releaseWake!: () => void;
   let announceWake!: () => void;
   const wakeStarted = new Promise<void>((resolve) => {
@@ -123,27 +159,25 @@ test("an Agent can attach an image file to a durable Channel message", async () 
   });
 
   const channels = new ChannelDatabase(currentDb);
-  const channel = await channels.createChannel({ title: "Visual review" });
-  const sessionId = "designer-session";
-  await channels.createMember(channelAgent(channel.id, sessionId, "Designer"));
+  const channel = await channels.createChannel({ name: "Visual review", ...CHANNEL_DEFAULTS });
   const screenshot = join(directory, "screenshot.png");
   await Bun.write(screenshot, Buffer.from(PNG_BASE64, "base64"));
 
-  const message = await sendChannelMessageFromAgent(sessionId, {
+  const message = await sendChannelMessageFromAgent(channel.leadId, {
     content: "The layout is ready for review.",
     attachmentPaths: [screenshot],
   });
 
   expect(message).toMatchObject({
-    sequence: 2,
-    sender: { type: "agent", agentId: sessionId },
+    sequence: 1,
+    sender: { type: "agent", agentId: channel.leadId },
     content: "The layout is ready for review.",
     attachments: [screenshot],
   });
   expect((await channels.listMessagesAfter(channel.id)).at(-1)).toEqual(message);
 });
 
-test("a Channel Agent can create peers in its own Channel", async () => {
+test("only the Channel lead can create members", async () => {
   currentDb = await createTestDatabase();
   onTestFinished(async () => {
     await currentDb?.close();
@@ -151,12 +185,9 @@ test("a Channel Agent can create peers in its own Channel", async () => {
   });
 
   const channels = new ChannelDatabase(currentDb);
-  const channel = await channels.createChannel({ title: "Product studio" });
-  const { member: creator } = await channels.createMember(
-    channelAgent(channel.id, "strategist-session", "Strategist"),
-  );
+  const channel = await channels.createChannel({ name: "Product studio", ...CHANNEL_DEFAULTS });
 
-  const peers = await createChannelMembersFromAgent(creator.id, [
+  const peers = await createChannelMembersFromLead(channel.leadId, [
     {
       name: "Designer",
       role: "Turns product direction into clear interaction design.",
@@ -184,8 +215,10 @@ test("a Channel Agent can create peers in its own Channel", async () => {
   expect((await channels.listMembers(channel.id)).map(({ name }) => name)).toEqual([
     "Designer",
     "Engineer",
-    "Strategist",
   ]);
+  await expect(
+    createChannelMembersFromLead(peers[0]!.id, [{ name: "Researcher" }]),
+  ).rejects.toThrow("Only the channel lead can create members.");
   expect((await channels.listMessagesAfter(channel.id)).at(-1)).toMatchObject({
     sender: { type: "system" },
     content: { type: "member_joined", member: { id: peers[1]!.id } },
@@ -205,13 +238,19 @@ test("a Session can seed and passively read Channel context", async () => {
 
   const channels = new ChannelDatabase(currentDb);
   const channel = await channels.createChannel({
-    title: "Research",
+    name: "Research",
     directory,
+    ...CHANNEL_DEFAULTS,
   });
   await Promise.all([
     Bun.write(join(directory, "evidence.png"), Buffer.from(PNG_BASE64, "base64")),
     Bun.write(join(directory, "brief.md"), "# Brief"),
   ]);
+  const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockResolvedValue({
+    disposition: "started",
+    waitForCompletion: async () => ({ status: "completed" }),
+  });
+  onTestFinished(() => deliver.mockRestore());
 
   const message = await postChannelMessageFromSession("coordinator-session", {
     id: "kickoff",
@@ -224,9 +263,19 @@ test("a Session can seed and passively read Channel context", async () => {
     path: "brief.md",
     title: "Research brief",
   });
+  await updateChannelFromLead(channel.leadId, {
+    purpose: "Turn the evidence into a useful recommendation.",
+    checklist: [{ title: "Synthesize the evidence", status: "in_progress" }],
+    previewUrl: "http://127.0.0.1:3000",
+  });
 
   const result = await readChannelForSession(channel.id);
   expect(result).toMatchObject({
+    channel: {
+      purpose: "Turn the evidence into a useful recommendation.",
+      checklist: [{ title: "Synthesize the evidence", status: "in_progress" }],
+      previewUrl: "http://127.0.0.1:3000",
+    },
     members: [],
     messages: [
       {
@@ -246,6 +295,10 @@ test("a Session can seed and passively read Channel context", async () => {
     hasMore: false,
   });
   expect((await channels.getChannel(channel.id))?.seenThrough).toBe(0);
+  expect(deliver).toHaveBeenCalledWith(channel.leadId, {
+    systemMessage: { type: "channel_message", senderName: "the user" },
+    immediate: true,
+  });
   expect(await readChannelForSession(channel.id, message.sequence + 1)).toMatchObject({
     messages: [{ id: "kickoff" }],
     hasMore: false,
@@ -260,7 +313,7 @@ test("a Channel Agent publishes focus and settles temporary turn state", async (
   });
 
   const channels = new ChannelDatabase(currentDb);
-  const channel = await channels.createChannel({ title: "Protocol review" });
+  const channel = await channels.createChannel({ name: "Protocol review", ...CHANNEL_DEFAULTS });
   const { member } = await channels.createMember(
     channelAgent(channel.id, "reviewer-session", "Reviewer"),
   );
@@ -335,7 +388,7 @@ test("a Channel stream orders and deduplicates published transitions", async () 
   });
 
   const channels = new ChannelDatabase(currentDb);
-  const channel = await channels.createChannel({ title: "Planning" });
+  const channel = await channels.createChannel({ name: "Planning", ...CHANNEL_DEFAULTS });
   const received: number[] = [];
   const unsubscribe = await streamChannel(channel.id, 0, (event) => {
     received.push(event.revision);
@@ -382,7 +435,7 @@ test("a Channel stream recovers with bounded latest history", async () => {
   });
 
   const channels = new ChannelDatabase(currentDb);
-  const channel = await channels.createChannel({ title: "Long-running room" });
+  const channel = await channels.createChannel({ name: "Long-running room", ...CHANNEL_DEFAULTS });
   for (let sequence = 1; sequence <= 101; sequence++) {
     await channels.appendMessage({
       id: `message-${sequence}`,

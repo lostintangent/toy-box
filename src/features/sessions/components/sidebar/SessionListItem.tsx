@@ -59,9 +59,7 @@ export function SessionListItem({
         activity={activity}
         title={sessionLabel}
         titleContent={<SessionListItemTitle title={sessionLabel} loading={isTitleLoading} />}
-        icon={
-          isPinned ? <Pin className="size-3.5 shrink-0 text-user-accent" aria-hidden /> : undefined
-        }
+        icon={isPinned ? <Pin className="size-3.5 shrink-0 text-accent" aria-hidden /> : undefined}
         time={!isDraft && <RelativeTime date={session.updatedAt} />}
         badge={
           showBadges && (
@@ -124,7 +122,7 @@ function SessionListItemTitle({ title, loading }: { title: string; loading: bool
         <span
           data-slot="skeleton"
           aria-hidden
-          className="inline-block h-4 w-28 animate-pulse rounded-md bg-accent align-middle motion-reduce:animate-none"
+          className="inline-block h-4 w-28 animate-pulse rounded-md bg-muted align-middle motion-reduce:animate-none"
         />
       </>
     );

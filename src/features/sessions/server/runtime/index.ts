@@ -1,5 +1,5 @@
 // Public operations for the session runtime. Headless callers explicitly
-// create or deliver; connected callers use one composite that subscribes while
+// create, recreate, or deliver; connected callers use one composite that subscribes while
 // optionally doing either. Every mutation acquires the same live runtime.
 
 import { listSessionArtifacts, writeSessionArtifact } from "../artifacts";
@@ -240,6 +240,25 @@ export function createSession(
   options: SessionCreationOptions,
 ) {
   return deliver(sessionId, message, options);
+}
+
+/** Recreate a session through its first message while retaining its public ID. */
+export async function recreateSession(
+  sessionId: string,
+  message: MessageInput,
+  options: SessionCreationOptions,
+) {
+  await sessionRegistry.deleteSessionIfExists(sessionId, { publish: false });
+  await sessionRegistry.createSessionRecord(sessionId, {
+    title: options.name,
+    sessionType: options.sessionType,
+  });
+  try {
+    return await createSession(sessionId, message, options);
+  } catch (error) {
+    await sessionRegistry.deleteSessionIfExists(sessionId);
+    throw error;
+  }
 }
 
 /** Deliver to an existing session without subscribing. */

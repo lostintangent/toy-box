@@ -55,8 +55,7 @@ export function SessionBranchMenu({
             variant="ghost"
             size="sm"
             className={cn(
-              "h-6 max-w-52 gap-1 rounded-md border-0 bg-transparent px-1 text-xs font-medium text-muted-foreground",
-              "hover:bg-transparent hover:text-foreground disabled:pointer-events-none disabled:opacity-70",
+              "h-6 max-w-52 gap-1 rounded-md border-0 bg-transparent px-1 text-xs font-medium text-muted-foreground disabled:pointer-events-none disabled:opacity-70",
               className,
             )}
             aria-label={location?.description ?? "Branch menu"}

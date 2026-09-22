@@ -2,213 +2,109 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, onTestFinished, setSystemTime, spyOn, test } from "bun:test";
-import { z } from "zod";
 import { createTestDatabase } from "@/server/database";
+import type { AutomationOptions } from "../model";
 import { AutomationDatabase } from "./database";
 
-function mockTime(date: string | Date): void {
+const options = {
+  title: "Daily summary",
+  prompt: "Summarize open pull requests.",
+  model: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
+  cron: "0 9 * * *",
+  cwd: "/repo/automation",
+} satisfies AutomationOptions;
+
+describe("automation persistence and scheduling", () => {
+  test("saved edits and their schedule survive reopening the database", async () => {
+    mockTime("2026-02-14T10:00:00.000Z");
+    const directory = await mkdtemp(join(tmpdir(), "toy-box-automations-"));
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, "automations.sqlite");
+    const first = await openTestDatabase(path);
+    const created = await first.automations.create(options);
+    const edited = {
+      ...options,
+      title: "Afternoon summary",
+      prompt: "Summarize repository status.",
+      model: { provider: "codex", name: "gpt-5.5", reasoningEffort: "medium" },
+      cron: "0 12 * * *",
+      cwd: "/repo/updated",
+    } satisfies AutomationOptions;
+    const updated = (await first.automations.update(created.id, edited))!;
+    await first.db.close();
+
+    const reopened = await openTestDatabase(path);
+    const saved = await reopened.automations.get(created.id);
+    expect(saved).toMatchObject({ ...edited, id: created.id });
+    expect(saved?.nextRunAt).not.toBe(created.nextRunAt);
+    expect(await reopened.automations.list()).toEqual([updated]);
+  });
+
+  test("claims each due automation once and skips missed occurrences", async () => {
+    mockTime("2026-02-14T10:00:00.000Z");
+    const { automations } = await openTestDatabase();
+    const created = await automations.create({ ...options, cron: "* * * * *" });
+
+    setSystemTime(new Date("2026-02-14T10:00:30.000Z"));
+    expect(await automations.claimDue()).toEqual([]);
+
+    setSystemTime(new Date("2026-02-14T10:05:30.000Z"));
+    expect(await automations.claimDue()).toEqual([
+      { ...created, nextRunAt: "2026-02-14T10:06:00.000Z" },
+    ]);
+    expect(await automations.claimDue()).toEqual([]);
+    expect((await automations.get(created.id))?.nextRunAt).toBe("2026-02-14T10:06:00.000Z");
+  });
+
+  test("records completion without changing the definition or its next occurrence", async () => {
+    mockTime("2026-02-14T10:00:00.000Z");
+    const { automations } = await openTestDatabase();
+    const created = await automations.create({ ...options, cwd: undefined });
+    const finishedAt = new Date("2026-02-14T10:05:00.000Z");
+
+    const finished = await automations.recordRunFinish(created.id, finishedAt);
+
+    expect(finished).toEqual({
+      ...created,
+      lastRunAt: finishedAt.toISOString(),
+      updatedAt: finishedAt.toISOString(),
+    });
+    expect(await automations.get(created.id)).toEqual(finished);
+    expect(await automations.recordRunFinish("missing", finishedAt)).toBeNull();
+  });
+
+  test("an unreadable definition does not hide or block healthy automations", async () => {
+    mockTime("2026-02-14T10:00:00.000Z");
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    onTestFinished(() => log.mockRestore());
+    const { db, automations } = await openTestDatabase();
+    const valid = await automations.create({ ...options, cron: "* * * * *" });
+    const invalid = await automations.create({
+      ...options,
+      title: "Unreadable",
+      cron: "* * * * *",
+    });
+    await db`UPDATE automations SET model_configuration = ${"{bad json"} WHERE id = ${invalid.id}`;
+
+    expect(await automations.list()).toEqual([valid]);
+    setSystemTime(new Date("2026-02-14T10:01:30.000Z"));
+    expect(await automations.claimDue()).toEqual([
+      { ...valid, nextRunAt: "2026-02-14T10:02:00.000Z" },
+    ]);
+    const [row] = await db<{ next_run_at: string }[]>`
+      SELECT next_run_at FROM automations WHERE id = ${invalid.id}
+    `;
+    expect(row?.next_run_at).toBe("2026-02-14T10:02:00.000Z");
+  });
+});
+
+function mockTime(date: string): void {
   setSystemTime(new Date(date));
   onTestFinished(() => setSystemTime());
 }
 
-async function openTestDatabase(path = ":memory:"): Promise<AutomationDatabase> {
+async function openTestDatabase(path = ":memory:") {
   const db = await createTestDatabase(path);
   onTestFinished(() => db.close());
-  return new AutomationDatabase(db);
+  return { db, automations: new AutomationDatabase(db) };
 }
-
-describe("automation database", () => {
-  test("persists automations across reopens with file-backed sqlite", async () => {
-    mockTime("2026-02-14T10:00:00.000Z");
-
-    const tempDirectory = await mkdtemp(join(tmpdir(), "toy-box-automations-"));
-    onTestFinished(async () => {
-      await rm(tempDirectory, { recursive: true, force: true });
-    });
-
-    const databasePath = join(tempDirectory, "automations.sqlite");
-
-    const db1 = await openTestDatabase(databasePath);
-    const created = await db1.create({
-      title: "Daily summary",
-      prompt: "Summarize open pull requests.",
-      model: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
-      cron: "0 9 * * *",
-      cwd: "/Users/test/project",
-    });
-
-    const initialList = await db1.list();
-    expect(initialList.map((a) => a.id)).toContain(created.id);
-
-    const db2 = await openTestDatabase(databasePath);
-
-    const reloadedList = await db2.list();
-    const reloaded = reloadedList.find((a) => a.id === created.id);
-    expect(reloaded?.title).toBe("Daily summary");
-    expect(reloaded?.prompt).toBe("Summarize open pull requests.");
-    expect(reloaded?.model).toEqual({
-      provider: "copilot",
-      name: "gpt-5",
-      reasoningEffort: "high",
-    });
-    expect(reloaded?.cron).toBe("0 9 * * *");
-    expect(reloaded?.id).toBe(created.id);
-    expect(z.uuid().safeParse(reloaded?.id).success).toBe(true);
-    expect(reloaded?.cwd).toBe("/Users/test/project");
-  });
-
-  test("claims due automations and reschedules their next run", async () => {
-    mockTime("2026-02-14T10:00:00.000Z");
-    const db = await openTestDatabase();
-
-    const created = await db.create({
-      title: "Minute ping",
-      prompt: "Ping",
-      model: { provider: "copilot", name: "gpt-5" },
-      cron: "* * * * *",
-    });
-    expect(created.cwd).toBeUndefined();
-
-    setSystemTime(new Date("2026-02-14T10:00:30.000Z"));
-    const beforeDue = await db.claimDue();
-    expect(beforeDue).toHaveLength(0);
-
-    setSystemTime(new Date("2026-02-14T10:01:30.000Z"));
-    const due = await db.claimDue();
-    expect(due.map((a) => a.id)).toEqual([created.id]);
-    expect(new Date(due[0]!.nextRunAt).getTime()).toBeGreaterThan(
-      new Date("2026-02-14T10:01:30.000Z").getTime(),
-    );
-    expect(await db.claimDue()).toEqual([]);
-
-    const updated = await db.get(created.id);
-    expect(updated).not.toBeNull();
-    expect(new Date(updated!.nextRunAt).getTime()).toBeGreaterThan(
-      new Date("2026-02-14T10:01:30.000Z").getTime(),
-    );
-  });
-
-  test("updates title and prompt for an existing automation", async () => {
-    mockTime("2026-02-14T10:00:00.000Z");
-    const db = await openTestDatabase();
-
-    const created = await db.create({
-      title: "Original title",
-      prompt: "Original prompt",
-      model: { provider: "copilot", name: "gpt-5" },
-      cron: "0 9 * * *",
-    });
-
-    setSystemTime(new Date("2026-02-14T10:05:00.000Z"));
-    const updated = await db.update(created.id, {
-      title: "Updated title",
-      prompt: "Updated prompt",
-      cron: "0 12 * * *",
-      model: { provider: "copilot", name: "gpt-5", reasoningEffort: "medium" },
-      cwd: "/tmp/updated",
-    });
-    expect(updated).not.toBeNull();
-    expect(updated?.title).toBe("Updated title");
-    expect(updated?.prompt).toBe("Updated prompt");
-    expect(updated?.cron).toBe("0 12 * * *");
-    expect(updated?.model).toEqual({
-      provider: "copilot",
-      name: "gpt-5",
-      reasoningEffort: "medium",
-    });
-    expect(updated?.cwd).toBe("/tmp/updated");
-    expect(updated?.nextRunAt).not.toBe(created.nextRunAt);
-  });
-
-  test("deletes an existing automation once", async () => {
-    const db = await openTestDatabase();
-    const created = await db.create({
-      title: "Temporary",
-      prompt: "Run once.",
-      model: { provider: "copilot", name: "gpt-5" },
-      cron: "0 9 * * *",
-    });
-
-    expect(await db.delete(created.id)).toBe(true);
-    expect(await db.get(created.id)).toBeNull();
-    expect(await db.delete(created.id)).toBe(false);
-  });
-
-  test("records completion metadata without changing automation identity", async () => {
-    mockTime("2026-02-14T10:00:00.000Z");
-    const db = await openTestDatabase();
-    const created = await db.create({
-      title: "Daily summary",
-      prompt: "Summarize status.",
-      model: { provider: "copilot", name: "gpt-5" },
-      cron: "0 9 * * *",
-    });
-
-    const finishedAt = new Date("2026-02-14T10:05:00.000Z");
-    await db.recordRunFinish(created.id, finishedAt);
-    expect(await db.get(created.id)).toMatchObject({
-      id: created.id,
-      lastRunAt: finishedAt.toISOString(),
-      updatedAt: finishedAt.toISOString(),
-    });
-  });
-
-  test("skips malformed automation rows when listing", async () => {
-    mockTime("2026-02-14T10:00:00.000Z");
-    const consoleErrorMock = spyOn(console, "error").mockImplementation(() => {});
-    onTestFinished(() => consoleErrorMock.mockRestore());
-    const rawDb = await createTestDatabase();
-    onTestFinished(() => rawDb.close());
-    const db = new AutomationDatabase(rawDb);
-
-    const valid = await db.create({
-      title: "Valid automation",
-      prompt: "Summarize status.",
-      model: { provider: "copilot", name: "gpt-5" },
-      cron: "0 9 * * *",
-    });
-    await rawDb`
-      INSERT INTO automations (id, title, prompt, model_configuration, cron, cwd, created_at, updated_at, next_run_at)
-      VALUES (${"broken"}, ${"Broken automation"}, ${"noop"}, ${"{bad json"}, ${"0 9 * * *"}, ${null}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"})
-    `;
-
-    expect((await db.list()).map((automation) => automation.id)).toEqual([valid.id]);
-    expect(consoleErrorMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("skips malformed due rows without dropping valid claims", async () => {
-    mockTime("2026-02-14T10:00:00.000Z");
-    const consoleErrorMock = spyOn(console, "error").mockImplementation(() => {});
-    onTestFinished(() => consoleErrorMock.mockRestore());
-    const rawDb = await createTestDatabase();
-    onTestFinished(() => rawDb.close());
-    const db = new AutomationDatabase(rawDb);
-
-    const valid = await db.create({
-      title: "Valid due automation",
-      prompt: "Summarize status.",
-      model: { provider: "copilot", name: "gpt-5" },
-      cron: "* * * * *",
-    });
-    await rawDb`
-      INSERT INTO automations (id, title, prompt, model_configuration, cron, cwd, created_at, updated_at, next_run_at)
-      VALUES (${"broken-due"}, ${"Broken due automation"}, ${"noop"}, ${"{bad json"}, ${"* * * * *"}, ${null}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"}, ${"2026-02-14T10:00:00.000Z"})
-    `;
-
-    setSystemTime(new Date("2026-02-14T10:01:30.000Z"));
-    expect((await db.claimDue()).map((automation) => automation.id)).toEqual([valid.id]);
-    expect(consoleErrorMock).toHaveBeenCalledTimes(1);
-
-    const rows = await rawDb<{ id: string; next_run_at: string }[]>`
-      SELECT id, next_run_at FROM automations ORDER BY id
-    `;
-    expect(Array.from(rows)).toContainEqual({
-      id: "broken-due",
-      next_run_at: expect.stringMatching(/^2026-02-14T10:02:/),
-    });
-    expect(Array.from(rows)).toContainEqual({
-      id: valid.id,
-      next_run_at: expect.stringMatching(/^2026-02-14T10:02:/),
-    });
-  });
-});

@@ -342,7 +342,7 @@ function ColorPicker({ color, onColorChange, disabled }: ColorPickerProps) {
                 className={cn(
                   "w-6 h-6 rounded border transition-all",
                   color === presetColor
-                    ? "border-user-accent ring-1 ring-user-accent ring-offset-1 ring-offset-background"
+                    ? "border-accent ring-1 ring-accent ring-offset-1 ring-offset-background"
                     : "border-foreground/20 hover:border-foreground/40",
                 )}
                 style={{ backgroundColor: presetColor }}
@@ -388,7 +388,7 @@ function SizeSelector({ size, sizes, onSizeChange, label, disabled }: SizeSelect
             <DropdownMenuItem
               key={option}
               onClick={() => onSizeChange(option)}
-              className={cn(size === option && "bg-accent")}
+              className={cn(size === option && "bg-accent text-accent-foreground")}
             >
               {label} {option}px
             </DropdownMenuItem>
@@ -450,7 +450,7 @@ function ShapePicker({ active, shape, onActivate, muted, disabled }: ShapePicker
               onClick={() => onActivate(shape.type)}
               className={cn(
                 "flex items-center gap-2",
-                currentShape.type === shape.type && "bg-accent",
+                currentShape.type === shape.type && "bg-accent text-accent-foreground",
               )}
             >
               {shape.icon}

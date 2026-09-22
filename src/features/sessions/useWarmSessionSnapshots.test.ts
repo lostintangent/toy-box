@@ -1,38 +1,84 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import type { SessionState } from "./model";
 import { createInitialSessionState } from "./model/reducer";
 import { sessionQueries } from "./queries";
 import { warmSessionSnapshotQuery } from "./useWarmSessionSnapshots";
 
 describe("warm session snapshot retention", () => {
-  test("holds a snapshot once its pane closes, and releases it when no longer warm", async () => {
-    // Collection is immediate here so retention is observable without timers.
-    const queryClient = new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } });
-    onTestFinished(() => queryClient.clear());
+  test("mobile retains an opened snapshot without fetching in the background", async () => {
+    const queryClient = createQueryClient();
+    let requests = 0;
+    const queryFn = async () => {
+      requests++;
+      return createInitialSessionState();
+    };
+    const options = { ...warmSessionSnapshotQuery("pinned-session", false), queryFn };
+    const pin = new QueryObserver(queryClient, options);
+    const unpin = pin.subscribe(() => {});
+    onTestFinished(unpin);
 
-    const { queryKey } = warmSessionSnapshotQuery("warm-session");
-    queryClient.setQueryData<SessionState>(queryKey, createInitialSessionState());
+    await queryClient.invalidateQueries({ queryKey: options.queryKey });
+    expect(requests).toBe(0);
 
-    const stopWarming = subscribe(queryClient, warmSessionSnapshotQuery("warm-session"));
-    const closePane = subscribe(queryClient, sessionQueries.detail("warm-session"));
+    const pane = new QueryObserver(queryClient, {
+      ...sessionQueries.detail("pinned-session"),
+      queryFn,
+    });
+    const closePane = pane.subscribe(() => {});
+    onTestFinished(closePane);
+    await pane.getCurrentQuery().promise;
+    expect(requests).toBe(1);
 
     closePane();
     await collectGarbage();
-    expect(queryClient.getQueryData(queryKey)).toBeDefined();
+    expect(queryClient.getQueryData(options.queryKey)).toBeDefined();
+    await queryClient.invalidateQueries({ queryKey: options.queryKey });
+    expect(requests).toBe(1);
 
-    stopWarming();
+    const closeReopenedPane = pane.subscribe(() => {});
+    onTestFinished(closeReopenedPane);
+    await pane.getCurrentQuery().promise;
+    expect(requests).toBe(2);
+    closeReopenedPane();
+
+    unpin();
     await collectGarbage();
-    expect(queryClient.getQueryData(queryKey)).toBeUndefined();
+    expect(queryClient.getQueryData(options.queryKey)).toBeUndefined();
+  });
+
+  test("switching to desktop warms a cold pin and keeps it across observer remounts", async () => {
+    const queryClient = createQueryClient();
+    let requests = 0;
+    const queryFn = async () => {
+      requests++;
+      return createInitialSessionState();
+    };
+    const options = { ...warmSessionSnapshotQuery("pinned-session", false), queryFn };
+    const pin = new QueryObserver(queryClient, options);
+    const unpin = pin.subscribe(() => {});
+    onTestFinished(unpin);
+    expect(requests).toBe(0);
+
+    const desktopOptions = { ...warmSessionSnapshotQuery("pinned-session", true), queryFn };
+    pin.setOptions(desktopOptions);
+    await pin.getCurrentQuery().promise;
+    expect(requests).toBe(1);
+
+    pin.setOptions(options);
+    pin.setOptions(desktopOptions);
+    unpin();
+    const stopWarming = pin.subscribe(() => {});
+    onTestFinished(stopWarming);
+    await collectGarbage();
+    expect(requests).toBe(1);
+    expect(queryClient.getQueryData(options.queryKey)).toBeDefined();
   });
 });
 
-/** Subscribe without fetching so the test isolates query retention. */
-function subscribe(
-  queryClient: QueryClient,
-  options: { queryKey: readonly unknown[] },
-): () => void {
-  return new QueryObserver(queryClient, { ...options, enabled: false }).subscribe(() => {});
+function createQueryClient(): QueryClient {
+  const client = new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } });
+  onTestFinished(() => client.clear());
+  return client;
 }
 
 function collectGarbage(): Promise<void> {

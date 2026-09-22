@@ -123,6 +123,7 @@ function restoreHyperSessionState(
 
 function WorkspacePage() {
   const navigate = useNavigate();
+  const { workspaceRevision } = Route.useRouteContext();
   const selectedSessionIds = Route.useSearch({
     select: (search) => search.sessions ?? [],
     structuralSharing: true,
@@ -286,15 +287,15 @@ function WorkspacePage() {
   const hasModels = useHasModels();
   const { data: channelList } = useQuery(channelQueries.list());
   const channels = channelList?.channels;
-  const { apps, automations, hyperSessionIds, inboxSessionIds } = useWorkspaceSelector(
-    (workspace) => ({
+  const { apps, automations, hyperSessionIds, inboxSessionIds, pinnedSessionIds } =
+    useWorkspaceSelector((workspace) => ({
       apps: workspace.apps,
       automations: workspace.automations,
       hyperSessionIds: workspace.hyperSessionIds,
       inboxSessionIds: workspace.inboxEntries.map((entry) => entry.id),
-    }),
-  );
-  useWorkspaceSync();
+      pinnedSessionIds: workspace.settings.pinnedSessionIds,
+    }));
+  useWorkspaceSync(workspaceRevision);
   const {
     sessions,
     isLoading: isSessionsLoading,
@@ -373,7 +374,7 @@ function WorkspacePage() {
     }
   };
 
-  // Close panes when their session is deleted or its provider leaves discovery.
+  // Close panes when their session leaves the catalog, including an older session losing its pin.
   useEffect(() => {
     if (isSessionsLoading) return;
     if (selectedSessionIds.length === 0) return;
@@ -471,11 +472,15 @@ function WorkspacePage() {
 
   useWarmSessionSnapshots();
 
-  const filteredSessions = filterSessionList(listedSessions, {
-    ...filter,
-    hiddenProviders: [...filter.hiddenProviders, ...disabledProviders],
-    query: deferredFilter,
-  });
+  const filteredSessions = filterSessionList(
+    listedSessions,
+    {
+      ...filter,
+      hiddenProviders: [...filter.hiddenProviders, ...disabledProviders],
+      query: deferredFilter,
+    },
+    pinnedSessionIds,
+  );
 
   function handleSessionDelete(sessionIdToDelete: string) {
     if (selectedSessionIds.includes(sessionIdToDelete)) {

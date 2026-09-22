@@ -37,7 +37,6 @@ export interface SessionConnection {
 export interface SessionProvider {
   readonly id: string;
   readonly name: string;
-  isInstalled(): boolean;
   listModels(): Promise<ModelInfo[]>;
   listSkills(
     directory: string | undefined,

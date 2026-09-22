@@ -1,5 +1,9 @@
 import { describe, expect, mock, onTestFinished, test } from "bun:test";
 import { createTestDatabase } from "@/server/database";
+import type { Session } from "@sessions/model";
+import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
+import { SettingsDatabase } from "@workspace/server/state/settings";
+import { applySessionState, deleteSessionState } from "@workspace/server/state/sessions";
 
 let currentDb: Bun.SQL | undefined;
 
@@ -84,6 +88,86 @@ describe("session type resolution", () => {
 });
 
 describe("Session catalog projection", () => {
+  test("reserves 250 history slots independently of managed and pinned sessions", async () => {
+    await openSessionTypeTestDatabase();
+    const automation = await new AutomationDatabase(currentDb!).create({
+      title: "Old automation",
+      prompt: "Run",
+      model: { provider: "copilot", name: "gpt-5" },
+      cron: "0 9 * * *",
+    });
+    await createInboxEntry("old-inbox");
+    addHyperSession("old-hyper");
+    onTestFinished(() => deleteHyperState("old-hyper"));
+    await registerWorkerSession({
+      type: "channel",
+      channelId: "channel",
+      sessionId: "old-channel-member",
+      ephemeral: false,
+    });
+    await new SettingsDatabase(currentDb!).set({
+      ...DEFAULT_SETTINGS,
+      pinnedSessionIds: ["old-pin", "new-pin"],
+    });
+    const history = Array.from({ length: 260 }, (_, i) => catalogSession(`history-${i}`, i + 1));
+    const required = [automation.id, "old-inbox", "old-hyper", "old-channel-member", "old-pin"];
+    const sessions = [
+      ...required.map((id) => catalogSession(id, 0)),
+      catalogSession("new-pin", 1000),
+      ...history,
+    ];
+    const worktree = { branch: "old-work", baseBranch: "main", path: "/repo/old-work" };
+
+    const catalog = await readSessionCatalog(async () => [sessions, { "history-0": worktree }]);
+
+    expect(catalog.sessions.map(({ id }) => id).sort()).toEqual(
+      [...required, "new-pin", ...history.slice(10).map(({ id }) => id)].sort(),
+    );
+    expect(catalog.workerSessionParents).toEqual({ "old-channel-member": null });
+    // Resource ownership is independent of the browsing window.
+    expect(catalog.worktrees["history-0"]).toEqual(worktree);
+  });
+
+  test("retains older running, waiting, unread and draft work outside the history window", async () => {
+    await openSessionTypeTestDatabase();
+    const protectedIds = ["old-running", "old-waiting", "old-unread", "old-prompt"];
+    for (const [index, status] of (["running", "waiting", "unread"] as const).entries()) {
+      applySessionState({ type: `session.${status}`, sessionId: protectedIds[index]! });
+    }
+    applySessionState({
+      type: "session.prompt.drafted",
+      sessionId: "old-prompt",
+      prompt: { text: "Unsent work", origin: "test", updatedAt: Date.now() },
+    });
+    onTestFinished(() => protectedIds.forEach((id) => deleteSessionState(id)));
+    const sessions = [
+      ...protectedIds.map((id) => catalogSession(id, 0)),
+      { ...catalogSession("old-draft", 0), provider: undefined },
+      ...Array.from({ length: 260 }, (_, i) => catalogSession(`history-${i}`, i + 1)),
+    ];
+
+    const catalog = await readSessionCatalog(async () => [sessions, {}]);
+
+    const sessionIds = catalog.sessions.map(({ id }) => id);
+    expect(sessionIds).toHaveLength(255);
+    expect(sessionIds).toEqual(expect.arrayContaining([...protectedIds, "old-draft"]));
+    expect(sessionIds).not.toContain("history-0");
+  });
+
+  test("selects the same history window when equal timestamps arrive in another order", async () => {
+    await openSessionTypeTestDatabase();
+    const sessions = Array.from({ length: 260 }, (_, i) =>
+      catalogSession(`session-${String(i).padStart(3, "0")}`, 1),
+    );
+    const first = await readSessionCatalog(async () => [sessions, {}]);
+    const second = await readSessionCatalog(async () => [[...sessions].reverse(), {}]);
+
+    expect(first.sessions.map(({ id }) => id).sort()).toEqual(
+      second.sessions.map(({ id }) => id).sort(),
+    );
+    expect(first.sessions).toHaveLength(250);
+  });
+
   test.each(["creation", "deletion"])(
     "keeps backing Sessions classified during concurrent %s",
     async (change) => {
@@ -132,10 +216,24 @@ describe("Session catalog projection", () => {
   );
 });
 
+function catalogSession(id: string, updatedAt: number): Session {
+  return {
+    id,
+    provider: { id: "codex" },
+    title: id,
+    createdAt: new Date(0),
+    updatedAt: new Date(updatedAt),
+  };
+}
+
 test("detaching a never-started Channel Agent removes its Worker", async () => {
   await openSessionTypeTestDatabase();
   const channels = new ChannelDatabase(currentDb!);
-  const channel = await channels.createChannel({ title: "Dormant team" });
+  const channel = await channels.createChannel({
+    name: "Dormant team",
+    purpose: "Coordinate a dormant team.",
+    model: { provider: "copilot", name: "gpt-5.5" },
+  });
   const { member } = await channels.createMember({
     type: "channel",
     channelId: channel.id,

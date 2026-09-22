@@ -125,7 +125,7 @@ export class SvgDocument {
       }
       svg { display: block; width: 100% !important; height: 100% !important; overflow: visible; user-select: none; }
       [data-whiteboard-svg-editing-host][contenteditable="true"] {
-        caret-color: var(--user-accent);
+        caret-color: var(--accent);
       }
       [data-whiteboard-svg-editing-host][contenteditable="true"] svg { user-select: text; }
       a { cursor: inherit; }

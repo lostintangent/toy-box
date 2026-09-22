@@ -30,8 +30,9 @@ Feature-specific Query factories may select from the shared cache, but must not 
 copies of the same server state.
 
 `disabledProviders` controls model and session discovery, with Claude disabled by default.
-Provider availability changes are published after persistence, then invalidate the provider catalog
-and session list on every client. Other preferences retain their existing optimistic updates.
+Provider availability and pin changes are published after persistence, then invalidate session
+catalog membership on every client. Provider changes also invalidate the provider catalog.
+Other preferences retain their existing optimistic updates.
 Sidebar text, provider, and external-session filters are browser-local route state; they do not
 write workspace settings or alter open panes.
 
@@ -46,10 +47,14 @@ an in-flight snapshot from overwriting newer events. [`hooks/state.ts`](hooks/st
 narrow reactive selectors and the two client command hooks; it does not copy server state.
 
 [`hooks/useWorkspaceSync.ts`](hooks/useWorkspaceSync.ts) is the single browser sink for the
-at-most-once workspace SSE stream. On initial connection or reconnect it refreshes the aggregate
-snapshot plus durable Session and Channel queries, then applies subsequent events to their
-owning Query caches. Events announce accepted changes; they are synchronization hints, not durable
-truth or a replay log.
+at-most-once workspace SSE stream. The root route captures the process-scoped broadcast revision
+before its SSR loaders run. The stream's opening message checks that revision without another
+request: an unchanged initial connection reuses the hydrated queries, while a mismatch refreshes
+the aggregate snapshot and Session, Channel, and Provider catalogs in the background. Reconnects
+always refresh, including after page visibility changes, so native history changed outside Toy Box
+is rediscovered. Subsequent events update their owning Query caches. The revision survives HMR,
+changes after a server restart, and requires no event buffer. Events announce accepted changes;
+they are synchronization hints, not durable truth or a replay log.
 
 [`server/functions.ts`](server/functions.ts) validates remote ingress for hydration, shared
 workspace actions, and settings updates, then delegates to the plain operations in

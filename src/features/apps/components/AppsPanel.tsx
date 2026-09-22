@@ -80,7 +80,8 @@ export function AppsPanel({
                     <span className="truncate">{definition.title}</span>
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    className="size-8 shrink-0 justify-center p-0 text-muted-foreground focus:text-destructive"
+                    variant="destructive"
+                    className="size-8 shrink-0 justify-center p-0"
                     aria-label={`Uninstall ${definition.title}`}
                     title={`Uninstall ${definition.title}`}
                     onClick={() => setUninstallDefinitionId(definition.id)}

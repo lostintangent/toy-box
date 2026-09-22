@@ -14,6 +14,16 @@ import { useAppHost } from "../../host/context";
 
 export { FilePicker as AppFilePicker } from "@files/components/browser/FilePicker";
 export { SessionLocationPicker as AppLocationPicker } from "@sessions/components/location/SessionLocationPicker";
+export { ScrollableFade as AppScrollableFade } from "@/shared/components/ui/scrollable-fade";
+export { Skeleton as AppSkeleton } from "@/shared/components/ui/skeleton";
+export {
+  Select as AppSelect,
+  SelectContent as AppSelectContent,
+  SelectItem as AppSelectItem,
+  SelectTrigger as AppSelectTrigger,
+  SelectValue as AppSelectValue,
+} from "@/shared/components/ui/select";
+export { Toggle as AppToggle } from "@/shared/components/ui/toggle";
 
 export function AppShell({ className, ...props }: ComponentProps<"div">) {
   return (

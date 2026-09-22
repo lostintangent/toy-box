@@ -24,35 +24,33 @@ import { automationMutations } from "../mutations";
 import {
   type Automation,
   type AutomationOptions,
+  type ScheduleDraft,
+  cronToSchedule,
+  scheduleToCron,
   validateAutomationCronDefinition,
 } from "../model";
 import { AutomationScheduleEditor } from "./AutomationScheduleEditor";
 
-type AutomationForm = Omit<AutomationOptions, "model"> & {
+type AutomationForm = Omit<AutomationOptions, "model" | "cron"> & {
   model: ModelConfiguration | null;
+  schedule: ScheduleDraft;
 };
 
-type AutomationDialogProps =
-  | { mode: "create"; automation?: undefined; onOpenChange: (open: boolean) => void }
-  | { mode: "edit"; automation: Automation; onOpenChange: (open: boolean) => void };
-
-export function AutomationDialog(props: AutomationDialogProps) {
-  const { mode, onOpenChange } = props;
-  const automation = mode === "edit" ? props.automation : null;
+export function AutomationDialog({
+  automation,
+  onOpenChange,
+}: {
+  automation?: Automation;
+  onOpenChange: (open: boolean) => void;
+}) {
   const { models, defaultModel } = useModels();
   const saveMutation = useMutation(
-    mode === "edit"
-      ? automationMutations.update(props.automation.id)
-      : automationMutations.create(),
+    automation ? automationMutations.update(automation.id) : automationMutations.create(),
   );
-  const [form, setForm] = useState(() =>
-    createAutomationForm(mode, automation, models, defaultModel),
-  );
-  const selectedModel = form.model ?? (mode === "create" ? defaultModel : null);
-  const cronError = getCronValidationError(form.cron);
-
-  const dialogTitle = mode === "edit" ? "Edit automation" : "Create automation";
-  const dialogSubmitLabel = mode === "edit" ? "Save" : "Create";
+  const [form, setForm] = useState(() => createAutomationForm(automation, models, defaultModel));
+  const selectedModel = form.model ?? (automation ? null : defaultModel);
+  const cron = scheduleToCron(form.schedule);
+  const cronError = getCronValidationError(cron);
 
   function updateForm(patch: Partial<AutomationForm>) {
     setForm((current) => ({ ...current, ...patch }));
@@ -68,7 +66,7 @@ export function AutomationDialog(props: AutomationDialogProps) {
         title: form.title.trim(),
         prompt: form.prompt.trim(),
         model: selectedModel,
-        cron: form.cron.trim(),
+        cron: cron.trim(),
         cwd: form.cwd?.trim() || undefined,
       },
       { onSuccess: () => onOpenChange(false) },
@@ -80,7 +78,7 @@ export function AutomationDialog(props: AutomationDialogProps) {
       <DialogContent aria-describedby={undefined}>
         <form className="space-y-4" onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>{dialogTitle}</DialogTitle>
+            <DialogTitle>{automation ? "Edit automation" : "Create automation"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <AutomationField label="Title">
@@ -120,8 +118,8 @@ export function AutomationDialog(props: AutomationDialogProps) {
             </div>
             <AutomationDirectoryPicker value={form.cwd} onChange={(cwd) => updateForm({ cwd })} />
             <AutomationScheduleEditor
-              value={form.cron}
-              onChange={(cron) => updateForm({ cron })}
+              value={form.schedule}
+              onChange={(schedule) => updateForm({ schedule })}
               error={cronError}
             />
           </div>
@@ -140,7 +138,7 @@ export function AutomationDialog(props: AutomationDialogProps) {
               }
             >
               {saveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {dialogSubmitLabel}
+              {automation ? "Save" : "Create"}
             </Button>
           </DialogFooter>
         </form>
@@ -150,17 +148,16 @@ export function AutomationDialog(props: AutomationDialogProps) {
 }
 
 function createAutomationForm(
-  mode: AutomationDialogProps["mode"],
-  automation: Automation | null,
+  automation: Automation | undefined,
   models: ModelInfo[],
   defaultModel: ModelConfiguration | null,
 ): AutomationForm {
-  if (mode === "edit" && automation) {
+  if (automation) {
     return {
       title: automation.title,
       prompt: automation.prompt,
       model: normalizeModelConfiguration(models, automation.model),
-      cron: automation.cron,
+      schedule: cronToSchedule(automation.cron),
       cwd: automation.cwd,
     };
   }
@@ -169,7 +166,7 @@ function createAutomationForm(
     title: "",
     prompt: "",
     model: defaultModel,
-    cron: "0 9 * * *",
+    schedule: cronToSchedule("0 9 * * *"),
     cwd: undefined,
   };
 }

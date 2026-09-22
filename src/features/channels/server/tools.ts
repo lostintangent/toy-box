@@ -10,6 +10,7 @@ import {
   isChannelSystemMessage,
   selfUpdateAgentInputSchema,
   setChannelStatusInputSchema,
+  updateChannelInputSchema,
   type Channel,
   type ChannelMessage,
 } from "@channels/model";
@@ -17,7 +18,11 @@ import { resolveWorkspaceFile } from "@files/server/paths";
 import type { Attachment } from "@sessions/model";
 
 const filePathSchema = z.string().trim().min(1).max(4_096);
-const memberIdSchema = z.string().trim().min(1).max(255);
+const agentIdSchema = z.string().trim().min(1).max(255);
+const conciseChannelMessageSchema = channelMessageContentSchema.max(
+  3_000,
+  "Channel messages must be at most 3,000 characters. Put durable long-form work in a shared artifact and send a concise summary. Do not split a document across messages.",
+);
 const channelMemberCreationSchema = createChannelMemberInputSchema.omit({ channelId: true });
 const channelMemberCreationsSchema = z.array(channelMemberCreationSchema).min(1);
 const shareChannelArtifactInputSchema = z
@@ -28,7 +33,8 @@ const shareChannelArtifactInputSchema = z
   .strict();
 
 const listChannelsTool = defineTool("list_channels", {
-  description: "Lists channels with their stable IDs, titles, and working directories.",
+  description:
+    "Lists channels with their stable IDs, names, purposes, lead models, and working directories.",
   parameters: z.object({}).strict(),
   handler: async () => {
     const { listChannels } = await import("@channels/server");
@@ -38,7 +44,7 @@ const listChannelsTool = defineTool("list_channels", {
 
 const createChannelTool = defineTool("create_channel", {
   description:
-    "Creates a channel with a title and optional working directory, creating the directory when needed.",
+    "Creates a channel with an intrinsic lead. With a purpose, the lead starts working toward it immediately. Without one, the lead asks the user what they want to work on. The model configures the lead. The optional working directory is created when needed.",
   parameters: createChannelInputSchema,
   handler: async (input) => {
     const { createChannel } = await import("@channels/server");
@@ -61,18 +67,16 @@ const createCurrentChannelMembersTool = defineTool("create_channel_members", {
     "Creates one or more members in this channel with unique names, optional roles, and optional models. A role defines the member's responsibility in the channel plus any necessary persona or behavioral details. Use list_models to resolve supported model options. Mention the returned handles in a channel message to wake the members. Members without a role or avatar establish them during their first turn.",
   parameters: z.object({ members: channelMemberCreationsSchema }).strict(),
   handler: async ({ members }, invocation) => {
-    const { createChannelMembersFromAgent } = await import("@channels/server");
-    return createdChannelMembers(
-      await createChannelMembersFromAgent(invocation.sessionId, members),
-    );
+    const { createChannelMembersFromLead } = await import("@channels/server");
+    return createdChannelMembers(await createChannelMembersFromLead(invocation.sessionId, members));
   },
 });
 
 const postChannelMessageTool = defineTool("post_channel_message", {
   description:
-    "Posts a user-attributed Markdown message with optional image paths to a channel. Relative paths use this session's workspace. Name-derived @mentions wake agents. A message without mentions wakes all current members. Read the channel for exact mentions.",
+    "Posts a user-attributed Markdown message with optional image paths to a channel. Relative paths use this session's workspace. Name-derived @mentions wake the addressed agents. A message without mentions wakes the lead. Read the channel for exact mentions.",
   parameters: channelIdentitySchema.extend({
-    content: channelMessageContentSchema,
+    content: conciseChannelMessageSchema,
     attachments: z.array(filePathSchema).optional(),
   }),
   handler: async ({ attachments, ...input }, invocation) => {
@@ -88,7 +92,7 @@ const postChannelMessageTool = defineTool("post_channel_message", {
 
 const readChannelForSessionTool = defineTool("read_channel", {
   description:
-    "Reads the newest 100 channel messages before an optional sequence without changing read state. Omit beforeSequence for the latest messages. While hasMore is true, continue with the first returned message's sequence. It also returns current members, shared artifacts, and attachments. File attachments are absolute paths. Inline uploads are attached images.",
+    "Reads the channel purpose, public checklist, preview URL, lead, current members, shared artifacts, attachments, and newest 100 messages before an optional sequence without changing read state. Omit beforeSequence for the latest messages. While hasMore is true, continue with the first returned message's sequence. File attachments are absolute paths. Inline uploads are attached images.",
   parameters: channelIdentitySchema.extend({
     beforeSequence: z.number().int().positive().optional(),
   }),
@@ -98,11 +102,14 @@ const readChannelForSessionTool = defineTool("read_channel", {
   },
 });
 
-const waitForChannelMembersTool = defineTool("wait_for_channel_members", {
+const waitForChannelAgentsTool = defineTool("wait_for_channel_agents", {
   description:
-    "Waits for one or more channel members' current executions to complete. Use after posting a message that wakes them, then read the channel for their public responses. Timing out does not stop their executions.",
+    "Waits for the channel lead or one or more members to finish their current executions. Use after creating a channel or posting a message that wakes them, then read the channel for their public responses. Timing out does not stop their executions.",
   parameters: channelIdentitySchema.extend({
-    memberIds: z.array(memberIdSchema).min(1).describe("One or more member IDs to wait for"),
+    agentIds: z
+      .array(agentIdSchema)
+      .min(1)
+      .describe("The lead ID or one or more member IDs to wait for"),
     timeoutMs: z
       .number()
       .int()
@@ -111,17 +118,17 @@ const waitForChannelMembersTool = defineTool("wait_for_channel_members", {
       .optional()
       .describe("Optional maximum time to wait in milliseconds"),
   }),
-  handler: async ({ channelId, memberIds, timeoutMs }) => {
-    const { waitForChannelMembers } = await import("@channels/server");
+  handler: async ({ channelId, agentIds, timeoutMs }) => {
+    const { waitForChannelAgents } = await import("@channels/server");
     return JSON.stringify({
-      members: await waitForChannelMembers(channelId, memberIds, timeoutMs),
+      agents: await waitForChannelAgents(channelId, agentIds, timeoutMs),
     });
   },
 });
 
 const readChannelForAgentTool = defineTool("read_channel", {
   description:
-    "Reads this agent's next 100 unread channel messages and attachments, then advances its read position. Repeat while hasMore is true. It also returns current members with exact mentions and statuses, plus shared artifacts. File attachments are absolute paths. Inline uploads are attached images.",
+    "Reads the channel purpose, public checklist, preview URL, lead, current members, shared artifacts, attachments, and this agent's next 100 unread messages, then advances its read position. Repeat while hasMore is true. File attachments are absolute paths. Inline uploads are attached images.",
   parameters: z.object({}),
   handler: async (_args, invocation) => {
     const { readChannelForAgent } = await import("@channels/server");
@@ -131,9 +138,9 @@ const readChannelForAgentTool = defineTool("read_channel", {
 
 const sendChannelMessageTool = defineTool("send_channel_message", {
   description:
-    "Publishes a Markdown channel message without ending the turn. Pass screenshot and image paths in attachments. Name-derived @mentions wake agents. @everyone wakes all current members. Messages without mentions wake nobody.",
+    "Publishes a Markdown channel message without ending the turn. Pass screenshot and image paths in attachments. Name-derived @mentions wake the addressed agents. @everyone wakes the lead and all members. Without mentions, member messages wake the lead and lead messages wake nobody.",
   parameters: z.object({
-    content: channelMessageContentSchema,
+    content: conciseChannelMessageSchema,
     attachments: z.array(filePathSchema).optional(),
   }),
   handler: async (args, invocation) => {
@@ -172,6 +179,16 @@ const setChannelStatusTool = defineTool("set_channel_status", {
   },
 });
 
+const updateChannelTool = defineTool("update_channel", {
+  description:
+    "Updates this channel's purpose, public checklist, or preview URL. Set the purpose when the user defines or revises what the channel is for. Replace the complete checklist when progress changes. Preserve root-relative preview URLs returned by Toy Box tools. Share file artifacts instead of using them as previews. Set purpose or previewUrl to null to clear it.",
+  parameters: updateChannelInputSchema,
+  handler: async (args, invocation) => {
+    const { updateChannelFromLead } = await import("@channels/server");
+    return JSON.stringify(await updateChannelFromLead(invocation.sessionId, args));
+  },
+});
+
 const finishChannelAgentTurnTool = defineTool("finish_agent_turn", {
   description:
     "Ends this private agent turn and clears its active channel status. waitingFor leaves a brief waiting status.",
@@ -205,7 +222,7 @@ const updateAgentTool = defineTool("update_agent", {
 
 const shareChannelArtifactFromSessionTool = defineTool("share_channel_artifact", {
   description:
-    "Shares an existing durable document or prototype for the channel to review or evolve without copying or modifying it. Screenshots and image evidence belong in post_channel_message attachments. The path may be absolute or relative to this session's workspace.",
+    "Registers an existing standalone file once for the channel to review or evolve without copying it. Later file edits appear automatically, and sharing the same file and title again is a no-op. The path may be absolute or relative to this session's workspace.",
   parameters: channelIdentitySchema.extend(shareChannelArtifactInputSchema.shape),
   handler: async (args, invocation) => {
     const { shareChannelArtifactFromSession } = await import("@channels/server");
@@ -215,7 +232,7 @@ const shareChannelArtifactFromSessionTool = defineTool("share_channel_artifact",
 
 const shareChannelArtifactFromAgentTool = defineTool("share_channel_artifact", {
   description:
-    "Shares an existing file as a channel artifact without copying or modifying it. The path may be absolute or relative to this agent's workspace.",
+    "Registers an existing standalone file once for the channel to review or evolve without copying it. Later file edits appear automatically, and sharing the same file and title again is a no-op. The path may be absolute or relative to this agent's workspace.",
   parameters: shareChannelArtifactInputSchema,
   handler: async (args, invocation) => {
     const { shareChannelArtifactFromAgent } = await import("@channels/server");
@@ -271,8 +288,15 @@ function toChannelReadToolResult<T extends { messages: ChannelMessage[] }>(resul
   } satisfies ToolResult;
 }
 
-function channelForTool({ id: channelId, title, directory }: Channel) {
-  return { channelId, title, directory };
+function channelForTool({ id: channelId, name, purpose, directory, model, leadId }: Channel) {
+  return {
+    channelId,
+    name,
+    ...(purpose ? { purpose } : {}),
+    directory,
+    model,
+    lead: { leadId, mention: "@lead" },
+  };
 }
 
 function createdChannelMembers(members: { id: string; name: string }[]): string {
@@ -284,13 +308,22 @@ function createdChannelMembers(members: { id: string; name: string }[]): string 
   });
 }
 
-export const channelAgentTools = [
+const commonChannelAgentTools = [
   readChannelForAgentTool,
-  createCurrentChannelMembersTool,
   setChannelStatusTool,
   sendChannelMessageTool,
   reactToChannelMessageTool,
   shareChannelArtifactFromAgentTool,
+];
+
+export const channelLeadTools = [
+  ...commonChannelAgentTools,
+  createCurrentChannelMembersTool,
+  updateChannelTool,
+  finishChannelAgentTurnTool,
+];
+export const channelMemberTools = [
+  ...commonChannelAgentTools,
   updateAgentTool,
   finishChannelAgentTurnTool,
 ];
@@ -300,6 +333,6 @@ export const channelTools = [
   createChannelTool,
   readChannelForSessionTool,
   postChannelMessageTool,
-  waitForChannelMembersTool,
+  waitForChannelAgentsTool,
   shareChannelArtifactFromSessionTool,
 ];

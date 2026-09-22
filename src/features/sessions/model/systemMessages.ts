@@ -15,6 +15,7 @@ export const sessionSystemMessageSchema = z.discriminatedUnion("type", [
       senderName: z.string().min(1),
     })
     .strict(),
+  z.object({ type: z.literal("channel_started") }).strict(),
 ]);
 
 export type SessionSystemMessage = z.infer<typeof sessionSystemMessageSchema>;
@@ -43,7 +44,9 @@ export function systemMessagePrompt(message: SessionSystemMessage): string {
     case "file_edited":
       return `The user edited a file open in Toy Box: ${JSON.stringify(message.file)}. A \`session\` file's \`path\` is relative to that session's artifacts folder, usually your own. A \`machine\` file's \`path\` is an absolute host path. Review its latest contents and respond only if a follow-up would help.`;
     case "channel_message":
-      return `A new public message from ${message.senderName} is waiting in a Channel you belong to. Call \`read_channel\` to consume messages since your last read.`;
+      return `A new public message from ${message.senderName} is waiting in a channel you belong to. Call \`read_channel\` to consume messages since your last read.`;
+    case "channel_started":
+      return "This channel was just created. Begin working toward its purpose.";
   }
 }
 
@@ -53,6 +56,8 @@ export function systemMessageLabel(message: SessionSystemMessage): string {
       return `Edited ${getPathBasename(message.file.path)}`;
     case "channel_message":
       return `Message from ${message.senderName}`;
+    case "channel_started":
+      return "Channel started";
   }
 }
 
@@ -63,5 +68,7 @@ export function systemMessageCoalesceKey(message: SessionSystemMessage): string 
       return `file_edited:${workspaceFileId(message.file)}`;
     case "channel_message":
       return "channel_message";
+    case "channel_started":
+      return;
   }
 }

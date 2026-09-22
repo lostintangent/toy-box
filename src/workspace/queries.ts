@@ -25,8 +25,8 @@ export const workspaceQueries = {
     queryOptions({
       queryKey: workspaceQueries.stateKey(),
       queryFn: ({ client }) => getWorkspaceQuerySource(client).readSnapshot(getWorkspaceState),
-      // The shared SSE connection explicitly invalidates this query after it
-      // opens, once no more updates can fall into a reconnect gap.
+      // The shared SSE connection validates SSR's revision and refreshes after
+      // missed updates or reconnects; ordinary live events update this cache.
       staleTime: Infinity,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
@@ -34,21 +34,26 @@ export const workspaceQueries = {
 };
 
 export function applyWorkspaceEvent(queryClient: QueryClient, event: WorkspaceEvent): void {
-  const disabledProviders = queryClient.getQueryData<WorkspaceState>(workspaceQueries.stateKey())
-    ?.settings.disabledProviders;
+  const previousSettings = queryClient.getQueryData<WorkspaceState>(
+    workspaceQueries.stateKey(),
+  )?.settings;
   recordWorkspaceQueryEvent(queryClient, event);
   applyWorkspaceEventToSessionQueries(queryClient, event);
   applyChannelListEvent(queryClient, event);
   queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), (state) =>
     state ? reduceWorkspaceState(state, event) : state,
   );
-  if (
-    event.type === "settings.changed" &&
-    (disabledProviders?.length !== event.settings.disabledProviders.length ||
-      disabledProviders.some((id) => !event.settings.disabledProviders.includes(id)))
-  ) {
-    void queryClient.invalidateQueries({ queryKey: providerQueries.all() });
-    void invalidateSessionsStateQuery(queryClient);
+  if (event.type === "settings.changed") {
+    const providersChanged =
+      previousSettings?.disabledProviders.length !== event.settings.disabledProviders.length ||
+      previousSettings.disabledProviders.some(
+        (id) => !event.settings.disabledProviders.includes(id),
+      );
+    const pinsChanged =
+      previousSettings?.pinnedSessionIds.length !== event.settings.pinnedSessionIds.length ||
+      previousSettings.pinnedSessionIds.some((id) => !event.settings.pinnedSessionIds.includes(id));
+    if (providersChanged) void queryClient.invalidateQueries({ queryKey: providerQueries.all() });
+    if (providersChanged || pinsChanged) void invalidateSessionsStateQuery(queryClient);
   }
 }
 
@@ -70,15 +75,14 @@ export function updateWorkspaceSetting<Key extends keyof Settings>(
 
   const settings = { ...workspace.settings, [key]: value };
   if (areSettingsEqual(workspace.settings, settings)) return;
-  // Catalog reads use persisted availability. Publish this preference after the
-  // save so a refetch cannot cache the old provider selection indefinitely.
-  if (key !== "disabledProviders")
-    applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
+  // Catalog membership depends on persisted providers and pins. Publish those
+  // preferences after saving so their refetch sees the accepted selection.
+  const changesCatalog = key === "disabledProviders" || key === "pinnedSessionIds";
+  if (!changesCatalog) applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
 
   void requestSettingsUpdate({ data: { [key]: value } })
     .then((settings) => {
-      if (key === "disabledProviders")
-        applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
+      if (changesCatalog) applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
     })
     .catch(() => repairWorkspaceStateQuery(queryClient));
 }

@@ -21,7 +21,7 @@ flowchart TB
     Policy --> Waiting
 
     subgraph Runtime[Shared session runtime]
-        Operations[Create, deliver, and abort]
+        Operations[Create, recreate, deliver, and abort]
         Streaming[Stream a session]
         Waiting[Wait for completion]
         Process[SessionStream: mailbox, state, events, exact completion]
@@ -38,16 +38,17 @@ flowchart TB
 The runtime exposes the session operations directly:
 
 1. **Create** provider history through the first message. A draft already owns a public ID and optional files, and creation binds its ID to the selected provider without changing workspace identity.
-2. **Deliver** a message to an existing session. The runtime decides whether it starts immediately or queues behind active execution; a queued user message may request immediate delivery.
-3. **Stream** through a subscription to ordered live events, with cursor replay after reconnect.
-4. **Wait** for completion. `waitForSessions` covers the announced, live, or latest persisted execution for each session ID; a delivery receipt binds a supervisor to the exact execution it started.
-5. **Control** by renaming, steering or cancelling queued input, aborting, rewinding an idle conversation, deleting, or applying worktree operations.
+2. **Recreate** a session through a new first message, retaining its public ID. `recreateSession` takes the same message and creation options as `createSession`: it privately deletes the previous session and its resources, publishes a fresh draft, then creates through the normal provider path. The caller chooses the new model and role; ordinary sessions default to the standard role. A failed creation removes the replacement draft. Automations is the main consumer and owns its rule against overlapping runs.
+3. **Deliver** a message to an existing session. The runtime decides whether it starts immediately or queues behind active execution; a queued user message may request immediate delivery.
+4. **Stream** through a subscription to ordered live events, with cursor replay after reconnect.
+5. **Wait** for completion. `waitForSessions` covers the announced, live, or latest persisted execution for each session ID; a delivery receipt binds a supervisor to the exact execution it started.
+6. **Control** by renaming, steering or cancelling queued input, aborting, rewinding an idle conversation, deleting, or applying worktree operations.
 
 Control is a category, not one runtime method. Abort, queue steering, and queue cancellation act on live execution; rename, deletion, and worktree commands delegate through the session API to the registry or resource owner described in the state guide. Rewind resolves the selected user-message timestamp against the provider's current rewind boundaries, removes that root user turn and every later conversation event while preserving files, and lets the provider reject a concurrent busy session. Queue status supplies the submission claim shared by normal draining and steering; steering uses the provider connection without opening another turn boundary.
 
 Once a session has turn-bearing history, resume is not a separate operation. Delivering to an idle session resumes its persisted provider connection; delivering to an active session queues. Callers do not choose whether a new turn starts or a message enters the active mailbox, though an active user delivery may request immediate dispatch.
 
-`streamSession` is the connected composite: it subscribes before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can start a draft's first turn or create a session with its required first message, deliver to an existing session, or subscribe without delivering. Headless callers use `createSession`, `deliverSessionMessage`, and `waitForSessions` directly. Scenario supervisors compose those operations with their own policy.
+`streamSession` is the connected composite: it subscribes before delivering an optional message, preventing a fast first event from falling between separate requests. The same request can start a draft's first turn or create a session with its required first message, deliver to an existing session, or subscribe without delivering. Headless callers use `createSession`, `recreateSession`, `deliverSessionMessage`, and `waitForSessions` directly. Scenario supervisors compose those operations with their own policy.
 
 ## Live execution
 
@@ -66,7 +67,7 @@ Managed features supervise sessions because their terminal policies differ. The 
 2. Connected callers subscribe before delivery. Every logical message has a unique client ID; `SessionStream.deliver` synchronously claims the first turn or emits `message_queued` behind active execution. A queue entry is `queued` while cancellable, `submitting` while its provider call is in flight, and `submitted` until the provider echoes it. Only queued user messages can be steered. Each provider associates native message identity with the client ID and adds it to canonical input events after filtering native subagent and skill inputs. That event removes a queued input, reconciles browser optimism when present, and otherwise appends normally.
 3. Each provider translates raw events into canonical `SessionEvent`s. The event bus stamps a process-monotonic `eventId`, and the shared reducer returns the next immutable `SessionState`.
 4. When the provider emits `end`, the runtime consumes it and drains the next queued message through the same path. With no queued work, the runtime finishes the execution. A `session_title_changed` event updates workspace metadata and does not enter transcript state or its event stream.
-5. Finishing publishes one terminal `end`, caches the resulting clean state, selects idle or unread from the active subscriptions, and then disposes the live runtime. Disposing closes the event bus, resolves waiters, removes the provider listener, and removes the stream registry entry; finishing then returns the provider connection to the state registry's bounded idle cache. Aborting interrupts provider work and then finishes; session deletion removes the live runtime without publishing ordinary idle/unread state.
+5. Finishing publishes one terminal `end`, caches the resulting clean state, selects idle or unread from the active subscriptions, and then disposes the live runtime. Disposing closes the event bus, resolves waiters, removes the provider listener, and removes the stream registry entry; finishing then returns the provider connection to the state registry's bounded idle cache. Aborting interrupts provider work and then finishes; session deletion aborts provider work and removes the live runtime without publishing ordinary idle/unread state.
 
 Files observation has a server lifetime independent of execution. Its shared artifact watcher reports
 changes beneath the Session storage root and supplies open editors. `refreshSessionArtifacts` updates an affected live

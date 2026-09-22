@@ -139,7 +139,6 @@ function EditableSessionDirectoryPicker({
               size="sm"
               className={cn(
                 "h-6 max-w-52 gap-1 rounded-md border-0 bg-transparent px-1 text-xs font-medium text-muted-foreground",
-                "hover:bg-transparent hover:text-foreground",
                 className,
               )}
               aria-label={selectedLocation?.description ?? "Select working directory"}
@@ -164,7 +163,7 @@ function EditableSessionDirectoryPicker({
                   !effectiveValue
                     ? "text-muted-foreground/30 cursor-not-allowed"
                     : useWorktree
-                      ? "text-foreground bg-accent"
+                      ? "bg-accent text-accent-foreground"
                       : "text-muted-foreground/50 hover:text-muted-foreground",
                 )}
                 onClick={(e) => {

@@ -25,7 +25,7 @@ import { AgentPrompt } from "./agent/AgentPrompt";
 import { activePointersOf } from "./agent/bridge";
 
 const LEAFNODE_THEME = {
-  accent: "var(--user-accent)",
+  accent: "var(--accent)",
   background: "var(--background)",
   muted: "var(--muted-foreground)",
   text: "var(--foreground)",

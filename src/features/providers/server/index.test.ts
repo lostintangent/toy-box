@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { copilotProvider } from "./copilot/provider";
 import { codexProvider } from "./codex/provider";
+import * as cli from "./cli";
 import type { ModelInfo } from "../model";
 import * as workspaceSettings from "@workspace/server/state/settings";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
@@ -19,10 +20,8 @@ beforeEach(() => {
     ...DEFAULT_SETTINGS,
     disabledProviders: [],
   });
-  for (const provider of sessionProviders) {
-    spyOn(provider, "isInstalled").mockReturnValue(false);
-    spyOn(provider, "stop").mockResolvedValue();
-  }
+  spyOn(cli, "isInstalled").mockReturnValue(false);
+  for (const provider of sessionProviders) spyOn(provider, "stop").mockResolvedValue();
 });
 afterEach(async () => {
   await stopProviders();
@@ -44,7 +43,7 @@ test("no installed providers returns empty catalogs without starting a provider"
 
 test("failed discovery leaves provider settings reachable and the next request can retry", async () => {
   spyOn(console, "error").mockImplementation(() => {});
-  spyOn(codexProvider, "isInstalled").mockReturnValue(true);
+  spyOn(cli, "isInstalled").mockImplementation((id) => id === "codex");
   const read = spyOn(codexProvider, "listModels")
     .mockRejectedValueOnce(new Error("Please authenticate"))
     .mockResolvedValue([MODEL]);
@@ -65,7 +64,7 @@ test.each(sessionProviders.map((provider) => provider.id))(
       .map((provider) =>
         spyOn(provider, "listModels").mockRejectedValue(new Error("Must not start")),
       );
-    spyOn(available, "isInstalled").mockReturnValue(true);
+    spyOn(cli, "isInstalled").mockImplementation((providerId) => providerId === id);
     const model = { id: "same-name", name: "Available model", provider: id };
     spyOn(available, "listModels").mockResolvedValue([model]);
     expect(await listModels()).toEqual([{ ...model, providerName: available.name }]);
@@ -75,8 +74,7 @@ test.each(sessionProviders.map((provider) => provider.id))(
 
 test("an unavailable provider does not suppress the other provider's catalog", async () => {
   spyOn(console, "error").mockImplementation(() => {});
-  spyOn(copilotProvider, "isInstalled").mockReturnValue(true);
-  spyOn(codexProvider, "isInstalled").mockReturnValue(true);
+  spyOn(cli, "isInstalled").mockImplementation((id) => id === "copilot" || id === "codex");
   spyOn(copilotProvider, "listModels").mockRejectedValue(new Error("Please authenticate"));
   spyOn(codexProvider, "listModels").mockResolvedValue([
     { id: "model", name: "Model", provider: "codex" },
@@ -87,7 +85,7 @@ test("an unavailable provider does not suppress the other provider's catalog", a
 test("concurrent discovery is shared and the catalog stays cached for the server lifetime", async () => {
   let now = 1_000_000;
   spyOn(Date, "now").mockImplementation(() => now);
-  spyOn(codexProvider, "isInstalled").mockReturnValue(true);
+  spyOn(cli, "isInstalled").mockImplementation((id) => id === "codex");
   const discovery = Promise.withResolvers<ModelInfo[]>();
   const read = spyOn(codexProvider, "listModels").mockReturnValue(discovery.promise);
   const first = listModels();
@@ -106,21 +104,17 @@ test("enablement gates discovery and toggling reuses each provider's model cache
     ...DEFAULT_SETTINGS,
     disabledProviders,
   }));
-  const readers = sessionProviders.map((provider) => {
-    spyOn(provider, "isInstalled").mockReturnValue(true);
-    return {
-      models: spyOn(provider, "listModels").mockResolvedValue([
-        { ...MODEL, provider: provider.id },
-      ]),
-      sessions: spyOn(provider, "listSessions").mockResolvedValue([
-        {
-          id: provider.id,
-          createdAt: new Date(0),
-          updatedAt: new Date(0),
-        },
-      ]),
-    };
-  });
+  spyOn(cli, "isInstalled").mockReturnValue(true);
+  const readers = sessionProviders.map((provider) => ({
+    models: spyOn(provider, "listModels").mockResolvedValue([{ ...MODEL, provider: provider.id }]),
+    sessions: spyOn(provider, "listSessions").mockResolvedValue([
+      {
+        id: provider.id,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      },
+    ]),
+  }));
   expect((await listModels()).map(({ provider }) => provider)).toEqual(["copilot", "codex"]);
   expect((await listSessions()).map(({ provider }) => provider?.id)).toEqual(["copilot", "codex"]);
   expect(readers[2]!.models).not.toHaveBeenCalled();
@@ -139,7 +133,7 @@ test("enablement gates discovery and toggling reuses each provider's model cache
 });
 
 test("provider shutdown clears the model catalog", async () => {
-  spyOn(codexProvider, "isInstalled").mockReturnValue(true);
+  spyOn(cli, "isInstalled").mockImplementation((id) => id === "codex");
   const read = spyOn(codexProvider, "listModels").mockResolvedValue([MODEL]);
   await listModels();
   await stopProviders();

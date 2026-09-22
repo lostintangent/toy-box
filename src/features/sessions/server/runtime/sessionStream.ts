@@ -80,15 +80,14 @@ export class SessionStream {
 
   /**
    * Remove the live runtime as part of deleting its durable session.
-   * Subscribers receive a terminal event, but a deleted session publishes no
-   * idle/unread update. Completion waiters still settle cleanly.
+   * Provider work is aborted and subscribers receive a terminal event, but a
+   * deleted session publishes no idle/unread update. Completion waiters still
+   * settle cleanly.
    */
-  static remove(sessionId: string): void {
+  static async remove(sessionId: string): Promise<void> {
     const stream = SessionStream.streams.get(sessionId);
     if (!stream) return;
-
-    if (!stream.#finished) stream.#emit({ type: "end", reason: "idle" });
-    stream.#dispose();
+    await stream.removeForDeletion();
   }
 
   // ── Instance fields ──────────────────────────────────────────────────
@@ -299,6 +298,13 @@ export class SessionStream {
     } finally {
       this.finish();
     }
+  }
+
+  private async removeForDeletion(): Promise<void> {
+    this.#abortRequested = true;
+    if (!this.#finished) this.#emit({ type: "end", reason: "idle" });
+    this.#dispose();
+    await this.connection.abort();
   }
 
   // ── Turn execution ───────────────────────────────────────────────────
