@@ -3,7 +3,7 @@ import { zodValidator } from "@tanstack/zod-adapter";
 import { z } from "zod";
 import {
   getProviderCatalog as readProviderCatalog,
-  getSessionProvider,
+  updateProvider as runProviderUpdate,
   sessionProviders,
 } from "./index";
 import * as cli from "./cli";
@@ -25,4 +25,4 @@ export const getProviderVersions = createServerFn({ method: "GET" }).handler(
 
 export const updateProvider = createServerFn({ method: "POST" })
   .validator(zodValidator(z.string()))
-  .handler(({ data }) => cli.updateProvider(getSessionProvider(data).id));
+  .handler(({ data }) => runProviderUpdate(data));

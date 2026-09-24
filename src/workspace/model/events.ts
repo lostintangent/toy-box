@@ -13,6 +13,7 @@ export type WorkspaceEvent =
   | WorkspaceAction
   | WorkerEvent
   | { type: "workspace.connected"; revision: string }
+  | { type: "providers.changed" }
   | { type: "channel.upserted"; channel: Channel }
   | { type: "channel.deleted"; channelId: string }
   | { type: "channel.members.changed" }

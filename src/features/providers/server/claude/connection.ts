@@ -58,6 +58,8 @@ export class ClaudeConnection implements SessionConnection {
           CLAUDE_CODE_BG_TASKS_REPORT_RUNNING: "1",
         },
         includePartialMessages: true,
+        // Newer models omit visible thinking summaries unless explicitly requested.
+        thinking: { type: "adaptive", display: "summarized" },
         forwardSubagentText: true,
         skills: "all",
         plugins: configuration.skillDirectories.map((path) => ({ type: "local", path })),

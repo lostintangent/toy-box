@@ -43,6 +43,8 @@ export function applyWorkspaceEvent(queryClient: QueryClient, event: WorkspaceEv
   queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), (state) =>
     state ? reduceWorkspaceState(state, event) : state,
   );
+  if (event.type === "providers.changed")
+    void queryClient.invalidateQueries({ queryKey: providerQueries.all() });
   if (event.type === "settings.changed") {
     const providersChanged =
       previousSettings?.disabledProviders.length !== event.settings.disabledProviders.length ||

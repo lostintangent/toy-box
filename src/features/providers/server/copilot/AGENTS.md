@@ -12,7 +12,9 @@ boundaries; they can arrive between another message's streamed text and completi
 `attachments.ts`, `modelConfiguration.ts`, and `models.ts`
 keep native data shapes outside the Sessions model. Shared Toy Box tool effects live
 in Sessions' `toolProjection.ts`; Copilot-specific completion rules stay here.
-System messages use Sessions' shared display codec in the native `displayPrompt` field.
+System messages use Sessions' shared display codec in the native `displayPrompt` field and send
+with native `system` provenance. The projector decodes those messages before dropping other
+model-only system events.
 The projector resolves persisted attachment references from native `session.binary_asset`
 events or inline blobs returned by `sessions.readPersistedEvents()`. The native reader restores
 attachment bytes without activating the session.

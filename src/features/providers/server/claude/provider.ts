@@ -1,15 +1,11 @@
-import {
-  deleteSession,
-  getSessionInfo,
-  listSessions,
-  type ModelInfo,
-} from "@anthropic-ai/claude-agent-sdk";
+import { deleteSession, getSessionInfo, listSessions } from "@anthropic-ai/claude-agent-sdk";
 import { homedir } from "node:os";
 import type { SessionProvider } from "@providers/server/provider";
 import { ClaudeConnection } from "./connection";
 import { closeClaudeQuery, startClaudeQuery, stopClaude } from "./client";
 import { readClaudeHistory } from "./history";
 import { createClaudeProjector } from "./projector";
+import { toModelInfo } from "./models";
 
 export const claudeProvider: SessionProvider = {
   id: "claude",
@@ -19,12 +15,7 @@ export const claudeProvider: SessionProvider = {
     try {
       return (await native.supportedModels())
         .filter((model) => model.value !== "default")
-        .map((model) => ({
-          id: model.resolvedModel ?? model.value,
-          name: modelDisplayName(model),
-          provider: "claude",
-          supportedReasoningEfforts: model.supportedEffortLevels,
-        }));
+        .map(toModelInfo);
     } finally {
       await closeClaudeQuery(native);
     }
@@ -74,13 +65,3 @@ export const claudeProvider: SessionProvider = {
   delete: deleteSession,
   stop: stopClaude,
 };
-
-function modelDisplayName(model: ModelInfo): string {
-  const name = model.displayName.replace(/ \(1M context\)$/, "");
-  const version = (model.resolvedModel ?? model.value).match(
-    /^claude-[a-z]+-(\d+(?:-\d{1,2})?)(?=-|\[|$)/,
-  )?.[1];
-  return version
-    ? name.replace(/^(\w+)(?: \d+(?:\.\d+)?)?/, `$1 ${version.replace("-", ".")}`)
-    : name;
-}

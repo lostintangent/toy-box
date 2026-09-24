@@ -17,6 +17,7 @@ import {
 } from "@sessions/server/toolProjection";
 import { decodeInput } from "./messages";
 import { fileChangeDetails } from "./fileChanges";
+import { normalizeModelId } from "./models";
 
 type Arguments = Record<string, JSONType>;
 type Call = {
@@ -72,9 +73,13 @@ export function createClaudeProjector(sessionId: string): (message: SDKMessage) 
           return [
             { type: "status", status: message.status === "compacting" ? "compacting" : "thinking" },
           ];
-        if (message.subtype === "thinking_tokens") return [{ type: "status", status: "reasoning" }];
         if (message.subtype === "init")
-          return [{ type: "model_changed", model: { provider: "claude", name: message.model } }];
+          return [
+            {
+              type: "model_changed",
+              model: { provider: "claude", name: normalizeModelId(message.model) },
+            },
+          ];
         return [];
       case "result":
         return message.is_error && !message.terminal_reason?.startsWith("aborted_")
@@ -105,7 +110,7 @@ export function createClaudeProjector(sessionId: string): (message: SDKMessage) 
             type: "model_changed",
             model: {
               provider: "claude",
-              name: message.message.model,
+              name: normalizeModelId(message.message.model),
               ...("effort" in message && typeof message.effort === "string"
                 ? { reasoningEffort: message.effort }
                 : {}),

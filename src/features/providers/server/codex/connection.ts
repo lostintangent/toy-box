@@ -104,6 +104,8 @@ export class CodexConnection implements SessionConnection {
         input,
         model: this.#model.name,
         effort: this.#model.reasoningEffort as ReasoningEffort | undefined,
+        // Some Codex models default to no visible reasoning summaries.
+        summary: "auto",
       });
     }
   }

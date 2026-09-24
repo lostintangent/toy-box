@@ -1,16 +1,18 @@
-import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, onTestFinished, spyOn, test } from "bun:test";
 import { copilotProvider } from "./copilot/provider";
 import { codexProvider } from "./codex/provider";
 import * as cli from "./cli";
 import type { ModelInfo } from "../model";
 import * as workspaceSettings from "@workspace/server/state/settings";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
+import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import {
   getProviderCatalog,
   listModels,
   listSessions,
   sessionProviders,
   stopProviders,
+  updateProvider,
 } from "./index";
 
 const MODEL: ModelInfo = { id: "model", name: "Available model", provider: "codex" };
@@ -139,4 +141,44 @@ test("provider shutdown clears the model catalog", async () => {
   await stopProviders();
   await listModels();
   expect(read).toHaveBeenCalledTimes(2);
+});
+
+test.each([true, false])(
+  "successful update checks refresh only that provider's models (version changed: %s)",
+  async (updated) => {
+    spyOn(cli, "isInstalled").mockImplementation((id) => id === "copilot" || id === "codex");
+    const copilotModels = spyOn(copilotProvider, "listModels").mockResolvedValue([
+      { ...MODEL, provider: "copilot" },
+    ]);
+    const codexModels = spyOn(codexProvider, "listModels")
+      .mockResolvedValueOnce([MODEL])
+      .mockResolvedValue([{ ...MODEL, id: "new-model" }]);
+    await listModels();
+    const result = { version: "1.1.0", updated };
+    spyOn(cli, "updateProvider").mockResolvedValue(result);
+    const stop = spyOn(codexProvider, "stop");
+    const events = mock();
+    onTestFinished(subscribeWorkspaceEvents(events));
+
+    expect(await updateProvider("codex")).toEqual(result);
+    expect(events.mock.calls).toEqual([[{ type: "providers.changed" }]]);
+    expect((await listModels()).map(({ id }) => id)).toEqual(["model", "new-model"]);
+    expect(copilotModels).toHaveBeenCalledTimes(1);
+    expect(codexModels).toHaveBeenCalledTimes(2);
+    expect(stop).not.toHaveBeenCalled();
+  },
+);
+
+test("failed updates retain the cached catalog without notifying clients", async () => {
+  spyOn(cli, "isInstalled").mockImplementation((id) => id === "codex");
+  const read = spyOn(codexProvider, "listModels").mockResolvedValue([MODEL]);
+  const catalog = await listModels();
+  spyOn(cli, "updateProvider").mockRejectedValue(new Error("Update failed"));
+  const events = mock();
+  onTestFinished(subscribeWorkspaceEvents(events));
+
+  await expect(updateProvider("codex")).rejects.toThrow("Update failed");
+  expect(await listModels()).toEqual(catalog);
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(events).not.toHaveBeenCalled();
 });

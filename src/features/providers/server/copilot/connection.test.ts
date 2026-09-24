@@ -35,6 +35,7 @@ test("native inputs retain payloads and client identity through interleaved echo
   expect(send).toHaveBeenLastCalledWith({
     prompt: systemMessagePrompt(content),
     displayPrompt: encodeSystemMessage(content),
+    source: "system",
     mode: "immediate",
   });
   expect(send).toHaveBeenNthCalledWith(1, {

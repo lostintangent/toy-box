@@ -1,6 +1,7 @@
 import type { Session } from "@sessions/model";
 import type { ModelInfo, ProviderCatalog } from "@providers/model";
 import { getSettings } from "@workspace/server/state/settings";
+import { broadcast } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
 import type { SessionProvider } from "./provider";
 import * as cli from "./cli";
@@ -29,6 +30,15 @@ export async function getProviderCatalog(): Promise<ProviderCatalog> {
 
 export async function listModels(): Promise<ModelInfo[]> {
   return (await getProviderCatalog()).models;
+}
+
+export async function updateProvider(providerId: string) {
+  const { id } = getSessionProvider(providerId);
+  const result = await cli.updateProvider(id);
+  // Refresh even when unchanged: the CLI may have been upgraded outside Toy Box.
+  modelsByProvider.delete(id);
+  broadcast({ type: "providers.changed" });
+  return result;
 }
 
 function readModels(provider: SessionProvider): Promise<ModelInfo[]> {

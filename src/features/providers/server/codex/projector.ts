@@ -101,6 +101,8 @@ export function createCodexProjector(sessionId: string) {
         const { delta } = params as ReasoningTextDeltaNotification;
         return delta ? [{ type: "reasoning_delta", content: delta }] : [];
       }
+      case "item/reasoning/summaryPartAdded":
+        return [{ type: "reasoning_delta", content: "\n\n" }];
       case "turn/plan/updated":
         events.push({
           type: "todos_patch",

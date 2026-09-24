@@ -9,7 +9,7 @@ the workspace consumes the same provider-owned catalog and configuration.
 - `queries.ts` and `server/functions.ts` expose one catalog of provider installation metadata and
   enabled models to the browser. The workspace
   route preloads the query during SSR and hydrates it through the existing Query integration.
-  Provider setting changes and workspace reconnects invalidate that query.
+  Provider setting changes, successful CLI update checks, and workspace reconnects invalidate that query.
 - `useModels.ts` exposes the catalog and its availability, composing Workspace's default-model
   preference through its settings hooks. `useHasModels` subscribes only to catalog availability.
 - `useProviders.ts` combines catalog metadata with Workspace's `disabledProviders` preference.
@@ -29,9 +29,11 @@ the workspace consumes the same provider-owned catalog and configuration.
   Native SDK and protocol types stay inside their implementations.
 - `server/index.ts` registers the providers, aggregates their available catalogs,
   isolates discovery failures, and stops their shared processes on server shutdown.
-  Model discovery shares one process-wide promise per provider until shutdown; failed discovery is
-  evicted so the next request can retry. Restart the server and reload the page after installing,
-  removing, or updating a provider to refresh its models. Enabled providers are selected outside
+  Model discovery shares one process-wide promise per provider until shutdown or a successful CLI
+  update check; failed discovery is evicted so the next request can retry. Updates evict only that
+  provider's models and broadcast `providers.changed` to refresh client catalogs and versions.
+  Running native processes retain their version until restarted. Restart the server and reload
+  the page after installing or removing a provider. Enabled providers are selected outside
   the cache, so toggling one never rediscovers the others. Session catalogs are read independently
   on every request. A provider that cannot discover its catalog contributes no entries and remains
   visible in Settings. Disabling removes discovery and closes its open session panes; it does not

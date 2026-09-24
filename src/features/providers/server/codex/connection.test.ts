@@ -371,6 +371,7 @@ test("Codex starts and steers the same turn with public input identity and per-t
       clientUserMessageId: "first",
       model: "model-two",
       effort: "high",
+      summary: "auto",
     },
   });
   expect(written[1]).toMatchObject({
@@ -385,12 +386,23 @@ test("Codex live text, snapshot resume, and native history preserve message boun
   notify("turn/started", { turn });
   notify("item/started", { turnId: turn.id, item: userItem });
   notify("item/completed", { turnId: turn.id, item: userItem });
+  notify("item/reasoning/summaryPartAdded", { turnId: turn.id, itemId: "reason", summaryIndex: 0 });
   notify("item/reasoning/textDelta", { turnId: turn.id, itemId: "reason", delta: "Thinking" });
   notify("item/reasoning/summaryTextDelta", { turnId: turn.id, itemId: "reason", delta: " more" });
-  expect(sessionState(events).reasoningContent).toBe("Thinking more");
+  notify("item/reasoning/summaryPartAdded", { turnId: turn.id, itemId: "reason", summaryIndex: 1 });
+  notify("item/reasoning/summaryTextDelta", {
+    turnId: turn.id,
+    itemId: "reason",
+    delta: "Checking",
+  });
+  expect(sessionState(events)).toMatchObject({
+    status: "reasoning",
+    reasoningContent: "\n\nThinking more\n\nChecking",
+  });
   notify("item/agentMessage/delta", { turnId: turn.id, itemId: assistantItem.id, delta: "Do" });
   expect(sessionState(events).messages.at(-1)).toMatchObject({ role: "assistant", content: "Do" });
   expect(sessionState(events).status).toBe("responding");
+  expect(sessionState(events).reasoningContent).toBe("");
   notify("item/agentMessage/delta", {
     turnId: turn.id,
     itemId: assistantItem.id,

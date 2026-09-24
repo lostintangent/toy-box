@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { applySessionEvent, createInitialSessionState } from "@sessions/model/reducer";
 import { computeFileDiffStats, getToolCallFileDiffs } from "@sessions/model/fileDiffs";
+import { getModelReasoningConfig, modelCatalogKey, modelConfigurationKey } from "@providers/model";
 import { createClaudeProjector } from "./projector";
+import { toModelInfo } from "./models";
 
 const native = (value: unknown) => value as SDKMessage;
 const assistant = (content: unknown[], id = "reply", parent_tool_use_id: string | null = null) =>
@@ -11,6 +13,43 @@ const assistant = (content: unknown[], id = "reply", parent_tool_use_id: string 
     message: { id, model: "claude-model", content },
     parent_tool_use_id,
   });
+
+test("catalog, startup, and history agree on the model and its reasoning options", () => {
+  const catalog = [
+    toModelInfo({
+      value: "opus[1m]",
+      resolvedModel: "claude-opus-5-5[1m]",
+      displayName: "Opus (1M context)",
+      description: "",
+      supportedEffortLevels: ["low", "high"],
+    }),
+  ];
+  const messages = [
+    native({ type: "system", subtype: "init", model: "claude-opus-5-5[1m]" }),
+    ...["claude-opus-5-5", "claude-opus-5-5[1M]"].map((model) =>
+      native({
+        type: "assistant",
+        message: { id: "reply", model, content: [{ type: "text", text: "Done." }] },
+        effort: "high",
+      }),
+    ),
+  ];
+  for (const message of messages) {
+    const state = createClaudeProjector("test")(message).reduce(
+      applySessionEvent,
+      createInitialSessionState(),
+    );
+    expect(state.model?.name).toBe("claude-opus-5-5");
+    const selected = catalog.find(
+      (model) => modelCatalogKey(model) === modelConfigurationKey(state.model!),
+    );
+    expect(selected?.name).toBe("Opus 5.5");
+    expect(getModelReasoningConfig(selected, state.model?.reasoningEffort)).toEqual({
+      supportedReasoningEfforts: ["low", "high"],
+      reasoningEffort: message.type === "assistant" ? "high" : "low",
+    });
+  }
+});
 
 test("turn results do not finish a session before native idle", () => {
   const project = createClaudeProjector("test");
@@ -106,7 +145,7 @@ test("streaming and committed text blocks converge on one assistant message", ()
   expect(reduce(stream)[0]?.content).toBe("Hello world");
 });
 
-test("thinking blocks replace their streamed preview and start fresh for the next block", () => {
+test("thinking summaries survive token progress and start fresh for the next block", () => {
   const project = createClaudeProjector("test");
   let state = createInitialSessionState();
   const receive = (message: SDKMessage) => {
@@ -122,10 +161,14 @@ test("thinking blocks replace their streamed preview and start fresh for the nex
     delta: { type: "thinking_delta", thinking: "ha" },
   });
   const committed = assistant([{ type: "thinking", thinking: "haha" }]);
+  const progress = native({ type: "system", subtype: "thinking_tokens", estimated_tokens: 2 });
 
   receive(start);
+  expect(state.status).toBe("reasoning");
   receive(delta);
+  receive(progress);
   receive(delta);
+  receive(progress);
   expect(state.reasoningContent).toBe("haha");
   receive(committed);
   expect(state).toEqual(

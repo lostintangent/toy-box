@@ -49,6 +49,7 @@ export function connectCopilotSession(
           ? {
               prompt: systemMessagePrompt(message.content),
               displayPrompt: encodeSystemMessage(message.content),
+              source: "system",
             }
           : {
               prompt: message.content,

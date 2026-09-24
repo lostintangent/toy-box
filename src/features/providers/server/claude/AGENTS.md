@@ -11,6 +11,7 @@ before Sessions deletes it; `close()` starts that cleanup without awaiting it.
 | ---------------- | -------------------------------------------------------------- |
 | `provider.ts`    | Native catalogs, creation, resume, history, and deletion       |
 | `client.ts`      | CLI discovery and SDK query cleanup                            |
+| `models.ts`      | Native model identities, labels, and catalog options           |
 | `connection.ts`  | One live session's input, controls, and request callbacks      |
 | `projector.ts`   | Live and historical native events into canonical SessionEvents |
 | `messages.ts`    | Native text, images, shared system messages, and slash prompts |

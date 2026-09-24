@@ -105,9 +105,6 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       // the agent tool call's arguments.
       if (event.agentId) return [];
 
-      // System reminders are model-only context, not user-visible transcript messages.
-      if (event.data.source === "system") return [];
-
       // Skill loading uses synthetic user messages to give the agent access to the selected skill.
       if (event.data.source?.startsWith("skill-")) return [];
 
@@ -121,6 +118,9 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
           },
         ];
       }
+
+      // System reminders are model-only context, not user-visible transcript messages.
+      if (event.data.source === "system") return [];
 
       return [
         {

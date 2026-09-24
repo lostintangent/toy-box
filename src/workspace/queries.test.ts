@@ -84,6 +84,30 @@ describe("workspace query cache", () => {
     }
   });
 
+  test("provider updates refresh models and versions on every client without touching sessions", () => {
+    const clients = [createQueryClient(), createQueryClient()];
+    const initial = createEmptyWorkspaceState();
+    const modelKey = providerQueries.catalog().queryKey;
+    const versionKey = providerQueries.versions().queryKey;
+    const sessionKey = sessionQueries.stateKey();
+    const historyKey = sessionQueries.detail("open-session").queryKey;
+    for (const client of clients) {
+      client.setQueryData(workspaceQueries.stateKey(), initial);
+      client.setQueryData(modelKey, { providers: [], models: [] });
+      client.setQueryData(versionKey, { claude: "1.0.0" });
+      client.setQueryData(sessionKey, createEmptySessionsState());
+      client.setQueryData(historyKey, createInitialSessionState());
+
+      applyWorkspaceEvent(client, { type: "providers.changed" });
+
+      expect(client.getQueryState(modelKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(versionKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(false);
+      expect(client.getQueryState(historyKey)?.isInvalidated).toBe(false);
+      expect(readWorkspaceState(client)).toBe(initial);
+    }
+  });
+
   test("pin changes refresh session membership while identical echoes keep it fresh", () => {
     const client = createQueryClient();
     const initial = createEmptyWorkspaceState();
