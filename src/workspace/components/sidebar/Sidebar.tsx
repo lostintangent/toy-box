@@ -14,7 +14,7 @@ import {
   ActionSpacer,
   CollapseToggle,
   SettingsButton,
-  type SidebarCreateOptions,
+  type SessionCreationOptions,
 } from "./SidebarActions";
 import { SessionList } from "@sessions/components/sidebar/SessionList";
 import { FileBrowserDialog } from "@files/components/browser/FileBrowserDialog";
@@ -50,7 +50,7 @@ export type SidebarProps = {
   panels: SidebarPanels;
   onPanelExpanded: (panel: keyof SidebarPanels, expanded: boolean) => void;
 
-  onCreateSession: (options?: SidebarCreateOptions) => void;
+  onCreateSession: (options?: SessionCreationOptions) => void;
   openAppIds: string[];
   onAppOpen: (appId: string, toggleInWorkspace: boolean) => void;
   onAppOpenInHyper: (appId: string) => void;
@@ -123,6 +123,12 @@ export function Sidebar({
   const [createAutomationOpen, setCreateAutomationOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
 
+  const creationActions = {
+    onCreateSession,
+    onCreateAutomation: () => setCreateAutomationOpen(true),
+    onCreateChannel: () => setCreateChannelOpen(true),
+  };
+
   // Only a collapsible sidebar pins the collapse toggle and settings actions
   // outside its two layouts, and only it has a rail for them to head and foot.
   const collapsed = collapsible?.collapsed ?? false;
@@ -162,9 +168,7 @@ export function Sidebar({
           filter={filter}
           onFilterChange={onFilterChange}
           sessionCount={sessions.length}
-          onCreateSession={onCreateSession}
-          onCreateAutomation={() => setCreateAutomationOpen(true)}
-          onCreateChannel={() => setCreateChannelOpen(true)}
+          {...creationActions}
         />
 
         <div className="min-h-0 min-w-0 flex flex-col bg-panel">
@@ -227,7 +231,7 @@ export function Sidebar({
         <SidebarRail
           collapsed={collapsed}
           className={layerClass(collapsed)}
-          onCreateSession={onCreateSession}
+          {...creationActions}
           onBrowseFiles={() => setBrowseOpen(true)}
           onToggleHyper={onToggleHyper}
           isHyperOpen={isHyperOpen}

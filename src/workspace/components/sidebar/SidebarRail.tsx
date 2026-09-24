@@ -3,9 +3,9 @@ import {
   ActionSpacer,
   BrowseFilesButton,
   HyperButton,
-  NewSessionButton,
+  SidebarSplitButton,
   TerminalToggle,
-  type SidebarCreateOptions,
+  type SessionCreationOptions,
 } from "./SidebarActions";
 import { SIDEBAR_BORDER, SIDEBAR_COLLAPSED_WIDTH } from "./SidebarResizer";
 import { cn } from "@/shared/utils";
@@ -26,6 +26,8 @@ export function SidebarRail({
   collapsed,
   className,
   onCreateSession,
+  onCreateAutomation,
+  onCreateChannel,
   onBrowseFiles,
   onToggleHyper,
   isHyperOpen,
@@ -34,7 +36,9 @@ export function SidebarRail({
 }: {
   collapsed: boolean;
   className?: string;
-  onCreateSession: (options?: SidebarCreateOptions) => void;
+  onCreateSession: (options?: SessionCreationOptions) => void;
+  onCreateAutomation: () => void;
+  onCreateChannel: () => void;
   onBrowseFiles: () => void;
   onToggleHyper: () => void;
   isHyperOpen: boolean;
@@ -61,7 +65,12 @@ export function SidebarRail({
       */}
       <ActionSpacer className="mt-1" />
       <Separator className={SEPARATOR} />
-      <NewSessionButton onCreateSession={onCreateSession} />
+      <SidebarSplitButton
+        variant="rail"
+        onCreateSession={onCreateSession}
+        onCreateAutomation={onCreateAutomation}
+        onCreateChannel={onCreateChannel}
+      />
 
       <div className="min-h-0 flex-1" />
 

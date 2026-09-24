@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import { useProviders } from "@providers/useProviders";
 import type { SessionFilters } from "@sessions/components/sidebar/sessionFilters";
-import { ChevronDown, Clock3, FileText, Filter, Hash, Shapes, X } from "lucide-react";
-import { Button } from "@/shared/components/ui/button";
+import { ChevronDown, Filter, X } from "lucide-react";
 import { Input } from "@/shared/components/ui/input";
 import { cn } from "@/shared/utils";
 import {
@@ -10,12 +9,11 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/components/ui/dropdown-menu";
-import { NewSessionButton, type SidebarCreateOptions } from "./SidebarActions";
+import { SidebarSplitButton, type SessionCreationOptions } from "./SidebarActions";
 
 export function SidebarHeader({
   leadingSlot,
@@ -31,15 +29,11 @@ export function SidebarHeader({
   filter: SessionFilters;
   onFilterChange: (value: SessionFilters) => void;
   sessionCount: number;
-  onCreateSession: (options?: SidebarCreateOptions) => void;
+  onCreateSession: (options?: SessionCreationOptions) => void;
   onCreateAutomation: () => void;
   onCreateChannel: () => void;
 }) {
   const { providers, hasModels } = useProviders();
-
-  function createArtifactDraft(path: string, content = "") {
-    onCreateSession({ artifact: { path, content } });
-  }
 
   return (
     <div
@@ -121,51 +115,11 @@ export function SidebarHeader({
           </button>
         )}
       </div>
-      <div className="flex">
-        <NewSessionButton onCreateSession={onCreateSession} className="size-7 rounded-r-none" />
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            disabled={!hasModels}
-            render={
-              <Button
-                size="icon-sm"
-                variant="accent"
-                className="h-7 w-5 rounded-l-none border-l border-background"
-                aria-label="Create options"
-                suppressHydrationWarning
-              />
-            }
-          >
-            <ChevronDown className="h-3.5 w-3.5" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => createArtifactDraft("document.md")}>
-              <FileText />
-              New document
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() =>
-                createArtifactDraft(
-                  "diagram.svg",
-                  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"></svg>\n',
-                )
-              }
-            >
-              <Shapes />
-              New whiteboard
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onCreateAutomation}>
-              <Clock3 />
-              Create automation
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onCreateChannel}>
-              <Hash />
-              Create channel
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      <SidebarSplitButton
+        onCreateSession={onCreateSession}
+        onCreateAutomation={onCreateAutomation}
+        onCreateChannel={onCreateChannel}
+      />
     </div>
   );
 }
