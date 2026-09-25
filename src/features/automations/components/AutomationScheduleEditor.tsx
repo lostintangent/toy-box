@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
-import { Button } from "@/shared/components/ui/button";
-import { Input } from "@/shared/components/ui/input";
+import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
 import { cronToSchedule, scheduleToCron, type ScheduleDraft } from "../model";
 
 const WEEKDAY_OPTIONS = [

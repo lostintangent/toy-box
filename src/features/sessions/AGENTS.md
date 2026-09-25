@@ -102,7 +102,16 @@ retains explicitly pinned snapshots without creating UI output or a second cache
 `components/` owns the complete session presentation: `SessionPane`, passive previews, overlays,
 SDK canvases, the transcript, composer, location controls, and sidebar list. Components own their
 mutation observers and browser-local interaction state. Reusable managed-session surfaces such as
-Inbox may consume the composer or location controls directly. Assistant Markdown keeps Streamdown's
+Inbox may consume the composer or location controls directly.
+
+The composer stacks what a session produced (artifacts newest first, plus todo progress and changed
+files) and what is waiting (queued messages) above the message being written. Queued user messages can be sent now, removed, or edited:
+editing takes a message out of the queue and back into the draft, as does stopping the turn, so
+queued input never disappears. Draft text syncs through the
+workspace. `/` completes skills at the start of a prompt and
+`@` inserts working-directory file paths as plain text, so references need no message schema.
+
+Assistant Markdown keeps Streamdown's
 HTML and protocol sanitization but omits URL hardening so relative links remain semantic anchors;
 links that resolve to an already-published session artifact focus that artifact's editor pane.
 Assistant messages can carry an optional error alongside their text and tools. A failed
@@ -113,7 +122,7 @@ snapshot seeding. Text and reasoning deltas append verbatim; complete messages r
 matching previews, and complete reasoning replaces the current reasoning text. Providers normalize
 native blocks into these explicit meanings; the reducer never guesses from overlapping text.
 
-The [workspace pane system](../../workspace/AGENTS.md) still owns pane identity,
+The [workspace pane system](../workspace/AGENTS.md) still owns pane identity,
 placement, focus, host chrome, and Main/Hyper composition. It renders `SessionPane` as a leaf but
 does not own session data or streaming behavior.
 
@@ -132,7 +141,8 @@ does not own session data or streaming behavior.
   question policy rather than deriving them from session roles or storage conventions.
 - Files' `server/watcher.ts` owns the shared artifact watcher used by discovery and open editors.
   It batches notifications by session ID; the runtime refreshes only affected active sessions.
-  Artifact membership comes from the filesystem; idle snapshots read the current directory.
+  Artifact membership and modification times come from the filesystem; idle snapshots read the
+  current directory.
 - [`state/`](server/state/AGENTS.md) owns cached provider connections, snapshots, session records, worktrees, and complete
   resource teardown.
 - `tools.ts` defines the model-facing operations that belong to Sessions. Application-level modules

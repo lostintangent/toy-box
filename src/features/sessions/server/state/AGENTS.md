@@ -35,7 +35,7 @@ creating another source of transcript truth.
   unfinished edits reject the operation before any resource is removed.
   The shared SQLite connection remains application infrastructure in
   [`../../../../server/database.ts`](../../../../server/database.ts). Workspace status and shared
-  snapshot composition remain in [`../../../../workspace/AGENTS.md`](../../../../workspace/AGENTS.md).
+  snapshot composition remain in [`../../../workspace/AGENTS.md`](../../../workspace/AGENTS.md).
   Application-level role classification and managed ownership remain in
   [`../../../../server/managedSessions.ts`](../../../../server/managedSessions.ts).
 

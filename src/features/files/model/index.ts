@@ -32,10 +32,16 @@ export const listDirectoryInputSchema = z.object({
   showDotfiles: z.boolean().optional(),
 });
 
+export const searchFilesInputSchema = z.object({
+  directory: z.string().min(1),
+  query: z.string().max(256),
+});
+
 export type WorkspaceFile = z.infer<typeof workspaceFileSchema>;
 export type SessionFile = z.infer<typeof sessionFileSchema>;
 export type CreateFileInput = z.infer<typeof createFileInputSchema>;
 export type ListDirectoryInput = z.infer<typeof listDirectoryInputSchema>;
+export type SearchFilesInput = z.infer<typeof searchFilesInputSchema>;
 export type WorkspaceFileMode = "read" | "edit" | "shared";
 export type FileWatchEvent = { type: "modified"; timestamp: number } | { type: "deleted" };
 

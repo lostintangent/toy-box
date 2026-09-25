@@ -43,16 +43,10 @@ import {
   PANE_OVERLAY_BUTTON_CLASS,
   PANE_OVERLAY_ICON_CLASS,
 } from "@workspace/components/panes/shell/paneControls";
-import { Button, buttonVariants } from "@/shared/components/ui/button";
-import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetTitle,
-  SheetTrigger,
-} from "@/shared/components/ui/sheet";
-import { DestructiveConfirmationDialog } from "@/shared/components/sidebar/DestructiveConfirmationDialog";
+import { Button, buttonVariants } from "@/shared/ui/button";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
+import { Sheet, SheetClose, SheetContent, SheetTitle, SheetTrigger } from "@/shared/ui/sheet";
+import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
 import { cn } from "@/shared/utils";
 import { DeleteChannelDialog } from "../DeleteChannelDialog";
 

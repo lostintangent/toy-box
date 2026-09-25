@@ -1,6 +1,6 @@
 import type { Channel } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
-import { DestructiveConfirmationDialog } from "@/shared/components/sidebar/DestructiveConfirmationDialog";
+import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
 
 export function DeleteChannelDialog({
   channel,

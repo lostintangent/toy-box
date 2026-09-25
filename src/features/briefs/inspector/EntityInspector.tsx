@@ -2,13 +2,7 @@ import { useState, type ReactNode } from "react";
 import { code } from "@streamdown/code";
 import { BookOpenText, FileCode2, GitFork, Pencil, Trash2 } from "lucide-react";
 import { Streamdown } from "streamdown";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/shared/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/shared/ui/sheet";
 import {
   activeOptionRelationships,
   decisionOriginForRecord,

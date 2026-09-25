@@ -687,18 +687,34 @@ describe("session reducer", () => {
       expect(state.todos).toEqual([]);
     });
 
-    test("linked sessions and artifacts are idempotent ordered collections", () => {
+    test("linked sessions are idempotent and artifact listings replace the collection", () => {
       const state = reduceEvents([
         { type: "linked_session_added", sessionId: "child-1" },
         { type: "linked_session_added", sessionId: "child-1" },
         { type: "linked_session_added", sessionId: "child-2" },
         { type: "linked_session_removed", sessionId: "child-1" },
-        { type: "artifacts_changed", artifacts: ["report.md", "notes.md"] },
+        { type: "artifacts_changed", artifacts: [{ path: "report.md", updatedAt: 1 }] },
         { type: "artifacts_changed", artifacts: [] },
       ]);
 
       expect(state.linkedSessionIds).toEqual(["child-2"]);
       expect(state.artifacts).toEqual([]);
+    });
+
+    test("artifact timestamps distinguish modifications from identical listings", () => {
+      const report = { path: "report.md", updatedAt: 1 };
+      const listed = reduceEvents([{ type: "artifacts_changed", artifacts: [report] }]);
+      const relisted = applySessionEvent(listed, {
+        type: "artifacts_changed",
+        artifacts: [report],
+      });
+      const modified = applySessionEvent(listed, {
+        type: "artifacts_changed",
+        artifacts: [{ ...report, updatedAt: 2 }],
+      });
+
+      expect(relisted.artifacts).toBe(listed.artifacts);
+      expect(modified.artifacts).toEqual([{ path: "report.md", updatedAt: 2 }]);
     });
 
     test("canvas identity separates instances and bumps revisions in place", () => {

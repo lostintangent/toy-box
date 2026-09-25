@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState, type ReactElement } from "react";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
-import { Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { VIEWPORT_OVERLAY_BOUNDS } from "@workspace/components/overlayWindow";
 

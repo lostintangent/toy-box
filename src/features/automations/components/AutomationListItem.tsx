@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Clock3, Pencil, Play, Trash2 } from "lucide-react";
-import { MetadataBadge } from "@/shared/components/ui/metadata-badge";
-import { RelativeTime } from "@/shared/components/ui/relative-time";
-import { DropdownMenuItem, DropdownMenuSeparator } from "@/shared/components/ui/dropdown-menu";
-import { DestructiveConfirmationDialog } from "@/shared/components/sidebar/DestructiveConfirmationDialog";
+import { MetadataBadge } from "@/shared/ui/metadata-badge";
+import { RelativeTime } from "@/shared/ui/relative-time";
+import { DropdownMenuItem, DropdownMenuSeparator } from "@/shared/ui/dropdown-menu";
+import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
 import { SidebarSessionItem } from "@sessions/components/sidebar/SidebarSessionItem";
 import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { automationMutations } from "../mutations";

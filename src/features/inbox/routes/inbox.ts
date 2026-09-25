@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { dispatchInboxTask } from "@inbox/server/functions";
-import { messageAttachmentsSchema } from "@sessions/model/protocol";
+import { attachmentsSchema } from "@/shared/attachments/model";
 
 const inboxInputSchema = z.object({
   prompt: z.string().trim().min(1),
-  attachments: messageAttachmentsSchema.optional(),
+  attachments: attachmentsSchema.optional(),
 });
 
 type InboxInput = z.infer<typeof inboxInputSchema>;

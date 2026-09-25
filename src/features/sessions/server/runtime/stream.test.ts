@@ -7,6 +7,7 @@ import {
   waitForSessions,
 } from "./index";
 import { SessionStream } from "./sessionStream";
+import { deleteSessionFiles, writeSessionArtifact } from "../artifacts";
 import * as realSnapshotCache from "@sessions/server/state/snapshots";
 import * as realWorkspaceState from "@workspace/server/state";
 import {
@@ -406,25 +407,20 @@ test("artifact refresh reconciles both clients and ignores updates after executi
   const sessionId = "session-observed-artifacts";
   cleanUpStreamAfterTest(sessionId);
   const stream = SessionStream.getOrCreate(sessionId, makeFakeSession(), {
-    artifacts: ["deleted.md"],
+    artifacts: [{ path: "deleted.md", updatedAt: 1 }],
   });
   const first = stream.subscribe();
   const second = stream.subscribe();
+  const created = { path: "created.html", updatedAt: 2 };
 
-  stream.updateArtifacts(["created.html"]);
+  stream.updateArtifacts([created]);
   const event = await nextStreamEvent(first);
-  expect(event).toMatchObject({
-    type: "artifacts_changed",
-    artifacts: ["created.html"],
-  });
+  expect(event).toMatchObject({ type: "artifacts_changed", artifacts: [created] });
   expect(await nextStreamEvent(second)).toEqual(event);
-  const state = stream.getSessionState();
-  stream.updateArtifacts(["created.html"]);
-  expect(stream.getSessionState().artifacts).toBe(state.artifacts);
 
   stream.finish();
-  stream.updateArtifacts(["after-finish.md"]);
-  expect(stream.getSessionState().artifacts).toEqual(["created.html"]);
+  stream.updateArtifacts([{ path: "after-finish.md", updatedAt: 3 }]);
+  expect(stream.getSessionState().artifacts).toEqual([created]);
 });
 
 describe("SessionStream question answers", () => {
@@ -1596,12 +1592,14 @@ describe("createSession", () => {
       },
     });
 
+    await writeSessionArtifact(sessionId, "document.md", "# Document");
+    onTestFinished(() => deleteSessionFiles(sessionId));
     const { createSession: importedCreate } = await import("./index");
     const { SessionStream: ImportedSessionStream } = await import("./sessionStream");
     await importedCreate(sessionId, userMessage("Update the document"), {});
 
     expect(ImportedSessionStream.get(sessionId)?.getSessionState().artifacts).toEqual([
-      "document.md",
+      { path: "document.md", updatedAt: expect.any(Number) },
     ]);
   });
 });

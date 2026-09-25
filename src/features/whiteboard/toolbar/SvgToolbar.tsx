@@ -3,9 +3,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
-import { Separator } from "@/shared/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+} from "@/shared/ui/dropdown-menu";
+import { Separator } from "@/shared/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
 import { useState, useSyncExternalStore } from "react";
 import { useSelector } from "@tanstack/react-store";

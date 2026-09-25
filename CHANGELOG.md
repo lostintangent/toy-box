@@ -1,6 +1,7 @@
 ## 📅 v0.2.0 (09/22/26)
 
 - Introduced support for Codex and Claude-based sessions
+- Re-designed the session composer
 - Added an overview pane/sheet to channels
 - SVG/whiteboard files now support pinch-to-zoom
 - Added new tools for sessions/agents to search and read sessions

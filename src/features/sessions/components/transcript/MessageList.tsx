@@ -6,12 +6,14 @@ import {
   useState,
   type MutableRefObject,
 } from "react";
+import * as m from "motion/react-m";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import type { Message as SessionTranscriptMessage, SessionStatus } from "../../model";
-import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
-import { ScrollToBottomButton } from "@/shared/components/ui/scroll-to-bottom-button";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
+import { ScrollToBottomButton } from "@/shared/ui/scroll-to-bottom-button";
 import { TranscriptPlaceholder } from "./TranscriptPlaceholder";
 import { Message } from "./messages/Message";
+import { queuedMessageLayoutId } from "../composer/QueuedMessageList";
 import { ReasoningDisplay, StatusIndicator } from "./SessionStatus";
 import {
   createMessageWindow,
@@ -216,13 +218,27 @@ function VirtualizedMessageList({
             if (!isRenderableMessage(message)) return null;
 
             const isLast = absoluteIndex === messages.length - 1;
+            const content = <Message message={message} isStreaming={isStreaming} isLast={isLast} />;
             return (
               <div
                 // eslint-disable-next-line react/no-array-index-key -- messages append in order and streaming updates replace content in place
                 key={`${message.role}-${absoluteIndex}`}
                 data-message-index={absoluteIndex}
               >
-                <Message message={message} isStreaming={isStreaming} isLast={isLast} />
+                {message.role === "user" && message.clientId ? (
+                  // A user message shares identity with the queued row it came from, so it
+                  // travels up from the composer when sent. A fixed layout dependency limits
+                  // animation to that arrival, never later updates or scrolling.
+                  <m.div
+                    layoutId={queuedMessageLayoutId(message.clientId)}
+                    layout="position"
+                    layoutDependency={message.clientId}
+                  >
+                    {content}
+                  </m.div>
+                ) : (
+                  content
+                )}
               </div>
             );
           })}

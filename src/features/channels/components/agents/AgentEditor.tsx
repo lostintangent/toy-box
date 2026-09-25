@@ -7,11 +7,11 @@ import { OptionalModelConfigurationPicker } from "@providers/components/ModelPic
 import type { ModelConfiguration } from "@providers/model";
 import { sessionQueries } from "@sessions/queries";
 import { useModels } from "@providers/useModels";
-import { Button } from "@/shared/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogTitle } from "@/shared/components/ui/dialog";
-import { Input } from "@/shared/components/ui/input";
-import { DestructiveConfirmationDialog } from "@/shared/components/sidebar/DestructiveConfirmationDialog";
-import { Textarea } from "@/shared/components/ui/textarea";
+import { Button } from "@/shared/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogTitle } from "@/shared/ui/dialog";
+import { Input } from "@/shared/ui/input";
+import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
+import { Textarea } from "@/shared/ui/textarea";
 import { AgentAvatar } from "./AgentAvatar";
 
 export function AgentEditor({ agent, onClose }: { agent: ChannelMember; onClose: () => void }) {

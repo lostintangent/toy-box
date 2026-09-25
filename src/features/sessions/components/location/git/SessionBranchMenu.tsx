@@ -7,8 +7,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
-import { Button } from "@/shared/components/ui/button";
+} from "@/shared/ui/dropdown-menu";
+import { Button } from "@/shared/ui/button";
 import { SessionLocationIcon } from "../SessionLocationIcon";
 import { resolveSessionLocation } from "../locationDisplay";
 import { cn } from "@/shared/utils";

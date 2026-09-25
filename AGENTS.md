@@ -40,7 +40,7 @@ Each guide explains one capability end to end, including adjacent callers and co
 - [`src/features/sessions/AGENTS.md`](src/features/sessions/AGENTS.md): the foundational session model, runtime, registry, SDK projection, browser lifecycle, and presentation
 - [`src/features/providers/AGENTS.md`](src/features/providers/AGENTS.md): the native provider contract, catalogs, Copilot, Codex, and Claude implementations, and history projection
 - [`src/features/channels/AGENTS.md`](src/features/channels/AGENTS.md): durable shared message buses, membership cursors, delivery policy, artifacts, and channel presentation
-- [`src/workspace/AGENTS.md`](src/workspace/AGENTS.md): aggregate workspace state, synchronization, pane identity, and layout composition
+- [`src/features/workspace/AGENTS.md`](src/features/workspace/AGENTS.md): TanStack application composition, aggregate workspace state, synchronization, pane identity, and layout
 - [`src/features/automations/AGENTS.md`](src/features/automations/AGENTS.md): dependable recurring work by scheduling ordinary managed sessions
 - [`src/features/inbox/AGENTS.md`](src/features/inbox/AGENTS.md): durable background results presented through ordinary managed sessions
 - [`src/features/workers/AGENTS.md`](src/features/workers/AGENTS.md): owner-scoped background work supervised as ordinary managed sessions

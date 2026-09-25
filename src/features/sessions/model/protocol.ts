@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import { modelConfigurationSchema } from "@providers/model";
+import { attachmentsSchema } from "@/shared/attachments/model";
 import { sessionSystemMessageSchema } from "./systemMessages";
 
 export const sessionTypeSchema = z.enum(["standard", "automation", "inbox", "hyper", "worker"]);
@@ -48,20 +49,11 @@ export const createSessionInputSchema = sessionInputSchema.extend({
   hyper: z.literal(true).optional(),
 });
 
-export const attachmentSchema = z.object({
-  mimeType: z.string().startsWith("image/"),
-  base64: z.string(),
-});
-
-export type Attachment = z.infer<typeof attachmentSchema>;
-
-export const messageAttachmentsSchema = z.array(attachmentSchema);
-
 export const sessionMessageSchema = z
   .object({
     clientId: z.string().optional(),
     content: z.string(),
-    attachments: messageAttachmentsSchema.optional(),
+    attachments: attachmentsSchema.optional(),
     model: modelConfigurationSchema.optional(),
     immediate: z.literal(true).optional(),
   })

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { ChannelMember } from "@channels/model";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
-import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { AgentAvatar } from "./AgentAvatar";
 
 /** One agent in a Channel. */

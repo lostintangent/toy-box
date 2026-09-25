@@ -1,6 +1,6 @@
 import { ChevronDown } from "lucide-react";
 import { Fragment } from "react";
-import { Button } from "@/shared/components/ui/button";
+import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,7 +9,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
+} from "@/shared/ui/dropdown-menu";
 import {
   formatReasoningEffort,
   modelCatalogKey,

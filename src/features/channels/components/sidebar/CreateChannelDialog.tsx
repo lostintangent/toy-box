@@ -5,7 +5,7 @@ import { channelMutations } from "@channels/mutations";
 import { ModelConfigurationPicker } from "@providers/components/ModelPicker";
 import type { ModelConfiguration } from "@providers/model";
 import { useModels } from "@providers/useModels";
-import { Button } from "@/shared/components/ui/button";
+import { Button } from "@/shared/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -13,9 +13,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/shared/components/ui/dialog";
-import { Input } from "@/shared/components/ui/input";
-import { Textarea } from "@/shared/components/ui/textarea";
+} from "@/shared/ui/dialog";
+import { Input } from "@/shared/ui/input";
+import { Textarea } from "@/shared/ui/textarea";
 import { SessionLocationPicker } from "@sessions/components/location/SessionLocationPicker";
 import { getRecentDirectories } from "@sessions/model/recentDirectories";
 import { sessionQueries } from "@sessions/queries";

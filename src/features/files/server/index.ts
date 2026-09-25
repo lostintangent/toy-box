@@ -8,9 +8,14 @@ import type {
   DirectoryEntry,
   DirectoryListing,
   ListDirectoryInput,
+  SearchFilesInput,
   WorkspaceFile,
 } from "../model";
+import { rankFilePaths } from "../model/paths";
 import { resolveWorkspaceFile } from "./paths";
+
+const SEARCH_RESULT_LIMIT = 12;
+const SCANNED_FILE_LIMIT = 20_000;
 
 export async function readFile(
   file: WorkspaceFile,
@@ -97,6 +102,30 @@ export async function listDirectory({
     directories,
     files,
   };
+}
+
+/** Files beneath a directory whose paths match a query, as paths relative to it. */
+export async function searchFiles({ directory, query }: SearchFilesInput): Promise<string[]> {
+  return rankFilePaths(await listFiles(resolve(directory)), query, SEARCH_RESULT_LIMIT);
+}
+
+/** Relative file paths, honoring Git ignores inside a repository. */
+async function listFiles(root: string): Promise<string[]> {
+  const git = Bun.spawn(["git", "ls-files", "--cached", "--others", "--exclude-standard"], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [output, exitCode] = await Promise.all([new Response(git.stdout).text(), git.exited]);
+  if (exitCode === 0) return output.split("\n").filter(Boolean);
+
+  const paths: string[] = [];
+  for await (const path of new Bun.Glob("**/*").scan({ cwd: root, onlyFiles: true })) {
+    if (path.split("/").includes("node_modules")) continue;
+    paths.push(path);
+    if (paths.length === SCANNED_FILE_LIMIT) break;
+  }
+  return paths;
 }
 
 function requireFilePath(file: WorkspaceFile): string {

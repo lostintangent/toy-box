@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { File } from "lucide-react";
-import { Button } from "@/shared/components/ui/button";
+import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/utils";
 import { machineFile, type WorkspaceFile } from "../../model";
 import { fileName, getPathDirname } from "../../model/paths";

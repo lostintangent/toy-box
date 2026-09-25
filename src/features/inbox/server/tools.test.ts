@@ -82,7 +82,7 @@ test("send_to_inbox writes its artifact to the session workspace and attaches th
   expect(await Bun.file(resolveSessionArtifactPath(sessionId, "research.md")!).text()).toBe(
     "# Research",
   );
-  expect(await listSessionArtifacts(sessionId)).toEqual(["research.md"]);
+  expect((await listSessionArtifacts(sessionId)).map(({ path }) => path)).toEqual(["research.md"]);
   expect(await listInboxEntries()).toContainEqual({
     id: entryId,
     message: "Research is ready",

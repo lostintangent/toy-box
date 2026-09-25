@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import { Copy } from "lucide-react";
 import { Streamdown } from "streamdown";
-import { Button } from "@/shared/components/ui/button";
-import { RelativeTime } from "@/shared/components/ui/relative-time";
-import { Separator } from "@/shared/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
-import type { Attachment, UserMessage as UserMessageType } from "../../../model";
-import { AttachmentGallery } from "../../AttachmentGallery";
+import { Button } from "@/shared/ui/button";
+import { RelativeTime } from "@/shared/ui/relative-time";
+import { Separator } from "@/shared/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import { AttachmentGallery } from "@/shared/attachments/AttachmentGallery";
+import type { Attachment } from "@/shared/attachments/model";
+import type { UserMessage as UserMessageType } from "../../../model";
 
 export function UserMessage({
   message,
@@ -14,7 +15,7 @@ export function UserMessage({
   children,
 }: {
   message: Pick<UserMessageType, "content" | "timestamp"> & {
-    attachments?: (Attachment | string)[];
+    attachments?: (Attachment | { label: string; src: string })[];
   };
   extraActions?: ReactNode;
   children?: ReactNode;

@@ -217,8 +217,11 @@ test("native artifact renames leave membership to filesystem observation", () =>
         },
       ],
     }),
-  ).reduce(applySessionEvent, createInitialSessionState({ artifacts: ["before.md"] }));
-  expect(state.artifacts).toEqual(["before.md"]);
+  ).reduce(
+    applySessionEvent,
+    createInitialSessionState({ artifacts: [{ path: "before.md", updatedAt: 1 }] }),
+  );
+  expect(state.artifacts).toEqual([{ path: "before.md", updatedAt: 1 }]);
   expect(state.messages).toEqual([]);
 });
 

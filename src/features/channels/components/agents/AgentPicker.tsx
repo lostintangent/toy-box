@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { FilePenLine, UserPlus, Users } from "lucide-react";
 import { AgentAvatar } from "./AgentAvatar";
-import { Button } from "@/shared/components/ui/button";
-import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
+import { Button } from "@/shared/ui/button";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { cn } from "@/shared/utils";
 import { AgentEditor } from "./AgentEditor";
 import type { AgentPickerSuggestion } from "./agentPickerSuggestions";

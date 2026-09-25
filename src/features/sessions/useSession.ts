@@ -78,7 +78,11 @@ export function useSession(
   // published to React immediately for discrete events or once per frame for
   // rapid text deltas.
   const [publishedSession, setPublishedSession] = useState(() =>
-    createInitialSessionState(session?.artifactPath ? { artifacts: [session.artifactPath] } : {}),
+    createInitialSessionState(
+      session?.artifactPath
+        ? { artifacts: [{ path: session.artifactPath, updatedAt: session.createdAt.getTime() }] }
+        : {},
+    ),
   );
   const sessionRef = useRef(publishedSession);
   const rafIdRef = useRef<number | null>(null);

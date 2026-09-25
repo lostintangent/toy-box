@@ -16,6 +16,7 @@ import type { SessionQuestionAnswer, SessionSubscriptionMode } from "@sessions/m
 import { applySessionEvent, createInitialSessionState } from "@sessions/model/reducer";
 import { hasBlockingSessionQuestion, hasPendingSessionQuestion } from "@sessions/model/questions";
 import type {
+  SessionArtifact,
   SessionCompletion,
   SessionEvent,
   SessionMessage,
@@ -443,9 +444,9 @@ export class SessionStream {
     }
   }
 
-  updateArtifacts(paths: string[]): void {
+  updateArtifacts(artifacts: SessionArtifact[]): void {
     if (this.#finished) return;
-    this.#emit({ type: "artifacts_changed", artifacts: paths });
+    this.#emit({ type: "artifacts_changed", artifacts });
   }
 
   #dispose(): void {

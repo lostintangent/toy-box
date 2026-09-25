@@ -6,7 +6,7 @@ import {
   SidebarListItemLayout,
   type SidebarListItemProps,
   type SidebarListItemStatus,
-} from "@/shared/components/sidebar/SidebarListItem";
+} from "@/shared/sidebar/SidebarListItem";
 import { SessionPreview, useSessionPreview } from "../SessionPreview";
 
 type SidebarSessionItemProps = Omit<SidebarListItemProps, "status"> & {

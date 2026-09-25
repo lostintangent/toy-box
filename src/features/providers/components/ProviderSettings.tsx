@@ -2,11 +2,11 @@ import { useEffect } from "react";
 import { useIsMutating, useMutation, useMutationState, useQuery } from "@tanstack/react-query";
 import type { MutationState } from "@tanstack/react-query";
 import { Check, Loader2, Minus, RefreshCw, X } from "lucide-react";
-import { Badge } from "@/shared/components/ui/badge";
-import { Button } from "@/shared/components/ui/button";
-import { Checkbox } from "@/shared/components/ui/checkbox";
-import { Skeleton } from "@/shared/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+import { Badge } from "@/shared/ui/badge";
+import { Button } from "@/shared/ui/button";
+import { Checkbox } from "@/shared/ui/checkbox";
+import { Skeleton } from "@/shared/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { providerMutations, providerQueries, type ProviderUpdateResult } from "../queries";
 import { useProviders } from "../useProviders";
 

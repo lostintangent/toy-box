@@ -6,6 +6,7 @@ import {
   fileName,
   getPathBasename,
   getPathDirname,
+  rankFilePaths,
   toRelativePath,
 } from "./paths";
 
@@ -57,5 +58,29 @@ describe("artifact route paths", () => {
         path: "nested/charts/chart.html",
       }),
     ).toBe("/api/serve/session/nested/charts/");
+  });
+});
+
+describe("rankFilePaths", () => {
+  const paths = [
+    "src/features/sessions/components/composer/SessionComposer.tsx",
+    "src/composer.ts",
+    "docs/composer-notes.md",
+    "src/features/files/model/paths.ts",
+  ];
+
+  test("prefers basename prefixes, then basename matches, then path matches", () => {
+    expect(rankFilePaths(paths, "composer", 10)).toEqual([
+      "src/composer.ts",
+      "docs/composer-notes.md",
+      "src/features/sessions/components/composer/SessionComposer.tsx",
+    ]);
+    expect(rankFilePaths(paths, "SESSIONS/", 10)).toEqual([
+      "src/features/sessions/components/composer/SessionComposer.tsx",
+    ]);
+  });
+
+  test("an empty query favors the shortest paths, within the limit", () => {
+    expect(rankFilePaths(paths, "", 2)).toEqual(["src/composer.ts", "docs/composer-notes.md"]);
   });
 });

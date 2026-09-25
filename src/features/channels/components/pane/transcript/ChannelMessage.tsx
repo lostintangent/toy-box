@@ -2,10 +2,12 @@ import { AgentAvatar } from "@channels/components/agents/AgentAvatar";
 import { AgentMention } from "@channels/components/agents/AgentMention";
 import { isChannelSystemMessage } from "@channels/model";
 import type { ChannelAgent, ChannelMessage, ChannelReaction } from "@channels/model";
-import { AttachmentGallery } from "@sessions/components/AttachmentGallery";
+import { machineFile } from "@files/model";
+import { createFileServeUrl, getPathBasename } from "@files/model/paths";
 import { UserMessage } from "@sessions/components/transcript/messages/UserMessage";
-import { RelativeTime } from "@/shared/components/ui/relative-time";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+import { AttachmentGallery } from "@/shared/attachments/AttachmentGallery";
+import { RelativeTime } from "@/shared/ui/relative-time";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
 import { ChannelSystemMessageView } from "./ChannelSystemMessage";
 
@@ -38,11 +40,19 @@ export function ChannelMessageView({
     }
   }
 
+  const attachments = (message.attachments ?? []).map((attachment) =>
+    typeof attachment === "string"
+      ? {
+          label: getPathBasename(attachment),
+          src: createFileServeUrl(machineFile(attachment)),
+        }
+      : attachment,
+  );
   const sender = message.sender;
   if (sender.type === "user") {
     return (
       <UserMessage
-        message={message}
+        message={{ ...message, attachments }}
         extraActions={
           reactions.length ? (
             <div className="mr-1">
@@ -58,7 +68,6 @@ export function ChannelMessageView({
 
   const agent = agents.find(({ id }) => id === sender.agentId);
   const agentName = agent?.name ?? DELETED_AGENT_LABEL;
-  const attachments = message.attachments ?? [];
   return (
     <article className="flex gap-3">
       <AgentAvatar name={agent?.name ?? "?"} avatar={agent?.avatar} />

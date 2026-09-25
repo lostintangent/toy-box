@@ -1,7 +1,7 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DropdownMenuSeparator } from "@/shared/components/ui/dropdown-menu";
+import { DropdownMenuSeparator } from "@/shared/ui/dropdown-menu";
 import type { ModelConfiguration } from "../model";
 import { ModelConfigurationPicker } from "./ModelPicker";
 

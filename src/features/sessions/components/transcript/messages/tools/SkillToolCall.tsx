@@ -1,6 +1,6 @@
 import { BookOpenText } from "lucide-react";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import { Button } from "@/shared/components/ui/button";
+import { Button } from "@/shared/ui/button";
 import { ToolCallCard } from "./ToolCallCard";
 import type { ToolCallProps } from "./types";
 

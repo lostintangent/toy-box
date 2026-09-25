@@ -21,11 +21,12 @@ An SDK canvas is not an editor pane. It is an SDK-provided URL surface with its 
 
 ## File operations
 
-A file exposes six operations with distinct transport needs:
+A file exposes seven operations with distinct transport needs:
 
 | Operation | Contract                                                                            |
 | --------- | ----------------------------------------------------------------------------------- |
 | Browse    | Validated RPC returns one directory's immediate children                            |
+| Search    | Validated RPC ranks a directory's files, honoring Git ignores, for `@` references   |
 | Create    | Validated RPC exclusively creates an empty machine file                             |
 | Read      | Validated RPC returns UTF-8 content and modification time                           |
 | Write     | Validated RPC persists UTF-8 content and returns the new modification time          |
@@ -43,7 +44,7 @@ Changes are batched before reading each observed file's revision and notifying i
 The watch route owns SSE transport; subscribing publishes the current revision after registration
 so a write between the initial read and subscription is still observed.
 
-`queries.ts` defines canonical browse and file-snapshot identity. `mutations.ts` defines creation and per-file serialized writes. `useFile` owns one file's lifetime for editor panes and app file surfaces: it reads initial content, watches external changes, debounces saves, and submits them through the write mutation. It ignores the watch echo of its own save and flushes pending edits before unmount. Pane identity is keyed by the file's identity (`workspaceFileId`), so opening a different file remounts the complete lifecycle while mode changes preserve it.
+`queries.ts` defines canonical browse, search, and file-snapshot identity. `mutations.ts` defines creation and per-file serialized writes. `useFile` owns one file's lifetime for editor panes and app file surfaces: it reads initial content, watches external changes, debounces saves, and submits them through the write mutation. It ignores the watch echo of its own save and flushes pending edits before unmount. Pane identity is keyed by the file's identity (`workspaceFileId`), so opening a different file remounts the complete lifecycle while mode changes preserve it.
 
 The file-mode browser can optionally restrict selection and creation by extension. It can create an empty machine file in any visible directory and returns its absolute path through the same completion callback used to select an existing file. Creation is exclusive, so an existing entry is never replaced; once selected, the new file enters the ordinary `WorkspaceFile` lifecycle above.
 
@@ -98,7 +99,7 @@ Inbox entries store at most one artifact filename and own its directory. `InboxP
 
 ## Boundaries and invariants
 
-- [`../../workspace/AGENTS.md`](../../workspace/AGENTS.md) owns the pane model and the layouts and workflows that compose editor surfaces.
+- [`../workspace/AGENTS.md`](../workspace/AGENTS.md) owns the pane model and the layouts and workflows that compose editor surfaces.
 - [`useFile.ts`](useFile.ts) owns client file lifecycle; [`components/editor/EditorPane.tsx`](components/editor/EditorPane.tsx) dispatches to format-specific renderers.
 - [`components/editor/kinds/svg/SvgEditor.tsx`](components/editor/kinds/svg/SvgEditor.tsx) adapts that lifecycle and [`SvgPaneActions.tsx`](components/editor/kinds/svg/SvgPaneActions.tsx) adapts semantic editor actions to pane chrome for the host-neutral [Whiteboard feature](../whiteboard/AGENTS.md).
 - [`components/editor/kinds/brief/BriefEditor.tsx`](components/editor/kinds/brief/BriefEditor.tsx) adapts that lifecycle to the host-neutral [Briefs feature](../briefs/AGENTS.md).

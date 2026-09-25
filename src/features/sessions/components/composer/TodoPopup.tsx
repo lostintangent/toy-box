@@ -1,7 +1,7 @@
 import { Check, Circle, CircleSlash, ListTodo, Loader2, type LucideIcon } from "lucide-react";
 import type { TodoItem, TodoStatus } from "../../model";
-import { Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui/popover";
-import { InputGroupButton } from "@/shared/components/ui/input-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { emptyOutputPillClassName, outputPillClassName } from "./ArtifactPill";
 
 type DisplayTodo = TodoItem & {
   displayStatus: TodoStatus;
@@ -53,18 +53,32 @@ function getDisplayTodos(todos: TodoItem[], isStreaming?: boolean): DisplayTodo[
 export function TodoPopup({ todos, isStreaming }: { todos?: TodoItem[]; isStreaming?: boolean }) {
   const displayTodos = getDisplayTodos(todos ?? [], isStreaming);
   const completedCount = displayTodos.filter((todo) => todo.status === "done").length;
-  if (displayTodos.length === 0) return null;
+  if (displayTodos.length === 0) {
+    return (
+      <span className={emptyOutputPillClassName}>
+        <ListTodo className="size-3.5 shrink-0" />
+        0/0
+      </span>
+    );
+  }
 
   return (
     <Popover>
       <PopoverTrigger
-        render={
-          <InputGroupButton size="icon-xs" aria-label="View todos">
-            <ListTodo className="h-4 w-4" />
-          </InputGroupButton>
-        }
-      />
-      <PopoverContent className="w-80 p-0" align="start">
+        aria-label="View todos"
+        className={outputPillClassName}
+        render={<button type="button" />}
+      >
+        <ListTodo className="size-3.5 shrink-0" />
+        {completedCount}/{displayTodos.length}
+        <span className="h-1 w-8 overflow-hidden rounded-full bg-muted max-sm:hidden">
+          <span
+            className="block h-full rounded-full bg-accent transition-[width]"
+            style={{ width: `${(completedCount / displayTodos.length) * 100}%` }}
+          />
+        </span>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 p-0" align="end" side="top">
         <div className="text-sm">
           <div className="flex items-center gap-2 border-b px-3 py-2">
             <ListTodo className="h-4 w-4 shrink-0 text-muted-foreground" />

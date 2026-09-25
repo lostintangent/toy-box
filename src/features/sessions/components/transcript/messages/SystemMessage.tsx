@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { MessageSquare, Pencil } from "lucide-react";
-import { RelativeTime } from "@/shared/components/ui/relative-time";
+import { RelativeTime } from "@/shared/ui/relative-time";
 import { cn } from "@/shared/utils";
 import type { SystemMessage as SystemMessageValue } from "../../../model";
 import { systemMessageLabel } from "../../../model/systemMessages";

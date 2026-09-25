@@ -48,7 +48,7 @@ Automation events synchronize durable definition and schedule metadata through t
 - [`../../server/database.ts`](../../server/database.ts) owns the shared database connection and
   composes feature schemas. `server/schema.ts` defines the Automation table, while
   `AutomationDatabase` owns its rows and schedule metadata. [Sessions](../sessions/AGENTS.md) owns
-  managed session teardown, and [Workspace](../../workspace/AGENTS.md) owns the aggregate client
+  managed session teardown, and [Workspace](../workspace/AGENTS.md) owns the aggregate client
   projection.
 - `server/tools.ts` owns the automation's model-facing tools and role instructions. Application
   composition supplies them to the [session provider boundary](../providers/INTEGRATION.md), and

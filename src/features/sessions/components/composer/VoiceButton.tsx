@@ -1,6 +1,6 @@
 import { Loader2, Mic, PhoneOff } from "lucide-react";
-import { InputGroupButton } from "@/shared/components/ui/input-group";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+import { InputGroupButton } from "@/shared/ui/input-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useVoiceComposer, type VoiceComposerContext } from "./useVoiceComposer";
 
 export function VoiceButton({ context }: { context: VoiceComposerContext }) {

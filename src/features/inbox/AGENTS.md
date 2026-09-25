@@ -38,9 +38,9 @@ The Inbox pane may publish one artifact into the browser-local workspace surface
 - The [Sessions runtime](../sessions/server/runtime/AGENTS.md) owns delivery, execution, completion, and transcript streaming. Inbox owns only supervision and retention policy.
 - [`../../server/database.ts`](../../server/database.ts) owns the shared connection and composes
   feature schemas, [Sessions](../sessions/AGENTS.md) owns session teardown, and
-  [Workspace](../../workspace/AGENTS.md) owns the aggregate projection. Inbox owns its table, rows,
+  [Workspace](../workspace/AGENTS.md) owns the aggregate projection. Inbox owns its table, rows,
   and entry events.
 - Inbox owns its role instructions and the `send_to_inbox` contract in `server/tools.ts`; application
   composition selects them for the [session provider boundary](../providers/INTEGRATION.md).
-- [Workspace](../../workspace/AGENTS.md) owns generic pane composition. Inbox owns the behavior of its pane and entries.
+- [Workspace](../workspace/AGENTS.md) owns generic pane composition. Inbox owns the behavior of its pane and entries.
 - Never create a second execution model or a second status source for Inbox work. Entry identity, session identity, and workspace session status must continue to agree.

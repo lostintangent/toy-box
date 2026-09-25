@@ -16,7 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
+} from "@/shared/ui/dropdown-menu";
 import { cn } from "@/shared/utils";
 import { PaneActions, usePaneActionsAvailable } from "@workspace/components/panes/shell/PaneSlots";
 import { PANE_OVERLAY_BUTTON_CLASS } from "@workspace/components/panes/shell/paneControls";

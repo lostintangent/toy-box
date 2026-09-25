@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ChevronDown, Loader2, Share2 } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
-import { Button } from "@/shared/components/ui/button";
+import { Button } from "@/shared/ui/button";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { appMutations } from "@apps/mutations";
 import {
@@ -10,7 +10,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
+} from "@/shared/ui/dropdown-menu";
 import { cn } from "@/shared/utils";
 import { useAppHost } from "../../host/context";
 

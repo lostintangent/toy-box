@@ -3,7 +3,6 @@ import type { ChannelMember } from "./index";
 import {
   agentHandleFromName,
   channelLead,
-  findAgentMentionToken,
   resolveChannelAudience,
   selfUpdateAgentInputSchema,
   setChannelStatusInputSchema,
@@ -44,11 +43,9 @@ describe("channel delivery policy", () => {
 });
 
 describe("channel agent mentions", () => {
-  test("derives safe handles and finds completion only at mention boundaries", () => {
+  test("derives safe handles", () => {
     expect(agentHandleFromName("Design Critic")).toBe("design-critic");
     expect(agentHandleFromName("Everyone")).toBe("everyone-agent");
-    expect(findAgentMentionToken("Ask (@Res", 9)).toEqual({ start: 5, end: 9, query: "res" });
-    expect(findAgentMentionToken("mail dev@example", 16)).toBeUndefined();
   });
 
   test("splits visible mentions without treating email addresses as mentions", () => {

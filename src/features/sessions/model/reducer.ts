@@ -48,7 +48,7 @@ export function createInitialSessionState(initial: Partial<SessionState> = {}): 
     todos: initial.todos ? initial.todos.map((todo) => ({ ...todo })) : [],
     linkedSessionIds: initial.linkedSessionIds ? [...initial.linkedSessionIds] : [],
     canvases: initial.canvases ? initial.canvases.map((canvas) => ({ ...canvas })) : [],
-    artifacts: initial.artifacts ? [...initial.artifacts] : [],
+    artifacts: initial.artifacts ? initial.artifacts.map((artifact) => ({ ...artifact })) : [],
     openedFiles: initial.openedFiles ? [...initial.openedFiles] : [],
     status: initial.status ?? "idle",
     reasoningContent: initial.reasoningContent ?? "",
@@ -305,10 +305,14 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
     case "artifacts_changed": {
       if (
         event.artifacts.length === state.artifacts.length &&
-        event.artifacts.every((path, index) => path === state.artifacts[index])
+        event.artifacts.every(
+          ({ path, updatedAt }, index) =>
+            path === state.artifacts[index]?.path &&
+            updatedAt === state.artifacts[index]?.updatedAt,
+        )
       )
         return;
-      state.artifacts = [...event.artifacts];
+      state.artifacts = event.artifacts.map((artifact) => ({ ...artifact }));
       return;
     }
 

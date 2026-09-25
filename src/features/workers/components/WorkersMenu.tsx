@@ -1,13 +1,8 @@
 import { useMutation } from "@tanstack/react-query";
 import { Clock3, Loader2, Square, Trash2 } from "lucide-react";
-import { InputGroupButton } from "@/shared/components/ui/input-group";
-import { MetadataBadge } from "@/shared/components/ui/metadata-badge";
-import {
-  Popover,
-  PopoverClose,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/shared/components/ui/popover";
+import { InputGroupButton } from "@/shared/ui/input-group";
+import { MetadataBadge } from "@/shared/ui/metadata-badge";
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { cn } from "@/shared/utils";
 import { workerMutations } from "../mutations";
 import type { Worker } from "../model";

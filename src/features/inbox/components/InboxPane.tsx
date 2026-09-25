@@ -20,7 +20,7 @@ import type { UserMessage } from "@sessions/model";
 import type { InboxEntry } from "../model";
 import { inboxMutations } from "../mutations";
 import { inboxQueries } from "../queries";
-import { InkCloud, type Ink, type Traveler } from "@/shared/components/ink-cloud/InkCloud";
+import { InkCloud, type Ink, type Traveler } from "@/shared/ink-cloud/InkCloud";
 import { InboxEntries } from "./InboxEntries";
 
 /** Requests leaving the composer and fanning out to their routes. */
@@ -143,6 +143,7 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
                 model={defaultModel}
                 onModelChange={setDefaultModel}
                 locationPicker={locationPicker}
+                directory={directory}
               />
             )}
           </div>

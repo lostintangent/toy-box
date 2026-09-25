@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Undo2 } from "lucide-react";
-import { Button } from "@/shared/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
-import { DestructiveConfirmationDialog } from "@/shared/components/sidebar/DestructiveConfirmationDialog";
+import { Button } from "@/shared/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { isWorkspaceSessionLive } from "@workspace/model/state/reducer";
 import type { UserMessage as UserMessageType } from "../../../model";

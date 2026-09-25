@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { Button } from "@/shared/components/ui/button";
+import { Button } from "@/shared/ui/button";
 import type { AppActions } from "@apps/sdk";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";

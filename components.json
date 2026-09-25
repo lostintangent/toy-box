@@ -6,15 +6,15 @@
   "tailwind": {
     "config": "",
     "prefix": "",
-    "css": "src/routes/styles.css",
+    "css": "src/features/workspace/routes/styles.css",
     "baseColor": "neutral",
     "cssVariables": true
   },
   "iconLibrary": "lucide",
   "aliases": {
-    "components": "@/shared/components",
+    "components": "@/shared",
     "utils": "@/shared/utils",
-    "ui": "@/shared/components/ui",
+    "ui": "@/shared/ui",
     "lib": "@/shared",
     "hooks": "@/shared/hooks"
   },

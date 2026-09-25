@@ -1,40 +1,50 @@
-// Shared composer for session delivery and Inbox creation. Session ID
-// presence is the complete host discriminator.
+// Shared composer for session delivery and Inbox creation. Session ID presence is the
+// complete host discriminator. A session stacks what it produced and what is waiting above
+// the input; the input holds this message's images, text, settings, and send controls.
 
-import { useEffect, useImperativeHandle, useRef } from "react";
-import { ArrowUp, ChevronDown, Play, Square } from "lucide-react";
+import { useEffect, useImperativeHandle, useRef, useState } from "react";
+import { formatForDisplay, matchesKeyboardEvent } from "@tanstack/react-hotkeys";
+import { ArrowUp, ChevronDown, Maximize2, Minimize2, Play, Square } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
-import { Skeleton } from "@/shared/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+} from "@/shared/ui/dropdown-menu";
+import { Skeleton } from "@/shared/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupTextarea,
-} from "@/shared/components/ui/input-group";
+} from "@/shared/ui/input-group";
 import type { ModelConfiguration, ModelInfo } from "@providers/model";
-import { type SessionSkill, type SessionState, type TodoItem, type UserMessage } from "../../model";
+import type {
+  SessionArtifact,
+  SessionSkill,
+  SessionState,
+  TodoItem,
+  UserMessage,
+} from "../../model";
 import type { DiffStats } from "../../model/fileDiffs";
 import { ModelConfigurationPicker } from "@providers/components/ModelPicker";
 import {
   SessionLocationPicker,
   type SessionLocationPickerProps,
 } from "../location/SessionLocationPicker";
-import { TodoPopup } from "./TodoPopup";
-import { DiffPopup } from "./DiffPopup";
-import { SkillPicker } from "./SkillPicker";
-import { ArtifactsList } from "./ArtifactsList";
+import { SessionOutputs } from "./SessionOutputs";
 import { VoiceButton } from "./VoiceButton";
-import { QueuedMessageList } from "./QueuedMessageList";
-import { AttachImageButton, ImageAttachments } from "./ImageAttachments";
-import { useImageAttachments } from "./useImageAttachments";
+import { QueuedMessageList, type QueuedMessageListHandle } from "./QueuedMessageList";
+import {
+  AttachImageButton,
+  ImageAttachments,
+} from "@/shared/composers/attachments/ImageAttachments";
+import { useAttachments } from "@/shared/composers/attachments/useAttachments";
+import { PromptCompletionMenu, usePromptCompletions } from "./completions/PromptCompletions";
 import type { VoiceComposerContext } from "./useVoiceComposer";
-import { TypingEffect } from "./typing-effect/TypingEffect";
+import { TypingEffect } from "@/shared/composers/typing-effect/TypingEffect";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useDraftPrompt } from "../../useDraftPrompt";
 import type { FileDiffSummary } from "../transcript/editDiffs";
@@ -63,7 +73,9 @@ type SessionComposerCommonProps = {
   skills?: SessionSkill[];
   showGlobalSkillBadges?: boolean;
   sessionDiff?: { total: DiffStats; byFile: FileDiffSummary[] };
-  artifacts?: string[];
+  artifacts?: SessionArtifact[];
+  /** Working directory whose files the prompt can reference. */
+  directory?: string;
   queuedMessages?: SessionState["queuedMessages"];
   /** Context that grounds a voice call in the current session. */
   sessionName?: string;
@@ -108,13 +120,18 @@ type ComposerPromptProps = {
   binding: ComposerPromptBinding;
   promptHandle: React.RefObject<ComposerPromptHandle | null>;
   hasAttachments: boolean;
+  isAttaching: boolean;
   isStreaming: boolean;
   onStop?: () => void;
   onSubmit: (immediate?: true) => void;
   onRun?: () => void;
   onSend?: () => void;
   onPaste: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+  onRemoveLastAttachment: () => void;
+  /** Present while a queued message can be edited; moves the last one into the composer. */
+  onEditLastQueued?: () => void;
   skills?: SessionSkill[];
+  directory?: string;
   showGlobalSkillBadges: boolean;
   // Parent-owned slots retain their element identity while draft text changes.
   leadingControls: React.ReactNode;
@@ -125,13 +142,17 @@ function ComposerPrompt({
   binding,
   promptHandle,
   hasAttachments,
+  isAttaching,
   isStreaming,
   onStop,
   onSubmit,
   onRun,
   onSend,
   onPaste,
+  onRemoveLastAttachment,
+  onEditLastQueued,
   skills,
+  directory,
   showGlobalSkillBadges,
   leadingControls,
   voiceControl,
@@ -145,57 +166,106 @@ function ComposerPrompt({
   const prompt = isControlled ? binding.prompt : draft.prompt;
   const onPromptChange = isControlled ? binding.onPromptChange : draft.setPrompt;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const isSubmitDisabled = !prompt.trim() && !hasAttachments;
+  const [isExpanded, setIsExpanded] = useState(false);
+  const { isMobile } = useViewport();
+  const completions = usePromptCompletions({
+    prompt,
+    onPromptChange,
+    textareaRef,
+    skills,
+    directory,
+  });
+  const isSubmitDisabled = isAttaching || (!prompt.trim() && !hasAttachments);
   const submitButtonVariant = isSubmitDisabled ? "ghost" : "accent";
   const submitLabel = isStreaming ? "Queue message" : "Send message";
-  const textareaMaxHeightClass = isControlled ? "max-h-36" : "max-h-18";
+  const sendNowShortcut = formatForDisplay("Mod+Enter");
+  // Desktop teaches one relevant shortcut while a turn runs.
+  const placeholder = !isStreaming
+    ? "Ask a question or describe your idea..."
+    : isMobile
+      ? "Queue a follow-up"
+      : `Queue a follow-up · ${onEditLastQueued ? "↑ edits the last queued message" : `${sendNowShortcut} sends it now`}`;
 
   useImperativeHandle(promptHandle, () => ({
     prompt,
     setPrompt: onPromptChange,
     resetAfterSubmit: () => {
       onPromptChange("");
+      setIsExpanded(false);
       if (!isControlled) draft.flush();
     },
-    focus: () => textareaRef.current?.focus(),
+    // Defer a frame so programmatic prompt changes render before the caret moves to the end.
+    focus: () =>
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        textarea?.focus();
+        textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+      }),
   }));
 
-  function handleSkillSelect(skill: SessionSkill) {
-    onPromptChange(`/${skill.name} `);
-    textareaRef.current?.focus();
-  }
-
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (completions.handleKeyDown(event)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      onSubmit();
+      onSubmit(
+        isStreaming && matchesKeyboardEvent(event.nativeEvent, "Mod+Enter") ? true : undefined,
+      );
+    } else if (event.key === "Backspace" && prompt === "" && hasAttachments) {
+      event.preventDefault();
+      onRemoveLastAttachment();
+    } else if (event.key === "ArrowUp" && prompt === "" && onEditLastQueued) {
+      event.preventDefault();
+      onEditLastQueued();
     }
   }
 
   return (
     <>
-      <SkillPicker
-        prompt={prompt}
-        skills={skills}
+      <PromptCompletionMenu
+        completions={completions}
         showGlobalSkillBadges={showGlobalSkillBadges}
-        onSelect={handleSkillSelect}
       />
       <InputGroupTextarea
         ref={textareaRef}
         value={prompt}
-        onChange={(event) => onPromptChange(event.currentTarget.value)}
+        onChange={completions.handleChange}
+        onSelect={completions.handleSelect}
         onKeyDown={handleKeyDown}
         onPaste={onPaste}
-        placeholder="Ask a question or describe your idea..."
-        className={cn(textareaMaxHeightClass, "min-h-14 overflow-y-auto py-2 text-sm")}
+        placeholder={placeholder}
+        className={cn(
+          "min-h-14 overflow-y-auto py-2 text-sm",
+          isExpanded ? "max-h-[70dvh] min-h-[50dvh]" : "max-h-[40dvh]",
+        )}
         rows={1}
       />
 
-      <InputGroupAddon align="block-end" className="relative justify-between pt-0 pb-2">
+      <InputGroupAddon align="block-end" className="relative justify-between px-2 pt-0 pb-2">
         <TypingEffect value={prompt} />
-        <div className="relative flex items-center gap-1">{leadingControls}</div>
+        <div className="relative flex min-w-0 items-center gap-1">{leadingControls}</div>
 
         <div className="relative flex items-center gap-0.5">
+          {(isExpanded || prompt.includes("\n")) && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <InputGroupButton
+                    size="icon-xs"
+                    aria-label={isExpanded ? "Collapse editor" : "Expand editor"}
+                    aria-pressed={isExpanded}
+                    onClick={() => setIsExpanded(!isExpanded)}
+                  >
+                    {isExpanded ? (
+                      <Minimize2 className="size-4" />
+                    ) : (
+                      <Maximize2 className="size-4" />
+                    )}
+                  </InputGroupButton>
+                }
+              />
+              <TooltipContent sideOffset={6}>{isExpanded ? "Collapse" : "Expand"}</TooltipContent>
+            </Tooltip>
+          )}
           {voiceControl}
           {isStreaming && onStop && (
             <Tooltip>
@@ -255,10 +325,12 @@ function ComposerPrompt({
                     <DropdownMenuItem onClick={() => onSubmit()}>
                       <ArrowUp />
                       Queue message
+                      <DropdownMenuShortcut>{formatForDisplay("Enter")}</DropdownMenuShortcut>
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => onSubmit(true)}>
                       <Play />
                       Send immediately
+                      <DropdownMenuShortcut>{sendNowShortcut}</DropdownMenuShortcut>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -286,7 +358,7 @@ function ComposerPrompt({
                       disabled={isSubmitDisabled}
                       variant={submitButtonVariant}
                       suppressHydrationWarning
-                      className="w-4 rounded-s-none data-[popup-open]:bg-accent/90"
+                      className="w-4 rounded-s-none border-l border-background data-[popup-open]:bg-accent/90"
                     />
                   }
                 >
@@ -342,6 +414,7 @@ export function SessionComposer(props: SessionComposerProps) {
     showGlobalSkillBadges = false,
     sessionDiff,
     artifacts = [],
+    directory,
     queuedMessages = [],
     sessionName,
     lastMessage,
@@ -358,45 +431,53 @@ export function SessionComposer(props: SessionComposerProps) {
         }
       : { sessionId };
 
-  const {
-    attachments,
-    isDragging,
-    handlePaste,
-    fileInputProps,
-    openPicker,
-    dropTargetProps,
-    clearAttachments,
-    replaceAttachments,
-    removeAttachment,
-  } = useImageAttachments();
+  const attachments = useAttachments();
+  const queueHandle = useRef<QueuedMessageListHandle>(null);
 
   useEffect(() => {
     if (!isMobile) promptHandle.current?.focus();
   }, [isMobile]);
 
-  const handleEditQueuedMessage = (
-    message: Extract<SessionState["queuedMessages"][number], { role: "user" }>,
-  ) => {
-    promptHandle.current?.setPrompt(message.content);
-    replaceAttachments(message.attachments ?? []);
-    promptHandle.current?.focus();
+  /** Append input taken out of the queue to the unsent draft. */
+  const restoreToDraft = (inputs: Pick<UserMessage, "content" | "attachments">[]) => {
+    const handle = promptHandle.current;
+    if (!handle || inputs.length === 0) return;
+    handle.setPrompt(
+      [handle.prompt, ...inputs.map(({ content }) => content)]
+        .filter((text) => text.trim())
+        .join("\n\n"),
+    );
+    attachments.append(inputs.flatMap((input) => input.attachments ?? []));
   };
+
+  // Stopping drops the queue, so queued input returns to the draft.
+  const stop =
+    onStop &&
+    (() => {
+      restoreToDraft(
+        queuedMessages.flatMap((message) =>
+          message.role === "user" && message.status === "queued" ? [message] : [],
+        ),
+      );
+      onStop();
+    });
 
   const submitWith = (
     submitter: SessionComposerCommonProps["onSubmit"] | undefined,
     immediate?: true,
   ) => {
     const prompt = promptHandle.current?.prompt.trim() ?? "";
-    if ((!prompt && attachments.length === 0) || !submitter) return false;
+    if (attachments.pendingCount > 0 || (!prompt && attachments.items.length === 0) || !submitter)
+      return false;
     submitter(
       {
         content: prompt,
-        attachments: attachments.length > 0 ? attachments : undefined,
+        attachments: attachments.items.length > 0 ? attachments.items : undefined,
       },
       immediate ? { immediate } : undefined,
     );
     promptHandle.current?.resetAfterSubmit();
-    clearAttachments();
+    attachments.clear();
     promptHandle.current?.focus();
     return true;
   };
@@ -422,70 +503,87 @@ export function SessionComposer(props: SessionComposerProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} {...dropTargetProps} className="w-full" suppressHydrationWarning>
-      <input {...fileInputProps} suppressHydrationWarning />
-
-      {sessionId && <ArtifactsList sourceSessionId={sessionId} artifacts={artifacts} />}
+    <form
+      onSubmit={handleSubmit}
+      {...attachments.dropTargetProps}
+      className="@container w-full"
+      suppressHydrationWarning
+    >
+      <input {...attachments.fileInputProps} suppressHydrationWarning />
 
       {sessionId && (
-        <QueuedMessageList
-          sessionId={sessionId}
-          messages={queuedMessages}
-          onEdit={handleEditQueuedMessage}
-        />
+        // One tray docked to the input holds what the session made and what waits to send.
+        <div className="mx-2 rounded-t-lg border border-b-0 bg-secondary-background p-1 empty:hidden">
+          <SessionOutputs
+            sessionId={sessionId}
+            artifacts={artifacts}
+            todos={todos}
+            isStreaming={isStreaming}
+            sessionDiff={sessionDiff}
+          />
+          <QueuedMessageList
+            sessionId={sessionId}
+            messages={queuedMessages}
+            handle={queueHandle}
+            onEdit={(message) => {
+              restoreToDraft([message]);
+              promptHandle.current?.focus();
+            }}
+          />
+        </div>
       )}
 
-      <ImageAttachments attachments={attachments} onRemove={removeAttachment} />
+      <InputGroup className={cn(attachments.isDragging && "border-ring ring-[3px] ring-ring/50")}>
+        <ImageAttachments
+          attachments={attachments.items}
+          pendingCount={attachments.pendingCount}
+          isDragging={attachments.isDragging}
+          onRemove={attachments.remove}
+        />
+        <ComposerPrompt
+          key={sessionId ?? "controlled"}
+          binding={promptBinding}
+          promptHandle={promptHandle}
+          hasAttachments={attachments.items.length > 0}
+          isAttaching={attachments.pendingCount > 0}
+          isStreaming={isStreaming}
+          onStop={stop}
+          onSubmit={submit}
+          onRun={createsSession ? () => submitWith(onRun) : undefined}
+          onSend={createsSession ? () => submitWith(onSubmit) : undefined}
+          onPaste={attachments.handlePaste}
+          onRemoveLastAttachment={attachments.removeLast}
+          onEditLastQueued={
+            queuedMessages.some(({ role, status }) => role === "user" && status === "queued")
+              ? () => queueHandle.current?.editLast()
+              : undefined
+          }
+          skills={skills}
+          directory={directory}
+          showGlobalSkillBadges={showGlobalSkillBadges}
+          leadingControls={
+            <>
+              <AttachImageButton onClick={attachments.openPicker} />
 
-      <div className="relative">
-        {isDragging && (
-          <div className="absolute inset-0 z-10 rounded-lg bg-blue-500/20 pointer-events-none" />
-        )}
+              {locationPicker && <SessionLocationPicker {...locationPicker} />}
 
-        <InputGroup>
-          <ComposerPrompt
-            key={sessionId ?? "controlled"}
-            binding={promptBinding}
-            promptHandle={promptHandle}
-            hasAttachments={attachments.length > 0}
-            isStreaming={isStreaming}
-            onStop={onStop}
-            onSubmit={submit}
-            onRun={createsSession ? () => submitWith(onRun) : undefined}
-            onSend={createsSession ? () => submitWith(onSubmit) : undefined}
-            onPaste={handlePaste}
-            skills={skills}
-            showGlobalSkillBadges={showGlobalSkillBadges}
-            leadingControls={
-              <>
-                <AttachImageButton onClick={openPicker} />
+              {(models.length === 0 || !model) && <ModelConfigurationSkeleton />}
 
-                {locationPicker && <SessionLocationPicker {...locationPicker} />}
-
-                {(models.length === 0 || !model) && <ModelConfigurationSkeleton />}
-
-                {models.length > 0 && model && onModelChange && (
-                  <ModelConfigurationPicker
-                    models={models}
-                    value={model}
-                    onValueChange={onModelChange}
-                  />
-                )}
-
-                <TodoPopup todos={todos} isStreaming={isStreaming} />
-
-                {sessionDiff && <DiffPopup total={sessionDiff.total} byFile={sessionDiff.byFile} />}
-              </>
-            }
-            voiceControl={
-              // Stream start unmounts and disconnects session voice; home stays mounted.
-              environment.voiceEnabled && !isStreaming ? (
-                <VoiceButton context={voiceContext} />
-              ) : null
-            }
-          />
-        </InputGroup>
-      </div>
+              {models.length > 0 && model && onModelChange && (
+                <ModelConfigurationPicker
+                  models={models}
+                  value={model}
+                  onValueChange={onModelChange}
+                />
+              )}
+            </>
+          }
+          voiceControl={
+            // Stream start unmounts and disconnects session voice; home stays mounted.
+            environment.voiceEnabled && !isStreaming ? <VoiceButton context={voiceContext} /> : null
+          }
+        />
+      </InputGroup>
     </form>
   );
 }

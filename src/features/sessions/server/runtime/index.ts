@@ -334,7 +334,7 @@ async function createStreamForMessage(
       model,
     });
     return SessionStream.getOrCreate(sessionId, created.session, {
-      ...(created.artifactPath ? { artifacts: [created.artifactPath] } : {}),
+      ...(created.artifactPath ? { artifacts: await listSessionArtifacts(sessionId) } : {}),
       ...(model ? { model } : {}),
     });
   }

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { FileUp, UserMinus, UserPlus } from "lucide-react";
 import { isChannelSystemMessage } from "@channels/model";
 import type { ChannelAgent, ChannelMessage } from "@channels/model";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 
 const DELETED_AGENT_LABEL = "Deleted agent";

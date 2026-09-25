@@ -1,5 +1,6 @@
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, SessionEvent, SessionMessage } from "@sessions/model";
+import type { SessionEvent, SessionMessage } from "@sessions/model";
+import type { Attachment } from "@/shared/attachments/model";
 import {
   decodeSystemMessage,
   encodeSystemMessage,

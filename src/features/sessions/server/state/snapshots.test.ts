@@ -48,7 +48,7 @@ describe.serial("snapshot cache", () => {
     await writeSessionArtifact(sessionId, "summary.brief", "Current brief");
     await writeSessionArtifact(sessionId, "legacy.intent", "Unsupported legacy artifact");
     await withProviderHistory(async () => {
-      expect((await loadSessionSnapshot(sessionId)).artifacts).toEqual([
+      expect((await loadSessionSnapshot(sessionId)).artifacts.map(({ path }) => path)).toEqual([
         "current.html",
         "summary.brief",
       ]);

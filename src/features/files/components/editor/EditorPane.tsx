@@ -1,5 +1,5 @@
 import { Component, Suspense, type ReactNode } from "react";
-import { Skeleton } from "@/shared/components/ui/skeleton";
+import { Skeleton } from "@/shared/ui/skeleton";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { resolveEditorPaneMode, type EditorWorkspacePane } from "@workspace/model/panes";
 import { useWorkspaceSelector } from "@workspace/hooks/state";

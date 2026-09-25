@@ -320,7 +320,7 @@ describe("session replacement and deletion cache boundary", () => {
     const previous = {
       ...createInitialSessionState({
         messages: [{ role: "assistant", content: "Previous run" }],
-        artifacts: ["old.md"],
+        artifacts: [{ path: "old.md", updatedAt: 1 }],
         model: { provider: "copilot", name: "previous-model" },
       }),
       lastSeenEventId: 100,
@@ -431,7 +431,7 @@ describe("session replacement and deletion cache boundary", () => {
     const previous = {
       ...createInitialSessionState({
         messages: [{ role: "assistant", content: "Previous run" }],
-        artifacts: ["old.md"],
+        artifacts: [{ path: "old.md", updatedAt: 1 }],
         model: { provider: "copilot", name: "previous-model" },
       }),
       lastSeenEventId: 100,

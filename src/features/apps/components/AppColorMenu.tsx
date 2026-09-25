@@ -7,7 +7,7 @@ import {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-} from "@/shared/components/ui/dropdown-menu";
+} from "@/shared/ui/dropdown-menu";
 import { isHexColor, type HexColor } from "@/shared/utils";
 
 const PRESET_COLORS: Array<{ name: string; value: HexColor }> = [

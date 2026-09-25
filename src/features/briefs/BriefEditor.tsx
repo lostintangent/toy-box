@@ -18,10 +18,10 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui/popover";
-import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+} from "@/shared/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
 import { briefActionKey, type BriefAction } from "./actions";
 import {

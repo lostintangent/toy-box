@@ -2,8 +2,8 @@ import { useState } from "react";
 import type { ChannelAgent } from "@channels/model";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { selectWorkspaceSessionActivity, useWorkspaceSelector } from "@workspace/hooks/state";
-import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
 import { AgentAvatar } from "./AgentAvatar";
 

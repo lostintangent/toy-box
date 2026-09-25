@@ -153,7 +153,7 @@ export function SessionPane({
       sessionId,
       linkedSessionIds,
       canvases,
-      artifacts,
+      artifacts.map(({ path }) => path),
       openedFiles,
     );
   }, [
@@ -304,6 +304,7 @@ export function SessionPane({
             showGlobalSkillBadges={Boolean(effectiveDirectory)}
             sessionDiff={editDiffs}
             artifacts={mode === "active" ? artifacts : []}
+            directory={effectiveDirectory}
             queuedMessages={queuedMessages}
             sessionName={session?.title}
             lastMessage={lastVoiceMessage}

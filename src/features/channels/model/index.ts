@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { workspaceFileSchema } from "@files/model";
 import { modelConfigurationSchema, type ModelConfiguration } from "@providers/model";
-import { attachmentSchema, messageAttachmentsSchema } from "@sessions/model/protocol";
+import { attachmentSchema, attachmentsSchema } from "@/shared/attachments/model";
 import {
   agentAvatarSchema,
   agentHandleFromName,
@@ -298,7 +298,7 @@ export const postChannelMessageInputSchema = z
     id: durableIdSchema,
     channelId: durableIdSchema,
     content: channelMessageTextSchema,
-    attachments: messageAttachmentsSchema.optional(),
+    attachments: attachmentsSchema.optional(),
   })
   .strict()
   .refine(({ content, attachments }) => content.length > 0 || (attachments?.length ?? 0) > 0, {

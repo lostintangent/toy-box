@@ -21,7 +21,7 @@ export function buildSessionSystemPrompt(
 
   if (directory) {
     parts.push(
-      `The user's current working directory is: ${directory}. Unless otherwise specified, all mentioned file paths should be interpreted relative to this directory, and file operations should target this location.`,
+      `The user's current working directory is: ${directory}. Unless otherwise specified, all mentioned file paths, including \`@path\` references, should be interpreted relative to this directory, and file operations should target this location.`,
     );
   }
 

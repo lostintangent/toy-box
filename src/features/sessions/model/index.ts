@@ -1,8 +1,9 @@
 import type { JSONType } from "zod";
 import type { WorkspaceFile } from "@files/model";
 import type { ModelConfiguration } from "@providers/model";
+import type { Attachment } from "@/shared/attachments/model";
 import type { SessionSystemMessage } from "./systemMessages";
-import type { Attachment, SessionType } from "./protocol";
+import type { SessionType } from "./protocol";
 
 export type SessionContext = {
   directory?: string;
@@ -28,7 +29,7 @@ export type Session = {
 };
 
 export type { SessionSystemMessage } from "./systemMessages";
-export type { Attachment, SessionLaunch, SessionLocation, SessionType } from "./protocol";
+export type { SessionLaunch, SessionLocation, SessionType } from "./protocol";
 
 export type SessionSkill = {
   name: string;
@@ -89,6 +90,13 @@ export type SessionCanvas = {
 
 type SessionCanvasOpen = Omit<SessionCanvas, "key" | "revision">;
 
+/** A file in the session's artifacts directory; its path is relative to that directory. */
+export type SessionArtifact = {
+  path: string;
+  /** Last modification time in epoch milliseconds. */
+  updatedAt: number;
+};
+
 /** Canonical reduced state for a session at any point in time. */
 export type SessionState = {
   messages: Message[];
@@ -97,7 +105,7 @@ export type SessionState = {
   todos: TodoItem[];
   linkedSessionIds: string[];
   canvases: SessionCanvas[];
-  artifacts: string[];
+  artifacts: SessionArtifact[];
   openedFiles: WorkspaceFile[];
   lastSeenEventId?: number;
   status: SessionStatus;
@@ -183,12 +191,6 @@ export type ToolCall = {
   question?: SessionQuestion;
 };
 
-/** Build a data URL from an attachment's base64 content and MIME type. */
-export function toDataUrl(attachment: Attachment): string | undefined {
-  if (!attachment.base64) return undefined;
-  return `data:${attachment.mimeType};base64,${attachment.base64}`;
-}
-
 export type DraftPrompt = {
   text: string;
   updatedAt: number;
@@ -262,7 +264,7 @@ export type SessionEvent = (
   | { type: "linked_session_added"; sessionId: string }
   | { type: "linked_session_removed"; sessionId: string }
   | { type: "canvas_opened"; canvas: SessionCanvasOpen }
-  | { type: "artifacts_changed"; artifacts: string[] }
+  | { type: "artifacts_changed"; artifacts: SessionArtifact[] }
   | { type: "file_opened"; file: WorkspaceFile }
   | { type: "file_closed"; file: WorkspaceFile }
   | { type: "end"; reason: "idle" | "error"; error?: string }

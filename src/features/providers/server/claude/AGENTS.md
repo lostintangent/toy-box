@@ -20,7 +20,9 @@ before Sessions deletes it; `close()` starts that cleanup without awaiting it.
 | `fileChanges.ts` | Native edit hunks into the shared diff format                  |
 
 Sessions keeps queued messages; messages sent while native work is active use Claude's
-`next` priority to steer at the next model step. `now` interrupts the current turn.
+`next` priority to steer at the next model step. `now` interrupts the current turn. Claude
+surfaces `next` input to the model as text only, so an immediate message with images uses
+`later` and runs once the active turn ends instead of losing its images.
 Enable `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` and `CLAUDE_CODE_BG_TASKS_REPORT_RUNNING`:
 native `session_state_changed: idle` follows background work and its notifications.
 A `result` is only a turn result and must not finish the shared stream.
@@ -51,6 +53,11 @@ The native `task-notification` origin keeps internal completion prompts out of t
 for active-branch and subagent reconstruction. Exported records restore structured tool
 results and effort that `getSessionMessages()` omits. Nothing is persisted or mirrored;
 the buffer is never installed as a live query's session store.
+
+The SDK reads a session's `cwd` only from the first 64 KB of its transcript (its branch comes from
+the tail), so a large first message, such as a pasted image, leaves the catalog without a
+directory. `readDirectory` alone reads the first transcript entry that records one, through
+`importSessionToStore`, so resuming such a session does not fall back to the home directory.
 
 Creation names use the SDK's `title` option; later names use `renameSession()`. The SDK's
 `customTitle` includes generated native titles too, so automatic Toy Box renames preserve

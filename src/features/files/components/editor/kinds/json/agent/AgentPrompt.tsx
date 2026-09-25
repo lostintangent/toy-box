@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { LeafnodeAgentRequest } from "@lostintangent/leafnode";
 import { useMutation } from "@tanstack/react-query";
-import { Button } from "@/shared/components/ui/button";
+import { Button } from "@/shared/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -9,8 +9,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/shared/components/ui/dialog";
-import { Textarea } from "@/shared/components/ui/textarea";
+} from "@/shared/ui/dialog";
+import { Textarea } from "@/shared/ui/textarea";
 import type { EditorProps } from "../../index";
 import { buildAgentPrompt, targetMetadata } from "./bridge";
 

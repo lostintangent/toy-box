@@ -1,6 +1,6 @@
 import { MessagesSquare } from "lucide-react";
-import { MetadataBadge } from "@/shared/components/ui/metadata-badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+import { MetadataBadge } from "@/shared/ui/metadata-badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
 import { SessionLocationIcon } from "./SessionLocationIcon";
 import { resolveSessionLocation } from "./locationDisplay";

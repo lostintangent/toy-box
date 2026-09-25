@@ -21,7 +21,9 @@ describe("artifact paths", () => {
     await Bun.write(resolve(directory, "report.md"), "Report");
     await Bun.write(attachments, "Input");
     expect(await Bun.file(resolveSessionArtifactPath(id, "report.md")!).text()).toBe("Report");
-    expect(await listSessionArtifacts(id)).toEqual(["report.md"]);
+    expect(await listSessionArtifacts(id)).toEqual([
+      { path: "report.md", updatedAt: expect.any(Number) },
+    ]);
     await deleteSessionFiles(id);
     expect(await listSessionArtifacts(id)).toEqual([]);
     expect(await Bun.file(attachments).exists()).toBe(false);

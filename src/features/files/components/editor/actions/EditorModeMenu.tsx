@@ -1,12 +1,12 @@
 import { Eye, Pencil, UsersRound, type LucideIcon } from "lucide-react";
-import { Button } from "@/shared/components/ui/button";
+import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
-import { MetadataBadge } from "@/shared/components/ui/metadata-badge";
+} from "@/shared/ui/dropdown-menu";
+import { MetadataBadge } from "@/shared/ui/metadata-badge";
 import type { WorkspaceFileMode } from "../../../model";
 import { cn } from "@/shared/utils";
 

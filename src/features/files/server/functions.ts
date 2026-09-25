@@ -5,6 +5,7 @@ import { zodValidator } from "@tanstack/zod-adapter";
 import {
   createFileInputSchema,
   listDirectoryInputSchema,
+  searchFilesInputSchema,
   workspaceFileInputSchema,
   writeFileInputSchema,
 } from "../model";
@@ -25,3 +26,7 @@ export const createFile = createServerFn({ method: "POST" })
 export const listDirectory = createServerFn({ method: "GET" })
   .validator(zodValidator(listDirectoryInputSchema))
   .handler(({ data }) => files.listDirectory(data));
+
+export const searchFiles = createServerFn({ method: "GET" })
+  .validator(zodValidator(searchFilesInputSchema))
+  .handler(({ data }) => files.searchFiles(data));

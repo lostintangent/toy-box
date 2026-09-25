@@ -33,7 +33,7 @@
       "@terminal/*": ["./src/features/terminal/*"],
       "@whiteboard/*": ["./src/features/whiteboard/*"],
       "@workers/*": ["./src/features/workers/*"],
-      "@workspace/*": ["./src/workspace/*"]
+      "@workspace/*": ["./src/features/workspace/*"]
     }
   }
 }

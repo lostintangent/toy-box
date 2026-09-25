@@ -13,7 +13,8 @@ import type {
   ToolExecutionCompleteData,
 } from "@github/copilot-sdk";
 import type { JSONType } from "zod";
-import type { Attachment, SessionEvent, SessionQuestionBase, ToolCall } from "@sessions/model";
+import type { SessionEvent, SessionQuestionBase, ToolCall } from "@sessions/model";
+import type { Attachment } from "@/shared/attachments/model";
 import { decodeSystemMessage } from "@sessions/model/systemMessages";
 import { fromSdkAttachments } from "./attachments";
 import {

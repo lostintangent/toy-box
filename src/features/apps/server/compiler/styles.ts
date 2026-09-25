@@ -2,7 +2,7 @@ import { Scanner } from "@tailwindcss/oxide";
 import { compile } from "tailwindcss";
 
 import tailwindTheme from "tailwindcss/theme.css?raw";
-import toyBoxTheme from "@/theme.css?raw";
+import toyBoxTheme from "@/shared/ui/theme.css?raw";
 
 const TAILWIND_THEME = "tailwind-theme";
 const TOY_BOX_THEME = "toy-box-theme";

@@ -1,4 +1,4 @@
-import { CloudPlaceholder, type Ink } from "@/shared/components/ink-cloud/CloudPlaceholder";
+import { CloudPlaceholder, type Ink } from "@/shared/ink-cloud/CloudPlaceholder";
 
 /** Two inks converging: the user's rising from below, the agents' descending from above. */
 const INKS: Ink[] = [

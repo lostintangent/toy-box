@@ -1,4 +1,5 @@
-import type { Attachment, SessionEvent, SessionMessage, SessionSkill } from "@sessions/model";
+import type { SessionEvent, SessionMessage, SessionSkill } from "@sessions/model";
+import type { Attachment } from "@/shared/attachments/model";
 import {
   decodeSystemMessage,
   encodeSystemMessage,

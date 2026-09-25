@@ -87,12 +87,19 @@ export default defineConfig(({ mode }) => {
           },
         },
       }),
-      tanstackStart({ router: { virtualRouteConfig: "./src/routes.ts" } }),
+      tanstackStart({
+        router: {
+          entry: "./features/workspace/router",
+          routesDirectory: "features/workspace/routes",
+          generatedRouteTree: "features/workspace/routeTree.gen.ts",
+          virtualRouteConfig: "./src/features/workspace/routes.ts",
+        },
+      }),
       viteReact({ compiler: true }),
     ]),
 
     fmt: {
-      ignorePatterns: ["src/routeTree.gen.ts"],
+      ignorePatterns: ["src/features/workspace/routeTree.gen.ts"],
     },
 
     staged: {

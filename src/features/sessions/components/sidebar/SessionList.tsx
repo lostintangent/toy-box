@@ -1,5 +1,5 @@
-import { SidebarList as AnimatedSidebarList } from "@/shared/components/sidebar/SidebarList";
-import { Skeleton } from "@/shared/components/ui/skeleton";
+import { SidebarList as AnimatedSidebarList } from "@/shared/sidebar/SidebarList";
+import { Skeleton } from "@/shared/ui/skeleton";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
 import type { Session } from "../../model";
 import { SessionListItem } from "./SessionListItem";

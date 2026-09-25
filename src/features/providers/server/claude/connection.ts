@@ -103,6 +103,9 @@ export class ClaudeConnection implements SessionConnection {
   async send(message: SessionMessage): Promise<void> {
     if (!this.#native) throw new SessionConnectionUnavailableError("Claude Agent disconnected.");
     const content = encodeInput(message);
+    // "next" folds steering into the active turn; "now" aborts that turn. Claude folds it in as
+    // text only, so an immediate message with images waits for the turn to end ("later").
+    const hasImages = message.role === "user" && Boolean(message.attachments?.length);
     const uuid = crypto.randomUUID();
     this.#pendingInputs.set(uuid, message.clientId);
     this.#input.enqueue({
@@ -112,8 +115,9 @@ export class ClaudeConnection implements SessionConnection {
       parent_tool_use_id: null,
       message: { role: "user", content },
       ...(message.role === "user" ? { origin: { kind: "human" } as const } : {}),
-      // "next" folds steering into the active turn; "now" aborts that turn.
-      ...(message.immediate ? { priority: "next" as const } : {}),
+      ...(message.immediate
+        ? { priority: hasImages ? ("later" as const) : ("next" as const) }
+        : {}),
     });
   }
 

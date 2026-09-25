@@ -2,9 +2,9 @@ import { useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { AutomationDialog } from "./AutomationDialog";
-import { Button } from "@/shared/components/ui/button";
-import { SidebarPanel } from "@/shared/components/sidebar/SidebarPanel";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+import { Button } from "@/shared/ui/button";
+import { SidebarPanel } from "@/shared/sidebar/SidebarPanel";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { automationQueries } from "../queries";
 import { AutomationListItem } from "./AutomationListItem";
 

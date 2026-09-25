@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import type { Attachment, SessionMessage } from "@sessions/model";
+import type { SessionMessage } from "@sessions/model";
+import type { Attachment } from "@/shared/attachments/model";
 import { decodeInput, encodeInput } from "./messages";
 
 test("images and system notifications round trip through native message content", () => {

@@ -79,12 +79,6 @@ export type CreateChannelMemberInput = z.output<typeof createChannelMemberInputS
 export type UpdateAgentInput = z.output<typeof updateAgentInputSchema>;
 export type SelfUpdateAgentInput = z.output<typeof selfUpdateAgentInputSchema>;
 
-export type AgentMentionToken = {
-  start: number;
-  end: number;
-  query: string;
-};
-
 type AgentMentionTextSegment =
   | { type: "text"; content: string }
   | { type: "mention"; content: string; handle: string };
@@ -114,22 +108,6 @@ export function extractAgentMentionHandles(content: string): {
     else handles.add(handle);
   }
   return { handles: [...handles], mentionAll };
-}
-
-export function findAgentMentionToken(
-  content: string,
-  caret: number,
-): AgentMentionToken | undefined {
-  const boundedCaret = Math.max(0, Math.min(content.length, caret));
-  const prefix = content.slice(0, boundedCaret);
-  const match = prefix.match(/(?:^|[^a-z0-9-])@([a-z0-9-]*)$/i);
-  if (!match) return undefined;
-  const query = match[1] ?? "";
-  return {
-    start: boundedCaret - query.length - 1,
-    end: boundedCaret,
-    query: query.toLowerCase(),
-  };
 }
 
 export function agentMatchesMentionQuery(

@@ -1,4 +1,9 @@
-import { deleteSession, getSessionInfo, listSessions } from "@anthropic-ai/claude-agent-sdk";
+import {
+  deleteSession,
+  getSessionInfo,
+  importSessionToStore,
+  listSessions,
+} from "@anthropic-ai/claude-agent-sdk";
 import { homedir } from "node:os";
 import type { SessionProvider } from "@providers/server/provider";
 import { ClaudeConnection } from "./connection";
@@ -56,7 +61,8 @@ export const claudeProvider: SessionProvider = {
   create: (sessionId, configuration) => ClaudeConnection.open({ id: sessionId }, configuration),
   resume: (session, configuration) => ClaudeConnection.open(session, configuration, true),
   async readDirectory(nativeId) {
-    return (await getSessionInfo(nativeId))?.cwd;
+    const info = await getSessionInfo(nativeId);
+    return info && (info.cwd ?? (await readTranscriptDirectory(nativeId)));
   },
   async isHistoryCurrent(nativeId, capturedAt) {
     const info = await getSessionInfo(nativeId);
@@ -65,3 +71,30 @@ export const claudeProvider: SessionProvider = {
   delete: deleteSession,
   stop: stopClaude,
 };
+
+// The SDK reads a session's `cwd` only from the first 64 KB of its transcript, so a large first
+// message, such as a pasted image, hides it. Resuming such a session reads the first transcript
+// entry that records one, stopping there, rather than running in the home directory.
+async function readTranscriptDirectory(nativeId: string): Promise<string | undefined> {
+  let directory: string | undefined;
+  const found = new Error("Found the transcript directory.");
+  try {
+    await importSessionToStore(
+      nativeId,
+      {
+        async append(_key, entries) {
+          const cwd = entries.find((entry) => typeof entry.cwd === "string")?.cwd;
+          if (typeof cwd !== "string") return;
+          directory = cwd;
+          // Stop reading the transcript once its directory is known.
+          throw found;
+        },
+        load: async () => null,
+      },
+      { includeSubagents: false, batchSize: 8 },
+    );
+  } catch (error) {
+    if (error !== found) throw error;
+  }
+  return directory;
+}

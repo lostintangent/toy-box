@@ -69,3 +69,31 @@ function encodeFilePath(path: string): string {
     .map((segment) => encodeURIComponent(segment))
     .join("/");
 }
+
+/** Relative paths matching a query, best first: basename prefix, then basename, then path
+ *  matches, with shorter paths breaking ties. An empty query favors the shortest paths. */
+export function rankFilePaths(paths: readonly string[], query: string, limit: number): string[] {
+  const needle = query.toLowerCase();
+  const matches: { path: string; rank: number }[] = [];
+  for (const path of paths) {
+    const lowerPath = path.toLowerCase();
+    const basename = getPathBasename(lowerPath);
+    const rank = basename.startsWith(needle)
+      ? 0
+      : basename.includes(needle)
+        ? 1
+        : lowerPath.includes(needle)
+          ? 2
+          : -1;
+    if (rank >= 0) matches.push({ path, rank });
+  }
+  return matches
+    .sort(
+      (left, right) =>
+        left.rank - right.rank ||
+        left.path.length - right.path.length ||
+        left.path.localeCompare(right.path),
+    )
+    .slice(0, limit)
+    .map(({ path }) => path);
+}

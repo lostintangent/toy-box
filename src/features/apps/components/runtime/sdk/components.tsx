@@ -2,10 +2,10 @@ import type { ComponentProps } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { Circle, CircleHelp, Loader2, PanelTop, Sparkles } from "lucide-react";
 import { ModelConfigurationPicker } from "@providers/components/ModelPicker";
-import { Badge } from "@/shared/components/ui/badge";
-import { Button } from "@/shared/components/ui/button";
-import { Input } from "@/shared/components/ui/input";
-import { Textarea } from "@/shared/components/ui/textarea";
+import { Badge } from "@/shared/ui/badge";
+import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
+import { Textarea } from "@/shared/ui/textarea";
 import type { AppSession } from "@apps/sdk";
 import type { ModelConfiguration } from "@providers/model";
 import { cn } from "@/shared/utils";
@@ -14,16 +14,16 @@ import { useAppHost } from "../../host/context";
 
 export { FilePicker as AppFilePicker } from "@files/components/browser/FilePicker";
 export { SessionLocationPicker as AppLocationPicker } from "@sessions/components/location/SessionLocationPicker";
-export { ScrollableFade as AppScrollableFade } from "@/shared/components/ui/scrollable-fade";
-export { Skeleton as AppSkeleton } from "@/shared/components/ui/skeleton";
+export { ScrollableFade as AppScrollableFade } from "@/shared/ui/scrollable-fade";
+export { Skeleton as AppSkeleton } from "@/shared/ui/skeleton";
 export {
   Select as AppSelect,
   SelectContent as AppSelectContent,
   SelectItem as AppSelectItem,
   SelectTrigger as AppSelectTrigger,
   SelectValue as AppSelectValue,
-} from "@/shared/components/ui/select";
-export { Toggle as AppToggle } from "@/shared/components/ui/toggle";
+} from "@/shared/ui/select";
+export { Toggle as AppToggle } from "@/shared/ui/toggle";
 
 export function AppShell({ className, ...props }: ComponentProps<"div">) {
   return (

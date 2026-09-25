@@ -15,7 +15,7 @@ import {
   type ChannelMessage,
 } from "@channels/model";
 import { resolveWorkspaceFile } from "@files/server/paths";
-import type { Attachment } from "@sessions/model";
+import type { Attachment } from "@/shared/attachments/model";
 
 const filePathSchema = z.string().trim().min(1).max(4_096);
 const agentIdSchema = z.string().trim().min(1).max(255);

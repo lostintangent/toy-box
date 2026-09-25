@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { ChevronRight, Loader2, Wrench, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ToolCall } from "../../../../model";
-import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { cn } from "@/shared/utils";
 
 type ToolCallCardProps = {

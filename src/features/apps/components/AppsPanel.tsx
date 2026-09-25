@@ -4,18 +4,18 @@ import { AppWindow, Download, MessageCirclePlus, Pencil, Plus, Trash2 } from "lu
 import { appMutations } from "@apps/mutations";
 import type { AppDefinition, AppInstance } from "@apps/model";
 import { appQueries } from "@apps/queries";
-import { Button } from "@/shared/components/ui/button";
-import { DestructiveConfirmationDialog } from "@/shared/components/sidebar/DestructiveConfirmationDialog";
-import { NameDialog } from "@/shared/components/sidebar/NameDialog";
-import { SidebarListItem } from "@/shared/components/sidebar/SidebarListItem";
-import { SidebarPanel } from "@/shared/components/sidebar/SidebarPanel";
+import { Button } from "@/shared/ui/button";
+import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
+import { NameDialog } from "@/shared/sidebar/NameDialog";
+import { SidebarListItem } from "@/shared/sidebar/SidebarListItem";
+import { SidebarPanel } from "@/shared/sidebar/SidebarPanel";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
+} from "@/shared/ui/dropdown-menu";
 import { APP_ICONS } from "./runtime/icons";
 import { AppColorMenu } from "./AppColorMenu";
 import { CreateAppDialog } from "./CreateAppDialog";

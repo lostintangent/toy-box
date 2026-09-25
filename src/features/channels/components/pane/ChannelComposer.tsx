@@ -6,7 +6,7 @@ import {
   agentPickerSuggestions,
   type AgentPickerSuggestion,
 } from "@channels/components/agents/agentPickerSuggestions";
-import { useAgentMentionInput } from "@channels/components/agents/useAgentMentionInput";
+import { useAgentCompletions } from "@channels/components/agents/useAgentCompletions";
 import {
   agentHandleFromName,
   agentMatchesMentionQuery,
@@ -18,18 +18,18 @@ import { channelMutations } from "@channels/mutations";
 import {
   AttachImageButton,
   ImageAttachments,
-} from "@sessions/components/composer/ImageAttachments";
-import { TypingEffect } from "@sessions/components/composer/typing-effect/TypingEffect";
-import { useImageAttachments } from "@sessions/components/composer/useImageAttachments";
+} from "@/shared/composers/attachments/ImageAttachments";
+import { useAttachments } from "@/shared/composers/attachments/useAttachments";
+import { TypingEffect } from "@/shared/composers/typing-effect/TypingEffect";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupTextarea,
-} from "@/shared/components/ui/input-group";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/components/ui/tooltip";
+} from "@/shared/ui/input-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useViewport } from "@/shared/hooks/useViewport";
-import { generateUUID } from "@/shared/utils";
+import { cn, generateUUID } from "@/shared/utils";
 
 export function ChannelComposer({
   channel,
@@ -43,18 +43,9 @@ export function ChannelComposer({
   const [content, setContent] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { isMobile } = useViewport();
-  const {
-    attachments,
-    isDragging,
-    handlePaste,
-    fileInputProps,
-    openPicker,
-    dropTargetProps,
-    clearAttachments,
-    removeAttachment,
-  } = useImageAttachments();
+  const attachments = useAttachments();
   const { mutate: postMessage } = useMutation(channelMutations.post());
-  const mention = useAgentMentionInput({
+  const completions = useAgentCompletions({
     value: content,
     onValueChange: setContent,
     textareaRef,
@@ -68,27 +59,34 @@ export function ChannelComposer({
 
   function submit() {
     const message = content.trim();
-    if (!message && attachments.length === 0) return;
+    if (attachments.pendingCount > 0 || (!message && attachments.items.length === 0)) return;
+    const images = attachments.items;
     setContent("");
-    clearAttachments();
-    mention.close();
+    attachments.clear();
+    completions.close();
     onSubmit();
     postMessage({
       id: generateUUID(),
       channelId: channel.id,
       content: message,
-      attachments: attachments.length > 0 ? attachments : undefined,
+      attachments: images.length > 0 ? images : undefined,
     });
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (mention.handleKeyDown(event)) return;
+    if (completions.handleKeyDown(event)) return;
+    if (event.key === "Backspace" && content === "" && attachments.items.length > 0) {
+      event.preventDefault();
+      attachments.removeLast();
+      return;
+    }
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     submit();
   }
 
-  const isSubmitDisabled = !content.trim() && attachments.length === 0;
+  const isSubmitDisabled =
+    attachments.pendingCount > 0 || (!content.trim() && attachments.items.length === 0);
 
   return (
     <form
@@ -97,61 +95,61 @@ export function ChannelComposer({
         event.preventDefault();
         submit();
       }}
-      {...dropTargetProps}
+      {...attachments.dropTargetProps}
     >
-      <input {...fileInputProps} />
-      <ImageAttachments attachments={attachments} onRemove={removeAttachment} />
-      <div className="relative">
-        {isDragging && (
-          <div className="pointer-events-none absolute inset-0 z-10 rounded-lg bg-blue-500/20" />
-        )}
-        <InputGroup>
-          {mention.isOpen && (
-            <AgentPicker
-              suggestions={mention.suggestions}
-              activeIndex={mention.activeIndex}
-              onActiveIndexChange={mention.setActiveIndex}
-              onSelect={mention.selectSuggestion}
-              error={mention.error}
-            />
-          )}
-          <InputGroupTextarea
-            ref={textareaRef}
-            value={content}
-            onChange={mention.handleChange}
-            onSelect={mention.handleSelect}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            placeholder={`Message #${channel.name}, or @mention an agent`}
-            className="max-h-18 min-h-14 overflow-y-auto py-2 text-sm"
-            rows={1}
+      <input {...attachments.fileInputProps} />
+      <InputGroup className={cn(attachments.isDragging && "border-ring ring-[3px] ring-ring/50")}>
+        <ImageAttachments
+          attachments={attachments.items}
+          pendingCount={attachments.pendingCount}
+          isDragging={attachments.isDragging}
+          onRemove={attachments.remove}
+        />
+        {completions.isOpen && (
+          <AgentPicker
+            suggestions={completions.suggestions}
+            activeIndex={completions.activeIndex}
+            onActiveIndexChange={completions.setActiveIndex}
+            onSelect={completions.selectSuggestion}
+            error={completions.error}
           />
-          <InputGroupAddon align="block-end" className="relative justify-between pt-0 pb-2">
-            <TypingEffect value={content} />
-            <div className="relative flex items-center gap-1">
-              <AttachImageButton onClick={openPicker} />
-            </div>
-            <div className="relative flex items-center">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <InputGroupButton
-                      type="submit"
-                      size="icon-xs"
-                      aria-label="Send channel message"
-                      disabled={isSubmitDisabled}
-                      variant={isSubmitDisabled ? "ghost" : "accent"}
-                    >
-                      <ArrowUp className="h-4 w-4" />
-                    </InputGroupButton>
-                  }
-                />
-                <TooltipContent sideOffset={6}>Send message</TooltipContent>
-              </Tooltip>
-            </div>
-          </InputGroupAddon>
-        </InputGroup>
-      </div>
+        )}
+        <InputGroupTextarea
+          ref={textareaRef}
+          value={content}
+          onChange={completions.handleChange}
+          onSelect={completions.handleSelect}
+          onKeyDown={handleKeyDown}
+          onPaste={attachments.handlePaste}
+          placeholder={`Message #${channel.name}, or @mention an agent`}
+          className="max-h-18 min-h-14 overflow-y-auto py-2 text-sm"
+          rows={1}
+        />
+        <InputGroupAddon align="block-end" className="relative justify-between px-2 pt-0 pb-2">
+          <TypingEffect value={content} />
+          <div className="relative flex items-center gap-1">
+            <AttachImageButton onClick={attachments.openPicker} />
+          </div>
+          <div className="relative flex items-center">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <InputGroupButton
+                    type="submit"
+                    size="icon-xs"
+                    aria-label="Send channel message"
+                    disabled={isSubmitDisabled}
+                    variant={isSubmitDisabled ? "ghost" : "accent"}
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </InputGroupButton>
+                }
+              />
+              <TooltipContent sideOffset={6}>Send message</TooltipContent>
+            </Tooltip>
+          </div>
+        </InputGroupAddon>
+      </InputGroup>
     </form>
   );
 }

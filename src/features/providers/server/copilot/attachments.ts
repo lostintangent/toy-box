@@ -3,7 +3,7 @@
 // records) can never drift.
 
 import type { Attachment as SdkAttachment, MessageOptions } from "@github/copilot-sdk";
-import type { Attachment } from "@sessions/model";
+import type { Attachment } from "@/shared/attachments/model";
 
 /** Domain attachments → SDK blobs, for session.send. */
 export function toSdkAttachments(

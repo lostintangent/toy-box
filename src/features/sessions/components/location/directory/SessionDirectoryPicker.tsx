@@ -8,10 +8,10 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
-import { Button } from "@/shared/components/ui/button";
-import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
-import { Skeleton } from "@/shared/components/ui/skeleton";
+} from "@/shared/ui/dropdown-menu";
+import { Button } from "@/shared/ui/button";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
+import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/utils";
 import { SessionLocationIcon } from "../SessionLocationIcon";
 import { getRecentDirectories, type RecentDirectory } from "../../../model/recentDirectories";

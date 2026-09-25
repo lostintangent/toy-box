@@ -20,17 +20,11 @@ import {
   Plus,
   type LucideIcon,
 } from "lucide-react";
-import { Button } from "@/shared/components/ui/button";
-import { Input } from "@/shared/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/shared/components/ui/dialog";
-import { ScrollableFade } from "@/shared/components/ui/scrollable-fade";
-import { Skeleton } from "@/shared/components/ui/skeleton";
+import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
+import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/utils";
 import { fileMutations } from "../../mutations";
 import type { DirectoryEntry, DirectoryListing } from "../../model";

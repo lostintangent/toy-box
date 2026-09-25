@@ -5,7 +5,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/shared/components/ui/dropdown-menu";
+} from "@/shared/ui/dropdown-menu";
 import { cn } from "@/shared/utils";
 import type { WhiteboardActions } from "@whiteboard/Whiteboard";
 import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
