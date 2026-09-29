@@ -7,7 +7,6 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
       purpose         TEXT,
       directory       TEXT,
       model           TEXT NOT NULL CHECK (json_valid(model)),
-      lead_session_id TEXT NOT NULL UNIQUE,
       checklist       TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(checklist)),
       preview_url     TEXT,
       latest_sequence INTEGER NOT NULL DEFAULT 0
@@ -41,6 +40,9 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
       ),
       UNIQUE(channel_id, sequence)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_channel_messages_sender
+      ON channel_messages(channel_id, sender_type, sequence);
 
     CREATE TABLE IF NOT EXISTS channel_message_reactions (
       channel_id       TEXT NOT NULL,

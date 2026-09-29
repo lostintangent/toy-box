@@ -7,8 +7,9 @@ import { channelQueries } from "@channels/queries";
 import { useChannel } from "@channels/useChannel";
 import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 import { TranscriptSkeleton } from "@sessions/components/transcript/TranscriptSkeleton";
-import { ChannelComposer } from "./ChannelComposer";
-import { ChannelOverview } from "./ChannelOverview";
+import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
+import { ChannelPaneProvider } from "./ChannelPaneContext";
+import { ChannelOverview } from "./overview/ChannelOverview";
 import { ChannelTranscript } from "./transcript/ChannelTranscript";
 
 export function ChannelPane({
@@ -24,6 +25,7 @@ export function ChannelPane({
     data: { channels, members },
   } = useSuspenseQuery(channelQueries.list());
   const scrollToBottomRef = useRef<() => void>(null);
+  const composerRef = useRef<ChannelComposerHandle>(null);
   const channel = channels.find(({ id }) => id === channelId);
 
   if (!channel) return <ChannelUnavailable />;
@@ -44,6 +46,7 @@ export function ChannelPane({
               isVisible={isVisible}
               variant={variant}
               scrollToBottomRef={scrollToBottomRef}
+              composerRef={composerRef}
             />
           </Suspense>
         </ClientOnly>
@@ -52,6 +55,7 @@ export function ChannelPane({
           <ChannelComposer
             channel={channel}
             members={channelMembers}
+            handleRef={composerRef}
             onSubmit={() => scrollToBottomRef.current?.()}
           />
         </div>
@@ -65,32 +69,36 @@ function ChannelDetail({
   isVisible,
   variant,
   scrollToBottomRef,
+  composerRef,
 }: {
   channel: Channel;
   isVisible: boolean;
   variant: PaneVariant;
   scrollToBottomRef: RefObject<(() => void) | null>;
+  composerRef: RefObject<ChannelComposerHandle | null>;
 }) {
-  const { state, loadPrevious } = useChannel(channel, isVisible);
+  const { state, unreadAfter, loadPrevious } = useChannel(channel, isVisible);
 
   return (
-    <>
-      <ChannelOverview
-        channel={channel}
-        lead={state.lead}
-        members={state.members}
-        artifacts={state.artifacts}
-        variant={variant}
-      />
+    <ChannelPaneProvider
+      value={{
+        lead: state.lead,
+        members: state.members,
+        agents: [state.lead, ...state.members],
+        reply: (agent) => composerRef.current?.reply(agent),
+        mention: () => composerRef.current?.mention(),
+      }}
+    >
+      <ChannelOverview channel={channel} artifacts={state.artifacts} variant={variant} />
       <div className="col-start-1 row-start-1 min-h-0">
         <ChannelTranscript
           messages={state.messages}
-          agents={[state.lead, ...state.members]}
+          unreadAfter={unreadAfter}
           scrollToBottomRef={scrollToBottomRef}
           onLoadPrevious={loadPrevious}
         />
       </div>
-    </>
+    </ChannelPaneProvider>
   );
 }
 

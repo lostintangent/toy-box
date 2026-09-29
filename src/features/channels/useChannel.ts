@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import type { Channel, ChannelEvent, ChannelState } from "./model";
 import { mergeChannelMessages, reduceChannelState } from "./model/reducer";
@@ -14,6 +14,11 @@ export function useChannel(channel: Channel, paneIsVisible: boolean) {
   const isVisible = paneIsVisible && pageIsVisible;
   const { data: state } = useSuspenseQuery(channelQueries.detail(channelId));
   const { mutate: markRead } = useMutation(channelMutations.markRead());
+  // Where unread messages began when the reader arrived. It follows the read position while the
+  // Channel is out of view and holds while it's read, so messages that arrive meanwhile aren't new.
+  const unread = seenThrough < latestSequence ? seenThrough : undefined;
+  const [unreadAfter, setUnreadAfter] = useState(unread);
+  if (!isVisible && unreadAfter !== unread) setUnreadAfter(unread);
 
   useEffect(() => {
     if (!isVisible || seenThrough >= latestSequence) return;
@@ -61,5 +66,5 @@ export function useChannel(channel: Channel, paneIsVisible: boolean) {
     );
   };
 
-  return { state, loadPrevious };
+  return { state, unreadAfter, loadPrevious };
 }

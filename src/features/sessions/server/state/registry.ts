@@ -106,13 +106,14 @@ export async function createSession(
   const sessionType = options?.sessionType ?? (hasHyperSession(sessionId) ? "hyper" : "standard");
   const model = requested.model;
   const name = requested.name;
-  const directory = requested.directory;
   const useWorktree = requested.useWorktree;
   const record = await readSession(sessionId);
   const { configurationKey, ...sessionConfiguration } = await getSessionConfiguration(
     sessionId,
     sessionType,
   );
+  const directory =
+    "directory" in sessionConfiguration ? sessionConfiguration.directory : requested.directory;
   const worktree =
     directory && useWorktree ? await createSessionWorktree(sessionId, directory) : undefined;
   const executionDirectory = worktree?.path ?? directory;
@@ -126,9 +127,9 @@ export async function createSession(
     session = await createProviderSession(sessionId, {
       model,
       name,
-      directory: executionDirectory ?? homedir(),
       sessionType,
       ...sessionConfiguration,
+      directory: executionDirectory ?? homedir(),
       artifactPath: record?.artifactPath,
     });
   } catch (error) {
@@ -201,12 +202,14 @@ async function acquireConfiguredSession(
       if (cached && cached.configurationKey === configurationKey) return cached.session;
 
       if (cached) await disconnectCachedSession(sessionId, cached);
-      const workspaceDirectory = await getSessionDirectory(sessionId);
-      const directory = workspaceDirectory ?? homedir();
+      const directory =
+        "directory" in sessionConfiguration
+          ? sessionConfiguration.directory
+          : await getSessionDirectory(sessionId);
       const session = await resumeProviderSession(sessionId, {
-        directory,
         sessionType,
         ...sessionConfiguration,
+        directory: directory ?? homedir(),
       });
       cachedSessions.set(sessionId, { session, configurationKey, executionLease: false });
       return session;

@@ -7,7 +7,7 @@ export function applyChannelListEvent(queryClient: QueryClient, event: Workspace
   switch (event.type) {
     case "channel.upserted":
       queryClient.setQueryData<ChannelList>(channelQueries.listKey(), (list) => {
-        if (!list) return { channels: [event.channel], members: [] };
+        if (!list) return list;
         const next = list.channels.filter(({ id }) => id !== event.channel.id);
         next.push(event.channel);
         return {
@@ -18,7 +18,7 @@ export function applyChannelListEvent(queryClient: QueryClient, event: Workspace
           ),
         };
       });
-      return;
+      break;
     case "channel.deleted":
       queryClient.removeQueries({
         queryKey: channelQueries.detail(event.channelId).queryKey,
@@ -32,12 +32,16 @@ export function applyChannelListEvent(queryClient: QueryClient, event: Workspace
             }
           : list,
       );
-      return;
+      break;
     case "channel.members.changed":
       void invalidateChannelListQuery(queryClient);
       return;
     default:
       return;
+  }
+  // Replace an overlapping snapshot read with one started after this committed change.
+  if (queryClient.getQueryState(channelQueries.listKey())?.fetchStatus === "fetching") {
+    void queryClient.refetchQueries({ queryKey: channelQueries.listKey(), exact: true });
   }
 }
 

@@ -10,18 +10,21 @@ import { createSdkEventProjector } from "./projector";
 export function connectCopilotSession(
   native: CopilotSession,
   sessionId: string,
+  appliedModel?: ModelConfiguration,
 ): SessionConnection {
   const pendingInputs = new Map<string, string>();
   return {
     provider: { id: "copilot", sessionId: native.sessionId ?? sessionId },
     onEvent(listener) {
+      // Native start and resume events predate subscription; seed the live stream with their model.
+      if (appliedModel) listener({ type: "model_changed", model: appliedModel });
       const project = createSdkEventProjector(sessionId);
       return native.on((event: SdkEvent) => {
         if (event.type === "session.idle") {
           listener({ type: "end", reason: "idle" });
           return;
         }
-        if (event.type === "session.error" || event.type === "abort") {
+        if (event.type === "abort") {
           listener({ type: "end", reason: "error" });
           return;
         }

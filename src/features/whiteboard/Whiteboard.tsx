@@ -16,7 +16,7 @@ import {
   SVG_RASTER_IMAGE_TYPES,
   writeSvgImageToClipboard,
 } from "./editor/images/images";
-import { createEditorStore, type EditorStore } from "./store";
+import { canEditDocument, createEditorStore, type EditorStore } from "./store";
 
 export type WhiteboardActions = {
   zoom: number;
@@ -97,11 +97,11 @@ function WhiteboardActionProjection({
     () => document.getSnapshot().isEmpty,
     () => document.getSnapshot().isEmpty,
   );
-  const { zoom, readOnly, gestureActive } = useSelector(
+  const { zoom, canEdit, gestureActive } = useSelector(
     store,
     (state) => ({
       zoom: state.viewport.zoom,
-      readOnly: state.readOnly,
+      canEdit: canEditDocument(state),
       gestureActive: state.gesture !== null,
     }),
     { compare: shallow },
@@ -133,9 +133,9 @@ function WhiteboardActionProjection({
     zoom,
     canZoom: !gestureActive,
     canFitContent: !isEmpty && !gestureActive,
-    canInsertImage: !readOnly,
+    canInsertImage: canEdit,
     canCopyAsImage: !isEmpty,
-    canClear: !readOnly && !isEmpty,
+    canClear: canEdit && !isEmpty,
     zoomIn: store.actions.zoomIn,
     zoomOut: store.actions.zoomOut,
     fitContent: store.actions.fitContent,

@@ -10,45 +10,55 @@ import {
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AgentStatus } from "@channels/components/agents/AgentStatus";
-import { isChannelSystemMessage } from "@channels/model";
-import type { ChannelAgent, ChannelMessage } from "@channels/model";
+import type { ChannelMessage } from "@channels/model";
+import { channelRequestStates, type ChannelRequestState } from "@channels/model/requests";
 import { TranscriptSkeleton } from "@sessions/components/transcript/TranscriptSkeleton";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { ScrollToBottomButton } from "@/shared/ui/scroll-to-bottom-button";
 import { cn } from "@/shared/utils";
-import { ChannelMessageView } from "./ChannelMessage";
+import { useChannelPane } from "../ChannelPaneContext";
+import { AgentRun } from "./AgentRun";
 import { ChannelPlaceholder } from "./ChannelPlaceholder";
+import { ChannelUserMessage } from "./ChannelUserMessage";
+import { SystemMessageGroup } from "./SystemMessageGroup";
+import { transcriptDayLabel, transcriptRows, type TranscriptRow } from "./transcriptRows";
 
 export function ChannelTranscript({
   messages,
-  agents,
+  unreadAfter,
   scrollToBottomRef,
   onLoadPrevious,
 }: {
   messages: ChannelMessage[];
-  agents: ChannelAgent[];
+  /** The read position when the reader arrived, if anything was unread. */
+  unreadAfter?: number;
   scrollToBottomRef: RefObject<(() => void) | null>;
   onLoadPrevious: () => Promise<void>;
 }) {
+  const { agents } = useChannelPane();
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollAfterAppendRef = useRef(false);
+  const jumpedToUnreadRef = useRef(false);
   const [isReady, setIsReady] = useState(messages.length === 0);
-  const messageGroups = groupAdjacentSystemMessages(messages);
-  const messageGroupCount = messageGroups.length;
-  const getMessageKey = useCallback(
-    (index: number) => messageGroups[index]!.at(-1)!.id,
-    [messageGroups],
-  );
+  const requests = channelRequestStates(messages);
+  const rows = transcriptRows(messages, unreadAfter);
+  const rowCount = rows.length;
+  const firstUnreadIndex = rows.findIndex((row) => row.startsUnread);
+  // A row keeps its first message's identity as later messages join its run.
+  const getRowKey = useCallback((index: number) => rows[index]!.messages[0]!.id, [rows]);
   // eslint-disable-next-line react/react-compiler -- TanStack Virtual intentionally owns its mutable instance.
   const virtualizer = useVirtualizer({
-    count: messageGroupCount,
+    count: rowCount,
     getScrollElement: () => scrollRef.current,
     estimateSize: (index) => {
-      const message = messageGroups[index]![0]!;
-      if (isChannelSystemMessage(message)) return 20;
-      return 100 + (message.attachments?.length ? 56 : 0);
+      const row = rows[index]!;
+      if (row.type === "system") return 20;
+      return row.messages.reduce(
+        (height, message) => height + 100 + (message.attachments?.length ? 96 : 0),
+        0,
+      );
     },
-    getItemKey: getMessageKey,
+    getItemKey: getRowKey,
     anchorTo: "end",
     followOnAppend: "smooth",
     scrollEndThreshold: 80,
@@ -82,7 +92,7 @@ export function ChannelTranscript({
     if (!scrollElement) return;
 
     if (
-      virtualItems.at(-1)?.index === messageGroupCount - 1 &&
+      virtualItems.at(-1)?.index === rowCount - 1 &&
       virtualizer.isAtEnd() &&
       !virtualizer.isScrolling
     ) {
@@ -92,7 +102,14 @@ export function ChannelTranscript({
 
     // Position directly so no programmatic-scroll reconciliation can outlive initialization.
     scrollElement.scrollTop = scrollElement.scrollHeight;
-  }, [isReady, messageGroupCount, virtualItems, virtualizer]);
+  }, [isReady, rowCount, virtualItems, virtualizer]);
+
+  // Opening a Channel with unread messages lands on where they begin, once, before it paints.
+  useLayoutEffect(() => {
+    if (!isReady || jumpedToUnreadRef.current) return;
+    jumpedToUnreadRef.current = true;
+    if (firstUnreadIndex >= 0) virtualizer.scrollToIndex(firstUnreadIndex, { align: "start" });
+  }, [firstUnreadIndex, isReady, virtualizer]);
 
   useLayoutEffect(() => {
     if (!scrollAfterAppendRef.current) return;
@@ -118,8 +135,8 @@ export function ChannelTranscript({
         ) : (
           <div ref={virtualizer.containerRef} className="@container relative min-h-full w-full">
             {virtualItems.map((virtualItem) => {
-              const messageGroup = messageGroups[virtualItem.index]!;
-              const isLast = virtualItem.index === messageGroups.length - 1;
+              const row = rows[virtualItem.index]!;
+              const isLast = virtualItem.index === rows.length - 1;
               return (
                 <div
                   key={virtualItem.key}
@@ -127,7 +144,9 @@ export function ChannelTranscript({
                   data-index={virtualItem.index}
                   className="absolute top-0 left-0 w-full px-4"
                 >
-                  <ChannelMessageView messages={messageGroup} agents={agents} />
+                  {row.startsDay && <DayDivider date={row.messages[0]!.timestamp} />}
+                  {row.startsUnread && <NewMessagesRule />}
+                  <TranscriptRowContent row={row} requests={requests} />
                   {isLast && (
                     <div className="space-y-2 empty:hidden pt-4">
                       <AgentStatus agents={agents} />
@@ -149,26 +168,43 @@ export function ChannelTranscript({
   );
 }
 
-function groupAdjacentSystemMessages(messages: readonly ChannelMessage[]): ChannelMessage[][] {
-  const groups: ChannelMessage[][] = [];
-  for (const message of messages) {
-    const previous = groups.at(-1);
-    const key = systemMessageGroupKey(message);
-    if (key && previous && systemMessageGroupKey(previous[0]!) === key) {
-      previous.push(message);
-    } else {
-      groups.push([message]);
-    }
+/** A user's message, one agent's run, or merged system messages. */
+function TranscriptRowContent({
+  row,
+  requests,
+}: {
+  row: TranscriptRow;
+  requests: ReadonlyMap<number, ChannelRequestState>;
+}) {
+  switch (row.type) {
+    case "user":
+      return <ChannelUserMessage message={row.messages[0]!} />;
+    case "agent":
+      return <AgentRun agentId={row.agentId} messages={row.messages} requests={requests} />;
+    case "system":
+      return <SystemMessageGroup messages={row.messages} />;
   }
-  return groups;
 }
 
-function systemMessageGroupKey(message: ChannelMessage) {
-  if (!isChannelSystemMessage(message)) return undefined;
-  const content = message.content;
-  if (content.type === "member_joined" || content.type === "member_left") return content.type;
-  if (content.type === "artifact_shared" && content.actor.type === "agent") {
-    return `${content.type}:${content.actor.agentId}`;
-  }
-  return undefined;
+function DayDivider({ date }: { date: string }) {
+  return (
+    <div className="mb-5 flex items-center gap-2">
+      <span className="section-heading">{transcriptDayLabel(new Date(date), new Date())}</span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+/** Marks where the messages that were unread when the reader arrived begin. */
+function NewMessagesRule() {
+  return (
+    <div
+      role="separator"
+      aria-label="New messages"
+      className="mb-5 flex items-center gap-2 text-2xs font-semibold text-unread"
+    >
+      <span className="h-px flex-1 bg-unread/50" />
+      New
+    </div>
+  );
 }

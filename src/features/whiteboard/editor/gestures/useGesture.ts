@@ -24,8 +24,13 @@ type CapturedGesture = {
   pointerIds: readonly number[];
 };
 
-function releasePointerCapture(gesture: CapturedGesture) {
+function releasePointerCapture(
+  gesture: CapturedGesture,
+  activeTouches: ReadonlyMap<number, Point>,
+) {
   for (const pointerId of gesture.pointerIds) {
+    // Keep tracking each touch until it lifts, even after its gesture ends.
+    if (activeTouches.has(pointerId)) continue;
     if (gesture.captureTarget.hasPointerCapture(pointerId)) {
       gesture.captureTarget.releasePointerCapture(pointerId);
     }
@@ -41,6 +46,7 @@ function capturePointers(gesture: CapturedGesture) {
 function finishCapturedGesture(
   gesture: CapturedGesture,
   outcome: GestureOutcome,
+  activeTouches: ReadonlyMap<number, Point>,
   endEditorGesture?: () => void,
 ) {
   try {
@@ -49,7 +55,7 @@ function finishCapturedGesture(
     try {
       endEditorGesture?.();
     } finally {
-      releasePointerCapture(gesture);
+      releasePointerCapture(gesture, activeTouches);
     }
   }
 }
@@ -80,7 +86,9 @@ export function useGesture({
       store.actions.endGesture();
       return;
     }
-    finishCapturedGesture(gesture, outcome, () => store.actions.endGesture());
+    finishCapturedGesture(gesture, outcome, activeTouchesRef.current, () =>
+      store.actions.endGesture(),
+    );
   }
 
   function leaveHover() {
@@ -94,7 +102,7 @@ export function useGesture({
       if (state.gesture || !gesture) return;
       // Tool, document, and read-only transitions can clear semantic gesture state externally.
       capturedGestureRef.current = null;
-      finishCapturedGesture(gesture, "cancel");
+      finishCapturedGesture(gesture, "cancel", activeTouches);
     });
     return () => {
       subscription.unsubscribe();
@@ -102,7 +110,7 @@ export function useGesture({
       const gesture = capturedGestureRef.current;
       capturedGestureRef.current = null;
       if (!gesture) return;
-      finishCapturedGesture(gesture, "cancel");
+      finishCapturedGesture(gesture, "cancel", activeTouches);
     };
   }, [store]);
 
@@ -196,8 +204,8 @@ export function useGesture({
   }
 
   function finishPointer(event: ReactPointerEvent<HTMLDivElement>, outcome: GestureOutcome) {
-    if (capturedGestureRef.current?.pointerIds.includes(event.pointerId)) finish(outcome);
     if (event.pointerType === "touch") activeTouchesRef.current.delete(event.pointerId);
+    if (capturedGestureRef.current?.pointerIds.includes(event.pointerId)) finish(outcome);
   }
 
   return {

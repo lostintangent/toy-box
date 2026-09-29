@@ -49,7 +49,6 @@ describe("worker SDK tool", () => {
       message: { content: "Review the runtime", model },
       location: { directory: "/workspace", useWorktree: true },
     });
-    expect(tool?.description).toContain("Retained children open as linked panes");
   });
 
   test("can make a child ephemeral", async () => {

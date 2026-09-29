@@ -3,42 +3,41 @@ import type {
   ChannelState,
   CreateChannelMemberInput,
   CreateChannelInput,
+  EditChannelInput,
   PostChannelMessageInput,
-  UpdateAgentInput,
+  UpdateChannelMemberInput,
 } from "@channels/model";
 import { channelQueries } from "@channels/queries";
-import { applyChannelListEvent } from "@channels/queryCache";
+import { applyChannelListEvent, invalidateChannelListQuery } from "@channels/queryCache";
 import {
   createChannel,
   createChannelMember,
   deleteChannel,
+  editChannel,
   markChannelRead,
   postChannelMessage,
   removeChannelMember,
-  renameChannel,
-  updateChannelAgent,
+  updateChannelMember,
 } from "@channels/server/functions";
 
 export const channelMutations = {
   create: () =>
     mutationOptions({
       mutationFn: (input: CreateChannelInput) => createChannel({ data: input }),
-      onSuccess: (channel, _input, _result, { client }) =>
-        applyChannelListEvent(client, { type: "channel.upserted", channel }),
+      onSuccess: (_channel, _input, _result, { client }) => invalidateChannelListQuery(client),
     }),
   createMember: () =>
     mutationOptions({
       mutationFn: (input: CreateChannelMemberInput) => createChannelMember({ data: input }),
     }),
-  updateAgent: () =>
+  updateMember: () =>
     mutationOptions({
-      mutationFn: (input: UpdateAgentInput) => updateChannelAgent({ data: input }),
+      mutationFn: (input: UpdateChannelMemberInput) => updateChannelMember({ data: input }),
     }),
-  rename: (channelId: string) =>
+  edit: () =>
     mutationOptions({
-      mutationFn: (name: string) => renameChannel({ data: { channelId, name } }),
-      onSuccess: (channel, _name, _result, { client }) =>
-        applyChannelListEvent(client, { type: "channel.upserted", channel }),
+      mutationFn: (input: EditChannelInput) => editChannel({ data: input }),
+      onSuccess: (_channel, _input, _result, { client }) => invalidateChannelListQuery(client),
     }),
   delete: (channelId: string) =>
     mutationOptions({

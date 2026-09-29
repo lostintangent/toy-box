@@ -1,11 +1,13 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { Automation } from "@automations/model";
+import { automationQueries } from "@automations/queries";
 import { applyWorkspaceEvent, createWorkspaceQuerySource, workspaceQueries } from "./queries";
 import { createEmptyWorkspaceState, type WorkspaceState } from "./model/state/reducer";
 import { providerQueries } from "@providers/queries";
 import { sessionQueries, createEmptySessionsState } from "@sessions/queries";
 import { createInitialSessionState } from "@sessions/model/reducer";
+import type { SessionsState } from "@sessions/model";
 
 const automation = {
   id: "automation-a",
@@ -23,10 +25,11 @@ describe("workspace query cache", () => {
     const queryClient = createQueryClient();
     queryClient.setQueryData(workspaceQueries.stateKey(), createEmptyWorkspaceState());
 
-    applyWorkspaceEvent(queryClient, { type: "session.running", sessionId: "session-a" });
+    applyWorkspaceEvent(queryClient, { type: "session.running", sessionId: "session-a", at: 1 });
 
     expect(readWorkspaceState(queryClient).sessionStates["session-a"]).toEqual({
       status: "running",
+      since: 1,
     });
   });
 
@@ -52,6 +55,7 @@ describe("workspace query cache", () => {
     applyWorkspaceEvent(firstQueryClient, {
       type: "session.running",
       sessionId: "session-a",
+      at: 1,
     });
 
     expect(readWorkspaceState(firstQueryClient).sessionStates["session-a"]?.status).toBe("running");
@@ -137,7 +141,6 @@ describe("workspace query cache", () => {
 
   test("preserves cache identity for structurally equal entity echoes", () => {
     const queryClient = createQueryClient();
-    const entry = { id: "entry-a", createdAt: "2026-01-01T00:00:00.000Z" };
     const kind = {
       name: "json-tree",
       extensions: ["json"],
@@ -147,8 +150,6 @@ describe("workspace query cache", () => {
     };
     const state = {
       ...createEmptyWorkspaceState(),
-      automations: [automation],
-      inboxEntries: [entry],
       customEditors: [kind],
     };
     queryClient.setQueryData(workspaceQueries.stateKey(), state);
@@ -163,12 +164,7 @@ describe("workspace query cache", () => {
     onTestFinished(unsubscribe);
 
     applyWorkspaceEvent(queryClient, {
-      type: "automation.upserted",
-      automation: { ...automation, model: { ...automation.model } },
-    });
-    applyWorkspaceEvent(queryClient, {
-      type: "inbox.entry.upserted",
-      entry: { ...entry },
+      type: "inbox.changed",
     });
     applyWorkspaceEvent(queryClient, {
       type: "editor.registered",
@@ -184,13 +180,28 @@ describe("workspace query cache", () => {
     const source = createWorkspaceQuerySource();
 
     const read = source.readSnapshot(() => snapshot.promise);
-    source.recordEvent({ type: "session.running", sessionId: "session-a" });
-    source.recordEvent({ type: "automation.upserted", automation });
+    source.recordEvent({ type: "session.running", sessionId: "session-a", at: 1 });
     snapshot.resolve(createEmptyWorkspaceState());
 
     const state = await read;
-    expect(state.sessionStates["session-a"]).toEqual({ status: "running" });
-    expect(state.automations).toEqual([automation]);
+    expect(state.sessionStates["session-a"]).toEqual({ status: "running", since: 1 });
+  });
+
+  test("routes automation events to the catalog and session ownership without changing workspace state", () => {
+    const client = createQueryClient();
+    const workspace = createEmptyWorkspaceState();
+    client.setQueryData(workspaceQueries.stateKey(), workspace);
+    client.setQueryData(sessionQueries.stateKey(), createEmptySessionsState());
+    client.setQueryData(automationQueries.listKey(), []);
+    applyWorkspaceEvent(client, { type: "automation.upserted", automation });
+    expect(client.getQueryData<Automation[]>(automationQueries.listKey())).toEqual([automation]);
+    expect(client.getQueryData<SessionsState>(sessionQueries.stateKey())?.ownership).toEqual({
+      [automation.id]: { type: "automation" },
+    });
+    expect(readWorkspaceState(client)).toBe(workspace);
+    applyWorkspaceEvent(client, { type: "automation.deleted", automationId: automation.id });
+    expect(client.getQueryData<Automation[]>(automationQueries.listKey())).toEqual([]);
+    expect(client.getQueryData<SessionsState>(sessionQueries.stateKey())?.ownership).toEqual({});
   });
 
   test("lets Query populate an empty cache with a reconciled snapshot", async () => {
@@ -203,13 +214,14 @@ describe("workspace query cache", () => {
       queryFn: () => source.readSnapshot(() => snapshot.promise),
       retry: false,
     });
-    source.recordEvent({ type: "session.running", sessionId: "session-a" });
+    source.recordEvent({ type: "session.running", sessionId: "session-a", at: 1 });
     expect(queryClient.getQueryData(workspaceQueries.stateKey())).toBeUndefined();
 
     snapshot.resolve(createEmptyWorkspaceState());
     await fetch;
     expect(readWorkspaceState(queryClient).sessionStates["session-a"]).toEqual({
       status: "running",
+      since: 1,
     });
   });
 
@@ -228,7 +240,7 @@ describe("workspace query cache", () => {
     };
 
     const firstFetch = queryClient.fetchQuery(query);
-    const event = { type: "session.running", sessionId: "session-a" } as const;
+    const event = { type: "session.running", sessionId: "session-a", at: 1 } as const;
     source.recordEvent(event);
     applyWorkspaceEvent(queryClient, event);
     const replacementFetch = queryClient.refetchQueries(
@@ -238,7 +250,7 @@ describe("workspace query cache", () => {
 
     first.resolve({
       ...createEmptyWorkspaceState(),
-      sessionStates: { "stale-session": { status: "running" } },
+      sessionStates: { "stale-session": { status: "running", since: 1 } },
     });
     await Promise.resolve();
     expect(readWorkspaceState(queryClient).sessionStates["stale-session"]).toBeUndefined();
@@ -246,7 +258,7 @@ describe("workspace query cache", () => {
     second.resolve(createEmptyWorkspaceState());
     await Promise.all([firstFetch, replacementFetch]);
     expect(readWorkspaceState(queryClient).sessionStates).toEqual({
-      "session-a": { status: "running" },
+      "session-a": { status: "running", since: 1 },
     });
   });
 
@@ -262,7 +274,7 @@ describe("workspace query cache", () => {
       retry: false,
       staleTime: 0,
     });
-    const event = { type: "session.running", sessionId: "session-a" } as const;
+    const event = { type: "session.running", sessionId: "session-a", at: 1 } as const;
     source.recordEvent(event);
     applyWorkspaceEvent(queryClient, event);
     snapshot.reject(new Error("snapshot failed"));
@@ -270,6 +282,7 @@ describe("workspace query cache", () => {
     await expect(fetch).rejects.toThrow("snapshot failed");
     expect(readWorkspaceState(queryClient).sessionStates["session-a"]).toEqual({
       status: "running",
+      since: 1,
     });
   });
 

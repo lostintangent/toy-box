@@ -34,7 +34,8 @@ import {
   SessionLocationPicker,
   type SessionLocationPickerProps,
 } from "../location/SessionLocationPicker";
-import { SessionOutputs } from "./SessionOutputs";
+import { ComposerTray } from "./ComposerTray";
+import { DiffPopup } from "./DiffPopup";
 import { VoiceButton } from "./VoiceButton";
 import { QueuedMessageList, type QueuedMessageListHandle } from "./QueuedMessageList";
 import {
@@ -45,6 +46,8 @@ import { useAttachments } from "@/shared/composers/attachments/useAttachments";
 import { PromptCompletionMenu, usePromptCompletions } from "./completions/PromptCompletions";
 import type { VoiceComposerContext } from "./useVoiceComposer";
 import { TypingEffect } from "@/shared/composers/typing-effect/TypingEffect";
+import type { ChecklistItem } from "@/shared/ui/checklist";
+import { sessionFile } from "@files/model";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useDraftPrompt } from "../../useDraftPrompt";
 import type { FileDiffSummary } from "../transcript/editDiffs";
@@ -433,6 +436,7 @@ export function SessionComposer(props: SessionComposerProps) {
 
   const attachments = useAttachments();
   const queueHandle = useRef<QueuedMessageListHandle>(null);
+  const hasDiff = sessionDiff && (sessionDiff.total.added > 0 || sessionDiff.total.removed > 0);
 
   useEffect(() => {
     if (!isMobile) promptHandle.current?.focus();
@@ -513,14 +517,20 @@ export function SessionComposer(props: SessionComposerProps) {
 
       {sessionId && (
         // One tray docked to the input holds what the session made and what waits to send.
-        <div className="mx-2 rounded-t-lg border border-b-0 bg-secondary-background p-1 empty:hidden">
-          <SessionOutputs
-            sessionId={sessionId}
-            artifacts={artifacts}
-            todos={todos}
-            isStreaming={isStreaming}
-            sessionDiff={sessionDiff}
-          />
+        <ComposerTray
+          artifacts={[...artifacts]
+            .sort((left, right) => right.updatedAt - left.updatedAt)
+            .map(({ path, updatedAt }) => ({
+              file: sessionFile(sessionId, path),
+              time: updatedAt,
+            }))}
+          artifactTimeLabel="Updated"
+          checklist={getDisplayTodos(todos ?? [], isStreaming)}
+          checklistLabel="Todos"
+          extraOutput={
+            hasDiff && <DiffPopup total={sessionDiff.total} byFile={sessionDiff.byFile} />
+          }
+        >
           <QueuedMessageList
             sessionId={sessionId}
             messages={queuedMessages}
@@ -530,7 +540,7 @@ export function SessionComposer(props: SessionComposerProps) {
               promptHandle.current?.focus();
             }}
           />
-        </div>
+        </ComposerTray>
       )}
 
       <InputGroup className={cn(attachments.isDragging && "border-ring ring-[3px] ring-ring/50")}>
@@ -586,4 +596,18 @@ export function SessionComposer(props: SessionComposerProps) {
       </InputGroup>
     </form>
   );
+}
+
+/** While a session streams without an active todo, its next pending todo reads as in progress. */
+function getDisplayTodos(todos: TodoItem[], isStreaming: boolean): ChecklistItem[] {
+  const hasActiveTodo = todos.some((todo) => todo.status === "in_progress");
+  let promotedPending = false;
+
+  return todos.map((todo) => {
+    if (isStreaming && !hasActiveTodo && !promotedPending && todo.status === "pending") {
+      promotedPending = true;
+      return { ...todo, status: "in_progress" };
+    }
+    return todo;
+  });
 }

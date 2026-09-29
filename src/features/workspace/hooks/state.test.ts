@@ -16,7 +16,7 @@ describe("workspace query selectors", () => {
 
     updateWorkspace(queryClient, (workspace) => ({
       ...workspace,
-      sessionStates: { "session-b": { status: "running" } },
+      sessionStates: { "session-b": { status: "running", since: 1 } },
     }));
     expect(status.data()).toBe("idle");
     expect(status.updates()).toBe(0);
@@ -25,7 +25,7 @@ describe("workspace query selectors", () => {
       ...workspace,
       sessionStates: {
         ...workspace.sessionStates,
-        "session-a": { status: "running" },
+        "session-a": { status: "running", since: 1 },
       },
     }));
     expect(status.data()).toBe("running");
@@ -64,7 +64,7 @@ describe("workspace query selectors", () => {
 
     updateWorkspace(queryClient, (workspace) => ({
       ...workspace,
-      sessionStates: { "session-a": { status: "running", prompt: changedPrompt } },
+      sessionStates: { "session-a": { status: "running", since: 1, prompt: changedPrompt } },
     }));
     expect(status.updates()).toBe(1);
     expect(selectedPrompt.data()).toBe(promptAfterEdit);
@@ -85,30 +85,33 @@ describe("workspace query selectors", () => {
       running: false,
       waiting: false,
       unread: false,
+      since: undefined,
       hasDraftPrompt: false,
     });
     expect(activity.updates()).toBe(0);
 
     updateWorkspace(queryClient, (workspace) => ({
       ...workspace,
-      sessionStates: { "session-a": { status: "running" } },
+      sessionStates: { "session-a": { status: "running", since: 1 } },
     }));
     expect(activity.data()).toEqual({
       running: true,
       waiting: false,
       unread: false,
+      since: 1,
       hasDraftPrompt: false,
     });
     expect(activity.updates()).toBe(1);
 
     updateWorkspace(queryClient, (workspace) => ({
       ...workspace,
-      sessionStates: { "session-a": { status: "waiting" } },
+      sessionStates: { "session-a": { status: "waiting", since: 1 } },
     }));
     expect(activity.data()).toEqual({
       running: false,
       waiting: true,
       unread: false,
+      since: 1,
       hasDraftPrompt: false,
     });
     expect(activity.updates()).toBe(2);
@@ -173,6 +176,7 @@ describe("workspace query selectors", () => {
   test("projects workers for only one artifact", () => {
     const queryClient = createQueryClient();
     const worker = {
+      createdAt: new Date(0).toISOString(),
       type: "file" as const,
       sessionId: "artifact-worker-a",
       ephemeral: true,
@@ -185,6 +189,7 @@ describe("workspace query selectors", () => {
       workers: [
         worker,
         {
+          createdAt: new Date(0).toISOString(),
           type: "file",
           sessionId: "artifact-worker-b",
           ephemeral: true,
@@ -204,7 +209,7 @@ describe("workspace query selectors", () => {
 
     updateWorkspace(queryClient, (workspace) => ({
       ...workspace,
-      sessionStates: { "artifact-worker-a": { status: "running" } },
+      sessionStates: { "artifact-worker-a": { status: "running", since: 1 } },
     }));
     expect(workers.updates()).toBe(0);
   });

@@ -1,19 +1,21 @@
 // Server-only worker admission: validate the owner, register the pending worker,
 // and hand execution to the runtime supervisor.
 
-import type { CancelWorkerInput, SpawnWorkerInput, Worker } from "../model";
+import type { CancelWorkerInput, SpawnWorkerInput, Worker, WorkerOwner } from "../model";
 import {
   registerPendingSessionCompletion,
   rejectPendingSessionCompletion,
 } from "@sessions/server/runtime";
 import * as supervisor from "./supervisor";
 import { WorkerCanceledError } from "./supervisor";
+import type { WorkerReceipt, WorkerRetention } from "./supervisor";
 import { finishWorker, getWorker, hasWorker, startWorker } from "./registry";
+import { createWorker } from "./database";
 import { getStateDatabase } from "@/server/database";
 import { AppDatabase } from "@apps/server/database";
 import { resolveWorkspaceFile } from "@files/server/paths";
 import { workspaceFileId } from "@files/model";
-import type { SessionLaunch, SessionLocation } from "@sessions/model";
+import type { SessionLaunch } from "@sessions/model";
 
 type SessionWorkerInput = SessionLaunch & {
   parentSessionId: string;
@@ -21,12 +23,21 @@ type SessionWorkerInput = SessionLaunch & {
   ephemeral?: boolean;
 };
 
-type WorkerSessionReceipt = Awaited<ReturnType<typeof supervisor.spawnWorker>>;
+export type WorkerSpawn<Owner extends WorkerOwner = WorkerOwner, Value = void> = SessionLaunch &
+  Pick<Worker, "name"> & {
+    metadata?: unknown;
+    owner: Owner;
+    sessionId?: string;
+    retention: WorkerRetention;
+    /** Persist ownership with an owner-specific admission, before execution starts. */
+    admit?: (worker: Worker & Owner) => Promise<Value>;
+  };
 
-export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId: string }> {
-  const sessionId = crypto.randomUUID();
+export async function spawnWorkerFromRequest(
+  input: SpawnWorkerInput,
+): Promise<{ sessionId: string }> {
   const details = {
-    sessionId,
+    location: input.location,
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
   };
@@ -36,43 +47,39 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId:
     if (!absolutePath || !(await Bun.file(absolutePath).stat()).isFile()) {
       throw new Error("Invalid file path.");
     }
-    const worker: Worker = { ...details, type: "file", file: input.file, ephemeral: true };
-    void admitWorker(worker, () =>
-      spawnWorkerSession(
-        input.location,
-        {
-          ...input.message,
-          content: buildWorkerPrompt(input.message.content, {
-            type: "file",
-            absolutePath,
-          }),
-        },
-        worker,
-      ),
-    );
-  } else {
-    const apps = new AppDatabase(await getStateDatabase());
-    if (!(await apps.get(input.appId))) throw new Error("Workers require an existing app.");
-    const worker: Worker = {
+    const { sessionId } = await spawnWorker({
       ...details,
-      type: "app",
-      appId: input.appId,
-      ephemeral: input.ephemeral ?? true,
-    };
-    void admitWorker(worker, async () => {
-      const app = await apps.get(input.appId);
-      if (!app) throw new Error("The app was deleted before its worker started.");
-      return spawnWorkerSession(
-        input.location,
-        {
-          ...input.message,
-          content: buildWorkerPrompt(input.message.content, { type: "app", app }),
-        },
-        worker,
-      );
+      owner: { type: "file", file: input.file },
+      retention: "ephemeral",
+      message: {
+        ...input.message,
+        content: buildWorkerPrompt(input.message.content, { type: "file", absolutePath }),
+      },
     });
+    return { sessionId };
   }
 
+  const apps = new AppDatabase(await getStateDatabase());
+  if (!(await apps.get(input.appId))) throw new Error("Workers require an existing app.");
+  const request: WorkerSpawn = {
+    ...details,
+    owner: { type: "app", appId: input.appId },
+    retention: (input.ephemeral ?? true) ? "ephemeral" : "durable",
+    message: input.message,
+  };
+  const { sessionId } = await admitWorker(request, async (worker) => {
+    const app = await apps.get(input.appId);
+    if (!app) throw new Error("The app was deleted before its worker started.");
+    return superviseAdmittedWorker({
+      worker,
+      retention: request.retention,
+      location: input.location,
+      message: {
+        ...input.message,
+        content: buildWorkerPrompt(input.message.content, { type: "app", app }),
+      },
+    });
+  });
   return { sessionId };
 }
 
@@ -80,28 +87,54 @@ export async function spawnWorker(input: SpawnWorkerInput): Promise<{ sessionId:
 export async function spawnSessionWorker(
   input: SessionWorkerInput,
 ): Promise<{ sessionId: string }> {
-  const sessionId = crypto.randomUUID();
-  const worker: Worker = {
-    type: "session",
-    sessionId,
-    parentSessionId: input.parentSessionId,
-    ephemeral: input.ephemeral ?? false,
+  const { sessionId } = await spawnWorker({
+    owner: { type: "session", parentSessionId: input.parentSessionId },
+    retention: input.ephemeral ? "ephemeral" : "durable",
     ...(input.name === undefined ? {} : { name: input.name }),
-  };
-
-  await admitWorker(worker, () => spawnWorkerSession(input.location, input.message, worker));
+    message: input.message,
+    location: input.location,
+  });
   return { sessionId };
 }
 
-function admitWorker(
-  worker: Worker,
-  spawn: () => Promise<WorkerSessionReceipt>,
-): Promise<WorkerSessionReceipt> {
+/** Start trusted owner-supplied work through the same admission and completion lifecycle. */
+export function spawnWorker<Owner extends WorkerOwner, Value>(
+  input: WorkerSpawn<Owner, Value> & Required<Pick<WorkerSpawn<Owner, Value>, "admit">>,
+): Promise<WorkerReceipt<Value>>;
+export function spawnWorker(input: WorkerSpawn): Promise<WorkerReceipt>;
+export function spawnWorker<Owner extends WorkerOwner, Value>(
+  input: WorkerSpawn<Owner, Value>,
+): Promise<WorkerReceipt<Value | void>> {
+  const { admit } = input;
+  return admitWorker(input, (worker) =>
+    superviseAdmittedWorker({
+      worker,
+      message: input.message,
+      location: input.location,
+      retention: input.retention,
+      admit: admit ? () => admit(worker) : undefined,
+    }),
+  );
+}
+
+function admitWorker<Owner extends WorkerOwner, Value>(
+  input: WorkerSpawn<Owner, Value>,
+  spawn: (worker: Worker & Owner) => Promise<WorkerReceipt<Value>>,
+): Promise<WorkerReceipt<Value>> {
+  const worker = createWorker(
+    {
+      ...input.owner,
+      ephemeral: input.retention === "ephemeral",
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+    },
+    input.sessionId,
+  );
   const receipt = registerPendingSessionCompletion(worker.sessionId);
   // Publish only after waiting by ID is safe. Workspace observers can react
   // synchronously to worker.started before the backing Session exists.
   startWorker(worker);
-  const workerSession = spawn();
+  const workerSession = spawn(worker);
   void completeAdmittedWorker(worker.sessionId, receipt, workerSession).catch(reportWorkerError);
   return workerSession;
 }
@@ -122,30 +155,23 @@ export async function cancelAdmittedWorker(sessionId: string): Promise<boolean> 
   return supervisor.cancelWorker(sessionId);
 }
 
-async function spawnWorkerSession(
-  location: SessionLocation | undefined,
-  message: SessionLaunch["message"],
-  worker: Worker,
-): Promise<WorkerSessionReceipt> {
-  if (!hasWorker(worker.sessionId)) throw new WorkerCanceledError(worker.sessionId);
-  return supervisor.spawnWorker({
-    worker,
-    message,
-    location,
-  });
+function superviseAdmittedWorker<Value>(
+  input: Parameters<typeof supervisor.superviseWorker<Value>>[0],
+): Promise<WorkerReceipt<Value | void>> {
+  if (!hasWorker(input.worker.sessionId)) {
+    return Promise.reject(new WorkerCanceledError(input.worker.sessionId));
+  }
+  return supervisor.superviseWorker(input);
 }
 
 async function completeAdmittedWorker(
   sessionId: string,
   receipt: ReturnType<typeof registerPendingSessionCompletion>,
-  workerSession: Promise<WorkerSessionReceipt>,
+  workerSession: Promise<WorkerReceipt<unknown>>,
 ): Promise<void> {
   try {
     const completion = await (await workerSession).waitForCompletion();
     receipt.resolve(completion);
-    if (completion.status !== "completed") {
-      throw new Error("The worker did not complete.");
-    }
   } catch (error) {
     receipt.reject(error);
     if (!(error instanceof WorkerCanceledError)) throw error;

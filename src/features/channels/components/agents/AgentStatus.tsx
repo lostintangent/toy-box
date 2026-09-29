@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ChannelAgent } from "@channels/model";
+import { channelAgentPresence } from "@channels/model/presence";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { selectWorkspaceSessionActivity, useWorkspaceSelector } from "@workspace/hooks/state";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
@@ -12,7 +13,8 @@ type WorkingAgent = {
   status?: string;
 };
 
-/** Present currently working Channel agents. */
+/** Present currently working Channel agents. Waiting shows in the overview, since the lead's
+ *  request already marks what the user needs to answer. */
 export function AgentStatus({
   agents,
   variant = "normal",
@@ -25,9 +27,8 @@ export function AgentStatus({
   );
   const working: WorkingAgent[] = agents
     .flatMap((agent, index) => {
-      if (!running[index]) return [];
-      const status = agent.status?.state === "working" ? agent.status.text : undefined;
-      return [{ agent, ...(status ? { status } : {}) }];
+      const presence = channelAgentPresence(agent, running[index]!);
+      return presence.state === "working" ? [{ agent, status: presence.text }] : [];
     })
     .sort((left, right) => left.agent.name.localeCompare(right.agent.name));
 
@@ -139,9 +140,9 @@ function WorkingAgentAvatar({
 function WorkingDots() {
   return (
     <span className="flex shrink-0 gap-0.5" aria-hidden>
-      <span className="size-1 animate-pulse rounded-full bg-current" />
-      <span className="size-1 animate-pulse rounded-full bg-current [animation-delay:150ms]" />
-      <span className="size-1 animate-pulse rounded-full bg-current [animation-delay:300ms]" />
+      <span className="size-1 animate-pulse rounded-full bg-current motion-reduce:animate-none" />
+      <span className="size-1 animate-pulse rounded-full bg-current [animation-delay:150ms] motion-reduce:animate-none" />
+      <span className="size-1 animate-pulse rounded-full bg-current [animation-delay:300ms] motion-reduce:animate-none" />
     </span>
   );
 }

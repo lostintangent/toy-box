@@ -9,17 +9,17 @@ import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import {
   createEditorPane,
-  createEditorPaneId,
+  createLinkedSessionPane,
   INBOX_PANE,
-  isEditorPane,
+  paneSourceSessionId,
 } from "@workspace/model/panes";
 import { sessionFile } from "@files/model";
 import { sessionMutations } from "@sessions/mutations";
-import { selectNonWorkerSessions, sessionQueries } from "@sessions/queries";
+import { sessionQueries } from "@sessions/queries";
 import type { UserMessage } from "@sessions/model";
 import type { InboxEntry } from "../model";
 import { inboxMutations } from "../mutations";
-import { inboxQueries } from "../queries";
+import { inboxQueries, selectInboxSessions } from "../queries";
 import { InkCloud, type Ink, type Traveler } from "@/shared/ink-cloud/InkCloud";
 import { InboxEntries } from "./InboxEntries";
 
@@ -37,15 +37,16 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
   const dispatchTaskMutation = useMutation(inboxMutations.dispatchTask());
   const createSessionMutation = useMutation(sessionMutations.startSession());
   const { panePublications } = useWorkspaceSurface();
+  const { data: entries } = useSuspenseQuery(inboxQueries.list());
   const { data: sessions = [] } = useQuery({
     ...sessionQueries.state(),
-    select: selectNonWorkerSessions,
+    select: (state) => selectInboxSessions(state, entries),
   });
-  const { data: entries } = useSuspenseQuery(inboxQueries.list());
   const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);
   const { models, hasModels, defaultModel, setDefaultModel } = useModels();
-  const linkedEditorPane = useSelector(panePublications, (linkedPanes) =>
-    linkedPanes[INBOX_PANE.id]?.find(isEditorPane),
+  const linkedPane = useSelector(
+    panePublications,
+    (linkedPanes) => linkedPanes[INBOX_PANE.id]?.[0],
   );
   const [prompt, setPrompt] = useState("");
   // An untouched selection follows the latest directory; null preserves an explicit clear.
@@ -62,30 +63,20 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
     onUseWorktreeChange: setUseWorktree,
   };
 
-  const linkedArtifactExists =
-    linkedEditorPane === undefined ||
-    entries.some(
-      (entry) =>
-        entry.artifact !== undefined &&
-        linkedEditorPane.id === createEditorPaneId(sessionFile(entry.id, entry.artifact)),
-    );
+  const linkedEntryExists =
+    linkedPane === undefined ||
+    entries.some((entry) => createInboxEntryPane(entry).id === linkedPane.id);
 
   // Inbox rows are server-authoritative. Remove browser-local composition when
   // another client deletes or replaces the linked entry.
   useEffect(() => {
-    if (linkedArtifactExists) return;
+    if (linkedEntryExists) return;
     panePublications.actions.clearLinkedPanes(INBOX_PANE.id);
-  }, [linkedArtifactExists, panePublications]);
+  }, [linkedEntryExists, panePublications]);
 
-  function handleInboxArtifactSelect(entry: InboxEntry) {
-    if (!entry.artifact) return;
-
-    const artifactPane = createEditorPane(sessionFile(entry.id, entry.artifact));
-    const pane = {
-      ...artifactPane,
-      title: entry.message ?? artifactPane.title,
-    };
-    const isLinked = linkedEditorPane?.id === pane.id;
+  function handleInboxEntrySelect(entry: InboxEntry) {
+    const pane = createInboxEntryPane(entry);
+    const isLinked = linkedPane?.id === pane.id;
     if (isLinked) {
       panePublications.actions.clearLinkedPanes(INBOX_PANE.id);
     } else {
@@ -150,11 +141,17 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
           <InboxEntries
             entries={entries}
             sessions={sessions}
-            linkedEditorPane={linkedEditorPane}
-            onArtifactSelect={handleInboxArtifactSelect}
+            linkedEntryId={linkedPane && paneSourceSessionId(linkedPane)}
+            onSelect={handleInboxEntrySelect}
           />
         </div>
       </div>
     </div>
   );
+}
+
+function createInboxEntryPane(entry: InboxEntry) {
+  if (entry.kind !== "result" || !entry.artifact) return createLinkedSessionPane(entry.id);
+  const pane = createEditorPane(sessionFile(entry.id, entry.artifact));
+  return { ...pane, title: entry.message };
 }

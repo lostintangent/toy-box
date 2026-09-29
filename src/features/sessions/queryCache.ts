@@ -6,7 +6,14 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 import type { WorkspaceEvent } from "@workspace/model/events";
-import type { Session, SessionLaunch, SessionType, SessionUpdate, SessionsState } from "./model";
+import type {
+  Session,
+  SessionLaunch,
+  SessionOwnership,
+  SessionType,
+  SessionUpdate,
+  SessionsState,
+} from "./model";
 import { createEmptySessionsState, sessionQueries } from "./queries";
 import { createInitialSessionState } from "./model/reducer";
 
@@ -68,12 +75,34 @@ export function applyWorkspaceEventToSessionQueries(
         retireSessionDetail(queryClient, event.session.id);
       }
       upsertSessionInState(queryClient, event.session);
+      if (event.session.sessionType === "worker" || event.session.sessionType === "automation") {
+        replaceOverlappingCatalogRead(queryClient);
+      }
       return;
     }
     case "session.deleted":
       removeSessionFromState(queryClient, event.sessionId);
       retireSessionDetail(queryClient, event.sessionId);
+      replaceOverlappingCatalogRead(queryClient);
       return;
+    case "automation.upserted": {
+      const id = event.automation.id;
+      if (snapshotSessionsState(queryClient)?.ownership[id]?.type === "automation") return;
+      queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), (state) =>
+        state ? setOwnership(state, id, { type: "automation" }) : state,
+      );
+      replaceOverlappingCatalogRead(queryClient);
+      return;
+    }
+    case "automation.deleted": {
+      const id = event.automationId;
+      queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), (state) =>
+        state ? removeSession(setOwnership(state, id, undefined), id) : state,
+      );
+      retireSessionDetail(queryClient, id);
+      replaceOverlappingCatalogRead(queryClient);
+      return;
+    }
     case "session.touched":
       void invalidateSessionQueries(queryClient, event.sessionId);
       return;
@@ -86,6 +115,12 @@ export function applyWorkspaceEventToSessionQueries(
         void queryClient.invalidateQueries({ queryKey: sessionQueries.stateKey(), exact: true });
       }
       return;
+  }
+}
+
+function replaceOverlappingCatalogRead(queryClient: QueryClient): void {
+  if (queryClient.getQueryState(sessionQueries.stateKey())?.fetchStatus === "fetching") {
+    void queryClient.refetchQueries({ queryKey: sessionQueries.stateKey(), exact: true });
   }
 }
 
@@ -150,20 +185,19 @@ function updateSessionsState(
 }
 
 function removeSession(state: SessionsState, sessionId: string): SessionsState {
+  const removesOwnership = state.ownership[sessionId]?.type === "worker";
   if (
     !state.sessions.some((session) => session.id === sessionId) &&
-    !Object.hasOwn(state.workerSessionParents, sessionId) &&
+    !removesOwnership &&
     !(sessionId in state.worktrees)
   ) {
     return state;
   }
 
   const { [sessionId]: _worktree, ...worktrees } = state.worktrees;
-  const { [sessionId]: _parent, ...workerSessionParents } = state.workerSessionParents;
   return {
-    ...state,
+    ...(removesOwnership ? setOwnership(state, sessionId, undefined) : state),
     sessions: state.sessions.filter((session) => session.id !== sessionId),
-    workerSessionParents,
     worktrees,
   };
 }
@@ -184,12 +218,39 @@ function upsertSession(state: SessionsState, update: SessionUpdate): SessionsSta
   const worktrees = update.worktree
     ? { ...state.worktrees, [update.id]: update.worktree }
     : state.worktrees;
-  const parentSessionId = update.parentSessionId ?? null;
-  const workerSessionParents =
-    update.sessionType === "worker" && state.workerSessionParents[update.id] !== parentSessionId
-      ? { ...state.workerSessionParents, [update.id]: parentSessionId }
-      : state.workerSessionParents;
-  return { ...state, sessions, worktrees, workerSessionParents };
+  const owner = state.ownership[update.id];
+  switch (update.sessionType) {
+    case "worker":
+      state = setOwnership(state, update.id, {
+        type: "worker",
+        parentSessionId:
+          update.parentSessionId ?? (owner?.type === "worker" ? owner.parentSessionId : null),
+      });
+      break;
+    case "automation":
+      state = setOwnership(state, update.id, { type: update.sessionType });
+      break;
+  }
+  return { ...state, sessions, worktrees };
+}
+
+function setOwnership(
+  state: SessionsState,
+  sessionId: string,
+  owner: SessionOwnership | undefined,
+): SessionsState {
+  const previous = state.ownership[sessionId];
+  if (
+    previous?.type === owner?.type &&
+    (previous?.type !== "worker" ||
+      (owner?.type === "worker" && previous.parentSessionId === owner.parentSessionId))
+  ) {
+    return state;
+  }
+  const ownership = { ...state.ownership };
+  if (owner) ownership[sessionId] = owner;
+  else delete ownership[sessionId];
+  return { ...state, ownership };
 }
 
 function isSessionReplacement(session: Session | undefined, update: SessionUpdate): boolean {

@@ -1,10 +1,8 @@
 // Server-side Workspace operations shared by validated ingress.
 
-import { listAutomations } from "@automations/server";
 import { AppDatabase } from "@apps/server/database";
 import { appDefinitionRegistry } from "@apps/server/definitions";
 import { loadCustomEditors } from "@files/server/editors";
-import { listInboxEntries } from "@inbox/server";
 import { retainSessionSnapshots } from "@sessions/server/state/snapshots";
 import { getStateDatabase } from "@/server/database";
 import type { Settings } from "../model/config/settings";
@@ -20,9 +18,7 @@ export { applyWorkspaceAction };
 
 /** Assemble the current projection from each feature's authoritative facts. */
 export async function getWorkspaceState(): Promise<WorkspaceState> {
-  const [automations, inboxEntries, customEditors, appDefinitions, database] = await Promise.all([
-    listAutomations(),
-    listInboxEntries(),
+  const [customEditors, appDefinitions, database] = await Promise.all([
     loadCustomEditors(),
     appDefinitionRegistry.list(),
     getStateDatabase({ createIfMissing: false }),
@@ -33,8 +29,6 @@ export async function getWorkspaceState(): Promise<WorkspaceState> {
     : [[], []];
 
   return readWorkspaceState({
-    automations,
-    inboxEntries,
     customEditors,
     appDefinitions,
     apps,

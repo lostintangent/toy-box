@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import type { Automation } from "@automations/model";
 import {
   createEmptyWorkspaceState,
   reduceWorkspaceSessionState,
@@ -15,11 +14,11 @@ const prompt = { text: "hello", origin: "client-a", updatedAt: 3 };
 
 describe("workspace session state", () => {
   test("makes running, waiting, unread, and idle mutually exclusive", () => {
-    let state = transition(undefined, { type: "session.running", sessionId });
-    expect(state).toEqual({ status: "running" });
+    let state = transition(undefined, { type: "session.running", sessionId, at: 1 });
+    expect(state).toEqual({ status: "running", since: 1 });
 
-    state = transition(state, { type: "session.waiting", sessionId });
-    expect(state).toEqual({ status: "waiting" });
+    state = transition(state, { type: "session.waiting", sessionId, at: 2 });
+    expect(state).toEqual({ status: "waiting", since: 1 });
 
     state = transition(state, { type: "session.unread", sessionId });
     expect(state).toEqual({ status: "unread" });
@@ -28,12 +27,35 @@ describe("workspace session state", () => {
     expect(state).toBeUndefined();
   });
 
+  test("remembers when a run began across its live transitions", () => {
+    let state = transition(undefined, { type: "session.running", sessionId, at: 1 });
+    state = transition(state, { type: "session.running", sessionId, at: 2 });
+    expect(state).toEqual({ status: "running", since: 1 });
+
+    state = transition(state, { type: "session.waiting", sessionId, at: 3 });
+    expect(state).toEqual({ status: "waiting", since: 1 });
+
+    state = transition(state, { type: "session.running", sessionId, at: 4 });
+    expect(state).toEqual({ status: "running", since: 1 });
+  });
+
+  test.each(["session.unread", "session.idle", "session.deleted"] as const)(
+    "starts a new run after %s",
+    (type) => {
+      const ended = transition({ status: "running", since: 1, prompt }, { type, sessionId });
+      expect(transition(ended, { type: "session.running", sessionId, at: 5 })).toMatchObject({
+        status: "running",
+        since: 5,
+      });
+    },
+  );
+
   test("keeps a composed prompt through runtime transitions", () => {
     let state = transition(undefined, { type: "session.prompt.drafted", sessionId, prompt });
     expect(state).toEqual({ status: "idle", prompt });
 
-    state = transition(state, { type: "session.running", sessionId });
-    expect(state).toEqual({ status: "running", prompt });
+    state = transition(state, { type: "session.running", sessionId, at: 1 });
+    expect(state).toEqual({ status: "running", since: 1, prompt });
 
     state = transition(state, { type: "session.unread", sessionId });
     expect(state).toEqual({ status: "unread", prompt });
@@ -44,8 +66,12 @@ describe("workspace session state", () => {
 
   test("canonicalizes idle sessions without prompts as missing", () => {
     expect(transition(undefined, { type: "session.idle", sessionId })).toBeUndefined();
-    expect(transition({ status: "running" }, { type: "session.idle", sessionId })).toBeUndefined();
-    expect(transition({ status: "waiting" }, { type: "session.idle", sessionId })).toBeUndefined();
+    expect(
+      transition({ status: "running", since: 1 }, { type: "session.idle", sessionId }),
+    ).toBeUndefined();
+    expect(
+      transition({ status: "waiting", since: 1 }, { type: "session.idle", sessionId }),
+    ).toBeUndefined();
   });
 });
 
@@ -96,6 +122,7 @@ describe("workspace state reducer", () => {
     state = reduceWorkspaceState(state, {
       type: "worker.started",
       worker: {
+        createdAt: new Date(0).toISOString(),
         type: "file",
         sessionId: "artifact-worker-a",
         ephemeral: true,
@@ -108,61 +135,19 @@ describe("workspace state reducer", () => {
     expect(state).toEqual(createEmptyWorkspaceState());
   });
 
-  test("creates, completes, and deletes inbox entries idempotently", () => {
-    const pending = { id: "entry-a", createdAt: "2026-01-01T00:00:00.000Z" };
-    let state = reduceWorkspaceState(createEmptyWorkspaceState(), {
-      type: "inbox.entry.upserted",
-      entry: pending,
-    });
-
-    expect(reduceWorkspaceState(state, { type: "inbox.entry.upserted", entry: pending })).toBe(
+  test("Inbox events leave shared workspace facts unchanged", () => {
+    const entry = { id: "entry-a", createdAt: "2026-01-01T00:00:00.000Z", message: "Ready" };
+    const state = createEmptyWorkspaceState();
+    expect(reduceWorkspaceState(state, { type: "inbox.changed" })).toBe(state);
+    expect(reduceWorkspaceState(state, { type: "inbox.entry.deleted", entryId: entry.id })).toBe(
       state,
     );
-
-    const completed = { ...pending, message: "Background work finished", artifact: "report.md" };
-    state = reduceWorkspaceState(state, {
-      type: "inbox.entry.upserted",
-      entry: completed,
-    });
-    expect(state.inboxEntries).toEqual([completed]);
-
-    state = reduceWorkspaceState(state, { type: "inbox.entry.deleted", entryId: pending.id });
-    expect(state.inboxEntries).toEqual([]);
-  });
-
-  test("upserts, orders, and deletes automations idempotently", () => {
-    const older = createAutomation({
-      id: "automation-a",
-      updatedAt: "2026-02-14T08:00:00.000Z",
-    });
-    const newer = createAutomation({
-      id: "automation-b",
-      updatedAt: "2026-02-14T09:00:00.000Z",
-    });
-    let state = createEmptyWorkspaceState();
-    state = reduceWorkspaceState(state, { type: "automation.upserted", automation: older });
-    state = reduceWorkspaceState(state, { type: "automation.upserted", automation: newer });
-
-    expect(state.automations.map(({ id }) => id)).toEqual(["automation-b", "automation-a"]);
-    expect(reduceWorkspaceState(state, { type: "automation.upserted", automation: newer })).toBe(
-      state,
-    );
-
-    state = reduceWorkspaceState(state, {
-      type: "automation.deleted",
-      automationId: older.id,
-    });
-    expect(state.automations).toEqual([newer]);
-    expect(
-      reduceWorkspaceState(state, {
-        type: "automation.deleted",
-        automationId: "missing",
-      }),
-    ).toBe(state);
+    expect(reduceWorkspaceState(state, { type: "inbox.changed" })).toBe(state);
   });
 
   test("tracks worker links idempotently", () => {
     const worker = {
+      createdAt: new Date(0).toISOString(),
       type: "file" as const,
       sessionId: "artifact-worker-a",
       ephemeral: true,
@@ -262,7 +247,13 @@ describe("workspace state reducer", () => {
     expect(state.apps).toEqual([alphabeticallyFirst, updated]);
     state = reduceWorkspaceState(state, {
       type: "worker.started",
-      worker: { type: "app", sessionId: "app-worker", appId: app.id, ephemeral: true },
+      worker: {
+        createdAt: new Date(0).toISOString(),
+        type: "app",
+        sessionId: "app-worker",
+        appId: app.id,
+        ephemeral: true,
+      },
     });
     const shareEvent = {
       type: "app.share.created",
@@ -316,18 +307,4 @@ function transition(
   event: WorkspaceSessionEvent,
 ): WorkspaceSessionState | undefined {
   return reduceWorkspaceSessionState(state, event);
-}
-
-function createAutomation(overrides: Partial<Automation> = {}): Automation {
-  return {
-    id: overrides.id ?? "automation-a",
-    title: overrides.title ?? "Daily summary",
-    prompt: overrides.prompt ?? "Summarize repo status.",
-    model: overrides.model ?? { provider: "copilot", name: "gpt-5" },
-    cron: overrides.cron ?? "0 9 * * *",
-    createdAt: overrides.createdAt ?? "2026-02-14T00:00:00.000Z",
-    updatedAt: overrides.updatedAt ?? "2026-02-14T00:00:00.000Z",
-    nextRunAt: overrides.nextRunAt ?? "2026-02-14T09:00:00.000Z",
-    lastRunAt: overrides.lastRunAt,
-  };
 }

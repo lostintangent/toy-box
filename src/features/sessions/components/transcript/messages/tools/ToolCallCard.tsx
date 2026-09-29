@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from "react";
-import { ChevronRight, Loader2, Wrench, X } from "lucide-react";
+import { ChevronRight, Wrench, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ToolCall } from "../../../../model";
+import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { cn } from "@/shared/utils";
 
@@ -35,9 +36,9 @@ export function ToolCallCard({
   // Type icon always visible on the left
   const typeIcon = <BaseIcon className="h-3 w-3 shrink-0 text-muted-foreground" />;
 
-  // Status icon shown on the right (spinner while active, X on failure)
+  // Status icon shown on the right (ring while active, X on failure)
   const statusIcon = isActive ? (
-    <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+    <RunningIndicator className="h-3 w-3 shrink-0 text-muted-foreground" />
   ) : hasResult && !isSuccess ? (
     <X className="h-3 w-3 shrink-0 text-destructive" />
   ) : null;

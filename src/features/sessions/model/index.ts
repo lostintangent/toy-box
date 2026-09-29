@@ -46,11 +46,15 @@ export type SessionWorktree = {
   linesRemoved?: number;
 };
 
+export type SessionOwnership =
+  | { type: "automation" }
+  | { type: "worker"; parentSessionId: string | null };
+
 export type SessionsState = {
   sessions: Session[];
   worktrees: Record<string, SessionWorktree>;
-  /** Worker session ID to its parent session ID, or null for app-owned workers. */
-  workerSessionParents: Record<string, string | null>;
+  /** Durable ownership can precede, and outlive recreation of, a backing session. */
+  ownership: Record<string, SessionOwnership>;
 };
 
 export type TodoStatus = "pending" | "in_progress" | "done" | "blocked";
@@ -73,6 +77,7 @@ export type SessionStatus = "idle" | "thinking" | "compacting" | "reasoning" | "
 export type SessionCompletion = {
   status: "completed" | "failed" | "timed_out";
   response?: string;
+  error?: string;
 };
 
 export type SessionCanvas = {

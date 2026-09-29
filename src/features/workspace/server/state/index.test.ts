@@ -1,5 +1,4 @@
 import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import type { Automation } from "@automations/model";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import { createTestDatabase } from "@/server/database";
 import { addHyperSession, deleteHyperState } from "./hyperSessions";
@@ -44,10 +43,8 @@ function cleanup(sessionId: string): void {
   deleteHyperState(sessionId);
 }
 
-function snapshot(automations: Automation[] = []) {
+function snapshot() {
   return getWorkspaceState({
-    automations,
-    inboxEntries: [],
     customEditors: [],
     appDefinitions: [],
     apps: [],
@@ -144,21 +141,6 @@ describe("workspace state", () => {
     expect((await snapshot()).sessionStates[id]).toBeUndefined();
   });
 
-  test("snapshot composes durable automation definitions", async () => {
-    const automation: Automation = {
-      id: "automation-a",
-      title: "Daily summary",
-      prompt: "Summarize repo status.",
-      model: { provider: "copilot", name: "gpt-5" },
-      cron: "0 9 * * *",
-      createdAt: "2026-02-14T00:00:00.000Z",
-      updatedAt: "2026-02-14T00:00:00.000Z",
-      nextRunAt: "2026-02-14T09:00:00.000Z",
-    };
-
-    expect((await snapshot([automation])).automations).toEqual([automation]);
-  });
-
   test("activity statuses broadcast only real transitions", () => {
     const sessionId = `workspace-status-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));
@@ -184,6 +166,7 @@ describe("workspace state", () => {
 
   test("snapshots and broadcasts worker links", async () => {
     const worker = {
+      createdAt: new Date(0).toISOString(),
       type: "file" as const,
       sessionId: `artifact-worker-${crypto.randomUUID()}`,
       ephemeral: true,

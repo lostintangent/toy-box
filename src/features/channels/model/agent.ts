@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { modelConfigurationSchema } from "@providers/model";
+import { hasChanges } from "./changes";
 
 const durableIdSchema = z.string().trim().min(1).max(255);
 export const agentNameSchema = z.string().trim().min(1).max(80);
@@ -43,6 +44,9 @@ export const CHANNEL_LEAD_PROFILE = {
   },
 } as const;
 
+/** The name shown for an agent that has since been removed from its Channel. */
+export const DELETED_AGENT_NAME = "Deleted agent";
+
 export const createChannelMemberInputSchema = z
   .object({
     channelId: durableIdSchema,
@@ -52,32 +56,31 @@ export const createChannelMemberInputSchema = z
   })
   .strict();
 
-export const updateAgentInputSchema = z
+const channelMemberChangesSchema = z
   .object({
-    agentId: durableIdSchema,
     name: agentNameSchema.optional(),
     role: agentRoleSchema.optional(),
     model: modelConfigurationSchema.nullable().optional(),
-  })
-  .strict()
-  .refine(
-    ({ name, role, model }) => name !== undefined || role !== undefined || model !== undefined,
-    { message: "At least one agent field must be updated." },
-  );
-
-export const selfUpdateAgentInputSchema = z
-  .object({
-    role: agentRoleSchema.optional(),
     avatar: agentAvatarSchema.optional(),
   })
-  .strict()
-  .refine(({ role, avatar }) => role !== undefined || avatar !== undefined, {
+  .strict();
+export type ChannelMemberChanges = z.output<typeof channelMemberChangesSchema>;
+
+export const updateChannelMemberInputSchema = channelMemberChangesSchema
+  .omit({ avatar: true })
+  .extend({ agentId: durableIdSchema })
+  .refine(({ agentId: _agentId, ...changes }) => hasChanges(changes), {
+    message: "At least one member field must be updated.",
+  });
+
+export const selfUpdateChannelMemberInputSchema = channelMemberChangesSchema
+  .pick({ role: true, avatar: true })
+  .refine(hasChanges, {
     message: "A role or avatar change is required.",
   });
 
 export type CreateChannelMemberInput = z.output<typeof createChannelMemberInputSchema>;
-export type UpdateAgentInput = z.output<typeof updateAgentInputSchema>;
-export type SelfUpdateAgentInput = z.output<typeof selfUpdateAgentInputSchema>;
+export type UpdateChannelMemberInput = z.output<typeof updateChannelMemberInputSchema>;
 
 type AgentMentionTextSegment =
   | { type: "text"; content: string }
@@ -118,6 +121,25 @@ export function agentMatchesMentionQuery(
   return [agentHandleFromName(agent.name), agent.name, agent.role ?? ""].some((value) =>
     value.toLowerCase().includes(normalized),
   );
+}
+
+const LEADING_MENTION = /^\s*@([a-z0-9][a-z0-9-]*)(?=[\s,:]|$)[\s,:]*/i;
+
+/**
+ * A message without the mentions it opens with, as agents address one another, so a header can name
+ * the addressees instead. They stay when one names no current agent or nothing follows them.
+ */
+export function withoutLeadingMentions(
+  content: string,
+  agents: readonly { name: string }[],
+): string {
+  const handles = new Set(["everyone", ...agents.map(({ name }) => agentHandleFromName(name))]);
+  let body = content;
+  for (let match = LEADING_MENTION.exec(body); match; match = LEADING_MENTION.exec(body)) {
+    if (!handles.has(match[1]!.toLowerCase())) return content;
+    body = body.slice(match[0].length);
+  }
+  return body || content;
 }
 
 export function splitAgentMentionText(content: string): AgentMentionTextSegment[] {

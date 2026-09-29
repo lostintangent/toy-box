@@ -6,11 +6,11 @@ import {
   channelIdentitySchema,
   createChannelMemberInputSchema,
   createChannelInputSchema,
+  editChannelInputSchema,
   markChannelReadInputSchema,
   postChannelMessageInputSchema,
   removeChannelMemberInputSchema,
-  renameChannelInputSchema,
-  updateAgentInputSchema,
+  updateChannelMemberInputSchema,
 } from "@channels/model";
 import * as channels from ".";
 
@@ -39,13 +39,13 @@ export const createChannelMember = createServerFn({ method: "POST" })
   .validator(zodValidator(createChannelMemberInputSchema))
   .handler(({ data }) => channels.createChannelMember(data));
 
-export const updateChannelAgent = createServerFn({ method: "POST" })
-  .validator(zodValidator(updateAgentInputSchema))
-  .handler(({ data }) => channels.updateChannelAgent(data));
+export const updateChannelMember = createServerFn({ method: "POST" })
+  .validator(zodValidator(updateChannelMemberInputSchema))
+  .handler(({ data }) => channels.updateChannelMember(data));
 
-export const renameChannel = createServerFn({ method: "POST" })
-  .validator(zodValidator(renameChannelInputSchema))
-  .handler(({ data }): Promise<Channel> => channels.renameChannel(data));
+export const editChannel = createServerFn({ method: "POST" })
+  .validator(zodValidator(editChannelInputSchema))
+  .handler(({ data }): Promise<Channel> => channels.editChannel(data));
 
 export const deleteChannel = createServerFn({ method: "POST" })
   .validator(zodValidator(channelIdentitySchema))

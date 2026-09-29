@@ -95,7 +95,7 @@ Custom editor definitions live under `~/.toy-box/editors/` and hydrate through s
 
 Sessions discovers artifact membership from the filesystem. Files observation reports affected session IDs; Sessions reads and publishes the current file list to active sessions through canonical events. Idle snapshots read the current directory. Workspace pane derivation turns those paths — and machine files the agent opened — into linked editor panes while keeping pane identity and edit mode stable across session updates. Eligible files can take focus when they first appear, but presentation policy remains separate from file state.
 
-Inbox entries store at most one artifact filename and own its directory. `InboxPane` can publish one selected Inbox artifact into its grid or pager, passing the entry ID and filename to the ordinary editor pane. Selecting the same row unlinks it and selecting another replaces it. Because the managed source session is not a sibling pane, the host supplies `SessionOverlay` so follow-up work uses the history that produced the artifact without exposing a separate session-management burden.
+Inbox entries reference at most one existing file beneath their Worker Session's artifacts directory. `InboxPane` publishes an artifact result as a linked editor, or a message/error result as a linked Session, keeping Inbox open. Artifact paths can include subdirectories. Selecting the same row unlinks it and selecting another replaces it. Because the managed source session is not a sibling pane, the host supplies `SessionOverlay` so follow-up work uses the history that produced the artifact without exposing a separate session-management burden.
 
 ## Boundaries and invariants
 

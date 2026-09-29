@@ -1,5 +1,6 @@
 import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
 import type { CopilotClient } from "@github/copilot-sdk";
+import type { SessionEvent } from "@sessions/model";
 import * as client from "./client";
 import { copilotProvider } from "./provider";
 
@@ -44,11 +45,14 @@ test("creation uses the canonical ID and initializes the working directory", asy
     createSession: async ({ sessionId }: { sessionId: string }) => ({
       sessionId,
       rpc: { metadata: { setWorkingDirectory } },
+      on: () => () => {},
     }),
   } as unknown as CopilotClient);
   onTestFinished(() => start.mockRestore());
 
+  const model = { provider: "copilot", name: "gpt-5.4-mini", reasoningEffort: "none" };
   const connection = await copilotProvider.create("public", {
+    model,
     directory: "/repo",
     allowUserQuestions: false,
     tools: [],
@@ -61,7 +65,81 @@ test("creation uses the canonical ID and initializes the working directory", asy
     id: "copilot",
     sessionId: "public",
   });
+  const events: SessionEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  expect(events).toEqual([{ type: "model_changed", model }]);
 });
+
+test("resume does not switch a model already applied by the SDK", async () => {
+  const setModel = mock(async () => {
+    throw new Error("The native switch rejects an explicit none effort");
+  });
+  const start = spyOn(client, "startCopilotClient").mockResolvedValue({
+    resumeSession: async () => ({
+      sessionId: "native",
+      rpc: {
+        model: { getCurrent: async () => ({ modelId: "gpt-5.4-mini", reasoningEffort: "none" }) },
+      },
+      setModel,
+    }),
+  } as unknown as CopilotClient);
+  onTestFinished(() => start.mockRestore());
+
+  await copilotProvider.resume(
+    { id: "public", provider: { id: "copilot", sessionId: "native" } },
+    {
+      model: { provider: "copilot", name: "gpt-5.4-mini", reasoningEffort: "none" },
+      directory: "/repo",
+      allowUserQuestions: false,
+      tools: [],
+      instructions: "",
+      skillDirectories: [],
+    },
+  );
+
+  expect(setModel).not.toHaveBeenCalled();
+});
+
+test.each([
+  ["model", { modelId: "gpt-6-sol", reasoningEffort: "max", contextTier: "long_context" }],
+  ["effort", { modelId: "gpt-6-luna", reasoningEffort: "low", contextTier: "long_context" }],
+  ["context tier", { modelId: "gpt-6-luna", reasoningEffort: "max", contextTier: "default" }],
+])(
+  "resume switches when the native %s differs from the requested configuration",
+  async (_, current) => {
+    const setModel = mock(async (_model: string, _options: object) => {});
+    const start = spyOn(client, "startCopilotClient").mockResolvedValue({
+      resumeSession: async () => ({
+        sessionId: "native",
+        rpc: { model: { getCurrent: async () => current } },
+        setModel,
+      }),
+    } as unknown as CopilotClient);
+    onTestFinished(() => start.mockRestore());
+
+    await copilotProvider.resume(
+      { id: "public", provider: { id: "copilot", sessionId: "native" } },
+      {
+        model: {
+          provider: "copilot",
+          name: "gpt-6-luna",
+          reasoningEffort: "max",
+          contextTier: "long_context",
+        },
+        directory: "/repo",
+        allowUserQuestions: false,
+        tools: [],
+        instructions: "",
+        skillDirectories: [],
+      },
+    );
+
+    expect(setModel).toHaveBeenCalledWith("gpt-6-luna", {
+      reasoningEffort: "max",
+      contextTier: "long_context",
+    });
+  },
+);
 
 test("read-only history preserves attachments and projector state across native pages", async () => {
   const read = mock(async ({ cursor }: { cursor?: string }) => ({

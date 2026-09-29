@@ -21,6 +21,10 @@ attachment bytes without activating the session.
 
 Copilot uses the Sessions-owned UUID as its native session ID.
 The registry persists the provider and resolves native identity for resume, history, and deletion.
+On resume, check the native model snapshot before calling `setModel`: some CLI versions ignore the
+resume override, while others apply it and can reject a redundant model switch. The applied model
+seeds the live Session stream at creation and resume; persisted `session.start` and `session.resume`
+events project those selections into historical replay.
 Explicit/automatic names and conversation-only rewind use native SDK RPCs.
 Skills include native discovery and the role-scoped bundled directories supplied by
 Sessions. Native permissions follow Toy Box's existing trusted-owner policy.

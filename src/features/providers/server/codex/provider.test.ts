@@ -1,5 +1,5 @@
 import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -109,8 +109,10 @@ test("history reads every stored turn page without acquiring the thread's writer
   expect(written).toEqual(["thread/read", "thread/turns/list", "thread/turns/list"]);
 });
 
-test("new and resumed threads expose native plans and the configured session skills", async () => {
+test("resumed threads apply the current workspace, model, and session skills", async () => {
   const root = await mkdtemp(join(tmpdir(), "toy-box-codex-skills-"));
+  const nextDirectory = join(root, "next");
+  await mkdir(nextDirectory);
   await Bun.write(
     join(root, "SKILL.md"),
     "---\nname: session-skill\ndescription: Session-specific skill\n---\n",
@@ -162,9 +164,16 @@ test("new and resumed threads expose native plans and the configured session ski
   const created = await codexProvider.create("public", configuration);
   connections.push(created);
   await created.disconnect();
-  connections.push(
-    await codexProvider.resume({ id: "public", provider: created.provider }, configuration),
+  const resumed = await codexProvider.resume(
+    { id: "public", provider: created.provider },
+    {
+      ...configuration,
+      directory: nextDirectory,
+      model: { provider: "codex", name: "next-model", reasoningEffort: "high" },
+    },
   );
+  connections.push(resumed);
+  await resumed.send({ role: "user", clientId: "next-message", content: "Continue" });
   const requests = written.filter(
     ({ method }) => method === "thread/start" || method === "thread/resume",
   );
@@ -184,8 +193,17 @@ test("new and resumed threads expose native plans and the configured session ski
     },
   ]);
   expect(requests[1]!.params).not.toHaveProperty("dynamicTools");
+  expect(requests[0]!.params.cwd).toBe(root);
+  expect(requests[1]!.params).toMatchObject({
+    cwd: nextDirectory,
+    model: "next-model",
+    config: { model_reasoning_effort: "high" },
+  });
+  expect(written.find(({ method }) => method === "turn/start")?.params).toMatchObject({
+    model: "next-model",
+    effort: "high",
+  });
   for (const { params } of requests) {
-    expect(params.cwd).toBe(root);
     expect(params.config).toMatchObject({
       "tools.update_plan.enabled": true,
       "features.default_mode_request_user_input": true,

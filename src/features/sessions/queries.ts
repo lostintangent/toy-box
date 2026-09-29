@@ -50,14 +50,17 @@ export function createEmptySessionsState(): SessionsState {
   return {
     sessions: [],
     worktrees: {},
-    workerSessionParents: {},
+    ownership: {},
   };
 }
 
 /** Exclude Worker backing Sessions while preserving their metadata for owning surfaces. */
 export function selectNonWorkerSessions(state: SessionsState): SessionsState["sessions"] {
-  if (Object.keys(state.workerSessionParents).length === 0) return state.sessions;
-  return state.sessions.filter(({ id }) => !Object.hasOwn(state.workerSessionParents, id));
+  return state.sessions.filter(({ id }) => state.ownership[id]?.type !== "worker");
+}
+
+export function selectAutomationSessionIds(state: SessionsState): string[] {
+  return Object.keys(state.ownership).filter((id) => state.ownership[id]?.type === "automation");
 }
 
 /** Cache skills by directory and session type; no directory means host-level discovery. */

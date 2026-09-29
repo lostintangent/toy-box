@@ -10,6 +10,8 @@ import {
 } from "@sessions/queryCache";
 import { providerQueries } from "@providers/queries";
 import { applyChannelListEvent } from "@channels/queryCache";
+import { applyAutomationListEvent } from "@automations/queryCache";
+import { applyInboxListEvent } from "@inbox/queryCache";
 import { areSettingsEqual, type Settings } from "./model/config/settings";
 import type { WorkspaceEvent } from "./model/events";
 import type { WorkspaceAction } from "./model/state/actions";
@@ -40,6 +42,8 @@ export function applyWorkspaceEvent(queryClient: QueryClient, event: WorkspaceEv
   recordWorkspaceQueryEvent(queryClient, event);
   applyWorkspaceEventToSessionQueries(queryClient, event);
   applyChannelListEvent(queryClient, event);
+  applyAutomationListEvent(queryClient, event);
+  applyInboxListEvent(queryClient, event);
   queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), (state) =>
     state ? reduceWorkspaceState(state, event) : state,
   );
@@ -89,7 +93,9 @@ export function updateWorkspaceSetting<Key extends keyof Settings>(
     .catch(() => repairWorkspaceStateQuery(queryClient));
 }
 
-export function invalidateWorkspaceStateQuery(queryClient: QueryClient): Promise<void> {
+export async function invalidateWorkspaceStateQuery(queryClient: QueryClient): Promise<void> {
+  // invalidateQueries alone can reuse an initial fetch that has no cached data yet.
+  await queryClient.cancelQueries({ queryKey: workspaceQueries.stateKey(), exact: true });
   return queryClient.invalidateQueries({ queryKey: workspaceQueries.stateKey(), exact: true });
 }
 

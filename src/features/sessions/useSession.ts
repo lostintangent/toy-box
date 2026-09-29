@@ -317,7 +317,7 @@ export function useSession(
     if (model) {
       sessionRef.current = { ...sessionRef.current, model };
     }
-    applyWorkspaceEvent(queryClient, { type: "session.running", sessionId });
+    applyWorkspaceEvent(queryClient, { type: "session.running", sessionId, at: Date.now() });
     applyEvent({
       type: "user_message",
       content: message.content,

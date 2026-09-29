@@ -1,9 +1,12 @@
+import { createStoredChannel } from "@channels/server/testFixtures";
 import { describe, expect, mock, onTestFinished, test } from "bun:test";
 import { createTestDatabase } from "@/server/database";
 import type { Session } from "@sessions/model";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
 import { SettingsDatabase } from "@workspace/server/state/settings";
 import { applySessionState, deleteSessionState } from "@workspace/server/state/sessions";
+import { subscribeWorkspaceEvents } from "@workspace/server/events";
+import type { WorkspaceEvent } from "@workspace/model/events";
 
 let currentDb: Bun.SQL | undefined;
 
@@ -17,8 +20,8 @@ mock.module("@/server/database", () => ({
 
 const { AutomationDatabase } = await import("@automations/server/database");
 const { ChannelDatabase } = await import("@channels/server/database");
-const { createInboxEntry } = await import("@inbox/server/database");
-const { registerWorkerSession, unregisterWorkerSession } = await import("@workers/server/database");
+const { registerWorkerSession, unregisterWorkerSession, WorkerDatabase } =
+  await import("@workers/server/database");
 const { addHyperSession, deleteHyperState } = await import("@workspace/server/state/hyperSessions");
 const { detachManagedSession, readSessionCatalog, resolveSessionType } =
   await import("./managedSessions");
@@ -28,6 +31,15 @@ async function openSessionTypeTestDatabase(): Promise<void> {
   onTestFinished(async () => {
     await currentDb?.close();
     currentDb = undefined;
+  });
+}
+
+function createInboxWorker(sessionId: string) {
+  return new WorkerDatabase(currentDb!).create({
+    type: "inbox",
+    sessionId,
+    createdAt: new Date(0).toISOString(),
+    ephemeral: false,
   });
 }
 
@@ -49,15 +61,17 @@ describe("session type resolution", () => {
     const hyperId = `toy-box-${crypto.randomUUID()}`;
     const workerId = `toy-box-${crypto.randomUUID()}`;
     const channelWorkerId = `toy-box-${crypto.randomUUID()}`;
-    await createInboxEntry(inboxId);
+    await createInboxWorker(inboxId);
     addHyperSession(hyperId);
     await registerWorkerSession({
+      createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: workerId,
       appId: "app-a",
       ephemeral: true,
     });
     await registerWorkerSession({
+      createdAt: new Date(0).toISOString(),
       type: "channel",
       channelId: "channel",
       sessionId: channelWorkerId,
@@ -68,22 +82,52 @@ describe("session type resolution", () => {
     onTestFinished(() => deleteHyperState(hyperId));
 
     expect(await resolveSessionType(automation.id)).toBe("automation");
-    expect(await resolveSessionType(inboxId)).toBe("inbox");
+    expect(await resolveSessionType(inboxId)).toBe("worker");
     expect(await resolveSessionType(hyperId)).toBe("hyper");
     expect(await resolveSessionType(workerId)).toBe("worker");
     expect(await resolveSessionType(channelWorkerId)).toBe("worker");
+    expect(await readSessionCatalog(async () => [[], {}])).toEqual({
+      sessions: [],
+      worktrees: {},
+      ownership: {
+        [automation.id]: { type: "automation" },
+        [inboxId]: { type: "worker", parentSessionId: null },
+        [workerId]: { type: "worker", parentSessionId: null },
+        [channelWorkerId]: { type: "worker", parentSessionId: null },
+      },
+    });
   });
 
   test("rejects conflicting managed records", async () => {
     await openSessionTypeTestDatabase();
     const sessionId = `toy-box-${crypto.randomUUID()}`;
-    await createInboxEntry(sessionId);
+    await createInboxWorker(sessionId);
     addHyperSession(sessionId);
     onTestFinished(() => deleteHyperState(sessionId));
 
     expect(resolveSessionType(sessionId)).rejects.toThrow(
-      `Session ${sessionId} has conflicting types: inbox, hyper`,
+      `Session ${sessionId} has conflicting types: worker, hyper`,
     );
+  });
+
+  test("catalog and runtime resolution reject the same conflicting durable owners", async () => {
+    await openSessionTypeTestDatabase();
+    const automation = await new AutomationDatabase(currentDb!).create({
+      title: "Conflicting owner",
+      prompt: "Run",
+      model: { provider: "copilot", name: "gpt-5" },
+      cron: "0 9 * * *",
+    });
+    await registerWorkerSession({
+      createdAt: new Date(0).toISOString(),
+      type: "session",
+      sessionId: automation.id,
+      parentSessionId: "parent",
+      ephemeral: false,
+    });
+    const message = `Session ${automation.id} has conflicting types: automation, worker`;
+    await expect(resolveSessionType(automation.id)).rejects.toThrow(message);
+    await expect(readSessionCatalog(async () => [[], {}])).rejects.toThrow(message);
   });
 });
 
@@ -96,10 +140,11 @@ describe("Session catalog projection", () => {
       model: { provider: "copilot", name: "gpt-5" },
       cron: "0 9 * * *",
     });
-    await createInboxEntry("old-inbox");
+    await createInboxWorker("old-inbox");
     addHyperSession("old-hyper");
     onTestFinished(() => deleteHyperState("old-hyper"));
     await registerWorkerSession({
+      createdAt: new Date(0).toISOString(),
       type: "channel",
       channelId: "channel",
       sessionId: "old-channel-member",
@@ -123,7 +168,11 @@ describe("Session catalog projection", () => {
     expect(catalog.sessions.map(({ id }) => id).sort()).toEqual(
       [...required, "new-pin", ...history.slice(10).map(({ id }) => id)].sort(),
     );
-    expect(catalog.workerSessionParents).toEqual({ "old-channel-member": null });
+    expect(catalog.ownership).toEqual({
+      [automation.id]: { type: "automation" },
+      "old-inbox": { type: "worker", parentSessionId: null },
+      "old-channel-member": { type: "worker", parentSessionId: null },
+    });
     // Resource ownership is independent of the browsing window.
     expect(catalog.worktrees["history-0"]).toEqual(worktree);
   });
@@ -132,7 +181,7 @@ describe("Session catalog projection", () => {
     await openSessionTypeTestDatabase();
     const protectedIds = ["old-running", "old-waiting", "old-unread", "old-prompt"];
     for (const [index, status] of (["running", "waiting", "unread"] as const).entries()) {
-      applySessionState({ type: `session.${status}`, sessionId: protectedIds[index]! });
+      applySessionState({ type: `session.${status}`, sessionId: protectedIds[index]!, at: 1 });
     }
     applySessionState({
       type: "session.prompt.drafted",
@@ -173,7 +222,9 @@ describe("Session catalog projection", () => {
     async (change) => {
       await openSessionTypeTestDatabase();
       const admit = async () => {
+        await createInboxWorker("inbox");
         await registerWorkerSession({
+          createdAt: new Date(0).toISOString(),
           type: "channel",
           channelId: "channel",
           sessionId: "channel-worker",
@@ -182,6 +233,7 @@ describe("Session catalog projection", () => {
           metadata: { seenThrough: 0 },
         });
         await registerWorkerSession({
+          createdAt: new Date(0).toISOString(),
           type: "session",
           sessionId: "worker",
           parentSessionId: "parent",
@@ -189,7 +241,7 @@ describe("Session catalog projection", () => {
         });
       };
       if (change === "deletion") await admit();
-      const sessions = ["ordinary", "channel-worker", "worker"].map((sessionId) => ({
+      const sessions = ["ordinary", "channel-worker", "worker", "inbox"].map((sessionId) => ({
         id: sessionId,
         createdAt: new Date(0),
         updatedAt: new Date(0),
@@ -203,6 +255,7 @@ describe("Session catalog projection", () => {
         } else {
           await unregisterWorkerSession("channel-worker");
           await unregisterWorkerSession("worker");
+          await new WorkerDatabase(currentDb!).delete("inbox");
         }
         return [sessions, { "channel-worker": worktree, worker: worktree }];
       });
@@ -210,7 +263,11 @@ describe("Session catalog projection", () => {
       expect(catalog).toEqual({
         sessions,
         worktrees: { "channel-worker": worktree, worker: worktree },
-        workerSessionParents: { "channel-worker": null, worker: "parent" },
+        ownership: {
+          "channel-worker": { type: "worker", parentSessionId: null },
+          worker: { type: "worker", parentSessionId: "parent" },
+          inbox: { type: "worker", parentSessionId: null },
+        },
       });
     },
   );
@@ -226,15 +283,16 @@ function catalogSession(id: string, updatedAt: number): Session {
   };
 }
 
-test("detaching a never-started Channel Agent removes its Worker", async () => {
+test("detaching a Channel Agent removes its Worker and records its departure", async () => {
   await openSessionTypeTestDatabase();
   const channels = new ChannelDatabase(currentDb!);
-  const channel = await channels.createChannel({
+  const channel = await createStoredChannel(channels, {
     name: "Dormant team",
     purpose: "Coordinate a dormant team.",
     model: { provider: "copilot", name: "gpt-5.5" },
   });
   const { member } = await channels.createMember({
+    createdAt: new Date(0).toISOString(),
     type: "channel",
     channelId: channel.id,
     sessionId: "dormant-reviewer",
@@ -250,4 +308,22 @@ test("detaching a never-started Channel Agent removes its Worker", async () => {
     { type: "member_joined", member },
     { type: "member_left", member },
   ]);
+});
+
+test("shared teardown publishes one Inbox deletion even when callers detach concurrently", async () => {
+  await openSessionTypeTestDatabase();
+  const sessionId = crypto.randomUUID();
+  await createInboxWorker(sessionId);
+  const events: WorkspaceEvent[] = [];
+  onTestFinished(
+    subscribeWorkspaceEvents((event) => {
+      if (event.type === "inbox.entry.deleted" && event.entryId === sessionId) events.push(event);
+    }),
+  );
+
+  await Promise.all([detachManagedSession(sessionId), detachManagedSession(sessionId)]);
+  await detachManagedSession(sessionId);
+
+  expect(await new WorkerDatabase(currentDb!).get(sessionId)).toBeNull();
+  expect(events).toEqual([{ type: "inbox.entry.deleted", entryId: sessionId }]);
 });

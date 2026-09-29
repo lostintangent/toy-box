@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Pencil, Pin, PinOff, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { FolderOpen, Pencil, Pin, PinOff, Trash2 } from "lucide-react";
 import { useReducedMotionConfig } from "motion/react";
 import { Typewriter } from "motion-plus/react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/shared/ui/dropdown-menu";
@@ -16,6 +16,7 @@ type SessionListItemProps = {
   onSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
   onPinToggle: () => void;
   onRename: () => void;
+  onBrowseDirectory: (directory: string) => void;
   onDelete: () => void;
   isActive?: boolean;
   isPinned?: boolean;
@@ -27,6 +28,7 @@ export function SessionListItem({
   onSelect,
   onPinToggle,
   onRename,
+  onBrowseDirectory,
   onDelete,
   isActive = false,
   isPinned = false,
@@ -50,7 +52,7 @@ export function SessionListItem({
     onSelect(session.id, event.metaKey || event.ctrlKey);
   };
 
-  const showBadges = Boolean(session.context?.directory);
+  const directory = session.context?.directory;
 
   return (
     <>
@@ -60,11 +62,22 @@ export function SessionListItem({
         title={sessionLabel}
         titleContent={<SessionListItemTitle title={sessionLabel} loading={isTitleLoading} />}
         icon={isPinned ? <Pin className="size-3.5 shrink-0 text-accent" aria-hidden /> : undefined}
-        time={!isDraft && <RelativeTime date={session.updatedAt} />}
+        time={
+          !isDraft &&
+          (activity.waiting ? (
+            <span className="italic text-amber-600/65 dark:text-amber-400/65">
+              Waiting for input
+            </span>
+          ) : activity.running && activity.since !== undefined ? (
+            <RunningTime since={activity.since} />
+          ) : (
+            <RelativeTime date={session.updatedAt} />
+          ))
+        }
         badge={
-          showBadges && (
+          directory && (
             <SessionMetadataBadges
-              cwd={session.context?.directory}
+              cwd={directory}
               repository={session.context?.repository}
               gitRoot={session.context?.gitRoot}
               isWorktree={isWorktree}
@@ -81,6 +94,12 @@ export function SessionListItem({
               <Pencil className="h-3.5 w-3.5" />
               Rename session
             </DropdownMenuItem>
+            {directory && (
+              <DropdownMenuItem onClick={() => onBrowseDirectory(directory)}>
+                <FolderOpen className="h-3.5 w-3.5" />
+                Browse files
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
               <Trash2 className="h-3.5 w-3.5" />
@@ -103,6 +122,33 @@ export function SessionListItem({
         />
       )}
     </>
+  );
+}
+
+/** "Running 12s", "Running 12m", "Running 1h", "Running 1h 5m". Clock skew clamps to "Running 0s". */
+export function formatRunningTime(elapsedMs: number): string {
+  const seconds = Math.floor(Math.max(0, elapsedMs) / 1000);
+  if (seconds < 60) return `Running ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `Running ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `Running ${hours}h ${rest}m` : `Running ${hours}h`;
+}
+
+/** Re-renders on each boundary of the unit it displays: seconds for the first minute, then minutes. */
+function RunningTime({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const elapsed = Math.max(0, Date.now() - since);
+    const unit = elapsed < 60_000 ? 1000 : 60_000;
+    const timer = setTimeout(() => setNow(Date.now()), unit - (elapsed % unit));
+    return () => clearTimeout(timer);
+  }, [now, since]);
+  return (
+    <span className="italic" suppressHydrationWarning>
+      {formatRunningTime(now - since)}
+    </span>
   );
 }
 

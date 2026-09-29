@@ -1,6 +1,6 @@
-import { Loader2 } from "lucide-react";
-import { Streamdown } from "streamdown";
+import { Markdown } from "@/shared/ui/markdown";
 import { StickToBottom } from "use-stick-to-bottom";
+import { RunningIndicator } from "@/shared/ui/running-indicator";
 import type { SessionStatus } from "../../model";
 
 export function StatusIndicator({ status }: { status: SessionStatus }) {
@@ -21,7 +21,7 @@ export function StatusIndicator({ status }: { status: SessionStatus }) {
 
   return (
     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-      <Loader2 className="h-4 w-4 animate-spin" />
+      <RunningIndicator className="h-4 w-4" />
       <span className="italic">{getStatusText()}</span>
     </div>
   );
@@ -34,12 +34,13 @@ export function ReasoningDisplay({ content }: { content: string }) {
       resize="smooth"
     >
       <StickToBottom.Content className="p-3" scrollClassName="!h-auto max-h-32">
-        <Streamdown
+        <Markdown
+          mode="streaming"
           isAnimating={true}
-          className="text-xs text-muted-foreground italic [&_p]:my-1 [&_pre]:my-1 [&_ul]:my-1 [&_ol]:my-1"
+          className="text-xs text-muted-foreground italic"
         >
           {content}
-        </Streamdown>
+        </Markdown>
       </StickToBottom.Content>
     </StickToBottom>
   );

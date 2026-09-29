@@ -9,6 +9,7 @@ const defaultLayout = {
   panels: {},
   hyperOpen: false,
   hyperPosition: { x: 24, y: 24 },
+  channelOverviewPinned: false,
 };
 
 function cookieFor(value: unknown): string {
@@ -36,6 +37,7 @@ describe("workspace layout", () => {
       panels: { channels: true },
       hyperOpen: true,
       hyperPosition: { x: 120, y: 80 },
+      channelOverviewPinned: true,
     });
 
     expect(cookieValue(cookie)).toEqual({
@@ -46,6 +48,7 @@ describe("workspace layout", () => {
       panels: { channels: true },
       hyperOpen: true,
       hyperPosition: { x: 120, y: 80 },
+      channelOverviewPinned: true,
     });
     expect(readWorkspaceLayout(`other=value; ${cookie}`)).toEqual({
       sidebarWidth: 320,
@@ -55,6 +58,7 @@ describe("workspace layout", () => {
       panels: { channels: true },
       hyperOpen: true,
       hyperPosition: { x: 120, y: 80 },
+      channelOverviewPinned: true,
     });
   });
 

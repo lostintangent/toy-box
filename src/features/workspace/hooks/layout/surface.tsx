@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { sessionQueries } from "@sessions/queries";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { selectAutomationSessionIds, sessionQueries } from "@sessions/queries";
 import { useEffect, useRef, type ReactNode } from "react";
 import { createAtom, createStoreContext } from "@tanstack/react-store";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
@@ -35,7 +35,11 @@ const { StoreProvider, useStoreContext: useWorkspaceSurface } = createStoreConte
     panes: readonly WorkspacePane[];
     openApp: (appId: string) => void;
     openFile?: (path: string) => void;
-    toggleFile?: (file: WorkspaceFile) => void;
+    /** Brings a file's pane forward, opening the file when it isn't showing. */
+    revealFile?: (file: WorkspaceFile) => void;
+    /** Whether Channel overviews stay pinned open, where the surface remembers it. */
+    channelOverviewPinned?: boolean;
+    setChannelOverviewPinned?: (pinned: boolean) => void;
   }
 >();
 export { useWorkspaceSurface };
@@ -54,23 +58,28 @@ export function WorkspaceSurfaceProvider({
   panes,
   onOpenApp,
   onOpenFile,
-  onToggleFile,
+  onRevealFile,
+  channelOverviewPinned,
+  onChannelOverviewPinnedChange,
   children,
 }: {
   surface: WorkspaceSurface;
   panes: WorkspacePane[];
   onOpenApp: (appId: string) => void;
   onOpenFile?: (path: string) => void;
-  onToggleFile?: (file: WorkspaceFile) => void;
+  onRevealFile?: (file: WorkspaceFile) => void;
+  channelOverviewPinned?: boolean;
+  onChannelOverviewPinnedChange?: (pinned: boolean) => void;
   children: ReactNode;
 }) {
   const workspaceSurface = workspaceSurfaces[surface];
   const autoFocusArtifacts = useWorkspaceSelector(
     (workspace) => workspace.settings.autoFocusArtifacts,
   );
-  const automationSessionIds = useWorkspaceSelector((workspace) =>
-    workspace.automations.map(({ id }) => id),
-  );
+  const { data: automationSessionIds } = useSuspenseQuery({
+    ...sessionQueries.state(),
+    select: selectAutomationSessionIds,
+  });
   const { data: initialEditorPaneIds = [] } = useQuery({
     ...sessionQueries.state(),
     select: (state) =>
@@ -123,7 +132,9 @@ export function WorkspaceSurfaceProvider({
         panes,
         openApp: onOpenApp,
         openFile: onOpenFile,
-        toggleFile: onToggleFile,
+        revealFile: onRevealFile,
+        channelOverviewPinned,
+        setChannelOverviewPinned: onChannelOverviewPinnedChange,
       }}
     >
       {children}

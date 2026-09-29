@@ -7,7 +7,7 @@ import { modelConfigurationSchema } from "@providers/model";
 import { attachmentsSchema } from "@/shared/attachments/model";
 import { sessionSystemMessageSchema } from "./systemMessages";
 
-export const sessionTypeSchema = z.enum(["standard", "automation", "inbox", "hyper", "worker"]);
+export const sessionTypeSchema = z.enum(["standard", "automation", "hyper", "worker"]);
 
 export type SessionType = z.infer<typeof sessionTypeSchema>;
 

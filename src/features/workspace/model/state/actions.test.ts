@@ -13,8 +13,6 @@ describe("workspace action protocol", () => {
     expect(
       workspaceActionSchema.safeParse({ type: "inbox.entry.deleted", entryId: "entry-1" }).success,
     ).toBe(false);
-    expect(
-      workspaceActionSchema.safeParse({ type: "inbox.entry.upserted", entry: {} }).success,
-    ).toBe(false);
+    expect(workspaceActionSchema.safeParse({ type: "inbox.changed" }).success).toBe(false);
   });
 });

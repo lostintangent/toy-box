@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from "react";
 import { code } from "@streamdown/code";
 import { BookOpenText, FileCode2, GitFork, Pencil, Trash2 } from "lucide-react";
-import { Streamdown } from "streamdown";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/shared/ui/sheet";
+import { Markdown } from "@/shared/ui/markdown";
 import {
   activeOptionRelationships,
   decisionOriginForRecord,
@@ -30,7 +30,6 @@ import {
   type PlanStep,
   type PlanStepUpdate,
 } from "../model/index";
-import { BriefMarkdownText } from "../MarkdownText";
 import { BriefExhibitEditor } from "./ExhibitEditor";
 import { BriefFindingEditor } from "./FindingEditor";
 import { PlanStepEditor } from "./PlanStepEditor";
@@ -361,13 +360,9 @@ function EntityDetails({
       <>
         {entity.finding.whyItMatters && (
           <InspectorSection title="Why it matters">
-            <Streamdown
-              mode="static"
-              plugins={{ code }}
-              className="space-y-1 text-[11.5px] leading-relaxed [&_ol]:my-1 [&_p]:my-0 [&_pre]:my-1 [&_ul]:my-1"
-            >
+            <Markdown plugins={{ code }} className="space-y-1 text-[11.5px] leading-relaxed">
               {entity.finding.whyItMatters}
-            </Streamdown>
+            </Markdown>
           </InspectorSection>
         )}
         {entity.finding.exhibit && (
@@ -425,7 +420,7 @@ function EntityDetails({
     return (
       <>
         <InspectorSection title="Done when">
-          <BriefMarkdownText>{entity.step.doneWhen}</BriefMarkdownText>
+          <Markdown className="space-y-1.5">{entity.step.doneWhen}</Markdown>
         </InspectorSection>
         <FieldValues fields={entity.section.fields} values={entity.step.values} />
         {onUpdatePlanStep && <EditButton onClick={onEdit} />}
@@ -576,7 +571,7 @@ function FieldValues({
           </dt>
           <dd className="mt-0.5 text-[11.5px]">
             {field.kind === "text" ? (
-              <BriefMarkdownText>{fieldValueText(field, values[field.id])}</BriefMarkdownText>
+              <Markdown className="space-y-1.5">{fieldValueText(field, values[field.id])}</Markdown>
             ) : (
               fieldValueText(field, values[field.id])
             )}

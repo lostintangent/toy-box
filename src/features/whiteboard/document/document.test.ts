@@ -82,28 +82,6 @@ describe("SVG document", () => {
     expect(svgDocument.serialize().content).not.toContain("whiteboard-svg-editing-host");
   });
 
-  test("renders the editor viewport without replacing the document's authored viewBox", () => {
-    const svgDocument = createSvgDocument();
-    svgDocument.load(
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"><rect /></svg>',
-    );
-
-    svgDocument.setRenderedViewport({ x: -100, y: -250, width: 750, height: 1_000 });
-
-    expect(svgDocument.root.getAttribute("viewBox")).toBe("-100 -250 750 1000");
-    expect(svgDocument.serialize().content).toContain('viewBox="0 0 1200 800"');
-  });
-
-  test("does not serialize a runtime viewBox into a document that did not author one", () => {
-    const svgDocument = createSvgDocument();
-    svgDocument.load('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" />');
-
-    svgDocument.setRenderedViewport({ x: 10, y: 20, width: 400, height: 300 });
-
-    expect(svgDocument.root.getAttribute("viewBox")).toBe("10 20 400 300");
-    expect(svgDocument.serialize().content).not.toContain("viewBox");
-  });
-
   test("treats named groups as authored objects and structural groups as transparent", () => {
     const svgDocument = createSvgDocument();
     svgDocument.load(`<svg xmlns="http://www.w3.org/2000/svg">

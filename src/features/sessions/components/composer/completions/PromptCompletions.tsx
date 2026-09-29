@@ -9,7 +9,7 @@ import { getPathBasename, getPathDirname } from "@files/model/paths";
 import { fileQueries } from "@files/queries";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { Button } from "@/shared/ui/button";
-import { MetadataBadge } from "@/shared/ui/metadata-badge";
+import { Badge } from "@/shared/ui/badge";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { useCompletions } from "@/shared/composers/completions/useCompletions";
 import { cn } from "@/shared/utils";
@@ -145,7 +145,7 @@ function SkillSuggestion({
           </ScrollableFade>
         )}
       </span>
-      {showGlobalBadge && skill.type === "global" && <MetadataBadge>Global</MetadataBadge>}
+      {showGlobalBadge && skill.type === "global" && <Badge variant="metadata">Global</Badge>}
       {path && openFile && (
         <Button
           type="button"

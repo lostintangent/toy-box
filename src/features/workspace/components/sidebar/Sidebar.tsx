@@ -19,7 +19,7 @@ import {
 import { SessionList } from "@sessions/components/sidebar/SessionList";
 import { FileBrowserDialog } from "@files/components/browser/FileBrowserDialog";
 import { ChannelsPanel } from "@channels/components/sidebar/ChannelsPanel";
-import { CreateChannelDialog } from "@channels/components/sidebar/CreateChannelDialog";
+import { ChannelDialog } from "@channels/components/ChannelDialog";
 import type { SidebarPanels } from "@workspace/model/config/layoutPrefs";
 
 /**
@@ -119,7 +119,8 @@ export function Sidebar({
   className,
 }: SidebarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [browseOpen, setBrowseOpen] = useState(false);
+  // The file browser opens at a row's directory, or wherever it defaults from the footer.
+  const [browsing, setBrowsing] = useState<{ directory?: string }>();
   const [createAutomationOpen, setCreateAutomationOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
 
@@ -179,6 +180,7 @@ export function Sidebar({
             onSessionSelect={onSessionSelect}
             onSessionRename={onSessionRename}
             onSessionDelete={onSessionDelete}
+            onBrowseDirectory={(directory) => setBrowsing({ directory })}
             openSessionIds={openSessionIds}
             worktreeSessionIds={worktreeSessionIds}
             emptyMessage={emptyMessage}
@@ -189,6 +191,7 @@ export function Sidebar({
             onExpandedChange={(expanded) => onPanelExpanded("channels", expanded)}
             openChannelIds={openChannelIds}
             onChannelOpen={onChannelOpen}
+            onBrowseDirectory={(directory) => setBrowsing({ directory })}
             onCreate={() => setCreateChannelOpen(true)}
           />
 
@@ -217,7 +220,7 @@ export function Sidebar({
               <SettingsButton onOpenSettings={() => setSettingsOpen(true)} />
             )
           }
-          onBrowseFiles={() => setBrowseOpen(true)}
+          onBrowseFiles={() => setBrowsing({})}
           onToggleHyper={onToggleHyper}
           isHyperOpen={isHyperOpen}
           onOpenInbox={onOpenInbox}
@@ -232,7 +235,7 @@ export function Sidebar({
           collapsed={collapsed}
           className={layerClass(collapsed)}
           {...creationActions}
-          onBrowseFiles={() => setBrowseOpen(true)}
+          onBrowseFiles={() => setBrowsing({})}
           onToggleHyper={onToggleHyper}
           isHyperOpen={isHyperOpen}
           onToggleTerminal={onToggleTerminal}
@@ -255,8 +258,11 @@ export function Sidebar({
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       <FileBrowserDialog
-        open={browseOpen}
-        onOpenChange={setBrowseOpen}
+        open={browsing !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setBrowsing(undefined);
+        }}
+        initialPath={browsing?.directory}
         title="Open a file"
         onOpenFile={onOpenFile}
       />
@@ -264,7 +270,7 @@ export function Sidebar({
       {createAutomationOpen && <AutomationDialog onOpenChange={setCreateAutomationOpen} />}
 
       {createChannelOpen && (
-        <CreateChannelDialog
+        <ChannelDialog
           onOpenChange={setCreateChannelOpen}
           onCreated={(channelId) => onChannelOpen(channelId, false)}
         />

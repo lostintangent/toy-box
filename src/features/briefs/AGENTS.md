@@ -115,8 +115,10 @@ plan targets. Removing a finding prunes every `basedOn` reference.
 
 ### Description
 
-Markdown sections and list sections describe the spec literally. Their strings
-and exhibit descriptions render as Markdown through Streamdown. Markdown is
+Markdown sections and list sections describe the spec literally. Their bodies,
+record text fields, and plan criteria use shared block Markdown so authored
+paragraphs remain distinct. Concise finding statements use InlineMarkdown;
+labels in buttons use only phrasing, not block structures. Markdown is
 presentation syntax over ordinary non-empty strings, not a separate brief text
 model.
 

@@ -1,6 +1,6 @@
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { createFileRoute, useNavigate, useRouterState, ClientOnly } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createIsomorphicFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { useState, useEffect, useDeferredValue, lazy, Suspense } from "react";
@@ -54,6 +54,8 @@ import { sessionQueries } from "@sessions/queries";
 import { providerQueries } from "@providers/queries";
 import { useHasModels } from "@providers/useModels";
 import { channelQueries } from "@channels/queries";
+import { automationQueries } from "@automations/queries";
+import { inboxQueries } from "@inbox/queries";
 const Terminal = lazy(() =>
   import("@terminal/components/Terminal").then((m) => ({
     default: m.Terminal,
@@ -93,6 +95,8 @@ export const Route = createFileRoute("/")({
     await Promise.all([
       context.queryClient.ensureQueryData(sessionQueries.state()),
       context.queryClient.ensureQueryData(channelQueries.list()),
+      context.queryClient.ensureQueryData(automationQueries.list()),
+      context.queryClient.ensureQueryData(inboxQueries.list()),
       context.queryClient.ensureQueryData(providerQueries.catalog()),
     ]);
     return loadWorkspaceLayout();
@@ -223,12 +227,11 @@ function WorkspacePage() {
     );
   }
 
-  function toggleFile(file: WorkspaceFile) {
-    if (openFiles.some((open) => workspaceFileId(open) === workspaceFileId(file))) {
-      closeFile(file);
-    } else {
-      openWorkspaceFile(file);
-    }
+  // Opening a file that's already showing brings its pane forward instead.
+  function revealFile(file: WorkspaceFile) {
+    const paneId = createEditorPaneId(file);
+    if (openPanes.some(({ id }) => id === paneId)) focusWorkspaceSurfacePane("main", paneId);
+    else openWorkspaceFile(file);
   }
 
   const primarySelectedSessionId = selectedSessionIds[0];
@@ -283,37 +286,30 @@ function WorkspacePage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(initialLayout.sidebarCollapsed);
   const [isTerminalOpen, setIsTerminalOpen] = useState(initialLayout.terminalOpen);
   const [sidebarPanels, setSidebarPanels] = useState<SidebarPanels>(initialLayout.panels);
+  const [isChannelOverviewPinned, setIsChannelOverviewPinned] = useState(
+    initialLayout.channelOverviewPinned,
+  );
 
   const hasModels = useHasModels();
   const { data: channelList } = useQuery(channelQueries.list());
   const channels = channelList?.channels;
-  const { apps, automations, hyperSessionIds, inboxSessionIds, pinnedSessionIds } =
-    useWorkspaceSelector((workspace) => ({
-      apps: workspace.apps,
-      automations: workspace.automations,
-      hyperSessionIds: workspace.hyperSessionIds,
-      inboxSessionIds: workspace.inboxEntries.map((entry) => entry.id),
-      pinnedSessionIds: workspace.settings.pinnedSessionIds,
-    }));
+  const { data: automations } = useSuspenseQuery(automationQueries.list());
+  const { apps, hyperSessionIds, pinnedSessionIds } = useWorkspaceSelector((workspace) => ({
+    apps: workspace.apps,
+    hyperSessionIds: workspace.hyperSessionIds,
+    pinnedSessionIds: workspace.settings.pinnedSessionIds,
+  }));
   useWorkspaceSync(workspaceRevision);
   const {
     sessions,
+    ownership,
     isLoading: isSessionsLoading,
     worktreeSessionIds,
     createSession,
   } = useSessions({
-    hiddenSessionIds: [
-      ...hyperSessionIds,
-      ...automations.map((automation) => automation.id),
-      ...inboxSessionIds,
-    ],
+    hiddenSessionIds: hyperSessionIds,
   });
 
-  const managedSessionIds = new Set([
-    ...automations.map((automation) => automation.id),
-    ...inboxSessionIds,
-    ...hyperSessionIds,
-  ]);
   function handleCloseVisibleSession(sessionId: string) {
     if (!selectedSessionIds.includes(sessionId)) return;
     updateSelectedSessionIds(selectedSessionIds.filter((id) => id !== sessionId));
@@ -468,7 +464,9 @@ function WorkspacePage() {
   const deferredFilter = useDeferredValue(filter.query);
 
   // Managed sessions are presented by their automation, inbox, hyper, or parent surface.
-  const listedSessions = (sessions ?? []).filter((session) => !managedSessionIds.has(session.id));
+  const listedSessions = (sessions ?? []).filter(
+    ({ id }) => !ownership?.[id] && !hyperSessionIds.includes(id),
+  );
 
   useWarmSessionSnapshots();
 
@@ -533,6 +531,7 @@ function WorkspacePage() {
     panels: sidebarPanels,
     hyperOpen: hyper.isOpen,
     hyperPosition: hyperSession?.position ?? initialLayout.hyperPosition,
+    channelOverviewPinned: isChannelOverviewPinned,
   });
   useEffect(() => {
     document.cookie = layoutCookie;
@@ -726,7 +725,9 @@ function WorkspacePage() {
         panes={openPanes}
         onOpenApp={openAppInMainSurface}
         onOpenFile={openFile}
-        onToggleFile={toggleFile}
+        onRevealFile={revealFile}
+        channelOverviewPinned={isChannelOverviewPinned}
+        onChannelOverviewPinnedChange={setIsChannelOverviewPinned}
       >
         <WorkspaceLayout
           hydrated={hydrated}

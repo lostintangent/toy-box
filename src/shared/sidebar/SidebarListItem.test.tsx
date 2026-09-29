@@ -45,15 +45,14 @@ test("shows an item status in place of its menu", () => {
       title="Product Lab"
       menuItems={<span>Rename</span>}
       status={{
+        kind: "unread",
         ariaLabel: "Product Lab has unread messages",
         tooltip: "Channel has unread messages",
-        icon: <span>Unread</span>,
       }}
     />,
   );
 
   expect(markup).toContain('role="status"');
   expect(markup).toContain('aria-label="Product Lab has unread messages"');
-  expect(markup).toContain("Unread");
   expect(markup).not.toContain('aria-label="Actions for Product Lab"');
 });

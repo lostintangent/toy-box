@@ -1,10 +1,10 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
-import type { ChannelMember } from "@channels/model";
+import { updateChannelMemberInputSchema, type ChannelMember } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import { OptionalModelConfigurationPicker } from "@providers/components/ModelPicker";
-import type { ModelConfiguration } from "@providers/model";
+import { areModelConfigurationsEqual, type ModelConfiguration } from "@providers/model";
 import { sessionQueries } from "@sessions/queries";
 import { useModels } from "@providers/useModels";
 import { Button } from "@/shared/ui/button";
@@ -41,19 +41,21 @@ function AgentForm({ agent, onClose }: { agent: ChannelMember; onClose: () => vo
   const provider = sessionProvider ?? agent.model?.provider;
   const { models, defaultModel } = useModels(provider);
   const inheritedModel = !provider || defaultModel?.provider === provider ? defaultModel : null;
-  const update = useMutation(channelMutations.updateAgent());
+  const update = useMutation(channelMutations.updateMember());
+  const nextName = name.trim();
+  const nextRole = role.trim();
+  const input = updateChannelMemberInputSchema.safeParse({
+    agentId: agent.id,
+    ...(nextName !== agent.name ? { name: nextName } : {}),
+    ...(nextRole !== (agent.role ?? "") ? { role: nextRole } : {}),
+    ...(!areModelConfigurationsEqual(model, agent.model) ? { model: model ?? null } : {}),
+  });
+  const canSubmit = input.success && !update.isPending;
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    update.mutate(
-      {
-        agentId: agent.id,
-        name,
-        ...(role.trim() ? { role } : {}),
-        model: model ?? null,
-      },
-      { onSuccess: onClose },
-    );
+    if (!input.success || update.isPending) return;
+    update.mutate(input.data, { onSuccess: onClose });
   }
 
   return (
@@ -100,12 +102,7 @@ function AgentForm({ agent, onClose }: { agent: ChannelMember; onClose: () => vo
           >
             <Trash2 /> Remove agent
           </Button>
-          <Button
-            type="submit"
-            disabled={
-              update.isPending || !name.trim() || (agent.role !== undefined && !role.trim())
-            }
-          >
+          <Button type="submit" disabled={!canSubmit}>
             {update.isPending ? "Saving…" : "Save agent"}
           </Button>
         </DialogFooter>

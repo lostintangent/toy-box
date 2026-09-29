@@ -1,7 +1,7 @@
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { LayoutGrid, Table2, X } from "lucide-react";
 import { cn } from "@/shared/utils";
-import { BriefMarkdownText } from "../../MarkdownText";
+import { Markdown } from "@/shared/ui/markdown";
 import {
   fieldValueText,
   projectedRecords,
@@ -56,7 +56,7 @@ function ChoiceTag({ field, optionId }: { field: ChoiceField; optionId: string }
 
 function FieldValue({ field, value }: { field: BriefField; value: string | string[] }) {
   if (field.kind === "text") {
-    return <BriefMarkdownText>{fieldValueText(field, value)}</BriefMarkdownText>;
+    return <Markdown className="space-y-1.5">{fieldValueText(field, value)}</Markdown>;
   }
 
   const optionIds = Array.isArray(value) ? value : [value];

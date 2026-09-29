@@ -1,8 +1,6 @@
 import type { AppDefinition, AppInstance, AppShare } from "@apps/model";
 import type { DraftPrompt } from "@sessions/model";
-import type { Automation } from "@automations/model";
 import type { CustomEditorKind } from "@files/model";
-import type { InboxEntry } from "@inbox/model";
 import { workerReferencesSession, type Worker } from "@workers/model";
 import { areSettingsEqual, DEFAULT_SETTINGS, type Settings } from "../config/settings";
 import type { WorkspaceEvent } from "../events";
@@ -12,8 +10,6 @@ export type WorkspaceState = {
   settings: Settings;
   sessionStates: Record<string, WorkspaceSessionState>;
   hyperSessionIds: string[];
-  automations: Automation[];
-  inboxEntries: InboxEntry[];
   workers: Worker[];
   customEditors: CustomEditorKind[];
   appDefinitions: AppDefinition[];
@@ -29,9 +25,11 @@ export type WorkspaceEnvironment = {
 
 /**
  * Shared lifecycle and composer state for one session. Missing means idle.
+ * A live session remembers `since`, when its current run began.
  */
 export type WorkspaceSessionState =
-  | { status: "running" | "waiting" | "unread"; prompt?: DraftPrompt }
+  | { status: "running" | "waiting"; since: number; prompt?: DraftPrompt }
+  | { status: "unread"; prompt?: DraftPrompt }
   | { status: "idle"; prompt: DraftPrompt };
 
 export function createEmptyWorkspaceState(): WorkspaceState {
@@ -39,8 +37,6 @@ export function createEmptyWorkspaceState(): WorkspaceState {
     settings: DEFAULT_SETTINGS,
     sessionStates: {},
     hyperSessionIds: [],
-    automations: [],
-    inboxEntries: [],
     workers: [],
     customEditors: [],
     appDefinitions: [],
@@ -54,9 +50,13 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
   switch (event.type) {
     case "workspace.connected":
     case "providers.changed":
+    case "inbox.changed":
+    case "inbox.entry.deleted":
     case "channel.upserted":
     case "channel.deleted":
     case "channel.members.changed":
+    case "automation.upserted":
+    case "automation.deleted":
       return state;
     case "settings.changed":
       return areSettingsEqual(state.settings, event.settings)
@@ -84,14 +84,6 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
         : state;
     case "session.touched":
       return state;
-    case "inbox.entry.upserted":
-      return updateList(state, "inboxEntries", (entries) =>
-        upsertBy(entries, event.entry, "id", Object.is, (left, right) =>
-          right.createdAt.localeCompare(left.createdAt),
-        ),
-      );
-    case "inbox.entry.deleted":
-      return updateList(state, "inboxEntries", (entries) => removeBy(entries, "id", event.entryId));
     case "editor.registered":
       return updateList(state, "customEditors", (editors) => upsertBy(editors, event.kind, "name"));
     case "app.registered":
@@ -149,16 +141,6 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
       return updateList(state, "workers", (workers) =>
         removeBy(workers, "sessionId", event.sessionId),
       );
-    case "automation.upserted":
-      return updateList(state, "automations", (automations) =>
-        upsertBy(automations, event.automation, "id", Object.is, (left, right) =>
-          right.updatedAt.localeCompare(left.updatedAt),
-        ),
-      );
-    case "automation.deleted":
-      return updateList(state, "automations", (automations) =>
-        removeBy(automations, "id", event.automationId),
-      );
   }
 }
 
@@ -188,9 +170,11 @@ export function reduceWorkspaceSessionState(
     case "session.running":
     case "session.waiting": {
       const status = event.type === "session.running" ? "running" : "waiting";
-      return state?.status === status
-        ? state
-        : { status, ...(state?.prompt ? { prompt: state.prompt } : {}) };
+      if (state?.status === status) return state;
+      // Waiting is a pause within the same run, so moving between the live states keeps its start.
+      const since =
+        state?.status === "running" || state?.status === "waiting" ? state.since : event.at;
+      return { status, since, ...(state?.prompt ? { prompt: state.prompt } : {}) };
     }
     case "session.idle":
       if (!state) return state;

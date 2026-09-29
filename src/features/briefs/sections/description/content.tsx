@@ -1,5 +1,5 @@
 import { code } from "@streamdown/code";
-import { Streamdown } from "streamdown";
+import { Markdown } from "@/shared/ui/markdown";
 import { cn } from "@/shared/utils";
 import type { ListSection, MarkdownSection } from "../../model/index";
 
@@ -11,13 +11,9 @@ export function BriefMarkdownOrListContent({
 }) {
   if (section.kind === "markdown") {
     return (
-      <Streamdown
-        mode="static"
-        plugins={{ code }}
-        className="text-[12px] leading-relaxed text-foreground/90 [&_ol]:my-2 [&_p]:my-2 [&_pre]:my-2 [&_ul]:my-2"
-      >
+      <Markdown plugins={{ code }} className="text-[12px] leading-relaxed text-foreground/90">
         {section.body}
-      </Streamdown>
+      </Markdown>
     );
   }
 
@@ -31,13 +27,9 @@ export function BriefMarkdownOrListContent({
     >
       {section.items.map((item) => (
         <li key={item}>
-          <Streamdown
-            mode="static"
-            plugins={{ code }}
-            className="space-y-1 [&_ol]:my-1 [&_p]:my-0 [&_pre]:my-1 [&_ul]:my-1"
-          >
+          <Markdown plugins={{ code }} className="space-y-1">
             {item}
-          </Streamdown>
+          </Markdown>
         </li>
       ))}
     </List>

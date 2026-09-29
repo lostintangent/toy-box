@@ -164,7 +164,7 @@ describe("SVG editor state", () => {
     expect(editor.state.selection).toHaveLength(0);
   });
 
-  test("removes a selection and clears the document as atomic editor commands", () => {
+  test("clears the document as one undoable command", () => {
     const { document, editor } = createEditor();
     const first = document.root.ownerDocument.createElementNS(
       "http://www.w3.org/2000/svg",
@@ -177,16 +177,58 @@ describe("SVG editor state", () => {
     document.root.appendChild(first);
     document.root.appendChild(second);
     editor.actions.select([first]);
-
-    expect(editor.actions.removeSelection()).toBe(true);
-    expect(document.root.getElementsByTagName("rect")).toHaveLength(0);
-    expect(editor.state.selection).toHaveLength(0);
-    expect(editor.state.history.undoStack).toHaveLength(1);
-
-    editor.actions.select([second]);
+    const original = document.serialize().content;
     expect(editor.actions.clear()).toBe(true);
     expect(document.getSnapshot().isEmpty).toBe(true);
     expect(editor.state.selection).toHaveLength(0);
-    expect(editor.state.history.undoStack).toHaveLength(2);
+    expect(editor.actions.undo()).toBe(true);
+    expect(document.serialize().content).toBe(original);
+    expect(editor.actions.undo()).toBe(false);
   });
+
+  test.each(["gesturing", "read-only"] as const)(
+    "does not start document commands when %s, and admits them once editable",
+    (mode) => {
+      const { document, editor } = createEditor();
+      editor.actions.loadDocument(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="50" height="50" stroke="black" /></svg>',
+      );
+      editor.actions.resizeViewport({ width: 400, height: 400 });
+      const rectangle = document.root.getElementsByTagName("rect")[0] as SVGGraphicsElement;
+      editor.actions.select([rectangle]);
+      editor.actions.changeStyle({ property: "color", value: "purple" });
+      editor.actions.changeStyle({ property: "color", value: "blue" });
+      editor.actions.undo();
+      const original = document.serialize().content;
+      const history = editor.state.history;
+      const viewport = editor.state.viewport;
+      const published: string[] = [];
+      document.subscribeToSource((content) => published.push(content));
+      if (mode === "gesturing") editor.actions.beginGesture({ type: "transform", mode: "move" });
+      else editor.actions.setReadOnly(true);
+
+      expect(editor.actions.edit(() => document.deleteElements([rectangle]))).toBe(false);
+      expect(editor.actions.clear()).toBe(false);
+      expect(
+        editor.actions.insertImage("data:image/png;base64,AA==", { width: 100, height: 50 }),
+      ).toBe(false);
+      editor.actions.changeStyle({ property: "color", value: "green" });
+      expect(editor.actions.undo()).toBe(false);
+      expect(editor.actions.redo()).toBe(false);
+      expect(document.serialize().content).toBe(original);
+      expect(editor.state.selection).toEqual([rectangle]);
+      expect(editor.state.history).toEqual(history);
+      expect(editor.state.viewport).toEqual(viewport);
+      expect(published).toEqual([]);
+
+      if (mode === "gesturing") editor.actions.endGesture();
+      else editor.actions.setReadOnly(false);
+      expect(editor.actions.edit(() => document.deleteElements([rectangle]))).toBe(true);
+      expect(document.root.getElementsByTagName("rect")).toHaveLength(0);
+      expect(published).toHaveLength(1);
+      expect(document.serialize().content).toBe(published[0]);
+      expect(editor.actions.undo()).toBe(true);
+      expect(document.serialize().content).toBe(original);
+    },
+  );
 });

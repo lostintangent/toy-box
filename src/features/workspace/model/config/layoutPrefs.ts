@@ -44,6 +44,7 @@ const workspaceLayoutSchema = z.object({
   hyperPosition: z
     .object({ x: z.number().finite(), y: z.number().finite() })
     .default(DEFAULT_HYPER_POSITION),
+  channelOverviewPinned: z.boolean().default(false),
 });
 
 export type WorkspaceLayout = z.output<typeof workspaceLayoutSchema>;
@@ -90,6 +91,7 @@ export function serializeWorkspaceLayout(layout: WorkspaceLayout): string {
     layout.hyperPosition.y !== DEFAULT_HYPER_POSITION.y
       ? { hyperPosition: layout.hyperPosition }
       : {}),
+    ...(layout.channelOverviewPinned ? { channelOverviewPinned: true } : {}),
   };
 
   return `${LAYOUT_COOKIE}=${encodeURIComponent(JSON.stringify(stored))}; Path=/; Max-Age=${LAYOUT_COOKIE_MAX_AGE}; SameSite=Lax`;

@@ -36,9 +36,9 @@ export type EditorActions = {
   endGesture: () => void;
 
   select: (elements: readonly SVGGraphicsElement[]) => void;
-  removeSelection: () => boolean;
   insertImage: (source: string, size: Size) => boolean;
   clear: () => boolean;
+  edit: (mutate: () => HistoryEntry | null) => boolean;
   commit: (entry: HistoryEntry | null) => boolean;
 
   resizeViewport: (size: Size) => void;
@@ -71,7 +71,24 @@ export function createEditorStore(document: SvgDocument, readOnly: boolean) {
       history: { undoStack: [], redoStack: [] },
     },
     ({ setState, get }) => {
+      function commit(entry: HistoryEntry | null): boolean {
+        if (!entry) return false;
+        setState((current) => ({
+          ...current,
+          history: recordHistoryEntry(current.history, entry),
+        }));
+        document.publishSource();
+        return true;
+      }
+
+      // Admit commands before they mutate the DOM; active gesture owners commit directly.
+      function edit(mutate: () => HistoryEntry | null): boolean {
+        if (!canEditDocument(get())) return false;
+        return commit(mutate());
+      }
+
       function traverseHistory(direction: "undo" | "redo"): boolean {
+        if (!canEditDocument(get())) return false;
         const history =
           direction === "undo" ? undoHistory(get().history) : redoHistory(get().history);
         if (!history) return false;
@@ -112,22 +129,18 @@ export function createEditorStore(document: SvgDocument, readOnly: boolean) {
           );
         },
         changeStyle(change) {
-          const current = get();
-          if (resolveActiveTool(current) === "select") {
-            const entry = styleElements(document, current.selection, change);
-            if (entry) {
-              setState((state) => ({
-                ...state,
-                history: recordHistoryEntry(state.history, entry),
-              }));
-              document.publishSource();
-              return;
+          edit(() => {
+            const current = get();
+            if (resolveActiveTool(current) === "select") {
+              const entry = styleElements(document, current.selection, change);
+              if (entry) return entry;
             }
-          }
-          setState((current) => ({
-            ...current,
-            styleDefaults: applyStyleChange(current.styleDefaults, change),
-          }));
+            setState((state) => ({
+              ...state,
+              styleDefaults: applyStyleChange(state.styleDefaults, change),
+            }));
+            return null;
+          });
         },
         beginGesture(gesture) {
           if (get().gesture) return false;
@@ -150,75 +163,49 @@ export function createEditorStore(document: SvgDocument, readOnly: boolean) {
               : { ...current, activeTool: nextTool, selection: nextSelection };
           });
         },
-        removeSelection() {
-          const current = get();
-          if (current.selection.length === 0) return false;
-          const entry = document.deleteElements(current.selection);
-          if (!entry) return false;
-
-          setState((state) => ({
-            ...state,
-            selection: [],
-            history: recordHistoryEntry(state.history, entry),
-          }));
-          document.publishSource();
-          return true;
-        },
         insertImage(source, size) {
-          const current = get();
-          if (current.viewport.size.width <= 0 || current.viewport.size.height <= 0) return false;
-          const center = toDocumentPoint(current.viewport, {
-            x: current.viewport.size.width / 2,
-            y: current.viewport.size.height / 2,
-          });
-          const { image, entry } = document.appendImage(source, center, size);
-          const bounds = {
-            x: center.x - size.width / 2,
-            y: center.y - size.height / 2,
-            width: size.width,
-            height: size.height,
-          };
+          return edit(() => {
+            const current = get();
+            if (current.viewport.size.width <= 0 || current.viewport.size.height <= 0) return null;
+            const center = toDocumentPoint(current.viewport, {
+              x: current.viewport.size.width / 2,
+              y: current.viewport.size.height / 2,
+            });
+            const { image, entry } = document.appendImage(source, center, size);
+            const bounds = {
+              x: center.x - size.width / 2,
+              y: center.y - size.height / 2,
+              width: size.width,
+              height: size.height,
+            };
 
-          setState((state) => ({
-            ...state,
-            activeTool: "select",
-            selection: [image],
-            history: recordHistoryEntry(state.history, entry),
-            viewport: positionViewport(
-              state.viewport,
-              { type: "manual" },
-              fitViewport(
-                bounds,
-                state.viewport.size.width,
-                state.viewport.size.height,
-                Math.min(state.viewport.zoom, 1),
+            setState((state) => ({
+              ...state,
+              activeTool: "select",
+              selection: [image],
+              viewport: positionViewport(
+                state.viewport,
+                { type: "manual" },
+                fitViewport(
+                  bounds,
+                  state.viewport.size.width,
+                  state.viewport.size.height,
+                  Math.min(state.viewport.zoom, 1),
+                ),
               ),
-            ),
-          }));
-          document.publishSource();
-          return true;
+            }));
+            return entry;
+          });
         },
         clear() {
-          const entry = document.clearVisibleContent();
-          if (!entry) return false;
-
-          setState((state) => ({
-            ...state,
-            selection: [],
-            history: recordHistoryEntry(state.history, entry),
-          }));
-          document.publishSource();
-          return true;
+          return edit(() => {
+            const entry = document.clearVisibleContent();
+            if (entry) setState((state) => ({ ...state, selection: [] }));
+            return entry;
+          });
         },
-        commit(entry) {
-          if (!entry) return false;
-          setState((current) => ({
-            ...current,
-            history: recordHistoryEntry(current.history, entry),
-          }));
-          document.publishSource();
-          return true;
-        },
+        edit,
+        commit,
         resizeViewport(size) {
           setState((current) => ({
             ...current,
@@ -298,6 +285,10 @@ export function createEditorStore(document: SvgDocument, readOnly: boolean) {
 }
 
 export type EditorStore = ReturnType<typeof createEditorStore>;
+
+export function canEditDocument(state: Pick<EditorState, "readOnly" | "gesture">): boolean {
+  return !state.readOnly && state.gesture === null;
+}
 
 export function resolveActiveTool(state: Pick<EditorState, "activeTool" | "readOnly">): Tool {
   return state.readOnly ? "hand" : state.activeTool;

@@ -1,12 +1,11 @@
-import type { MouseEvent } from "react";
-import { Circle, CircleHelp, Loader2, Pencil } from "lucide-react";
+import { useEffect, useState, type MouseEvent } from "react";
 import {
   SidebarListItemAction,
   SidebarListItemButton,
   SidebarListItemLayout,
   type SidebarListItemProps,
-  type SidebarListItemStatus,
 } from "@/shared/sidebar/SidebarListItem";
+import type { SidebarStatus } from "@/shared/sidebar/SidebarStatus";
 import { SessionPreview, useSessionPreview } from "../SessionPreview";
 
 type SidebarSessionItemProps = Omit<SidebarListItemProps, "status"> & {
@@ -42,7 +41,8 @@ export function SidebarSessionItem({
   ...props
 }: SidebarSessionItemProps) {
   const preview = useSessionPreview(isActive || previewDisabled || disabled);
-  const status = getSessionListItemStatus(title, activity, isActive);
+  const justFinished = useJustFinished(activity.running || activity.waiting);
+  const status = getSessionListItemStatus(title, activity, isActive, justFinished);
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
     preview.close();
@@ -96,37 +96,54 @@ export function SidebarSessionItem({
   );
 }
 
+/** True for a beat after a run ends, so finishing reads as a check before the unread dot. */
+function useJustFinished(live: boolean): boolean {
+  const [wasLive, setWasLive] = useState(live);
+  const [justFinished, setJustFinished] = useState(false);
+  if (live !== wasLive) {
+    setWasLive(live);
+    setJustFinished(!live);
+  }
+
+  useEffect(() => {
+    if (!justFinished) return;
+    const timer = setTimeout(() => setJustFinished(false), 3000);
+    return () => clearTimeout(timer);
+  }, [justFinished]);
+
+  return justFinished;
+}
+
 function getSessionListItemStatus(
   title: string,
   { running, waiting, unread, hasDraftPrompt }: SidebarSessionItemProps["activity"],
   isActive: boolean,
-): SidebarListItemStatus | undefined {
+  justFinished: boolean,
+): SidebarStatus | undefined {
   if (waiting) {
     return {
+      kind: "waiting",
       ariaLabel: `${title} is waiting for input`,
       tooltip: "Session is waiting for input",
-      icon: <CircleHelp className="h-4 w-4 text-muted-foreground" aria-hidden />,
     };
   }
   if (running) {
-    return {
-      ariaLabel: `${title} is running`,
-      tooltip: "Session is running",
-      icon: <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />,
-    };
+    return { kind: "running", ariaLabel: `${title} is running`, tooltip: "Session is running" };
   }
   if (unread && !isActive) {
-    return {
-      ariaLabel: `${title} has unread messages`,
-      tooltip: "Session has unread messages",
-      icon: <Circle className="h-2.5 w-2.5 fill-unread text-unread" aria-hidden />,
-    };
+    return justFinished
+      ? { kind: "finished", ariaLabel: `${title} finished`, tooltip: "Session finished" }
+      : {
+          kind: "unread",
+          ariaLabel: `${title} has unread messages`,
+          tooltip: "Session has unread messages",
+        };
   }
   if (hasDraftPrompt) {
     return {
+      kind: "draft",
       ariaLabel: `${title} has a draft prompt`,
       tooltip: "Session has a draft prompt",
-      icon: <Pencil className="h-4 w-4 text-muted-foreground" aria-hidden />,
     };
   }
 }

@@ -36,18 +36,21 @@ export const cancelWorkerInputSchema = z
 export type SpawnWorkerInput = z.infer<typeof spawnWorkerInputSchema>;
 export type CancelWorkerInput = z.infer<typeof cancelWorkerInputSchema>;
 
-/** A Session identity whose lifecycle belongs to another resource. */
-export type Worker = {
-  sessionId: string;
-  ephemeral: boolean;
-  name?: SpawnWorkerInput["name"];
-  metadata?: SpawnWorkerInput["metadata"];
-} & (
+export type WorkerOwner =
   | { type: "session"; parentSessionId: string }
   | { type: "file"; file: SessionFile }
   | { type: "app"; appId: string }
   | { type: "channel"; channelId: string }
-);
+  | { type: "inbox" };
+
+/** A Session identity whose lifecycle belongs to another resource. */
+export type Worker = WorkerOwner & {
+  sessionId: string;
+  createdAt: string;
+  ephemeral: boolean;
+  name?: z.infer<typeof workerNameSchema>;
+  metadata?: z.infer<typeof smallJsonSchema>;
+};
 
 export type WorkerEvent =
   | { type: "worker.started"; worker: Worker }
@@ -61,6 +64,7 @@ export function workerParentSessionId(worker: Worker): string | undefined {
       return worker.file.sessionId;
     case "app":
     case "channel":
+    case "inbox":
       return;
   }
 }

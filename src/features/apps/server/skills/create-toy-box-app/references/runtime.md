@@ -384,6 +384,7 @@ type SessionLaunch = {
 type SessionCompletion = {
   status: "completed" | "failed" | "timed_out";
   response?: string;
+  error?: string;
 };
 
 type AppShare = {

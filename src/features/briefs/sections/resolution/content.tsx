@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/shared/utils";
+import { Markdown } from "@/shared/ui/markdown";
 import {
   decisionStatus,
   fieldValueText,
@@ -27,7 +28,6 @@ import {
   type Question,
   type ResolutionSection,
 } from "../../model/index";
-import { BriefMarkdownText } from "../../MarkdownText";
 import { BriefExhibitCard } from "../definition";
 import { ChangeTag, optionRelationshipLabel, Tag } from "../shared";
 
@@ -335,12 +335,12 @@ export function DecisionsSection({
                                 {section && section.fields.length > 0 && (
                                   <div className="mt-0.5 space-y-0.5 text-[10px] text-muted-foreground">
                                     {section.fields.map((field) => (
-                                      <div key={field.id}>
-                                        <span className="font-medium">{field.label}: </span>
+                                      <div key={field.id} className="flex items-start gap-1">
+                                        <span className="shrink-0 font-medium">{field.label}:</span>
                                         {field.kind === "text" ? (
-                                          <BriefMarkdownText>
+                                          <Markdown className="min-w-0 space-y-1">
                                             {fieldValueText(field, addition.values[field.id])}
-                                          </BriefMarkdownText>
+                                          </Markdown>
                                         ) : (
                                           fieldValueText(field, addition.values[field.id])
                                         )}

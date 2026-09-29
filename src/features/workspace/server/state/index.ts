@@ -16,13 +16,7 @@ export { getEnvironment } from "./environment";
 export async function getWorkspaceState(
   options: Pick<
     WorkspaceState,
-    | "automations"
-    | "inboxEntries"
-    | "customEditors"
-    | "appDefinitions"
-    | "apps"
-    | "appShares"
-    | "environment"
+    "customEditors" | "appDefinitions" | "apps" | "appShares" | "environment"
   >,
 ): Promise<WorkspaceState> {
   const settings = await getSettings();
@@ -91,7 +85,11 @@ export function setSessionStatus(
   sessionId: string,
   status: "running" | "waiting" | "idle" | "unread",
 ): void {
-  commitSessionEvent({ type: `session.${status}`, sessionId } as const);
+  commitSessionEvent(
+    status === "running" || status === "waiting"
+      ? { type: `session.${status}`, sessionId, at: Date.now() }
+      : { type: `session.${status}`, sessionId },
+  );
 }
 
 export function applyWorkspaceAction(action: WorkspaceAction): void {

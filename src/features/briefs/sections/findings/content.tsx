@@ -1,14 +1,13 @@
 import { code } from "@streamdown/code";
 import { ChevronRight, FileCode2, Lightbulb, PanelRightOpen } from "lucide-react";
-import { Streamdown } from "streamdown";
 import { cn } from "@/shared/utils";
+import { InlineMarkdown, Markdown } from "@/shared/ui/markdown";
 import {
   entitiesGroundedByFinding,
   type FindingsSection,
   type BriefDocument,
   type BriefEntityId,
 } from "../../model/index";
-import { BriefMarkdownText } from "../../MarkdownText";
 import { BriefExhibitCard } from "../definition";
 
 /** Source-backed discoveries that explain why the spec has its authored shape. */
@@ -50,7 +49,7 @@ export function BriefFindingsContent({
                 <Lightbulb aria-hidden className="size-3" />
               </span>
               <div className="min-w-0 flex-1 text-[12px] font-medium leading-relaxed text-foreground/90">
-                <BriefMarkdownText>{finding.statement}</BriefMarkdownText>
+                <InlineMarkdown>{finding.statement}</InlineMarkdown>
               </div>
               {onInspect && (
                 <button
@@ -79,13 +78,12 @@ export function BriefFindingsContent({
                       <div className="text-[9.5px] font-semibold uppercase tracking-wide text-sky-400/80">
                         Why it matters
                       </div>
-                      <Streamdown
-                        mode="static"
+                      <Markdown
                         plugins={{ code }}
-                        className="mt-0.5 space-y-1 text-[10.5px] leading-relaxed text-foreground/85 [&_ol]:my-1 [&_p]:my-0 [&_pre]:my-1 [&_ul]:my-1"
+                        className="mt-0.5 space-y-1 text-[10.5px] leading-relaxed text-foreground/85"
                       >
                         {finding.whyItMatters}
-                      </Streamdown>
+                      </Markdown>
                     </div>
                   )}
 

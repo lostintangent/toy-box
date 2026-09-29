@@ -19,8 +19,8 @@ test("renders an active pending question with choices and freeform input", () =>
 
   expect(markup).toContain("one");
   expect(markup).not.toContain("**one**");
-  expect(markup).toContain(">SQLite</button>");
-  expect(markup).toContain(">PostgreSQL</button>");
+  expect(markup).toContain(">SQLite<");
+  expect(markup).toContain(">PostgreSQL<");
   expect(markup).toContain('aria-label="Freeform answer"');
   expect(markup).toContain(">Submit</button>");
 });
@@ -38,7 +38,7 @@ test("renders a passive pending question without answer controls", () => {
   );
 
   expect(markup).toContain("Waiting for input.");
-  expect(markup).not.toContain(">SQLite</button>");
+  expect(markup).not.toContain("SQLite");
   expect(markup).not.toContain('aria-label="Freeform answer"');
 });
 
@@ -61,6 +61,25 @@ test("renders resolved and terminal unanswered questions read-only", () => {
   });
   expect(unanswered).toContain("No answer was recorded.");
   expect(unanswered).not.toContain('aria-label="Freeform answer"');
+});
+
+test("keeps HTML-like choices and recorded answers visible", () => {
+  const pending = renderQuestion({
+    question: "Pick one.",
+    choices: ["<Widget>"],
+    allowFreeform: false,
+    state: "pending",
+    requestId: "request-1",
+  });
+  expect(pending).toContain("&lt;Widget&gt;");
+
+  const answered = renderQuestion({
+    question: "Pick one.",
+    allowFreeform: false,
+    state: "answered",
+    answer: "<Widget>",
+  });
+  expect(answered).toContain("&lt;Widget&gt;");
 });
 
 function renderQuestion(question: SessionQuestion, mode: SessionPaneMode = "active"): string {

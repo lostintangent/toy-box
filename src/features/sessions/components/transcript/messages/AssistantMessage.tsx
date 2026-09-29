@@ -1,4 +1,4 @@
-import { Streamdown } from "streamdown";
+import { Markdown } from "@/shared/ui/markdown";
 import { code } from "@streamdown/code";
 import { TriangleAlert } from "lucide-react";
 import type { AssistantMessage as AssistantMessageType, ToolCall } from "../../../model";
@@ -30,15 +30,16 @@ export function AssistantMessage({
         <div className="space-y-2">
           {/* Text content */}
           {message.content ? (
-            <Streamdown
+            <Markdown
+              mode="streaming"
               isAnimating={isLast && isStreaming}
               plugins={{ code }}
               components={transcriptLinkComponents}
               rehypePlugins={transcriptRehypePlugins}
-              className="text-sm [&_p]:my-2 [&_pre]:my-2 [&_ul]:my-2 [&_ol]:my-2"
+              className="text-sm"
             >
               {message.content}
-            </Streamdown>
+            </Markdown>
           ) : null}
           {/* Tool calls display */}
           {hasToolCalls && (
@@ -50,13 +51,9 @@ export function AssistantMessage({
               className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm"
             >
               <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-amber-500" />
-              <Streamdown
-                mode="static"
-                linkSafety={{ enabled: false }}
-                className="min-w-0 break-words"
-              >
+              <Markdown linkSafety={{ enabled: false }} className="min-w-0 break-words">
                 {message.error}
-              </Streamdown>
+              </Markdown>
             </div>
           )}
         </div>

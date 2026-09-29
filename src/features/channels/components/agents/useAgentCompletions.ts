@@ -73,6 +73,7 @@ export function useAgentCompletions({
       completions.handleKeyDown(event, suggestions.length, (index) =>
         selectSuggestion(suggestions[index]!),
       ),
+    replace: completions.replace,
     close: completions.close,
   };
 }

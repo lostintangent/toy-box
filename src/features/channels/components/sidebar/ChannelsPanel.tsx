@@ -1,18 +1,19 @@
 import { useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { Circle, Hash, Pencil, Plus, Trash2 } from "lucide-react";
+import { Hash, Plus } from "lucide-react";
 import { AgentStatus } from "@channels/components/agents/AgentStatus";
-import { channelHasUnread, channelLead } from "@channels/model";
-import { channelMutations } from "@channels/mutations";
+import { channelLead } from "@channels/model";
 import { channelQueries } from "@channels/queries";
-import { NameDialog } from "@/shared/sidebar/NameDialog";
 import { SidebarListItem } from "@/shared/sidebar/SidebarListItem";
 import { SidebarPanel } from "@/shared/sidebar/SidebarPanel";
 import { Button } from "@/shared/ui/button";
-import { DropdownMenuItem, DropdownMenuSeparator } from "@/shared/ui/dropdown-menu";
 import { RelativeTime } from "@/shared/ui/relative-time";
+import { selectWorkspaceSessionActivity, useWorkspaceSelector } from "@workspace/hooks/state";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { SessionMetadataBadges } from "@sessions/components/location/SessionMetadataBadges";
+import { ChannelDialog } from "../ChannelDialog";
+import { ChannelMenuItems } from "../ChannelMenuItems";
+import { channelAttention } from "./attention";
 import { DeleteChannelDialog } from "../DeleteChannelDialog";
 
 export function ChannelsPanel({
@@ -20,23 +21,34 @@ export function ChannelsPanel({
   onExpandedChange,
   openChannelIds,
   onChannelOpen,
+  onBrowseDirectory,
   onCreate,
 }: {
   isExpanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   openChannelIds: string[];
   onChannelOpen: (channelId: string, toggleInWorkspace: boolean) => void;
+  onBrowseDirectory: (directory: string) => void;
   onCreate: () => void;
 }) {
   const {
     data: { channels, members },
   } = useSuspenseQuery(channelQueries.list());
-  const [renameChannelId, setRenameChannelId] = useState<string>();
+  const [editChannelId, setEditChannelId] = useState<string>();
   const [deleteChannelId, setDeleteChannelId] = useState<string>();
+  const running = useWorkspaceSelector((workspace) =>
+    [...channels.map(({ id }) => id), ...members.map(({ id }) => id)].some(
+      (id) => selectWorkspaceSessionActivity(workspace, id).running,
+    ),
+  );
   if (channels.length === 0) return null;
 
-  const renaming = channels.find(({ id }) => id === renameChannelId);
+  const editing = channels.find(({ id }) => id === editChannelId);
   const deleting = channels.find(({ id }) => id === deleteChannelId);
+  const rows = channels.map((channel) => ({
+    channel,
+    status: channelAttention(channel, openChannelIds.includes(channel.id)),
+  }));
 
   return (
     <>
@@ -44,6 +56,12 @@ export function ChannelsPanel({
         title="Channels"
         isExpanded={isExpanded}
         onExpandedChange={onExpandedChange}
+        activity={{
+          waiting: rows.some(({ status }) => status?.kind === "waiting"),
+          finished: rows.some(({ status }) => status?.kind === "finished"),
+          unread: rows.some(({ status }) => status?.kind === "unread"),
+          running,
+        }}
         action={
           <Tooltip>
             <TooltipTrigger
@@ -63,8 +81,9 @@ export function ChannelsPanel({
           </Tooltip>
         }
       >
-        {channels.map((channel) => {
+        {rows.map(({ channel, status }) => {
           const channelMembers = members.filter((member) => member.channelId === channel.id);
+          const { directory } = channel;
 
           return (
             <SidebarListItem
@@ -74,7 +93,7 @@ export function ChannelsPanel({
                 <span className="flex items-center gap-3">
                   <span>{channel.name}</span>
                   <AgentStatus
-                    agents={[channelLead(channel.leadId), ...channelMembers]}
+                    agents={[channelLead(channel.id), ...channelMembers]}
                     variant="compact"
                   />
                 </span>
@@ -85,32 +104,15 @@ export function ChannelsPanel({
                 </span>
               }
               time={<RelativeTime date={channel.updatedAt} />}
-              badge={
-                channel.directory ? <SessionMetadataBadges cwd={channel.directory} /> : undefined
-              }
+              badge={directory ? <SessionMetadataBadges cwd={directory} /> : undefined}
               menuItems={
-                <>
-                  <DropdownMenuItem onClick={() => setRenameChannelId(channel.id)}>
-                    <Pencil /> Rename channel
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onClick={() => setDeleteChannelId(channel.id)}
-                  >
-                    <Trash2 /> Delete channel
-                  </DropdownMenuItem>
-                </>
+                <ChannelMenuItems
+                  onEdit={() => setEditChannelId(channel.id)}
+                  onBrowse={directory ? () => onBrowseDirectory(directory) : undefined}
+                  onDelete={() => setDeleteChannelId(channel.id)}
+                />
               }
-              status={
-                channelHasUnread(channel) && !openChannelIds.includes(channel.id)
-                  ? {
-                      ariaLabel: `${channel.name} has unread messages`,
-                      tooltip: "Channel has unread messages",
-                      icon: <Circle className="h-2.5 w-2.5 fill-unread text-unread" aria-hidden />,
-                    }
-                  : undefined
-              }
+              status={status}
               isActive={openChannelIds.includes(channel.id)}
               onClick={(event) => onChannelOpen(channel.id, event.metaKey || event.ctrlKey)}
             />
@@ -118,15 +120,12 @@ export function ChannelsPanel({
         })}
       </SidebarPanel>
 
-      {renaming && (
-        <NameDialog
-          key={renaming.id}
-          name={renaming.name}
-          title="Rename channel"
-          description="Change how this channel appears in the channel list."
-          mutation={channelMutations.rename(renaming.id)}
+      {editing && (
+        <ChannelDialog
+          key={editing.id}
+          channel={editing}
           onOpenChange={(open) => {
-            if (!open) setRenameChannelId(undefined);
+            if (!open) setEditChannelId(undefined);
           }}
         />
       )}

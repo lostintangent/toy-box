@@ -5,27 +5,30 @@ import {
   runAutomation,
   updateAutomation,
 } from "./server/functions";
-import { invalidateSessionQueries, recreateSessionInCache } from "@sessions/queryCache";
+import {
+  invalidateSessionQueries,
+  invalidateSessionsStateQuery,
+  recreateSessionInCache,
+} from "@sessions/queryCache";
 import { applyWorkspaceEvent, workspaceQueries } from "@workspace/queries";
 import { isWorkspaceSessionLive, type WorkspaceState } from "@workspace/model/state/reducer";
 import type { Automation, AutomationOptions } from "./model";
+import { invalidateAutomationListQuery } from "./queryCache";
 
 export const automationMutations = {
   create: () =>
     mutationOptions({
       mutationFn: (input: AutomationOptions) => createAutomation({ data: input }),
-      onSuccess: (automation, _variables, _onMutateResult, { client }) => {
-        cacheAutomation(client, automation);
-      },
+      onSuccess: (_automation, _variables, _onMutateResult, { client }) =>
+        Promise.all([invalidateAutomationListQuery(client), invalidateSessionsStateQuery(client)]),
     }),
 
   update: (automationId: string) =>
     mutationOptions({
       mutationFn: (input: AutomationOptions) =>
         updateAutomation({ data: { automationId, ...input } }),
-      onSuccess: (automation, _variables, _onMutateResult, { client }) => {
-        cacheAutomation(client, automation);
-      },
+      onSuccess: (_automation, _variables, _onMutateResult, { client }) =>
+        invalidateAutomationListQuery(client),
     }),
 
   delete: (automationId: string) =>
@@ -56,10 +59,6 @@ export const automationMutations = {
         invalidateSessionQueries(client, automation.id),
     }),
 };
-
-function cacheAutomation(client: QueryClient, automation: Automation) {
-  applyWorkspaceEvent(client, { type: "automation.upserted", automation });
-}
 
 function removeAutomation(client: QueryClient, automationId: string) {
   // The definition owns the stable managed session with the same ID.

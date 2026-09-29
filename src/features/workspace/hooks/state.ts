@@ -26,6 +26,7 @@ export function selectWorkspaceSessionActivity(workspace: WorkspaceState, sessio
     running: state?.status === "running",
     waiting: state?.status === "waiting",
     unread: state?.status === "unread",
+    since: state?.status === "running" || state?.status === "waiting" ? state.since : undefined,
     hasDraftPrompt: Boolean(state?.prompt?.text.trim()),
   };
 }

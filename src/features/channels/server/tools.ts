@@ -8,8 +8,9 @@ import {
   createChannelMemberInputSchema,
   createChannelInputSchema,
   isChannelSystemMessage,
-  selfUpdateAgentInputSchema,
-  setChannelStatusInputSchema,
+  requestChannelUserAttentionInputSchema,
+  selfUpdateChannelMemberInputSchema,
+  setChannelAgentStatusInputSchema,
   updateChannelInputSchema,
   type Channel,
   type ChannelMessage,
@@ -44,7 +45,7 @@ const listChannelsTool = defineTool("list_channels", {
 
 const createChannelTool = defineTool("create_channel", {
   description:
-    "Creates a channel with an intrinsic lead. With a purpose, the lead starts working toward it immediately. Without one, the lead asks the user what they want to work on. The model configures the lead. The optional working directory is created when needed.",
+    "Creates a channel with an intrinsic lead. With a purpose, the lead starts working toward it immediately. Without one, the lead asks the user what they want to work on. The model configures the lead. The working directory is optional.",
   parameters: createChannelInputSchema,
   handler: async (input) => {
     const { createChannel } = await import("@channels/server");
@@ -54,7 +55,7 @@ const createChannelTool = defineTool("create_channel", {
 
 export const createChannelMembersTool = defineTool("create_channel_members", {
   description:
-    "Creates one or more members in a channel with unique names, optional roles, and optional models. A role defines the member's responsibility in the channel plus any necessary persona or behavioral details. Use list_models to resolve supported model options. Mention the returned handles in a channel message to wake the members. Members without a role or avatar establish them during their first turn.",
+    "Creates one or more members in a channel with unique names, optional roles, and optional models. A role defines the member's responsibility in the channel plus any necessary persona or behavioral details. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
   parameters: channelIdentitySchema.extend({ members: channelMemberCreationsSchema }),
   handler: async ({ channelId, members }) => {
     const { createChannelMembers } = await import("@channels/server");
@@ -64,7 +65,7 @@ export const createChannelMembersTool = defineTool("create_channel_members", {
 
 const createCurrentChannelMembersTool = defineTool("create_channel_members", {
   description:
-    "Creates one or more members in this channel with unique names, optional roles, and optional models. A role defines the member's responsibility in the channel plus any necessary persona or behavioral details. Use list_models to resolve supported model options. Mention the returned handles in a channel message to wake the members. Members without a role or avatar establish them during their first turn.",
+    "Creates one or more members in this channel with unique names, optional roles, and optional models. A role defines the member's responsibility in the channel plus any necessary persona or behavioral details. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
   parameters: z.object({ members: channelMemberCreationsSchema }).strict(),
   handler: async ({ members }, invocation) => {
     const { createChannelMembersFromLead } = await import("@channels/server");
@@ -167,10 +168,10 @@ const reactToChannelMessageTool = defineTool("react_to_channel_message", {
   },
 });
 
-const setChannelStatusTool = defineTool("set_channel_status", {
+const setChannelStatusTool = defineTool("set_agent_status", {
   description:
     "Sets this agent's brief channel status without posting a message, waking agents, or ending the turn.",
-  parameters: setChannelStatusInputSchema,
+  parameters: setChannelAgentStatusInputSchema,
   handler: async (args, invocation) => {
     const { setChannelAgentStatus } = await import("@channels/server");
     return JSON.stringify({
@@ -179,9 +180,34 @@ const setChannelStatusTool = defineTool("set_channel_status", {
   },
 });
 
+const markChannelDoneTool = defineTool("mark_channel_done", {
+  description:
+    "After posting your completion summary with send_channel_message, records a system message marking the current goal done. Rejects unfinished checklist items (including descendants) or waiting members and lists the blockers. Does not end the turn.",
+  parameters: z.object({}).strict(),
+  handler: async (_args, invocation) => {
+    const { markChannelDoneFromLead } = await import("@channels/server");
+    const message = await markChannelDoneFromLead(invocation.sessionId);
+    return JSON.stringify({ sequence: message.sequence });
+  },
+});
+
+const requestChannelUserAttentionTool = defineTool("request_user_attention", {
+  description:
+    "Flags an agent's already-posted message as a user request and records a system message referencing it. A user message after that request acknowledges it; reading does not. Repeating the same request is a no-op. Does not post request text or end the turn.",
+  parameters: requestChannelUserAttentionInputSchema,
+  handler: async ({ requestSequence }, invocation) => {
+    const { requestChannelUserAttentionFromLead } = await import("@channels/server");
+    const message = await requestChannelUserAttentionFromLead(
+      invocation.sessionId,
+      requestSequence,
+    );
+    return JSON.stringify({ sequence: message.sequence });
+  },
+});
+
 const updateChannelTool = defineTool("update_channel", {
   description:
-    "Updates this channel's purpose, public checklist, or preview URL. Set the purpose when the user defines or revises what the channel is for. Replace the complete checklist when progress changes. Preserve root-relative preview URLs returned by Toy Box tools. Share file artifacts instead of using them as previews. Set purpose or previewUrl to null to clear it.",
+    "Updates this channel's name, purpose, working directory, public checklist, or preview URL. Only the lead can change its working directory; use an existing absolute path, which applies to all agents at their next execution. Rename it when the user changes its title; set the purpose when the user defines or revises what the channel is for. Replace the complete checklist when progress changes. Preserve root-relative preview URLs returned by Toy Box tools. Share file artifacts instead of using them as previews. Set purpose, directory, or previewUrl to null to clear it.",
   parameters: updateChannelInputSchema,
   handler: async (args, invocation) => {
     const { updateChannelFromLead } = await import("@channels/server");
@@ -211,12 +237,12 @@ const finishChannelAgentTurnTool = defineTool("finish_agent_turn", {
   },
 });
 
-const updateAgentTool = defineTool("update_agent", {
+const updateMemberTool = defineTool("update_member", {
   description: "Updates this channel agent's role, avatar, or both.",
-  parameters: selfUpdateAgentInputSchema,
+  parameters: selfUpdateChannelMemberInputSchema,
   handler: async (args, invocation) => {
-    const { updateCurrentChannelAgent } = await import("@channels/server");
-    return JSON.stringify(await updateCurrentChannelAgent(invocation.sessionId, args));
+    const { updateChannelMember } = await import("@channels/server");
+    return JSON.stringify(await updateChannelMember({ agentId: invocation.sessionId, ...args }));
   },
 });
 
@@ -251,13 +277,15 @@ function toChannelReadToolResult<T extends { messages: ChannelMessage[] }>(resul
         content:
           content.type === "member_joined" || content.type === "member_left"
             ? { type: content.type, memberId: content.member.id }
-            : {
-                ...content,
-                artifact: {
-                  path: resolveWorkspaceFile(content.artifact.file)!,
-                  title: content.artifact.title,
-                },
-              },
+            : content.type === "artifact_shared"
+              ? {
+                  ...content,
+                  artifact: {
+                    path: resolveWorkspaceFile(content.artifact.file)!,
+                    title: content.artifact.title,
+                  },
+                }
+              : content,
       };
     }
     const { id: _id, attachments, ...rest } = message;
@@ -288,14 +316,14 @@ function toChannelReadToolResult<T extends { messages: ChannelMessage[] }>(resul
   } satisfies ToolResult;
 }
 
-function channelForTool({ id: channelId, name, purpose, directory, model, leadId }: Channel) {
+function channelForTool({ id: channelId, name, purpose, directory, model }: Channel) {
   return {
     channelId,
     name,
     ...(purpose ? { purpose } : {}),
     directory,
     model,
-    lead: { leadId, mention: "@lead" },
+    lead: { leadId: channelId, mention: "@lead" },
   };
 }
 
@@ -320,11 +348,13 @@ export const channelLeadTools = [
   ...commonChannelAgentTools,
   createCurrentChannelMembersTool,
   updateChannelTool,
+  requestChannelUserAttentionTool,
+  markChannelDoneTool,
   finishChannelAgentTurnTool,
 ];
 export const channelMemberTools = [
   ...commonChannelAgentTools,
-  updateAgentTool,
+  updateMemberTool,
   finishChannelAgentTurnTool,
 ];
 

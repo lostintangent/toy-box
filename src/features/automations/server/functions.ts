@@ -1,4 +1,4 @@
-// Validated automation commands for UI clients. Reads use the workspace snapshot.
+// Automation catalog and validated commands for UI clients.
 
 import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
@@ -9,6 +9,10 @@ import {
   updateAutomationInputSchema,
 } from "../model";
 import * as lifecycle from "./index";
+
+export const listAutomations = createServerFn({ method: "GET" }).handler(() =>
+  lifecycle.listAutomations(),
+);
 
 export const createAutomation = createServerFn({ method: "POST" })
   .validator(zodValidator(automationOptionsSchema))

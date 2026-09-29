@@ -10,12 +10,14 @@ import {
 describe("worker ownership", () => {
   test("derives optional parent sessions", () => {
     const fileWorker = {
+      createdAt: new Date(0).toISOString(),
       type: "file",
       sessionId: "worker-a",
       ephemeral: true,
       file: sessionFile("session-a", "notes.md"),
     } as const;
     const appWorker = {
+      createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: "worker-b",
       ephemeral: false,
@@ -27,6 +29,7 @@ describe("worker ownership", () => {
 
   test("references both a worker session and its direct parent session", () => {
     const worker = {
+      createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: "worker-a",
       ephemeral: true,
@@ -38,6 +41,7 @@ describe("worker ownership", () => {
     expect(
       workerReferencesSession(
         {
+          createdAt: new Date(0).toISOString(),
           type: "session",
           sessionId: "worker-a",
           ephemeral: false,
@@ -55,7 +59,7 @@ describe("worker ingress", () => {
       spawnWorkerInputSchema.parse({
         type: "file",
         file: sessionFile("session-a", "notes.md"),
-        name: "  Reviewer  ",
+        name: "Reviewer",
         message: { content: "Review this file" },
       }),
     ).toMatchObject({ type: "file", name: "Reviewer" });

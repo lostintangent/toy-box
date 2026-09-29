@@ -7,6 +7,7 @@ import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model
 import { createInitialSessionState } from "@sessions/model/reducer";
 import type { Automation, AutomationOptions } from "./model";
 import { automationMutations } from "./mutations";
+import { automationQueries } from "./queries";
 
 const automation = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -27,30 +28,33 @@ const automationOptions = {
 } satisfies AutomationOptions;
 
 describe("automation client behavior", () => {
-  test("projects created and updated definitions into workspace state", async () => {
-    const queryClient = createQueryClient();
+  test("create and update responses refresh their catalogs without replacing newer schedule data", async () => {
+    const queryClient = createQueryClient(automation);
+    const key = automationQueries.listKey();
+    const current = { ...automation, nextRunAt: "2026-08-03T09:00:00.000Z" };
+    queryClient.setQueryData(key, [current]);
 
     await new MutationObserver(queryClient, {
       ...automationMutations.create(),
       mutationFn: async () => automation,
     }).mutate(automationOptions);
-    expect(readWorkspace(queryClient).automations).toEqual([automation]);
-
-    const updatedAutomation = {
-      ...automation,
-      title: "Morning summary",
-      updatedAt: "2026-08-01T10:00:00.000Z",
-    } satisfies Automation;
+    expect(queryClient.getQueryData<Automation[]>(key)).toEqual([current]);
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(true);
+    queryClient.setQueryData(key, [current]);
+    queryClient.setQueryData(sessionQueries.stateKey(), readSessions(queryClient));
     await new MutationObserver(queryClient, {
       ...automationMutations.update(automation.id),
-      mutationFn: async () => updatedAutomation,
+      mutationFn: async () => automation,
     }).mutate(automationOptions);
 
-    expect(readWorkspace(queryClient).automations).toEqual([updatedAutomation]);
+    expect(queryClient.getQueryData<Automation[]>(key)).toEqual([current]);
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(false);
   });
 
   test("treats idempotent deletion as authoritative absence", async () => {
-    const queryClient = createQueryClient(automation, { status: "running" });
+    const queryClient = createQueryClient(automation, { status: "running", since: 1 });
     await new MutationObserver(queryClient, {
       ...automationMutations.delete(automation.id),
       mutationFn: async () => false,
@@ -58,6 +62,8 @@ describe("automation client behavior", () => {
 
     expect(readWorkspace(queryClient)).toEqual(createEmptyWorkspaceState());
     expect(readSessions(queryClient).sessions).toEqual([]);
+    expect(readSessions(queryClient).ownership).toEqual({});
+    expect(queryClient.getQueryData<Automation[]>(automationQueries.listKey())).toEqual([]);
   });
 
   test("shows the prompt before dispatch and preserves streaming through request completion", async () => {
@@ -165,7 +171,7 @@ describe("automation client behavior", () => {
   test.each(["running", "waiting"] as const)(
     "preserves the current conversation when Run is clicked while %s",
     async (status) => {
-      const queryClient = createQueryClient(automation, { status });
+      const queryClient = createQueryClient(automation, { status, since: 1 });
       const sessions = readSessions(queryClient);
       const snapshot = {
         ...createInitialSessionState(),
@@ -195,13 +201,14 @@ function createQueryClient(
   const workspace: WorkspaceState = seed
     ? {
         ...createEmptyWorkspaceState(),
-        automations: [seed],
         sessionStates: sessionState ? { [seed.id]: sessionState } : {},
       }
     : createEmptyWorkspaceState();
   queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), workspace);
+  queryClient.setQueryData(automationQueries.listKey(), seed ? [seed] : []);
   queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), {
     ...createEmptySessionsState(),
+    ownership: seed ? { [seed.id]: { type: "automation" } } : {},
     sessions: seed
       ? [
           {

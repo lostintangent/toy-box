@@ -64,18 +64,21 @@ describe("worker cleanup", () => {
     const fileChild = "file-child";
     const workers = [
       {
+        createdAt: new Date(0).toISOString(),
         type: "session" as const,
         sessionId: parent,
         parentSessionId: "grandparent",
         ephemeral: false,
       },
       {
+        createdAt: new Date(0).toISOString(),
         type: "session" as const,
         sessionId: sessionChild,
         parentSessionId: parent,
         ephemeral: false,
       },
       {
+        createdAt: new Date(0).toISOString(),
         type: "file" as const,
         sessionId: fileChild,
         file: sessionFile(parent, "notes.md"),
@@ -110,16 +113,24 @@ describe("worker cleanup", () => {
     const queued = "queued-app-worker";
     const abandoned = "abandoned-app-worker";
     for (const sessionId of [active, queued]) {
-      startWorker({ type: "app", sessionId, appId, ephemeral: true });
+      startWorker({
+        createdAt: new Date(0).toISOString(),
+        type: "app",
+        sessionId,
+        appId,
+        ephemeral: true,
+      });
       onTestFinished(() => finishWorker(sessionId));
     }
     await registerWorkerSession({
+      createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: active,
       appId,
       ephemeral: false,
     });
     await registerWorkerSession({
+      createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: abandoned,
       appId,
@@ -145,12 +156,14 @@ describe("worker cleanup", () => {
   test("attempts every independent cleanup", async () => {
     await openDatabase();
     await registerWorkerSession({
+      createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: "failed-cleanup",
       appId: "app-a",
       ephemeral: false,
     });
     await registerWorkerSession({
+      createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: "successful-cleanup",
       appId: "app-a",

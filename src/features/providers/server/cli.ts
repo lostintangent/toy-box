@@ -1,6 +1,5 @@
 import { homedir } from "node:os";
 import { delimiter, dirname } from "node:path";
-import { $ } from "bun";
 
 // Provider IDs name their CLIs, which all support --version and update.
 export function isInstalled(providerId: string): boolean {
@@ -26,5 +25,5 @@ function runCommand(providerId: string, argument: string): Promise<string> {
   if (!executable) throw new Error(`Could not find ${providerId} on PATH.`);
   // Updaters must find their own package manager before the dev server's local shims.
   const cliPath = `${dirname(executable)}${delimiter}${process.env.PATH}`;
-  return $`PATH=${cliPath} ${executable} ${argument} < /dev/null`.cwd(homedir()).text();
+  return Bun.$`PATH=${cliPath} ${executable} ${argument} < /dev/null`.cwd(homedir()).text();
 }

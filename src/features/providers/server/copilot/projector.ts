@@ -190,7 +190,10 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       return event.agentId ? [] : [{ type: "status", status: "thinking" }];
     case "session.compaction_start":
       return event.agentId ? [] : [{ type: "status", status: "compacting" }];
+    case "session.error":
+      return [{ type: "end", reason: "error", error: event.data.message }];
     case "session.start":
+    case "session.resume":
       return projectSessionStart(
         event.data.selectedModel,
         event.data.reasoningEffort,

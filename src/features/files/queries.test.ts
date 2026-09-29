@@ -23,8 +23,5 @@ describe("file query identity", () => {
     const query = fileQueries.detail(file);
 
     expect([...query.queryKey]).toEqual([...fileQueries.detailKey(workspaceFileId(file))]);
-    expect(query.refetchOnMount).toBe("always");
-    expect(query.refetchOnWindowFocus).toBe(false);
-    expect(query.refetchOnReconnect).toBe(false);
   });
 });

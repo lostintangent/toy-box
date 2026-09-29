@@ -1,10 +1,9 @@
-import type { SessionConnection } from "@providers/server/provider";
+import { utimes } from "node:fs/promises";
 import { resolveSessionArtifactPath } from "@files/server/paths";
-import { deleteSessionFiles, listSessionArtifacts } from "@sessions/server/artifacts";
+import { deleteSessionFiles } from "@sessions/server/artifacts";
 import { expect, mock, onTestFinished, test } from "bun:test";
 import type { ToolInvocation } from "@github/copilot-sdk";
 import { createTestDatabase } from "@/server/database";
-import { SessionStream } from "@sessions/server/runtime/sessionStream";
 
 let currentDb: Bun.SQL | undefined;
 
@@ -16,11 +15,13 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-const { createInboxEntry, listInboxEntries } = await import("./database");
+const { WorkerDatabase } = await import("@workers/server/database");
+const { ensureInboxRecovered, getInboxEntry } = await import("./index");
 const { inboxTools } = await import("./tools");
 
 async function openInboxToolTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
+  await ensureInboxRecovered();
   onTestFinished(async () => {
     await currentDb?.close();
     currentDb = undefined;
@@ -36,67 +37,65 @@ function invocation(sessionId: string): ToolInvocation {
   };
 }
 
-test("send_to_inbox completes its session's pending entry", async () => {
-  await openInboxToolTestDatabase();
-  const message = `Inbox tool ${crypto.randomUUID()}`;
-  const sessionId = `toy-box-${crypto.randomUUID()}`;
-  await createInboxEntry(sessionId);
-
-  const [sendToInbox] = inboxTools;
-  const result = await sendToInbox?.handler?.({ message }, invocation(sessionId));
-  const { entryId } = JSON.parse(String(result)) as { entryId: string };
-
-  expect(await listInboxEntries()).toContainEqual({
-    id: entryId,
-    message,
-    createdAt: expect.any(String),
+function createInboxWorker(sessionId: string) {
+  return new WorkerDatabase(currentDb!).create({
+    type: "inbox",
+    sessionId,
+    createdAt: new Date(0).toISOString(),
+    ephemeral: false,
   });
-  expect(entryId).toBe(sessionId);
-});
+}
 
-test("send_to_inbox writes its artifact to the session workspace and attaches the filename", async () => {
+test("send_to_inbox attaches an existing nested file without rewriting it, and can clear its reference", async () => {
   await openInboxToolTestDatabase();
   const sessionId = `toy-box-${crypto.randomUUID()}`;
-  await createInboxEntry(sessionId);
-
-  const fakeSession = {
-    binding: { sessionId, providerId: "copilot", nativeId: sessionId },
-    onEvent: () => () => {},
-  } as unknown as SessionConnection;
-  const stream = SessionStream.getOrCreate(sessionId, fakeSession);
-  onTestFinished(async () => {
-    stream.finish();
-    await deleteSessionFiles(sessionId);
-  });
+  await createInboxWorker(sessionId);
+  const artifact = "reports/research.md";
+  const path = resolveSessionArtifactPath(sessionId, artifact)!;
+  await Bun.write(path, "# Research");
+  onTestFinished(() => deleteSessionFiles(sessionId));
+  await utimes(path, 0, 0);
 
   const [sendToInbox] = inboxTools;
-  const sendResult = await sendToInbox?.handler?.(
-    {
-      message: "Research is ready",
-      artifact: { filename: "research.md", content: "# Research" },
-    },
+  expect(sendToInbox.isTerminal).toBe(true);
+  const result = await sendToInbox.handler(
+    { message: "Research is ready", artifact },
     invocation(sessionId),
   );
-  const { entryId } = JSON.parse(String(sendResult)) as { entryId: string };
-
-  expect(await Bun.file(resolveSessionArtifactPath(sessionId, "research.md")!).text()).toBe(
-    "# Research",
-  );
-  expect((await listSessionArtifacts(sessionId)).map(({ path }) => path)).toEqual(["research.md"]);
-  expect(await listInboxEntries()).toContainEqual({
-    id: entryId,
+  expect(JSON.parse(String(result))).toEqual({ entryId: sessionId });
+  expect(await Bun.file(path).text()).toBe("# Research");
+  expect(Bun.file(path).lastModified).toBe(0);
+  expect(await getInboxEntry(sessionId)).toEqual({
+    id: sessionId,
+    createdAt: new Date(0).toISOString(),
+    kind: "result",
     message: "Research is ready",
-    createdAt: expect.any(String),
-    artifact: "research.md",
+    artifact,
   });
+
+  await sendToInbox.handler({ message: "Updated answer" }, invocation(sessionId));
+  expect(await getInboxEntry(sessionId)).toEqual({
+    id: sessionId,
+    createdAt: new Date(0).toISOString(),
+    kind: "result",
+    message: "Updated answer",
+  });
+  expect(await Bun.file(path).text()).toBe("# Research");
 });
 
-test("send_to_inbox rejects sessions without a pending inbox entry", async () => {
+test("send_to_inbox rejects invalid artifacts without replacing the existing result", async () => {
   await openInboxToolTestDatabase();
-  const [sendToInbox] = inboxTools;
   const sessionId = `toy-box-${crypto.randomUUID()}`;
-
-  expect(sendToInbox?.handler?.({ message: "Unexpected" }, invocation(sessionId))).rejects.toThrow(
-    "Inbox entry not found.",
-  );
+  await createInboxWorker(sessionId);
+  await Bun.write(resolveSessionArtifactPath(sessionId, "reports/result.md")!, "Result");
+  onTestFinished(() => deleteSessionFiles(sessionId));
+  const [sendToInbox] = inboxTools;
+  await sendToInbox.handler({ message: "Keep this answer" }, invocation(sessionId));
+  const existing = await getInboxEntry(sessionId);
+  for (const artifact of ["missing.md", "reports", "../outside.md", "/etc/passwd"]) {
+    await expect(
+      sendToInbox.handler({ message: "Invalid", artifact }, invocation(sessionId)),
+    ).rejects.toThrow();
+    expect(await getInboxEntry(sessionId)).toEqual(existing);
+  }
 });

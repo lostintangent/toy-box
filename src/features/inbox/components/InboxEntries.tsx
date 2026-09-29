@@ -1,29 +1,43 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Circle, FileText, Inbox as InboxIcon, Info, Loader2, Trash2 } from "lucide-react";
+import {
+  Circle,
+  FileText,
+  Inbox as InboxIcon,
+  Info,
+  Loader2,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { Button } from "@/shared/ui/button";
+import { Markdown } from "@/shared/ui/markdown";
+import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
-import { useDispatchWorkspaceAction, useWorkspaceSessionActivity } from "@workspace/hooks/state";
+import {
+  useDispatchWorkspaceAction,
+  useWorkspaceSelector,
+  useWorkspaceSessionActivity,
+} from "@workspace/hooks/state";
 import { cn } from "@/shared/utils";
-import { createEditorPaneId, type EditorWorkspacePane } from "@workspace/model/panes";
-import { sessionFile } from "@files/model";
 import type { Session } from "@sessions/model";
 import type { InboxEntry } from "../model";
 import { inboxMutations } from "../mutations";
+import { isInboxTaskRunning, sortInboxEntries } from "../queries";
 
 export function InboxEntries({
   entries,
   sessions,
-  linkedEditorPane,
-  onArtifactSelect,
+  linkedEntryId,
+  onSelect,
 }: {
   entries: InboxEntry[];
   sessions: Session[];
-  linkedEditorPane?: EditorWorkspacePane;
-  onArtifactSelect: (entry: InboxEntry) => void;
+  linkedEntryId?: string;
+  onSelect: (entry: InboxEntry) => void;
 }) {
+  const sortedEntries = useWorkspaceSelector((workspace) => sortInboxEntries(entries, workspace));
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
 
   return (
@@ -40,16 +54,13 @@ export function InboxEntries({
         </p>
       ) : (
         <div className="overflow-hidden rounded-lg border bg-card">
-          {entries.map((entry) => (
+          {sortedEntries.map((entry) => (
             <InboxEntryRow
               key={entry.id}
               entry={entry}
               session={sessionsById.get(entry.id)}
-              linked={
-                entry.artifact !== undefined &&
-                linkedEditorPane?.id === createEditorPaneId(sessionFile(entry.id, entry.artifact))
-              }
-              onSelect={() => onArtifactSelect(entry)}
+              linked={linkedEntryId === entry.id}
+              onSelect={() => onSelect(entry)}
             />
           ))}
         </div>
@@ -71,11 +82,22 @@ function InboxEntryRow({
 }) {
   const deleteMutation = useMutation(inboxMutations.deleteEntry(entry.id));
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const { running, unread } = useWorkspaceSessionActivity(entry.id);
+  const { unread } = useWorkspaceSessionActivity(entry.id);
+  const running = useWorkspaceSelector((workspace) => isInboxTaskRunning(workspace, entry.id));
   const dispatchWorkspaceAction = useDispatchWorkspaceAction();
-  const pending = entry.message === undefined;
+  const pending = entry.kind === "pending";
   const preview = useSessionPreview(!pending || !session);
-  const label = entry.message || session?.title;
+  const label =
+    entry.kind === "result"
+      ? entry.message
+      : session?.title || (entry.kind === "error" ? entry.error : undefined);
+  const labelId = useId();
+
+  function handleSelect() {
+    preview.close();
+    if (unread) dispatchWorkspaceAction({ type: "session.read", sessionId: entry.id });
+    onSelect();
+  }
 
   return (
     <>
@@ -86,51 +108,67 @@ function InboxEntryRow({
           linked && "bg-muted/60",
         )}
       >
-        <SessionPreview sessionId={entry.id} {...preview}>
+        {entry.kind === "error" ? (
           <button
             type="button"
-            aria-label={label ? undefined : "Loading inbox entry"}
-            aria-pressed={entry.artifact ? linked : undefined}
-            onClick={() => {
-              preview.close();
-              if (unread) dispatchWorkspaceAction({ type: "session.read", sessionId: entry.id });
-              onSelect();
-            }}
-            onMouseEnter={preview.onMouseEnter}
-            onMouseLeave={preview.onMouseLeave}
+            aria-pressed={linked}
+            onClick={handleSelect}
             className="flex min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left"
           >
-            {entry.artifact ? (
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+            <span className="min-w-0 break-words text-destructive">{entry.error}</span>
+          </button>
+        ) : (
+          <div
+            onMouseEnter={preview.onMouseEnter}
+            onMouseLeave={preview.onMouseLeave}
+            className="relative flex min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left"
+          >
+            <SessionPreview sessionId={entry.id} {...preview}>
+              <button
+                type="button"
+                aria-labelledby={label ? labelId : undefined}
+                aria-label={label ? undefined : "Loading inbox entry"}
+                aria-pressed={linked}
+                onClick={handleSelect}
+                className="absolute inset-0 cursor-pointer focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </SessionPreview>
+            {entry.kind === "result" && entry.artifact ? (
               <FileText
                 className={cn(
-                  "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground",
+                  "pointer-events-none mt-0.5 h-4 w-4 shrink-0 text-muted-foreground",
                   linked && "text-primary",
                 )}
               />
             ) : (
-              <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <Info className="pointer-events-none mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
             )}
             {label ? (
-              <span
+              <div
+                id={labelId}
                 className={cn(
-                  "whitespace-pre-wrap break-words",
+                  "pointer-events-none relative z-10 min-w-0 break-words [&_a]:pointer-events-auto",
                   pending && "italic text-muted-foreground",
                 )}
               >
-                {label}
-              </span>
+                <Markdown preserveLineBreaks linkSafety={{ enabled: false }}>
+                  {label}
+                </Markdown>
+              </div>
             ) : (
-              <Skeleton className="mt-0.5 h-4 w-3/5 max-w-80" />
+              <Skeleton className="pointer-events-none mt-0.5 h-4 w-3/5 max-w-80" />
             )}
-          </button>
-        </SessionPreview>
+          </div>
+        )}
         <InboxEntryAction
           label={label}
           running={running}
           unread={unread}
           deleting={deleteMutation.isPending}
           onDelete={() => {
-            if (entry.artifact) setDeleteOpen(true);
+            if (entry.kind === "error" || (entry.kind === "result" && entry.artifact))
+              setDeleteOpen(true);
             else deleteMutation.mutate();
           }}
         />
@@ -170,7 +208,7 @@ function InboxEntryAction({
           aria-label={running ? `${statusLabel} is running` : `${statusLabel} has unread activity`}
         >
           {running ? (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            <RunningIndicator className="h-4 w-4 text-muted-foreground" />
           ) : (
             <Circle className="h-2.5 w-2.5 fill-unread text-unread" />
           )}

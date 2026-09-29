@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
-import { Check, Loader2 } from "lucide-react";
 import { cn } from "@/shared/utils";
-import { BriefMarkdownText } from "../../MarkdownText";
+import { DoneIndicator } from "@/shared/ui/done-indicator";
+import { RunningIndicator } from "@/shared/ui/running-indicator";
+import { Markdown } from "@/shared/ui/markdown";
 import {
   fieldValueText,
   planStatus,
@@ -106,13 +107,12 @@ export function BriefPlanSection({
                     <div className="absolute -bottom-5 top-7 w-px bg-border" />
                   )}
                   {status === "complete" ? (
-                    <span
+                    // Oversized so its disc fills the 28px phase node.
+                    <DoneIndicator
                       role="img"
                       aria-label={`${phaseLabel} complete`}
-                      className="relative inline-flex size-7 items-center justify-center rounded-full border border-emerald-500/50 bg-background text-emerald-400"
-                    >
-                      <Check aria-hidden className="size-3.5" />
-                    </span>
+                      className="-m-1 size-9"
+                    />
                   ) : (
                     <span
                       aria-label={`${phaseLabel}${status === "in-progress" ? " in progress" : ""}`}
@@ -124,7 +124,7 @@ export function BriefPlanSection({
                       )}
                     >
                       {status === "in-progress" ? (
-                        <Loader2 aria-hidden className="size-3.5 animate-spin" />
+                        <RunningIndicator className="size-3.5" />
                       ) : (
                         phaseIndex + 1
                       )}
@@ -205,14 +205,14 @@ function PlanStepCard({
         <span className="flex items-center justify-between gap-2">
           <span className="text-[11.5px] font-semibold">{step.title}</span>
           {step.status === "complete" ? (
-            <Check
+            <DoneIndicator
               role="img"
               aria-label={`${step.title} complete`}
-              className="size-3 shrink-0 text-emerald-400"
+              className="size-4 shrink-0"
             />
           ) : step.status === "in-progress" ? (
             <span className="inline-flex shrink-0 items-center gap-1 text-[9.5px] font-medium text-sky-400">
-              <Loader2 aria-hidden className="size-3 animate-spin" />
+              <RunningIndicator className="size-3" />
               In progress
             </span>
           ) : null}
@@ -227,14 +227,20 @@ function PlanStepCard({
         <div className={wide ? "sm:col-span-2" : undefined}>
           <dt className="text-[9px] font-medium text-muted-foreground">Done when</dt>
           <dd className="mt-0.5 text-[10.5px] leading-relaxed text-foreground/90">
-            <BriefMarkdownText>{step.doneWhen}</BriefMarkdownText>
+            <Markdown className="space-y-1.5">{step.doneWhen}</Markdown>
           </dd>
         </div>
         {section.fields.map((field) => (
           <div key={field.id}>
             <dt className="text-[9px] font-medium text-muted-foreground">{field.label}</dt>
             <dd className="mt-0.5 text-[10.5px] leading-relaxed text-foreground/90">
-              {fieldValueText(field, step.values[field.id])}
+              {field.kind === "text" ? (
+                <Markdown className="space-y-1.5">
+                  {fieldValueText(field, step.values[field.id])}
+                </Markdown>
+              ) : (
+                fieldValueText(field, step.values[field.id])
+              )}
             </dd>
           </div>
         ))}

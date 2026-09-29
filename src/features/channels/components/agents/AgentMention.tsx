@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { defaultRemarkPlugins, Streamdown, type Components } from "streamdown";
+import { defaultRemarkPlugins, type Components } from "streamdown";
 import { splitAgentMentionText } from "@channels/model";
+import { Markdown } from "@/shared/ui/markdown";
 import { cn } from "@/shared/utils";
 
 const MENTION_TAG = "agent-mention";
@@ -86,17 +87,13 @@ export function AgentMention({
   onAccent?: boolean;
 }) {
   return (
-    <Streamdown
+    <Markdown
+      preserveLineBreaks
       remarkPlugins={remarkPlugins}
       allowedTags={allowedTags}
       components={onAccent ? accentComponents : components}
-      className={cn(
-        "whitespace-pre-wrap text-sm [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_ul]:my-1.5",
-        onAccent &&
-          "[&_[data-streamdown=link]]:text-primary-foreground [&_[data-streamdown=inline-code]]:bg-primary-foreground/15",
-      )}
     >
       {content}
-    </Streamdown>
+    </Markdown>
   );
 }

@@ -6,7 +6,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { MetadataBadge } from "@/shared/ui/metadata-badge";
+import { Badge } from "@/shared/ui/badge";
 import type { WorkspaceFileMode } from "../../../model";
 import { cn } from "@/shared/utils";
 
@@ -80,7 +80,8 @@ export function EditorModeMenu({
               title={option.description}
               className="h-auto rounded-full p-0 hover:bg-transparent"
             >
-              <MetadataBadge
+              <Badge
+                variant="metadata"
                 className={cn(
                   "h-6 md:h-5 cursor-pointer select-none rounded-full border bg-transparent px-2 md:px-1.5 text-xs transition-colors hover:bg-muted",
                   option.badgeClassName,
@@ -89,7 +90,7 @@ export function EditorModeMenu({
               >
                 <Icon className={cn("h-3 w-3 shrink-0", option.iconClassName, iconClassName)} />
                 <span>{option.label}</span>
-              </MetadataBadge>
+              </Badge>
             </Button>
           ) : (
             <button

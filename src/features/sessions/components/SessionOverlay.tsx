@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { CircleHelp, Loader2, MessageCircle, X } from "lucide-react";
+import { MessageCircle, X } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
+import { RunningIndicator } from "@/shared/ui/running-indicator";
+import { WaitingIndicator } from "@/shared/ui/waiting-indicator";
 import { cn } from "@/shared/utils";
 import {
   CONTAINER_OVERLAY_BOUNDS,
@@ -35,9 +37,9 @@ export function SessionOverlay({
       tabIndex={isOpen ? -1 : undefined}
     >
       {waiting ? (
-        <CircleHelp className={PANE_OVERLAY_ICON_CLASS} />
+        <WaitingIndicator className="size-4" />
       ) : running ? (
-        <Loader2 className={cn(PANE_OVERLAY_ICON_CLASS, "animate-spin")} />
+        <RunningIndicator className={PANE_OVERLAY_ICON_CLASS} />
       ) : (
         <MessageCircle className={PANE_OVERLAY_ICON_CLASS} />
       )}

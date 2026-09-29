@@ -10,7 +10,6 @@ import { dirname, join } from "node:path";
 import { initializeAppSchema } from "@apps/server/schema";
 import { initializeAutomationSchema } from "@automations/server/schema";
 import { initializeChannelSchema } from "@channels/server/schema";
-import { initializeInboxSchema } from "@inbox/server/schema";
 import { initializeSessionSchema } from "@sessions/server/schema";
 import { initializeWorkerSchema } from "@workers/server/schema";
 import { initializeWorkspaceSchema } from "@workspace/server/state/schema";
@@ -81,7 +80,6 @@ async function initializeSchema(db: Bun.SQL, path: string): Promise<void> {
   await initializeWorkerSchema(db);
   await initializeChannelSchema(db);
   await initializeAutomationSchema(db);
-  await initializeInboxSchema(db);
   await initializeAppSchema(db);
   await initializeWorkspaceSchema(db);
 }

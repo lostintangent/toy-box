@@ -27,34 +27,44 @@ export function DocumentLayer({
     return () => document.unmount();
   }, [baseUri, document]);
 
+  // Keep this subscription stable across source loads: selection measures after it.
   useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
     let previousViewport = store.state.viewport;
+    let previousNavigation = false;
 
-    function renderViewport() {
-      const viewport = store.state.viewport;
+    const renderViewport = () => {
+      const { viewport, gesture } = store.state;
+      const page = document.page;
+      const navigating = gesture?.type === "pan" || gesture?.type === "pinch";
       previousViewport = viewport;
-      if (!snapshot.root || viewport.size.width <= 0 || viewport.size.height <= 0) return;
-      document.setRenderedViewport({
-        x: -viewport.panX,
-        y: -viewport.panY,
-        width: viewport.size.width / viewport.zoom,
-        height: viewport.size.height / viewport.zoom,
-      });
-    }
+      previousNavigation = navigating;
+      host.toggleAttribute("data-whiteboard-navigating", navigating);
+
+      // Keep percentage geometry in the authored viewport, even after navigation ends.
+      host.style.width = `${page.width}px`;
+      host.style.height = `${page.height}px`;
+      const x = (viewport.panX + page.x) * viewport.zoom;
+      const y = (viewport.panY + page.y) * viewport.zoom;
+      host.style.transform = `translate(${x}px, ${y}px) scale(${viewport.zoom})`;
+      host.style.willChange = navigating ? "transform" : "";
+    };
 
     renderViewport();
     const subscription = store.subscribe((state) => {
-      if (state.viewport === previousViewport) return;
+      const navigating = state.gesture?.type === "pan" || state.gesture?.type === "pinch";
+      if (state.viewport === previousViewport && navigating === previousNavigation) return;
       renderViewport();
     });
     return () => subscription.unsubscribe();
-  }, [document, snapshot.root, store]);
+  }, [document, store]);
 
   return (
     <>
       <div
         ref={hostRef}
-        className="absolute inset-0 overflow-hidden"
+        className="absolute left-0 top-0 origin-top-left"
         hidden={Boolean(snapshot.error)}
         {...editingProps}
       />

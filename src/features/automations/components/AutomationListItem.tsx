@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Clock3, Pencil, Play, Trash2 } from "lucide-react";
-import { MetadataBadge } from "@/shared/ui/metadata-badge";
+import { Badge } from "@/shared/ui/badge";
 import { RelativeTime } from "@/shared/ui/relative-time";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/shared/ui/dropdown-menu";
 import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
@@ -50,10 +50,10 @@ export function AutomationListItem({
           )
         }
         badge={
-          <MetadataBadge>
+          <Badge variant="metadata">
             <Clock3 className="h-3 w-3 shrink-0" />
             <RelativeTime date={automation.nextRunAt} />
-          </MetadataBadge>
+          </Badge>
         }
         menuItems={
           <>

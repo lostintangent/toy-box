@@ -54,4 +54,18 @@ describe("model catalog adapter", () => {
 
     expect(adapted).toBe(source);
   });
+
+  test("keeps the first entry for each model ID", () => {
+    const grok = model();
+    const gpt = model({ id: "gpt-5.5", name: "GPT-5.5" });
+
+    const adapted = adaptModelCatalog([
+      grok,
+      gpt,
+      model({ name: "Grok 4.6 (repeated)" }),
+      model({ id: "gpt-5.5", name: "GPT-5.5 (repeated)" }),
+    ]);
+
+    expect(adapted).toEqual([grok, gpt]);
+  });
 });

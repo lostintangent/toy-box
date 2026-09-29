@@ -6,7 +6,7 @@ Automations let users turn a prompt into dependable recurring work that runs wit
 
 An automation is a durable definition containing a title, prompt, model, cron schedule, and optional working directory, plus `nextRunAt` and `lastRunAt` lifecycle metadata. Its UUID is also the stable public ID of the session it manages. That identity persists across occurrences, while each run replaces the previous idle provider conversation so it starts with a clean transcript. No separate run ID or reusable-session option exists. Automation membership comes from its durable definition, never from the ID's spelling.
 
-The public operations are `list`, `create`, `update`, `delete`, and `run`. `server/index.ts` owns their lifecycle, publication, managed-session teardown, and dispatch. UI commands in `server/functions.ts` and model-facing tools in `server/tools.ts` validate inputs with the same schemas before calling that lifecycle; UI reads use the workspace snapshot. Trusted server orchestration calls that underlying lifecycle directly only when it already owns validated domain values.
+The public operations are `list`, `create`, `update`, `delete`, and `run`. `server/index.ts` owns their lifecycle, publication, managed-session teardown, and dispatch. UI commands in `server/functions.ts` and model-facing tools in `server/tools.ts` validate inputs with the same schemas before calling that lifecycle; UI reads use the feature-owned catalog query. Trusted server orchestration calls that underlying lifecycle directly only when it already owns validated domain values.
 
 Creation and update validate the cron expression and calculate the next occurrence in the server's local timezone. Deletion removes the managed session before deleting the definition, so an automation and its transcript never become independently orphaned resources.
 
@@ -34,13 +34,26 @@ The session runtime owns every execution transition: the first turn publishes ru
 
 ## Client synchronization
 
-Automation definitions are part of the shared workspace query projection alongside Inbox entries and other managed-session state. `automationQueries` exposes that projection as the feature's read API, while `automationMutations` owns CRUD and run requests plus their immediate client cache effects. Components consume those options directly and retain only local interaction state. `useWorkspaceSync` applies server events, reuses the SSR snapshot when the initial stream revision matches, and refetches after missed updates or reconnects.
+`automationQueries.list()` owns the Automation catalog independently of Workspace. The main route
+preloads it during SSR before mounting the shared workspace subscription. `queryCache.ts` patches
+committed upsert/delete events and replaces an overlapping fetch with a post-commit read; events
+never seed a partial catalog. `useWorkspaceSync` reuses SSR data when the initial stream revision
+matches and refetches the catalog after reconnects or missed updates.
+
+`automationMutations` owns CRUD and run requests. Create/update responses invalidate rather than
+reapply potentially stale definitions over scheduler events. Creation also refreshes Sessions'
+ownership projection; deletion removes both the definition and its managed session from client
+caches. Components consume these options directly and retain only local interaction state.
 
 The mounted automation dialog owns one schedule draft. Daily, interval, and cron are editing modes; inactive tab inputs are remembered, and only the selected mode determines the saved cron.
 
 A user-triggered run displays as running immediately through the mutation's pending state, without opening its pane. The mutation calls Sessions' `recreateSessionInCache` with the cached prompt and model. Only the automation ID and client message ID accompany the request; the server uses the saved definition and carries that message ID into delivery. Sessions owns replacing the old transcript and reconciling the canonical message. Settled requests call Sessions' `invalidateSessionQueries` to reconcile success, overlap, or failure. Automation list items combine the pending request with workspace activity for presentation; the server announces running when the live stream exists.
 
-Automation events synchronize durable definition and schedule metadata through the workspace event algebra. Automation sessions are excluded from the standard session list because the automation panel is their managed presentation. They remain ordinary sessions to the runtime and can be opened, streamed, and inspected through the same session UI.
+Automation events synchronize definition and schedule metadata through the shared workspace
+transport. Sessions consumes the same events to maintain ownership, without copying definitions.
+That ownership excludes automation sessions from ordinary roots and draft reuse, and supplies
+automation-specific editor and SDK behavior even before a backing session exists. They remain
+ordinary sessions to the runtime and can be opened, streamed, and inspected through the same UI.
 
 ## Boundaries and invariants
 
@@ -48,8 +61,8 @@ Automation events synchronize durable definition and schedule metadata through t
 - [`../../server/database.ts`](../../server/database.ts) owns the shared database connection and
   composes feature schemas. `server/schema.ts` defines the Automation table, while
   `AutomationDatabase` owns its rows and schedule metadata. [Sessions](../sessions/AGENTS.md) owns
-  managed session teardown, and [Workspace](../workspace/AGENTS.md) owns the aggregate client
-  projection.
+  managed session teardown and ownership projection. Automations owns its catalog cache;
+  [Workspace](../workspace/AGENTS.md) coordinates SSR and the shared update transport.
 - `server/tools.ts` owns the automation's model-facing tools and role instructions. Application
   composition supplies them to the [session provider boundary](../providers/INTEGRATION.md), and
   tools share the UI's input schemas and call the same domain operations.

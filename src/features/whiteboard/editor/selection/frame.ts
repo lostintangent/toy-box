@@ -61,7 +61,7 @@ export function measureElementFrame(
         y: corners.reduce((sum, point) => sum + point.y, 0) / corners.length,
       },
       ...(element.localName.toLowerCase() === "line"
-        ? { lineEndpoints: readLineEndpoints(element, screenMatrix, origin) }
+        ? { lineEndpoints: readLineEndpoints(element as SVGLineElement, screenMatrix, origin) }
         : {}),
     };
   } catch {
@@ -170,20 +170,18 @@ function boundsOfPoints(points: readonly Point[]): Rect {
 }
 
 function readLineEndpoints(
-  element: SVGGraphicsElement,
+  element: SVGLineElement,
   screenMatrix: Matrix2D,
   origin: Pick<DOMRect, "left" | "top">,
-): { start: Point; end: Point } | undefined {
-  const x1 = Number(element.getAttribute("x1") ?? 0);
-  const y1 = Number(element.getAttribute("y1") ?? 0);
-  const x2 = Number(element.getAttribute("x2") ?? 0);
-  const y2 = Number(element.getAttribute("y2") ?? 0);
-  if (![x1, y1, x2, y2].every(Number.isFinite)) return undefined;
+): { start: Point; end: Point } {
   const project = (point: Point): Point => {
     const clientPoint = transformPoint(screenMatrix, point);
     return { x: clientPoint.x - origin.left, y: clientPoint.y - origin.top };
   };
-  return { start: project({ x: x1, y: y1 }), end: project({ x: x2, y: y2 }) };
+  return {
+    start: project({ x: element.x1.baseVal.value, y: element.y1.baseVal.value }),
+    end: project({ x: element.x2.baseVal.value, y: element.y2.baseVal.value }),
+  };
 }
 
 function midpoint(left: Point, right: Point): Point {

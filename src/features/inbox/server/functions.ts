@@ -7,6 +7,10 @@ import { inboxEntryIdInputSchema } from "../model";
 import { dispatchInboxTask as dispatchInboxTaskOnServer } from "./dispatcher";
 import * as lifecycle from "./index";
 
+export const listInboxEntries = createServerFn({ method: "GET" }).handler(() =>
+  lifecycle.listInboxEntries(),
+);
+
 export const dispatchInboxTask = createServerFn({ method: "POST" })
   .validator(zodValidator(sessionLaunchSchema))
   .handler(({ data }) => dispatchInboxTaskOnServer(data));

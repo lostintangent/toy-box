@@ -2,12 +2,13 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { generateUUID } from "@/shared/utils";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { sessionMutations } from "./mutations";
-import { selectNonWorkerSessions, sessionQueries } from "./queries";
+import { sessionQueries } from "./queries";
 import type { SessionsState } from "./model";
 
 function selectCatalog(state: SessionsState) {
   return {
-    sessions: selectNonWorkerSessions(state),
+    sessions: state.sessions,
+    ownership: state.ownership,
     worktreeSessionIds: Object.keys(state.worktrees),
   };
 }
@@ -16,7 +17,8 @@ function selectCatalog(state: SessionsState) {
 export function useSessions({ hiddenSessionIds }: { hiddenSessionIds: string[] }) {
   const { data, isLoading } = useQuery({ ...sessionQueries.state(), select: selectCatalog });
   const create = useMutation(sessionMutations.createSession());
-  const draftSessions = data?.sessions.filter((session) => !session.provider) ?? [];
+  const draftSessions =
+    data?.sessions.filter((session) => !session.provider && !data.ownership[session.id]) ?? [];
   const prompts = useWorkspaceSelector((workspace) =>
     Object.fromEntries(
       draftSessions.map(({ id }) => {
@@ -45,5 +47,11 @@ export function useSessions({ hiddenSessionIds }: { hiddenSessionIds: string[] }
     return sessionId;
   }
 
-  return { sessions, isLoading, worktreeSessionIds: data?.worktreeSessionIds ?? [], createSession };
+  return {
+    sessions,
+    ownership: data?.ownership,
+    isLoading,
+    worktreeSessionIds: data?.worktreeSessionIds ?? [],
+    createSession,
+  };
 }

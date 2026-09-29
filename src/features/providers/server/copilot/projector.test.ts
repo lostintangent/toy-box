@@ -1702,7 +1702,7 @@ describe("projector", () => {
       ).toEqual([]);
     });
 
-    test("projects model and title events into canonical session events", () => {
+    test("projects native model, title, and failure transitions", () => {
       const context = createStreamingContext();
 
       expect(
@@ -1730,6 +1730,26 @@ describe("projector", () => {
             reasoningEffort: "xhigh",
             contextTier: "future_tier",
           },
+        },
+      ]);
+
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "session.resume",
+            data: {
+              resumeTime: "2026-06-10T20:29:44.232Z",
+              eventCount: 10,
+              selectedModel: "gpt-5.4-mini",
+              reasoningEffort: "none",
+            },
+          }),
+          context,
+        ),
+      ).toEqual([
+        {
+          type: "model_changed",
+          model: { provider: "copilot", name: "gpt-5.4-mini", reasoningEffort: "none" },
         },
       ]);
 
@@ -1765,6 +1785,16 @@ describe("projector", () => {
           context,
         ),
       ).toEqual([{ type: "session_title_changed", title: "Compacted summary" }]);
+
+      expect(
+        projectSdkEvent(
+          sdkEvent({
+            type: "session.error",
+            data: { message: "Native model history is incompatible." },
+          }),
+          context,
+        ),
+      ).toEqual([{ type: "end", reason: "error", error: "Native model history is incompatible." }]);
     });
 
     test("SDK workspace-file events do not publish artifact membership", () => {

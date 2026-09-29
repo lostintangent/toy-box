@@ -2,12 +2,10 @@ import type { MouseEvent, ReactNode } from "react";
 import { useHasModels } from "@providers/useModels";
 import {
   ChevronDown,
-  CircleHelp,
   Clock3,
   FileText,
   FolderOpen,
   Hash,
-  Loader2,
   MessageCirclePlus,
   PanelLeft,
   PanelLeftClose,
@@ -24,6 +22,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
+import { RunningIndicator } from "@/shared/ui/running-indicator";
+import { WaitingIndicator } from "@/shared/ui/waiting-indicator";
 import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useWorkspaceSelector, useWorkspaceSessionActivity } from "@workspace/hooks/state";
@@ -295,9 +295,9 @@ function HyperSessionStatus({ sessionId, isOpen }: { sessionId: string; isOpen: 
   return (
     <>
       {waiting && !isOpen ? (
-        <CircleHelp />
+        <WaitingIndicator />
       ) : running && !isOpen ? (
-        <Loader2 className="animate-spin" />
+        <RunningIndicator />
       ) : (
         <MessageCirclePlus />
       )}

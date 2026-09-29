@@ -67,19 +67,23 @@ export function useSelection({
   }
 
   function pasteSelection(text: string): boolean {
-    const pasted = pasteSvgSelectionClipboard(document, text);
-    if (!pasted) return false;
+    return store.actions.edit(() => {
+      const pasted = pasteSvgSelectionClipboard(document, text);
+      if (!pasted) return null;
 
-    suspendTextEdit();
-    store.actions.commit(pasted.entry);
-    store.actions.select(pasted.elements);
-    return true;
+      suspendTextEdit();
+      store.actions.select(pasted.elements);
+      return pasted.entry;
+    });
   }
 
   function removeSelection(): boolean {
-    if (selection.length === 0) return false;
-    suspendTextEdit();
-    return store.actions.removeSelection();
+    return store.actions.edit(() => {
+      suspendTextEdit();
+      const entry = document.deleteElements(store.state.selection);
+      if (entry) store.actions.select([]);
+      return entry;
+    });
   }
 
   function claimSelectionGesture(event: ReactPointerEvent<HTMLDivElement>) {
@@ -185,21 +189,23 @@ export function useSelection({
   }
 
   function nudgeSelection(delta: { x: number; y: number }): boolean {
-    if (activeTool !== "select" || selection.length === 0) return false;
-    const captures = captureSelectionTransforms(selection);
-    if (!captures) return false;
+    return store.actions.edit(() => {
+      const { activeTool, selection } = store.state;
+      if (activeTool !== "select" || selection.length === 0) return null;
+      const captures = captureSelectionTransforms(selection);
+      if (!captures) return null;
 
-    suspendTextEdit();
-    const translation = translationMatrix(delta.x, delta.y);
-    for (const capture of captures) applyScreenTransform(capture, translation);
-    const entry = createAttributesHistoryEntry(
-      captures.map((capture) => ({
-        element: capture.element,
-        before: { namespace: null, name: "transform", value: capture.beforeTransform },
-        after: snapshotAttribute(capture.element, "transform"),
-      })),
-    );
-    return store.actions.commit(entry);
+      suspendTextEdit();
+      const translation = translationMatrix(delta.x, delta.y);
+      for (const capture of captures) applyScreenTransform(capture, translation);
+      return createAttributesHistoryEntry(
+        captures.map((capture) => ({
+          element: capture.element,
+          before: { namespace: null, name: "transform", value: capture.beforeTransform },
+          after: snapshotAttribute(capture.element, "transform"),
+        })),
+      );
+    });
   }
 
   function updateHoveredHandle(event: ReactPointerEvent<HTMLDivElement>) {

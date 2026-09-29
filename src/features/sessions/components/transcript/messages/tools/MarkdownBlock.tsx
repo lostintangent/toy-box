@@ -1,4 +1,4 @@
-import { Streamdown } from "streamdown";
+import { Markdown } from "@/shared/ui/markdown";
 import { code } from "@streamdown/code";
 
 type MarkdownBlockProps = {
@@ -14,9 +14,7 @@ export function MarkdownBlock({ title, maxHeight = "max-h-48", children }: Markd
     <div>
       {title && <div className="text-xs text-muted-foreground mb-1">{title}</div>}
       <div className={`bg-secondary-background text-xs p-2 rounded overflow-x-auto ${maxHeight}`}>
-        <Streamdown plugins={{ code }} className="[&_p]:my-1 [&_pre]:my-1 [&_ul]:my-1 [&_ol]:my-1">
-          {children}
-        </Streamdown>
+        <Markdown plugins={{ code }}>{children}</Markdown>
       </div>
     </div>
   );

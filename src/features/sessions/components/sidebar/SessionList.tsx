@@ -1,3 +1,4 @@
+import { Badge } from "@/shared/ui/badge";
 import { SidebarList as AnimatedSidebarList } from "@/shared/sidebar/SidebarList";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
@@ -23,6 +24,7 @@ type SessionListProps = {
   onSessionSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
   onSessionRename: (sessionId: string) => void;
   onSessionDelete: (sessionId: string) => void;
+  onBrowseDirectory: (directory: string) => void;
   openSessionIds: string[];
   worktreeSessionIds: string[];
   emptyMessage?: string;
@@ -35,6 +37,7 @@ export function SessionList({
   onSessionSelect,
   onSessionRename,
   onSessionDelete,
+  onBrowseDirectory,
   openSessionIds,
   worktreeSessionIds,
   emptyMessage,
@@ -70,9 +73,7 @@ export function SessionList({
               <div key={`group:${group.key}`} className="pt-3 pb-1">
                 <div className="flex items-center gap-2 px-2">
                   <span className="section-heading">{group.label}</span>
-                  <span className="text-2xs font-medium tabular-nums text-foreground/60">
-                    ({group.sessions.length})
-                  </span>
+                  <Badge variant="count">{group.sessions.length}</Badge>
                   <div className="h-px flex-1 bg-border" />
                 </div>
               </div>
@@ -84,6 +85,7 @@ export function SessionList({
                 onSelect={onSessionSelect}
                 onPinToggle={() => handleSessionPinToggle(session.id)}
                 onRename={() => onSessionRename(session.id)}
+                onBrowseDirectory={onBrowseDirectory}
                 onDelete={() => onSessionDelete(session.id)}
                 isActive={openSessionIds.includes(session.id)}
                 isPinned={pinnedSessionIdSet.has(session.id)}

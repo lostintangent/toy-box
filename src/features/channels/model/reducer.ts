@@ -40,7 +40,11 @@ export function reduceChannelState(state: ChannelState, event: ChannelEvent): Ch
           break;
 
         case "artifact_shared":
-          next.artifacts = upsertArtifact(state.artifacts, content.artifact);
+          next.artifacts = shareArtifact(
+            state.artifacts,
+            content.artifact,
+            event.message.timestamp,
+          );
           break;
       }
       return next;
@@ -95,12 +99,16 @@ function upsertMessage(messages: ChannelMessage[], message: ChannelMessage): Cha
   return [...next.slice(0, index), message, ...next.slice(index)];
 }
 
-function upsertArtifact(
+/** Adds a newly shared artifact, or retitles one already shared without changing when it was. */
+function shareArtifact(
   artifacts: readonly ChannelArtifact[],
-  artifact: ChannelArtifact,
+  { file, title }: Omit<ChannelArtifact, "sharedAt">,
+  sharedAt: string,
 ): ChannelArtifact[] {
-  const id = workspaceFileId(artifact.file);
-  const index = artifacts.findIndex(({ file }) => workspaceFileId(file) === id);
-  if (index === -1) return [...artifacts, artifact];
-  return [...artifacts.slice(0, index), artifact, ...artifacts.slice(index + 1)];
+  const id = workspaceFileId(file);
+  return artifacts.some((artifact) => workspaceFileId(artifact.file) === id)
+    ? artifacts.map((artifact) =>
+        workspaceFileId(artifact.file) === id ? { ...artifact, title } : artifact,
+      )
+    : [...artifacts, { file, title, sharedAt }];
 }

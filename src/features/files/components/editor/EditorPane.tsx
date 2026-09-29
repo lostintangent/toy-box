@@ -1,8 +1,9 @@
 import { Component, Suspense, type ReactNode } from "react";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { selectAutomationSessionIds, sessionQueries } from "@sessions/queries";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { resolveEditorPaneMode, type EditorWorkspacePane } from "@workspace/model/panes";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { PaneActions, PaneStatus } from "@workspace/components/panes/shell/PaneSlots";
 import { WorkersMenu } from "@workers/components/WorkersMenu";
 import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
@@ -20,12 +21,11 @@ type EditorPaneProps = {
 export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
   const { panePublications } = useWorkspaceSurface();
   const { file, title } = pane;
-  const mode = useWorkspaceSelector((workspace) =>
-    resolveEditorPaneMode(
-      pane,
-      workspace.automations.map(({ id }) => id),
-    ),
-  );
+  const { data: automationSessionIds } = useSuspenseQuery({
+    ...sessionQueries.state(),
+    select: selectAutomationSessionIds,
+  });
+  const mode = resolveEditorPaneMode(pane, automationSessionIds);
   const kind = useEditorKind(file);
   const { editable = true } = kind;
   const { workers, spawnWorker, ...fileState } = useFile(file, mode);

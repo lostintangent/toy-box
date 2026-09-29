@@ -5,6 +5,7 @@ import { activePointersOf, buildAgentPrompt, targetMetadata } from "./bridge";
 
 function worker(metadata: Worker["metadata"]): Worker {
   return {
+    createdAt: new Date(0).toISOString(),
     type: "file",
     sessionId: "s",
     ephemeral: true,

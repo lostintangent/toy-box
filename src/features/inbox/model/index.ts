@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Worker } from "@workers/model";
 
 const safePathSegmentSchema = z
   .string()
@@ -17,33 +18,56 @@ const safePathSegmentSchema = z
 
 export const inboxEntryIdSchema = safePathSegmentSchema.describe("The Inbox entry ID");
 
-export const inboxArtifactFilenameSchema = safePathSegmentSchema.describe("The artifact file name");
+const inboxArtifactPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(4096)
+  .refine(
+    (path) =>
+      !path.startsWith("~/") &&
+      path.split("/").every((segment) => safePathSegmentSchema.safeParse(segment).success),
+    "Must be a relative file path beneath this session's artifacts directory",
+  );
 
 export type InboxEntry = {
   id: string;
-  message?: string;
   createdAt: string;
-  artifact?: string;
-};
+} & (
+  | { kind: "pending" }
+  | { kind: "result"; message: string; artifact?: string }
+  | { kind: "error"; error: string }
+);
 
 export const inboxEntryIdInputSchema = z.object({
   entryId: inboxEntryIdSchema,
 });
 
-export const sendToInboxInputSchema = z.object({
+export const inboxResultSchema = z.object({
   message: z
     .string()
     .trim()
     .min(1)
     .max(4000)
     .describe("The concise Inbox message to show the user"),
-  artifact: z
-    .object({
-      filename: inboxArtifactFilenameSchema.describe(
-        "A file name with an appropriate extension, such as report.md",
-      ),
-      content: z.string().max(1_000_000).describe("The complete UTF-8 file contents"),
-    })
+  artifact: inboxArtifactPathSchema
     .optional()
-    .describe("The complete file result when the request requires more than the message"),
+    .describe(
+      "An existing file relative to this session's artifacts directory, such as reports/research.md. Write the file before calling this tool.",
+    ),
 });
+
+export const inboxFailureSchema = z.object({
+  error: z.string().trim().min(1).max(4000),
+});
+
+export function inboxEntryFromWorker(worker: Extract<Worker, { type: "inbox" }>): InboxEntry {
+  const entry = { id: worker.sessionId, createdAt: worker.createdAt };
+  if (worker.metadata === undefined) return { ...entry, kind: "pending" };
+
+  const result = inboxResultSchema.safeParse(worker.metadata);
+  if (result.success) return { ...entry, kind: "result", ...result.data };
+  const failure = inboxFailureSchema.safeParse(worker.metadata);
+  if (failure.success) return { ...entry, kind: "error", ...failure.data };
+  return { ...entry, kind: "error", error: "This Inbox result could not be read." };
+}

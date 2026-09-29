@@ -2,16 +2,10 @@ import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/shared/ui/dropdown-menu";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { cn } from "@/shared/utils";
-
-export type SidebarListItemStatus = {
-  ariaLabel: string;
-  tooltip: string;
-  icon: ReactNode;
-};
+import { SidebarStatus } from "./SidebarStatus";
 
 export type SidebarListItemProps = Omit<
   ComponentProps<"button">,
@@ -24,7 +18,7 @@ export type SidebarListItemProps = Omit<
   badge?: ReactNode;
   menuItems: ReactNode;
   menuDisabled?: boolean;
-  status?: SidebarListItemStatus;
+  status?: SidebarStatus;
   isActive?: boolean;
   className?: string;
   buttonClassName?: string;
@@ -157,28 +151,11 @@ export function SidebarListItemAction({
   children,
 }: {
   title: string;
-  status?: SidebarListItemStatus;
+  status?: SidebarStatus;
   menuDisabled: boolean;
   children: ReactNode;
 }) {
-  if (status) {
-    return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <div
-              role="status"
-              className="ml-2 flex h-8 w-8 shrink-0 items-center justify-center"
-              aria-label={status.ariaLabel}
-            >
-              {status.icon}
-            </div>
-          }
-        />
-        <TooltipContent sideOffset={6}>{status.tooltip}</TooltipContent>
-      </Tooltip>
-    );
-  }
+  if (status) return <SidebarStatus status={status} className="ml-2 size-8" />;
 
   return (
     <SidebarListItemMenu title={title} disabled={menuDisabled}>

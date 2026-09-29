@@ -1,45 +1,31 @@
-// Inbox-managed session dispatch and completion supervision.
+// Inbox-owned Worker dispatch and result retention.
 
-import { createSession, releaseIdleSession } from "@sessions/server/runtime";
+import { spawnWorker } from "@workers/server";
+import type { Worker } from "@workers/model";
+import { broadcast } from "@workspace/server/events";
 import type { SessionCompletion, SessionLaunch } from "@sessions/model";
-import { createPendingInboxEntry, deleteInboxEntry, getInboxEntry } from "./index";
+import { ensureInboxRecovered, failInboxTask } from "./index";
 
-/** Accept an Inbox task and open its ordinary session runtime without attaching a client. */
+/** Accept an Inbox task without attaching a client to its Worker. */
 export async function dispatchInboxTask(input: SessionLaunch): Promise<{ sessionId: string }> {
-  const sessionId = crypto.randomUUID();
-  await createPendingInboxEntry(sessionId);
-
-  let waitForCompletion: () => Promise<SessionCompletion>;
-  try {
-    const receipt = await createSession(sessionId, input.message, {
-      ...input.location,
-      sessionType: "inbox",
-    });
-    waitForCompletion = receipt.waitForCompletion;
-  } catch (error) {
-    await deleteInboxEntry(sessionId).catch(console.error);
-    throw error;
-  }
-
-  void superviseInboxTask(sessionId, waitForCompletion).catch((error) => {
-    console.error(`Failed to supervise inbox task ${sessionId}:`, error);
+  await ensureInboxRecovered();
+  const { sessionId } = await spawnWorker({
+    ...input,
+    owner: { type: "inbox" },
+    retention: retainInboxResult,
   });
+  broadcast({ type: "inbox.changed" });
   return { sessionId };
 }
 
-async function superviseInboxTask(
-  sessionId: string,
-  waitForCompletion: () => Promise<SessionCompletion>,
-): Promise<void> {
-  const completion = await waitForCompletion();
-  if (completion.status === "completed") {
-    const entry = await getInboxEntry(sessionId);
-    if (!entry) return;
-    if (entry.message === undefined) {
-      await deleteInboxEntry(sessionId);
-      return;
-    }
-  }
+async function retainInboxResult(worker: Worker, completion: SessionCompletion): Promise<boolean> {
+  if (completion.status === "completed") return worker.metadata !== undefined;
 
-  await releaseIdleSession(sessionId);
+  await failInboxTask(
+    worker.sessionId,
+    completion.error
+      ? `This task failed: ${completion.error}`.slice(0, 4000)
+      : "This task stopped before reporting an Inbox result.",
+  );
+  return true;
 }

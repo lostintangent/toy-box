@@ -1,6 +1,8 @@
 import { Children, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
+import { Badge } from "@/shared/ui/badge";
 import { SidebarList } from "./SidebarList";
+import { SidebarStatus } from "./SidebarStatus";
 import { cn } from "@/shared/utils";
 
 export function SidebarPanel({
@@ -8,6 +10,7 @@ export function SidebarPanel({
   isExpanded,
   onExpandedChange,
   action,
+  activity,
   emptyMessage,
   children,
 }: {
@@ -15,10 +18,13 @@ export function SidebarPanel({
   isExpanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   action?: ReactNode;
+  /** What its items are doing; while collapsed, the most pressing replaces the action. */
+  activity?: { waiting?: boolean; finished?: boolean; unread?: boolean; running?: boolean };
   emptyMessage?: string;
   children: ReactNode;
 }) {
   const count = Children.toArray(children).length;
+  const status = isExpanded ? undefined : PANEL_STATUSES.find(({ kind }) => activity?.[kind]);
 
   return (
     <section className="min-w-0 overflow-hidden border-t">
@@ -42,13 +48,18 @@ export function SidebarPanel({
               isExpanded && "rotate-90",
             )}
           />
-          <span className="section-heading">
-            {title}
-            {count > 0 ? ` (${count})` : ""}
-          </span>
+          <span className="section-heading">{title}</span>
+          {count > 0 && <Badge variant="count">{count}</Badge>}
         </button>
 
-        {action}
+        {status ? (
+          <SidebarStatus
+            status={{ ...status, ariaLabel: `${title}: ${status.tooltip.toLowerCase()}` }}
+            className="size-6"
+          />
+        ) : (
+          action
+        )}
       </div>
 
       <div
@@ -82,3 +93,11 @@ export function SidebarPanel({
     </section>
   );
 }
+
+/** Most pressing first, with completion taking precedence over ordinary unread messages. */
+const PANEL_STATUSES = [
+  { kind: "waiting", tooltip: "Waiting for input" },
+  { kind: "finished", tooltip: "Done" },
+  { kind: "unread", tooltip: "Unread messages" },
+  { kind: "running", tooltip: "Running" },
+] as const;

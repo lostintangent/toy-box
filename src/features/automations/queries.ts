@@ -1,10 +1,15 @@
 import { queryOptions } from "@tanstack/react-query";
-import { workspaceQueries } from "@workspace/queries";
+import { listAutomations } from "./server/functions";
 
 export const automationQueries = {
+  listKey: () => ["automations", "list"] as const,
+
   list: () =>
     queryOptions({
-      ...workspaceQueries.state(),
-      select: (workspace) => workspace.automations,
+      queryKey: automationQueries.listKey(),
+      queryFn: listAutomations,
+      staleTime: Infinity,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
     }),
 };

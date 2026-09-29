@@ -9,7 +9,7 @@ export class AutomationDatabase {
 
   async list(): Promise<Automation[]> {
     const rows = await this.db<AutomationRow[]>`
-      SELECT * FROM automations ORDER BY updated_at DESC
+      SELECT * FROM automations ORDER BY updated_at DESC, id
     `;
     return readValidAutomations(rows, "list");
   }

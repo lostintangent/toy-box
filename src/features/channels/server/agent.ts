@@ -1,23 +1,18 @@
 import { agentHandleFromName, type Channel } from "@channels/model";
 import { appLifecycleTools, artifactAppTools, createAppStateTools } from "@apps/server/tools";
 import { automationTools } from "@automations/server/tools";
-import { listModels } from "@providers/server";
-import type { ModelConfiguration } from "@providers/model";
 import { modelTools } from "@sessions/server/tools";
-import { readSession } from "@sessions/server/state/sessions";
-import { getSettings } from "@workspace/server/state/settings";
 import type { Worker } from "@workers/model";
 import { getStateDatabase } from "@/server/database";
-import { ChannelDatabase, channelAgentFromWorker, type ChannelAgentRecord } from "./database";
+import { channelAgentFromWorker, type ChannelAgentContext } from "@channels/model/worker";
+import { ChannelDatabase } from "./database";
 import { channelLeadTools, channelMemberTools } from "./tools";
 
 export async function getChannelAgentConfiguration(worker: Extract<Worker, { type: "channel" }>) {
   const channel = await new ChannelDatabase(await getStateDatabase()).getChannel(worker.channelId);
   if (!channel) throw new Error("Channel agent is incomplete.");
-  const agent = channelAgentFromWorker(worker, channel.leadId);
-  const model = agent.isLead
-    ? channel.model
-    : (agent.model ?? (await getWorkspaceDefaultModel(worker.sessionId)));
+  const agent = channelAgentFromWorker(worker);
+  const model = agent.isLead ? channel.model : agent.model;
   const additionalInstructions = buildChannelAgentInstructions(agent, channel);
   return {
     tools: [
@@ -28,14 +23,14 @@ export async function getChannelAgentConfiguration(worker: Extract<Worker, { typ
       ...modelTools,
       ...(agent.isLead ? channelLeadTools : channelMemberTools),
     ],
+    directory: channel.directory,
     additionalInstructions,
-    configurationKey: JSON.stringify([model, additionalInstructions]),
     disableMemory: true as const,
     ...(model ? { model } : {}),
   };
 }
 
-function buildChannelAgentInstructions(agent: ChannelAgentRecord, channel: Channel): string {
+function buildChannelAgentInstructions(agent: ChannelAgentContext, channel: Channel): string {
   const avatarText = agent.isLead
     ? `${agent.avatar.color} fixed lead mark`
     : agent.avatar
@@ -44,21 +39,21 @@ function buildChannelAgentInstructions(agent: ChannelAgentRecord, channel: Chann
   const onboardingProcess = agent.isLead
     ? undefined
     : !agent.role && !agent.avatar
-      ? "This is your first engagement. Before finishing, use update_agent once to define your role and any behavioral details, then design a distinctive avatar that reflects how you contribute."
+      ? "This is your first engagement. Before finishing, use update_member once to define your role and any behavioral details, then design a distinctive avatar that reflects how you contribute."
       : !agent.role
-        ? "Before finishing, use update_agent to define your role in this channel and any behavioral details that shape how you contribute."
+        ? "Before finishing, use update_member to define your role in this channel and any behavioral details that shape how you contribute."
         : !agent.avatar
-          ? "Before finishing, use update_agent to design a distinctive avatar that reflects your role."
+          ? "Before finishing, use update_member to design a distinctive avatar that reflects your role."
           : undefined;
 
   const identityGuidance = agent.isLead
     ? "Your identity is fixed for this channel."
-    : "Use update_agent when your identity in this channel changes.";
+    : "Use update_member when your identity in this channel changes.";
   const kickoffGuidance = channel.purpose
     ? `Before creating checklist items or members, or beginning substantive work, understand what sufficiently serving the purpose requires. Scale the process to the work. For focused or ad hoc work, frame the immediate scope and start. For complex or consequential work, define concrete success criteria and identify material assumptions, risks, open questions, and capabilities. Decide what must be resolved first and whether a product, design, architecture, research, or specification pass would improve the result. Use only the durable artifacts needed for alignment, and make intentional exclusions explicit.
 
 Your first public action in a new channel must be one concise kickoff message. Post it before creating any member. Summarize the consequential framing, your approach, and the first actionable step. Handle the purpose directly only when it is genuinely small enough to complete and validate well in one focused turn. Otherwise, establish the lightweight checklist and staffing plan the current work needs before substantive work begins.`
-    : `This channel does not have a purpose yet. Your first public action must be one concise message asking the user what they want to work on. Do not create checklist items or members or begin work until the user provides enough direction to define the purpose. Then call finish_agent_turn with a brief waitingFor note.
+    : `This channel does not have a purpose yet. Your first public action must be one concise message asking the user what they want to work on. Follow the user-request process under Communicate, then call finish_agent_turn with a brief waitingFor note. Do not create checklist items or members or begin work until the user provides enough direction to define the purpose.
 
 When the user responds, use update_channel to set a concise purpose. After that succeeds, evaluate what the purpose requires, post a concise kickoff with the consequential framing and first actionable step, and only then create checklist items or members.`;
   const leadGuidance = agent.isLead
@@ -77,13 +72,13 @@ Keep dependent work sequential. If one member's output will shape another's work
 Stay engaged after delegation. Ask the right questions, challenge weak assumptions or results, and treat completion reports as claims until the evidence matches them. Review each outcome before it unlocks later work. Do not duplicate assigned work, but use your own time for brief research, synthesis, or cross-cutting integration that advances the whole channel.
 
 ### Track and adapt
-Keep the purpose, checklist, preview, shared artifacts, and roster current. When the user materially revises what the channel is for, update the purpose before adapting the plan. Treat the checklist as the lightweight working set for the current effort, not a history log. Keep top-level items focused on discrete value. Use children to decompose an outcome into independently tracked work or to group closely related work beneath that value. Pending means work has not started. In progress means its owner is actively advancing it. Blocked means progress cannot continue without a specific input, dependency, or decision. Done means the stated outcome exists and every retained child is done. Reopen work when evidence disproves completion, remove obsolete items, and replace or clear the checklist as the current effort changes.
+Keep the channel name, purpose, working directory, checklist, preview, shared artifacts, and roster current. If the work needs a directory and none was provided, create one and assign it with update_channel. When the user materially revises what the channel is for, update the purpose before adapting the plan. Treat the checklist as the lightweight working set for the current effort, not a history log. Keep top-level items focused on discrete value. Use children to decompose an outcome into independently tracked work or to group closely related work beneath that value. Pending means work has not started. In progress means its owner is actively advancing it. Blocked means progress cannot continue without a specific input, dependency, or decision. Done means the stated outcome exists and every retained child is done. Reopen work when evidence disproves completion, remove obsolete items, and replace or clear the checklist as the current effort changes.
 
 ### Communicate
-Post a concise channel update when the plan changes, a meaningful milestone lands, or the user must decide. Do not repeat information members already shared. Add unique clarity through a decision, implication, quality judgment, or next move that creates momentum. Ask the user when a decision or missing context blocks meaningful progress.
+Post a concise channel update when the plan changes, a meaningful milestone lands, or the user must decide. Do not repeat information members already shared. Add unique clarity through a decision, implication, quality judgment, or next move that creates momentum. When you need a user decision, missing context, or action, first explain exactly what they need to do with send_channel_message, then call request_user_attention with its returned sequence as requestSequence. Posting the question or leaving a waitingFor note alone does not flag the user. Any subsequent user message acknowledges the request, but you must judge whether it actually resolves the need. If not, post and flag a new request.
 
 ### Close the loop
-For finite work, completion is an evidence-backed judgment, not a checklist transition. Never declare the outcome complete merely because every item is marked done or members report success. Use the final read_channel to reassess the checklist and inspect the actual result against the purpose, each promised outcome, and the quality bar a discerning user would apply. Reopen any item with an unresolved finding, missing result, insufficient validation, or outcome you would not confidently stand behind. For user-facing software, keep validation open until the actual preview has been exercised with playwright-cli across relevant desktop, mobile, and color-scheme states and screenshots are attached to the channel. Compilation, source inspection, and validators do not satisfy this requirement. If a reviewer reports an unresolved finding, keep the corresponding item open until it is fixed and verified. Confirm that no relevant wait remains and that the preview and shared artifacts reflect the result. Then post one concise mentionless update for the user that explains what was achieved, points to the running preview when available, and links only the artifacts worth opening. For an ongoing or ad hoc purpose, close the current batch clearly and leave the checklist ready for what comes next instead of pretending the channel itself is complete.
+For finite work, completion is an evidence-backed judgment, not a checklist transition. Never declare the outcome complete merely because every item is marked done or members report success. Use the final read_channel to reassess the checklist and inspect the actual result against the purpose, each promised outcome, and the quality bar a discerning user would apply. Reopen any item with an unresolved finding, missing result, insufficient validation, or outcome you would not confidently stand behind. For user-facing software, keep validation open until the actual preview has been exercised with playwright-cli across relevant desktop, mobile, and color-scheme states and screenshots are attached to the channel. Compilation, source inspection, and validators do not satisfy this requirement. If a reviewer reports an unresolved finding, keep the corresponding item open until it is fixed and verified. Confirm that no member remains waiting and that the preview and shared artifacts reflect the result. Then post one concise mentionless update for the user that explains what was achieved, points to the running preview when available, and links only the artifacts worth opening. After posting it, call mark_channel_done before finish_agent_turn. Resolve any reported blockers before retrying; never clear a real wait or mark unfinished work done just to pass. For an ongoing or ad hoc purpose, close the current batch clearly and leave the checklist ready for what comes next instead of pretending the channel itself is complete.
 `
     : "";
 
@@ -129,23 +124,4 @@ ${identityGuidance}${leadGuidance}
 </channel_role>
 
 ${onboardingProcess ? `<onboarding_process>\n${onboardingProcess}\n</onboarding_process>` : ""}`;
-}
-
-async function getWorkspaceDefaultModel(
-  sessionId: string,
-): Promise<ModelConfiguration | undefined> {
-  const provider = (await readSession(sessionId))?.provider;
-  const settings = await getSettings();
-  if (
-    settings.defaultModel &&
-    (provider || !settings.disabledProviders.includes(settings.defaultModel.provider))
-  ) {
-    return !provider || settings.defaultModel.provider === provider.id
-      ? settings.defaultModel
-      : undefined;
-  }
-  const model = (await listModels()).find(
-    (candidate) => !provider || candidate.provider === provider.id,
-  );
-  return model ? { name: model.id, provider: model.provider } : undefined;
 }

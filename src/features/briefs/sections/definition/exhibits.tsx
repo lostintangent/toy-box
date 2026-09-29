@@ -12,7 +12,7 @@ import {
   Waypoints,
   type LucideIcon,
 } from "lucide-react";
-import { Streamdown } from "streamdown";
+import { Markdown } from "@/shared/ui/markdown";
 import { HTML_SANDBOX_PERMISSIONS, injectBaseHref } from "@/shared/embeddedHtml";
 import { cn } from "@/shared/utils";
 import type {
@@ -88,13 +88,12 @@ export function BriefExhibitCard({
             {!embedded && <ChangeTag change={exhibit.change} source={exhibit.source} />}
           </div>
           {exhibit.description && (
-            <Streamdown
-              mode="static"
+            <Markdown
               plugins={{ code }}
-              className="mt-1.5 space-y-1 text-[10.5px] leading-relaxed text-muted-foreground [&_ol]:my-1 [&_p]:my-0 [&_pre]:my-1 [&_ul]:my-1"
+              className="mt-1.5 space-y-1 text-[10.5px] leading-relaxed text-muted-foreground"
             >
               {exhibit.description}
-            </Streamdown>
+            </Markdown>
           )}
         </div>
         {onInspect && inspectable && (

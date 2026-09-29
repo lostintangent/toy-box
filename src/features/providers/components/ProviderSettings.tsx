@@ -30,9 +30,7 @@ export function ProviderSettings() {
       <legend className="mb-3 w-full">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">Model Providers</span>
-          <Badge variant="secondary" className="h-5 min-w-5 px-1.5 tabular-nums">
-            {providers.length}
-          </Badge>
+          <Badge variant="count">{providers.length}</Badge>
           <Button
             type="button"
             variant="outline"

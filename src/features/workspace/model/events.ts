@@ -1,7 +1,6 @@
 import type { AppDefinition, AppInstance, AppShare } from "@apps/model";
 import type { Automation } from "@automations/model";
 import type { CustomEditorKind } from "@files/model";
-import type { InboxEntry } from "@inbox/model";
 import type { SessionUpdate } from "@sessions/model";
 import type { WorkerEvent } from "@workers/model";
 import type { Channel } from "@channels/model";
@@ -25,11 +24,9 @@ export type WorkspaceEvent =
       type: "session.upserted";
       session: SessionUpdate;
     }
-  | SimpleSessionUpdateEvents<"deleted" | "running" | "waiting" | "idle" | "unread" | "touched">
-  | {
-      type: "inbox.entry.upserted";
-      entry: InboxEntry;
-    }
+  | { type: "session.running" | "session.waiting"; sessionId: string; at: number }
+  | SimpleSessionUpdateEvents<"deleted" | "idle" | "unread" | "touched">
+  | { type: "inbox.changed" }
   | {
       type: "inbox.entry.deleted";
       entryId: string;

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, onTestFinished, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
 import type { Session, SessionState } from "./model";
 import { applySessionEvent, createInitialSessionState } from "./model/reducer";
@@ -106,7 +106,7 @@ describe("session query cache", () => {
       title: "Updated",
       updatedAt: new Date("2026-02-14T02:00:00.000Z"),
     });
-    expect(state.workerSessionParents).toEqual({ [sessionId]: "parent" });
+    expect(state.ownership).toEqual({ [sessionId]: { type: "worker", parentSessionId: "parent" } });
     expect(state.worktrees[sessionId]).toMatchObject({ branch: "feature" });
   });
 
@@ -119,7 +119,9 @@ describe("session query cache", () => {
       sessionType: "worker",
     });
 
-    expect(readState(queryClient).workerSessionParents).toEqual({ [sessionId]: null });
+    expect(readState(queryClient).ownership).toEqual({
+      [sessionId]: { type: "worker", parentSessionId: null },
+    });
   });
 
   test("retains Channel worker metadata without projecting it as an ordinary session", () => {
@@ -132,7 +134,9 @@ describe("session query cache", () => {
     });
 
     const state = readState(queryClient);
-    expect(state.workerSessionParents).toEqual({ "channel-worker-session": null });
+    expect(state.ownership).toEqual({
+      "channel-worker-session": { type: "worker", parentSessionId: null },
+    });
     expect(state.worktrees).toHaveProperty("channel-worker-session");
     expect(selectNonWorkerSessions(state)).toEqual([]);
   });
@@ -176,12 +180,14 @@ describe("session query cache", () => {
       applyWorkspaceEventToSessionQueries(client, {
         type: `session.${status}`,
         sessionId: "recent",
+        at: 1,
       });
       expect(client.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(false);
 
       applyWorkspaceEventToSessionQueries(client, {
         type: `session.${status}`,
         sessionId: "older",
+        at: 1,
       });
       expect(client.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(true);
       client.clear();
@@ -231,7 +237,7 @@ describe("session query cache", () => {
     const sessionId = "toy-box-delete";
     seedState(queryClient, {
       sessions: [createSession(sessionId)],
-      workerSessionParents: { [sessionId]: "parent" },
+      ownership: { [sessionId]: { type: "worker", parentSessionId: "parent" } },
       worktrees: {
         [sessionId]: {
           branch: "feature",
@@ -248,7 +254,7 @@ describe("session query cache", () => {
 
     const state = readState(queryClient);
     expect(state.sessions).toEqual([]);
-    expect(state.workerSessionParents).toEqual({});
+    expect(state.ownership).toEqual({});
     expect(state.worktrees).toEqual({});
   });
 
@@ -312,7 +318,7 @@ describe("session replacement and deletion cache boundary", () => {
         },
         otherSession,
       ],
-      workerSessionParents: { [sessionId]: "previous-parent" },
+      ownership: { [sessionId]: { type: "worker", parentSessionId: "previous-parent" } },
       worktrees: {
         [sessionId]: { path: "/previous", branch: "old", baseBranch: "main" },
       },
@@ -354,7 +360,7 @@ describe("session replacement and deletion cache boundary", () => {
         },
         otherSession,
       ],
-      workerSessionParents: {},
+      ownership: {},
       worktrees: {},
     });
     const optimistic = client.getQueryData<SessionState>(queryKey)!;
@@ -423,7 +429,7 @@ describe("session replacement and deletion cache boundary", () => {
           artifactPath: "old.md",
         },
       ],
-      workerSessionParents: { [sessionId]: "previous-parent" },
+      ownership: { [sessionId]: { type: "automation" } },
       worktrees: {
         [sessionId]: { path: "/previous", branch: "old", baseBranch: "main" },
       },
@@ -466,13 +472,134 @@ describe("session replacement and deletion cache boundary", () => {
         artifactPath: undefined,
       },
     ]);
-    expect(readState(client).workerSessionParents).toEqual({});
+    expect(readState(client).ownership).toEqual({ [sessionId]: { type: "automation" } });
     expect(readState(client).worktrees).toEqual({});
 
     history.resolve(previous);
     await read.catch(() => {});
     expect(client.getQueryData<SessionState>(queryKey)).toEqual(retired);
     client.clear();
+  });
+
+  describe("managed ownership cache", () => {
+    const automation = {
+      id: "automation",
+      title: "Scheduled work",
+      prompt: "Run",
+      cron: "0 9 * * *",
+      model: { provider: "copilot", name: "gpt-5" },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      nextRunAt: new Date(1).toISOString(),
+    };
+    test("owner events do not seed an incomplete session catalog", () => {
+      const client = new QueryClient();
+      onTestFinished(() => client.clear());
+      applyWorkspaceEventToSessionQueries(client, {
+        type: "automation.upserted",
+        automation,
+      });
+      expect(snapshotSessionsState(client)).toBeUndefined();
+    });
+
+    test("ownership precedes the session and survives metadata changes and backing-session deletion", () => {
+      const client = new QueryClient();
+      onTestFinished(() => client.clear());
+      seedState(client, {});
+      const event = {
+        type: "automation.upserted",
+        automation,
+      } as const;
+      applyWorkspaceEventToSessionQueries(client, event);
+      const owned = readState(client);
+      applyWorkspaceEventToSessionQueries(client, event);
+      expect(readState(client)).toBe(owned);
+      expect(owned.sessions).toEqual([]);
+      expect(owned.ownership).toEqual({ automation: { type: "automation" } });
+      upsertSessionInState(client, { id: automation.id, sessionType: "automation" });
+      upsertSessionInState(client, { id: automation.id, title: "Completed work" });
+      applyWorkspaceEventToSessionQueries(client, {
+        type: "session.deleted",
+        sessionId: automation.id,
+      });
+      expect(readState(client)).toEqual(owned);
+      applyWorkspaceEventToSessionQueries(client, {
+        type: "automation.deleted",
+        automationId: automation.id,
+      });
+      expect(readState(client)).toEqual(createEmptySessionsState());
+    });
+
+    test.each(["automation.upserted", "automation.deleted"] as const)(
+      "%s replaces an older catalog read without losing unrelated sessions",
+      async (type) => {
+        const client = new QueryClient();
+        onTestFinished(() => client.clear());
+        const stale = {
+          ...createEmptySessionsState(),
+          sessions: [createSession(automation.id)],
+          ownership: {},
+        };
+        seedState(client, stale);
+        const latest: SessionsState = {
+          ...createEmptySessionsState(),
+          sessions:
+            type === "automation.upserted"
+              ? [...stale.sessions, createSession("other")]
+              : [createSession("other")],
+          ownership: type === "automation.upserted" ? { automation: { type: "automation" } } : {},
+        };
+        const snapshot = Promise.withResolvers<SessionsState>();
+        let reads = 0;
+        const pending = client.fetchQuery({
+          ...sessionQueries.state(),
+          staleTime: 0,
+          queryFn: () => (++reads === 1 ? snapshot.promise : Promise.resolve(latest)),
+        });
+        applyWorkspaceEventToSessionQueries(
+          client,
+          type === "automation.upserted"
+            ? { type, automation }
+            : { type, automationId: automation.id },
+        );
+        snapshot.resolve(stale);
+        await expect(pending).resolves.toEqual(latest);
+        expect(reads).toBe(2);
+        expect(readState(client)).toEqual(latest);
+      },
+    );
+
+    test("Inbox results and unchanged Automation ownership do not replace a catalog read", async () => {
+      const client = new QueryClient();
+      onTestFinished(() => client.clear());
+      seedState(client, { ownership: { automation: { type: "automation" } } });
+      const state = readState(client);
+      const snapshot = Promise.withResolvers<SessionsState>();
+      let reads = 0;
+      const pending = client.fetchQuery({
+        ...sessionQueries.state(),
+        staleTime: 0,
+        queryFn: () => {
+          reads++;
+          return snapshot.promise;
+        },
+      });
+      applyWorkspaceEventToSessionQueries(client, {
+        type: "automation.upserted",
+        automation: { ...automation, nextRunAt: new Date(2).toISOString() },
+      });
+      applyWorkspaceEventToSessionQueries(client, {
+        type: "inbox.changed",
+      });
+      applyWorkspaceEventToSessionQueries(client, {
+        type: "inbox.entry.deleted",
+        entryId: "inbox-worker",
+      });
+      expect(readState(client)).toBe(state);
+      snapshot.resolve(state);
+      await pending;
+      expect(reads).toBe(1);
+    });
   });
 
   test("does not populate history caches for sessions this client has never opened", () => {

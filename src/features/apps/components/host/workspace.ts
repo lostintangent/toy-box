@@ -22,18 +22,17 @@ export function projectAppWorkspace(
   const definitions = new Map(
     workspace.appDefinitions.map((definition) => [definition.id, definition]),
   );
-  const automationIds = new Set(workspace.automations.map((automation) => automation.id));
   const hyperSessionIds = new Set(workspace.hyperSessionIds);
-  const inboxIds = new Set(workspace.inboxEntries.map((entry) => entry.id));
   const sessionKind = (sessionId: string): AppSession["kind"] =>
-    automationIds.has(sessionId)
+    sessions.ownership[sessionId]?.type === "automation"
       ? "automation"
       : hyperSessionIds.has(sessionId)
         ? "hyper"
         : "standard";
   const childrenByParent = new Map<string, SessionsState["sessions"]>();
   for (const session of sessions.sessions) {
-    const parentSessionId = sessions.workerSessionParents[session.id];
+    const owner = sessions.ownership[session.id];
+    const parentSessionId = owner?.type === "worker" ? owner.parentSessionId : null;
     if (!parentSessionId) continue;
     const children = childrenByParent.get(parentSessionId) ?? [];
     children.push(session);
@@ -51,9 +50,7 @@ export function projectAppWorkspace(
   }
 
   const next: AppWorkspace = {
-    sessions: selectNonWorkerSessions(sessions)
-      .filter(({ id }) => !inboxIds.has(id))
-      .map(projectSession),
+    sessions: selectNonWorkerSessions(sessions).map(projectSession),
     apps: workspace.apps.map(({ id, definitionId, title, revision, updatedAt }) => ({
       id,
       definitionId,

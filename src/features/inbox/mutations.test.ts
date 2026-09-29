@@ -1,55 +1,49 @@
-import { describe, expect, onTestFinished, test } from "bun:test";
+import { expect, onTestFinished, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
-import { workspaceQueries } from "@workspace/queries";
-import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model/state/reducer";
 import type { InboxEntry } from "./model";
+import { inboxQueries } from "./queries";
 import { inboxMutations } from "./mutations";
+import { createEmptySessionsState, sessionQueries } from "@sessions/queries";
+import type { SessionsState } from "@sessions/model";
 
 const entry = {
   id: "inbox-a",
   createdAt: "2026-08-01T12:00:00.000Z",
+  kind: "result",
   message: "Finished task",
 } satisfies InboxEntry;
+const other = { ...entry, id: "inbox-b" };
 
-describe("inbox mutation options", () => {
-  test("removes successfully deleted and already-absent entries", async () => {
-    for (const result of [true, false]) {
-      const queryClient = createQueryClient();
-      await new MutationObserver(queryClient, {
-        ...inboxMutations.deleteEntry(entry.id),
-        mutationFn: async () => result,
-      }).mutate();
-
-      expect(readEntries(queryClient)).toEqual([]);
-    }
-  });
-
-  test("leaves the cache alone when deletion fails", async () => {
-    const queryClient = createQueryClient();
-    const deleteMutation = new MutationObserver(queryClient, {
-      ...inboxMutations.deleteEntry(entry.id),
-      mutationFn: async () => {
-        throw new Error("delete failed");
+test("successful and already-absent deletions remove only their entry and backing session", async () => {
+  for (const result of [true, false]) {
+    const client = new QueryClient();
+    onTestFinished(() => client.clear());
+    client.setQueryData(inboxQueries.listKey(), [entry, other]);
+    const sessions = [entry, other].map(({ id }) => ({
+      id,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    }));
+    const retainedOwnership = { [other.id]: { type: "worker", parentSessionId: null } } as const;
+    client.setQueryData<SessionsState>(sessionQueries.stateKey(), {
+      ...createEmptySessionsState(),
+      sessions,
+      ownership: {
+        [entry.id]: { type: "worker", parentSessionId: null },
+        ...retainedOwnership,
       },
     });
 
-    await expect(deleteMutation.mutate()).rejects.toThrow("delete failed");
+    await new MutationObserver(client, {
+      ...inboxMutations.deleteEntry(entry.id),
+      mutationFn: async () => result,
+    }).mutate();
 
-    expect(readEntries(queryClient)).toEqual([entry]);
-    expect(queryClient.getQueryState(workspaceQueries.stateKey())?.isInvalidated).toBe(false);
-  });
+    expect(client.getQueryData<InboxEntry[]>(inboxQueries.listKey())).toEqual([other]);
+    expect(client.getQueryData<SessionsState>(sessionQueries.stateKey())).toEqual({
+      ...createEmptySessionsState(),
+      sessions: [sessions[1]!],
+      ownership: retainedOwnership,
+    });
+  }
 });
-
-function createQueryClient(): QueryClient {
-  const queryClient = new QueryClient();
-  queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), {
-    ...createEmptyWorkspaceState(),
-    inboxEntries: [entry],
-  });
-  onTestFinished(() => queryClient.clear());
-  return queryClient;
-}
-
-function readEntries(queryClient: QueryClient): InboxEntry[] {
-  return queryClient.getQueryData<WorkspaceState>(workspaceQueries.stateKey())?.inboxEntries ?? [];
-}

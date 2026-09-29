@@ -13,14 +13,22 @@ export function startPinchGesture(
 ): GestureController<TouchPointPair> | null {
   if (!store.actions.beginGesture({ type: "pinch" })) return null;
 
-  let previous = measurePinch(points);
+  const initial = measurePinch(points);
+  const initialZoom = store.state.viewport.zoom;
+  let previousCenter = initial.center;
 
   return {
     update(nextPoints) {
       const next = measurePinch(nextPoints);
-      const scale = previous.distance > 0 ? next.distance / previous.distance : 1;
-      store.actions.transformViewport(scale, previous.center, next.center);
-      previous = next;
+      // A fixed starting scale prevents separately delivered finger moves drifting at zoom limits.
+      const zoom =
+        initial.distance > 0 ? (initialZoom * next.distance) / initial.distance : initialZoom;
+      store.actions.transformViewport(
+        zoom / store.state.viewport.zoom,
+        previousCenter,
+        next.center,
+      );
+      previousCenter = next.center;
     },
     finish() {},
   };

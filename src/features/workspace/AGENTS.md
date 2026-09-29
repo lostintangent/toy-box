@@ -19,6 +19,9 @@ Workspace.
 It includes settings, sparse session activity, Hyper membership, environment capabilities, and
 current projections supplied by each feature. Feature databases, registries, files, and session
 history remain authoritative; Workspace only assembles their current values.
+Sessions, Channels, Automations, Inbox, and Providers have independent Query catalogs preloaded by the main
+route. The session catalog supplies durable ownership for generic session classification; feature
+catalogs supply the records needed by their own surfaces.
 
 The snapshot path reads those feature-owned facts once; the event path incrementally maintains the
 same flat materialized view. Features publish accepted changes through `server/events.ts`, while
@@ -26,6 +29,9 @@ the central pure reducer owns only composition invariants—for example, removin
 and workers when an app disappears. It never performs a feature's persistence or lifecycle work.
 General invalidation hints such as `session.touched` remain reducer no-ops and instead prompt the
 owning feature cache to recover from its authoritative snapshot.
+Inbox owns its list query and handles `inbox.changed` and `inbox.entry.deleted` in its feature cache.
+Its entries are absent from `WorkspaceState`; presentation combines the Inbox list with shared
+Session activity where needed. The shared stream routes its events without another connection.
 Feature-specific Query factories may select from the shared cache, but must not create competing
 copies of the same server state.
 
@@ -38,8 +44,10 @@ write workspace settings or alter open panes.
 
 [`model/state/reducer.ts`](model/state/reducer.ts) applies the same `WorkspaceEvent` transitions on
 the server and in each browser. The sparse `sessionStates` map retains only meaningful shared
-activity: active work, unread completion, or an unsent composer prompt. Draft sessions
-live in the Sessions catalog; ordinary read-idle sessions have no workspace activity entry.
+activity: active work, unread completion, or an unsent composer prompt. Active work carries
+`since`, stamped from the `at` of the event that began the run; waiting keeps it and a new run
+restarts it. Draft sessions live in the Sessions catalog; ordinary read-idle sessions have no
+workspace activity entry.
 
 [`queries.ts`](queries.ts) is the canonical TanStack Query interface to that projection. It owns
 snapshot identity, optimistic workspace commands, and a per-`QueryClient` event journal that keeps
@@ -50,7 +58,7 @@ narrow reactive selectors and the two client command hooks; it does not copy ser
 at-most-once workspace SSE stream. The root route captures the process-scoped broadcast revision
 before its SSR loaders run. The stream's opening message checks that revision without another
 request: an unchanged initial connection reuses the hydrated queries, while a mismatch refreshes
-the aggregate snapshot and Session, Channel, and Provider catalogs in the background. Reconnects
+the aggregate snapshot and Session, Channel, Automation, Inbox, and Provider catalogs in the background. Reconnects
 always refresh, including after page visibility changes, so native history changed outside Toy Box
 is rediscovered. Subsequent events update their owning Query caches. The revision survives HMR,
 changes after a server restart, and requires no event buffer. Events announce accepted changes;
@@ -81,7 +89,7 @@ server projection.
 - A canvas pane presents an SDK-provided URL associated with its source session.
 - An app pane presents one durable app instance and is not inherently session-backed.
 - A channel pane presents one durable shared bus. Its artifacts retain their Files-owned identity
-  when toggled as ordinary root editor panes rather than published as linked panes.
+  when revealed as ordinary root editor panes rather than published as linked panes.
 
 A session `.toy` artifact app remains an editor pane. Reusing the app compiler
 and mounted runtime does not add another pane kind or transfer ownership from its

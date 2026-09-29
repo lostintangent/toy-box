@@ -1917,24 +1917,31 @@ describe("SessionStream.waitForCompletion", () => {
     expect(SessionStream.get("session-timeout")).toBe(stream);
   });
 
-  test("returns failed status with the latest real assistant response", async () => {
-    cleanUpStreamAfterTest("session-error-completion", { restoreMocks: true });
+  test.each(["", "Partial result"])(
+    "returns the provider error alongside any assistant output (%j)",
+    async (response) => {
+      cleanUpStreamAfterTest("session-error-completion", { restoreMocks: true });
+      const { session, emit } = makeControllableSession();
+      const stream = SessionStream.getOrCreate("session-error-completion", session, {
+        messages: [{ role: "assistant", content: response }],
+      });
+      const waitPromise = stream.waitForCompletion();
 
-    const stream = createStreamWithAssistantResponse("session-error-completion", "Partial result");
-    const waitPromise = stream.waitForCompletion();
+      emit({ type: "end", reason: "error", error: "Provider rate limit exceeded" });
 
-    stream.finish("error");
-
-    await expect(waitPromise).resolves.toEqual({
-      status: "failed",
-      response: "Partial result",
-    });
-    expect(stream.getSessionState().messages.at(-1)).toMatchObject({
-      role: "assistant",
-      content: "Partial result",
-      error: "An error occurred. Please try again.",
-    });
-  });
+      await expect(waitPromise).resolves.toEqual({
+        status: "failed",
+        ...(response ? { response } : {}),
+        error: "Provider rate limit exceeded",
+      });
+      expect(stream.getSessionState().messages.at(-1)).toMatchObject({
+        role: "assistant",
+        content: response,
+        error: "Provider rate limit exceeded",
+      });
+      await expect(stream.waitForCompletion()).resolves.toEqual(await waitPromise);
+    },
+  );
 
   test("deletion resolves waiters as completed with the latest response", async () => {
     cleanUpStreamAfterTest("session-delete-wait", { restoreMocks: true });

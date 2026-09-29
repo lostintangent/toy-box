@@ -14,7 +14,7 @@ describe("app workspace projection", () => {
     const defaultModel = { provider: "codex", name: "shared" };
     const projection = projectAppWorkspace({
       workspace: createEmptyWorkspaceState(),
-      sessions: { sessions: [], worktrees: {}, workerSessionParents: {} },
+      sessions: { sessions: [], worktrees: {}, ownership: {} },
       models,
       defaultModel,
       openPanes: [],
@@ -26,25 +26,12 @@ describe("app workspace projection", () => {
     const workspace = {
       ...createEmptyWorkspaceState(),
       sessionStates: {
-        standard: { status: "running" as const },
+        standard: { status: "running" as const, since: 1 },
         "session-worker": { status: "unread" as const },
         automation: { status: "unread" as const },
-        hyper: { status: "running" as const },
+        hyper: { status: "running" as const, since: 1 },
       },
       hyperSessionIds: ["hyper"],
-      automations: [
-        {
-          id: "automation",
-          title: "Automation",
-          prompt: "Run the automation",
-          model: { provider: "copilot", name: "gpt-5" },
-          cron: "0 9 * * *",
-          createdAt: "2026-07-28T00:00:00.000Z",
-          updatedAt: "2026-07-28T00:00:00.000Z",
-          nextRunAt: "2026-07-29T09:00:00.000Z",
-        },
-      ],
-      inboxEntries: [],
       apps: [
         {
           id: "app-a",
@@ -79,6 +66,7 @@ describe("app workspace projection", () => {
       ],
       workers: [
         {
+          createdAt: new Date(0).toISOString(),
           type: "app" as const,
           sessionId: "app-worker",
           ephemeral: true,
@@ -87,6 +75,7 @@ describe("app workspace projection", () => {
           metadata: { requestId: "request-a" },
         },
         {
+          createdAt: new Date(0).toISOString(),
           type: "app" as const,
           sessionId: "other-app-worker",
           ephemeral: false,
@@ -96,6 +85,11 @@ describe("app workspace projection", () => {
     };
     const sessionsState: SessionsState = {
       sessions: [
+        {
+          id: "inbox",
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        },
         {
           id: "standard",
           provider: { id: "codex" },
@@ -148,10 +142,12 @@ describe("app workspace projection", () => {
           baseBranch: "main",
         },
       },
-      workerSessionParents: {
-        "app-worker": null,
-        "session-worker": "standard",
-        "nested-worker": "session-worker",
+      ownership: {
+        automation: { type: "automation" },
+        inbox: { type: "worker", parentSessionId: null },
+        "app-worker": { type: "worker", parentSessionId: null },
+        "session-worker": { type: "worker", parentSessionId: "standard" },
+        "nested-worker": { type: "worker", parentSessionId: "session-worker" },
       },
     };
 
@@ -349,7 +345,7 @@ describe("app workspace projection", () => {
           ...workspace,
           sessionStates: {
             ...workspace.sessionStates,
-            "nested-worker": { status: "running" as const },
+            "nested-worker": { status: "running" as const, since: 1 },
           },
         },
       },

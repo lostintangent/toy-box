@@ -1,5 +1,6 @@
 import { Diff } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { cn } from "@/shared/utils";
 import type { DiffStats } from "../../model/fileDiffs";
 import type { FileDiffSummary } from "../transcript/editDiffs";
@@ -27,9 +28,9 @@ export function DiffPopup({ total, byFile }: { total: DiffStats; byFile: FileDif
           <div className="px-3 py-2 space-y-1 max-h-48 overflow-y-auto">
             {byFile.map((file) => (
               <div key={file.path} className="flex items-center gap-2 text-xs">
-                <span className="truncate flex-1 font-mono text-muted-foreground">
-                  {file.displayPath}
-                </span>
+                <ScrollableFade className="flex-1 whitespace-nowrap font-mono text-muted-foreground">
+                  <span className="shrink-0">{file.displayPath}</span>
+                </ScrollableFade>
                 <span className="shrink-0 font-mono">
                   <span className="text-diff-added">+{file.diff.added}</span>{" "}
                   <span className="text-diff-removed">-{file.diff.removed}</span>

@@ -19,16 +19,18 @@ React owns component lifetimes and presentation. The TanStack store owns state s
 1. A host supplies current content, read-only policy, relative-resource base, and a content-change callback to `Whiteboard`. The Files adapter maps an ordinary `.svg` file into that contract.
 2. `Whiteboard` creates one `SvgDocument` and one editor store for that mounted document. Host identity decides when the whiteboard remounts; an editability change updates the existing whiteboard's read-only policy.
 3. When supplied content changes, `SvgDocument` parses and validates it into a native `<svg>` root. The editor clears DOM-backed selection, active gestures, and history, then recomputes any fitted viewport against the new page. Content published by that same editor is recognized as an echo rather than reloaded.
-4. `DocumentLayer` mounts the native root inside an isolated shadow host and projects the editor viewport through the root's runtime `viewBox`.
+4. `DocumentLayer` mounts the native root inside an isolated shadow host sized to the authored page. It projects the editor viewport by transforming that host, leaving the SVG's coordinate system intact.
 5. Editor commands mutate the live native DOM and record the corresponding reversible history entry. Publishing serializes the current SVG and hands the resulting content back through the host callback.
 
-Runtime presentation never changes the file's authored viewport or base URI: serialization restores those authored attributes. Selection chrome, the grid, tool state, viewport, and history are editor state and never enter the persisted SVG.
+Runtime presentation never changes the SVG's authored viewport. Relative resources use a runtime base URI that serialization restores to its authored value. Selection chrome, the grid, tool state, viewport, and history are editor state and never enter the persisted SVG.
 
 ## Pointer gestures
 
 Drawing, selection, and viewport navigation are gesture sources. On pointer-down, only the source for the effective tool may claim the pointer. A successful claim returns a controller that exclusively owns subsequent pointer updates until commit or cancellation; pointer capture belongs to that same lifecycle.
 
 The store's `gesture` value is the observable semantic state needed by React—for example, `pan`, `draw`, `marquee`, or `transform`. The controller holds only the imperative details of that one pointer lifetime. Finishing commits one editor operation; cancelling a document edit restores its provisional DOM changes.
+
+Ordinary document commands enter through the store's `edit` action, which checks editability before invoking their mutation callback. While a gesture is active, unrelated edits are ignored rather than queued. Gesture controllers and native text editing use `commit` to record changes they already own; guarding that completion would be too late to prevent interleaved mutations.
 
 Holding Space temporarily switches between hand and select while the editor itself has focus. Text entry and toolbar controls retain their native Space behavior.
 
@@ -58,17 +60,18 @@ The viewport store value contains the pane size, zoom, pan, and whether it is fi
 
 - The hand tool and middle pointer button claim pan gestures.
 - Two touches supersede any active single-pointer gesture and continuously pan and zoom around
-  their moving midpoint until either touch ends.
+  their moving midpoint until either touch ends. Each remaining touch stays captured until its
+  own release, so lifting outside the pane cannot leave a stale finger in the next pinch.
 - Wheel and pane commands zoom around a viewport point or fit the authored page/content.
 - A `ResizeObserver` updates pane size. Fit modes recompute their position as the pane changes; manual mode preserves the user's chosen view.
-- `DocumentLayer` turns viewport state into the native SVG `viewBox`, while `GridLayer` paints the dot grid with the same transform. Document content and editor feedback therefore remain aligned without rewriting authored geometry.
+- `DocumentLayer` translates and scales the HTML host for every viewport change. The native SVG keeps its authored `viewBox` and a fixed page-sized viewport, so percentage geometry does not reflow when navigation ends or the pane resizes. Its store subscription stays mounted across source replacements so document projection precedes selection measurement. A shadow-host attribute temporarily suppresses filters during pan and pinch; completion, cancellation, and cleanup restore the authored effects without modifying the SVG. `GridLayer` paints the dot grid with the same viewport.
 
 ## Other editor commands
 
 - Style actions apply to a compatible selection when the select tool is active; otherwise they update the defaults retained for future drawing.
-- Undo and redo apply native DOM history entries and discard any selection whose nodes are no longer attached.
-- Image paste, file selection, and drag-and-drop decode supported raster files and insert one native SVG image element through the store.
-- Read-only policy is enforced at interaction entry points. The document still renders and navigates, but mutating tools and commands cannot claim work.
+- Undo and redo share document commands' editability rule; otherwise they apply native DOM history entries and discard any selection whose nodes are no longer attached.
+- Image paste, file selection, and drag-and-drop decode supported raster files and insert one native SVG image element through the store. Admission is checked when decoding finishes, before insertion.
+- `canEditDocument` supplies the shared read-only/gesture policy for commands and their disabled controls. Read-only tool admission remains at interaction entry points, so the document still renders and navigates.
 
 ## Folder story
 
@@ -86,6 +89,6 @@ The viewport store value contains the pane size, zoom, pan, and whether it is fi
 - Clear every DOM-backed transient value when a different document is loaded.
 - Pair every committed native mutation with one reversible history entry and one source publication.
 - Keep gesture admission declarative and let one controller own an accepted pointer through completion.
-- Keep overlays and runtime viewport attributes out of serialized SVG.
+- Keep viewport projection outside the authored SVG; do not rewrite its `viewBox` to navigate.
 - Subscribe React components only to the store slices they render; read current store state directly inside event-time commands.
 - Keep host lifecycle, persistence, and pane presentation behind the public contract; do not import another application feature.

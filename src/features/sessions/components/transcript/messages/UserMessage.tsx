@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Copy } from "lucide-react";
-import { Streamdown } from "streamdown";
+import { Markdown } from "@/shared/ui/markdown";
 import { Button } from "@/shared/ui/button";
 import { RelativeTime } from "@/shared/ui/relative-time";
 import { Separator } from "@/shared/ui/separator";
@@ -12,12 +12,15 @@ import type { UserMessage as UserMessageType } from "../../../model";
 export function UserMessage({
   message,
   extraActions,
+  time,
   children,
 }: {
   message: Pick<UserMessageType, "content" | "timestamp"> & {
     attachments?: (Attachment | { label: string; src: string })[];
   };
   extraActions?: ReactNode;
+  /** Replaces the relative timestamp, such as in a timeline already divided by day. */
+  time?: ReactNode;
   children?: ReactNode;
 }) {
   const attachments = message.attachments ?? [];
@@ -25,21 +28,18 @@ export function UserMessage({
   return (
     <div className="flex flex-col items-end gap-2">
       {message.content && (
-        <div className="max-w-full @md:max-w-[80%] rounded-lg bg-primary px-3 py-2.5 text-primary-foreground">
-          {children ?? (
-            <Streamdown className="whitespace-pre-wrap text-sm [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_ul]:my-1.5 [&_[data-streamdown=link]]:text-primary-foreground [&_[data-streamdown=inline-code]]:bg-primary-foreground/15">
-              {message.content}
-            </Streamdown>
-          )}
+        <div className="max-w-full @md:max-w-[80%] rounded-lg bg-primary px-3 py-2.5 text-sm text-primary-foreground [&_[data-streamdown=link]]:text-primary-foreground [&_[data-streamdown=inline-code]]:bg-primary-foreground/15">
+          {children ?? <Markdown preserveLineBreaks>{message.content}</Markdown>}
         </div>
       )}
       <div className="flex min-h-6 items-center gap-1">
         {extraActions}
         {extraActions && <Separator orientation="vertical" className="h-4!" />}
         <CopyControl content={message.content} />
-        {message.timestamp && (
-          <RelativeTime className="text-xs text-muted-foreground" date={message.timestamp} />
-        )}
+        {time ??
+          (message.timestamp && (
+            <RelativeTime className="text-xs text-muted-foreground" date={message.timestamp} />
+          ))}
       </div>
       {attachments.length > 0 && (
         <div className="flex gap-1 flex-wrap justify-end max-w-full @md:max-w-[80%]">
@@ -50,7 +50,7 @@ export function UserMessage({
   );
 }
 
-function CopyControl({ content }: { content: string }) {
+export function CopyControl({ content }: { content: string }) {
   return (
     <Tooltip>
       <TooltipTrigger

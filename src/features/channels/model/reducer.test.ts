@@ -162,9 +162,58 @@ describe("Channel state reducer", () => {
         status: { state: "working", text: "Reviewing the protocol", lookingAt: 1 },
       },
     ]);
-    expect(shared.artifacts).toEqual([artifact]);
+    expect(shared.artifacts).toEqual([{ ...artifact, sharedAt: "2026-09-05T12:01:00.000Z" }]);
     expect(left.members).toEqual([]);
     expect(left.messages.map(({ id }) => id)).toEqual(["joined", "shared", "left"]);
+  });
+
+  test("sharing an artifact again retitles it but keeps when it was first shared", () => {
+    const file = machineFile("/workspace/plan.md");
+    const share = (sequence: number, title: string, timestamp: string): ChannelEvent => ({
+      type: "message",
+      revision: sequence,
+      message: {
+        id: `shared-${sequence}`,
+        sequence,
+        sender: { type: "system" },
+        content: { type: "artifact_shared", actor: { type: "user" }, artifact: { file, title } },
+        timestamp,
+      },
+    });
+    const first = reduceChannelState(state(), share(1, "Plan", "2026-09-05T12:00:00.000Z"));
+    const again = reduceChannelState(first, share(2, "Release plan", "2026-09-05T13:00:00.000Z"));
+
+    expect(again.artifacts).toEqual([
+      { file, title: "Release plan", sharedAt: "2026-09-05T12:00:00.000Z" },
+    ]);
+  });
+
+  test("member edits replace the profile without duplicating membership or changing the transcript", () => {
+    const member = { channelId: "channel", id: "reviewer", name: "Reviewer" };
+    const other = { ...member, id: "builder", name: "Builder" };
+    const current = {
+      ...state(),
+      members: [{ ...member, role: "Old role" }, other],
+      messages: [
+        {
+          id: "request",
+          sequence: 1,
+          sender: { type: "user" as const },
+          content: "Review the plan.",
+          timestamp: "2026-09-05T12:00:00.000Z",
+        },
+      ],
+    };
+    const updated = { ...member, name: "Critic" };
+    const next = reduceChannelState(current, { type: "member", revision: 1, member: updated });
+
+    expect(next).toEqual({
+      ...current,
+      revision: 1,
+      members: expect.arrayContaining([other, updated]),
+    });
+    expect(next.members).toHaveLength(2);
+    expect(current.members).toEqual([{ ...member, role: "Old role" }, other]);
   });
 
   test("reduces lead status without adding the lead to members", () => {

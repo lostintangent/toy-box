@@ -1,8 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
 import { Clock3, Loader2, Square, Trash2 } from "lucide-react";
 import { InputGroupButton } from "@/shared/ui/input-group";
-import { MetadataBadge } from "@/shared/ui/metadata-badge";
+import { Badge } from "@/shared/ui/badge";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { cn } from "@/shared/utils";
 import { workerMutations } from "../mutations";
 import type { Worker } from "../model";
@@ -33,7 +34,7 @@ export function WorkersMenu({
         title={label}
         className={cn(PANE_OVERLAY_BUTTON_CLASS, "relative")}
       >
-        <Loader2 className={cn(PANE_OVERLAY_ICON_CLASS, "animate-spin")} aria-hidden />
+        <RunningIndicator className={PANE_OVERLAY_ICON_CLASS} />
         <span
           aria-hidden
           className="pointer-events-none absolute inset-0 flex items-center justify-center text-[8px] font-semibold leading-none tabular-nums text-foreground"
@@ -42,12 +43,13 @@ export function WorkersMenu({
         </span>
       </button>
     ) : (
-      <MetadataBadge
+      <Badge
+        variant="metadata"
         render={<button type="button" aria-label={label} title={label} />}
         className="min-w-5 cursor-pointer select-none self-center justify-center tabular-nums hover:bg-secondary/80"
       >
         {workers.length}
-      </MetadataBadge>
+      </Badge>
     );
 
   return (
@@ -96,7 +98,7 @@ function WorkerItem({
         className="flex items-center gap-2 rounded-sm px-2 py-1 text-xs hover:bg-accent/50 hover:text-accent-foreground"
       >
         {running ? (
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+          <RunningIndicator className="h-3.5 w-3.5 shrink-0 text-primary" />
         ) : (
           <Clock3 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}

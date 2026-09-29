@@ -90,7 +90,12 @@ export const copilotProvider: SessionProvider = {
       await session.rpc.metadata.setWorkingDirectory({
         workingDirectory: configuration.directory,
       });
-      const connection = await connect(session, sessionId, configuration.allowUserQuestions);
+      const connection = await connect(
+        session,
+        sessionId,
+        configuration.allowUserQuestions,
+        configuration.model,
+      );
       if (configuration.name) await connection.rename(configuration.name);
       return connection;
     } catch (error) {
@@ -105,10 +110,20 @@ export const copilotProvider: SessionProvider = {
       session.provider?.sessionId ?? session.id,
       nativeConfiguration(session.id, configuration),
     );
-    // The SDK restores the persisted model on resume despite a supplied override.
-    if (configuration.model)
-      await native.setModel(configuration.model.name, toSdkSetModelOptions(configuration.model));
-    return connect(native, session.id, configuration.allowUserQuestions);
+    // Some CLI versions restore the persisted model despite a resume override.
+    if (configuration.model) {
+      const current = await native.rpc.model.getCurrent();
+      if (
+        current.modelId !== configuration.model.name ||
+        (configuration.model.reasoningEffort !== undefined &&
+          current.reasoningEffort !== configuration.model.reasoningEffort) ||
+        (configuration.model.contextTier !== undefined &&
+          current.contextTier !== configuration.model.contextTier)
+      ) {
+        await native.setModel(configuration.model.name, toSdkSetModelOptions(configuration.model));
+      }
+    }
+    return connect(native, session.id, configuration.allowUserQuestions, configuration.model);
   },
   async readDirectory(nativeId) {
     return sessionDirectory(
@@ -132,10 +147,15 @@ export const copilotProvider: SessionProvider = {
   stop: stopCopilotClient,
 };
 
-async function connect(session: CopilotSession, sessionId: string, allowUserQuestions: boolean) {
+async function connect(
+  session: CopilotSession,
+  sessionId: string,
+  allowUserQuestions: boolean,
+  appliedModel?: SessionConfiguration["model"],
+) {
   if (allowUserQuestions)
     await session.rpc.eventLog.registerInterest({ eventType: "user_input.requested" });
-  return connectCopilotSession(session, sessionId);
+  return connectCopilotSession(session, sessionId, appliedModel);
 }
 
 function nativeConfiguration(

@@ -3,59 +3,72 @@
 import { sessionFile } from "@files/model";
 import { getStateDatabase } from "@/server/database";
 import { smallJsonSchema } from "@/shared/smallJson";
-import type { Worker } from "../model";
+import type { Worker, WorkerOwner } from "../model";
+
+/** Construct a reserved identity without starting a Session or publishing active work. */
+export function createWorker<
+  Input extends WorkerOwner & Pick<Worker, "ephemeral" | "name"> & { metadata?: unknown },
+>(input: Input, sessionId: string = crypto.randomUUID()) {
+  return {
+    ...input,
+    metadata: input.metadata === undefined ? undefined : smallJsonSchema.parse(input.metadata),
+    sessionId,
+    createdAt: new Date().toISOString(),
+  };
+}
 
 /** Worker persistence that owners can compose into their own transactions. */
 export class WorkerDatabase {
   constructor(private readonly db: Bun.SQL) {}
 
-  async get(sessionId: string): Promise<Worker | null> {
+  async get<Type extends Worker["type"] = Worker["type"]>(
+    sessionId: string,
+    scope?: Type | Extract<WorkerOwner, { type: Type }>,
+  ): Promise<Extract<Worker, { type: Type }> | null> {
+    const owner = scope ? this.db`AND ${scopePredicate(this.db, scope)}` : this.db``;
     const [row] = await this.db<WorkerRow[]>`
-      SELECT * FROM workers WHERE session_id = ${sessionId}
+      SELECT * FROM workers WHERE session_id = ${sessionId} ${owner}
     `;
-    return row ? workerFromRow(row) : null;
+    return row ? (workerFromRow(row) as Extract<Worker, { type: Type }>) : null;
   }
 
-  async list<Type extends Worker["type"]>(type: Type): Promise<Extract<Worker, { type: Type }>[]> {
+  async list<Type extends Worker["type"]>(
+    scope: Type | Extract<WorkerOwner, { type: Type }>,
+  ): Promise<Extract<Worker, { type: Type }>[]> {
+    const owner = scopePredicate(this.db, scope);
     const rows = await this.db<WorkerRow[]>`
-      SELECT * FROM workers WHERE worker_type = ${type} ORDER BY session_id
+      SELECT * FROM workers WHERE ${owner}
+      ORDER BY created_at DESC, session_id
     `;
     return rows.map((row) => workerFromRow(row) as Extract<Worker, { type: Type }>);
   }
 
-  async listForChannel(channelId: string): Promise<Extract<Worker, { type: "channel" }>[]> {
-    const rows = await this.db<WorkerRow[]>`
-      SELECT * FROM workers
-      WHERE worker_type = 'channel' AND channel_id = ${channelId}
-      ORDER BY name COLLATE NOCASE, session_id
-    `;
-    return rows.map((row) => workerFromRow(row) as Extract<Worker, { type: "channel" }>);
-  }
-
+  /** Construction validates metadata before admission can publish or persist the Worker. */
   async create(worker: Worker): Promise<void> {
-    const columns = workerColumns(worker);
-    await this.db`
-      INSERT INTO workers (
-        session_id, worker_type, parent_session_id, file_path, app_id, channel_id,
-        ephemeral, name, metadata
-      ) VALUES (
-        ${worker.sessionId}, ${worker.type}, ${columns.parentSessionId ?? null},
-        ${columns.filePath ?? null}, ${columns.appId ?? null}, ${columns.channelId ?? null},
-        ${worker.ephemeral ? 1 : 0}, ${worker.name ?? null},
-        ${worker.metadata === undefined ? null : JSON.stringify(worker.metadata)}
-      )
-    `;
+    const row = {
+      session_id: worker.sessionId,
+      created_at: Date.parse(worker.createdAt),
+      worker_type: worker.type,
+      ...workerColumns(worker),
+      ephemeral: worker.ephemeral ? 1 : 0,
+      name: worker.name,
+      metadata: worker.metadata === undefined ? null : JSON.stringify(worker.metadata),
+    };
+    await this.db`INSERT INTO workers ${this.db(row)}`;
   }
 
   async update(
     sessionId: string,
-    details: { name: Worker["name"]; metadata: Worker["metadata"] },
+    details: Pick<Worker, "name"> & { metadata?: unknown },
   ): Promise<boolean> {
+    const fields = {
+      name: details.name,
+      metadata: Object.hasOwn(details, "metadata")
+        ? serializeWorkerMetadata(details.metadata)
+        : undefined,
+    };
     const rows = await this.db<{ session_id: string }[]>`
-      UPDATE workers
-      SET name = ${details.name ?? null},
-          metadata = ${details.metadata === undefined ? null : JSON.stringify(details.metadata)}
-      WHERE session_id = ${sessionId}
+      UPDATE workers SET ${this.db(fields)} WHERE session_id = ${sessionId}
       RETURNING session_id
     `;
     return rows.length > 0;
@@ -67,16 +80,21 @@ export class WorkerDatabase {
     `;
     return rows.length > 0;
   }
-}
 
-/** Map every worker session to its parent session, or null for non-Session owners. */
-export async function getWorkerSessionParents(): Promise<Record<string, string | null>> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return {};
-  const rows = await db<WorkerSessionParentRow[]>`
-    SELECT session_id, parent_session_id FROM workers ORDER BY session_id
-  `;
-  return Object.fromEntries(rows.map((row) => [row.session_id, row.parent_session_id]));
+  /** Initialize absent metadata without replacing a result or recreating deleted ownership. */
+  async initializeMetadata(
+    sessionId: string,
+    type: Worker["type"],
+    metadata: unknown,
+  ): Promise<boolean> {
+    const rows = await this.db<WorkerSessionIdRow[]>`
+      UPDATE workers
+      SET metadata = ${serializeWorkerMetadata(metadata)}
+      WHERE session_id = ${sessionId} AND worker_type = ${type} AND metadata IS NULL
+      RETURNING session_id
+    `;
+    return rows.length > 0;
+  }
 }
 
 export async function getWorkerSessionIdsForParent(parentSessionId: string): Promise<string[]> {
@@ -118,30 +136,60 @@ export async function registerWorkerSession(worker: Worker): Promise<void> {
   await new WorkerDatabase(await getStateDatabase()).create(worker);
 }
 
-export async function unregisterWorkerSession(sessionId: string): Promise<void> {
+export async function unregisterWorkerSession(sessionId: string): Promise<boolean> {
   const db = await getStateDatabase({ createIfMissing: false });
-  if (db) await new WorkerDatabase(db).delete(sessionId);
+  return db ? new WorkerDatabase(db).delete(sessionId) : false;
 }
 
-function workerColumns(worker: Worker) {
+function workerColumns(worker: WorkerOwner) {
   switch (worker.type) {
     case "session":
-      return { parentSessionId: worker.parentSessionId };
+      return { parent_session_id: worker.parentSessionId };
     case "file":
-      return { parentSessionId: worker.file.sessionId, filePath: worker.file.path };
+      return { parent_session_id: worker.file.sessionId, file_path: worker.file.path };
     case "app":
-      return { appId: worker.appId };
+      return { app_id: worker.appId };
     case "channel":
-      return { channelId: worker.channelId };
+      return { channel_id: worker.channelId };
+    case "inbox":
+      return {};
   }
 }
 
+function scopePredicate(db: Bun.SQL, scope: Worker["type"] | WorkerOwner) {
+  const type = typeof scope === "string" ? scope : scope.type;
+  const owner = typeof scope === "string" ? db`` : ownerPredicate(db, scope);
+  return db`worker_type = ${type} ${owner}`;
+}
+
+function ownerPredicate(db: Bun.SQL, owner: WorkerOwner) {
+  switch (owner.type) {
+    case "session":
+      return db`AND parent_session_id = ${owner.parentSessionId}`;
+    case "file":
+      return db`AND parent_session_id = ${owner.file.sessionId} AND file_path = ${owner.file.path}`;
+    case "app":
+      return db`AND app_id = ${owner.appId}`;
+    case "channel":
+      return db`AND channel_id = ${owner.channelId}`;
+    case "inbox":
+      return db``;
+  }
+}
+
+function serializeWorkerMetadata(metadata: unknown): string | null {
+  return metadata === undefined ? null : JSON.stringify(smallJsonSchema.parse(metadata));
+}
+
 function workerFromRow(row: WorkerRow): Worker {
+  // SQLite enforces valid JSON. Write limits must not prevent reading or deleting old records.
+  const metadata: Worker["metadata"] = row.metadata === null ? undefined : JSON.parse(row.metadata);
   const common = {
     sessionId: row.session_id,
+    createdAt: new Date(row.created_at).toISOString(),
     ephemeral: row.ephemeral === 1,
     ...(row.name ? { name: row.name } : {}),
-    ...(row.metadata ? { metadata: smallJsonSchema.parse(JSON.parse(row.metadata)) } : {}),
+    ...(metadata === undefined ? {} : { metadata }),
   };
   switch (row.worker_type) {
     case "session":
@@ -156,11 +204,14 @@ function workerFromRow(row: WorkerRow): Worker {
       return { ...common, type: "app", appId: row.app_id! };
     case "channel":
       return { ...common, type: "channel", channelId: row.channel_id! };
+    case "inbox":
+      return { ...common, type: "inbox", ephemeral: false };
   }
 }
 
 type WorkerRow = {
   session_id: string;
+  created_at: number;
   worker_type: Worker["type"];
   parent_session_id: string | null;
   file_path: string | null;
@@ -172,4 +223,3 @@ type WorkerRow = {
 };
 
 type WorkerSessionIdRow = { session_id: string };
-type WorkerSessionParentRow = WorkerSessionIdRow & { parent_session_id: string | null };

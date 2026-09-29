@@ -19,7 +19,10 @@ export function AttachmentGallery({
   onRemove,
 }: {
   attachments: readonly (Attachment | { label: string; src: string })[];
-  variant?: "pills" | "thumbnails" | "summary";
+  /** The user's own messages show square thumbnails, while agents' messages show a filmstrip that
+   *  keeps each image's shape so screenshots read in place. Drafts show removable pills, and queued
+   *  messages a one-line summary. */
+  variant?: "thumbnails" | "filmstrip" | "pills" | "summary";
   onRemove?: (index: number) => void;
 }) {
   const previews = attachments.map((attachment, index) => ({
@@ -115,10 +118,18 @@ export function AttachmentGallery({
           trigger(
             index,
             cn(
-              "flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted transition-colors",
+              "flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted transition-colors",
+              variant === "filmstrip" ? "h-22 min-w-12" : "size-12",
               preview.src && "hover:border-accent",
             ),
-            thumbnail(index, preview.src ? "size-full" : "size-5"),
+            thumbnail(
+              index,
+              !preview.src
+                ? "size-5"
+                : variant === "filmstrip"
+                  ? "h-full w-auto min-w-full max-w-40"
+                  : "size-full",
+            ),
           ),
         )
       )}

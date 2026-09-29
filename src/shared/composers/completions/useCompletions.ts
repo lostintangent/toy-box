@@ -93,6 +93,16 @@ export function useCompletions({
     });
   }
 
+  /** Replace the whole draft and continue at its end, so a completion there opens as if typed. */
+  function replace(text: string): void {
+    onValueChange(text);
+    track(text, text.length);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(text.length, text.length);
+    });
+  }
+
   /** Move through `count` suggestions and pick one; returns whether the key was consumed. */
   function handleKeyDown(
     event: KeyboardEvent<HTMLTextAreaElement>,
@@ -128,6 +138,7 @@ export function useCompletions({
     handleChange,
     handleSelect,
     insert,
+    replace,
     handleKeyDown,
     close,
   };

@@ -270,12 +270,11 @@ export class SessionStream {
   finish(reason: StreamEndReason = "idle", error?: string): void {
     if (this.#finished) return;
     this.#finished = true;
+    this.#emit({ type: "end", reason, ...(error ? { error } : {}) });
     this.#completionResult = completionResult(
       this.#sessionState.messages,
       reason === "error" ? "failed" : "completed",
     );
-
-    this.#emit({ type: "end", reason, ...(error ? { error } : {}) });
     if (reason === "idle" && !this.#abortRequested) {
       cacheSnapshot(this.sessionId, this.#sessionState);
     }
@@ -491,12 +490,16 @@ function completionResult(
   messages: SessionState["messages"],
   status: SessionCompletion["status"] = "completed",
 ): SessionCompletion {
+  const lastMessage = messages.at(-1);
+  const error =
+    status === "failed" && lastMessage?.role === "assistant" ? lastMessage.error : undefined;
+  const result = { status, ...(error ? { error } : {}) };
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
     if (message.role === "assistant" && message.content.trim().length > 0) {
-      return { status, response: message.content };
+      return { ...result, response: message.content };
     }
   }
 
-  return { status };
+  return result;
 }

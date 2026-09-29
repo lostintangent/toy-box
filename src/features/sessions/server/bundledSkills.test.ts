@@ -66,7 +66,6 @@ describe("bundled SDK skills", () => {
     const expected = {
       standard: universal,
       automation: universal,
-      inbox: universal,
       worker: universal,
       hyper: [...universal, "create-toy-box-editor"],
     } satisfies Record<SessionType, readonly string[]>;

@@ -2,7 +2,8 @@
 // Sessions supplies execution and teardown; managing features supply ownership
 // and presentation policy without entering the Session kernel.
 
-import type { SessionsState, SessionType } from "@sessions/model";
+import type { SessionOwnership, SessionsState, SessionType } from "@sessions/model";
+import { broadcast } from "@workspace/server/events";
 import { getStateDatabase } from "@/server/database";
 import { getHyperSessionIds, hasHyperSession } from "@workspace/server/state/hyperSessions";
 import { getSessionStates } from "@workspace/server/state/sessions";
@@ -14,24 +15,14 @@ const RECENT_SESSION_LIMIT = 250;
 export async function readSessionCatalog(
   readCatalog: () => Promise<[SessionsState["sessions"], SessionsState["worktrees"]]>,
 ): Promise<SessionsState> {
-  const { getWorkerSessionParents } = await import("@workers/server/database");
-  const readOwnership = () => getWorkerSessionParents();
   // Ownership precedes SDK creation and outlives SDK deletion. Read it on both
   // sides so a concurrent change cannot expose a backing Session as ordinary.
-  const workersBefore = await readOwnership();
+  const ownershipBefore = await readSessionOwnership();
   const [sessions, worktrees] = await readCatalog();
-  const [workersAfter, settings, database] = await Promise.all([
-    readOwnership(),
-    getSettings(),
-    getStateDatabase({ createIfMissing: false }),
-  ]);
-  const managed = database
-    ? await database<{ id: string }[]>`SELECT id FROM automations UNION SELECT id FROM inbox`
-    : [];
-  const workerSessionParents = { ...workersBefore, ...workersAfter };
+  const [ownershipAfter, settings] = await Promise.all([readSessionOwnership(), getSettings()]);
+  const ownership = { ...ownershipBefore, ...ownershipAfter };
   const retainedSessionIds = new Set([
-    ...Object.keys(workerSessionParents),
-    ...managed.map(({ id }) => id),
+    ...Object.keys(ownership),
     ...getHyperSessionIds(),
     ...settings.pinnedSessionIds,
   ]);
@@ -48,30 +39,24 @@ export async function readSessionCatalog(
   return {
     sessions: sessions.filter(({ id, provider }) => retainedSessionIds.has(id) || !provider),
     worktrees,
-    workerSessionParents,
+    ownership,
   };
 }
 
 /** Resolve the role claimed for a Session by application features. */
 export async function resolveSessionType(sessionId: string): Promise<SessionType> {
   const database = await getStateDatabase({ createIfMissing: false });
-  const row = database
-    ? (
-        await database<SessionTypeClaims[]>`
-          SELECT
-            EXISTS(SELECT 1 FROM automations WHERE id = ${sessionId}) AS automation,
-            EXISTS(SELECT 1 FROM inbox WHERE id = ${sessionId}) AS inbox,
-            EXISTS(SELECT 1 FROM workers WHERE session_id = ${sessionId}) AS worker
-        `
-      )[0]
-    : undefined;
-
+  const [claims] = database
+    ? await database<{ automation: number; worker: number }[]>`
+        SELECT
+          EXISTS(SELECT 1 FROM automations WHERE id = ${sessionId}) AS automation,
+          EXISTS(SELECT 1 FROM workers WHERE session_id = ${sessionId}) AS worker
+      `
+    : [];
   const types: SessionType[] = [];
-  if (row?.automation) types.push("automation");
-  if (row?.inbox) types.push("inbox");
+  if (claims?.automation) types.push("automation");
+  if (claims?.worker) types.push("worker");
   if (hasHyperSession(sessionId)) types.push("hyper");
-  if (row?.worker) types.push("worker");
-
   if (types.length > 1) {
     throw new Error(`Session ${sessionId} has conflicting types: ${types.join(", ")}`);
   }
@@ -91,13 +76,37 @@ export async function detachManagedSession(sessionId: string): Promise<void> {
   if (worker?.type === "channel") {
     const { detachChannelAgentSession } = await import("@channels/server");
     await detachChannelAgentSession(sessionId);
-  } else if (worker) {
-    await unregisterWorkerSession(sessionId);
+  } else if (worker && (await unregisterWorkerSession(sessionId))) {
+    if (worker.type === "inbox") {
+      broadcast({ type: "inbox.entry.deleted", entryId: sessionId });
+    }
   }
 }
 
-type SessionTypeClaims = {
-  automation: number;
-  inbox: number;
-  worker: number;
-};
+async function readSessionOwnership(): Promise<SessionsState["ownership"]> {
+  const database = await getStateDatabase({ createIfMissing: false });
+  if (!database) return {};
+  const rows = await database<
+    { session_id: string; type: SessionOwnership["type"]; parent_session_id: string | null }[]
+  >`
+    SELECT id AS session_id, 'automation' AS type, NULL AS parent_session_id
+      FROM automations
+    UNION ALL
+    SELECT session_id, 'worker', parent_session_id
+      FROM workers
+  `;
+  const ownership: SessionsState["ownership"] = {};
+  for (const row of rows) {
+    const previous = ownership[row.session_id];
+    if (previous) {
+      throw new Error(
+        `Session ${row.session_id} has conflicting types: ${previous.type}, ${row.type}`,
+      );
+    }
+    ownership[row.session_id] =
+      row.type === "worker"
+        ? { type: "worker", parentSessionId: row.parent_session_id }
+        : { type: row.type };
+  }
+  return ownership;
+}

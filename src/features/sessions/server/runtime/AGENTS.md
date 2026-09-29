@@ -74,7 +74,7 @@ changes beneath the Session storage root and supplies open editors. `refreshSess
 stream through canonical events containing the current file list; idle snapshots read the files when loaded.
 Streams neither own filesystem watchers nor wait for artifact discovery at turn completion.
 
-A delivery receipt exposes the initial `started` or `queued` decision and a waiter bound to that exact stream instance. Completion reports `completed`, `failed`, or `timed_out`, plus the latest substantive assistant response when available. Waiting by session ID also covers work announced before its stream exists and falls back to the final snapshot when no live stream remains. A timeout ends only that caller's wait; it does not abort the session or alter its supervisor's policy.
+A delivery receipt exposes the initial `started` or `queued` decision and a waiter bound to that exact stream instance. Completion reports `completed`, `failed`, or `timed_out`, plus the latest substantive assistant response when available. Failed live completion also forwards the final assistant message's error, preserving partial output separately from the failure detail. Waiting by session ID also covers work announced before its stream exists and falls back to the final snapshot when no live stream remains. A timeout ends only that caller's wait; it does not abort the session or alter its supervisor's policy.
 
 A supervisor that retains durable history but expects little immediate reuse may call
 `releaseIdleSession` after completion. This disconnects only a session with no active execution;

@@ -1,4 +1,5 @@
 export {
+  canEditDocument,
   createEditorStore,
   resolveActiveTool,
   styleColor,

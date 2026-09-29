@@ -88,7 +88,7 @@ mock.module("@workspace/server/state", () => ({
   ...realWorkspaceStateExports,
   setSessionStatus: (sessionId: string, status: "running" | "idle" | "unread") => {
     sideEffects.push(`${status}:${sessionId}`);
-    emitMockWorkspaceEvent({ type: `session.${status}`, sessionId });
+    emitMockWorkspaceEvent({ type: `session.${status}`, sessionId, at: Date.now() });
   },
   clearDraftPrompt: () => {},
 }));

@@ -7,8 +7,11 @@ import { AUTOMATION_SESSION_INSTRUCTIONS, automationTools } from "@automations/s
 import { channelTools, createChannelMembersTool } from "@channels/server/tools";
 import { editorTools, fileTools } from "@files/server/tools";
 import { INBOX_SESSION_INSTRUCTIONS, inboxTools } from "@inbox/server/tools";
+import { listModels } from "@providers/server";
+import type { ModelConfiguration } from "@providers/model";
 import type { SessionType } from "@sessions/model";
 import { SESSION_HISTORY_DISCOVERY_INSTRUCTIONS } from "@sessions/server/instructions";
+import { readSession } from "@sessions/server/state/sessions";
 import {
   coordinationTools,
   HYPER_SESSION_INSTRUCTIONS,
@@ -24,6 +27,7 @@ import type { Tool } from "@sessions/server/tools/definition";
 import { getPersistedWorker } from "@workers/server/database";
 import { workerTools } from "@workers/server/tools";
 import { settingsTools } from "@workspace/server/tools";
+import { getSettings } from "@workspace/server/state/settings";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SessionTool = Tool<any>;
@@ -64,15 +68,16 @@ const sessionTypePolicies: Record<SessionType, SessionTypePolicy> = {
     channels: true,
     settings: true,
   },
-  inbox: {
-    instructions: [INBOX_SESSION_INSTRUCTIONS, SESSION_HISTORY_DISCOVERY_INSTRUCTIONS],
-    channels: true,
-    staffChannels: true,
-    inbox: true,
-  },
   worker: {
     instructions: [SESSION_HISTORY_DISCOVERY_INSTRUCTIONS],
   },
+};
+
+const inboxPolicy: SessionTypePolicy = {
+  instructions: [INBOX_SESSION_INSTRUCTIONS, SESSION_HISTORY_DISCOVERY_INSTRUCTIONS],
+  channels: true,
+  staffChannels: true,
+  inbox: true,
 };
 
 /** Compose feature-owned tools, instructions, and configuration lifetime over the Session runtime. */
@@ -82,11 +87,21 @@ export async function getSessionConfiguration(sessionId: string, sessionType: Se
     if (!worker) throw new Error("Worker sessions require persisted ownership.");
     if (worker.type === "channel") {
       const { getChannelAgentConfiguration } = await import("@channels/server/agent");
-      return getChannelAgentConfiguration(worker);
+      const configuration = await getChannelAgentConfiguration(worker);
+      const model = configuration.model ?? (await getWorkspaceDefaultModel(sessionId));
+      return {
+        ...configuration,
+        model,
+        configurationKey: JSON.stringify([
+          model,
+          configuration.directory,
+          configuration.additionalInstructions,
+        ]),
+      };
     }
   }
 
-  const policy = sessionTypePolicies[sessionType];
+  const policy = worker?.type === "inbox" ? inboxPolicy : sessionTypePolicies[sessionType];
   const appId = worker?.type === "app" ? worker.appId : undefined;
   return {
     configurationKey: undefined,
@@ -119,4 +134,24 @@ function getSessionTools(
     ...(policy.editor ? editorTools : []),
     ...(policy.inbox ? inboxTools : []),
   ];
+}
+
+/** Unconfigured members follow workspace defaults while retaining their existing provider. */
+async function getWorkspaceDefaultModel(
+  sessionId: string,
+): Promise<ModelConfiguration | undefined> {
+  const provider = (await readSession(sessionId))?.provider;
+  const settings = await getSettings();
+  if (
+    settings.defaultModel &&
+    (provider || !settings.disabledProviders.includes(settings.defaultModel.provider))
+  ) {
+    return !provider || settings.defaultModel.provider === provider.id
+      ? settings.defaultModel
+      : undefined;
+  }
+  const model = (await listModels()).find(
+    (candidate) => !provider || candidate.provider === provider.id,
+  );
+  return model ? { name: model.id, provider: model.provider } : undefined;
 }

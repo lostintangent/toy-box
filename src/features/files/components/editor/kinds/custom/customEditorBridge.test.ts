@@ -32,6 +32,7 @@ describe("custom editor iframe bridge", () => {
     expect(
       createCustomEditorRenderMessage("one,two", 17, false, [
         {
+          createdAt: new Date(0).toISOString(),
           type: "file",
           sessionId: "artifact-worker-a",
           ephemeral: true,

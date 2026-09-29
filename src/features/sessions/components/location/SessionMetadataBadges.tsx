@@ -1,5 +1,5 @@
 import { MessagesSquare } from "lucide-react";
-import { MetadataBadge } from "@/shared/ui/metadata-badge";
+import { Badge } from "@/shared/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
 import { SessionLocationIcon } from "./SessionLocationIcon";
@@ -38,7 +38,8 @@ export function SessionMetadataBadges({
         <Tooltip>
           <TooltipTrigger
             render={
-              <MetadataBadge
+              <Badge
+                variant="metadata"
                 className="max-w-44"
                 aria-label={location.description}
                 aria-description={error?.message}
@@ -49,7 +50,7 @@ export function SessionMetadataBadges({
                   className="h-3 w-3 shrink-0"
                 />
                 <span className="truncate">{location.label}</span>
-              </MetadataBadge>
+              </Badge>
             }
           />
           <TooltipContent sideOffset={6} className="max-w-96 break-all">
@@ -60,10 +61,10 @@ export function SessionMetadataBadges({
       )}
 
       {hasMessageCount && (
-        <MetadataBadge aria-label={`${messageCount} messages`}>
+        <Badge variant="metadata" aria-label={`${messageCount} messages`}>
           <MessagesSquare className="h-3 w-3 shrink-0" />
           <span>{messageCount}</span>
-        </MetadataBadge>
+        </Badge>
       )}
     </div>
   );

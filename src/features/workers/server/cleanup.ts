@@ -1,7 +1,12 @@
 import { deleteSessionIfExists } from "@sessions/server/runtime";
-import { getWorkerSessionIdsForApp, getWorkerSessionIdsForParent } from "./database";
+import {
+  getPersistedWorker,
+  getWorkerSessionIdsForApp,
+  getWorkerSessionIdsForParent,
+} from "./database";
 import { cancelAdmittedWorker } from "./admission";
-import { finishWorkersForApp, finishWorkersOwnedBySession } from "./registry";
+import { finishWorkersForApp, finishWorkersOwnedBySession, getWorker } from "./registry";
+import type { Worker } from "../model";
 
 /** Remove every worker owned by a deleted session, including file workers. */
 export async function deleteWorkersForSession(sessionId: string): Promise<void> {
@@ -27,11 +32,15 @@ export async function deleteWorkersForApp(appId: string): Promise<void> {
 }
 
 async function deleteWorkers(sessionIds: ReadonlySet<string>): Promise<unknown[]> {
-  const cleanup = await Promise.allSettled([...sessionIds].map(deleteWorker));
+  const cleanup = await Promise.allSettled([...sessionIds].map((id) => deleteWorker(id)));
   return cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
 }
 
-async function deleteWorker(sessionId: string): Promise<void> {
+export async function deleteWorker(sessionId: string, type?: Worker["type"]): Promise<boolean> {
+  if (type) {
+    const worker = (await getPersistedWorker(sessionId)) ?? getWorker(sessionId);
+    if (worker?.type !== type) return false;
+  }
   const errors: unknown[] = [];
   try {
     await cancelAdmittedWorker(sessionId);
@@ -47,4 +56,5 @@ async function deleteWorker(sessionId: string): Promise<void> {
   if (errors.length > 1) {
     throw new AggregateError(errors, `Unable to cancel or delete worker ${sessionId}.`);
   }
+  return true;
 }

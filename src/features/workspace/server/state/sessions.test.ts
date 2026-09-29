@@ -63,9 +63,9 @@ describe("workspace session storage", () => {
     onTestFinished(() => clean(sessionId));
 
     setSessionPrompt(sessionId, "old", "client-a", 1);
-    applySessionState({ type: "session.waiting", sessionId });
+    applySessionState({ type: "session.waiting", sessionId, at: 1 });
 
-    expect(getSessionState(sessionId, DAY_MS + 2)).toEqual({ status: "waiting" });
+    expect(getSessionState(sessionId, DAY_MS + 2)).toEqual({ status: "waiting", since: 1 });
   });
 
   test("deletes one record to clear status and prompt together", () => {

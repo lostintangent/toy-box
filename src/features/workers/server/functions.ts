@@ -9,7 +9,7 @@ import * as workers from "./admission";
 /** Spawn a background worker owned by a file or app. */
 export const spawnWorker = createServerFn({ method: "POST" })
   .validator(zodValidator(spawnWorkerInputSchema))
-  .handler(({ data }): Promise<{ sessionId: string }> => workers.spawnWorker(data));
+  .handler(({ data }): Promise<{ sessionId: string }> => workers.spawnWorkerFromRequest(data));
 
 /** Cancel a queued or running worker through its exact owner. */
 export const cancelWorker = createServerFn({ method: "POST" })

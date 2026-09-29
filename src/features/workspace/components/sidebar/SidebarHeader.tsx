@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { useProviders } from "@providers/useProviders";
 import type { SessionFilters } from "@sessions/components/sidebar/sessionFilters";
-import { ChevronDown, Filter, X } from "lucide-react";
+import { Filter, X } from "lucide-react";
+import { Badge } from "@/shared/ui/badge";
 import { Input } from "@/shared/ui/input";
 import { cn } from "@/shared/utils";
 import {
@@ -34,6 +35,7 @@ export function SidebarHeader({
   onCreateChannel: () => void;
 }) {
   const { providers, hasModels } = useProviders();
+  const isFiltering = filter.hiddenProviders.length > 0 || !filter.showExternalSessions;
 
   return (
     <div
@@ -48,18 +50,18 @@ export function SidebarHeader({
             render={
               <button
                 className={cn(
-                  "absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
-                  filter.hiddenProviders.length || !filter.showExternalSessions
-                    ? "text-foreground"
-                    : "text-muted-foreground",
+                  "absolute left-2 top-1/2 -translate-y-1/2 flex items-center hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
+                  isFiltering ? "text-foreground" : "text-muted-foreground",
                 )}
-                aria-label="Filter sessions"
+                aria-label={isFiltering ? "Filter sessions (some hidden)" : "Filter sessions"}
                 suppressHydrationWarning
               />
             }
           >
             <Filter className="h-4 w-4" />
-            <ChevronDown className="h-3 w-3" />
+            {isFiltering && (
+              <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-accent" />
+            )}
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuGroup>
@@ -100,10 +102,10 @@ export function SidebarHeader({
           disabled={!hasModels}
           value={filter.query}
           onChange={(e) => onFilterChange({ ...filter, query: e.target.value })}
-          placeholder={`Filter sessions (${sessionCount})`}
-          className={cn("h-8 pl-12", filter.query ? "pr-8" : "pr-2")}
+          placeholder="Filter sessions"
+          className="h-8 pl-8 pr-8"
         />
-        {filter.query && (
+        {filter.query ? (
           <button
             disabled={!hasModels}
             onClick={() => onFilterChange({ ...filter, query: "" })}
@@ -113,6 +115,14 @@ export function SidebarHeader({
           >
             <X className="h-4 w-4" />
           </button>
+        ) : (
+          <Badge
+            variant="count"
+            className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2"
+            suppressHydrationWarning
+          >
+            {sessionCount}
+          </Badge>
         )}
       </div>
       <SidebarSplitButton

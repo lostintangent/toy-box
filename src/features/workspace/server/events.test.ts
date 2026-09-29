@@ -6,7 +6,7 @@ test("the workspace revision stays stable until a broadcast, even with no client
   const before = getWorkspaceRevision();
   expect(getWorkspaceRevision()).toBe(before);
 
-  broadcast({ type: "session.running", sessionId: crypto.randomUUID() });
+  broadcast({ type: "session.running", sessionId: crypto.randomUUID(), at: 1 });
 
   const after = getWorkspaceRevision();
   expect(after).not.toBe(before);
@@ -19,7 +19,7 @@ test("subscribers observe the new revision while receiving its update", () => {
   const unsubscribe = subscribeWorkspaceEvents(() => revisions.push(getWorkspaceRevision()));
   onTestFinished(unsubscribe);
 
-  broadcast({ type: "session.running", sessionId: crypto.randomUUID() });
+  broadcast({ type: "session.running", sessionId: crypto.randomUUID(), at: 1 });
 
   expect(revisions).toEqual([getWorkspaceRevision()]);
   expect(revisions[0]).not.toBe(before);
@@ -31,6 +31,7 @@ test("one failed workspace listener does not interrupt the remaining clients", (
   const event: WorkspaceEvent = {
     type: "session.running",
     sessionId: `broadcast-${crypto.randomUUID()}`,
+    at: 1,
   };
   const received: WorkspaceEvent[] = [];
   const unsubscribeFailed = subscribeWorkspaceEvents(() => {

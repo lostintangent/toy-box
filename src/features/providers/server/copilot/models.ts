@@ -2,9 +2,13 @@ import type { ModelInfo } from "@github/copilot-sdk";
 import type { ContextTier, ModelOptionInfo } from "@providers/model";
 export type ModelCatalogInfo = ModelInfo & ModelOptionInfo;
 
-/** Decorate SDK models with context-window metadata derived from current catalog limits. */
+/** Adapt SDK models into one entry per ID, decorated with context-window metadata. */
 export function adaptModelCatalog(models: readonly ModelCatalogInfo[]): ModelCatalogInfo[] {
-  return models.map((model) => {
+  // Some CLI versions list the whole catalog twice; keep each ID's first entry.
+  const uniqueModels = models.filter(
+    (model, index) => models.findIndex(({ id }) => id === model.id) === index,
+  );
+  return uniqueModels.map((model) => {
     if (model.supportedContextTiers !== undefined) return model;
 
     const supportedContextTiers = deriveContextTiers(model);

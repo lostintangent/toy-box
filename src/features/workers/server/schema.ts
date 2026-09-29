@@ -3,8 +3,9 @@ export async function initializeWorkerSchema(db: Bun.SQL): Promise<void> {
   await db.unsafe(`
     CREATE TABLE IF NOT EXISTS workers (
       session_id        TEXT PRIMARY KEY,
+      created_at        INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),
       worker_type       TEXT NOT NULL
-        CHECK (worker_type IN ('session', 'file', 'app', 'channel')),
+        CHECK (worker_type IN ('session', 'file', 'app', 'channel', 'inbox')),
       parent_session_id TEXT,
       file_path         TEXT,
       app_id            TEXT,
@@ -13,39 +14,11 @@ export async function initializeWorkerSchema(db: Bun.SQL): Promise<void> {
         CHECK (ephemeral IN (0, 1)),
       name              TEXT,
       metadata          TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-      CHECK (
-        (
-          worker_type = 'app'
-          AND parent_session_id IS NULL
-          AND file_path IS NULL
-          AND app_id IS NOT NULL
-          AND channel_id IS NULL
-        )
-        OR
-        (
-          worker_type = 'channel'
-          AND parent_session_id IS NULL
-          AND file_path IS NULL
-          AND app_id IS NULL
-          AND channel_id IS NOT NULL
-        )
-        OR
-        (
-          worker_type = 'session'
-          AND parent_session_id IS NOT NULL
-          AND file_path IS NULL
-          AND app_id IS NULL
-          AND channel_id IS NULL
-        )
-        OR
-        (
-          worker_type = 'file'
-          AND parent_session_id IS NOT NULL
-          AND file_path IS NOT NULL
-          AND app_id IS NULL
-          AND channel_id IS NULL
-        )
-      )
+      CHECK ((parent_session_id IS NOT NULL) = (worker_type IN ('session', 'file'))),
+      CHECK ((file_path IS NOT NULL) = (worker_type = 'file')),
+      CHECK ((app_id IS NOT NULL) = (worker_type = 'app')),
+      CHECK ((channel_id IS NOT NULL) = (worker_type = 'channel')),
+      CHECK (worker_type <> 'inbox' OR ephemeral = 0)
     );
 
     CREATE INDEX IF NOT EXISTS idx_workers_parent_session_id
@@ -56,5 +29,8 @@ export async function initializeWorkerSchema(db: Bun.SQL): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_workers_channel_id
       ON workers(channel_id, session_id);
+
+    CREATE INDEX IF NOT EXISTS idx_workers_type_created
+      ON workers(worker_type, created_at DESC, session_id);
   `);
 }

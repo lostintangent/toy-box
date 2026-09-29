@@ -42,8 +42,6 @@ export class SvgDocument {
   #editingHost: HTMLElement | null = null;
   #baseUri: string | undefined;
   #authoredXmlBase: string | null = null;
-  #authoredViewBox: string | null = null;
-  #renderedViewport: Rect | null = null;
   #snapshot: SvgDocumentSnapshot = {
     error: null,
     root: null,
@@ -86,7 +84,6 @@ export class SvgDocument {
       this.#root = null;
       this.#page = DEFAULT_PAGE;
       this.#authoredXmlBase = null;
-      this.#authoredViewBox = null;
       this.#editingHost?.replaceChildren();
       this.#publish({
         error: parsed.error,
@@ -100,8 +97,7 @@ export class SvgDocument {
     this.#root = parsed.root;
     this.#page = readSvgPage(parsed.root);
     this.#authoredXmlBase = parsed.root.getAttributeNS(XML_NAMESPACE, "base");
-    this.#authoredViewBox = parsed.root.getAttribute("viewBox");
-    this.#applyRuntimePresentation();
+    this.#applyRuntimeBase();
     this.#mountLoadedRoot();
     this.#publish({
       error: null,
@@ -122,8 +118,12 @@ export class SvgDocument {
         height: 100%;
         overflow: visible;
         outline: none;
+        /* Keep glyph metrics stable across zoom levels instead of refitting every text node. */
+        text-rendering: geometricPrecision;
       }
-      svg { display: block; width: 100% !important; height: 100% !important; overflow: visible; user-select: none; }
+      [data-whiteboard-svg-editing-host] > svg { display: block; width: 100% !important; height: 100% !important; overflow: visible; user-select: none; }
+      /* Avoid rebuilding expensive SVG effects while the viewport is moving. */
+      :host([data-whiteboard-navigating]) * { filter: none !important; }
       [data-whiteboard-svg-editing-host][contenteditable="true"] {
         caret-color: var(--accent);
       }
@@ -134,7 +134,7 @@ export class SvgDocument {
     this.#editingHost.dataset.whiteboardSvgEditingHost = "";
     this.#editingHost.contentEditable = "false";
     this.#editingHost.spellcheck = false;
-    this.#applyRuntimePresentation();
+    this.#applyRuntimeBase();
     this.#mountLoadedRoot();
   }
 
@@ -151,12 +151,6 @@ export class SvgDocument {
     this.#editingHost.spellcheck = editable;
   }
 
-  /** Renders document coordinates through the editor viewport. */
-  setRenderedViewport(viewport: Rect): void {
-    this.#renderedViewport = viewport;
-    this.#applyRuntimeViewport();
-  }
-
   serialize(): { content: string; error?: never } | { content?: never; error: string } {
     if (!this.#root) {
       return { error: this.#snapshot.error ?? "The SVG document has not been loaded." };
@@ -166,7 +160,6 @@ export class SvgDocument {
 
     const clone = this.#root.cloneNode(true) as SVGSVGElement;
     restoreXmlBase(clone, this.#authoredXmlBase);
-    restoreAttribute(clone, "viewBox", this.#authoredViewBox);
     return { content: serializeSvgDocument(clone, this.#sourceIO?.serializer) };
   }
 
@@ -356,17 +349,6 @@ export class SvgDocument {
     else restoreXmlBase(this.#root, this.#authoredXmlBase);
   }
 
-  #applyRuntimeViewport(): void {
-    if (!this.#root || !this.#renderedViewport) return;
-    const { x, y, width, height } = this.#renderedViewport;
-    this.#root.setAttribute("viewBox", `${x} ${y} ${width} ${height}`);
-  }
-
-  #applyRuntimePresentation(): void {
-    this.#applyRuntimeBase();
-    this.#applyRuntimeViewport();
-  }
-
   #mountLoadedRoot(): void {
     if (!this.#shadowRoot || !this.#mountStyle || !this.#editingHost || !this.#root) return;
     this.#editingHost.replaceChildren(this.#root);
@@ -403,11 +385,6 @@ function parseSvgLength(value: string | null): number | null {
 function restoreXmlBase(root: Element, authoredValue: string | null): void {
   if (authoredValue === null) root.removeAttributeNS(XML_NAMESPACE, "base");
   else root.setAttributeNS(XML_NAMESPACE, "xml:base", authoredValue);
-}
-
-function restoreAttribute(element: Element, name: string, authoredValue: string | null): void {
-  if (authoredValue === null) element.removeAttribute(name);
-  else element.setAttribute(name, authoredValue);
 }
 
 function getTrailingWhitespace(parent: Element): ChildNode | null {

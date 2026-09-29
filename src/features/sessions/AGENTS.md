@@ -33,10 +33,12 @@ submission addressed to a session, including its turn-specific model or immediat
 A queued message is that same value plus its queue status. `SessionLaunch` composes the initial
 message payload with an optional `SessionLocation`; location is creation context, not message data.
 
-`SessionsState` is the session catalog read model. It combines draft records, provider metadata, and worktrees
-with Worker ownership needed to hide managed sessions from ordinary roots while retaining linked
-children, previews, and activity. Automation, Inbox, and Hyper remain ordinary addressable entries.
-Every new Session role must explicitly choose its projection policy.
+`SessionsState` combines draft records, provider metadata, worktrees, and a typed `ownership` index
+for Automation and Worker sessions. Ownership is derived from feature records and can exist
+before a backing session. Worker ownership includes its optional parent relationship. Generic
+consumers use this index for filtering, draft reuse, editor defaults, and SDK classification rather
+than consulting feature catalogs. Hyper membership remains process-local Workspace coordination.
+Managed sessions remain addressable for linked children, previews, and activity.
 
 `src/server/managedSessions.ts` at the application composition boundary selects the 250 most recent
 ordinary, unpinned sessions, plus all managed and pinned sessions. Drafts and sessions with shared
@@ -68,6 +70,13 @@ and transcript with a fresh draft containing the first message. Callers pass tha
 `clientId` to their server operation and call `invalidateSessionQueries` when it settles, so
 success, overlap, and failure reconcile from authoritative state. This cache operation has no
 React lifetime and is shared by mutation owners such as Automations.
+
+Automation events also maintain their ownership claims, while session creation carries
+Worker ownership, including Inbox-owned work. Backing-session deletion preserves Automation
+ownership until the owning record is deleted; Worker ownership ends with its session. Inbox result
+events do not touch Sessions queries. Committed ownership changes replace an
+overlapping catalog fetch with a post-commit read. SSR initializes the complete catalog before the
+shared subscription mounts, and reconnects recover ownership from the authoritative catalog.
 
 An idle conversation rewind refreshes the initiating client's snapshot and emits a
 `session.touched` hint so other clients refresh its detail and list metadata; it never rewinds files.
@@ -105,7 +114,8 @@ mutation observers and browser-local interaction state. Reusable managed-session
 Inbox may consume the composer or location controls directly.
 
 The composer stacks what a session produced (artifacts newest first, plus todo progress and changed
-files) and what is waiting (queued messages) above the message being written. Queued user messages can be sent now, removed, or edited:
+files) and what is waiting (queued messages) above the message being written. Channels dock the same
+`ComposerTray` for their shared artifacts, checklist, and preview. Queued user messages can be sent now, removed, or edited:
 editing takes a message out of the queue and back into the draft, as does stopping the turn, so
 queued input never disappears. Draft text syncs through the
 workspace. `/` completes skills at the start of a prompt and
@@ -152,7 +162,7 @@ does not own session data or streaming behavior.
 - `functions.ts` is the validated browser ingress, including the short-lived voice token endpoint.
   It delegates to the same server capabilities used by trusted orchestration.
 
-Automations, Inbox, and Workers build on `@sessions/server/runtime`. They add scheduling, ownership,
+Automations and Workers build on `@sessions/server/runtime`; Inbox builds on Workers. They add scheduling, ownership,
 admission, and retention policy without importing provider details, snapshot storage, or the registry
 implementation. Channel leads and members are durable Channel-owned Workers whose configuration
 carries their local identity and collaboration tools. Shared workspace projection and process
@@ -171,9 +181,10 @@ Session execution.
   owns the connected stream lifecycle.
 - Managed features may govern a session's lifecycle, but they do not redefine session execution,
   transcript state, native event projection, registry, or UI primitives.
-- The application rebuilds private Channel agent configuration for comparison between executions.
-  Single-flight runtime acquisition replaces the idle provider connection only when that effective
-  configuration changed; active delivery keeps its existing session. Callers do not coordinate
-  configuration refresh. This preserves durable history, workspace identity, and worktree state.
+- The application rebuilds private Channel agent configuration, including its working directory,
+  for comparison between executions. Single-flight runtime acquisition replaces the idle provider
+  connection only when that effective configuration changed; active delivery keeps its existing
+  session. Callers do not coordinate configuration refresh. This preserves durable history,
+  workspace identity, and worktree state.
 - Generic workspace composition may render and arrange a session, but it must not copy session
   state into layout state.

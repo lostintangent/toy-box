@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { inboxQueries } from "@inbox/queries";
 import { Separator } from "@/shared/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
@@ -25,8 +27,9 @@ export function SidebarFooter({
   isTerminalOpen: boolean;
 }) {
   const appTitle = import.meta.env.VITE_APP_TITLE;
+  const { data: inboxEntries } = useSuspenseQuery(inboxQueries.list());
   const hasUnreadInbox = useWorkspaceSelector((workspace) =>
-    workspace.inboxEntries.some((entry) => workspace.sessionStates[entry.id]?.status === "unread"),
+    inboxEntries.some((entry) => workspace.sessionStates[entry.id]?.status === "unread"),
   );
   const showInboxUnreadIndicator = !isInboxOpen && hasUnreadInbox;
 

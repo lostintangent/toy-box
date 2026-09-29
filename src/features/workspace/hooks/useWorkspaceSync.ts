@@ -5,6 +5,8 @@ import { invalidateSessionsStateQuery } from "@sessions/queryCache";
 import { applyWorkspaceEvent, invalidateWorkspaceStateQuery } from "@workspace/queries";
 import type { WorkspaceEvent } from "@workspace/model/events";
 import { invalidateChannelListQuery } from "@channels/queryCache";
+import { invalidateAutomationListQuery } from "@automations/queryCache";
+import { invalidateInboxListQuery } from "@inbox/queryCache";
 import { providerQueries } from "@providers/queries";
 
 /** Keeps shared Query projections aligned with the workspace update stream. */
@@ -29,6 +31,8 @@ export function useWorkspaceSync(ssrRevision?: string): void {
         invalidateWorkspaceStateQuery(queryClient),
         invalidateSessionsStateQuery(queryClient),
         invalidateChannelListQuery(queryClient),
+        invalidateAutomationListQuery(queryClient),
+        invalidateInboxListQuery(queryClient),
         queryClient.invalidateQueries({ queryKey: providerQueries.all() }),
       ]).catch((error) => {
         console.error("Failed to refresh shared state:", error);

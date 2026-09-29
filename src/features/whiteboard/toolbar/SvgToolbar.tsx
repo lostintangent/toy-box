@@ -11,7 +11,13 @@ import { useState, useSyncExternalStore } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { shallow } from "@tanstack/store";
 import { readElementStyle, type SvgDocument } from "../document";
-import { resolveActiveTool, styleColor, type EditorStore, type Tool } from "../store";
+import {
+  canEditDocument,
+  resolveActiveTool,
+  styleColor,
+  type EditorStore,
+  type Tool,
+} from "../store";
 import {
   ArrowRight,
   ChevronDown,
@@ -65,18 +71,20 @@ export function SvgToolbar({
   themeForegroundColor: string;
   activeTool: Tool;
 }) {
-  const { readOnly, selectedTool, styleDefaults, selection, canUndo, canRedo } = useSelector(
-    store,
-    (state) => ({
-      readOnly: state.readOnly,
-      selectedTool: resolveActiveTool(state),
-      styleDefaults: state.styleDefaults,
-      selection: state.selection,
-      canUndo: state.history.undoStack.length > 0,
-      canRedo: state.history.redoStack.length > 0,
-    }),
-    { compare: shallow },
-  );
+  const { readOnly, canEdit, selectedTool, styleDefaults, selection, canUndo, canRedo } =
+    useSelector(
+      store,
+      (state) => ({
+        readOnly: state.readOnly,
+        canEdit: canEditDocument(state),
+        selectedTool: resolveActiveTool(state),
+        styleDefaults: state.styleDefaults,
+        selection: state.selection,
+        canUndo: canEditDocument(state) && state.history.undoStack.length > 0,
+        canRedo: canEditDocument(state) && state.history.redoStack.length > 0,
+      }),
+      { compare: shallow },
+    );
   const documentSnapshot = useSyncExternalStore(
     document.subscribe,
     document.getSnapshot,
@@ -178,7 +186,7 @@ export function SvgToolbar({
           color={displayColor}
           onColorChange={(color) => store.actions.changeStyle({ property: "color", value: color })}
           disabled={
-            readOnly ||
+            !canEdit ||
             selectedTool === "eraser" ||
             selectedTool === "hand" ||
             (selectedTool === "select" && selectedStyle.colorElements.length === 0)
@@ -190,7 +198,7 @@ export function SvgToolbar({
             defaultColor={displayColor}
             onFillChange={(fill) => store.actions.changeStyle({ property: "fill", value: fill })}
             colors={PRESET_COLORS}
-            disabled={readOnly}
+            disabled={!canEdit}
           />
         )}
         <SizeSelector
@@ -205,7 +213,7 @@ export function SvgToolbar({
           }
           label={selectedTool === "text" ? "Font" : "Size"}
           disabled={
-            readOnly ||
+            !canEdit ||
             selectedTool === "hand" ||
             (selectedTool === "select" && selectedStyle.widthElements.length === 0)
           }
@@ -221,11 +229,11 @@ export function SvgToolbar({
               <button
                 type="button"
                 onClick={store.actions.undo}
-                disabled={readOnly || !canUndo}
+                disabled={!canUndo}
                 aria-label="Undo"
                 className={cn(
                   "p-1 rounded transition-colors shrink-0",
-                  !readOnly && canUndo ? "hover:bg-foreground/10" : "opacity-40 cursor-not-allowed",
+                  canUndo ? "hover:bg-foreground/10" : "opacity-40 cursor-not-allowed",
                 )}
               >
                 <Undo2 size={14} />
@@ -240,11 +248,11 @@ export function SvgToolbar({
               <button
                 type="button"
                 onClick={store.actions.redo}
-                disabled={readOnly || !canRedo}
+                disabled={!canRedo}
                 aria-label="Redo"
                 className={cn(
                   "p-1 rounded transition-colors shrink-0",
-                  !readOnly && canRedo ? "hover:bg-foreground/10" : "opacity-40 cursor-not-allowed",
+                  canRedo ? "hover:bg-foreground/10" : "opacity-40 cursor-not-allowed",
                 )}
               >
                 <Redo2 size={14} />

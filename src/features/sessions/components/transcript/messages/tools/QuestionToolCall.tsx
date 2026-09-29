@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { CircleHelp } from "lucide-react";
-import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
+import { CircleHelp } from "lucide-react";
 import { Button } from "@/shared/ui/button";
+import { InlineMarkdown, Markdown } from "@/shared/ui/markdown";
 import { Input } from "@/shared/ui/input";
 import { useCurrentSession } from "../../../CurrentSessionContext";
 import { sessionMutations } from "../../../../mutations";
@@ -13,23 +13,20 @@ export function QuestionToolCall({ question }: { question: SessionQuestion }) {
   const { sessionId, mode } = useCurrentSession();
 
   return (
-    <div className="w-full rounded-lg border border-border/70 bg-background/80 p-3 text-sm shadow-xs">
+    <div className="w-full rounded-lg border bg-background/80 p-3 text-sm shadow-xs">
       <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
         <CircleHelp className="size-4" aria-hidden />
         <span>Question</span>
       </div>
-      <Streamdown
-        plugins={{ code }}
-        className="text-sm [&_p]:my-2 [&_pre]:my-2 [&_ul]:my-2 [&_ol]:my-2"
-      >
-        {question.question}
-      </Streamdown>
+      <Markdown plugins={{ code }}>{question.question}</Markdown>
 
       {question.state === "answered" ? (
         <div className="mt-3 border-t pt-3">
           <div className="mb-1 text-xs text-muted-foreground">Answer</div>
-          <div className="whitespace-pre-wrap">
-            {question.secret ? "Answer submitted" : question.answer}
+          <div className="whitespace-pre-wrap wrap-anywhere">
+            <InlineMarkdown>
+              {question.secret ? "Answer submitted" : question.answer}
+            </InlineMarkdown>
           </div>
         </div>
       ) : question.state === "unanswered" ? (
@@ -77,10 +74,11 @@ function QuestionAnswerForm({
               type="button"
               variant="outline"
               size="sm"
+              className="h-auto min-w-0 max-w-full whitespace-normal wrap-anywhere py-1.5 text-left"
               disabled={answerMutation.isPending}
               onClick={() => submitAnswer(choice, false)}
             >
-              {choice}
+              <InlineMarkdown allowLinks={false}>{choice}</InlineMarkdown>
             </Button>
           ))}
         </div>

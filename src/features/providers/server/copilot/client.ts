@@ -40,12 +40,8 @@ export function startCopilotClient(): Promise<CopilotClient> {
   return promise;
 }
 
-/** Use the SDK-pinned CLI in development and the user's installed CLI in production. */
+/** Run the installed CLI, which Settings also reports and updates. */
 function resolveCopilotCliPath(): string {
-  if (import.meta.env.DEV) {
-    return Bun.resolveSync(`@github/copilot-${process.platform}-${process.arch}`, process.cwd());
-  }
-
   try {
     const copilotBin = Bun.which("copilot");
     if (copilotBin) {

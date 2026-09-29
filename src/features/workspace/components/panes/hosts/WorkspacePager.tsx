@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useAtom } from "@tanstack/react-store";
 import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/shared/ui/button";
+import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { useFocusedPaneAtom } from "@workspace/hooks/layout/surface";
 import { cn } from "@/shared/utils";
@@ -229,13 +230,7 @@ function PagerDotButton({
     ? "bg-foreground h-3 w-3"
     : cn(
         "h-2.5 w-2.5",
-        isRunning
-          ? "bg-sky-500 animate-pulse"
-          : isWaiting
-            ? "bg-amber-500"
-            : isUnread
-              ? "bg-unread"
-              : presentation.colorClassName,
+        isWaiting ? "bg-amber-500" : isUnread ? "bg-unread" : presentation.colorClassName,
       );
 
   return (
@@ -246,13 +241,17 @@ function PagerDotButton({
       className="flex items-center justify-center h-5 w-5 md:h-4 md:w-4 touch-manipulation"
       onClick={() => onPress(pane.id)}
     >
-      <span
-        className={cn(
-          "rounded-full transition-all duration-200",
-          dotClass,
-          animateEntry && "animate-in fade-in zoom-in-50 duration-300",
-        )}
-      />
+      {isRunning && !isActive ? (
+        <RunningIndicator className="size-3 text-muted-foreground" />
+      ) : (
+        <span
+          className={cn(
+            "rounded-full transition-all duration-200",
+            dotClass,
+            animateEntry && "animate-in fade-in zoom-in-50 duration-300",
+          )}
+        />
+      )}
     </button>
   );
 }
