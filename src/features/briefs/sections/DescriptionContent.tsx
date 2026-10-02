@@ -1,14 +1,10 @@
 import { code } from "@streamdown/code";
 import { Markdown } from "@/shared/ui/markdown";
 import { cn } from "@/shared/utils";
-import type { ListSection, MarkdownSection } from "../../model/index";
+import type { DescriptionSection } from "../model/index";
 
 /** Render the two literal description forms without introducing another domain type. */
-export function BriefMarkdownOrListContent({
-  section,
-}: {
-  section: MarkdownSection | ListSection;
-}) {
+export function DescriptionContent({ section }: { section: DescriptionSection }) {
   if (section.kind === "markdown") {
     return (
       <Markdown plugins={{ code }} className="text-[12px] leading-relaxed text-foreground/90">

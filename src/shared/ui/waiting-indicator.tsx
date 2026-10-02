@@ -1,6 +1,9 @@
 import type { ComponentProps } from "react";
 import { cn } from "@/shared/utils";
 
+/** Outlines a card that's waiting on the user. */
+export const waitingOutlineClassName = "border-amber-500/40 ring-[3px] ring-amber-500/10";
+
 /** An agent needs input: a soft amber disc and question mark on the same circle as the running arc. */
 export function WaitingIndicator({
   className,

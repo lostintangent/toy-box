@@ -22,12 +22,11 @@ import type {
   BriefDocument,
   BriefEntityId,
   BriefExhibit,
-  TreeChange,
   TreeExhibit,
-} from "../../model/index";
+} from "../model/index";
 import { PseudocodeBlock } from "./PseudocodeBlock";
-import { BriefFlowExhibit } from "./flow";
-import { ChangeTag, changeTextClassName } from "../shared";
+import { FlowDiagram } from "./FlowDiagram";
+import { CHANGE_PRESENTATION, ChangeTag, TREE_CHANGE_LABEL } from "./vocabulary";
 
 const EXHIBIT_KIND_PRESENTATION: Record<
   BriefExhibit["kind"],
@@ -40,13 +39,7 @@ const EXHIBIT_KIND_PRESENTATION: Record<
   prototype: { label: "Prototype", Icon: PanelsTopLeft, className: "text-amber-400" },
 };
 
-const TREE_CHANGE_LABEL: Record<TreeChange, string> = {
-  new: "Added",
-  modified: "Modified",
-  removed: "Deleted",
-};
-
-export function BriefExhibitCard({
+export function ExhibitCard({
   document,
   exhibit,
   baseUri,
@@ -117,7 +110,7 @@ export function BriefExhibitCard({
             compact={compact}
           />
         ) : exhibit.kind === "flow" ? (
-          <BriefFlowExhibit
+          <FlowDiagram
             document={document}
             exhibit={exhibit}
             focusedEntityId={focusedEntityId}
@@ -183,7 +176,9 @@ function FileTrees({ roots }: { roots: readonly FileTreeEntry[] }) {
 
 function FileTreeEntryView({ entry }: { entry: FileTreeEntry }) {
   const EntryIcon = entry.kind === "folder" ? Folder : File;
-  const changeClassName = entry.change ? changeTextClassName(entry.change) : undefined;
+  const changeClassName = entry.change
+    ? CHANGE_PRESENTATION[entry.change].textClassName
+    : undefined;
   return (
     <li>
       <div className="flex min-h-6 min-w-0 items-center gap-1.5">
@@ -226,7 +221,9 @@ function DomainTrees({ roots }: { roots: readonly DomainTreeEntry[] }) {
 
 function DomainTreeEntryView({ entry }: { entry: DomainTreeEntry }) {
   const EntryIcon = entry.children ? Boxes : Box;
-  const changeClassName = entry.change ? changeTextClassName(entry.change) : undefined;
+  const changeClassName = entry.change
+    ? CHANGE_PRESENTATION[entry.change].textClassName
+    : undefined;
   return (
     <li>
       <div className="flex min-h-6 min-w-0 items-center gap-1.5">
@@ -260,7 +257,7 @@ function resolveExhibitContent(content: string, baseUri: string | undefined): st
   return baseUri ? injectBaseHref(content, baseUri) : content;
 }
 
-export function BriefExhibitsContent({
+export function ExhibitsContent({
   document,
   section,
   baseUri,
@@ -276,7 +273,7 @@ export function BriefExhibitsContent({
   return (
     <div className="space-y-3">
       {section.items.map((exhibit) => (
-        <BriefExhibitCard
+        <ExhibitCard
           key={exhibit.id}
           document={document}
           exhibit={exhibit}

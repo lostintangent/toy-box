@@ -14,7 +14,7 @@ export const SESSION_OVERLAY_SIZE = {
 // The shared overlay card shell. Each overlay layers its own positioning and
 // enter/exit animation on top of this (see SessionOverlay and HyperSession).
 export const SESSION_OVERLAY_BASE_CLASS =
-  "overflow-hidden rounded-md border bg-background shadow-xl";
+  "overflow-hidden rounded-xl border bg-background shadow-xl";
 
 const {
   width: OVERLAY_WIDTH,

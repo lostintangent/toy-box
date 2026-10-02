@@ -4,7 +4,6 @@ import { DoneIndicator } from "@/shared/ui/done-indicator";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { Markdown } from "@/shared/ui/markdown";
 import {
-  fieldValueText,
   planStatus,
   type BriefEntity,
   type BriefEntityId,
@@ -13,8 +12,8 @@ import {
   type PlanSection,
   type PlanStep,
   type SpecState,
-} from "../../model/index";
-import { SectionEmptyState } from "../shared";
+} from "../model/index";
+import { FieldValueText } from "./vocabulary";
 
 type VisiblePhase = {
   id: string;
@@ -22,7 +21,7 @@ type VisiblePhase = {
   steps: PlanStep[];
 };
 
-export function BriefPlanSection({
+export function PlanContent({
   spec,
   plan,
   section,
@@ -85,7 +84,7 @@ export function BriefPlanSection({
       )}
 
       {phases.length === 0 ? (
-        <SectionEmptyState
+        <PlanEmptyState
           title={spec.settled ? "No plan steps implement this spec" : "No current plan steps yet"}
           detail={
             spec.settled
@@ -96,40 +95,42 @@ export function BriefPlanSection({
       ) : (
         <ol className="space-y-5">
           {phases.map((phase, phaseIndex) => {
-            const first = phase.steps[0];
-            if (!first) return null;
             const status = planStatus(phase.steps);
             const phaseLabel = phase.phase?.title ?? `Step ${phaseIndex + 1}`;
+            const statusLabel =
+              status === "complete" ? " complete" : status === "in-progress" ? " in progress" : "";
+            const steps = phase.steps.map((step) => (
+              <PlanStepCard
+                key={step.id}
+                section={section}
+                step={step}
+                targets={plan.targetsByStepId.get(step.id) ?? []}
+                focusedEntityId={focusedEntityId}
+                onInspect={onInspect}
+              />
+            ));
             return (
               <li key={phase.id} className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3">
                 <div className="relative flex justify-center">
                   {phaseIndex < phases.length - 1 && (
                     <div className="absolute -bottom-5 top-7 w-px bg-border" />
                   )}
-                  {status === "complete" ? (
-                    // Oversized so its disc fills the 28px phase node.
-                    <DoneIndicator
-                      role="img"
-                      aria-label={`${phaseLabel} complete`}
-                      className="-m-1 size-9"
-                    />
-                  ) : (
-                    <span
-                      aria-label={`${phaseLabel}${status === "in-progress" ? " in progress" : ""}`}
-                      className={cn(
-                        "relative inline-flex size-7 items-center justify-center rounded-full border bg-background text-[10px] font-semibold tabular-nums",
-                        status === "in-progress"
-                          ? "border-sky-500/50 text-sky-400"
-                          : "border-border",
-                      )}
-                    >
-                      {status === "in-progress" ? (
-                        <RunningIndicator className="size-3.5" />
-                      ) : (
-                        phaseIndex + 1
-                      )}
-                    </span>
-                  )}
+                  <span
+                    role="img"
+                    aria-label={`${phaseLabel}${statusLabel}`}
+                    className={cn(
+                      "relative inline-flex size-7 items-center justify-center rounded-full border bg-background text-[10px] font-semibold tabular-nums",
+                      status === "complete" ? "border-emerald-500/50" : "border-border",
+                    )}
+                  >
+                    {status === "complete" ? (
+                      <DoneIndicator className="size-3.5" />
+                    ) : status === "in-progress" ? (
+                      <RunningIndicator className="size-3.5" />
+                    ) : (
+                      phaseIndex + 1
+                    )}
+                  </span>
                 </div>
                 {phase.phase ? (
                   <section className="min-w-0">
@@ -139,29 +140,10 @@ export function BriefPlanSection({
                         {phase.steps.length} step{phase.steps.length === 1 ? "" : "s"}
                       </span>
                     </div>
-                    <div className="mt-3 space-y-3">
-                      {phase.steps.map((step) => (
-                        <PlanStepCard
-                          key={step.id}
-                          section={section}
-                          step={step}
-                          targets={plan.targetsByStepId.get(step.id) ?? []}
-                          focusedEntityId={focusedEntityId}
-                          onInspect={onInspect}
-                          wide
-                        />
-                      ))}
-                    </div>
+                    <div className="mt-3 space-y-3">{steps}</div>
                   </section>
                 ) : (
-                  <PlanStepCard
-                    section={section}
-                    step={first}
-                    targets={plan.targetsByStepId.get(first.id) ?? []}
-                    focusedEntityId={focusedEntityId}
-                    onInspect={onInspect}
-                    wide
-                  />
+                  steps
                 )}
               </li>
             );
@@ -178,14 +160,12 @@ function PlanStepCard({
   targets,
   focusedEntityId,
   onInspect,
-  wide = false,
 }: {
   section: PlanSection;
   step: PlanStep;
   targets: readonly BriefEntity[];
   focusedEntityId?: BriefEntityId;
   onInspect: (entityId: BriefEntityId) => void;
-  wide?: boolean;
 }) {
   const focused = step.id === focusedEntityId;
   return (
@@ -211,20 +191,16 @@ function PlanStepCard({
               className="size-4 shrink-0"
             />
           ) : step.status === "in-progress" ? (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[9.5px] font-medium text-sky-400">
-              <RunningIndicator className="size-3" />
-              In progress
-            </span>
+            <RunningIndicator
+              role="img"
+              aria-label={`${step.title} in progress`}
+              className="size-4 shrink-0"
+            />
           ) : null}
         </span>
       </button>
-      <dl
-        className={cn(
-          "border-t border-border/60 px-3 py-2.5",
-          wide ? "grid gap-3 sm:grid-cols-2" : "space-y-2",
-        )}
-      >
-        <div className={wide ? "sm:col-span-2" : undefined}>
+      <dl className="grid gap-3 border-t border-border/60 px-3 py-2.5 sm:grid-cols-2">
+        <div className="sm:col-span-2">
           <dt className="text-[9px] font-medium text-muted-foreground">Done when</dt>
           <dd className="mt-0.5 text-[10.5px] leading-relaxed text-foreground/90">
             <Markdown className="space-y-1.5">{step.doneWhen}</Markdown>
@@ -234,13 +210,7 @@ function PlanStepCard({
           <div key={field.id}>
             <dt className="text-[9px] font-medium text-muted-foreground">{field.label}</dt>
             <dd className="mt-0.5 text-[10.5px] leading-relaxed text-foreground/90">
-              {field.kind === "text" ? (
-                <Markdown className="space-y-1.5">
-                  {fieldValueText(field, step.values[field.id])}
-                </Markdown>
-              ) : (
-                fieldValueText(field, step.values[field.id])
-              )}
+              <FieldValueText field={field} value={step.values[field.id]} />
             </dd>
           </div>
         ))}
@@ -308,6 +278,15 @@ function PlanNotice({ children }: { children: ReactNode }) {
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3.5 py-3 text-[11px] text-amber-200">
       {children}
+    </div>
+  );
+}
+
+function PlanEmptyState({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="rounded-xl border border-dashed border-border p-8 text-center">
+      <h2 className="text-sm font-semibold">{title}</h2>
+      <p className="mx-auto mt-1 max-w-md text-[11.5px] text-muted-foreground">{detail}</p>
     </div>
   );
 }

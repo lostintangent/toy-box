@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { modelConfigurationSchema } from "@providers/model";
-import { validateAutomationCronDefinition } from "./cron";
+import { cronSchema } from "@/shared/cron";
 
 export * from "./cron";
 
@@ -8,26 +8,12 @@ const automationIdSchema = z.string().trim().min(1).describe("The automation ID"
 
 const nonEmptyTextSchema = z.string().trim().min(1);
 const optionalTextSchema = z.string().trim().optional();
-const cronDefinitionSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .superRefine((value, ctx) => {
-    try {
-      validateAutomationCronDefinition(value);
-    } catch {
-      ctx.addIssue({
-        code: "custom",
-        message: "Invalid cron definition",
-      });
-    }
-  });
 
 export const automationOptionsSchema = z.object({
   title: nonEmptyTextSchema,
   prompt: nonEmptyTextSchema,
   model: modelConfigurationSchema.describe("Model and reasoning configuration for automation runs"),
-  cron: cronDefinitionSchema,
+  cron: cronSchema,
   cwd: optionalTextSchema,
 });
 

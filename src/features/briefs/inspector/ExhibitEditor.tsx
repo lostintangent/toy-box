@@ -1,29 +1,26 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Box, Boxes, File, Folder, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Textarea } from "@/shared/ui/textarea";
-import {
-  BRIEF_CHANGES,
-  type Change,
-  type DomainTreeEntry,
-  type FileTreeEntry,
-  type BriefExhibit,
-  type BriefExhibitUpdate,
-  type SourcePolicy,
-  type TreeChange,
+import type {
+  BriefExhibit,
+  DomainTreeEntry,
+  ExhibitUpdate,
+  FileTreeEntry,
+  SourcePolicy,
+  TreeChange,
 } from "../model/index";
-import { CHANGE_EDITOR_LABELS, LabeledEditorField } from "./FieldEditor";
+import { TREE_CHANGE_LABEL } from "../sections/vocabulary";
+import { ChangeField, EditorForm, LabeledEditorField, SourceField } from "./EditorForm";
 
-const TREE_CHANGE_LABEL: Record<TreeChange | "unchanged", string> = {
+const TREE_CHANGE_CHOICES: Record<TreeChange | "unchanged", string> = {
   unchanged: "No change",
-  new: "Added",
-  modified: "Modified",
-  removed: "Deleted",
+  ...TREE_CHANGE_LABEL,
 };
 
-export function BriefExhibitEditor({
+export function ExhibitEditor({
   sourcePolicy,
   allowExisting = true,
   exhibit,
@@ -33,75 +30,47 @@ export function BriefExhibitEditor({
   sourcePolicy: SourcePolicy;
   allowExisting?: boolean;
   exhibit: BriefExhibit;
-  onSave: (update: BriefExhibitUpdate, original: BriefExhibit) => string | undefined;
+  onSave: (update: ExhibitUpdate) => string | undefined;
   onCancel: () => void;
 }) {
-  const [original] = useState(exhibit);
-  const [draft, setDraft] = useState<BriefExhibitUpdate>(() => cloneExhibit(exhibit));
-  const [error, setError] = useState<string>();
-  const allowedChanges = allowExisting
-    ? BRIEF_CHANGES
-    : BRIEF_CHANGES.filter((change) => change !== "existing");
-  const changeOptions = allowedChanges.map((value) => ({
-    value,
-    label: CHANGE_EDITOR_LABELS[value],
-  }));
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(onSave(normalizeExhibit(draft), original));
-  }
+  const [draft, setDraft] = useState<ExhibitUpdate>(() => {
+    const { id: _id, basedOn: _basedOn, ...update } = exhibit;
+    return update;
+  });
 
   return (
-    <form className="space-y-3" onSubmit={handleSubmit}>
+    <EditorForm
+      current={exhibit}
+      draft={draft}
+      onSave={(next) => onSave(normalizeExhibit(next))}
+      onCancel={onCancel}
+    >
       <LabeledEditorField label="Title">
         {(id) => (
           <Input
             id={id}
             value={draft.title}
-            onChange={(event) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, title: event.target.value }));
-            }}
+            onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
             autoFocus
             required
           />
         )}
       </LabeledEditorField>
 
-      <LabeledEditorField label="Change">
-        {(id) => (
-          <Select
-            items={changeOptions}
-            value={draft.change}
-            onValueChange={(change: Change) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, change }));
-            }}
-          >
-            <SelectTrigger id={id} className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {changeOptions.map((change) => (
-                <SelectItem key={change.value} value={change.value}>
-                  {change.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </LabeledEditorField>
+      <ChangeField
+        value={draft.change}
+        allowExisting={allowExisting}
+        onChange={(change) => setDraft((current) => ({ ...current, change }))}
+      />
 
       <LabeledEditorField label="What this detail settles" hint="Optional">
         {(id) => (
           <Textarea
             id={id}
             value={draft.description ?? ""}
-            onChange={(event) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, description: event.target.value }));
-            }}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, description: event.target.value }))
+            }
             placeholder="Why this definition belongs in the brief."
           />
         )}
@@ -111,40 +80,36 @@ export function BriefExhibitEditor({
         <PseudocodeFields
           language={draft.language}
           content={draft.content}
-          onLanguageChange={(language) => {
-            setError(undefined);
+          onLanguageChange={(language) =>
             setDraft((current) =>
               current.kind === "pseudocode" ? { ...current, language } : current,
-            );
-          }}
-          onContentChange={(content) => {
-            setError(undefined);
+            )
+          }
+          onContentChange={(content) =>
             setDraft((current) =>
               current.kind === "pseudocode" ? { ...current, content } : current,
-            );
-          }}
+            )
+          }
         />
       ) : draft.kind === "tree" && draft.type === "files" ? (
         <FileTreeFields
           roots={draft.roots}
-          onChange={(roots) => {
-            setError(undefined);
+          onChange={(roots) =>
             setDraft((current) =>
               current.kind === "tree" && current.type === "files" ? { ...current, roots } : current,
-            );
-          }}
+            )
+          }
         />
       ) : draft.kind === "tree" ? (
         <DomainTreeFields
           roots={draft.roots}
-          onChange={(roots) => {
-            setError(undefined);
+          onChange={(roots) =>
             setDraft((current) =>
               current.kind === "tree" && current.type === "domain"
                 ? { ...current, roots }
                 : current,
-            );
-          }}
+            )
+          }
         />
       ) : draft.kind === "flow" ? (
         <p className="rounded-lg border border-border/70 bg-muted/20 p-2.5 text-[10.5px] leading-relaxed text-muted-foreground">
@@ -157,14 +122,13 @@ export function BriefExhibitEditor({
             <Textarea
               id={id}
               value={draft.content}
-              onChange={(event) => {
-                setError(undefined);
+              onChange={(event) =>
                 setDraft((current) =>
                   current.kind === "prototype" && "content" in current
                     ? { ...current, content: event.target.value }
                     : current,
-                );
-              }}
+                )
+              }
               placeholder="<html>...</html> or <svg>...</svg>"
               className="min-h-56 font-mono text-xs"
               spellCheck={false}
@@ -178,14 +142,13 @@ export function BriefExhibitEditor({
             <Input
               id={id}
               value={draft.uri}
-              onChange={(event) => {
-                setError(undefined);
+              onChange={(event) =>
                 setDraft((current) =>
                   current.kind === "image" || (current.kind === "prototype" && "uri" in current)
                     ? { ...current, uri: event.target.value }
                     : current,
-                );
-              }}
+                )
+              }
               placeholder={
                 draft.kind === "image"
                   ? "./diagram.svg or https://example.com/diagram.png"
@@ -203,12 +166,11 @@ export function BriefExhibitEditor({
             <Input
               id={id}
               value={draft.altText}
-              onChange={(event) => {
-                setError(undefined);
+              onChange={(event) =>
                 setDraft((current) =>
                   current.kind === "image" ? { ...current, altText: event.target.value } : current,
-                );
-              }}
+                )
+              }
               placeholder="Describe the visual information this image conveys."
               required
             />
@@ -216,43 +178,13 @@ export function BriefExhibitEditor({
         </LabeledEditorField>
       )}
 
-      <LabeledEditorField
-        label="Source"
-        hint={sourcePolicy === "optional" ? "Optional" : "Required unless new"}
-      >
-        {(id) => (
-          <Input
-            id={id}
-            value={draft.source ?? ""}
-            onChange={(event) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, source: event.target.value }));
-            }}
-            required={sourcePolicy !== "optional" && draft.change !== "new"}
-            placeholder={
-              sourcePolicy === "code"
-                ? "src/path/file.ts#Symbol"
-                : "Code, document, issue, or other useful source"
-            }
-          />
-        )}
-      </LabeledEditorField>
-
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
-
-      <div className="flex justify-end gap-2 pt-1">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" size="sm">
-          Save changes
-        </Button>
-      </div>
-    </form>
+      <SourceField
+        sourcePolicy={sourcePolicy}
+        change={draft.change}
+        value={draft.source}
+        onChange={(source) => setDraft((current) => ({ ...current, source }))}
+      />
+    </EditorForm>
   );
 }
 
@@ -565,7 +497,7 @@ function TreeChangeSelect({
 }) {
   return (
     <Select
-      items={TREE_CHANGE_LABEL}
+      items={TREE_CHANGE_CHOICES}
       value={change ?? "unchanged"}
       onValueChange={(next: TreeChange | "unchanged") =>
         onChange(next === "unchanged" ? undefined : next)
@@ -575,7 +507,7 @@ function TreeChangeSelect({
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {Object.entries(TREE_CHANGE_LABEL).map(([value, label]) => (
+        {Object.entries(TREE_CHANGE_CHOICES).map(([value, label]) => (
           <SelectItem key={value} value={value}>
             {label}
           </SelectItem>
@@ -611,17 +543,7 @@ function StepButton({
   );
 }
 
-function cloneExhibit(exhibit: BriefExhibit): BriefExhibitUpdate {
-  const { id: _id, basedOn: _basedOn, ...update } = exhibit;
-  if (update.kind === "tree") {
-    return update.type === "files"
-      ? { ...update, roots: update.roots.map(cloneFileTreeEntry) }
-      : { ...update, roots: update.roots.map(cloneDomainTreeEntry) };
-  }
-  return { ...update };
-}
-
-function normalizeExhibit(draft: BriefExhibitUpdate): BriefExhibitUpdate {
+function normalizeExhibit(draft: ExhibitUpdate): ExhibitUpdate {
   const title = draft.title.trim();
   const description = draft.description?.trim();
   const source = draft.source?.trim();
@@ -697,19 +619,6 @@ function newFileTreeEntry(kind: FileTreeEntry["kind"]): FileTreeEntry {
 
 function newDomainTreeEntry(): DomainTreeEntry {
   return { name: "" };
-}
-
-function cloneFileTreeEntry(entry: FileTreeEntry): FileTreeEntry {
-  return entry.kind === "folder"
-    ? { ...entry, children: entry.children.map(cloneFileTreeEntry) }
-    : { ...entry };
-}
-
-function cloneDomainTreeEntry(entry: DomainTreeEntry): DomainTreeEntry {
-  return {
-    ...entry,
-    ...(entry.children ? { children: entry.children.map(cloneDomainTreeEntry) } : {}),
-  };
 }
 
 function normalizeFileTreeEntry(entry: FileTreeEntry): FileTreeEntry {

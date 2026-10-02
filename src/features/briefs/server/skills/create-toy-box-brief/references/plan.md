@@ -33,6 +33,7 @@ PlanSection =
         "title": "reader-facing group name",
         "steps": [PlanStep, "..."]
       }, "..."]
+    }
 
 PlanStep = {
   "id": "globally unique brief entity ID",
@@ -101,9 +102,8 @@ Flow connections and decision relationships never order plan work.
 
 ## Derived plan state
 
-`planSections(document)` returns all top-level plan sections in document order.
-`planState(planSections(document), specState(document))` evaluates them as one
-plan against the current derived spec.
+`planState(document, specState(document))` evaluates all top-level plan
+sections, in document order, as one plan against the current derived spec.
 
 A step is current when at least one implementation link refers to current spec
 guidance or a current requirement. Reopening or changing a decision can make

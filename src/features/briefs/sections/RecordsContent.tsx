@@ -1,9 +1,8 @@
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { LayoutGrid, Table2, X } from "lucide-react";
 import { cn } from "@/shared/utils";
-import { Markdown } from "@/shared/ui/markdown";
 import {
-  fieldValueText,
+  canRemoveEntity,
   projectedRecords,
   recordLabel,
   recordReadingFields,
@@ -13,8 +12,8 @@ import {
   type ProjectedRecord,
   type RecordsSection,
   type RecordsView,
-} from "../../model/index";
-import { ChangeTag, SectionViewControl, Tag } from "../shared";
+} from "../model/index";
+import { ChangeTag, DECISION_STATUS_PRESENTATION, FieldValueText, Tag } from "./vocabulary";
 
 const CHOICE_CLASSES = [
   "bg-sky-500/10 text-sky-400",
@@ -55,9 +54,7 @@ function ChoiceTag({ field, optionId }: { field: ChoiceField; optionId: string }
 }
 
 function FieldValue({ field, value }: { field: BriefField; value: string | string[] }) {
-  if (field.kind === "text") {
-    return <Markdown className="space-y-1.5">{fieldValueText(field, value)}</Markdown>;
-  }
+  if (field.kind === "text") return <FieldValueText field={field} value={value} />;
 
   const optionIds = Array.isArray(value) ? value : [value];
   return (
@@ -110,41 +107,39 @@ function RemoveRecordButton({ label, onClick }: { label: string; onClick: () => 
 }
 
 function RecordMeta({
+  document,
   entry,
   onRemove,
 }: {
+  document: BriefDocument;
   entry: ProjectedRecord;
-  onRemove?: (recordId: string) => void;
+  onRemove?: (entityId: BriefEntityId) => void;
 }) {
-  const selected = entry.selected;
-  const selectedLabel = selected?.status === "decided" ? "Decided" : "Trying";
-  const removable = !selected && entry.item.change === "new" && onRemove;
+  const { activeOption } = entry;
+  const status = activeOption && DECISION_STATUS_PRESENTATION[activeOption.status];
+  const removable = onRemove && canRemoveEntity(document, entry.record.id);
 
   return (
     <div>
       <div className="flex flex-wrap items-center gap-1">
-        <ChangeTag change={entry.item.change} source={entry.item.source} />
-        {selected && (
+        <ChangeTag change={entry.record.change} source={entry.record.source} />
+        {activeOption && status && (
           <Tag
-            className={
-              selected.status === "decided"
-                ? "bg-emerald-500/10 text-emerald-400"
-                : "bg-amber-500/10 text-amber-400"
-            }
-            ariaLabel={`${selectedLabel} addition from option ${selected.optionLabel}`}
+            className={status.className}
+            ariaLabel={`${status.label} addition from option ${activeOption.option.label}`}
           >
-            {selectedLabel}
+            {status.label}
           </Tag>
         )}
         {removable && (
           <RemoveRecordButton
-            label={`Remove ${recordLabel(entry.item)} from brief`}
-            onClick={() => onRemove(entry.item.id)}
+            label={`Remove ${recordLabel(entry.record)} from brief`}
+            onClick={() => onRemove(entry.record.id)}
           />
         )}
       </div>
-      {selected && (
-        <div className="mt-1 text-[9.5px] text-violet-400/80">{selected.optionLabel}</div>
+      {activeOption && (
+        <div className="mt-1 text-[9.5px] text-violet-400/80">{activeOption.option.label}</div>
       )}
     </div>
   );
@@ -187,14 +182,16 @@ function inspectRecordFromKeyboard(
 }
 
 type RecordsProjectionProps = {
+  document: BriefDocument;
   section: RecordsSection;
   entries: ProjectedRecord[];
   focusedEntityId?: BriefEntityId;
   onInspect?: (entityId: BriefEntityId) => void;
-  onRemove?: (recordId: string) => void;
+  onRemove?: (entityId: BriefEntityId) => void;
 };
 
 function RecordsTable({
+  document,
   section,
   entries,
   focusedEntityId,
@@ -217,20 +214,20 @@ function RecordsTable({
         </thead>
         <tbody>
           {entries.map((entry) => {
-            const focused = focusedEntityId === entry.item.id;
+            const focused = focusedEntityId === entry.record.id;
             return (
               <tr
-                key={entry.item.id}
+                key={entry.record.id}
                 tabIndex={onInspect ? 0 : undefined}
-                aria-label={onInspect ? `Inspect ${recordLabel(entry.item)}` : undefined}
+                aria-label={onInspect ? `Inspect ${recordLabel(entry.record)}` : undefined}
                 aria-current={focused || undefined}
-                onClick={(event) => inspectRecordFromClick(event, entry.item.id, onInspect)}
-                onKeyDown={(event) => inspectRecordFromKeyboard(event, entry.item.id, onInspect)}
+                onClick={(event) => inspectRecordFromClick(event, entry.record.id, onInspect)}
+                onKeyDown={(event) => inspectRecordFromKeyboard(event, entry.record.id, onInspect)}
                 className={cn(
                   "border-b border-border/50 text-[11px]",
                   onInspect &&
                     "cursor-pointer transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                  entry.selected && "bg-violet-500/5",
+                  entry.activeOption && "bg-violet-500/5",
                   focused && "bg-sky-500/10 outline outline-1 outline-sky-400/60",
                 )}
                 data-focused={focused || undefined}
@@ -238,21 +235,21 @@ function RecordsTable({
                 {section.subject && (
                   <td className="py-2 pr-3 align-top">
                     <div className="text-[11.5px] font-medium leading-snug">
-                      {entry.item.subject}
+                      {entry.record.subject}
                     </div>
                     <div className="mt-1.5">
-                      <RecordMeta entry={entry} onRemove={onRemove} />
+                      <RecordMeta document={document} entry={entry} onRemove={onRemove} />
                     </div>
                   </td>
                 )}
                 {section.fields.map((field) => (
                   <td key={field.id} className="py-2 pr-3 align-top">
-                    <FieldValue field={field} value={entry.item.values[field.id]} />
+                    <FieldValue field={field} value={entry.record.values[field.id]} />
                   </td>
                 ))}
                 {!section.subject && (
                   <td className="py-2 pr-3 align-top">
-                    <RecordMeta entry={entry} onRemove={onRemove} />
+                    <RecordMeta document={document} entry={entry} onRemove={onRemove} />
                   </td>
                 )}
               </tr>
@@ -265,6 +262,7 @@ function RecordsTable({
 }
 
 function RecordsCards({
+  document,
   section,
   entries,
   focusedEntityId,
@@ -276,20 +274,20 @@ function RecordsCards({
   return (
     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
       {entries.map((entry) => {
-        const focused = focusedEntityId === entry.item.id;
+        const focused = focusedEntityId === entry.record.id;
         return (
           <article
-            key={entry.item.id}
+            key={entry.record.id}
             tabIndex={onInspect ? 0 : undefined}
-            aria-label={onInspect ? `Inspect ${recordLabel(entry.item)}` : undefined}
+            aria-label={onInspect ? `Inspect ${recordLabel(entry.record)}` : undefined}
             aria-current={focused || undefined}
-            onClick={(event) => inspectRecordFromClick(event, entry.item.id, onInspect)}
-            onKeyDown={(event) => inspectRecordFromKeyboard(event, entry.item.id, onInspect)}
+            onClick={(event) => inspectRecordFromClick(event, entry.record.id, onInspect)}
+            onKeyDown={(event) => inspectRecordFromKeyboard(event, entry.record.id, onInspect)}
             className={cn(
               "rounded-lg border border-border/60 bg-muted/15 p-2.5",
               onInspect &&
                 "cursor-pointer transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              entry.selected && "border-violet-500/30 bg-violet-500/5",
+              entry.activeOption && "border-violet-500/30 bg-violet-500/5",
               focused && "border-sky-400/70 bg-sky-500/10 ring-1 ring-sky-400/40",
             )}
             data-focused={focused || undefined}
@@ -297,7 +295,7 @@ function RecordsCards({
             <div className="flex items-start gap-2">
               {section.subject && (
                 <div className="min-w-0 flex-1 text-[12px] font-semibold leading-snug">
-                  {entry.item.subject}
+                  {entry.record.subject}
                 </div>
               )}
               {summaryChoiceField && (
@@ -305,15 +303,15 @@ function RecordsCards({
                   <span className="sr-only">{summaryChoiceField.label}: </span>
                   <FieldValue
                     field={summaryChoiceField}
-                    value={entry.item.values[summaryChoiceField.id]}
+                    value={entry.record.values[summaryChoiceField.id]}
                   />
                 </div>
               )}
-              <RecordMeta entry={entry} onRemove={onRemove} />
+              <RecordMeta document={document} entry={entry} onRemove={onRemove} />
             </div>
             {bodyField ? (
               <div className="mt-2 text-[11px] leading-relaxed text-foreground/90">
-                <FieldValue field={bodyField} value={entry.item.values[bodyField.id]} />
+                <FieldValue field={bodyField} value={entry.record.values[bodyField.id]} />
               </div>
             ) : (
               section.fields.length > 0 && (
@@ -324,7 +322,7 @@ function RecordsCards({
                         {field.label}
                       </dt>
                       <dd className="mt-0.5 text-foreground/90">
-                        <FieldValue field={field} value={entry.item.values[field.id]} />
+                        <FieldValue field={field} value={entry.record.values[field.id]} />
                       </dd>
                     </div>
                   ))}
@@ -338,13 +336,50 @@ function RecordsCards({
   );
 }
 
-export function BriefRecordsContent({
+function RecordsViewControl({
+  title,
+  view,
+  onViewChange,
+}: {
+  title: string;
+  view: RecordsView;
+  onViewChange: (view: RecordsView) => void;
+}) {
+  return (
+    <div className="mb-2 flex justify-end">
+      <div
+        role="group"
+        aria-label={`${title} view`}
+        className="inline-flex rounded-md border border-border/70 bg-muted/20 p-0.5"
+      >
+        {RECORD_VIEW_OPTIONS.map(({ value, description, title: optionTitle, Icon }) => (
+          <button
+            key={value}
+            type="button"
+            aria-label={`Show ${title} as ${description}`}
+            aria-pressed={view === value}
+            title={optionTitle}
+            onClick={() => onViewChange(value)}
+            className={cn(
+              "inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground",
+              view === value && "bg-background text-foreground shadow-xs",
+            )}
+          >
+            <Icon aria-hidden className="size-3" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function RecordsContent({
   document,
   section,
   view,
   focusedEntityId,
   onInspect,
-  onRemoveRecord,
+  onRemove,
   onViewChange,
 }: {
   document: BriefDocument;
@@ -352,40 +387,33 @@ export function BriefRecordsContent({
   view: RecordsView;
   focusedEntityId?: BriefEntityId;
   onInspect?: (entityId: BriefEntityId) => void;
-  onRemoveRecord?: (sectionId: string, recordId: string) => void;
+  onRemove?: (entityId: BriefEntityId) => void;
   onViewChange: (view: RecordsView) => void;
 }) {
   const entries = projectedRecords(document, section.id);
-  const remove = onRemoveRecord
-    ? (recordId: string) => onRemoveRecord(section.id, recordId)
-    : undefined;
 
   return (
     <div>
-      <SectionViewControl
-        title={section.title}
-        view={view}
-        options={RECORD_VIEW_OPTIONS}
-        className="mb-2"
-        onViewChange={onViewChange}
-      />
+      <RecordsViewControl title={section.title} view={view} onViewChange={onViewChange} />
       {entries.length === 0 ? (
         <p className="text-[11.5px] text-muted-foreground">No records mapped yet.</p>
       ) : view === "table" ? (
         <RecordsTable
+          document={document}
           section={section}
           entries={entries}
           focusedEntityId={focusedEntityId}
           onInspect={onInspect}
-          onRemove={remove}
+          onRemove={onRemove}
         />
       ) : (
         <RecordsCards
+          document={document}
           section={section}
           entries={entries}
           focusedEntityId={focusedEntityId}
           onInspect={onInspect}
-          onRemove={remove}
+          onRemove={onRemove}
         />
       )}
       <ChoiceLegends fields={section.fields} />

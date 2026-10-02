@@ -59,7 +59,19 @@ export const claudeProvider: SessionProvider = {
     return (await readClaudeHistory(nativeId)).flatMap(createClaudeProjector(id));
   },
   create: (sessionId, configuration) => ClaudeConnection.open({ id: sessionId }, configuration),
-  resume: (session, configuration) => ClaudeConnection.open(session, configuration, true),
+  async resume(session, configuration) {
+    // Workaround (Claude CLI 2.1.285; listed in providers/AGENTS.md): resume never restores
+    // reasoning effort and restores the model only when the CLI recognizes it. Reopen with the
+    // last reply's model and effort from history; remove once the CLI restores both itself.
+    const model =
+      configuration.model ??
+      (await claudeProvider.readHistory(session))
+        .flatMap((event) =>
+          event.type === "model_changed" && !event.parentToolCallId ? [event.model] : [],
+        )
+        .at(-1);
+    return ClaudeConnection.open(session, { ...configuration, model }, true);
+  },
   async readDirectory(nativeId) {
     const info = await getSessionInfo(nativeId);
     return info && (info.cwd ?? (await readTranscriptDirectory(nativeId)));

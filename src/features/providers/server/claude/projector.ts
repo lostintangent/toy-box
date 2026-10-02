@@ -105,6 +105,9 @@ export function createClaudeProjector(sessionId: string): (message: SDKMessage) 
         return [];
       }
       case "assistant": {
+        // The CLI authors API errors and notices as `<synthetic>` model messages. They are neither
+        // model output nor a model change; a turn that fails reports its error in its result.
+        if (message.message.model === "<synthetic>") return [];
         const events: SessionEvent[] = [
           {
             type: "model_changed",

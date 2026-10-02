@@ -4,7 +4,7 @@ import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { cn } from "@/shared/utils";
 import type { DiffStats } from "../../model/fileDiffs";
 import type { FileDiffSummary } from "../transcript/editDiffs";
-import { outputPillClassName } from "./ArtifactPill";
+import { outputPillClassName } from "@workspace/components/outputs/ArtifactPill";
 
 export function DiffPopup({ total, byFile }: { total: DiffStats; byFile: FileDiffSummary[] }) {
   const { added, removed } = total;

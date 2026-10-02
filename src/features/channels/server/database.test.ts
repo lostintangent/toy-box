@@ -1,5 +1,5 @@
 import { channelAgent, createStoredChannel } from "@channels/server/testFixtures";
-import { describe, expect, onTestFinished, test } from "bun:test";
+import { describe, expect, onTestFinished, setSystemTime, test } from "bun:test";
 import { machineFile, sessionFile } from "@files/model";
 import { createTestDatabase } from "@/server/database";
 import { ChannelDatabase } from "./database";
@@ -676,5 +676,87 @@ describe("channel database", () => {
       agentId: member.id,
     });
     expect(messages.at(-1)?.content).toEqual({ type: "member_left", member });
+  });
+});
+
+describe("channel follow-ups and routines", () => {
+  async function setup() {
+    const channels = await openChannels();
+    const channel = await createStoredChannel(channels, { name: "Watch", ...CHANNEL_DEFAULTS });
+    return { channels, channel };
+  }
+
+  /** A local wall-clock time, so hourly cron boundaries hold in any time zone. */
+  function localTime(hours: number, minutes = 0): Date {
+    return new Date(2026, 8, 29, hours, minutes);
+  }
+
+  test("a lead adds, changes, and deletes routines with one transcript message each", async () => {
+    const { channels, channel } = await setup();
+    const standup = await channels.setRoutine(channel.id, {
+      title: "CI",
+      schedule: "0 9 * * 1-5",
+      prompt: "Check CI",
+    });
+    const review = await channels.setRoutine(channel.id, {
+      title: "Review",
+      schedule: "0 16 * * 5",
+      prompt: "Review the week",
+    });
+    const changed = await channels.setRoutine(channel.id, {
+      routineId: standup.routine.id,
+      title: "CI",
+      schedule: "0 9 * * 1-5",
+      prompt: "Check CI and new issues",
+    });
+    await channels.deleteRoutine(channel.id, review.routine.id);
+
+    expect((await channels.listMessagesAfter(channel.id)).map(({ content }) => content)).toEqual([
+      { type: "routine_scheduled", routine: standup.routine },
+      { type: "routine_scheduled", routine: review.routine },
+      { type: "routine_edited", routine: changed.routine },
+      { type: "routine_deleted", routine: review.routine },
+    ]);
+    expect((await channels.getState(channel.id, 100))?.routines).toEqual([changed.routine]);
+  });
+
+  test("an identical change and a repeated deletion leave the transcript alone", async () => {
+    const { channels, channel } = await setup();
+    const input = { title: "CI", schedule: "0 9 * * *", prompt: "Check CI" };
+    const { routine } = await channels.setRoutine(channel.id, input);
+    const unchanged = await channels.setRoutine(channel.id, { routineId: routine.id, ...input });
+    await channels.deleteRoutine(channel.id, routine.id);
+
+    expect(unchanged.changed).toBe(false);
+    expect(await channels.deleteRoutine(channel.id, routine.id)).toBeNull();
+    expect((await channels.getChannel(channel.id))?.latestSequence).toBe(2);
+  });
+
+  test("only the lead sets routines, and only its own channel's", async () => {
+    const { channels, channel } = await setup();
+    const { member } = await channels.createMember(channelAgent(channel.id, "watcher", "Watcher"));
+    const routine = { title: "CI", schedule: "0 9 * * *", prompt: "Check CI" };
+
+    await expect(channels.setRoutine(member.id, routine)).rejects.toThrow("Only the channel lead");
+    await expect(
+      channels.setRoutine(channel.id, { ...routine, routineId: "missing" }),
+    ).rejects.toThrow("Routine not found");
+  });
+
+  test("a due routine is claimed once, and runs missed while stopped collapse into one", async () => {
+    const { channels, channel } = await setup();
+    setSystemTime(localTime(10, 30));
+    onTestFinished(() => setSystemTime());
+    await channels.setRoutine(channel.id, {
+      title: "CI",
+      schedule: "0 * * * *",
+      prompt: "Check CI",
+    });
+    const due = [{ channelId: channel.id, title: "CI", prompt: "Check CI" }];
+
+    expect((await channels.claimDueWakes(localTime(10, 59))).routines).toEqual([]);
+    expect((await channels.claimDueWakes(localTime(14, 10))).routines).toEqual(due);
+    expect((await channels.claimDueWakes(localTime(14, 10))).routines).toEqual([]);
+    expect((await channels.claimDueWakes(localTime(15))).routines).toEqual(due);
   });
 });

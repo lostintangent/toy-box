@@ -5,7 +5,14 @@ import { channelLead } from ".";
 import { mergeChannelMessages, reduceChannelState } from "./reducer";
 
 function state(): ChannelState {
-  return { revision: 0, lead: channelLead("lead"), members: [], messages: [], artifacts: [] };
+  return {
+    revision: 0,
+    lead: channelLead("lead"),
+    members: [],
+    messages: [],
+    artifacts: [],
+    routines: [],
+  };
 }
 
 describe("Channel state reducer", () => {
@@ -226,6 +233,45 @@ describe("Channel state reducer", () => {
 
     expect(working.lead.status).toEqual({ state: "working", text: "Shaping the plan" });
     expect(working.members).toEqual([]);
+  });
+
+  test("routine messages add, change in place, and delete routines", () => {
+    const standup = { id: "standup", title: "CI", schedule: "0 9 * * 1-5", prompt: "Check CI" };
+    const review = {
+      id: "review",
+      title: "Review",
+      schedule: "0 16 * * 5",
+      prompt: "Review the week",
+    };
+    let revision = 0;
+    const routineMessage = (
+      type: "routine_scheduled" | "routine_edited" | "routine_deleted",
+      routine: typeof standup,
+    ): ChannelEvent => ({
+      type: "message",
+      revision: ++revision,
+      message: {
+        id: `message-${revision}`,
+        sequence: revision,
+        sender: { type: "system" },
+        content: { type, routine },
+        timestamp: "2026-09-29T12:00:00.000Z",
+      },
+    });
+
+    const added = [
+      routineMessage("routine_scheduled", standup),
+      routineMessage("routine_scheduled", review),
+    ].reduce(reduceChannelState, state());
+    const changed = reduceChannelState(
+      added,
+      routineMessage("routine_edited", { ...standup, prompt: "Check CI and new issues" }),
+    );
+    const removed = reduceChannelState(changed, routineMessage("routine_deleted", review));
+
+    expect(added.routines).toEqual([standup, review]);
+    expect(changed.routines).toEqual([{ ...standup, prompt: "Check CI and new issues" }, review]);
+    expect(removed.routines).toEqual([{ ...standup, prompt: "Check CI and new issues" }]);
   });
 
   test("merges history by durable identity and sequence", () => {

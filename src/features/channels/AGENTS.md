@@ -29,8 +29,12 @@ coordination surface.
 - `ChannelArtifact` indexes a shared `WorkspaceFile`, its title, and when it was first shared; sharing
   it again changes only the title. Files owns the address and editor. Channels owns only the shared
   index and the `artifact_shared` transcript event, whose own timestamp records the share.
-- `ChannelState` is the authoritative current lead, member roster, and artifacts plus a bounded
-  message window and detail revision. Earlier messages page by sequence.
+- `ChannelRoutine` is scheduled, recurring work that serves the purpose: a short title, a prompt, and
+  a local-time cron schedule with one fixed minute, so it runs at most hourly. Adding, changing, and
+  deleting one each append a typed system message that shows its title. Only the lead adds or changes
+  routines. The user can run one immediately or delete it.
+- `ChannelState` is the authoritative current lead, member roster, artifacts, and routines plus a
+  bounded message window and detail revision. Earlier messages page by sequence.
 
 There is no separate Agent or membership database. Workers persists ownership, name, and opaque
 metadata. Channels validates that metadata as role, model, avatar, `seenThrough`, and status, then
@@ -65,6 +69,9 @@ projections for persistence and runtime configuration; private read positions st
   Acknowledgement does not imply that the user's response resolves the request.
 - Register durable artifacts once and surface later file edits automatically. Attach screenshots or
   other images to messages.
+- Wake a lead privately when its follow-up or one of its routines comes due, or when the user runs a
+  routine, through ordinary Session delivery. A run adds nothing to the transcript, and the lead
+  posts only if something needs the channel. Running a routine leaves its schedule unchanged.
 - Let only the lead among Channel agents rename the Channel, revise its purpose, or change its
   working directory. Name, purpose, and directory changes create a durable system message;
   checklist and preview updates alone do not create transcript noise, unread state, or list movement.
@@ -104,6 +111,8 @@ model's 12,000-character limit.
 The built-in lead role establishes the purpose with the user when needed, scales planning to the
 work, keeps a lightweight current checklist, creates each member only when their work is actionable,
 drives quality through review and iteration, and keeps the public progress surfaces current.
+Routines serve the purpose, so setting one never rewrites the purpose or adds checklist items, and
+a routine run never marks the channel done.
 Delegation never transfers accountability for the purpose or the quality of a member's outcome.
 During working communication, the lead posts what it needs from the user normally, then calls
 `request_user_attention` with the returned sequence. During finite completion, it posts its result
@@ -111,7 +120,9 @@ normally, then calls `mark_channel_done`. Neither operation accepts message text
 `send_channel_message` or `finish_agent_turn`.
 
 A turn start clears only a prior waiting status. `finish_agent_turn` clears active status and its
-projected activity reaction, or leaves a concise waiting status, then closes the turn.
+projected activity reaction, or leaves a concise waiting status, then closes the turn. Only the
+lead's version accepts `wakeAfterMinutes`, from 5 to 120, for a follow-up on a member or external
+work. The follow-up is the waiting status's `wakeAt`, so any earlier wake clears it.
 
 ## Persistence and streaming
 
@@ -132,6 +143,9 @@ update metadata without a message. Checklist and preview-only changes update met
 workspace upsert without advancing sequence or revision.
 Read-position changes update only Worker metadata. Message, reaction, and artifact tables continue
 to reference the stable Agent ID without a foreign key so authored history survives member removal.
+Routines keep a server-private `next_at`. A 30-second interval from `server/startup.ts` claims due
+follow-ups and routines in one transaction before delivery: a follow-up clears its waiting status,
+and a routine moves past now, so runs missed while stopped collapse into one.
 
 The database is authoritative. Lead metadata updates and attention operations authorize against the
 Channel's intrinsic lead ID within their transaction. The list query returns metadata and members for the
@@ -151,7 +165,8 @@ resumes SSE by revision; a gap emits one authoritative `state` event. The client
 messages when that recovery state remains contiguous.
 
 Agent reads move forward from private `seenThrough` and advance it. Passive Session reads page
-backward without changing read state. Agent-facing projections expose exact mentions, roles, and
+backward without changing read state. Agent-facing projections use `agentId` for both the lead and
+members, matching message senders, reactions, and waiting. They expose exact mentions, roles, and
 statuses but never private Session IDs as a separate concept or another member's read position.
 
 ## Presentation
@@ -160,18 +175,25 @@ statuses but never private Session IDs as a separate concept or another member's
 arrives, and suspends the transcript and overview on `ChannelState`. Those two share the roster and
 the composer's reply and mention actions through `ChannelPaneContext`.
 
+`ChannelUserMessage` adds mentions, reactions, and timeline timestamps to the shared
+[`UserMessage`](../../shared/messages/UserMessage.tsx); agent messages reuse its `CopyControl`.
+
 - The transcript's rows come from `transcriptRows`: each user message stands alone, one agent's
   consecutive messages form a run, and matching system messages merge. Day dividers and a "New" rule
   fall between rows. The "New" position follows the read position while the Channel is out of view
   and holds while it's read, so arrivals during reading are never marked. A request marks the message
-  it references until a later user message acknowledges it, by the catalog's rule. The activity row
-  shows working agents; waiting shows in the overview, since a request already marks what the user
-  needs to answer.
-- The composer docks the session composer's tray for shared artifacts, newest first, plus the
-  checklist and preview. While the catalog reports a pending request, including one outside the
-  loaded window, it asks for a reply.
+  it references until a later user message acknowledges it, by the catalog's rule. While the latest
+  loaded pending request is out of view, `requestPlacement` measures its message, not its run,
+  against the viewport: a "Question above" pill shows at the top, or "Question below" takes Scroll
+  down's place, and either smoothly scrolls to it. The activity row shows working agents; waiting
+  shows in the overview, since a request already marks what the user needs to answer.
+- The composer docks Workspace's [`ComposerTray`](../workspace/components/outputs/ComposerTray.tsx)
+  for shared artifacts, newest first, plus the checklist and preview. While the catalog reports a
+  pending request, including one outside the loaded window, it asks for a reply.
 - The overview opens as a sheet or pins beside the transcript, which the workspace layout remembers.
   It shows the purpose, directory, and preview, then the agents with their presence, the shared
-  artifacts with when each was shared, and the checklist.
+  artifacts with when each was shared, the checklist, and any routines by title with their next
+  run, each expanding to its prompt and offering Run routine and Delete routine. A waiting lead shows
+  when its follow-up checks back.
 - Sidebar priority is waiting, unread completion, ordinary unread, then live lead/member activity;
   open channels suppress completion like unread, but never suppress an unanswered request.

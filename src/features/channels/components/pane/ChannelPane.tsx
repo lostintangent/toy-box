@@ -89,7 +89,12 @@ function ChannelDetail({
         mention: () => composerRef.current?.mention(),
       }}
     >
-      <ChannelOverview channel={channel} artifacts={state.artifacts} variant={variant} />
+      <ChannelOverview
+        channel={channel}
+        artifacts={state.artifacts}
+        routines={state.routines}
+        variant={variant}
+      />
       <div className="col-start-1 row-start-1 min-h-0">
         <ChannelTranscript
           messages={state.messages}

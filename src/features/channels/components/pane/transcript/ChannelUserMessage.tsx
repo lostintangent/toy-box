@@ -1,7 +1,7 @@
 import { AgentMention } from "@channels/components/agents/AgentMention";
 import { channelAttachmentPreview, type ChannelConversationMessage } from "@channels/model";
 import { channelMessageReactions } from "@channels/model/reactions";
-import { UserMessage } from "@sessions/components/transcript/messages/UserMessage";
+import { UserMessage } from "@/shared/messages/UserMessage";
 import { ClockTime } from "@/shared/ui/clock-time";
 import { useChannelPane } from "../ChannelPaneContext";
 import { ChannelReactions } from "./ChannelReactions";

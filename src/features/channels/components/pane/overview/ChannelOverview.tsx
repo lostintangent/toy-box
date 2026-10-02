@@ -6,7 +6,7 @@ import { AgentEditor } from "@channels/components/agents/AgentEditor";
 import { ChannelDialog } from "@channels/components/ChannelDialog";
 import { ChannelMenuItems } from "@channels/components/ChannelMenuItems";
 import { DeleteChannelDialog } from "@channels/components/DeleteChannelDialog";
-import type { Channel, ChannelArtifact, ChannelMember } from "@channels/model";
+import type { Channel, ChannelArtifact, ChannelMember, ChannelRoutine } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import { FileBrowserDialog } from "@files/components/browser/FileBrowserDialog";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
@@ -36,10 +36,12 @@ type OverviewDialog =
 export function ChannelOverview({
   channel,
   artifacts,
+  routines,
   variant,
 }: {
   channel: Channel;
   artifacts: ChannelArtifact[];
+  routines: ChannelRoutine[];
   variant: PaneVariant;
 }) {
   const {
@@ -125,6 +127,7 @@ export function ChannelOverview({
     <ChannelOverviewContent
       channel={channel}
       artifacts={artifacts}
+      routines={routines}
       onArtifactOpen={openArtifact}
       onEditMember={(member) => openDialog({ type: "edit_member", member })}
       onRemoveMember={(member) => openDialog({ type: "remove_member", member })}

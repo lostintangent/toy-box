@@ -76,5 +76,18 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_channel_artifacts_channel
       ON channel_artifacts(channel_id, created_at, kind, session_id, path);
+
+    CREATE TABLE IF NOT EXISTS channel_routines (
+      id          TEXT PRIMARY KEY,
+      channel_id  TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      title       TEXT NOT NULL,
+      schedule    TEXT NOT NULL,
+      prompt      TEXT NOT NULL,
+      next_at     TEXT NOT NULL,
+      created_at  TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_channel_routines_next_at
+      ON channel_routines(next_at);
   `);
 }

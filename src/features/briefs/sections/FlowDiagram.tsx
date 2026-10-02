@@ -4,15 +4,15 @@ import { cn } from "@/shared/utils";
 import {
   BRIEF_CHANGES,
   flowGraph,
-  flowPathSelectionAfterInspection,
+  flowPathThrough,
   type Change,
   type FlowExhibit,
   type FlowGraph,
   type FlowGraphNode,
   type BriefDocument,
   type BriefEntityId,
-} from "../../model/index";
-import { ChangeTag, SectionEmptyState } from "../shared";
+} from "../model/index";
+import { CHANGE_PRESENTATION, ChangeTag } from "./vocabulary";
 
 const NODE_WIDTH = 132;
 const NODE_HEIGHT = 152;
@@ -20,24 +20,13 @@ const COLUMN_GAP = 20;
 const ROW_GAP = 44;
 const FLOW_PADDING = 24;
 
-const CHANGE_BORDER_CLASS: Record<Change, string> = {
-  existing: "border-zinc-500/30",
-  new: "border-emerald-500/40",
-  modified: "border-amber-500/40",
-  preserved: "border-sky-500/40",
-  removed: "border-rose-500/40",
-  renamed: "border-violet-500/40",
-  split: "border-violet-500/40",
-  relocated: "border-violet-500/40",
-};
-
 type PositionedFlowNode = {
   node: FlowGraphNode;
   x: number;
   y: number;
 };
 
-export function BriefFlowExhibit({
+export function FlowDiagram({
   document,
   exhibit,
   focusedEntityId,
@@ -49,16 +38,6 @@ export function BriefFlowExhibit({
   onInspect?: (entityId: BriefEntityId) => void;
 }) {
   const graph = flowGraph(document, exhibit);
-
-  if (graph.connections.length === 0) {
-    return (
-      <SectionEmptyState
-        title="Nothing in this flow is connected yet"
-        detail="The flow no longer has a complete path through its current nodes."
-      />
-    );
-  }
-
   const nodes = graph.stages.flat();
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
 
@@ -96,8 +75,9 @@ function PathFlow({
       : graph.paths[0]?.id;
 
   function inspectNode(nodeId: string) {
-    const nextPathId = flowPathSelectionAfterInspection(graph, selectedPathId, nodeId);
-    if (nextPathId !== selectedPathId) setSelection(nextPathId);
+    if (selectedPathId !== undefined) {
+      setSelection(flowPathThrough(graph, nodeId, selectedPathId) ?? selectedPathId);
+    }
     const node = nodesById.get(nodeId);
     onInspect?.(node?.entity?.id ?? exhibitId);
   }
@@ -159,13 +139,6 @@ function FlowPaths({
   selectedPathId?: string;
   onSelect: (pathId: string | undefined) => void;
 }) {
-  const pathConnectionIds = new Set(
-    graph.paths.flatMap((path) => path.connections.map((connection) => connection.id)),
-  );
-  const supporting = graph.connections.filter(
-    (connection) => !pathConnectionIds.has(connection.id),
-  );
-
   return (
     <div className="space-y-2.5">
       <div className="flex items-center justify-between gap-3 px-1">
@@ -234,7 +207,7 @@ function FlowPaths({
           ))}
         </div>
       )}
-      {supporting.map((connection) => {
+      {graph.supportingConnections.map((connection) => {
         const from = nodesById.get(connection.from);
         const to = nodesById.get(connection.to);
         if (!from || !to) return null;
@@ -276,9 +249,7 @@ function PathFlowGraph({
   const activeConnectionIds = selectedPath
     ? new Set(selectedPath.connections.map((connection) => connection.id))
     : undefined;
-  const pathConnectionIds = new Set(
-    graph.paths.flatMap((path) => path.connections.map((connection) => connection.id)),
-  );
+  const supportingConnections = new Set(graph.supportingConnections);
   const startIds = new Set(graph.paths.map((path) => path.start));
   const regionByNode = new Map(
     graph.regions.flatMap((region) => region.nodes.map((node) => [node.id, region.title] as const)),
@@ -330,7 +301,7 @@ function PathFlowGraph({
             const to = positions.get(connection.to);
             if (!from || !to) return null;
             const active = !activeConnectionIds || activeConnectionIds.has(connection.id);
-            const pathConnection = pathConnectionIds.has(connection.id);
+            const pathConnection = !supportingConnections.has(connection);
             return (
               <path
                 key={connection.id}
@@ -379,32 +350,28 @@ function FlowNodeCard({
   onInspect,
 }: {
   node: FlowGraphNode;
-  position?: PositionedFlowNode;
+  position: PositionedFlowNode;
   nodesById: ReadonlyMap<string, FlowGraphNode>;
-  start?: boolean;
+  start: boolean;
   region?: string;
-  muted?: boolean;
+  muted: boolean;
   activeConnectionIds?: ReadonlySet<string>;
   focusedEntityId?: BriefEntityId;
   onInspect: (nodeId: string) => void;
 }) {
   const connectionDescriptionId = useId();
-  const path = position !== undefined;
   const focused = node.entity?.id === focusedEntityId;
-  const primaryConnection = path
-    ? (node.outgoing.find((connection) => activeConnectionIds?.has(connection.id)) ??
-      node.outgoing[0])
-    : undefined;
+  const primaryConnection =
+    node.outgoing.find((connection) => activeConnectionIds?.has(connection.id)) ?? node.outgoing[0];
 
   return (
     <article
       data-flow-node={node.id}
       data-focused={focused || undefined}
-      style={position ? { left: position.x, top: position.y } : undefined}
+      style={{ left: position.x, top: position.y }}
       className={cn(
-        "overflow-hidden rounded-xl border border-border bg-card",
-        node.change && CHANGE_BORDER_CLASS[node.change],
-        path && "z-10 transition-opacity lg:absolute lg:h-[152px] lg:w-[132px]",
+        "z-10 overflow-hidden rounded-xl border border-border bg-card transition-opacity lg:absolute lg:h-[152px] lg:w-[132px]",
+        node.change && CHANGE_PRESENTATION[node.change].borderClassName,
         muted && "hidden lg:block lg:opacity-40",
         focused && "border-sky-400/70 bg-sky-500/10 ring-1 ring-sky-400/40",
       )}
@@ -414,7 +381,7 @@ function FlowNodeCard({
         onClick={() => onInspect(node.id)}
         aria-current={focused || undefined}
         aria-describedby={node.outgoing.length > 0 ? connectionDescriptionId : undefined}
-        className={cn("block w-full p-3 text-left hover:bg-muted/30", path && "lg:h-full")}
+        className="block w-full p-3 text-left hover:bg-muted/30 lg:h-full"
       >
         {(start || region) && (
           <span className="mb-1.5 flex min-w-0 flex-col items-start gap-1">
@@ -431,7 +398,7 @@ function FlowNodeCard({
           </span>
         )}
         {node.change && <ChangeTag change={node.change} />}
-        {path && primaryConnection && (
+        {primaryConnection && (
           <span className="mt-1.5 hidden line-clamp-2 text-[8.5px] leading-snug text-sky-500 lg:block">
             {primaryConnection.label}
           </span>
@@ -440,12 +407,7 @@ function FlowNodeCard({
           {node.label}
         </span>
         {node.detail && (
-          <span
-            className={cn(
-              "mt-1.5 block text-[10px] leading-relaxed text-muted-foreground",
-              path && "lg:hidden",
-            )}
-          >
+          <span className="mt-1.5 block text-[10px] leading-relaxed text-muted-foreground lg:hidden">
             {node.detail}
           </span>
         )}
@@ -461,12 +423,7 @@ function FlowNodeCard({
               .filter(Boolean)
               .join(". ")}
           </span>
-          <div
-            className={cn(
-              "space-y-1.5 border-t border-border/60 bg-muted/10 p-2.5",
-              path && "lg:hidden",
-            )}
-          >
+          <div className="space-y-1.5 border-t border-border/60 bg-muted/10 p-2.5 lg:hidden">
             {node.outgoing.map((connection) => {
               const target = nodesById.get(connection.to);
               if (!target) return null;

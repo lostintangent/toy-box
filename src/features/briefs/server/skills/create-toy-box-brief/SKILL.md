@@ -77,8 +77,8 @@ Apply the framing above, then read the exact contracts before authoring:
 - Always read [references/schema.md](references/schema.md) completely for the
   document vocabulary, exhibit forms, identity, grounding, decisions,
   references, and derived spec.
-- When `metadata.brief.action` names `regenerate-section`,
-  `investigate-question`, or `explain-record`, also read
+- When the request names the `regenerate-section`, `investigate-question`, or
+  `explain-record` editor-action workflow, also read
   [references/editor-actions.md](references/editor-actions.md) and perform only
   that focused workflow. It replaces the ordinary authoring path below while
   retaining the same quality bar.

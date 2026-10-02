@@ -65,9 +65,7 @@ export function SessionListItem({
         time={
           !isDraft &&
           (activity.waiting ? (
-            <span className="italic text-amber-600/65 dark:text-amber-400/65">
-              Waiting for input
-            </span>
+            <span className="italic">Waiting for input</span>
           ) : activity.running && activity.since !== undefined ? (
             <RunningTime since={activity.since} />
           ) : (

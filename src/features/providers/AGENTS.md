@@ -64,3 +64,15 @@ before publishing completion. Disconnecting a browser never disconnects the prov
 `ModelConfiguration.provider` and `Session.provider.id` select the provider;
 these shared value fields also distinguish models with the same name across catalogs.
 Keep one model configuration and transcript shape across providers and all consumers.
+
+## Native workarounds
+
+Code that compensates for a native SDK or CLI defect starts with a `Workaround` comment naming the
+version where the defect was seen and when the code can be removed. Each one is listed here, so
+check the list whenever a provider is upgraded:
+
+- Claude resume (`server/claude/provider.ts`): the CLI never restores reasoning effort, and it
+  restores the model only when it recognizes it, falling back to its default otherwise (seen with
+  CLI 2.1.285). Resume starts with the model and effort of the last reply in history instead. A
+  session with no successful reply still starts on the CLI default. Remove once the CLI restores
+  both itself.

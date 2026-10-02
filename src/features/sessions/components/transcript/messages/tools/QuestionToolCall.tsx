@@ -5,6 +5,8 @@ import { CircleHelp } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { InlineMarkdown, Markdown } from "@/shared/ui/markdown";
 import { Input } from "@/shared/ui/input";
+import { cn } from "@/shared/utils";
+import { waitingOutlineClassName } from "@/shared/ui/waiting-indicator";
 import { useCurrentSession } from "../../../CurrentSessionContext";
 import { sessionMutations } from "../../../../mutations";
 import type { SessionQuestion } from "../../../../model";
@@ -13,7 +15,12 @@ export function QuestionToolCall({ question }: { question: SessionQuestion }) {
   const { sessionId, mode } = useCurrentSession();
 
   return (
-    <div className="w-full rounded-lg border bg-background/80 p-3 text-sm shadow-xs">
+    <div
+      className={cn(
+        "w-full rounded-lg border bg-background/80 p-3 text-sm shadow-xs",
+        question.state === "pending" && waitingOutlineClassName,
+      )}
+    >
       <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
         <CircleHelp className="size-4" aria-hidden />
         <span>Question</span>

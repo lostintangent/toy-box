@@ -1,6 +1,7 @@
 import { parseSerializedModelConfiguration } from "@providers/model";
-import { computeNextAutomationRunAt, type Automation, type AutomationOptions } from "../model";
+import type { Automation, AutomationOptions } from "../model";
 import { inStateTransaction } from "@/server/database";
+import { nextCronOccurrence } from "@/shared/cron";
 
 const DUE_AUTOMATION_RETRY_DELAY_MS = 60_000;
 
@@ -24,7 +25,7 @@ export class AutomationDatabase {
   async create(input: AutomationOptions): Promise<Automation> {
     const now = new Date();
     const nowIso = now.toISOString();
-    const nextRunAt = computeNextAutomationRunAt(input.cron, now).toISOString();
+    const nextRunAt = nextCronOccurrence(input.cron, now).toISOString();
     const id = crypto.randomUUID();
     const values = serializeOptions(input);
 
@@ -45,7 +46,7 @@ export class AutomationDatabase {
   async update(automationId: string, input: AutomationOptions): Promise<Automation | null> {
     const now = new Date();
     const nowIso = now.toISOString();
-    const nextRunAt = computeNextAutomationRunAt(input.cron, now).toISOString();
+    const nextRunAt = nextCronOccurrence(input.cron, now).toISOString();
     const values = serializeOptions(input);
 
     const [row] = await this.db<AutomationRow[]>`
@@ -89,7 +90,7 @@ export class AutomationDatabase {
       for (const row of rows) {
         let nextRunAt = fallbackNextRunAt;
         try {
-          nextRunAt = computeNextAutomationRunAt(row.cron, now).toISOString();
+          nextRunAt = nextCronOccurrence(row.cron, now).toISOString();
         } catch (error) {
           console.error(`Failed to reschedule automation ${row.id}:`, error);
         }

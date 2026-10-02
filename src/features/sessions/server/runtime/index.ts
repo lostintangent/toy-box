@@ -96,9 +96,9 @@ function waitForSession(sessionId: string, timeoutMs?: number): Promise<SessionC
   return waitForPendingSession(pending.promise, timeoutMs);
 }
 
-/** Read the current canonical state, whether the session is live or persisted. */
+/** Read the current canonical state, whether the session is live, starting, or persisted. */
 export async function getSessionSnapshot(sessionId: string): Promise<SessionState> {
-  const stream = SessionStream.get(sessionId);
+  const stream = await currentSessionStream(sessionId);
   return stream ? stream.getSessionState() : loadSessionSnapshot(sessionId);
 }
 
@@ -112,7 +112,7 @@ export function getSessionRuntimeStatus(sessionId: string): {
 } {
   const stream = SessionStream.get(sessionId);
   return {
-    running: stream !== undefined,
+    running: stream !== undefined || pendingStreamCreations.has(sessionId),
     queuedCount: stream?.getSessionState().queuedMessages.length ?? 0,
   };
 }
@@ -194,7 +194,7 @@ export async function streamSession(
   request: StreamSessionRequest,
 ): Promise<SessionStreamSubscription | undefined> {
   if (!request.message) {
-    const stream = SessionStream.get(request.sessionId);
+    const stream = await currentSessionStream(request.sessionId);
     return stream?.subscribe(request.afterEventId, request.mode);
   }
 
@@ -302,6 +302,13 @@ async function deliver(sessionId: string, message: MessageInput, create?: Sessio
 
 // Covers concurrent acquisition before the stream reaches the registry.
 const pendingStreamCreations = sharedMap<Promise<SessionStream>>("pending-session-streams");
+
+/** The live stream, including one still being acquired. A failed acquisition belongs to its initiator. */
+async function currentSessionStream(sessionId: string): Promise<SessionStream | undefined> {
+  return (
+    SessionStream.get(sessionId) ?? pendingStreamCreations.get(sessionId)?.catch(() => undefined)
+  );
+}
 
 /** Single-flight get-or-create. SessionStream.deliver owns first-turn selection. */
 async function acquireSessionStream(

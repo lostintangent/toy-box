@@ -164,15 +164,14 @@ export const cancelQueuedMessage = createServerFn({ method: "POST" })
 /** Steer a queued message into the active SDK turn and await acceptance. */
 export const steerQueuedMessage = createServerFn({ method: "POST" })
   .validator(zodValidator(queuedMessageInputSchema))
-  .handler(
-    ({ data }): Promise<boolean> => steerRuntimeQueuedMessage(data.sessionId, data.clientId),
+  .handler(({ data }): Promise<boolean> =>
+    steerRuntimeQueuedMessage(data.sessionId, data.clientId),
   );
 
 export const answerSessionQuestion = createServerFn({ method: "POST" })
   .validator(zodValidator(answerSessionQuestionInputSchema))
-  .handler(
-    ({ data: { sessionId, ...answer } }): Promise<boolean> =>
-      answerRuntimeSessionQuestion(sessionId, answer),
+  .handler(({ data: { sessionId, ...answer } }): Promise<boolean> =>
+    answerRuntimeSessionQuestion(sessionId, answer),
   );
 
 /** Abort the currently processing message in a session.
@@ -187,8 +186,8 @@ export const abortSession = createServerFn({ method: "POST" })
 /** Rewind an idle local session to immediately before one root user message. */
 export const rewindSession = createServerFn({ method: "POST" })
   .validator(zodValidator(rewindSessionInputSchema))
-  .handler(
-    ({ data }): Promise<SessionState> => rewindRuntimeSession(data.sessionId, data.timestamp),
+  .handler(({ data }): Promise<SessionState> =>
+    rewindRuntimeSession(data.sessionId, data.timestamp),
   );
 
 export const deleteSession = createServerFn({ method: "POST" })

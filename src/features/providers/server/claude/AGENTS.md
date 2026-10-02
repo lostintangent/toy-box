@@ -26,6 +26,9 @@ surfaces `next` input to the model as text only, so an immediate message with im
 Enable `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` and `CLAUDE_CODE_BG_TASKS_REPORT_RUNNING`:
 native `session_state_changed: idle` follows background work and its notifications.
 A `result` is only a turn result and must not finish the shared stream.
+The CLI writes its own API errors and notices, such as "No response requested.", as assistant
+messages from the `<synthetic>` model. A turn can recover from such an error, so these messages
+are neither transcript text nor model changes; only a turn's `result` reports its failure.
 Explicit `allowedTools` keeps native checklists available on newer models.
 Model and reasoning effort change together through the session-scoped `applyFlagSettings` API.
 
@@ -51,8 +54,10 @@ The native `task-notification` origin keeps internal completion prompts out of t
 
 `history.ts` uses the SDK's native export into a request-local buffer, then its history APIs
 for active-branch and subagent reconstruction. Exported records restore structured tool
-results and effort that `getSessionMessages()` omits. Nothing is persisted or mirrored;
-the buffer is never installed as a live query's session store.
+results, effort, and API errors that `getSessionMessages()` omits. Native history keeps no turn
+results, so, as in the CLI, a turn whose last assistant message is an API error restores its
+failed `result`. Nothing is persisted or mirrored; the buffer is never installed as a live
+query's session store.
 
 The SDK reads a session's `cwd` only from the first 64 KB of its transcript (its branch comes from
 the tail), so a large first message, such as a pasted image, leaves the catalog without a

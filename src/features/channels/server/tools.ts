@@ -8,9 +8,11 @@ import {
   createChannelMemberInputSchema,
   createChannelInputSchema,
   isChannelSystemMessage,
+  channelRoutineIdentitySchema,
   requestChannelUserAttentionInputSchema,
   selfUpdateChannelMemberInputSchema,
   setChannelAgentStatusInputSchema,
+  setChannelRoutineInputSchema,
   updateChannelInputSchema,
   type Channel,
   type ChannelMessage,
@@ -39,7 +41,7 @@ const listChannelsTool = defineTool("list_channels", {
   parameters: z.object({}).strict(),
   handler: async () => {
     const { listChannels } = await import("@channels/server");
-    return JSON.stringify({ channels: (await listChannels()).channels.map(channelForTool) });
+    return { channels: (await listChannels()).channels.map(channelForTool) };
   },
 });
 
@@ -49,7 +51,7 @@ const createChannelTool = defineTool("create_channel", {
   parameters: createChannelInputSchema,
   handler: async (input) => {
     const { createChannel } = await import("@channels/server");
-    return JSON.stringify({ channel: channelForTool(await createChannel(input)) });
+    return { channel: channelForTool(await createChannel(input)) };
   },
 });
 
@@ -87,13 +89,13 @@ const postChannelMessageTool = defineTool("post_channel_message", {
       ...input,
       attachmentPaths: attachments,
     });
-    return JSON.stringify({ sequence: message.sequence });
+    return { sequence: message.sequence };
   },
 });
 
 const readChannelForSessionTool = defineTool("read_channel", {
   description:
-    "Reads the channel purpose, public checklist, preview URL, lead, current members, shared artifacts, attachments, and newest 100 messages before an optional sequence without changing read state. Omit beforeSequence for the latest messages. While hasMore is true, continue with the first returned message's sequence. File attachments are absolute paths. Inline uploads are attached images.",
+    "Reads the channel purpose, public checklist, preview URL, lead, current members, shared artifacts, routines, attachments, and newest 100 messages before an optional sequence without changing read state. Omit beforeSequence for the latest messages. While hasMore is true, continue with the first returned message's sequence. File attachments are absolute paths. Inline uploads are attached images.",
   parameters: channelIdentitySchema.extend({
     beforeSequence: z.number().int().positive().optional(),
   }),
@@ -121,15 +123,15 @@ const waitForChannelAgentsTool = defineTool("wait_for_channel_agents", {
   }),
   handler: async ({ channelId, agentIds, timeoutMs }) => {
     const { waitForChannelAgents } = await import("@channels/server");
-    return JSON.stringify({
+    return {
       agents: await waitForChannelAgents(channelId, agentIds, timeoutMs),
-    });
+    };
   },
 });
 
 const readChannelForAgentTool = defineTool("read_channel", {
   description:
-    "Reads the channel purpose, public checklist, preview URL, lead, current members, shared artifacts, attachments, and this agent's next 100 unread messages, then advances its read position. Repeat while hasMore is true. File attachments are absolute paths. Inline uploads are attached images.",
+    "Reads the channel purpose, public checklist, preview URL, lead, current members, shared artifacts, routines, attachments, and this agent's next 100 unread messages, then advances its read position. Repeat while hasMore is true. File attachments are absolute paths. Inline uploads are attached images.",
   parameters: z.object({}),
   handler: async (_args, invocation) => {
     const { readChannelForAgent } = await import("@channels/server");
@@ -150,7 +152,7 @@ const sendChannelMessageTool = defineTool("send_channel_message", {
       content: args.content,
       attachmentPaths: args.attachments,
     });
-    return JSON.stringify({ sequence: message.sequence });
+    return { sequence: message.sequence };
   },
 });
 
@@ -164,7 +166,7 @@ const reactToChannelMessageTool = defineTool("react_to_channel_message", {
   handler: async (args, invocation) => {
     const { setChannelMessageReactionFromAgent } = await import("@channels/server");
     const reaction = await setChannelMessageReactionFromAgent(invocation.sessionId, args);
-    return JSON.stringify({ reaction });
+    return { reaction };
   },
 });
 
@@ -174,9 +176,9 @@ const setChannelStatusTool = defineTool("set_agent_status", {
   parameters: setChannelAgentStatusInputSchema,
   handler: async (args, invocation) => {
     const { setChannelAgentStatus } = await import("@channels/server");
-    return JSON.stringify({
+    return {
       status: await setChannelAgentStatus(invocation.sessionId, args),
-    });
+    };
   },
 });
 
@@ -187,7 +189,7 @@ const markChannelDoneTool = defineTool("mark_channel_done", {
   handler: async (_args, invocation) => {
     const { markChannelDoneFromLead } = await import("@channels/server");
     const message = await markChannelDoneFromLead(invocation.sessionId);
-    return JSON.stringify({ sequence: message.sequence });
+    return { sequence: message.sequence };
   },
 });
 
@@ -201,7 +203,7 @@ const requestChannelUserAttentionTool = defineTool("request_user_attention", {
       invocation.sessionId,
       requestSequence,
     );
-    return JSON.stringify({ sequence: message.sequence });
+    return { sequence: message.sequence };
   },
 });
 
@@ -211,29 +213,82 @@ const updateChannelTool = defineTool("update_channel", {
   parameters: updateChannelInputSchema,
   handler: async (args, invocation) => {
     const { updateChannelFromLead } = await import("@channels/server");
-    return JSON.stringify(await updateChannelFromLead(invocation.sessionId, args));
+    return updateChannelFromLead(invocation.sessionId, args);
   },
 });
+
+const finishChannelAgentTurnParameters = z
+  .object({
+    waitingFor: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("What this agent is waiting for after the turn ends."),
+  })
+  .strict();
+
+const FOLLOW_UP_BOUNDS =
+  "Follow-ups check on a member or external work within two hours. Use a routine for anything later or recurring.";
+
+const finishLeadTurnParameters = finishChannelAgentTurnParameters
+  .extend({
+    wakeAfterMinutes: z
+      .number()
+      .int()
+      .min(5, FOLLOW_UP_BOUNDS)
+      .max(120, FOLLOW_UP_BOUNDS)
+      .optional()
+      .describe(
+        "Wake after this many minutes to check on what you're waiting for, unless something wakes you first.",
+      ),
+  })
+  .refine(
+    ({ waitingFor, wakeAfterMinutes }) =>
+      wakeAfterMinutes === undefined || waitingFor !== undefined,
+    "Pass waitingFor with wakeAfterMinutes.",
+  );
 
 const finishChannelAgentTurnTool = defineTool("finish_agent_turn", {
   description:
     "Ends this private agent turn and clears its active channel status. waitingFor leaves a brief waiting status.",
-  parameters: z
-    .object({
-      waitingFor: z
-        .string()
-        .trim()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe("What this agent is waiting for after the turn ends."),
-    })
-    .strict(),
+  parameters: finishChannelAgentTurnParameters,
   isTerminal: true,
-  handler: async ({ waitingFor }, invocation) => {
+  handler: async (
+    { waitingFor, wakeAfterMinutes }: z.output<typeof finishLeadTurnParameters>,
+    invocation,
+  ) => {
     const { finishChannelAgentTurn } = await import("@channels/server");
-    await finishChannelAgentTurn(invocation.sessionId, waitingFor);
+    await finishChannelAgentTurn(invocation.sessionId, waitingFor, wakeAfterMinutes);
     return "Done.";
+  },
+});
+
+/** The same tool plus a follow-up, which only the lead can set. */
+const finishLeadTurnTool = { ...finishChannelAgentTurnTool, parameters: finishLeadTurnParameters };
+
+const setRoutineTool = defineTool("set_routine", {
+  description:
+    "Adds a routine that privately wakes you with its prompt on its schedule, or changes one by routineId. Posts a system message to the channel.",
+  parameters: setChannelRoutineInputSchema,
+  handler: async (input, invocation) => {
+    const { setChannelRoutineFromLead } = await import("@channels/server");
+    const routine = await setChannelRoutineFromLead(invocation.sessionId, input);
+    return { routineId: routine.id };
+  },
+});
+
+const deleteRoutineTool = defineTool("delete_routine", {
+  description: "Deletes one of this channel's routines and posts a system message.",
+  parameters: channelRoutineIdentitySchema.omit({ channelId: true }),
+  handler: async ({ routineId }, invocation) => {
+    const { deleteChannelRoutine } = await import("@channels/server");
+    // A lead's session ID is its Channel's ID.
+    if (!(await deleteChannelRoutine(invocation.sessionId, routineId))) {
+      throw new Error("Routine not found in this channel.");
+    }
+    return "Removed.";
   },
 });
 
@@ -242,7 +297,11 @@ const updateMemberTool = defineTool("update_member", {
   parameters: selfUpdateChannelMemberInputSchema,
   handler: async (args, invocation) => {
     const { updateChannelMember } = await import("@channels/server");
-    return JSON.stringify(await updateChannelMember({ agentId: invocation.sessionId, ...args }));
+    const { id: agentId, ...member } = await updateChannelMember({
+      agentId: invocation.sessionId,
+      ...args,
+    });
+    return { agentId, ...member };
   },
 });
 
@@ -252,7 +311,7 @@ const shareChannelArtifactFromSessionTool = defineTool("share_channel_artifact",
   parameters: channelIdentitySchema.extend(shareChannelArtifactInputSchema.shape),
   handler: async (args, invocation) => {
     const { shareChannelArtifactFromSession } = await import("@channels/server");
-    return JSON.stringify(await shareChannelArtifactFromSession(invocation.sessionId, args));
+    return shareChannelArtifactFromSession(invocation.sessionId, args);
   },
 });
 
@@ -262,7 +321,7 @@ const shareChannelArtifactFromAgentTool = defineTool("share_channel_artifact", {
   parameters: shareChannelArtifactInputSchema,
   handler: async (args, invocation) => {
     const { shareChannelArtifactFromAgent } = await import("@channels/server");
-    return JSON.stringify(await shareChannelArtifactFromAgent(invocation.sessionId, args));
+    return shareChannelArtifactFromAgent(invocation.sessionId, args);
   },
 });
 
@@ -276,7 +335,7 @@ function toChannelReadToolResult<T extends { messages: ChannelMessage[] }>(resul
         ...rest,
         content:
           content.type === "member_joined" || content.type === "member_left"
-            ? { type: content.type, memberId: content.member.id }
+            ? { type: content.type, agentId: content.member.id }
             : content.type === "artifact_shared"
               ? {
                   ...content,
@@ -323,17 +382,17 @@ function channelForTool({ id: channelId, name, purpose, directory, model }: Chan
     ...(purpose ? { purpose } : {}),
     directory,
     model,
-    lead: { leadId: channelId, mention: "@lead" },
+    lead: { agentId: channelId, mention: "@lead" },
   };
 }
 
-function createdChannelMembers(members: { id: string; name: string }[]): string {
-  return JSON.stringify({
+function createdChannelMembers(members: { id: string; name: string }[]) {
+  return {
     members: members.map((member) => ({
-      memberId: member.id,
+      agentId: member.id,
       mention: `@${agentHandleFromName(member.name)}`,
     })),
-  });
+  };
 }
 
 const commonChannelAgentTools = [
@@ -348,9 +407,11 @@ export const channelLeadTools = [
   ...commonChannelAgentTools,
   createCurrentChannelMembersTool,
   updateChannelTool,
+  setRoutineTool,
+  deleteRoutineTool,
   requestChannelUserAttentionTool,
   markChannelDoneTool,
-  finishChannelAgentTurnTool,
+  finishLeadTurnTool,
 ];
 export const channelMemberTools = [
   ...commonChannelAgentTools,

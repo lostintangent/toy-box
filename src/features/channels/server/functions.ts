@@ -10,12 +10,13 @@ import {
   markChannelReadInputSchema,
   postChannelMessageInputSchema,
   removeChannelMemberInputSchema,
+  channelRoutineIdentitySchema,
   updateChannelMemberInputSchema,
 } from "@channels/model";
 import * as channels from ".";
 
-export const listChannels = createServerFn({ method: "GET" }).handler(
-  (): Promise<ChannelList> => channels.listChannels(),
+export const listChannels = createServerFn({ method: "GET" }).handler((): Promise<ChannelList> =>
+  channels.listChannels(),
 );
 
 export const getChannelState = createServerFn({ method: "GET" })
@@ -26,9 +27,8 @@ export const listChannelMessagesBefore = createServerFn({ method: "GET" })
   .validator(
     zodValidator(channelIdentitySchema.extend({ beforeSequence: z.number().int().positive() })),
   )
-  .handler(
-    ({ data }): Promise<ChannelMessage[]> =>
-      channels.listChannelMessagesBefore(data.channelId, data.beforeSequence),
+  .handler(({ data }): Promise<ChannelMessage[]> =>
+    channels.listChannelMessagesBefore(data.channelId, data.beforeSequence),
   );
 
 export const createChannel = createServerFn({ method: "POST" })
@@ -54,6 +54,18 @@ export const deleteChannel = createServerFn({ method: "POST" })
 export const removeChannelMember = createServerFn({ method: "POST" })
   .validator(zodValidator(removeChannelMemberInputSchema))
   .handler(({ data }): Promise<void> => channels.removeChannelMember(data.agentId));
+
+export const deleteChannelRoutine = createServerFn({ method: "POST" })
+  .validator(zodValidator(channelRoutineIdentitySchema))
+  .handler(({ data }): Promise<boolean> =>
+    channels.deleteChannelRoutine(data.channelId, data.routineId),
+  );
+
+export const runChannelRoutine = createServerFn({ method: "POST" })
+  .validator(zodValidator(channelRoutineIdentitySchema))
+  .handler(({ data }): Promise<boolean> =>
+    channels.runChannelRoutine(data.channelId, data.routineId),
+  );
 
 export const markChannelRead = createServerFn({ method: "POST" })
   .validator(zodValidator(markChannelReadInputSchema))

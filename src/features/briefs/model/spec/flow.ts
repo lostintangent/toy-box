@@ -1,5 +1,5 @@
 import { addDuplicateIssues, addEntityReferenceIssue, type RefinementContext } from "../issues";
-import { briefEntitiesFrom, type BriefEntity } from "../query/reading";
+import { briefEntitiesFrom, type BriefEntity } from "../query/entities";
 import { buildBriefIndex } from "../query/structure";
 import type {
   Change,
@@ -8,7 +8,6 @@ import type {
   FlowNode,
   FlowPath,
   BriefDocument,
-  BriefEntityId,
 } from "../schema";
 
 /**
@@ -44,16 +43,11 @@ type FlowGraphRegion = {
 
 export type FlowGraph = {
   connections: FlowConnection[];
+  /** Connections that belong to no path; they add context without forming a route. */
+  supportingConnections: FlowConnection[];
   stages: FlowGraphNode[][];
   paths: FlowGraphPath[];
   regions: FlowGraphRegion[];
-};
-
-export type EntityFlowConnection = {
-  flow: FlowExhibit;
-  connection: FlowConnection;
-  outgoing: boolean;
-  related: FlowGraphNode;
 };
 
 export function flowNodeId(node: FlowNode): string {
@@ -304,44 +298,27 @@ export function flowGraph(document: BriefDocument, flow: FlowExhibit): FlowGraph
       ? [{ id: region.id, title: region.title, nodes: regionNodes }]
       : [];
   });
-  return { connections: flow.connections, stages: compactStages, paths, regions };
+  const pathConnectionIds = new Set(pathConnections.map((connection) => connection.id));
+  return {
+    connections: flow.connections,
+    supportingConnections: flow.connections.filter(
+      (connection) => !pathConnectionIds.has(connection.id),
+    ),
+    stages: compactStages,
+    paths,
+    regions,
+  };
 }
 
-export function flowPathSelectionAfterInspection(
+/** The path that shows a node, preferring the given path when it already does. */
+export function flowPathThrough(
   graph: FlowGraph,
-  selectedPathId: string | undefined,
   nodeId: string,
+  preferredPathId: string,
 ): string | undefined {
-  if (selectedPathId === undefined) return undefined;
-  const selectedPath = graph.paths.find((path) => path.id === selectedPathId);
-  if (selectedPath?.nodes.some((node) => node.id === nodeId)) return selectedPathId;
-  return (
-    graph.paths.find((path) => path.nodes.some((node) => node.id === nodeId))?.id ?? selectedPathId
-  );
-}
-
-export function entityFlowConnections(
-  document: BriefDocument,
-  entityId: BriefEntityId,
-): EntityFlowConnection[] {
-  const index = buildBriefIndex(document.sections);
-  return index.sectionExhibits.flatMap((exhibit) => {
-    if (exhibit.kind !== "flow") return [];
-    const graph = flowGraph(document, exhibit);
-    const node = graph.stages.flat().find((candidate) => candidate.entity?.id === entityId);
-    if (!node) return [];
-    const nodesById = new Map(graph.stages.flat().map((candidate) => [candidate.id, candidate]));
-    return [
-      ...node.outgoing.flatMap((connection) => {
-        const related = nodesById.get(connection.to);
-        return related ? [{ flow: exhibit, connection, outgoing: true, related }] : [];
-      }),
-      ...node.incoming.flatMap((connection) => {
-        const related = nodesById.get(connection.from);
-        return related ? [{ flow: exhibit, connection, outgoing: false, related }] : [];
-      }),
-    ];
-  });
+  const showsNode = (path: FlowGraphPath) => path.nodes.some((node) => node.id === nodeId);
+  const preferred = graph.paths.find((path) => path.id === preferredPathId);
+  return (preferred && showsNode(preferred) ? preferred : graph.paths.find(showsNode))?.id;
 }
 
 function addNodeReferenceIssue(
@@ -469,10 +446,6 @@ function flowPathStages(
       incomingCount.set(connection.to, remaining);
       if (remaining === 0) queue.push(connection.to);
     }
-  }
-
-  for (const nodeId of nodeOrder) {
-    if (!stageById.has(nodeId)) stageById.set(nodeId, 0);
   }
   return stageById;
 }

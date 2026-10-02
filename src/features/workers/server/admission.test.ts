@@ -351,17 +351,18 @@ describe("workers", () => {
     // oxlint-disable-next-line typescript/unbound-method -- The original method is explicitly rebound with call below.
     const realGet = AppDatabase.prototype.get;
     let reads = 0;
-    const get = spyOn(AppDatabase.prototype, "get").mockImplementation(
-      async function (this: AppDatabase, appId) {
-        const result = await realGet.call(this, appId);
-        reads += 1;
-        if (reads === 2) {
-          stateRead.resolve();
-          await releaseRead.promise;
-        }
-        return result;
-      },
-    );
+    const get = spyOn(AppDatabase.prototype, "get").mockImplementation(async function (
+      this: AppDatabase,
+      appId,
+    ) {
+      const result = await realGet.call(this, appId);
+      reads += 1;
+      if (reads === 2) {
+        stateRead.resolve();
+        await releaseRead.promise;
+      }
+      return result;
+    });
     onTestFinished(() => get.mockRestore());
 
     const spawning = spawnWorkerFromRequest({

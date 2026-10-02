@@ -1,5 +1,5 @@
 import { channelAgent, createStoredChannel } from "@channels/server/testFixtures";
-import { beforeEach, expect, mock, onTestFinished, spyOn, test } from "bun:test";
+import { beforeEach, expect, mock, onTestFinished, setSystemTime, spyOn, test } from "bun:test";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import type { ChannelEvent } from "@channels/model";
 import { createTestDatabase } from "@/server/database";
 import * as sessions from "@sessions/server/providers";
 import * as sessionRuntime from "@sessions/server/runtime";
+import { normalizeToolResult, type Tool } from "@sessions/server/tools/definition";
 import * as workspaceEvents from "@workspace/server/events";
 
 let currentDb: Bun.SQL | undefined;
@@ -29,17 +30,19 @@ const {
   requestChannelUserAttentionFromLead,
   postChannelMessageFromSession,
   readChannelForSession,
+  runChannelRoutine,
   sendChannelMessageFromAgent,
   setChannelAgentStatus,
   setChannelMessageReactionFromAgent,
+  setChannelRoutineFromLead,
   shareChannelArtifactFromSession,
   streamChannel,
   updateChannelMember,
   updateChannelFromLead,
+  wakeDueChannelAgents,
 } = await import("./index");
 const { publishChannelEvent, releaseChannelEvents } = await import("./events");
-const { getChannelAgentConfiguration } = await import("./agent");
-const { channelMemberTools, channelTools } = await import("./tools");
+const { channelMemberTools, channelTools, createChannelMembersTool } = await import("./tools");
 
 beforeEach(() => {
   const create = spyOn(sessionRuntime, "createSession").mockResolvedValue({
@@ -114,23 +117,6 @@ test("attention uses normal messages and upserts, and a user reply also wakes th
   expect(deliver.mock.calls.map(([id]) => id).sort()).toEqual([channel.id, member.id].sort());
   expect((await channels.getChannel(channel.id))?.hasPendingRequest).toBe(false);
   expect((await channels.getAgent(channel.id))?.status).toBeUndefined();
-});
-
-test("only leads receive nonterminal attention tools", async () => {
-  const channels = await openChannels();
-  const channel = await createStoredChannel(channels, {
-    name: "Protocol",
-    model: CHANNEL_DEFAULTS.model,
-  });
-  const configuration = await getChannelAgentConfiguration(
-    channelAgent(channel.id, channel.id, "Lead"),
-  );
-  for (const name of ["mark_channel_done", "request_user_attention"]) {
-    const tool = configuration.tools.find((tool) => tool.name === name);
-    expect(tool).toBeDefined();
-    expect(tool?.isTerminal).not.toBe(true);
-    expect([...channelMemberTools, ...channelTools].some((tool) => tool.name === name)).toBe(false);
-  }
 });
 
 test("creating a Channel starts its lead without creating a directory", async () => {
@@ -344,6 +330,66 @@ test("only the Channel lead can create members", async () => {
   expect((await channels.listMessagesAfter(channel.id)).at(-1)).toMatchObject({
     sender: { type: "system" },
     content: { type: "member_joined", member: { id: peers[1]!.id } },
+  });
+});
+
+test("channel tools use agentId across creation, context, profile updates, and waiting", async () => {
+  await openChannels();
+  async function invoke(name: string, input = {}, sessionId = "coordinator") {
+    const tool = [...channelTools, createChannelMembersTool, ...channelMemberTools].find(
+      (tool) => tool.name === name,
+    ) as Tool | undefined;
+    if (!tool) throw new Error(`Tool not found: ${name}`);
+    const result = normalizeToolResult(
+      await tool.handler(tool.parameters?.parse(input) ?? input, {
+        sessionId,
+        toolCallId: name,
+        toolName: name,
+        arguments: input,
+      }),
+    );
+    const content = result.content[0];
+    if (content?.type !== "text") throw new Error("Expected a text tool result.");
+    return JSON.parse(content.text);
+  }
+
+  const { channel } = await invoke("create_channel", { name: "Identity", ...CHANNEL_DEFAULTS });
+  const channelId = channel.channelId;
+  onTestFinished(() => releaseChannelEvents(channelId));
+  expect(channel.lead).toEqual({ agentId: channelId, mention: "@lead" });
+  expect((await invoke("list_channels")).channels[0].lead).toEqual(channel.lead);
+
+  const { members } = await invoke("create_channel_members", {
+    channelId,
+    members: [{ name: "Reviewer" }],
+  });
+  const member = members[0];
+  expect(member).toEqual({ agentId: expect.any(String), mention: "@reviewer" });
+  const profile = await invoke("update_member", { role: "Review the outcome." }, member.agentId);
+  expect(profile.agentId).toBe(member.agentId);
+  expect(profile).not.toHaveProperty("id");
+
+  const context = await invoke("read_channel", { channelId });
+  expect(context.lead.agentId).toBe(channel.lead.agentId);
+  expect(context.members).toEqual([
+    {
+      agentId: member.agentId,
+      name: "Reviewer",
+      mention: "@reviewer",
+      role: "Review the outcome.",
+    },
+  ]);
+  expect(context.messages[0].content).toEqual({ type: "member_joined", agentId: member.agentId });
+  expect(
+    await invoke("wait_for_channel_agents", {
+      channelId,
+      agentIds: [context.lead.agentId, context.members[0].agentId],
+    }),
+  ).toEqual({
+    agents: [
+      { agentId: channelId, status: "completed" },
+      { agentId: member.agentId, status: "completed" },
+    ],
   });
 });
 
@@ -623,7 +669,7 @@ test("a Channel Agent publishes focus and settles temporary turn state", async (
   expect(await readChannelForSession(channel.id)).toMatchObject({
     members: [
       {
-        memberId: member.id,
+        agentId: member.id,
         status: { state: "waiting", text: "implementation feedback" },
       },
     ],
@@ -705,4 +751,125 @@ test("a Channel stream recovers with bounded latest history", async () => {
   expect(event.state.messages).toHaveLength(100);
   expect(event.state.messages[0]?.sequence).toBe(2);
   expect(event.state.messages.at(-1)?.sequence).toBe(101);
+});
+
+function spyOnDelivery() {
+  const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockResolvedValue({
+    disposition: "started",
+    waitForCompletion: async () => ({ status: "completed" }),
+  });
+  const broadcasts = spyOn(workspaceEvents, "broadcast").mockImplementation(() => {});
+  onTestFinished(() => {
+    deliver.mockRestore();
+    broadcasts.mockRestore();
+  });
+  return deliver;
+}
+
+test("a lead follow-up privately wakes it once when due", async () => {
+  const channels = await openChannels();
+  const channel = await createStoredChannel(channels, { name: "Deploy", ...CHANNEL_DEFAULTS });
+  const deliver = spyOnDelivery();
+  setSystemTime(new Date("2026-09-29T15:00:00.000Z"));
+  onTestFinished(() => setSystemTime());
+
+  await finishChannelAgentTurn(channel.id, "CI to finish", 20);
+  expect((await channels.getAgent(channel.id))?.status).toEqual({
+    state: "waiting",
+    text: "CI to finish",
+    wakeAt: "2026-09-29T15:20:00.000Z",
+  });
+  await wakeDueChannelAgents(new Date("2026-09-29T15:19:00.000Z"));
+  expect(deliver).not.toHaveBeenCalled();
+  await wakeDueChannelAgents(new Date("2026-09-29T15:20:00.000Z"));
+  await wakeDueChannelAgents(new Date("2026-09-29T15:21:00.000Z"));
+
+  expect(deliver.mock.calls).toEqual([
+    [
+      channel.id,
+      {
+        systemMessage: { type: "channel_follow_up", waitingFor: "CI to finish" },
+        immediate: true,
+      },
+    ],
+  ]);
+  expect((await channels.getAgent(channel.id))?.status).toBeUndefined();
+});
+
+test("a message that wakes the lead first cancels its follow-up", async () => {
+  const channels = await openChannels();
+  const channel = await createStoredChannel(channels, { name: "Deploy", ...CHANNEL_DEFAULTS });
+  const deliver = spyOnDelivery();
+
+  await finishChannelAgentTurn(channel.id, "CI to finish", 20);
+  await postChannelMessageFromSession("user-session", {
+    id: "update",
+    channelId: channel.id,
+    content: "CI passed.",
+  });
+  await wakeDueChannelAgents(new Date(Date.now() + 30 * 60_000));
+
+  expect(deliver.mock.calls).toEqual([
+    [
+      channel.id,
+      { systemMessage: { type: "channel_message", senderName: "the user" }, immediate: true },
+    ],
+  ]);
+});
+
+test("a due routine privately wakes its lead without adding to the transcript", async () => {
+  const channels = await openChannels();
+  const channel = await createStoredChannel(channels, { name: "Watch", ...CHANNEL_DEFAULTS });
+  const events: ChannelEvent[] = [];
+  const unsubscribe = await streamChannel(channel.id, 0, (event) => events.push(event));
+  onTestFinished(() => {
+    unsubscribe();
+    releaseChannelEvents(channel.id);
+  });
+  const deliver = spyOnDelivery();
+
+  const routine = await setChannelRoutineFromLead(channel.id, {
+    title: "CI",
+    schedule: "0 * * * *",
+    prompt: "Check CI",
+  });
+  const { latestSequence } = (await channels.getChannel(channel.id))!;
+  await wakeDueChannelAgents(new Date(Date.now() + 61 * 60_000));
+
+  expect(events.map((event) => event.type === "message" && event.message.content)).toEqual([
+    { type: "routine_scheduled", routine },
+  ]);
+  expect(deliver.mock.calls).toEqual([
+    [
+      channel.id,
+      {
+        systemMessage: { type: "channel_routine", title: "CI", prompt: "Check CI" },
+        immediate: true,
+      },
+    ],
+  ]);
+  expect((await channels.getChannel(channel.id))?.latestSequence).toBe(latestSequence);
+});
+
+test("running a routine wakes its lead now and leaves its schedule alone", async () => {
+  const channels = await openChannels();
+  const channel = await createStoredChannel(channels, { name: "Watch", ...CHANNEL_DEFAULTS });
+  const deliver = spyOnDelivery();
+  const routine = await setChannelRoutineFromLead(channel.id, {
+    title: "CI",
+    schedule: "0 * * * *",
+    prompt: "Check CI",
+  });
+  const wake: Parameters<typeof sessionRuntime.deliverSessionMessage> = [
+    channel.id,
+    {
+      systemMessage: { type: "channel_routine", title: "CI", prompt: "Check CI" },
+      immediate: true,
+    },
+  ];
+
+  expect(await runChannelRoutine(channel.id, routine.id)).toBe(true);
+  await wakeDueChannelAgents(new Date(Date.now() + 61 * 60_000));
+
+  expect(deliver.mock.calls).toEqual([wake, wake]);
 });

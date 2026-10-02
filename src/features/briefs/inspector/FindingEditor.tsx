@@ -1,11 +1,10 @@
-import { useState, type FormEvent } from "react";
-import { Button } from "@/shared/ui/button";
+import { useState } from "react";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import type { Finding, FindingsSection, FindingUpdate } from "../model/index";
-import { LabeledEditorField } from "./FieldEditor";
+import { EditorForm, LabeledEditorField, sourcePlaceholder } from "./EditorForm";
 
-export function BriefFindingEditor({
+export function FindingEditor({
   section,
   finding,
   onSave,
@@ -13,43 +12,38 @@ export function BriefFindingEditor({
 }: {
   section: FindingsSection;
   finding: Finding;
-  onSave: (update: FindingUpdate, original: Finding) => string | undefined;
+  onSave: (update: FindingUpdate) => string | undefined;
   onCancel: () => void;
 }) {
-  const [original] = useState(finding);
   const [draft, setDraft] = useState(() => ({
     statement: finding.statement,
     whyItMatters: finding.whyItMatters ?? "",
     sources: finding.sources?.join("\n") ?? "",
   }));
-  const [error, setError] = useState<string>();
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const whyItMatters = draft.whyItMatters.trim();
-    const sources = draft.sources
+  function save(current: typeof draft): string | undefined {
+    const whyItMatters = current.whyItMatters.trim();
+    const sources = current.sources
       .split("\n")
       .map((source) => source.trim())
       .filter(Boolean);
-    const update: FindingUpdate = {
-      statement: draft.statement.trim(),
+    return onSave({
+      statement: current.statement.trim(),
       ...(whyItMatters ? { whyItMatters } : {}),
       ...(sources.length > 0 ? { sources } : {}),
-    };
-    setError(onSave(update, original));
+    });
   }
 
   return (
-    <form className="space-y-3" onSubmit={handleSubmit}>
+    <EditorForm current={finding} draft={draft} onSave={save} onCancel={onCancel}>
       <LabeledEditorField label="Finding">
         {(id) => (
           <Input
             id={id}
             value={draft.statement}
-            onChange={(event) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, statement: event.target.value }));
-            }}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, statement: event.target.value }))
+            }
             autoFocus
             required
           />
@@ -61,10 +55,9 @@ export function BriefFindingEditor({
           <Textarea
             id={id}
             value={draft.whyItMatters}
-            onChange={(event) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, whyItMatters: event.target.value }));
-            }}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, whyItMatters: event.target.value }))
+            }
             placeholder="Explain how this fact shapes the change."
           />
         )}
@@ -78,35 +71,15 @@ export function BriefFindingEditor({
           <Textarea
             id={id}
             value={draft.sources}
-            onChange={(event) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, sources: event.target.value }));
-            }}
-            required={section.sourcePolicy !== "optional"}
-            placeholder={
-              section.sourcePolicy === "code"
-                ? "src/path/file.ts#Symbol"
-                : "Code, document, issue, or other useful source"
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, sources: event.target.value }))
             }
+            required={section.sourcePolicy !== "optional"}
+            placeholder={sourcePlaceholder(section.sourcePolicy)}
             className="min-h-20 font-mono text-xs"
           />
         )}
       </LabeledEditorField>
-
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
-
-      <div className="flex justify-end gap-2 pt-1">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" size="sm">
-          Save changes
-        </Button>
-      </div>
-    </form>
+    </EditorForm>
   );
 }

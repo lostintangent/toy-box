@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { FlowExhibit, BriefDocument } from "../schema";
 import { fixture, flowExhibit, parse } from "../testFixtures";
-import { entityFlowConnections, flowGraph } from "./flow";
+import { entityLinks } from "../query/links";
+import { flowGraph, flowPathThrough } from "./flow";
 
 function changedFlow(change: (flow: FlowExhibit) => void): BriefDocument {
   const document = structuredClone(fixture());
@@ -23,6 +24,12 @@ describe("brief flow", () => {
         to: "rendered-result",
         label: "produces",
       });
+      flow.connections.push({
+        id: "ordinary-tools-render-directly",
+        from: "ordinary-tools",
+        to: "rendered-result",
+        label: "can render directly",
+      });
       flow.paths[0]!.connectionIds.push("fallback-produces-result");
       flow.regions![1]!.nodeIds.push("rendered-result");
     });
@@ -40,6 +47,9 @@ describe("brief flow", () => {
       "ordinary-tools-preserve-fallback",
       "fallback-produces-result",
     ]);
+    expect(graph.supportingConnections.map((connection) => connection.id)).toEqual([
+      "ordinary-tools-render-directly",
+    ]);
     expect(graph.regions[1]?.nodes.map((node) => node.id)).toEqual([
       "fallback-owner",
       "block",
@@ -50,7 +60,7 @@ describe("brief flow", () => {
     ).toBeUndefined();
 
     expect(
-      entityFlowConnections(parsed.value, "fallback-owner").map(
+      entityLinks(parsed.value, "fallback-owner").flows.map(
         ({ flow: owner, connection, outgoing, related }) => ({
           flow: owner.id,
           connection: connection.id,
@@ -72,6 +82,14 @@ describe("brief flow", () => {
         related: "ordinary-tools",
       },
     ]);
+  });
+
+  test("finds the path through a node, preferring one that already shows it", () => {
+    const document = fixture();
+    const graph = flowGraph(document, flowExhibit(document, "shared-rendering-flow"));
+
+    expect(flowPathThrough(graph, "ordinary-tools", "fallback-route")).toBe("fallback-route");
+    expect(flowPathThrough(graph, "block", "fallback-route")).toBe("shared-body-route");
   });
 
   test("rejects flows whose owned graph cannot be followed honestly", () => {

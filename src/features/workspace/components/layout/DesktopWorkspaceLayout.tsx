@@ -3,8 +3,10 @@ import type { ImperativePanelHandle } from "react-resizable-panels";
 import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
+import { cn } from "@/shared/utils";
 import { TerminalShell } from "@terminal/components/TerminalShell";
 import { HyperSession, type HyperSessionProps } from "./HyperSession";
+import { CARD_CLASS, CARD_INSET_CLASS } from "./card";
 import { Sidebar, type SidebarProps } from "@workspace/components/sidebar/Sidebar";
 import {
   WorkspaceGrid,
@@ -67,55 +69,53 @@ export function DesktopWorkspaceLayout({
   }
 
   return (
-    <div className="h-full hidden md:block">
-      <div className="flex h-full">
-        <Sidebar {...sidebar} />
+    <div className={cn("hidden h-full bg-backdrop md:flex", CARD_INSET_CLASS)}>
+      <Sidebar {...sidebar} />
 
-        <div className="min-w-0 flex-1">
-          <ResizablePanelGroup direction="vertical" className="h-full">
-            <ResizablePanel order={1} defaultSize={open ? 100 - size : 100}>
-              <div className="h-full overflow-hidden relative">
-                <WorkspaceGrid {...workspace} />
-              </div>
-            </ResizablePanel>
+      <div className="min-w-0 flex-1">
+        <ResizablePanelGroup direction="vertical" className="h-full">
+          <ResizablePanel order={1} defaultSize={open ? 100 - size : 100}>
+            <WorkspaceGrid {...workspace} />
+          </ResizablePanel>
 
-            <ResizableHandle
-              disabled={!open}
-              onDragging={handleTerminalDragging}
-              className={!open ? "hidden" : ""}
-            />
-            <ResizablePanel
-              ref={terminalPanelRef}
-              id="terminal"
-              order={2}
-              defaultSize={open ? size : 0}
-              minSize={15}
-              maxSize={80}
-              collapsible
-              collapsedSize={0}
-              onResize={handleTerminalResize}
-              onCollapse={() => onOpenChange(false)}
-              onExpand={() => onOpenChange(true)}
-              className={
-                !isTerminalDragging ? "transition-[flex-grow] duration-300 ease-layout" : ""
-              }
-            >
-              <AnimatePresence initial={false}>
-                {open && (
-                  <m.div
-                    key="desktop-terminal"
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0, transition: { duration: 0.3 } }}
-                    className="h-full border-t"
-                  >
+          <ResizableHandle
+            gap
+            disabled={!open}
+            onDragging={handleTerminalDragging}
+            className={cn(!open && "hidden")}
+          />
+          <ResizablePanel
+            ref={terminalPanelRef}
+            id="terminal"
+            order={2}
+            defaultSize={open ? size : 0}
+            minSize={15}
+            maxSize={80}
+            collapsible
+            collapsedSize={0}
+            onResize={handleTerminalResize}
+            onCollapse={() => onOpenChange(false)}
+            onExpand={() => onOpenChange(true)}
+            className={!isTerminalDragging ? "transition-[flex-grow] duration-300 ease-layout" : ""}
+          >
+            <AnimatePresence initial={false}>
+              {open && (
+                <m.div
+                  key="desktop-terminal"
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0, transition: { duration: 0.3 } }}
+                  className={cn("size-full", CARD_INSET_CLASS)}
+                >
+                  <div className={cn(CARD_CLASS, "h-full")}>
                     <TerminalShell onClose={() => onOpenChange(false)}>{body}</TerminalShell>
-                  </m.div>
-                )}
-              </AnimatePresence>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </div>
+                  </div>
+                </m.div>
+              )}
+            </AnimatePresence>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
+
       {hyper && <HyperSession {...hyper} />}
     </div>
   );

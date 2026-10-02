@@ -4,6 +4,7 @@ import {
   type ChannelMessage,
   type ChannelSystemMessage,
 } from "@channels/model";
+import type { ChannelRequestState } from "@channels/model/requests";
 
 // Consecutive messages from one agent within this window share a header.
 const RUN_WINDOW_MS = 10 * 60 * 1000;
@@ -49,6 +50,19 @@ export function transcriptRows(
     }
   }
   return rows;
+}
+
+/** The latest pending request whose message is loaded, which a reply answers, and its row. */
+export function pendingRequestRow(
+  rows: readonly TranscriptRow[],
+  requests: ReadonlyMap<number, ChannelRequestState>,
+): { sequence: number; index: number } | undefined {
+  const pending = [...requests].filter(([, state]) => state === "pending");
+  const sequence = Math.max(...pending.map(([sequence]) => sequence));
+  const index = rows.findIndex((row) =>
+    row.messages.some((message) => message.sequence === sequence),
+  );
+  return index < 0 ? undefined : { sequence, index };
 }
 
 /** "Today", "Yesterday", or the full day, adding the year only when it isn't the current one. */

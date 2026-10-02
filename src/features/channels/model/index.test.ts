@@ -5,6 +5,7 @@ import {
   channelAudienceLabel,
   channelLead,
   channelCompletionBlockers,
+  channelRoutineInputSchema,
   channelSystemMessageContentSchema,
   editChannelInputSchema,
   resolveChannelAudience,
@@ -202,4 +203,24 @@ test("channel edits change only allowed properties", () => {
       directory: "/different-project",
     }).success,
   ).toBe(false);
+});
+
+describe("channel routines", () => {
+  test.each(["0 9 * * 1-5", "30 */2 * * *", "0 * * * *", "15 8 1 * *"])(
+    "accepts %s because one fixed minute runs at most hourly",
+    (schedule) => {
+      expect(
+        channelRoutineInputSchema.safeParse({ title: "CI", schedule, prompt: "Check CI" }).success,
+      ).toBe(true);
+    },
+  );
+
+  test.each(["*/15 * * * *", "0,30 9 * * *", "0-5 9 * * *", "@hourly", "0 0 9 * * *"])(
+    "rejects %s",
+    (schedule) => {
+      expect(
+        channelRoutineInputSchema.safeParse({ title: "CI", schedule, prompt: "Check CI" }).success,
+      ).toBe(false);
+    },
+  );
 });

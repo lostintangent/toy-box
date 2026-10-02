@@ -1,13 +1,12 @@
 import {
   decisionEntity,
   exhibitEntity,
-  briefEntitiesFrom,
   recordEntity,
-  selectedDecisionOption,
-  selectedAdditionsFrom,
+  sectionEntity,
   type BriefEntity,
-} from "../query/reading";
-import { buildBriefIndex, type BriefIndex } from "../query/structure";
+} from "../query/entities";
+import { activeAdditions, activeOptions, isSelfContainedOption } from "../query/options";
+import { buildBriefIndex, isDescriptionSection, type BriefIndex } from "../query/structure";
 import type { Decision, BriefDocument, Question } from "../schema";
 
 /** Execution inputs and settlement state derived from a Brief document's effective spec. */
@@ -27,7 +26,7 @@ export function specState(document: BriefDocument): SpecState {
   );
 
   return {
-    guidance: specGuidanceFrom(index),
+    guidance: index.specSections.filter(isDescriptionSection).map(sectionEntity),
     requirements: specRequirementsFrom(index),
     openQuestions,
     unresolvedDecisions,
@@ -36,23 +35,11 @@ export function specState(document: BriefDocument): SpecState {
 }
 
 export function unresolvedDependencies(document: BriefDocument, decision: Decision): Question[] {
-  return unresolvedDependenciesFrom(buildBriefIndex(document.sections), decision);
-}
-
-function unresolvedDependenciesFrom(index: BriefIndex, decision: Decision): Question[] {
+  const { questionsById } = buildBriefIndex(document.sections);
   return decision.dependsOn.flatMap((questionId) => {
-    const dependency = index.questionsById.get(questionId);
+    const dependency = questionsById.get(questionId);
     return dependency && !dependency.answer ? [dependency] : [];
   });
-}
-
-function specGuidanceFrom(index: BriefIndex): BriefEntity[] {
-  const guidanceIds = new Set(
-    index.specSections
-      .filter((section) => section.kind === "markdown" || section.kind === "list")
-      .map((section) => section.id),
-  );
-  return briefEntitiesFrom(index).filter((entity) => guidanceIds.has(entity.id));
 }
 
 function specRequirementsFrom(index: BriefIndex): BriefEntity[] {
@@ -67,24 +54,19 @@ function specRequirementsFrom(index: BriefIndex): BriefEntity[] {
       ...section.items
         .filter((record) => record.change !== "existing")
         .map((record) => recordEntity(section, record)),
-      ...selectedAdditionsFrom(index, section.id)
-        .filter((selected) => selected.status === "decided")
-        .map((selected) => recordEntity(section, selected.item)),
+      ...activeAdditions(index, section.id)
+        .filter(({ activeOption }) => activeOption.status === "decided")
+        .map(({ record }) => recordEntity(section, record)),
     ];
   });
-  const optionExhibits: BriefEntity[] = index.decisions.flatMap((decision) => {
-    if (decision.choice?.status !== "decided") return [];
-    const option = selectedDecisionOption(decision);
-    return option?.exhibit
+  const decided = activeOptions(index).filter(({ status }) => status === "decided");
+  const optionExhibits = decided.flatMap(({ decision, option }) =>
+    option.exhibit
       ? [exhibitEntity(option.exhibit, { kind: "decision-option", decision, option })]
-      : [];
-  });
-  const decisions: BriefEntity[] = index.decisions
-    .filter((decision) => {
-      if (decision.choice?.status !== "decided") return false;
-      const option = selectedDecisionOption(decision);
-      return option?.adds.length === 0 && !option.exhibit;
-    })
-    .map((decision) => decisionEntity(decision));
+      : [],
+  );
+  const decisions = decided
+    .filter(({ option }) => isSelfContainedOption(option))
+    .map(({ decision }) => decisionEntity(decision));
   return [...sectionRequirements, ...optionExhibits, ...decisions];
 }

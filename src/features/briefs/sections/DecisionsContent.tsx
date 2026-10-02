@@ -3,8 +3,6 @@ import {
   BookOpenText,
   Check,
   ChevronRight,
-  CircleCheck,
-  FlaskConical,
   GitBranch,
   GitFork,
   Loader2,
@@ -12,99 +10,31 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/shared/utils";
-import { Markdown } from "@/shared/ui/markdown";
+import { briefActionKey } from "../actions";
 import {
+  clearDecisionChoice,
+  decide,
   decisionStatus,
-  fieldValueText,
   findRecordsSection,
   briefEntities,
   recordLabel,
+  reopenDecision,
+  selectDecisionOption,
   unresolvedDependencies,
-  type Decision,
-  type DecisionStatus,
   type BriefDocument,
+  type BriefEdit,
   type BriefEntityId,
+  type Decision,
   type OptionAddition,
-  type Question,
-  type ResolutionSection,
-} from "../../model/index";
-import { BriefExhibitCard } from "../definition";
-import { ChangeTag, optionRelationshipLabel, Tag } from "../shared";
-
-/** Questions and decisions are the reader-facing surface for reviewing and settling the spec. */
-
-const DECISION_STATUS: Record<DecisionStatus, { label: string; className: string }> = {
-  decided: { label: "Decided", className: "bg-emerald-500/10 text-emerald-400" },
-  provisional: { label: "Trying", className: "bg-amber-500/10 text-amber-400" },
-  open: { label: "Open", className: "bg-zinc-500/10 text-zinc-400" },
-};
-
-const ANSWER_METHOD_LABEL: Record<Question["answerMethod"], string> = {
-  "investigate-code": "Check the code",
-  "run-experiment": "Try it",
-};
-
-/** Questions and decisions that determine whether the effective spec is settled. */
-export function BriefResolutionContent({
-  document,
-  section,
-  baseUri,
-  focusedEntityId,
-  editable,
-  pending,
-  onExplainRecord,
-  onInspect,
-  onInvestigateQuestion,
-  onSelectDecisionOption,
-  onRecordDecision,
-  onReopenDecision,
-  onClearDecisionChoice,
-  onReopenQuestion,
-}: {
-  document: BriefDocument;
-  section: ResolutionSection;
-  baseUri?: string;
-  focusedEntityId?: BriefEntityId;
-  editable: boolean;
-  pending: ReadonlySet<string>;
-  onExplainRecord?: (recordId: string) => void;
-  onInspect?: (entityId: BriefEntityId) => void;
-  onInvestigateQuestion?: (questionId: string) => void;
-  onSelectDecisionOption: (decisionId: string, optionId: string) => void;
-  onRecordDecision: (decisionId: string) => void;
-  onReopenDecision: (decisionId: string) => void;
-  onClearDecisionChoice: (decisionId: string) => void;
-  onReopenQuestion: (questionId: string) => void;
-}) {
-  if (section.kind === "questions") {
-    return (
-      <QuestionsSection
-        questions={section.items}
-        editable={editable}
-        pending={pending}
-        onInvestigateQuestion={onInvestigateQuestion}
-        onReopen={onReopenQuestion}
-      />
-    );
-  }
-
-  return (
-    <DecisionsSection
-      document={document}
-      decisions={section.items}
-      baseUri={baseUri}
-      focusedEntityId={focusedEntityId}
-      editable={editable}
-      pending={pending}
-      onExplainRecord={onExplainRecord}
-      onInspect={onInspect}
-      onSelectDecisionOption={onSelectDecisionOption}
-      onRecordDecision={onRecordDecision}
-      onReopen={onReopenDecision}
-      onClearDecisionChoice={onClearDecisionChoice}
-    />
-  );
-}
+} from "../model/index";
+import { ExhibitCard } from "./ExhibitsContent";
+import {
+  ChangeTag,
+  DECISION_STATUS_PRESENTATION,
+  FieldValueText,
+  optionRelationshipLabel,
+  Tag,
+} from "./vocabulary";
 
 function AdditionExplanation({
   item,
@@ -179,7 +109,8 @@ function AdditionExplanation({
   );
 }
 
-export function DecisionsSection({
+/** Decisions whose options a reader can try, commit, revisit, or clear. */
+export function DecisionsContent({
   document,
   decisions,
   baseUri,
@@ -188,10 +119,7 @@ export function DecisionsSection({
   pending,
   onExplainRecord,
   onInspect,
-  onSelectDecisionOption,
-  onRecordDecision,
-  onReopen,
-  onClearDecisionChoice,
+  onEdit,
 }: {
   document: BriefDocument;
   decisions: Decision[];
@@ -201,10 +129,7 @@ export function DecisionsSection({
   pending: ReadonlySet<string>;
   onExplainRecord?: (recordId: string) => void;
   onInspect?: (entityId: BriefEntityId) => void;
-  onSelectDecisionOption: (decisionId: string, optionId: string) => void;
-  onRecordDecision: (decisionId: string) => void;
-  onReopen: (decisionId: string) => void;
-  onClearDecisionChoice: (decisionId: string) => void;
+  onEdit: (edit: BriefEdit) => void;
 }) {
   const entities = briefEntities(document);
   const entityLabel = (entityId: BriefEntityId) =>
@@ -217,7 +142,7 @@ export function DecisionsSection({
         const blockedByDependency = dependencies.length > 0;
         const currentStatus = decisionStatus(item);
         const unresolved = currentStatus !== "decided";
-        const status = DECISION_STATUS[currentStatus];
+        const status = DECISION_STATUS_PRESENTATION[currentStatus];
 
         return (
           <div
@@ -266,7 +191,9 @@ export function DecisionsSection({
                       type="button"
                       aria-pressed={selected}
                       disabled={!editable}
-                      onClick={() => onSelectDecisionOption(item.id, option.id)}
+                      onClick={() =>
+                        onEdit((brief) => selectDecisionOption(brief, item.id, option.id))
+                      }
                       className={cn(
                         "block w-full p-2.5 text-left",
                         !editable && "cursor-default opacity-70",
@@ -300,7 +227,7 @@ export function DecisionsSection({
                     </button>
                     {option.exhibit && (
                       <div className="mx-2.5 mb-2.5">
-                        <BriefExhibitCard
+                        <ExhibitCard
                           document={document}
                           exhibit={option.exhibit}
                           baseUri={baseUri}
@@ -337,20 +264,23 @@ export function DecisionsSection({
                                     {section.fields.map((field) => (
                                       <div key={field.id} className="flex items-start gap-1">
                                         <span className="shrink-0 font-medium">{field.label}:</span>
-                                        {field.kind === "text" ? (
-                                          <Markdown className="min-w-0 space-y-1">
-                                            {fieldValueText(field, addition.values[field.id])}
-                                          </Markdown>
-                                        ) : (
-                                          fieldValueText(field, addition.values[field.id])
-                                        )}
+                                        <FieldValueText
+                                          field={field}
+                                          value={addition.values[field.id]}
+                                          className="min-w-0 space-y-1"
+                                        />
                                       </div>
                                     ))}
                                   </div>
                                 )}
                                 <AdditionExplanation
                                   item={addition}
-                                  pending={pending.has(`explain-record:${addition.id}`)}
+                                  pending={pending.has(
+                                    briefActionKey({
+                                      action: "explain-record",
+                                      recordId: addition.id,
+                                    }),
+                                  )}
                                   onExplainRecord={onExplainRecord}
                                 />
                               </div>
@@ -389,7 +319,7 @@ export function DecisionsSection({
                 <button
                   type="button"
                   disabled={blockedByDependency}
-                  onClick={() => onRecordDecision(item.id)}
+                  onClick={() => onEdit((brief) => decide(brief, item.id))}
                   className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-1 text-[10.5px] font-medium text-emerald-400 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <Check className="size-3" />
@@ -397,7 +327,7 @@ export function DecisionsSection({
                 </button>
                 <button
                   type="button"
-                  onClick={() => onClearDecisionChoice(item.id)}
+                  onClick={() => onEdit((brief) => clearDecisionChoice(brief, item.id))}
                   className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10.5px] text-muted-foreground hover:text-foreground"
                 >
                   <Trash2 className="size-3" />
@@ -408,91 +338,12 @@ export function DecisionsSection({
             {editable && currentStatus === "decided" && (
               <button
                 type="button"
-                onClick={() => onReopen(item.id)}
+                onClick={() => onEdit((brief) => reopenDecision(brief, item.id))}
                 className="mt-2 inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10.5px] text-muted-foreground hover:text-foreground"
               >
                 <RotateCcw className="size-3" />
                 Revisit
               </button>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-export function QuestionsSection({
-  questions,
-  editable,
-  pending,
-  onInvestigateQuestion,
-  onReopen,
-}: {
-  questions: Question[];
-  editable: boolean;
-  pending: ReadonlySet<string>;
-  onInvestigateQuestion?: (questionId: string) => void;
-  onReopen?: (questionId: string) => void;
-}) {
-  return (
-    <div className="space-y-2.5">
-      {questions.map((item) => {
-        const resolved = Boolean(item.answer);
-        const busy = pending.has(`investigate-question:${item.id}`);
-        const experiment = item.answerMethod === "run-experiment";
-        const InvestigationIcon = experiment ? FlaskConical : GitBranch;
-        const investigationLabel = experiment ? "Try it" : "Check code";
-        return (
-          <div
-            key={item.id}
-            className={cn(
-              "rounded-lg border border-l-2 bg-muted/20 p-2.5",
-              resolved ? "border-l-emerald-500/70 opacity-70" : "border-l-rose-500",
-            )}
-          >
-            <div className="text-[12px]">{item.question}</div>
-            <div className="mt-1 flex flex-wrap gap-1.5">
-              <Tag className="bg-zinc-500/10 text-zinc-400">
-                {ANSWER_METHOD_LABEL[item.answerMethod]}
-              </Tag>
-            </div>
-            {item.impact && (
-              <div className="mt-1 text-[10.5px] text-muted-foreground">{item.impact}</div>
-            )}
-            {resolved ? (
-              <div className="mt-1">
-                <div className="flex items-start gap-1 text-[10.5px] text-emerald-400">
-                  <CircleCheck className="mt-0.5 size-3 shrink-0" />
-                  {item.answer}
-                </div>
-                {editable && onReopen && (
-                  <button
-                    type="button"
-                    onClick={() => onReopen(item.id)}
-                    className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10.5px] text-muted-foreground hover:text-foreground"
-                  >
-                    <RotateCcw className="size-3" />
-                    Revisit question
-                  </button>
-                )}
-              </div>
-            ) : (
-              (editable || busy) && (
-                <button
-                  type="button"
-                  disabled={!onInvestigateQuestion || busy}
-                  onClick={() => onInvestigateQuestion?.(item.id)}
-                  className="mt-2 inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-[10.5px] text-sky-400 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {busy ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <InvestigationIcon className="size-3" />
-                  )}
-                  {busy ? "Pending..." : investigationLabel}
-                </button>
-              )
             )}
           </div>
         );

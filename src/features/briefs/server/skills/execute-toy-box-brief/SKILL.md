@@ -1,6 +1,6 @@
 ---
 name: execute-toy-box-brief
-description: "Execute, resume, or review the settled implementation plan in a Toy Box `.brief` document. Advance durable plan-step status and publish execution results for `metadata.brief.action: execute-plan`; inspect the completed outcome and append only warranted follow-up work for `metadata.brief.action: review-outcome`."
+description: "Execute, resume, or review the settled implementation plan in a Toy Box `.brief` document. When asked to execute or resume, advance durable plan-step status and publish execution results; when asked to review a completed brief's outcome, inspect what landed and append only warranted follow-up work."
 user-invocable: false
 ---
 
@@ -21,9 +21,10 @@ Before changing code or the brief:
 3. Read the relevant repository guides, implementation, tests, and direct
    consumers for the next unfinished step.
 
-Follow only the workflow requested by `metadata.brief.action`. An explicit
-human request to implement or resume means `execute-plan`; an explicit request
-to inspect what landed after completion means `review-outcome`.
+Follow only the requested workflow. A request to implement, execute, or resume
+the plan means [Execute or resume the plan](#execute-or-resume-the-plan); a
+request to review or inspect what landed after completion means
+[Review the completed outcome](#review-the-completed-outcome).
 
 ## Execute or resume the plan
 
@@ -128,4 +129,4 @@ the evidence that determined it, and why follow-up was or was not warranted. Use
 the same `Execution results` tab-partition rules as execution, keep every
 top-level section in exactly one tab, validate the complete brief, and stop.
 When follow-up work was added, the derived plan becomes executable again and a
-later `execute-plan` resumes after the completed work.
+later execution run resumes after the completed work.

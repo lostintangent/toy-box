@@ -8,7 +8,7 @@ import { isWorkspaceSessionLive } from "@workspace/model/state/reducer";
 import type { UserMessage as UserMessageType } from "../../../model";
 import { sessionMutations } from "../../../mutations";
 import { useCurrentSession } from "../../CurrentSessionContext";
-import { UserMessage } from "./UserMessage";
+import { UserMessage } from "@/shared/messages/UserMessage";
 
 export function SessionUserMessage({ message }: { message: UserMessageType }) {
   const { sessionId, mode } = useCurrentSession();

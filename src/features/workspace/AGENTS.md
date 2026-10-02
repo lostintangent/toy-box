@@ -13,6 +13,10 @@ cross-feature presentation requires it. Workspace is therefore a high-level feat
 features contribute facts and surfaces, while the main route assembles the product through
 Workspace.
 
+Feature components may consume narrow Workspace capabilities such as pane slots and output
+presentation; those reusable capabilities remain independent of their consuming features.
+`src/shared` remains independent of feature modules.
+
 ## Shared projection
 
 `WorkspaceState` is the aggregate read model delivered during SSR and refreshed after reconnects.
@@ -136,6 +140,11 @@ and local surface state, and portals the active pane's controls into its toolbar
 `components/panes/hosts` owns collection geometry and pane visibility. `components/panes/shell`
 owns the single-pane feature adapter and the chrome slots supplied by those hosts. Neither owns the
 feature state rendered inside a pane.
+
+[`components/outputs/`](components/outputs/) groups `ComposerTray.tsx`, `ArtifactPill.tsx`, and
+`ChecklistPopup.tsx` for Session and Channel output presentation. They combine Files identity and
+previews with the current surface's pane focus and file-worker activity. Callers supply their
+artifacts, checklist, and additional controls.
 
 One sparse browser cookie retains non-default `WorkspaceLayout` values across reloads and SSR.
 `sidebarCollapsed` is the shared visibility fact: it produces the desktop rail or reveals the

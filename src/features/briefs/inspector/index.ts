@@ -1,1 +1,0 @@
-export { BriefEntityInspector } from "./EntityInspector";

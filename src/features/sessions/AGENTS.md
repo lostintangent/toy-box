@@ -114,12 +114,16 @@ mutation observers and browser-local interaction state. Reusable managed-session
 Inbox may consume the composer or location controls directly.
 
 The composer stacks what a session produced (artifacts newest first, plus todo progress and changed
-files) and what is waiting (queued messages) above the message being written. Channels dock the same
-`ComposerTray` for their shared artifacts, checklist, and preview. Queued user messages can be sent now, removed, or edited:
+files) and what is waiting (queued messages) above the message being written. Sessions and Channels
+share Workspace's [`ComposerTray`](../workspace/components/outputs/ComposerTray.tsx).
+Queued user messages can be sent now, removed, or edited:
 editing takes a message out of the queue and back into the draft, as does stopping the turn, so
 queued input never disappears. Draft text syncs through the
 workspace. `/` completes skills at the start of a prompt and
 `@` inserts working-directory file paths as plain text, so references need no message schema.
+
+`SessionUserMessage` adds session rewind to the feature-independent
+[`UserMessage`](../../shared/messages/UserMessage.tsx), which also exports `CopyControl`.
 
 Assistant Markdown keeps Streamdown's
 HTML and protocol sanitization but omits URL hardening so relative links remain semantic anchors;

@@ -1,14 +1,16 @@
 import { buildBriefIndex } from "../query/structure";
 import type {
-  FlowExhibit,
   BriefDocument,
   BriefExhibit,
-  OptionRelationship,
   BriefSection,
+  Decision,
+  DecisionOption,
+  FlowExhibit,
   PlanSection,
+  PlanStep,
 } from "../schema";
 import { flowConnectionsReachableFrom, flowNodeId } from "../spec/flow";
-import { transformSections } from "./sections";
+import { mapEach } from "./immutable";
 
 /**
  * Restore every reference invariant invalidated by removing authoritative
@@ -19,155 +21,133 @@ export function repairAfterEntityRemoval(
   initiallyRemovedEntityIds: ReadonlySet<string>,
 ): BriefDocument {
   const removedEntityIds = new Set(initiallyRemovedEntityIds);
-  const initialIndex = buildBriefIndex(document.sections);
-  const recordSectionIds = new Set(initialIndex.recordsSections.map((section) => section.id));
-  for (const addition of initialIndex.decisions.flatMap((decision) =>
+  const index = buildBriefIndex(document.sections);
+  const recordSectionIds = new Set(index.recordsSections.map((section) => section.id));
+  for (const addition of index.decisions.flatMap((decision) =>
     decision.options.flatMap((option) => option.adds),
   )) {
     if (!recordSectionIds.has(addition.sectionId)) removedEntityIds.add(addition.id);
   }
 
-  let next = {
-    ...document,
-    sections: repairFlowSections(document.sections, removedEntityIds),
-  };
-
-  const repairedIndex = buildBriefIndex(next.sections);
-  const remainingRecordSectionIds = new Set(
-    repairedIndex.recordsSections.map((section) => section.id),
+  // Flow repair can remove further exhibits, so it settles the removed set first.
+  const withRepairedFlows = repairFlows(document, removedEntityIds);
+  return repairTabs(
+    mapEach(withRepairedFlows, "sections", (section) =>
+      repairReferences(section, removedEntityIds),
+    ),
   );
-  const keepRelationship = (relationship: OptionRelationship) =>
-    !removedEntityIds.has(relationship.from) && !removedEntityIds.has(relationship.to);
+}
 
-  next = transformSections(next, (section) => {
-    if (section.kind === "records") {
-      const items = section.items.map((item) => repairGrounding(item, removedEntityIds));
-      return items.some((item, index) => item !== section.items[index])
-        ? { ...section, items }
-        : section;
-    }
-    if (section.kind === "exhibits") {
-      const items = section.items.map((item) => repairGrounding(item, removedEntityIds));
-      return items.some((item, index) => item !== section.items[index])
-        ? { ...section, items }
-        : section;
-    }
-    if (section.kind === "questions") {
-      return {
-        ...section,
-        items: section.items.map((question) => ({
-          ...question,
-          affects: question.affects.filter((entityId) => !removedEntityIds.has(entityId)),
-        })),
-      };
-    }
-    if (section.kind !== "decisions") return section;
-    return {
-      ...section,
-      items: section.items.map((decision) =>
-        repairGrounding(
-          {
-            ...decision,
-            dependsOn: decision.dependsOn.filter((questionId) => !removedEntityIds.has(questionId)),
-            affects: decision.affects.filter((entityId) => !removedEntityIds.has(entityId)),
-            options: decision.options.map((option) => {
-              const adds = option.adds
-                .filter(
-                  (addition) =>
-                    !removedEntityIds.has(addition.id) &&
-                    remainingRecordSectionIds.has(addition.sectionId),
-                )
-                .map((addition) => repairGrounding(addition, removedEntityIds));
-              const relationships = (option.relationships ?? []).filter(keepRelationship);
-              const exhibit = option.exhibit
-                ? repairGrounding(option.exhibit, removedEntityIds)
-                : undefined;
-              const { relationships: _relationships, exhibit: _exhibit, ...optionFields } = option;
-              return {
-                ...optionFields,
-                adds,
-                ...(exhibit ? { exhibit } : {}),
-                ...(relationships.length > 0 ? { relationships } : {}),
-              };
-            }),
-          },
-          removedEntityIds,
-        ),
-      ),
-    };
-  });
-  next = {
-    ...next,
-    sections: repairPlansAfterRemoval(next.sections, removedEntityIds),
+function repairFlows(document: BriefDocument, removedEntityIds: Set<string>): BriefDocument {
+  const repairOwnedFlow = <Owner extends { exhibit?: BriefExhibit }>(owner: Owner): Owner => {
+    if (owner.exhibit?.kind !== "flow") return owner;
+    const exhibit = repairFlowAfterRemoval(owner.exhibit, removedEntityIds);
+    if (exhibit === owner.exhibit) return owner;
+    if (exhibit) return { ...owner, exhibit };
+    removedEntityIds.add(owner.exhibit.id);
+    const { exhibit: _exhibit, ...withoutExhibit } = owner;
+    return withoutExhibit as Owner;
   };
 
-  if (!next.tabs) return next;
-  const remainingSectionIds = new Set(next.sections.map((section) => section.id));
-  const tabs = next.tabs.flatMap((tab) => {
+  return mapEach(document, "sections", (section) => {
+    if (section.kind === "findings") return mapEach(section, "items", repairOwnedFlow);
+    if (section.kind === "decisions") {
+      return mapEach(section, "items", (decision) => mapEach(decision, "options", repairOwnedFlow));
+    }
+    if (section.kind !== "exhibits") return section;
+
+    const repaired = mapEach(section, "items", (item) => {
+      if (item.kind !== "flow") return item;
+      const flow = repairFlowAfterRemoval(item, removedEntityIds);
+      if (!flow) removedEntityIds.add(item.id);
+      return flow;
+    });
+    if (repaired.items.length > 0) return repaired;
+    removedEntityIds.add(section.id);
+    return undefined;
+  });
+}
+
+function repairReferences(
+  section: BriefSection,
+  removedEntityIds: ReadonlySet<string>,
+): BriefSection | undefined {
+  switch (section.kind) {
+    case "records":
+      return mapEach(section, "items", (item) => repairGrounding(item, removedEntityIds));
+    case "exhibits":
+      return mapEach(section, "items", (item) => repairGrounding(item, removedEntityIds));
+    case "questions":
+      return mapEach(section, "items", (question) =>
+        mapEach(question, "affects", surviving(removedEntityIds)),
+      );
+    case "decisions":
+      return mapEach(section, "items", (decision) => repairDecision(decision, removedEntityIds));
+    case "plan":
+      return repairPlan(section, removedEntityIds);
+    default:
+      return section;
+  }
+}
+
+function repairDecision(decision: Decision, removedEntityIds: ReadonlySet<string>): Decision {
+  const repairOption = (option: DecisionOption): DecisionOption => {
+    let next = mapEach(option, "adds", (addition) =>
+      removedEntityIds.has(addition.id) ? undefined : repairGrounding(addition, removedEntityIds),
+    );
+    if (next.exhibit) {
+      const exhibit = repairGrounding(next.exhibit, removedEntityIds);
+      if (exhibit !== next.exhibit) next = { ...next, exhibit };
+    }
+    const related = mapEach(next, "relationships", (relationship) =>
+      removedEntityIds.has(relationship.from) || removedEntityIds.has(relationship.to)
+        ? undefined
+        : relationship,
+    );
+    return withoutEmpty(related, "relationships");
+  };
+
+  const repaired = mapEach(
+    mapEach(
+      mapEach(decision, "dependsOn", surviving(removedEntityIds)),
+      "affects",
+      surviving(removedEntityIds),
+    ),
+    "options",
+    repairOption,
+  );
+  return repairGrounding(repaired, removedEntityIds);
+}
+
+function repairPlan(
+  section: PlanSection,
+  removedEntityIds: ReadonlySet<string>,
+): PlanSection | undefined {
+  const repairStep = (step: PlanStep) => {
+    const repaired = mapEach(step, "implements", surviving(removedEntityIds));
+    return repaired.implements.length > 0 ? repaired : undefined;
+  };
+  if ("steps" in section) {
+    const repaired = mapEach(section, "steps", repairStep);
+    return repaired.steps.length > 0 ? repaired : undefined;
+  }
+  const repaired = mapEach(section, "phases", (phase) => {
+    const next = mapEach(phase, "steps", repairStep);
+    return next.steps.length > 0 ? next : undefined;
+  });
+  return repaired.phases.length > 0 ? repaired : undefined;
+}
+
+function repairTabs(document: BriefDocument): BriefDocument {
+  if (!document.tabs) return document;
+  const remainingSectionIds = new Set(document.sections.map((section) => section.id));
+  const tabs = document.tabs.flatMap((tab) => {
     const sections = tab.sections.filter((id) => remainingSectionIds.has(id));
     return sections.length > 0 ? [{ ...tab, sections }] : [];
   });
-  if (tabs.length > 1) return { ...next, tabs };
-  const { tabs: _tabs, ...withoutTabs } = next;
+  if (tabs.length > 1) return { ...document, tabs };
+  const { tabs: _tabs, ...withoutTabs } = document;
   return withoutTabs;
-}
-
-function repairFlowSections(
-  sections: readonly BriefSection[],
-  removedEntityIds: Set<string>,
-): BriefSection[] {
-  return sections.flatMap((section): BriefSection[] => {
-    if (section.kind === "findings") {
-      const items = section.items.map((finding) => {
-        if (finding.exhibit?.kind !== "flow") return finding;
-        const exhibit = repairFlowAfterRemoval(finding.exhibit, removedEntityIds);
-        if (exhibit === finding.exhibit) return finding;
-        if (exhibit) return { ...finding, exhibit };
-        removedEntityIds.add(finding.exhibit.id);
-        const { exhibit: _exhibit, ...withoutExhibit } = finding;
-        return withoutExhibit;
-      });
-      return items.some((finding, index) => finding !== section.items[index])
-        ? [{ ...section, items }]
-        : [section];
-    }
-    if (section.kind === "decisions") {
-      const items = section.items.map((decision) => {
-        const options = decision.options.map((option) => {
-          if (option.exhibit?.kind !== "flow") return option;
-          const exhibit = repairFlowAfterRemoval(option.exhibit, removedEntityIds);
-          if (exhibit === option.exhibit) return option;
-          if (exhibit) return { ...option, exhibit };
-          removedEntityIds.add(option.exhibit.id);
-          const { exhibit: _exhibit, ...withoutExhibit } = option;
-          return withoutExhibit;
-        });
-        return options.some((option, index) => option !== decision.options[index])
-          ? { ...decision, options }
-          : decision;
-      });
-      return items.some((decision, index) => decision !== section.items[index])
-        ? [{ ...section, items }]
-        : [section];
-    }
-    if (section.kind !== "exhibits") return [section];
-
-    const items = section.items.flatMap((item): BriefExhibit[] => {
-      if (item.kind !== "flow") return [item];
-      const repaired = repairFlowAfterRemoval(item, removedEntityIds);
-      if (repaired) return [repaired];
-      removedEntityIds.add(item.id);
-      return [];
-    });
-    if (items.length === 0) {
-      removedEntityIds.add(section.id);
-      return [];
-    }
-    return items.length === section.items.length &&
-      items.every((item, index) => item === section.items[index])
-      ? [section]
-      : [{ ...section, items }];
-  });
 }
 
 function repairGrounding<T extends { basedOn?: string[] }>(
@@ -183,134 +163,72 @@ function repairGrounding<T extends { basedOn?: string[] }>(
   } as T;
 }
 
+/**
+ * Keep the routes that still start at a present node, then only the connections,
+ * nodes, and regions those routes still need. A flow without a route is removed.
+ */
 function repairFlowAfterRemoval(
   flow: FlowExhibit,
   removedEntityIds: ReadonlySet<string>,
 ): FlowExhibit | undefined {
-  const nodes = flow.nodes.filter(
-    (node) => !("entity" in node) || !removedEntityIds.has(node.entity),
+  const present = mapEach(flow, "nodes", (node) =>
+    "entity" in node && removedEntityIds.has(node.entity) ? undefined : node,
   );
-  const nodeIds = new Set(nodes.map(flowNodeId));
-  const candidateConnections = flow.connections.filter(
-    (connection) => nodeIds.has(connection.from) && nodeIds.has(connection.to),
+  const nodeIds = new Set(present.nodes.map(flowNodeId));
+  const connected = mapEach(present, "connections", (connection) =>
+    nodeIds.has(connection.from) && nodeIds.has(connection.to) ? connection : undefined,
   );
   const connectionsById = new Map(
-    candidateConnections.map((connection) => [connection.id, connection]),
+    connected.connections.map((connection) => [connection.id, connection]),
   );
-  const paths = flow.paths.flatMap((path) => {
-    if (!nodeIds.has(path.start)) return [];
-    const selected = path.connectionIds.flatMap((connectionId) => {
-      const connection = connectionsById.get(connectionId);
-      return connection ? [connection] : [];
-    });
-    const reachableConnectionIds = new Set(
+  const routed = mapEach(connected, "paths", (path) => {
+    if (!nodeIds.has(path.start)) return undefined;
+    const selected = path.connectionIds.flatMap((id) => connectionsById.get(id) ?? []);
+    const reachableIds = new Set(
       flowConnectionsReachableFrom(path.start, selected).map((connection) => connection.id),
     );
-    const connectionIds = path.connectionIds.filter((connectionId) =>
-      reachableConnectionIds.has(connectionId),
-    );
-    if (connectionIds.length === 0) return [];
-    return connectionIds.length === path.connectionIds.length
-      ? [path]
-      : [{ ...path, connectionIds }];
+    const next = mapEach(path, "connectionIds", (id) => (reachableIds.has(id) ? id : undefined));
+    return next.connectionIds.length > 0 ? next : undefined;
   });
-  if (paths.length === 0) return;
+  if (routed.paths.length === 0) return undefined;
 
-  const pathConnectionIds = new Set(paths.flatMap((path) => path.connectionIds));
+  const pathConnectionIds = new Set(routed.paths.flatMap((path) => path.connectionIds));
   const pathNodeIds = new Set(
-    [...pathConnectionIds].flatMap((connectionId) => {
-      const connection = connectionsById.get(connectionId);
+    [...pathConnectionIds].flatMap((id) => {
+      const connection = connectionsById.get(id);
       return connection ? [connection.from, connection.to] : [];
     }),
   );
-  const connections = candidateConnections.filter(
-    (connection) =>
-      pathConnectionIds.has(connection.id) ||
-      (pathNodeIds.has(connection.from) && pathNodeIds.has(connection.to)),
+  const supporting = mapEach(routed, "connections", (connection) =>
+    pathConnectionIds.has(connection.id) ||
+    (pathNodeIds.has(connection.from) && pathNodeIds.has(connection.to))
+      ? connection
+      : undefined,
   );
-  if (connections.length === 0) return;
   const retainedNodeIds = new Set(
-    connections.flatMap((connection) => [connection.from, connection.to]),
+    supporting.connections.flatMap((connection) => [connection.from, connection.to]),
   );
-  const retainedNodes = nodes.filter((node) => retainedNodeIds.has(flowNodeId(node)));
-  if (retainedNodes.length < 2) return;
+  const retained = mapEach(supporting, "nodes", (node) =>
+    retainedNodeIds.has(flowNodeId(node)) ? node : undefined,
+  );
+  if (retained.nodes.length < 2) return undefined;
 
-  const regions = flow.regions?.flatMap((region) => {
-    const regionNodeIds = region.nodeIds.filter((nodeId) => pathNodeIds.has(nodeId));
-    if (regionNodeIds.length === 0) return [];
-    return regionNodeIds.length === region.nodeIds.length
-      ? [region]
-      : [{ ...region, nodeIds: regionNodeIds }];
+  const regioned = mapEach(retained, "regions", (region) => {
+    const next = mapEach(region, "nodeIds", (id) => (pathNodeIds.has(id) ? id : undefined));
+    return next.nodeIds.length > 0 ? next : undefined;
   });
-  const unchanged =
-    retainedNodes.length === flow.nodes.length &&
-    connections.length === flow.connections.length &&
-    paths.length === flow.paths.length &&
-    paths.every((path, index) => path === flow.paths[index]) &&
-    (regions?.length ?? 0) === (flow.regions?.length ?? 0) &&
-    (regions ?? []).every((region, index) => region === flow.regions?.[index]);
-  if (unchanged) return flow;
-
-  const { regions: _regions, ...flowFields } = flow;
-  return {
-    ...flowFields,
-    nodes: retainedNodes,
-    connections,
-    paths,
-    ...(regions && regions.length > 0 ? { regions } : {}),
-  };
+  return withoutEmpty(regioned, "regions");
 }
 
-function repairPlansAfterRemoval(
-  sections: readonly BriefSection[],
-  removedEntityIds: ReadonlySet<string>,
-): BriefSection[] {
-  function repairPlanSection(section: PlanSection): PlanSection | undefined {
-    if ("steps" in section) {
-      const steps = section.steps.flatMap((step) => {
-        const implementsIds = step.implements.filter((entityId) => !removedEntityIds.has(entityId));
-        if (implementsIds.length === 0) return [];
-        return [
-          implementsIds.length === step.implements.length
-            ? step
-            : { ...step, implements: implementsIds },
-        ];
-      });
-      if (steps.length === 0) return;
-      const changed =
-        steps.length !== section.steps.length ||
-        steps.some((step, index) => step !== section.steps[index]);
-      return changed ? { ...section, steps } : section;
-    }
+/** A reference survives removal only when its entity does. */
+function surviving(removedEntityIds: ReadonlySet<string>) {
+  return (id: string) => (removedEntityIds.has(id) ? undefined : id);
+}
 
-    const phases = section.phases.flatMap((phase) => {
-      const steps = phase.steps.flatMap((step) => {
-        const implementsIds = step.implements.filter((entityId) => !removedEntityIds.has(entityId));
-        if (implementsIds.length === 0) return [];
-        return [
-          implementsIds.length === step.implements.length
-            ? step
-            : { ...step, implements: implementsIds },
-        ];
-      });
-      if (steps.length === 0) return [];
-      const changed =
-        steps.length !== phase.steps.length ||
-        steps.some((step, index) => step !== phase.steps[index]);
-      return [changed ? { ...phase, steps } : phase];
-    });
-    if (phases.length === 0) return;
-    const changed =
-      phases.length !== section.phases.length ||
-      phases.some((phase, index) => phase !== section.phases[index]);
-    return changed ? { ...section, phases } : section;
-  }
-
-  return sections.flatMap((section): BriefSection[] => {
-    if (section.kind === "plan") {
-      const repaired = repairPlanSection(section);
-      return repaired ? [repaired] : [];
-    }
-    return [section];
-  });
+/** Optional authored lists are omitted rather than left empty. */
+function withoutEmpty<Owner extends object>(owner: Owner, key: keyof Owner): Owner {
+  const value = owner[key];
+  if (!Array.isArray(value) || value.length > 0) return owner;
+  const { [key]: _empty, ...rest } = owner;
+  return rest as Owner;
 }

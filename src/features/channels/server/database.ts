@@ -23,13 +23,16 @@ import {
   type ChannelSystemMessageContent,
   type ChannelSystemMessage,
   type ChannelChecklistItem,
+  type ChannelRoutine,
   type CreateChannelInput,
   type EditChannelInput,
+  type SetChannelRoutineInput,
   type UpdateChannelInput,
 } from "@channels/model";
 import { machineFile, sessionFile } from "@files/model";
 import { modelConfigurationSchema } from "@providers/model";
 import { inStateTransaction } from "@/server/database";
+import { nextCronOccurrence } from "@/shared/cron";
 import type { Worker } from "@workers/model";
 import { WorkerDatabase } from "@workers/server/database";
 import {
@@ -130,6 +133,7 @@ export class ChannelDatabase {
         ...channelRoster(workers),
         messages: await listMessagesBefore(db, channelId, undefined, messageLimit),
         artifacts: await listArtifacts(db, channelId),
+        routines: await listRoutines(db, channelId),
       };
     });
   }
@@ -423,6 +427,111 @@ export class ChannelDatabase {
       };
     });
   }
+
+  async listRoutines(channelId: string): Promise<ChannelRoutine[]> {
+    return listRoutines(this.db, channelId);
+  }
+
+  /** Adds a routine to the lead's Channel, or changes one. An identical change is a no-op. */
+  async setRoutine(leadId: string, { routineId, ...input }: SetChannelRoutineInput) {
+    return inStateTransaction(this.db, async (db) => {
+      const channel = await requireLeadChannel(db, leadId);
+      const routine = { id: routineId ?? crypto.randomUUID(), ...input };
+      const nextAt = nextCronOccurrence(input.schedule, new Date()).toISOString();
+      if (routineId) {
+        const [current] = await db<ChannelRoutine[]>`
+          SELECT id, title, schedule, prompt FROM channel_routines
+          WHERE id = ${routineId} AND channel_id = ${channel.id}
+        `;
+        if (!current) throw new Error("Routine not found in this channel.");
+        if (Bun.deepEquals(current, routine)) {
+          return { changed: false as const, routine };
+        }
+        await db`
+          UPDATE channel_routines SET ${db({ ...input, next_at: nextAt })} WHERE id = ${routineId}
+        `;
+      } else {
+        await db`
+          INSERT INTO channel_routines ${db({
+            ...routine,
+            channel_id: channel.id,
+            next_at: nextAt,
+            created_at: new Date().toISOString(),
+          })}
+        `;
+      }
+      const change = await appendSystemMessage(db, channel.id, {
+        type: routineId ? "routine_edited" : "routine_scheduled",
+        routine,
+      });
+      return {
+        changed: true as const,
+        ...change,
+        routine,
+        channel: await requireChannel(db, channel.id),
+      };
+    });
+  }
+
+  /** Deletes a routine, or returns null when it's already gone. */
+  async deleteRoutine(channelId: string, routineId: string) {
+    return inStateTransaction(this.db, async (db) => {
+      const [row] = await db<ChannelRoutine[]>`
+        DELETE FROM channel_routines WHERE id = ${routineId} AND channel_id = ${channelId}
+        RETURNING id, title, schedule, prompt
+      `;
+      if (!row) return null;
+      const change = await appendSystemMessage(db, channelId, {
+        type: "routine_deleted",
+        routine: row,
+      });
+      return { ...change, channel: await requireChannel(db, channelId) };
+    });
+  }
+
+  /**
+   * Claims every due follow-up and routine, so each wakes its lead once. A follow-up clears its
+   * waiting status. A routine moves past `now`, so runs missed while stopped collapse into one.
+   */
+  async claimDueWakes(now: Date) {
+    return inStateTransaction(this.db, async (db) => {
+      const workers = new WorkerDatabase(db);
+      const followUps = [];
+      for (const worker of await workers.list("channel")) {
+        const metadata = channelAgentMetadataSchema.parse(worker.metadata);
+        const { status } = metadata;
+        if (status?.state !== "waiting" || !status.wakeAt || new Date(status.wakeAt) > now)
+          continue;
+        await workers.update(worker.sessionId, {
+          metadata: applyPatch(metadata, { status: null }),
+        });
+        const revision = await advanceRevision(db, worker.channelId);
+        followUps.push({
+          change: { agentId: worker.sessionId, channelId: worker.channelId, revision },
+          waitingFor: status.text,
+        });
+      }
+      const routines = await db<(ChannelRoutine & { channel_id: string })[]>`
+        SELECT id, channel_id, title, schedule, prompt FROM channel_routines
+        WHERE next_at <= ${now.toISOString()}
+      `;
+      for (const { id, schedule } of routines) {
+        await db`
+          UPDATE channel_routines
+          SET next_at = ${nextCronOccurrence(schedule, now).toISOString()}
+          WHERE id = ${id}
+        `;
+      }
+      return {
+        followUps,
+        routines: routines.map(({ channel_id, title, prompt }) => ({
+          channelId: channel_id,
+          title,
+          prompt,
+        })),
+      };
+    });
+  }
 }
 
 /** Undefined leaves a property alone; null removes an optional property. */
@@ -627,6 +736,14 @@ async function listArtifacts(db: Bun.SQL, channelId: string): Promise<ChannelArt
     ORDER BY created_at, kind, session_id, path
   `;
   return rows.map(artifactFromRow);
+}
+
+async function listRoutines(db: Bun.SQL, channelId: string): Promise<ChannelRoutine[]> {
+  return db<ChannelRoutine[]>`
+    SELECT id, title, schedule, prompt FROM channel_routines
+    WHERE channel_id = ${channelId}
+    ORDER BY created_at, id
+  `;
 }
 
 type ChannelRow = {

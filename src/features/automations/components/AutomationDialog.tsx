@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/shared/ui/input";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { Textarea } from "@/shared/ui/textarea";
+import { cronSchema } from "@/shared/cron";
 import { SessionDirectoryPicker } from "@sessions/components/location/directory/SessionDirectoryPicker";
 import {
   normalizeModelConfiguration,
@@ -21,7 +22,6 @@ import {
   type ScheduleDraft,
   cronToSchedule,
   scheduleToCron,
-  validateAutomationCronDefinition,
 } from "../model";
 import { AutomationScheduleEditor } from "./AutomationScheduleEditor";
 
@@ -219,10 +219,5 @@ function getCronValidationError(cron: string): string | null {
   const value = cron.trim();
   if (value.length === 0) return "Cron is required.";
 
-  try {
-    validateAutomationCronDefinition(value);
-    return null;
-  } catch {
-    return "Enter a valid 5-field cron expression.";
-  }
+  return cronSchema.safeParse(value).success ? null : "Enter a valid 5-field cron expression.";
 }

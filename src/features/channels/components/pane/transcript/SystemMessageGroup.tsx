@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { FileUp, Pencil, UserMinus, UserPlus } from "lucide-react";
+import { CalendarClock, FileUp, Pencil, UserMinus, UserPlus } from "lucide-react";
 import { DELETED_AGENT_NAME, type ChannelSystemMessage } from "@channels/model";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
@@ -23,41 +23,35 @@ export function SystemMessageGroup({ messages }: { messages: readonly ChannelSys
     case "channel_renamed":
       content = (
         <>
-          Channel was renamed to{" "}
-          <span className="font-medium text-foreground">{systemMessage.name}</span>
+          Channel renamed: <Value text={systemMessage.name} />
         </>
       );
       break;
     case "channel_purpose_changed": {
       const { purpose } = systemMessage;
-      const text = purpose?.replace(/\s+/g, " ");
-      const preview = text && text.length > 120 ? `${text.slice(0, 117)}...` : text;
       content =
         purpose === null ? (
-          "The channel’s purpose has been cleared"
+          "Purpose cleared"
         ) : (
           <>
-            The channel’s purpose has been updated to{" "}
-            <span className="font-medium text-foreground" title={purpose}>
-              “{preview}”
-            </span>
+            Purpose updated: <Value text={purpose} />
           </>
         );
       break;
     }
     case "channel_directory_changed": {
       const { directory } = systemMessage;
-      const preview =
-        directory && directory.length > 120 ? `...${directory.slice(-117)}` : directory;
+      // A long path keeps its end, where the distinguishing folders are.
       content =
         directory === null ? (
-          "The working directory has been cleared"
+          "Working directory cleared"
         ) : (
           <>
-            The working directory has been changed to{" "}
-            <span className="font-medium text-foreground" title={directory}>
-              {preview}
-            </span>
+            Working directory changed:{" "}
+            <Value
+              text={directory.length > 120 ? `...${directory.slice(-117)}` : directory}
+              title={directory}
+            />
           </>
         );
       break;
@@ -110,6 +104,19 @@ export function SystemMessageGroup({ messages }: { messages: readonly ChannelSys
       );
       break;
     }
+    case "routine_scheduled":
+    case "routine_edited":
+    case "routine_deleted": {
+      const { title, schedule, prompt } = systemMessage.routine;
+      icon = <CalendarClock className="size-3.5 shrink-0" />;
+      content = (
+        <>
+          {ROUTINE_CHANGES[systemMessage.type]}:{" "}
+          <Value text={title} title={`${schedule}\n${prompt}`} />
+        </>
+      );
+      break;
+    }
   }
 
   // The icon sits in the avatar column, so events read as part of the conversation.
@@ -142,6 +149,22 @@ export function SystemMessageGroup({ messages }: { messages: readonly ChannelSys
         body
       )}
     </div>
+  );
+}
+
+const ROUTINE_CHANGES = {
+  routine_scheduled: "New routine scheduled",
+  routine_edited: "Routine edited",
+  routine_deleted: "Routine deleted",
+};
+
+/** A changed value on one line of at most 120 characters, and in full on hover. */
+function Value({ text, title = text }: { text: string; title?: string }) {
+  const line = text.replace(/\s+/g, " ");
+  return (
+    <span className="font-medium text-foreground" title={title}>
+      {line.length > 120 ? `${line.slice(0, 117)}...` : line}
+    </span>
   );
 }
 

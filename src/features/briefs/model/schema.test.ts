@@ -1,19 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import exampleBrief from "@briefs/server/skills/create-toy-box-brief/references/example.brief?raw";
 import { parseBrief, serializeBrief, type BriefDocument, type OptionRelationship } from "./schema";
+import { findBriefEntity } from "./query/entities";
+import { resolveBriefTabs } from "./query/structure";
+import { planState } from "./plan";
+import { specState } from "./spec";
 import {
-  activeOptionRelationships,
   allDecisions,
   allFindings,
   allQuestions,
-  findExhibitsSection,
-  findBriefEntity,
-  resolveBriefTabs,
-} from "./query/reading";
-import { planSections, planState } from "./plan";
-import { specState } from "./spec";
-import {
   exhibitsFixture,
+  findExhibitsSection,
   flowExhibit,
   fixture,
   fixtureInput,
@@ -50,7 +47,6 @@ describe("brief schema", () => {
     ]);
     expect(allQuestions(parsed.value)).toHaveLength(1);
     expect(allDecisions(parsed.value)).toHaveLength(1);
-    expect(activeOptionRelationships(parsed.value)).toHaveLength(0);
     expect(flowExhibit(parsed.value, "shared-rendering-flow").title).toBe(
       "See both rendering routes",
     );
@@ -926,7 +922,7 @@ describe("brief schema", () => {
     expect(parsed).toMatchObject({ ok: true });
     if (!parsed.ok) throw new Error(parsed.error);
     const spec = specState(parsed.value);
-    const state = planState(planSections(parsed.value), spec);
+    const state = planState(parsed.value, spec);
     if (!state) throw new Error("Missing example plan");
     expect(state.fullyPlanned).toBe(true);
     expect(state.steps.map((step) => step.id)).toEqual([

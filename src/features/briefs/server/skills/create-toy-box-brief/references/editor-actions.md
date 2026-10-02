@@ -4,7 +4,7 @@ Read the actual `.brief` file, its section purposes, the complete
 [schema reference](schema.md), and relevant sources before changing it. Read
 [plan.md](plan.md) whenever the document has a plan whose coverage or references
 may need repair. Preserve the rest of the document and perform only the action
-named by `metadata.brief.action`.
+the request names, on the section, question, or record ID it gives.
 
 ## `regenerate-section`
 
@@ -35,6 +35,8 @@ Locate `questionId` and follow its authored answer method.
 
 - For code investigation, settle only what the code can establish.
 - For an experiment, record the observable result and its consequences.
+- Write the settled fact to the question's `answer`; leave it unset when the
+  evidence cannot settle it.
 - Replace the question with an open decision when it is actually a preference.
   Never turn evidence into a product choice on the user's behalf.
 - When the answer is a load-bearing fact, preserve it as a concise sourced

@@ -138,7 +138,9 @@ export function AttachmentGallery({
           ref={dialogRef}
           initialFocus={dialogRef}
           aria-describedby={undefined}
-          className="h-[85vh] w-[90vw] max-w-5xl border-0 bg-transparent p-0 sm:max-w-5xl"
+          // `grid-rows-1` here and `min-h-0` on each slide stop a tall image's natural height from
+          // growing the shared slide height, which would push every other image off-center.
+          className="h-[85vh] w-[90vw] max-w-5xl grid-rows-1 border-0 bg-transparent p-0 sm:max-w-5xl"
           showCloseButton={false}
         >
           <Carousel
@@ -150,7 +152,7 @@ export function AttachmentGallery({
                 key={index}
                 type="button"
                 aria-label={`Close preview of ${label}`}
-                className="flex size-full items-center justify-center"
+                className="flex size-full min-h-0 items-center justify-center"
               >
                 <img
                   src={src}

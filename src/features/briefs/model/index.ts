@@ -1,8 +1,8 @@
 /**
  * The public Brief domain model: one flexible `BriefDocument`, its findings,
- * derived effective spec, and the optional execution plan that makes the spec
- * executable. Editor surfaces consume this facade; internal modules import their
- * source owner.
+ * derived effective spec, the optional execution plan that makes the spec
+ * executable, and the edits that transition it. Editor surfaces consume this
+ * facade; internal modules import their source owner.
  */
 
 export {
@@ -10,95 +10,87 @@ export {
   parseBrief,
   serializeBrief,
   type Change,
-  type MarkdownSection,
-  type ListSection,
+  type DescriptionSection,
   type Finding,
-  type FindingUpdate,
   type FindingsSection,
   type BriefRecord,
-  type BriefRecordUpdate,
   type OptionAddition,
   type RecordsSection,
   type RecordsView,
-  type FlowNode,
-  type FlowConnection,
-  type FlowPath,
-  type FlowRegion,
   type FlowExhibit,
   type TreeChange,
   type FileTreeEntry,
   type DomainTreeEntry,
   type TreeExhibit,
   type BriefExhibit,
-  type BriefExhibitUpdate,
   type ExhibitsSection,
   type DefinitionSection,
   type Question,
-  type DecisionOption,
-  type DecisionChoice,
   type DecisionStatus,
+  type OptionStatus,
   type Decision,
   type ResolutionSection,
-  type SpecSection,
   type PlanPhase,
   type PlanSection,
   type PlanStep,
-  type PlanStepStatus,
-  type PlanStepUpdate,
   type BriefDocument,
   type BriefEntityId,
   type BriefField,
   type OptionRelationship,
   type SourcePolicy,
   type BriefSection,
-  type BriefTab,
 } from "./schema";
 
-export {
-  allDecisions,
-  allFindings,
-  allQuestions,
-  activeOptionRelationships,
-  decisionOriginForRecord,
-  decisionStatus,
-  fieldValueText,
-  findExhibitsSection,
-  findFindingsSection,
-  findBriefEntity,
-  findRecordsSection,
-  briefEntities,
-  entitiesGroundedByFinding,
-  findingsForEntity,
-  projectedRecords,
-  recordLabel,
-  recordReadingFields,
-  resolveBriefTabs,
-  selectedDecisionOption,
-  selectedAdditions,
-  type BriefEntity,
-  type ActiveOptionRelationship,
-  type ProjectedRecord,
-  type ResolvedBriefTab,
-} from "./query/reading";
+export { findRecordsSection, resolveBriefTabs, type ResolvedBriefTab } from "./query/structure";
 
 export {
-  entityFlowConnections,
+  briefEntities,
+  fieldValueText,
+  findBriefEntity,
+  recordLabel,
+  recordReadingFields,
+  type BriefEntity,
+} from "./query/entities";
+
+export {
+  activeOption,
+  decisionStatus,
+  projectedRecords,
+  type ProjectedRecord,
+} from "./query/options";
+
+export { entityLinks, type EntityLinks } from "./query/links";
+
+export {
   flowGraph,
-  flowNodeId,
-  flowPathSelectionAfterInspection,
+  flowPathThrough,
   specState,
   unresolvedDependencies,
-  type EntityFlowConnection,
   type FlowGraph,
   type FlowGraphNode,
   type SpecState,
 } from "./spec";
 
+export { planExecuting, planState, planStatus, planSteps, type PlanState } from "./plan";
+
 export {
-  planSections,
-  planState,
-  planStatus,
-  planSteps,
-  type PlanState,
-  type PlanStatus,
-} from "./plan";
+  canRegenerateSection,
+  canRemoveEntity,
+  clearDecisionChoice,
+  decide,
+  removeEntity,
+  reopenDecision,
+  reopenQuestion,
+  selectDecisionOption,
+  setRecordsView,
+  setSectionsCollapsed,
+  updateExhibit,
+  updateFinding,
+  updatePlanStep,
+  updateRecord,
+  type BriefEdit,
+  type ExhibitUpdate,
+  type FindingUpdate,
+  type PlanStepUpdate,
+  type RecordUpdate,
+} from "./edit";

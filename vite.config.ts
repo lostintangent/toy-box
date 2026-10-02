@@ -116,16 +116,17 @@ export default defineConfig(({ mode }) => {
       env: {
         browser: true,
       },
+      categories: {
+        correctness: "error",
+      },
       rules: {
-        "react/jsx-key": "error",
         "react/no-array-index-key": "warn",
-        "react/jsx-no-undef": "error",
-        "react/react-compiler": [
-          "error",
-          {
-            reportAllBailouts: true,
-          },
-        ],
+        // React Compiler bailouts outside `correctness` (formerly `reportAllBailouts`).
+        "react/unsupported-syntax": "error",
+        "react/invariant": "error",
+        "react/rule-suppression": "error",
+        "react/syntax": "error",
+        "react/todo": "error",
         "toy-box-react/no-manual-memoization": "error",
         "@tanstack/query/exhaustive-deps": "error",
         "@tanstack/query/no-rest-destructuring": "warn",

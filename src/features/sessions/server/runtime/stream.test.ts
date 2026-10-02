@@ -1602,6 +1602,55 @@ describe("createSession", () => {
       { path: "document.md", updatedAt: expect.any(Number) },
     ]);
   });
+
+  test("reads join an in-progress creation instead of reporting a missing session", async () => {
+    const sessionId = "session-reads-join-creation";
+    cleanUpStreamAfterTest(sessionId, { restoreMocks: true });
+    const creating = Promise.withResolvers<{ session: SessionConnection }>();
+    const loadSessionSnapshot = mock(async () => {
+      throw new Error(`Session not found: ${sessionId}`);
+    });
+
+    mockStreamRuntimeModules({
+      sessionRegistry: { createSession: () => creating.promise },
+      snapshotCache: { loadSessionSnapshot },
+    });
+
+    const runtime = await import("./index");
+    const created = runtime.createSession(sessionId, userMessage("Start"), {});
+    const snapshot = runtime.getSessionSnapshot(sessionId);
+    const subscription = runtime.streamSession({ sessionId });
+    expect(runtime.getSessionRuntimeStatus(sessionId).running).toBe(true);
+
+    creating.resolve({ session: makeFakeSession() });
+    await created;
+
+    await expect(snapshot).resolves.toBeDefined();
+    const events = await subscription;
+    expect(events).toBeDefined();
+    await events!.return();
+    expect(loadSessionSnapshot).not.toHaveBeenCalled();
+  });
+
+  test("reads fall back to persisted history when creation fails", async () => {
+    const sessionId = "session-reads-failed-creation";
+    restoreMocksAfterTest();
+    const creating = Promise.withResolvers<never>();
+    const persisted = idleSnapshot(sessionId, []);
+
+    mockStreamRuntimeModules({
+      sessionRegistry: { createSession: () => creating.promise },
+      snapshotCache: { loadSessionSnapshot: async () => persisted },
+    });
+
+    const runtime = await import("./index");
+    const created = runtime.createSession(sessionId, userMessage("Start"), {});
+    const snapshot = runtime.getSessionSnapshot(sessionId);
+
+    creating.reject(new Error("Provider unavailable"));
+    await expect(created).rejects.toThrow("Provider unavailable");
+    expect(await snapshot).toBe(persisted);
+  });
 });
 
 describe("deliverSessionMessage", () => {

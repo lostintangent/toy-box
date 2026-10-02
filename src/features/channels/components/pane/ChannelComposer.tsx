@@ -16,8 +16,8 @@ import {
 } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import { channelQueries } from "@channels/queries";
-import { outputPillClassName } from "@sessions/components/composer/ArtifactPill";
-import { ComposerTray } from "@sessions/components/composer/ComposerTray";
+import { outputPillClassName } from "@workspace/components/outputs/ArtifactPill";
+import { ComposerTray } from "@workspace/components/outputs/ComposerTray";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import {
   AttachImageButton,

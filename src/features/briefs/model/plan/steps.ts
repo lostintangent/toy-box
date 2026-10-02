@@ -1,5 +1,4 @@
-import { buildBriefIndex } from "../query/structure";
-import type { BriefDocument, PlanPhase, PlanSection, PlanStep } from "../schema";
+import type { PlanPhase, PlanSection, PlanStep } from "../schema";
 
 /**
  * The authored steps in one plan section. Flat steps preserve their order.
@@ -11,11 +10,6 @@ type PlanStepLocation = {
   phase?: PlanPhase;
   path: PropertyKey[];
 };
-
-/** The top-level sections whose steps together form the document's optional plan. */
-export function planSections(document: BriefDocument): readonly PlanSection[] {
-  return buildBriefIndex(document.sections).planSections;
-}
 
 export function planStepLocations(section: PlanSection): PlanStepLocation[] {
   if ("steps" in section) {

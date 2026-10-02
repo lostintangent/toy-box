@@ -1,9 +1,14 @@
-import { allDecisions, findRecordsSection } from "./query/reading";
+import { findRecordsSection } from "./query/structure";
+import { buildBriefIndex } from "./query/structure";
 import {
   parseBrief,
+  type Decision,
+  type ExhibitsSection,
+  type Finding,
   type FlowExhibit,
   type BriefDocument,
   type PlanSection,
+  type Question,
   type RecordsSection,
 } from "./schema";
 
@@ -495,6 +500,31 @@ export function phasedPlanFixture(): BriefDocument {
   const parsed = parse(document);
   if (!parsed.ok) throw new Error(parsed.error);
   return parsed.value;
+}
+
+export function allQuestions(document: BriefDocument): Question[] {
+  return buildBriefIndex(document.sections).questions;
+}
+
+export function allDecisions(document: BriefDocument): Decision[] {
+  return buildBriefIndex(document.sections).decisions;
+}
+
+export function allFindings(document: BriefDocument): Finding[] {
+  return buildBriefIndex(document.sections).findings;
+}
+
+export function allPlanSections(document: BriefDocument): PlanSection[] {
+  return buildBriefIndex(document.sections).planSections;
+}
+
+export function findExhibitsSection(
+  document: BriefDocument,
+  sectionId: string,
+): ExhibitsSection | undefined {
+  return buildBriefIndex(document.sections).exhibitSections.find(
+    (section) => section.id === sectionId,
+  );
 }
 
 export function recordsSection(document: BriefDocument, id: string): RecordsSection {

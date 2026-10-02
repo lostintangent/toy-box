@@ -74,7 +74,7 @@ export const sessionHistoryTools = [
 const checkSessionStatus = defineTool("check_session_status", {
   description:
     "Checks another session's current runtime status. " +
-    "Returns whether it currently has an active stream and how many prompts are queued.",
+    "Returns whether it is running, including while it starts, and how many prompts are queued.",
   parameters: z.object({
     sessionId: z.string().describe("The ID of the session to check"),
   }),

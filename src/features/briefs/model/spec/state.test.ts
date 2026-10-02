@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { allDecisions, allQuestions } from "../query/reading";
 import { selectDecisionOption } from "../edit";
-import { fixture, groundedFixture, optionExhibitsFixture, plannedFixture } from "../testFixtures";
+import {
+  allDecisions,
+  allQuestions,
+  fixture,
+  groundedFixture,
+  optionExhibitsFixture,
+  plannedFixture,
+} from "../testFixtures";
 import { specState } from "./state";
 
 describe("brief spec", () => {

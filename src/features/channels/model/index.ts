@@ -3,6 +3,7 @@ import { machineFile, workspaceFileSchema } from "@files/model";
 import { createFileServeUrl, getPathBasename } from "@files/model/paths";
 import { modelConfigurationSchema, type ModelConfiguration } from "@providers/model";
 import { attachmentSchema, attachmentsSchema } from "@/shared/attachments/model";
+import { cronSchema } from "@/shared/cron";
 import { hasChanges } from "./changes";
 import {
   agentAvatarSchema,
@@ -103,7 +104,14 @@ export const channelAgentStatusSchema = z.discriminatedUnion("state", [
     state: z.literal("working"),
     text: channelStatusTextSchema,
   }),
-  z.object({ state: z.literal("waiting"), text: channelStatusTextSchema }).strict(),
+  z
+    .object({
+      state: z.literal("waiting"),
+      text: channelStatusTextSchema,
+      /** A lead follow-up: when to wake if nothing else wakes it first. */
+      wakeAt: z.iso.datetime().optional(),
+    })
+    .strict(),
 ]);
 export type ChannelAgentStatus = z.output<typeof channelAgentStatusSchema>;
 
@@ -177,6 +185,38 @@ const channelMessageActorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("agent"), agentId: durableIdSchema }).strict(),
 ]);
 
+/** A titled, recurring prompt that privately wakes the lead. Only the lead adds or changes one. */
+export const channelRoutineInputSchema = z
+  .object({
+    title: z.string().trim().min(1).max(80).describe("A short name for the routine."),
+    schedule: cronSchema
+      // One fixed minute can match at most once an hour.
+      .refine(
+        (schedule) => /^\d+(\s+\S+){4}$/.test(schedule),
+        "Routines run at most hourly. Use a 5-field cron with one fixed minute, like 0 9 * * 1-5.",
+      )
+      .describe("A 5-field cron in local time with one fixed minute, like 0 9 * * 1-5."),
+    prompt: z
+      .string()
+      .trim()
+      .min(1)
+      .max(2_000)
+      .describe("What to check or do each time the routine wakes you."),
+  })
+  .strict();
+
+export const channelRoutineSchema = channelRoutineInputSchema.extend({ id: durableIdSchema });
+export type ChannelRoutine = z.output<typeof channelRoutineSchema>;
+
+export const setChannelRoutineInputSchema = channelRoutineInputSchema.extend({
+  routineId: durableIdSchema.optional().describe("The routine to change. Omit it to add one."),
+});
+export type SetChannelRoutineInput = z.output<typeof setChannelRoutineInputSchema>;
+
+export const channelRoutineIdentitySchema = z
+  .object({ channelId: durableIdSchema, routineId: durableIdSchema })
+  .strict();
+
 export const requestChannelUserAttentionInputSchema = z
   .object({
     requestSequence: z
@@ -221,6 +261,12 @@ export const channelSystemMessageContentSchema = z.discriminatedUnion("type", [
       artifact: channelArtifactSchema.omit({ sharedAt: true }),
     })
     .strict(),
+  z
+    .object({
+      type: z.enum(["routine_scheduled", "routine_edited", "routine_deleted"]),
+      routine: channelRoutineSchema,
+    })
+    .strict(),
 ]);
 export type ChannelSystemMessageContent = z.output<typeof channelSystemMessageContentSchema>;
 
@@ -258,6 +304,8 @@ export type ChannelState = {
   messages: ChannelMessage[];
   /** Oldest first. */
   artifacts: ChannelArtifact[];
+  /** Oldest first. */
+  routines: ChannelRoutine[];
 };
 
 export type ChannelEvent = (

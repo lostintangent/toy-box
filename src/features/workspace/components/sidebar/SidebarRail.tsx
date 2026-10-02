@@ -7,7 +7,7 @@ import {
   TerminalToggle,
   type SessionCreationOptions,
 } from "./SidebarActions";
-import { SIDEBAR_BORDER, SIDEBAR_COLLAPSED_WIDTH } from "./SidebarResizer";
+import { SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_FRAME } from "./SidebarResizer";
 import { cn } from "@/shared/utils";
 
 /** The rail's separators are the footer's vertical rule turned on its side. */
@@ -52,7 +52,7 @@ export function SidebarRail({
       // The rail holds the collapsed sidebar's width rather than filling it, so
       // its icons sit on their final pixel from the first frame of a collapse
       // instead of sliding inward as the sidebar narrows.
-      style={{ width: SIDEBAR_COLLAPSED_WIDTH - SIDEBAR_BORDER }}
+      style={{ width: SIDEBAR_COLLAPSED_WIDTH - SIDEBAR_FRAME }}
       className={cn(
         "absolute inset-y-0 left-0 flex flex-col items-center gap-3 py-3 bg-background",
         className,

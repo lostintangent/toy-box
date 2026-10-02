@@ -1,17 +1,3 @@
-import { CronExpressionParser } from "cron-parser";
-
-const FALLBACK_TIMEZONE = "UTC";
-
-const AUTOMATION_CRON_TIMEZONE = resolveLocalTimezone();
-
-export function validateAutomationCronDefinition(cron: string): void {
-  parseAutomationCronExpression(cron, new Date());
-}
-
-export function computeNextAutomationRunAt(cron: string, fromDate: Date): Date {
-  return parseAutomationCronExpression(cron, fromDate).next().toDate();
-}
-
 // Form state remembers inactive tab inputs; only the selected mode defines the cron.
 export type ScheduleDraft = {
   mode: "daily" | "interval" | "cron";
@@ -66,21 +52,6 @@ export function cronToSchedule(cron: string): ScheduleDraft {
   const intervalHours = parseIntervalHoursField(hourRaw);
   if (minute !== 0 || intervalHours === null) return draft;
   return { ...draft, mode: "interval", intervalHours, daysOfWeek };
-}
-
-function resolveLocalTimezone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || FALLBACK_TIMEZONE;
-  } catch {
-    return FALLBACK_TIMEZONE;
-  }
-}
-
-function parseAutomationCronExpression(cron: string, currentDate: Date) {
-  return CronExpressionParser.parse(cron.trim(), {
-    currentDate,
-    tz: AUTOMATION_CRON_TIMEZONE,
-  });
 }
 
 function parseDaysOfWeekField(value: string): number[] | null {

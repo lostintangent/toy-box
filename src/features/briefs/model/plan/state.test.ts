@@ -1,19 +1,28 @@
 import { describe, expect, test } from "bun:test";
-import { activeOptionRelationships, allDecisions } from "../query/reading";
 import type { BriefDocument } from "../schema";
 import { specState } from "../spec";
 import {
+  allDecisions,
+  allPlanSections,
   optionExhibitsFixture,
   parse,
   phasedPlanFixture,
   plan,
   plannedFixture,
 } from "../testFixtures";
-import { planState, planStatus } from "./state";
-import { planSections, planSteps } from "./steps";
+import { planExecuting, planState, planStatus } from "./state";
+import { planSteps } from "./steps";
 
 function derivedPlanState(document: BriefDocument) {
-  return planState(planSections(document), specState(document));
+  return planState(document, specState(document));
+}
+
+function startedPlanState() {
+  const document = plannedFixture();
+  const executionPlan = plan(document, "implementation");
+  if (!("steps" in executionPlan)) throw new Error("Expected flat plan");
+  executionPlan.steps[0]!.status = "in-progress";
+  return derivedPlanState(document);
 }
 
 describe("brief plan", () => {
@@ -98,9 +107,6 @@ describe("brief plan", () => {
     expect(state?.targetsByStepId.get("integration-step")?.map((entity) => entity.id)).toEqual([
       "changed-behavior",
     ]);
-    expect(activeOptionRelationships(document).map(({ relationship }) => relationship.id)).toEqual([
-      "changed-causes-durable",
-    ]);
   });
 
   test("derives one plan from multiple plan sections in document order", () => {
@@ -125,8 +131,8 @@ describe("brief plan", () => {
     expect(parsed).toMatchObject({ ok: true });
     if (!parsed.ok) return;
 
-    const sections = planSections(parsed.value);
-    const state = planState(sections, specState(parsed.value));
+    const sections = allPlanSections(parsed.value);
+    const state = planState(parsed.value, specState(parsed.value));
     expect(sections.map((section) => section.id)).toEqual(["implementation", "integration-plan"]);
     expect(
       sections.map((section) => ("phases" in section ? section.phases[0]?.id : undefined)),
@@ -304,7 +310,7 @@ describe("brief plan", () => {
     if (!parsed.ok) throw new Error(parsed.error);
 
     expect(specState(parsed.value).settled).toBe(true);
-    expect(planSections(parsed.value)).toEqual([]);
+    expect(derivedPlanState(parsed.value)).toBeUndefined();
   });
 
   test("keeps complete planning separate from spec settlement", () => {
@@ -340,5 +346,17 @@ describe("brief plan", () => {
       status: "not-started",
       canExecute: false,
     });
+  });
+
+  test("observes execution from a request or from the owning agent of a started plan", () => {
+    const unstarted = derivedPlanState(plannedFixture());
+    expect(planExecuting(unstarted, { requested: true, ownerActive: false })).toBe(true);
+    expect(planExecuting(startedPlanState(), { requested: false, ownerActive: true })).toBe(true);
+  });
+
+  test("keeps a plan executable when no execution is observed", () => {
+    const unstarted = derivedPlanState(plannedFixture());
+    expect(planExecuting(unstarted, { requested: false, ownerActive: true })).toBe(false);
+    expect(planExecuting(startedPlanState(), { requested: false, ownerActive: false })).toBe(false);
   });
 });

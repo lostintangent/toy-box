@@ -1,77 +1,51 @@
-import { useState, type FormEvent } from "react";
-import { Button } from "@/shared/ui/button";
+import { useState } from "react";
 import { Input } from "@/shared/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Textarea } from "@/shared/ui/textarea";
+import type { BriefRecord, RecordsSection, RecordUpdate } from "../model/index";
 import {
-  BRIEF_CHANGES,
-  type Change,
-  type BriefRecord,
-  type BriefRecordUpdate,
-  type OptionAddition,
-  type RecordsSection,
-} from "../model/index";
-import {
-  cloneFieldValues,
-  CHANGE_EDITOR_LABELS,
-  BriefFieldInput,
+  FieldInput,
+  ChangeField,
+  EditorForm,
   LabeledEditorField,
   normalizeFieldValues,
-} from "./FieldEditor";
+  SourceField,
+} from "./EditorForm";
 
-export function BriefRecordEditor({
+export function RecordEditor({
   section,
   record,
   onSave,
   onCancel,
 }: {
   section: RecordsSection;
-  record: BriefRecord | OptionAddition;
-  onSave: (update: BriefRecordUpdate, original: BriefRecord | OptionAddition) => string | undefined;
+  record: BriefRecord;
+  onSave: (update: RecordUpdate) => string | undefined;
   onCancel: () => void;
 }) {
-  const [original] = useState(record);
-  const [draft, setDraft] = useState<BriefRecordUpdate>(() => ({
+  const [draft, setDraft] = useState<RecordUpdate>(() => ({
     ...(record.subject ? { subject: record.subject } : {}),
     change: record.change,
-    values: cloneFieldValues(record.values),
+    values: record.values,
     ...(record.explanation ? { explanation: record.explanation } : {}),
     ...(record.source ? { source: record.source } : {}),
   }));
-  const [error, setError] = useState<string>();
-  const allowedChanges =
-    "sectionId" in record ? BRIEF_CHANGES.filter((change) => change !== "existing") : BRIEF_CHANGES;
-  const changeOptions = allowedChanges.map((value) => ({
-    value,
-    label: CHANGE_EDITOR_LABELS[value],
-  }));
-
-  function updateField(fieldId: string, value: string | string[]) {
-    setError(undefined);
-    setDraft((current) => ({
-      ...current,
-      values: { ...current.values, [fieldId]: value },
-    }));
-  }
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const error = onSave(normalizeUpdate(section, draft), original);
-    setError(error);
-  }
 
   return (
-    <form className="space-y-3" onSubmit={handleSubmit}>
+    <EditorForm
+      current={record}
+      draft={draft}
+      onSave={(next) => onSave(normalizeUpdate(section, next))}
+      onCancel={onCancel}
+    >
       {section.subject && (
         <LabeledEditorField label={section.subject}>
           {(id) => (
             <Input
               id={id}
               value={draft.subject ?? ""}
-              onChange={(event) => {
-                setError(undefined);
-                setDraft((current) => ({ ...current, subject: event.target.value }));
-              }}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, subject: event.target.value }))
+              }
               autoFocus
               required
             />
@@ -79,36 +53,23 @@ export function BriefRecordEditor({
         </LabeledEditorField>
       )}
 
-      <LabeledEditorField label="Change">
-        {(id) => (
-          <Select
-            items={changeOptions}
-            value={draft.change}
-            onValueChange={(change: Change) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, change }));
-            }}
-          >
-            <SelectTrigger id={id} className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {changeOptions.map((change) => (
-                <SelectItem key={change.value} value={change.value}>
-                  {change.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </LabeledEditorField>
+      <ChangeField
+        value={draft.change}
+        allowExisting={!("sectionId" in record)}
+        onChange={(change) => setDraft((current) => ({ ...current, change }))}
+      />
 
       {section.fields.map((field) => (
-        <BriefFieldInput
+        <FieldInput
           key={field.id}
           field={field}
           value={draft.values[field.id]}
-          onChange={(value) => updateField(field.id, value)}
+          onChange={(value) =>
+            setDraft((current) => ({
+              ...current,
+              values: { ...current.values, [field.id]: value },
+            }))
+          }
         />
       ))}
 
@@ -117,56 +78,25 @@ export function BriefRecordEditor({
           <Textarea
             id={id}
             value={draft.explanation ?? ""}
-            onChange={(event) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, explanation: event.target.value }));
-            }}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, explanation: event.target.value }))
+            }
             placeholder="Add context that helps someone make sense of this."
           />
         )}
       </LabeledEditorField>
 
-      <LabeledEditorField
-        label="Source"
-        hint={section.sourcePolicy === "optional" ? "Optional" : "Required unless new"}
-      >
-        {(id) => (
-          <Input
-            id={id}
-            value={draft.source ?? ""}
-            onChange={(event) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, source: event.target.value }));
-            }}
-            required={section.sourcePolicy !== "optional" && draft.change !== "new"}
-            placeholder={
-              section.sourcePolicy === "code"
-                ? "src/path/file.ts#Symbol"
-                : "Code, document, issue, or other useful source"
-            }
-          />
-        )}
-      </LabeledEditorField>
-
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
-
-      <div className="flex justify-end gap-2 pt-1">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" size="sm">
-          Save changes
-        </Button>
-      </div>
-    </form>
+      <SourceField
+        sourcePolicy={section.sourcePolicy}
+        change={draft.change}
+        value={draft.source}
+        onChange={(source) => setDraft((current) => ({ ...current, source }))}
+      />
+    </EditorForm>
   );
 }
 
-function normalizeUpdate(section: RecordsSection, draft: BriefRecordUpdate): BriefRecordUpdate {
+function normalizeUpdate(section: RecordsSection, draft: RecordUpdate): RecordUpdate {
   const subject = draft.subject?.trim();
   const explanation = draft.explanation?.trim();
   const source = draft.source?.trim();

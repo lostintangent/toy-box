@@ -4,6 +4,7 @@ import { applySessionEvent, createInitialSessionState } from "@sessions/model/re
 import { computeFileDiffStats, getToolCallFileDiffs } from "@sessions/model/fileDiffs";
 import { getModelReasoningConfig, modelCatalogKey, modelConfigurationKey } from "@providers/model";
 import { createClaudeProjector } from "./projector";
+import { restoreFailedTurns } from "./history";
 import { toModelInfo } from "./models";
 
 const native = (value: unknown) => value as SDKMessage;
@@ -13,6 +14,24 @@ const assistant = (content: unknown[], id = "reply", parent_tool_use_id: string 
     message: { id, model: "claude-model", content },
     parent_tool_use_id,
   });
+/** The CLI authors these messages itself, such as API errors after retries. */
+const synthetic = (text: string, error?: string) =>
+  native({
+    type: "assistant",
+    message: { model: "<synthetic>", content: [{ type: "text", text }] },
+    parent_tool_use_id: null,
+    error,
+  });
+const prompt = native({
+  type: "user",
+  message: { role: "user", content: "Say hi" },
+  parent_tool_use_id: null,
+  origin: { kind: "human" },
+});
+const replay = (messages: SDKMessage[]) =>
+  messages
+    .flatMap(createClaudeProjector("test"))
+    .reduce(applySessionEvent, createInitialSessionState());
 
 test("catalog, startup, and history agree on the model and its reasoning options", () => {
   const catalog = [
@@ -57,6 +76,65 @@ test("turn results do not finish a session before native idle", () => {
   expect(
     project(native({ type: "system", subtype: "session_state_changed", state: "idle" })),
   ).toEqual([{ type: "end", reason: "idle" }]);
+});
+
+test("a turn that ends in an API error fails with it once, live and in history", () => {
+  const limit = "You've hit your session limit · resets 11:50am (America/Los_Angeles)";
+  const failure = synthetic(limit, "rate_limit");
+  const live = replay([
+    prompt,
+    failure,
+    native({ type: "result", subtype: "success", is_error: true, result: limit }),
+    native({ type: "system", subtype: "session_state_changed", state: "idle" }),
+  ]);
+  const history = replay(restoreFailedTurns([prompt, failure]));
+
+  for (const state of [live, history])
+    expect(state.messages).toEqual([
+      { role: "user", content: "Say hi", rewindable: false },
+      { role: "assistant", content: "", error: limit },
+    ]);
+});
+
+test("a recoverable API error neither fails nor interrupts its turn", () => {
+  const removed = synthetic(
+    "API Error: an image in the conversation could not be processed and was removed.",
+    "invalid_request",
+  );
+  const reply = assistant([{ type: "text", text: "Your screenshot was too large." }]);
+  const live = replay([
+    prompt,
+    removed,
+    reply,
+    native({ type: "result", subtype: "success", is_error: false }),
+    native({ type: "system", subtype: "session_state_changed", state: "idle" }),
+  ]);
+  const history = replay(restoreFailedTurns([prompt, removed, reply]));
+
+  for (const state of [live, history])
+    expect(state.messages).toEqual([
+      { role: "user", content: "Say hi", rewindable: false },
+      { role: "assistant", messageId: "reply", content: "Your screenshot was too large." },
+    ]);
+});
+
+test("CLI-authored messages are neither output nor a model change, unlike real model switches", () => {
+  const reply = (model: string, reasoningEffort: string) =>
+    native({
+      type: "assistant",
+      message: { id: model, model, content: [{ type: "text", text: "Done." }] },
+      parent_tool_use_id: null,
+      effort: reasoningEffort,
+    });
+  const notice = synthetic("No response requested.");
+  const noticed = replay([reply("claude-a", "high"), notice]);
+  const switched = replay([reply("claude-a", "high"), notice, reply("claude-b", "low")]);
+
+  expect(noticed.messages).toEqual([
+    { role: "assistant", messageId: "claude-a", content: "Done." },
+  ]);
+  expect(noticed.model).toEqual({ provider: "claude", name: "claude-a", reasoningEffort: "high" });
+  expect(switched.model).toEqual({ provider: "claude", name: "claude-b", reasoningEffort: "low" });
 });
 
 test.each(["[Request interrupted by user]", "[Request interrupted by user for tool use]"])(

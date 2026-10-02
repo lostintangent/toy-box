@@ -6,7 +6,7 @@ import type { ChannelAgent } from ".";
  */
 export type ChannelAgentPresence =
   | { state: "working"; text?: string }
-  | { state: "waiting"; text: string }
+  | { state: "waiting"; text: string; wakeAt?: string }
   | { state: "idle" };
 
 export function channelAgentPresence(
@@ -18,5 +18,5 @@ export function channelAgentPresence(
       ? { state: "working", text: status.text }
       : { state: "working" };
   }
-  return status?.state === "waiting" ? { state: "waiting", text: status.text } : { state: "idle" };
+  return status?.state === "waiting" ? status : { state: "idle" };
 }

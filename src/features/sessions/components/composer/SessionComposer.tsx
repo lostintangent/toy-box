@@ -34,7 +34,7 @@ import {
   SessionLocationPicker,
   type SessionLocationPickerProps,
 } from "../location/SessionLocationPicker";
-import { ComposerTray } from "./ComposerTray";
+import { ComposerTray } from "@workspace/components/outputs/ComposerTray";
 import { DiffPopup } from "./DiffPopup";
 import { VoiceButton } from "./VoiceButton";
 import { QueuedMessageList, type QueuedMessageListHandle } from "./QueuedMessageList";

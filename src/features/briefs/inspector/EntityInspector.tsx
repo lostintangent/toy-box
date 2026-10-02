@@ -4,66 +4,34 @@ import { BookOpenText, FileCode2, GitFork, Pencil, Trash2 } from "lucide-react";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/shared/ui/sheet";
 import { Markdown } from "@/shared/ui/markdown";
 import {
-  activeOptionRelationships,
-  decisionOriginForRecord,
+  activeOption,
+  canRemoveEntity,
   decisionStatus,
-  entitiesGroundedByFinding,
-  entityFlowConnections,
-  fieldValueText,
-  findingsForEntity,
-  briefEntities,
-  planSections,
-  planSteps,
-  selectedDecisionOption,
+  entityLinks,
+  updateExhibit,
+  updateFinding,
+  updatePlanStep,
+  updateRecord,
+  type BriefEdit,
   type Decision,
-  type Finding,
-  type FindingUpdate,
   type BriefDocument,
   type BriefEntity,
   type BriefEntityId,
-  type BriefExhibit,
-  type BriefExhibitUpdate,
   type BriefField,
-  type BriefRecord,
-  type BriefRecordUpdate,
-  type OptionAddition,
-  type PlanStep,
-  type PlanStepUpdate,
+  type EntityLinks,
 } from "../model/index";
-import { BriefExhibitEditor } from "./ExhibitEditor";
-import { BriefFindingEditor } from "./FindingEditor";
+import { briefActionKey } from "../actions";
+import { ExhibitEditor } from "./ExhibitEditor";
+import { FindingEditor } from "./FindingEditor";
 import { PlanStepEditor } from "./PlanStepEditor";
-import { BriefRecordEditor } from "./RecordEditor";
-import { exhibitKindLabel, BriefExhibitCard } from "../sections";
-import { ChangeTag, decisionStatusLabel, optionRelationshipLabel } from "../sections/shared";
-
-type UpdateRecord = (
-  recordId: string,
-  update: BriefRecordUpdate,
-  original: BriefRecord | OptionAddition,
-) => string | undefined;
-
-type UpdatePlanStep = (
-  stepId: string,
-  update: PlanStepUpdate,
-  original: PlanStep,
-) => string | undefined;
-
-type UpdateExhibit = (
-  exhibitId: string,
-  update: BriefExhibitUpdate,
-  original: BriefExhibit,
-) => string | undefined;
-
-type RemoveExhibit = (sectionId: string, exhibitId: string) => void;
-
-type UpdateFinding = (
-  findingId: string,
-  update: FindingUpdate,
-  original: Finding,
-) => string | undefined;
-
-type RemoveFinding = (sectionId: string, findingId: string) => void;
+import { RecordEditor } from "./RecordEditor";
+import { ExhibitCard, exhibitKindLabel } from "../sections/ExhibitsContent";
+import {
+  ChangeTag,
+  DECISION_STATUS_PRESENTATION,
+  FieldValueText,
+  optionRelationshipLabel,
+} from "../sections/vocabulary";
 
 type InspectorProps = {
   document: BriefDocument;
@@ -73,15 +41,12 @@ type InspectorProps = {
   onClose: () => void;
   onExplainRecord?: (recordId: string) => void;
   onInspect: (entityId: BriefEntityId) => void;
-  onUpdateRecord?: UpdateRecord;
-  onUpdatePlanStep?: UpdatePlanStep;
-  onUpdateExhibit?: UpdateExhibit;
-  onRemoveExhibit?: RemoveExhibit;
-  onUpdateFinding?: UpdateFinding;
-  onRemoveFinding?: RemoveFinding;
+  /** Apply one content edit, returning why it could not be saved. */
+  onSave?: (edit: BriefEdit) => string | undefined;
+  onRemove?: (entityId: BriefEntityId) => void;
 };
 
-export function BriefEntityInspector({
+export function EntityInspector({
   document,
   baseUri,
   entity,
@@ -89,12 +54,8 @@ export function BriefEntityInspector({
   onClose,
   onExplainRecord,
   onInspect,
-  onUpdateRecord,
-  onUpdatePlanStep,
-  onUpdateExhibit,
-  onRemoveExhibit,
-  onUpdateFinding,
-  onRemoveFinding,
+  onSave,
+  onRemove,
 }: InspectorProps) {
   return (
     <Sheet open={Boolean(entity)} onOpenChange={(open) => !open && onClose()}>
@@ -108,12 +69,8 @@ export function BriefEntityInspector({
             pending={pending}
             onExplainRecord={onExplainRecord}
             onInspect={onInspect}
-            onUpdateRecord={onUpdateRecord}
-            onUpdatePlanStep={onUpdatePlanStep}
-            onUpdateExhibit={onUpdateExhibit}
-            onRemoveExhibit={onRemoveExhibit}
-            onUpdateFinding={onUpdateFinding}
-            onRemoveFinding={onRemoveFinding}
+            onSave={onSave}
+            onRemove={onRemove}
           />
         )}
       </SheetContent>
@@ -128,46 +85,11 @@ function InspectorContent({
   pending,
   onExplainRecord,
   onInspect,
-  onUpdateRecord,
-  onUpdatePlanStep,
-  onUpdateExhibit,
-  onRemoveExhibit,
-  onUpdateFinding,
-  onRemoveFinding,
+  onSave,
+  onRemove,
 }: Omit<InspectorProps, "entity" | "onClose"> & { entity: BriefEntity }) {
   const [editing, setEditing] = useState(false);
-  const entities = new Map(briefEntities(document).map((item) => [item.id, item]));
-  const optionRelationships = activeOptionRelationships(document).filter(
-    ({ relationship }) => relationship.from === entity.id || relationship.to === entity.id,
-  );
-  const flowConnections = entityFlowConnections(document, entity.id);
-  const documentPlanSections = planSections(document);
-  const implementationTargets =
-    entity.type === "plan-step"
-      ? entity.step.implements.flatMap((entityId) => {
-          const target = entities.get(entityId);
-          return target ? [target] : [];
-        })
-      : [];
-  const implementingSteps =
-    entity.type !== "plan-step"
-      ? documentPlanSections.flatMap((section) =>
-          planSteps(section).flatMap((step) => {
-            if (!step.implements.includes(entity.id)) return [];
-            const stepEntity = entities.get(step.id);
-            return stepEntity?.type === "plan-step" ? [stepEntity] : [];
-          }),
-        )
-      : [];
-  const affected =
-    entity.type === "question"
-      ? entity.question.affects
-      : entity.type === "decision"
-        ? entity.decision.affects
-        : [];
-  const groundingFindings = findingsForEntity(document, entity.id);
-  const groundedEntities =
-    entity.type === "finding" ? entitiesGroundedByFinding(document, entity.id) : [];
+  const links = entityLinks(document, entity.id);
 
   return (
     <>
@@ -190,132 +112,93 @@ function InspectorContent({
           document={document}
           baseUri={baseUri}
           entity={entity}
+          origin={links.origin}
           editing={editing}
           pending={pending}
           onEdit={() => setEditing(true)}
           onDone={() => setEditing(false)}
           onExplainRecord={onExplainRecord}
           onInspect={onInspect}
-          onUpdateRecord={onUpdateRecord}
-          onUpdatePlanStep={onUpdatePlanStep}
-          onUpdateExhibit={onUpdateExhibit}
-          onRemoveExhibit={onRemoveExhibit}
-          onUpdateFinding={onUpdateFinding}
-          onRemoveFinding={onRemoveFinding}
+          onSave={onSave}
+          onRemove={onRemove}
         />
-        {!editing && groundingFindings.length > 0 && (
-          <InspectorSection title="Based on">
-            <div className="space-y-2">
-              {groundingFindings.map((finding) => (
-                <InspectorLink
-                  key={finding.id}
-                  label={finding.statement}
-                  detail="Finding"
-                  onClick={() => onInspect(finding.id)}
-                />
-              ))}
-            </div>
-          </InspectorSection>
-        )}
-        {!editing && groundedEntities.length > 0 && (
-          <InspectorSection title="Grounds">
-            <div className="space-y-2">
-              {groundedEntities.map((grounded) => (
-                <InspectorLink
-                  key={grounded.id}
-                  label={grounded.label}
-                  detail={entityTypeLabel(grounded)}
-                  onClick={() => onInspect(grounded.id)}
-                />
-              ))}
-            </div>
-          </InspectorSection>
-        )}
-        {!editing && affected.length > 0 && (
-          <InspectorSection title="What this touches">
-            <div className="space-y-2">
-              {affected.map((entityId) => {
-                const related = entities.get(entityId);
-                if (!related) return null;
-                return (
-                  <InspectorLink
-                    key={entityId}
-                    label={related.label}
-                    detail={entityTypeLabel(related)}
-                    onClick={() => onInspect(entityId)}
-                  />
-                );
-              })}
-            </div>
-          </InspectorSection>
-        )}
-        {!editing && implementationTargets.length > 0 && (
-          <InspectorSection title="Implements">
-            <div className="space-y-2">
-              {implementationTargets.map((target) => (
-                <InspectorLink
-                  key={target.id}
-                  label={target.label}
-                  detail={entityTypeLabel(target)}
-                  onClick={() => onInspect(target.id)}
-                />
-              ))}
-            </div>
-          </InspectorSection>
-        )}
-        {!editing && implementingSteps.length > 0 && (
-          <InspectorSection title="Plan steps">
-            <div className="space-y-2">
-              {implementingSteps.map((step) => (
-                <InspectorLink
-                  key={step.id}
-                  label={step.label}
-                  detail={entityTypeLabel(step)}
-                  onClick={() => onInspect(step.id)}
-                />
-              ))}
-            </div>
-          </InspectorSection>
-        )}
-        {!editing && flowConnections.length > 0 && (
-          <InspectorSection title="Flows" icon={<GitFork className="size-3" />}>
-            <div className="space-y-2">
-              {flowConnections.map(({ flow, connection, outgoing, related }) => (
-                <InspectorLink
-                  key={`${flow.id}:${connection.id}:${outgoing ? "out" : "in"}`}
-                  eyebrow={`${outgoing ? "→ " : "← "}${connection.label} · ${flow.title}`}
-                  label={related.label}
-                  detail={related.entity ? entityTypeLabel(related.entity) : "Flow node"}
-                  onClick={() => onInspect(related.entity?.id ?? flow.id)}
-                />
-              ))}
-            </div>
-          </InspectorSection>
-        )}
-        {!editing && optionRelationships.length > 0 && (
-          <InspectorSection title="Option relationships" icon={<GitFork className="size-3" />}>
-            <div className="space-y-2">
-              {optionRelationships.map((effective) => {
-                const outgoing = effective.relationship.from === entity.id;
-                const related = entities.get(
-                  outgoing ? effective.relationship.to : effective.relationship.from,
-                );
-                if (!related) return null;
-                const status = ` · ${effective.optionLabel} (${decisionStatusLabel(effective.status)})`;
-                return (
-                  <InspectorLink
-                    key={effective.relationship.id}
-                    eyebrow={`${outgoing ? "→ " : "← "}${optionRelationshipLabel(effective.relationship)}${status}`}
-                    label={related.label}
-                    onClick={() => onInspect(related.id)}
-                  />
-                );
-              })}
-            </div>
-          </InspectorSection>
-        )}
+        {!editing && <EntityLinkList links={links} onInspect={onInspect} />}
       </div>
     </>
+  );
+}
+
+function EntityLinkList({
+  links,
+  onInspect,
+}: {
+  links: EntityLinks;
+  onInspect: (entityId: BriefEntityId) => void;
+}) {
+  return (
+    <>
+      <LinkedEntities title="Based on" entities={links.basedOn} onInspect={onInspect} />
+      <LinkedEntities title="Grounds" entities={links.grounds} onInspect={onInspect} />
+      <LinkedEntities title="What this touches" entities={links.affects} onInspect={onInspect} />
+      <LinkedEntities title="Touched by" entities={links.affectedBy} onInspect={onInspect} />
+      <LinkedEntities title="Implements" entities={links.implements} onInspect={onInspect} />
+      <LinkedEntities title="Plan steps" entities={links.implementedBy} onInspect={onInspect} />
+      {links.flows.length > 0 && (
+        <InspectorSection title="Flows" icon={<GitFork className="size-3" />}>
+          <div className="space-y-2">
+            {links.flows.map(({ flow, connection, outgoing, related }) => (
+              <InspectorLink
+                key={`${flow.id}:${connection.id}:${outgoing ? "out" : "in"}`}
+                eyebrow={`${outgoing ? "→ " : "← "}${connection.label} · ${flow.title}`}
+                label={related.label}
+                detail={related.entity ? entityTypeLabel(related.entity) : "Flow node"}
+                onClick={() => onInspect(related.entity?.id ?? flow.id)}
+              />
+            ))}
+          </div>
+        </InspectorSection>
+      )}
+      {links.activeRelationships.length > 0 && (
+        <InspectorSection title="Option relationships" icon={<GitFork className="size-3" />}>
+          <div className="space-y-2">
+            {links.activeRelationships.map(({ relationship, outgoing, related, activeOption }) => (
+              <InspectorLink
+                key={relationship.id}
+                eyebrow={`${outgoing ? "→ " : "← "}${optionRelationshipLabel(relationship)} · ${activeOption.option.label} (${DECISION_STATUS_PRESENTATION[activeOption.status].label})`}
+                label={related.label}
+                onClick={() => onInspect(related.id)}
+              />
+            ))}
+          </div>
+        </InspectorSection>
+      )}
+    </>
+  );
+}
+
+function LinkedEntities({
+  title,
+  entities,
+  onInspect,
+}: {
+  title: string;
+  entities: BriefEntity[];
+  onInspect: (entityId: BriefEntityId) => void;
+}) {
+  if (entities.length === 0) return null;
+  return (
+    <InspectorSection title={title}>
+      <div className="space-y-2">
+        {entities.map((related) => (
+          <InspectorLink
+            key={related.id}
+            label={related.label}
+            detail={entityTypeLabel(related)}
+            onClick={() => onInspect(related.id)}
+          />
+        ))}
+      </div>
+    </InspectorSection>
   );
 }
 
@@ -323,35 +206,37 @@ function EntityDetails({
   document,
   baseUri,
   entity,
+  origin,
   editing,
   pending,
   onEdit,
   onDone,
   onExplainRecord,
   onInspect,
-  onUpdateRecord,
-  onUpdatePlanStep,
-  onUpdateExhibit,
-  onRemoveExhibit,
-  onUpdateFinding,
-  onRemoveFinding,
+  onSave,
+  onRemove,
 }: Omit<InspectorProps, "entity" | "onClose"> & {
   entity: BriefEntity;
+  origin: EntityLinks["origin"];
   editing: boolean;
   onEdit: () => void;
   onDone: () => void;
 }) {
+  function save(edit: BriefEdit): string | undefined {
+    const error = onSave?.(edit);
+    if (!error) onDone();
+    return error;
+  }
+  const remove =
+    onRemove && canRemoveEntity(document, entity.id) ? () => onRemove(entity.id) : undefined;
+
   if (entity.type === "finding") {
-    if (editing && onUpdateFinding) {
+    if (editing && onSave) {
       return (
-        <BriefFindingEditor
+        <FindingEditor
           section={entity.section}
           finding={entity.finding}
-          onSave={(update, original) => {
-            const error = onUpdateFinding(entity.finding.id, update, original);
-            if (!error) onDone();
-            return error;
-          }}
+          onSave={(update) => save((brief) => updateFinding(brief, entity.id, update))}
           onCancel={onDone}
         />
       );
@@ -366,7 +251,7 @@ function EntityDetails({
           </InspectorSection>
         )}
         {entity.finding.exhibit && (
-          <BriefExhibitCard
+          <ExhibitCard
             document={document}
             exhibit={entity.finding.exhibit}
             baseUri={baseUri}
@@ -387,13 +272,13 @@ function EntityDetails({
             </ul>
           </InspectorSection>
         )}
-        {(onUpdateFinding || onRemoveFinding) && (
+        {(onSave || remove) && (
           <div className="flex flex-wrap gap-2">
-            {onUpdateFinding && <EditButton onClick={onEdit} />}
-            {onRemoveFinding && (
+            {onSave && <EditButton onClick={onEdit} />}
+            {remove && (
               <RemoveButton
                 label={`Remove finding: ${entity.finding.statement}`}
-                onClick={() => onRemoveFinding(entity.section.id, entity.finding.id)}
+                onClick={remove}
               />
             )}
           </div>
@@ -403,16 +288,12 @@ function EntityDetails({
   }
 
   if (entity.type === "plan-step") {
-    if (editing && onUpdatePlanStep) {
+    if (editing && onSave) {
       return (
         <PlanStepEditor
           section={entity.section}
           step={entity.step}
-          onSave={(update, original) => {
-            const error = onUpdatePlanStep(entity.step.id, update, original);
-            if (!error) onDone();
-            return error;
-          }}
+          onSave={(update) => save((brief) => updatePlanStep(brief, entity.id, update))}
           onCancel={onDone}
         />
       );
@@ -423,27 +304,25 @@ function EntityDetails({
           <Markdown className="space-y-1.5">{entity.step.doneWhen}</Markdown>
         </InspectorSection>
         <FieldValues fields={entity.section.fields} values={entity.step.values} />
-        {onUpdatePlanStep && <EditButton onClick={onEdit} />}
+        {onSave && <EditButton onClick={onEdit} />}
       </>
     );
   }
 
   if (entity.type === "record") {
-    if (editing && onUpdateRecord) {
+    const explanationPending = pending.has(
+      briefActionKey({ action: "explain-record", recordId: entity.id }),
+    );
+    if (editing && onSave) {
       return (
-        <BriefRecordEditor
+        <RecordEditor
           section={entity.section}
           record={entity.record}
-          onSave={(update, original) => {
-            const error = onUpdateRecord(entity.record.id, update, original);
-            if (!error) onDone();
-            return error;
-          }}
+          onSave={(update) => save((brief) => updateRecord(brief, entity.id, update))}
           onCancel={onDone}
         />
       );
     }
-    const origin = decisionOriginForRecord(document, entity.record.id);
     return (
       <>
         <FieldValues fields={entity.section.fields} values={entity.record.values} />
@@ -461,23 +340,23 @@ function EntityDetails({
           <InspectorSection title="Came from">
             <InspectorLink
               label={origin.option.label}
-              detail={`${origin.decision.question} · ${decisionStatusLabel(origin.status)}`}
+              detail={`${origin.decision.question} · ${DECISION_STATUS_PRESENTATION[origin.status].label}`}
               onClick={() => onInspect(origin.decision.id)}
             />
           </InspectorSection>
         )}
-        {(onUpdateRecord || onExplainRecord) && (
+        {(onSave || onExplainRecord) && (
           <div className="flex flex-wrap gap-2">
-            {onUpdateRecord && <EditButton onClick={onEdit} />}
+            {onSave && <EditButton onClick={onEdit} />}
             {onExplainRecord && (
               <button
                 type="button"
-                disabled={pending.has(`explain-record:${entity.record.id}`)}
+                disabled={explanationPending}
                 onClick={() => onExplainRecord(entity.record.id)}
                 className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[10.5px] font-medium hover:bg-muted disabled:opacity-40"
               >
                 <BookOpenText className="size-3.5" />
-                {pending.has(`explain-record:${entity.record.id}`)
+                {explanationPending
                   ? "Explanation pending"
                   : entity.record.explanation
                     ? "Explain further"
@@ -492,24 +371,20 @@ function EntityDetails({
 
   if (entity.type === "exhibit") {
     const owner = entity.owner;
-    if (editing && onUpdateExhibit) {
+    if (editing && onSave) {
       return (
-        <BriefExhibitEditor
+        <ExhibitEditor
           sourcePolicy={owner.kind === "section" ? owner.section.sourcePolicy : "optional"}
           allowExisting={owner.kind === "section"}
           exhibit={entity.exhibit}
-          onSave={(update, original) => {
-            const error = onUpdateExhibit(entity.exhibit.id, update, original);
-            if (!error) onDone();
-            return error;
-          }}
+          onSave={(update) => save((brief) => updateExhibit(brief, entity.id, update))}
           onCancel={onDone}
         />
       );
     }
     return (
       <>
-        <BriefExhibitCard document={document} exhibit={entity.exhibit} baseUri={baseUri} compact />
+        <ExhibitCard document={document} exhibit={entity.exhibit} baseUri={baseUri} compact />
         {owner.kind === "decision-option" && (
           <InspectorSection title="Defines this option">
             <InspectorLink
@@ -519,15 +394,11 @@ function EntityDetails({
             />
           </InspectorSection>
         )}
-        {(onUpdateExhibit ||
-          (owner.kind === "section" && entity.exhibit.change === "new" && onRemoveExhibit)) && (
+        {(onSave || remove) && (
           <div className="flex flex-wrap gap-2">
-            {onUpdateExhibit && <EditButton onClick={onEdit} />}
-            {owner.kind === "section" && entity.exhibit.change === "new" && onRemoveExhibit && (
-              <RemoveButton
-                label={`Remove ${entity.exhibit.title} from brief`}
-                onClick={() => onRemoveExhibit(owner.section.id, entity.exhibit.id)}
-              />
+            {onSave && <EditButton onClick={onEdit} />}
+            {remove && (
+              <RemoveButton label={`Remove ${entity.exhibit.title} from brief`} onClick={remove} />
             )}
           </div>
         )}
@@ -570,11 +441,7 @@ function FieldValues({
             {field.label}
           </dt>
           <dd className="mt-0.5 text-[11.5px]">
-            {field.kind === "text" ? (
-              <Markdown className="space-y-1.5">{fieldValueText(field, values[field.id])}</Markdown>
-            ) : (
-              fieldValueText(field, values[field.id])
-            )}
+            <FieldValueText field={field} value={values[field.id]} />
           </dd>
         </div>
       ))}
@@ -656,10 +523,10 @@ function InspectorSection({
 }
 
 function DecisionState({ decision }: { decision: Decision }) {
-  const option = selectedDecisionOption(decision);
+  const option = activeOption(decision)?.option;
   return (
     <div className="space-y-1">
-      <p>{decisionStatusLabel(decisionStatus(decision))}</p>
+      <p>{DECISION_STATUS_PRESENTATION[decisionStatus(decision)].label}</p>
       {option && (
         <>
           <p className="font-medium text-foreground">{option.label}</p>

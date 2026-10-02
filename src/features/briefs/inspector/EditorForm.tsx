@@ -1,23 +1,144 @@
-import { useId, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
+import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/utils";
-import type { Change, BriefField, BriefRecord } from "../model/index";
+import {
+  BRIEF_CHANGES,
+  type BriefField,
+  type BriefRecord,
+  type Change,
+  type SourcePolicy,
+} from "../model/index";
+import { CHANGE_PRESENTATION } from "../sections/vocabulary";
 
-/** Shared form controls for values declared by a Brief section's fields. */
+/** Shared inspector form controls for editing one Brief entity draft. */
 
-export const CHANGE_EDITOR_LABELS: Record<Change, string> = {
-  existing: "Existing",
-  new: "New",
-  modified: "Changed",
-  removed: "Removed",
-  preserved: "Kept",
-  renamed: "Renamed",
-  split: "Split",
-  relocated: "Moved",
-};
+/**
+ * An entity edit form whose save error stays visible until the draft changes.
+ * It refuses to save over `current`, the live authored value, once that value
+ * changes underneath the open draft.
+ */
+export function EditorForm<Draft>({
+  current,
+  draft,
+  onSave,
+  onCancel,
+  children,
+}: {
+  current: unknown;
+  draft: Draft;
+  onSave: (draft: Draft) => string | undefined;
+  onCancel: () => void;
+  children: ReactNode;
+}) {
+  const [original] = useState(current);
+  const [failure, setFailure] = useState<{ draft: Draft; error: string }>();
+  const error = failure?.draft === draft ? failure.error : undefined;
 
-export function BriefFieldInput({
+  function save(): string | undefined {
+    if (JSON.stringify(current) !== JSON.stringify(original)) {
+      return "This changed while you were editing. Cancel and reopen it to use the latest version.";
+    }
+    return onSave(draft);
+  }
+
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const error = save();
+        setFailure(error ? { draft, error } : undefined);
+      }}
+    >
+      {children}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm">
+          Save changes
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+export function ChangeField({
+  value,
+  allowExisting,
+  onChange,
+}: {
+  value: Change;
+  allowExisting: boolean;
+  onChange: (change: Change) => void;
+}) {
+  const options = BRIEF_CHANGES.filter((change) => allowExisting || change !== "existing").map(
+    (change) => ({ value: change, label: CHANGE_PRESENTATION[change].label }),
+  );
+  return (
+    <LabeledEditorField label="Change">
+      {(id) => (
+        <Select items={options} value={value} onValueChange={(change: Change) => onChange(change)}>
+          <SelectTrigger id={id} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </LabeledEditorField>
+  );
+}
+
+export function SourceField({
+  sourcePolicy,
+  change,
+  value,
+  onChange,
+}: {
+  sourcePolicy: SourcePolicy;
+  change: Change;
+  value?: string;
+  onChange: (source: string) => void;
+}) {
+  return (
+    <LabeledEditorField
+      label="Source"
+      hint={sourcePolicy === "optional" ? "Optional" : "Required unless new"}
+    >
+      {(id) => (
+        <Input
+          id={id}
+          value={value ?? ""}
+          onChange={(event) => onChange(event.target.value)}
+          required={sourcePolicy !== "optional" && change !== "new"}
+          placeholder={sourcePlaceholder(sourcePolicy)}
+        />
+      )}
+    </LabeledEditorField>
+  );
+}
+
+export function sourcePlaceholder(sourcePolicy: SourcePolicy): string {
+  return sourcePolicy === "code"
+    ? "src/path/file.ts#Symbol"
+    : "Code, document, issue, or other useful source";
+}
+
+export function FieldInput({
   field,
   value,
   onChange,
@@ -131,14 +252,6 @@ export function LabeledEditorField({
       {children(id)}
     </div>
   );
-}
-
-export function cloneFieldValues(values: BriefRecord["values"]): BriefRecord["values"] {
-  const clone: BriefRecord["values"] = {};
-  for (const [key, value] of Object.entries(values)) {
-    clone[key] = Array.isArray(value) ? [...value] : value;
-  }
-  return clone;
 }
 
 export function normalizeFieldValues(

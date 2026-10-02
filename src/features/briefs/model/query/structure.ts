@@ -1,5 +1,7 @@
 import type {
+  BriefDocument,
   Decision,
+  DescriptionSection,
   ExhibitsSection,
   Finding,
   FindingsSection,
@@ -12,9 +14,9 @@ import type {
 } from "../schema";
 
 /**
- * The structural index over one document's authored sections, plus the
- * document locations those sections and items occupy. Aggregate queries build
- * this once and share it with the reads they compose.
+ * The structural index over one document's authored sections, plus the plain
+ * structural reads over it. Aggregate queries build the index once and share it
+ * with the reads they compose.
  */
 
 export type BriefIndex = {
@@ -22,12 +24,10 @@ export type BriefIndex = {
   specSections: SpecSection[];
   findingSections: FindingsSection[];
   findings: Finding[];
-  findingsById: Map<string, Finding>;
   recordsSections: RecordsSection[];
   recordsSectionsById: Map<string, RecordsSection>;
   planSections: PlanSection[];
   exhibitSections: ExhibitsSection[];
-  exhibitSectionsById: Map<string, ExhibitsSection>;
   sectionExhibits: BriefExhibit[];
   optionExhibits: BriefExhibit[];
   questions: Question[];
@@ -73,12 +73,10 @@ export function buildBriefIndex(sections: readonly BriefSection[]): BriefIndex {
     specSections,
     findingSections,
     findings,
-    findingsById: new Map(findings.map((finding) => [finding.id, finding])),
     recordsSections,
     recordsSectionsById: new Map(recordsSections.map((section) => [section.id, section])),
     planSections,
     exhibitSections,
-    exhibitSectionsById: new Map(exhibitSections.map((section) => [section.id, section])),
     sectionExhibits,
     optionExhibits,
     questions,
@@ -87,24 +85,30 @@ export function buildBriefIndex(sections: readonly BriefSection[]): BriefIndex {
   };
 }
 
-export function sectionPath(section: BriefSection): PropertyKey[] {
-  return sectionPathForId(section.id);
+/** Markdown and list sections guide execution without enumerating requirements. */
+export function isDescriptionSection(section: BriefSection): section is DescriptionSection {
+  return section.kind === "markdown" || section.kind === "list";
 }
 
-export function sectionPathForId(sectionId: string): PropertyKey[] {
-  return ["sections", sectionId];
+export type ResolvedBriefTab = {
+  title: string;
+  sections: BriefSection[];
+};
+
+/** Resolve optional tab references without changing canonical document order. */
+export function resolveBriefTabs(document: BriefDocument): ResolvedBriefTab[] {
+  if (!document.tabs) {
+    return [{ title: document.title, sections: document.sections }];
+  }
+  return document.tabs.map((tab) => ({
+    title: tab.title,
+    sections: document.sections.filter((section) => tab.sections.includes(section.id)),
+  }));
 }
 
-export function decisionPathIn(index: BriefIndex, item: Decision): PropertyKey[] {
-  const section = index.specSections.find(
-    (candidate) => candidate.kind === "decisions" && candidate.items.includes(item),
-  );
-  return [...(section ? sectionPathForId(section.id) : ["sections"]), "items", item.id];
-}
-
-export function questionPathIn(index: BriefIndex, item: Question): PropertyKey[] {
-  const section = index.specSections.find(
-    (candidate) => candidate.kind === "questions" && candidate.items.includes(item),
-  );
-  return [...(section ? sectionPathForId(section.id) : ["sections"]), "items", item.id];
+export function findRecordsSection(
+  document: BriefDocument,
+  sectionId: string,
+): RecordsSection | undefined {
+  return buildBriefIndex(document.sections).recordsSectionsById.get(sectionId);
 }

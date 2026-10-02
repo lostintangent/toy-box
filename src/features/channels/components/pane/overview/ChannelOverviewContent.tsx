@@ -1,9 +1,22 @@
 import { useRef, type ReactNode } from "react";
-import { ExternalLink, MonitorPlay, MoreHorizontal, Pencil, Plus, UserMinus } from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
+import {
+  ChevronRight,
+  Clock3,
+  ExternalLink,
+  MonitorPlay,
+  MoreHorizontal,
+  Pencil,
+  Play,
+  Plus,
+  Trash2,
+  UserMinus,
+} from "lucide-react";
 import { AgentItem } from "@channels/components/agents/AgentItem";
-import type { Channel, ChannelArtifact, ChannelMember } from "@channels/model";
+import type { Channel, ChannelArtifact, ChannelMember, ChannelRoutine } from "@channels/model";
+import { channelMutations } from "@channels/mutations";
 import { workspaceFileId } from "@files/model";
-import { ArtifactPill } from "@sessions/components/composer/ArtifactPill";
+import { ArtifactPill } from "@workspace/components/outputs/ArtifactPill";
 import { SessionMetadataBadges } from "@sessions/components/location/SessionMetadataBadges";
 import { Badge } from "@/shared/ui/badge";
 import { Button, buttonVariants } from "@/shared/ui/button";
@@ -19,14 +32,16 @@ import { ProgressBar } from "@/shared/ui/progress-bar";
 import { RelativeTime } from "@/shared/ui/relative-time";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { ShowMore, useShowMore } from "@/shared/ui/show-more";
+import { nextCronOccurrence } from "@/shared/cron";
 import { cn } from "@/shared/utils";
 import { useChannelPane } from "../ChannelPaneContext";
 import { channelChecklistItems } from "../channelChecklistItems";
 
-/** What the overview shows: the Channel's context, agents, shared artifacts, and checklist. */
+/** What the overview shows: the Channel's context, agents, artifacts, checklist, and routines. */
 export function ChannelOverviewContent({
   channel,
   artifacts,
+  routines,
   onArtifactOpen,
   onEditMember,
   onRemoveMember,
@@ -35,6 +50,7 @@ export function ChannelOverviewContent({
 }: {
   channel: Channel;
   artifacts: ChannelArtifact[];
+  routines: ChannelRoutine[];
   onArtifactOpen: (artifact: ChannelArtifact) => void;
   onEditMember: (member: ChannelMember) => void;
   onRemoveMember: (member: ChannelMember) => void;
@@ -89,13 +105,13 @@ export function ChannelOverviewContent({
       <OverviewSection title="Agents" count={members.length + 1}>
         <div>
           <div role="list" aria-label={`Agents in #${channel.name}`}>
-            <AgentItem agent={lead} action={<MemberMenu name={lead.name} />} />
+            <AgentItem agent={lead} action={<RowMenu name={lead.name} />} />
             {sortedMembers.map((member) => (
               <AgentItem
                 key={member.id}
                 agent={member}
                 action={
-                  <MemberMenu name={member.name}>
+                  <RowMenu name={member.name}>
                     <DropdownMenuItem onClick={() => onEditMember(member)}>
                       <Pencil /> Edit member
                     </DropdownMenuItem>
@@ -103,7 +119,7 @@ export function ChannelOverviewContent({
                     <DropdownMenuItem variant="destructive" onClick={() => onRemoveMember(member)}>
                       <UserMinus /> Remove from channel
                     </DropdownMenuItem>
-                  </MemberMenu>
+                  </RowMenu>
                 }
               />
             ))}
@@ -153,6 +169,55 @@ export function ChannelOverviewContent({
           <p className="text-sm text-muted-foreground italic">The checklist is empty.</p>
         )}
       </OverviewSection>
+
+      {routines.length > 0 && (
+        <OverviewSection title="Routines" count={routines.length}>
+          <div role="list" aria-label={`Routines in #${channel.name}`} className="space-y-2">
+            {routines.map((routine) => (
+              <RoutineItem key={routine.id} channelId={channel.id} routine={routine} />
+            ))}
+          </div>
+        </OverviewSection>
+      )}
+    </div>
+  );
+}
+
+/** A routine's title and next run, expanding to its prompt. Only the lead adds or changes one;
+ *  you can run or delete it. */
+function RoutineItem({ channelId, routine }: { channelId: string; routine: ChannelRoutine }) {
+  const { mutate: runRoutine } = useMutation(channelMutations.runRoutine(channelId));
+  const { mutate: deleteRoutine } = useMutation(channelMutations.deleteRoutine(channelId));
+
+  return (
+    <div role="listitem" className="flex items-start gap-2 text-sm">
+      <details className="group min-w-0 flex-1">
+        <summary className="flex cursor-pointer list-none items-start gap-2 [&::-webkit-details-marker]:hidden">
+          <ChevronRight
+            aria-hidden
+            className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+          />
+          <span className="flex min-w-0 flex-col items-start gap-1">
+            <span className="text-foreground/90">{routine.title}</span>
+            <Badge variant="metadata" title={routine.schedule}>
+              <Clock3 className="h-3 w-3 shrink-0" />
+              <RelativeTime date={nextCronOccurrence(routine.schedule, new Date())} />
+            </Badge>
+          </span>
+        </summary>
+        <p className="mt-1.5 ml-5.5 whitespace-pre-wrap text-xs text-muted-foreground">
+          {routine.prompt}
+        </p>
+      </details>
+      <RowMenu name={routine.title}>
+        <DropdownMenuItem onClick={() => runRoutine(routine.id)}>
+          <Play /> Run routine
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onClick={() => deleteRoutine(routine.id)}>
+          <Trash2 /> Delete routine
+        </DropdownMenuItem>
+      </RowMenu>
     </div>
   );
 }
@@ -178,9 +243,9 @@ function ChannelPurpose({ purpose }: { purpose: string }) {
   );
 }
 
-/** A member's "⋯" menu. The lead can't be edited or removed, so its menu has no actions and stays
+/** A row's "⋯" menu. The lead can't be edited or removed, so its menu has no actions and stays
  *  disabled, keeping every row the same shape. */
-function MemberMenu({ name, children }: { name: string; children?: ReactNode }) {
+function RowMenu({ name, children }: { name: string; children?: ReactNode }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger

@@ -1,13 +1,14 @@
-import { addDuplicateIssues, type RefinementContext } from "../issues";
-import { sectionPath, type BriefIndex } from "../query/structure";
-import type { BriefEntityId, BriefRecord, OptionAddition } from "../schema";
+import { addDuplicateIssues, sectionPath, type RefinementContext } from "../issues";
+import { briefEntitiesFrom, type BriefEntity } from "../query/entities";
+import { isSelfContainedOption } from "../query/options";
+import { isDescriptionSection, type BriefIndex } from "../query/structure";
 import { planStepLocations } from "./steps";
 
 /** Validate every authored plan section and the implementation links it owns. */
 export function addPlanIssues(index: BriefIndex, ctx: RefinementContext): void {
-  const records = recordsById(index);
+  const entities = new Map(briefEntitiesFrom(index).map((entity) => [entity.id, entity]));
   for (const section of index.planSections) {
-    const path = sectionPath(section);
+    const path = sectionPath(section.id);
     if ("phases" in section) {
       addDuplicateIssues(
         section.phases.map((phase) => phase.id),
@@ -26,7 +27,7 @@ export function addPlanIssues(index: BriefIndex, ctx: RefinementContext): void {
         `Implementation links for "${step.title}"`,
       );
       step.implements.forEach((entityId, entityIndex) => {
-        if (isPotentialImplementationTarget(entityId, index, records)) return;
+        if (isImplementationTarget(entities.get(entityId))) return;
         ctx.addIssue({
           code: "custom",
           message: `Plan step "${step.id}" can implement only Markdown/list sections, decisions with a self-contained option, or records and exhibits not marked "existing".`,
@@ -37,42 +38,16 @@ export function addPlanIssues(index: BriefIndex, ctx: RefinementContext): void {
   }
 }
 
-function recordsById(index: BriefIndex): Map<string, BriefRecord | OptionAddition> {
-  return new Map<string, BriefRecord | OptionAddition>([
-    ...index.recordsSections.flatMap((section) =>
-      section.items.map((record) => [record.id, record] as const),
-    ),
-    ...index.decisions.flatMap((decision) =>
-      decision.options.flatMap((option) =>
-        option.adds.flatMap((record) => {
-          const section = index.recordsSectionsById.get(record.sectionId);
-          return section ? ([[record.id, record]] as const) : [];
-        }),
-      ),
-    ),
-  ]);
-}
-
-function isPotentialImplementationTarget(
-  entityId: BriefEntityId,
-  index: BriefIndex,
-  records: ReadonlyMap<string, BriefRecord | OptionAddition>,
-): boolean {
-  if (
-    index.decisions.some(
-      (decision) =>
-        decision.id === entityId &&
-        decision.options.some((option) => option.adds.length === 0 && !option.exhibit),
-    )
-  ) {
-    return true;
+function isImplementationTarget(entity: BriefEntity | undefined): boolean {
+  switch (entity?.type) {
+    case "section":
+      return isDescriptionSection(entity.section);
+    case "decision":
+      return entity.decision.options.some(isSelfContainedOption);
+    case "record":
+    case "exhibit":
+      return entity.change !== "existing";
+    default:
+      return false;
   }
-  const section = index.specSections.find((candidate) => candidate.id === entityId);
-  if (section) return section.kind === "markdown" || section.kind === "list";
-  const exhibit = [...index.sectionExhibits, ...index.optionExhibits].find(
-    (item) => item.id === entityId,
-  );
-  if (exhibit) return exhibit.change !== "existing";
-  const record = records.get(entityId);
-  return Boolean(record && record.change !== "existing");
 }

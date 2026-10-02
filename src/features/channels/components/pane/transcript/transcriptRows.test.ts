@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { ChannelMessage } from "@channels/model";
-import { transcriptDayLabel, transcriptRows, type TranscriptRow } from "./transcriptRows";
+import { channelRequestStates } from "@channels/model/requests";
+import {
+  pendingRequestRow,
+  transcriptDayLabel,
+  transcriptRows,
+  type TranscriptRow,
+} from "./transcriptRows";
 
 // Local wall-clock times keep day boundaries independent of the test machine's time zone.
 function at(day: number, hour: number, minute: number): string {
@@ -106,6 +112,34 @@ describe("transcript rows", () => {
       true,
     ]);
     expect(transcriptRows(messages, 0).some(({ startsUnread }) => startsUnread)).toBe(false);
+  });
+});
+
+describe("pending request row", () => {
+  const request = (sequence: number, requestSequence: number) =>
+    event(sequence, { type: "user_attention_requested", requestSequence });
+  const pendingRow = (messages: ChannelMessage[]) =>
+    pendingRequestRow(transcriptRows(messages), channelRequestStates(messages));
+
+  test("is the latest pending request's message and the row holding it, even mid-run", () => {
+    const messages = [
+      agentPost(1, "lead", at(26, 10, 0)),
+      request(2, 1),
+      userPost(3, at(26, 10, 2)),
+      agentPost(4, "lead", at(26, 10, 3)),
+      agentPost(5, "lead", at(26, 10, 4)),
+      request(6, 4),
+      request(7, 5),
+    ];
+    expect(pendingRow(messages)).toEqual({ sequence: 5, index: 2 });
+  });
+
+  test("is absent without a request, once the user replies, or while its message isn't loaded", () => {
+    expect(pendingRow([agentPost(1, "lead", at(26, 10, 0))])).toBeUndefined();
+    expect(
+      pendingRow([agentPost(1, "lead", at(26, 10, 0)), request(2, 1), userPost(3, at(26, 10, 2))]),
+    ).toBeUndefined();
+    expect(pendingRow([request(2, 1)])).toBeUndefined();
   });
 });
 

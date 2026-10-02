@@ -1,15 +1,9 @@
-import { useState, type FormEvent } from "react";
-import { Button } from "@/shared/ui/button";
+import { useState } from "react";
 import { Input } from "@/shared/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Textarea } from "@/shared/ui/textarea";
-import { type PlanSection, type PlanStep, type PlanStepUpdate } from "../model/index";
-import {
-  cloneFieldValues,
-  BriefFieldInput,
-  LabeledEditorField,
-  normalizeFieldValues,
-} from "./FieldEditor";
+import type { PlanSection, PlanStep, PlanStepUpdate } from "../model/index";
+import { FieldInput, EditorForm, LabeledEditorField, normalizeFieldValues } from "./EditorForm";
 
 const PLAN_STEP_STATUS_OPTIONS = [
   { value: "not-started", label: "Not started" },
@@ -28,51 +22,36 @@ export function PlanStepEditor({
 }: {
   section: PlanSection;
   step: PlanStep;
-  onSave: (update: PlanStepUpdate, original: PlanStep) => string | undefined;
+  onSave: (update: PlanStepUpdate) => string | undefined;
   onCancel: () => void;
 }) {
-  const [original] = useState(step);
   const [draft, setDraft] = useState<PlanStepUpdate>(() => ({
     title: step.title,
     doneWhen: step.doneWhen,
     status: step.status,
-    values: cloneFieldValues(step.values),
+    values: step.values,
   }));
-  const [error, setError] = useState<string>();
-
-  function updateField(fieldId: string, value: string | string[]) {
-    setError(undefined);
-    setDraft((current) => ({
-      ...current,
-      values: { ...current.values, [fieldId]: value },
-    }));
-  }
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const error = onSave(
-      {
-        title: draft.title.trim(),
-        doneWhen: draft.doneWhen.trim(),
-        status: draft.status,
-        values: normalizeFieldValues(section.fields, draft.values),
-      },
-      original,
-    );
-    setError(error);
-  }
 
   return (
-    <form className="space-y-3" onSubmit={handleSubmit}>
+    <EditorForm
+      current={step}
+      draft={draft}
+      onSave={(next) =>
+        onSave({
+          title: next.title.trim(),
+          doneWhen: next.doneWhen.trim(),
+          status: next.status,
+          values: normalizeFieldValues(section.fields, next.values),
+        })
+      }
+      onCancel={onCancel}
+    >
       <LabeledEditorField label="Step">
         {(id) => (
           <Input
             id={id}
             value={draft.title}
-            onChange={(event) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, title: event.target.value }));
-            }}
+            onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
             autoFocus
             required
           />
@@ -84,10 +63,9 @@ export function PlanStepEditor({
           <Textarea
             id={id}
             value={draft.doneWhen}
-            onChange={(event) => {
-              setError(undefined);
-              setDraft((current) => ({ ...current, doneWhen: event.target.value }));
-            }}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, doneWhen: event.target.value }))
+            }
             className="min-h-20"
             required
           />
@@ -99,13 +77,12 @@ export function PlanStepEditor({
           <Select
             items={PLAN_STEP_STATUS_OPTIONS}
             value={draft.status ?? "not-started"}
-            onValueChange={(status: PlanStepStatusOption) => {
-              setError(undefined);
+            onValueChange={(status: PlanStepStatusOption) =>
               setDraft((current) => ({
                 ...current,
                 status: status === "not-started" ? undefined : status,
-              }));
-            }}
+              }))
+            }
           >
             <SelectTrigger id={id} className="w-full">
               <SelectValue />
@@ -122,28 +99,18 @@ export function PlanStepEditor({
       </LabeledEditorField>
 
       {section.fields.map((field) => (
-        <BriefFieldInput
+        <FieldInput
           key={field.id}
           field={field}
           value={draft.values[field.id]}
-          onChange={(value) => updateField(field.id, value)}
+          onChange={(value) =>
+            setDraft((current) => ({
+              ...current,
+              values: { ...current.values, [field.id]: value },
+            }))
+          }
         />
       ))}
-
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
-
-      <div className="flex justify-end gap-2 pt-1">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" size="sm">
-          Save changes
-        </Button>
-      </div>
-    </form>
+    </EditorForm>
   );
 }

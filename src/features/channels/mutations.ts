@@ -13,10 +13,12 @@ import {
   createChannel,
   createChannelMember,
   deleteChannel,
+  deleteChannelRoutine,
   editChannel,
   markChannelRead,
   postChannelMessage,
   removeChannelMember,
+  runChannelRoutine,
   updateChannelMember,
 } from "@channels/server/functions";
 
@@ -49,6 +51,14 @@ export const channelMutations = {
   removeMember: (agentId: string) =>
     mutationOptions({
       mutationFn: () => removeChannelMember({ data: { agentId } }),
+    }),
+  runRoutine: (channelId: string) =>
+    mutationOptions({
+      mutationFn: (routineId: string) => runChannelRoutine({ data: { channelId, routineId } }),
+    }),
+  deleteRoutine: (channelId: string) =>
+    mutationOptions({
+      mutationFn: (routineId: string) => deleteChannelRoutine({ data: { channelId, routineId } }),
     }),
   markRead: () =>
     mutationOptions({

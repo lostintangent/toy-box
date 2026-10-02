@@ -1,36 +1,37 @@
-import { planSteps } from "../plan/steps";
+import { briefEntityIds } from "../query/entities";
 import { buildBriefIndex } from "../query/structure";
 import { unresolvedDependencies } from "../spec";
 import type {
-  Decision,
-  FindingUpdate,
   BriefDocument,
+  BriefEntityId,
   BriefExhibit,
-  BriefExhibitUpdate,
-  BriefRecordUpdate,
-  PlanStepUpdate,
+  BriefRecord,
+  BriefSection,
+  Decision,
+  Finding,
+  PlanStep,
   RecordsView,
 } from "../schema";
+import { mapEach } from "./immutable";
 import { repairAfterEntityRemoval } from "./repair";
-import { transformSections } from "./sections";
 
 /**
  * Editor-owned immutable transitions over a `BriefDocument`: disclosure,
- * decision and question lifecycle, editable content updates, and reference-safe
- * section and item removal.
+ * decision and question lifecycle, content updates, and reference-safe removal.
+ * An update replaces an item's editable content, so omitted optional content is
+ * cleared, while the item keeps its identity, grounding, and links.
  */
 
-export function setSectionCollapsed(
-  document: BriefDocument,
-  sectionId: string,
-  collapsed: boolean,
-): BriefDocument {
-  return transformSections(document, (section) =>
-    section.id === sectionId && section.collapsed !== collapsed
-      ? { ...section, collapsed }
-      : section,
-  );
-}
+/** One editor transition over the current document. */
+export type BriefEdit = (document: BriefDocument) => BriefDocument;
+
+/** An entity's editable content: everything except its identity and the links an update keeps. */
+type EditableContent<T, Kept extends string> = T extends unknown ? Omit<T, "id" | Kept> : never;
+
+export type FindingUpdate = EditableContent<Finding, "exhibit">;
+export type RecordUpdate = EditableContent<BriefRecord, "basedOn">;
+export type ExhibitUpdate = EditableContent<BriefExhibit, "basedOn">;
+export type PlanStepUpdate = EditableContent<PlanStep, "implements">;
 
 export function setSectionsCollapsed(
   document: BriefDocument,
@@ -38,7 +39,7 @@ export function setSectionsCollapsed(
   collapsed: boolean,
 ): BriefDocument {
   const selected = new Set(sectionIds);
-  return transformSections(document, (section) =>
+  return mapEach(document, "sections", (section) =>
     selected.has(section.id) && section.collapsed !== collapsed
       ? { ...section, collapsed }
       : section,
@@ -50,7 +51,7 @@ export function setRecordsView(
   sectionId: string,
   view: RecordsView,
 ): BriefDocument {
-  return transformSections(document, (section) =>
+  return mapEach(document, "sections", (section) =>
     section.kind === "records" && section.id === sectionId && section.view !== view
       ? { ...section, view }
       : section,
@@ -75,7 +76,7 @@ export function selectDecisionOption(
 }
 
 /** Commit the current provisional choice. Dependencies must be settled first. */
-export function recordDecision(document: BriefDocument, decisionId: string): BriefDocument {
+export function decide(document: BriefDocument, decisionId: string): BriefDocument {
   return mapDecision(document, decisionId, (item) =>
     item.choice &&
     item.choice.status !== "decided" &&
@@ -105,174 +106,106 @@ export function clearDecisionChoice(document: BriefDocument, decisionId: string)
 
 /** Reopen a settled factual question without changing how it should be investigated. */
 export function reopenQuestion(document: BriefDocument, questionId: string): BriefDocument {
-  return transformSections(document, (section) => {
-    if (section.kind !== "questions") return section;
-    let changed = false;
-    const items = section.items.map((item) => {
-      if (item.id !== questionId || item.answer === undefined) return item;
-      changed = true;
-      const { answer: _answer, ...open } = item;
-      return open;
-    });
-    return changed ? { ...section, items } : section;
-  });
+  return mapEach(document, "sections", (section) =>
+    section.kind === "questions"
+      ? mapEach(section, "items", (item) => {
+          if (item.id !== questionId || item.answer === undefined) return item;
+          const { answer: _answer, ...open } = item;
+          return open;
+        })
+      : section,
+  );
 }
 
-/** Update one record's editable content while preserving its stable brief identity. */
+/** Replace one record's editable content, whether its section or a decision option authors it. */
 export function updateRecord(
   document: BriefDocument,
   recordId: string,
-  update: BriefRecordUpdate,
+  update: RecordUpdate,
 ): BriefDocument {
-  return transformSections(document, (section) => {
+  return mapEach(document, "sections", (section) => {
     if (section.kind === "records") {
-      let changed = false;
-      const items = section.items.map((item) => {
-        if (item.id !== recordId) return item;
-        changed = true;
-        return { ...item, ...update };
-      });
-      return changed ? { ...section, items } : section;
+      return mapEach(section, "items", (item) =>
+        item.id === recordId ? { id: item.id, ...grounding(item), ...update } : item,
+      );
     }
     if (section.kind !== "decisions") return section;
-
-    let changed = false;
-    const items = section.items.map((decision) => {
-      const options = decision.options.map((option) => {
-        const adds = option.adds.map((addition) => {
-          if (addition.id !== recordId) return addition;
-          changed = true;
-          return { ...addition, ...update };
-        });
-        return adds.some((addition, index) => addition !== option.adds[index])
-          ? { ...option, adds }
-          : option;
-      });
-      return options.some((option, index) => option !== decision.options[index])
-        ? { ...decision, options }
-        : decision;
-    });
-    return changed ? { ...section, items } : section;
+    return mapEach(section, "items", (decision) =>
+      mapEach(decision, "options", (option) =>
+        mapEach(option, "adds", (addition) =>
+          addition.id === recordId
+            ? { id: addition.id, sectionId: addition.sectionId, ...grounding(addition), ...update }
+            : addition,
+        ),
+      ),
+    );
   });
 }
 
-/** Update one settled finding while preserving its identity and supporting exhibit. */
+/** Replace one finding's editable content while keeping its supporting exhibit. */
 export function updateFinding(
   document: BriefDocument,
   findingId: string,
   update: FindingUpdate,
 ): BriefDocument {
-  return transformSections(document, (section) => {
-    if (section.kind !== "findings") return section;
-    let changed = false;
-    const items = section.items.map((item) => {
-      if (item.id !== findingId) return item;
-      changed = true;
-      return {
-        id: item.id,
-        ...update,
-        ...(item.exhibit ? { exhibit: item.exhibit } : {}),
-      };
-    });
-    return changed ? { ...section, items } : section;
-  });
+  return mapEach(document, "sections", (section) =>
+    section.kind === "findings"
+      ? mapEach(section, "items", (item) =>
+          item.id === findingId
+            ? { id: item.id, ...update, ...(item.exhibit ? { exhibit: item.exhibit } : {}) }
+            : item,
+        )
+      : section,
+  );
 }
 
-/** Update one plan step while preserving its implementation links and stable identity. */
+/** Replace one plan step's editable content while keeping its implementation links. */
 export function updatePlanStep(
   document: BriefDocument,
   stepId: string,
   update: PlanStepUpdate,
 ): BriefDocument {
-  let changed = false;
-  const sections = document.sections.map((section) => {
+  const updateStep = (step: PlanStep) =>
+    step.id === stepId ? { id: step.id, implements: step.implements, ...update } : step;
+  return mapEach(document, "sections", (section) => {
     if (section.kind !== "plan") return section;
-    if ("steps" in section) {
-      let planChanged = false;
-      const steps = section.steps.map((step) => {
-        if (step.id !== stepId) return step;
-        planChanged = true;
-        return { ...step, ...update };
-      });
-      changed = changed || planChanged;
-      return planChanged ? { ...section, steps } : section;
-    }
-
-    let planChanged = false;
-    const phases = section.phases.map((phase) => {
-      const steps = phase.steps.map((step) => {
-        if (step.id !== stepId) return step;
-        planChanged = true;
-        return { ...step, ...update };
-      });
-      return steps.some((step, index) => step !== phase.steps[index]) ? { ...phase, steps } : phase;
-    });
-    changed = changed || planChanged;
-    return planChanged ? { ...section, phases } : section;
+    return "steps" in section
+      ? mapEach(section, "steps", updateStep)
+      : mapEach(section, "phases", (phase) => mapEach(phase, "steps", updateStep));
   });
-  return changed ? { ...document, sections } : document;
 }
 
-/** Update one exhibit definition while preserving its stable brief identity and form. */
+/** Replace one exhibit's editable content without reinterpreting it as another form. */
 export function updateExhibit(
   document: BriefDocument,
   exhibitId: string,
-  update: BriefExhibitUpdate,
+  update: ExhibitUpdate,
 ): BriefDocument {
-  return transformSections(document, (section) => {
+  const updates = (exhibit: BriefExhibit | undefined): exhibit is BriefExhibit =>
+    exhibit?.id === exhibitId && hasSameExhibitForm(exhibit, update);
+  const replace = (exhibit: BriefExhibit): BriefExhibit => ({
+    id: exhibit.id,
+    ...grounding(exhibit),
+    ...update,
+  });
+  return mapEach(document, "sections", (section) => {
     if (section.kind === "exhibits") {
-      let changed = false;
-      const items = section.items.map((item) => {
-        if (item.id !== exhibitId || !hasSameExhibitForm(item, update)) return item;
-        changed = true;
-        return { ...item, ...update };
-      });
-      return changed ? { ...section, items } : section;
+      return mapEach(section, "items", (item) => (updates(item) ? replace(item) : item));
     }
     if (section.kind !== "decisions") return section;
-
-    let changed = false;
-    const items = section.items.map((decision) => {
-      const options = decision.options.map((option) => {
-        if (option.exhibit?.id !== exhibitId || !hasSameExhibitForm(option.exhibit, update)) {
-          return option;
-        }
-        changed = true;
-        return { ...option, exhibit: { ...option.exhibit, ...update } };
-      });
-      return options.some((option, index) => option !== decision.options[index])
-        ? { ...decision, options }
-        : decision;
-    });
-    return changed ? { ...section, items } : section;
+    return mapEach(section, "items", (decision) =>
+      mapEach(decision, "options", (option) =>
+        updates(option.exhibit) ? { ...option, exhibit: replace(option.exhibit) } : option,
+      ),
+    );
   });
 }
 
-/** Remove one finding and prune optional grounding references that point to it. */
-export function removeFinding(
-  document: BriefDocument,
-  sectionId: string,
-  findingId: string,
-): BriefDocument {
-  const section = buildBriefIndex(document.sections).findingSections.find(
-    (candidate) => candidate.id === sectionId,
-  );
-  const finding = section?.items.find((candidate) => candidate.id === findingId);
-  if (!section || !finding) return document;
-  if (section.items.length === 1) return removeSection(document, sectionId);
-
-  const withoutFinding = transformSections(document, (candidate) =>
-    candidate.kind === "findings" && candidate.id === sectionId
-      ? {
-          ...candidate,
-          items: candidate.items.filter((item) => item.id !== findingId),
-        }
-      : candidate,
-  );
-  return repairAfterEntityRemoval(withoutFinding, new Set([findingId]));
+function grounding(item: { basedOn?: string[] }): { basedOn?: string[] } {
+  return item.basedOn ? { basedOn: item.basedOn } : {};
 }
 
-function hasSameExhibitForm(exhibit: BriefExhibit, update: BriefExhibitUpdate): boolean {
+function hasSameExhibitForm(exhibit: BriefExhibit, update: ExhibitUpdate): boolean {
   if (exhibit.kind !== update.kind) return false;
   if (exhibit.kind === "prototype" && update.kind === "prototype") {
     return "content" in exhibit === "content" in update;
@@ -281,82 +214,65 @@ function hasSameExhibitForm(exhibit: BriefExhibit, update: BriefExhibitUpdate): 
   return true;
 }
 
-/** Remove one user-authored new exhibit and repair every reference to its brief identity. */
-export function removeExhibit(
-  document: BriefDocument,
-  sectionId: string,
-  exhibitId: string,
-): BriefDocument {
-  const section = buildBriefIndex(document.sections).exhibitSectionsById.get(sectionId);
-  const exhibit = section?.items.find((candidate) => candidate.id === exhibitId);
-  if (!section || !exhibit || exhibit.change !== "new") return document;
+/** Whether a worker may regenerate this section without rewriting settled or derived content. */
+export function canRegenerateSection(section: BriefSection): boolean {
+  return !(section.kind === "plan" || section.kind === "questions" || section.kind === "decisions");
+}
 
-  if (section.items.length === 1) return removeSection(document, sectionId);
-
-  const withoutExhibit = transformSections(document, (candidate) =>
-    candidate.kind === "exhibits" && candidate.id === sectionId
-      ? {
-          ...candidate,
-          items: candidate.items.filter((item) => item.id !== exhibitId),
-        }
-      : candidate,
+/**
+ * Whether an editor may remove this entity: a section, a finding, or a new record
+ * or exhibit authored directly in a section. Existing content describes the
+ * current system, decision options own their contributions, and a brief always
+ * keeps at least one section.
+ */
+export function canRemoveEntity(document: BriefDocument, entityId: BriefEntityId): boolean {
+  const owner = document.sections.find(
+    (section) => section.id === entityId || removableItemIds(section).includes(entityId),
   );
-  return repairAfterEntityRemoval(withoutExhibit, new Set([exhibitId]));
+  if (!owner) return false;
+  return (
+    document.sections.length > 1 ||
+    (owner.id !== entityId && withoutItem(owner, entityId) !== undefined)
+  );
 }
 
-/** Remove one section and every entity reference that cannot survive without it. */
-export function removeSection(document: BriefDocument, sectionId: string): BriefDocument {
-  const sectionIndex = document.sections.findIndex((section) => section.id === sectionId);
-  if (sectionIndex < 0 || document.sections.length === 1) return document;
-  const removed = document.sections[sectionIndex]!;
-  const sections = document.sections.filter((_, index) => index !== sectionIndex);
+/** Remove one removable entity and repair every reference that cannot survive without it. */
+export function removeEntity(document: BriefDocument, entityId: BriefEntityId): BriefDocument {
+  if (!canRemoveEntity(document, entityId)) return document;
+  const next = mapEach(document, "sections", (section) =>
+    section.id === entityId ? undefined : withoutItem(section, entityId),
+  );
+  const remainingSectionIds = new Set(next.sections.map((section) => section.id));
+  const removedSections = document.sections.filter(
+    (section) => !remainingSectionIds.has(section.id),
+  );
+  const repaired = repairAfterEntityRemoval(
+    next,
+    new Set([entityId, ...briefEntityIds(buildBriefIndex(removedSections))]),
+  );
+  return repaired.sections.length > 0 ? repaired : document;
+}
 
-  const removedIndex = buildBriefIndex([removed]);
-  const removedSectionIds = new Set(removedIndex.sections.map((section) => section.id));
-  const removedEntityIds = new Set([
-    ...removedSectionIds,
-    ...removedIndex.findings.map((item) => item.id),
-    ...removedIndex.recordsSections.flatMap((section) => section.items.map((item) => item.id)),
-    ...removedIndex.planSections.flatMap((section) => planSteps(section).map((step) => step.id)),
-    ...removedIndex.sectionExhibits.map((item) => item.id),
-    ...removedIndex.questions.map((item) => item.id),
-    ...removedIndex.decisions.flatMap((item) => [
-      item.id,
-      ...item.options.flatMap((option) => option.adds.map((addition) => addition.id)),
-      ...item.options.flatMap((option) => (option.exhibit ? [option.exhibit.id] : [])),
-    ]),
-  ]);
-  const index = buildBriefIndex(document.sections);
-  for (const addition of index.decisions.flatMap((decision) =>
-    decision.options.flatMap((option) => option.adds),
-  )) {
-    if (removedSectionIds.has(addition.sectionId)) removedEntityIds.add(addition.id);
+function removableItemIds(section: BriefSection): string[] {
+  switch (section.kind) {
+    case "findings":
+      return section.items.map((item) => item.id);
+    case "records":
+      return section.items.flatMap((item) => (item.change === "new" ? [item.id] : []));
+    case "exhibits":
+      return section.items.flatMap((item) => (item.change === "new" ? [item.id] : []));
+    default:
+      return [];
   }
-
-  const next = repairAfterEntityRemoval({ ...document, sections }, removedEntityIds);
-  return next.sections.length > 0 ? next : document;
 }
 
-/** Remove one user-authored new record without touching established or option-owned content. */
-export function removeRecord(
-  document: BriefDocument,
-  sectionId: string,
-  recordId: string,
-): BriefDocument {
-  const index = buildBriefIndex(document.sections);
-  const record = index.recordsSectionsById
-    .get(sectionId)
-    ?.items.find((candidate) => candidate.id === recordId);
-  if (!record || record.change !== "new") return document;
-
-  const withoutRecord = transformSections(document, (section) => {
-    if (section.kind !== "records" || section.id !== sectionId) return section;
-    return {
-      ...section,
-      items: section.items.filter((candidate) => candidate.id !== recordId),
-    };
-  });
-  return repairAfterEntityRemoval(withoutRecord, new Set([recordId]));
+/** Findings and exhibits sections exist to hold items, so they leave with their last one. */
+function withoutItem(section: BriefSection, itemId: string): BriefSection | undefined {
+  if (section.kind !== "findings" && section.kind !== "records" && section.kind !== "exhibits") {
+    return section;
+  }
+  const next = mapEach(section, "items", (item) => (item.id === itemId ? undefined : item));
+  return next.items.length > 0 || next.kind === "records" ? next : undefined;
 }
 
 function mapDecision(
@@ -364,15 +280,9 @@ function mapDecision(
   decisionId: string,
   transition: (item: Decision) => Decision,
 ): BriefDocument {
-  return transformSections(document, (section) => {
-    if (section.kind !== "decisions") return section;
-    let changed = false;
-    const items = section.items.map((item) => {
-      if (item.id !== decisionId) return item;
-      const next = transition(item);
-      changed = changed || next !== item;
-      return next;
-    });
-    return changed ? { ...section, items } : section;
-  });
+  return mapEach(document, "sections", (section) =>
+    section.kind === "decisions"
+      ? mapEach(section, "items", (item) => (item.id === decisionId ? transition(item) : item))
+      : section,
+  );
 }

@@ -97,6 +97,11 @@ code {
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
 
+  /* The window surface the desktop's cards float over. */
+  --backdrop: oklch(0.96 0 0);
+  /* Lifts those cards off the backdrop. */
+  --card-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 2px 8px rgb(0 0 0 / 0.05);
+
   --diff-added: oklch(0.527 0.194 149.214);
   --diff-added-bg: oklch(0.527 0.194 149.214 / 15%);
   --diff-added-bg-strong: oklch(0.527 0.194 149.214 / 30%);
@@ -131,6 +136,13 @@ code {
     --border: oklch(0.3 0 0);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
+
+    /*
+      Nothing reads as a shadow against near-black cards, so dark mode separates
+      them by tone alone: the backdrop sits one step above them.
+    */
+    --backdrop: oklch(0.17 0 0);
+    --card-shadow: none;
 
     --diff-added: oklch(0.65 0.18 149.579);
     --diff-added-bg: oklch(0.65 0.18 149.579 / 15%);

@@ -1,17 +1,16 @@
-import { addDuplicateIssues, addEntityReferenceIssue, type RefinementContext } from "./issues";
-import { planStepLocations, planSteps } from "./plan/steps";
-import { addPlanIssues } from "./plan/validation";
-import { recordLabel } from "./query/reading";
 import {
-  buildBriefIndex,
-  decisionPathIn,
-  questionPathIn,
+  addDuplicateIssues,
+  addEntityReferenceIssue,
   sectionPath,
-  sectionPathForId,
-  type BriefIndex,
-} from "./query/structure";
+  type RefinementContext,
+} from "./issues";
+import { planStepLocations } from "./plan/steps";
+import { addPlanIssues } from "./plan/validation";
+import { briefEntityIds, recordLabel } from "./query/entities";
+import { buildBriefIndex, isDescriptionSection, type BriefIndex } from "./query/structure";
 import type {
   Change,
+  Decision,
   DomainTreeEntry,
   ExhibitsSection,
   FindingsSection,
@@ -21,9 +20,9 @@ import type {
   BriefField,
   BriefRecord,
   OptionRelationship,
-  OptionAddition,
   PlanSection,
   PlanStep,
+  Question,
   RecordsSection,
   SourcePolicy,
 } from "./schema";
@@ -38,17 +37,7 @@ import { addFlowIssues } from "./spec/flow";
 export function validateDocument(document: BriefDocument, ctx: RefinementContext): void {
   const index = buildBriefIndex(document.sections);
   addTabIssues(document, ctx);
-  const documentIds = documentEntityIds(index);
-  const optionRecordIds = index.decisions.flatMap((item) =>
-    item.options.flatMap((option) => option.adds.map((addition) => addition.id)),
-  );
-  const optionExhibitIds = index.optionExhibits.map((exhibit) => exhibit.id);
-  addDuplicateIssues(
-    [...documentIds, ...optionRecordIds, ...optionExhibitIds],
-    ctx,
-    ["sections"],
-    "Brief entity IDs",
-  );
+  addDuplicateIssues(briefEntityIds(index), ctx, ["sections"], "Brief entity IDs");
 
   const relationshipIds = index.decisions.flatMap((item) =>
     item.options.flatMap((option) =>
@@ -59,24 +48,44 @@ export function validateDocument(document: BriefDocument, ctx: RefinementContext
 
   const questionIds = new Set(index.questions.map((item) => item.id));
   const findingIds = new Set(index.findings.map((item) => item.id));
+  const optionRecordIds = index.decisions.flatMap((item) =>
+    item.options.flatMap((option) => option.adds.map((addition) => addition.id)),
+  );
+  const optionExhibitIds = index.optionExhibits.map((exhibit) => exhibit.id);
+  const relationshipEntities = new Set(specRelationshipEntityIds(index));
   const flowIds = new Set(
     [...index.sectionExhibits, ...index.optionExhibits]
       .filter((exhibit) => exhibit.kind === "flow")
       .map((exhibit) => exhibit.id),
   );
   const sharedFlowEntityIds = new Set(
-    [...specRelationshipEntityIds(index), ...optionRecordIds, ...optionExhibitIds].filter(
+    [...relationshipEntities, ...optionRecordIds, ...optionExhibitIds].filter(
       (id) => !flowIds.has(id),
     ),
   );
 
+  const decisionReferences: DecisionReferences = {
+    findingIds,
+    questionIds,
+    relationshipEntities,
+    recordsSectionsById: index.recordsSectionsById,
+  };
   for (const section of index.specSections) {
+    const path = sectionPath(section.id);
     if (section.kind === "records") {
       addRecordsIssues(section, findingIds, ctx);
     } else if (section.kind === "exhibits") {
       addExhibitIssues(section, sharedFlowEntityIds, findingIds, ctx);
     } else if (section.kind === "list") {
-      addDuplicateIssues(section.items, ctx, sectionPath(section), `Items in "${section.title}"`);
+      addDuplicateIssues(section.items, ctx, path, `Items in "${section.title}"`);
+    } else if (section.kind === "questions") {
+      for (const item of section.items) {
+        addQuestionIssues(item, relationshipEntities, ctx, [...path, "items", item.id]);
+      }
+    } else if (section.kind === "decisions") {
+      for (const item of section.items) {
+        addDecisionIssues(item, decisionReferences, ctx, [...path, "items", item.id]);
+      }
     }
   }
   for (const section of index.findingSections) {
@@ -84,93 +93,107 @@ export function validateDocument(document: BriefDocument, ctx: RefinementContext
   }
   for (const section of index.planSections) addPlanFieldIssues(section, ctx);
   addPlanIssues(index, ctx);
+}
 
-  const relationshipEntities = new Set(specRelationshipEntityIds(index));
+function addQuestionIssues(
+  question: Question,
+  relationshipEntities: ReadonlySet<string>,
+  ctx: RefinementContext,
+  path: PropertyKey[],
+): void {
+  addDuplicateIssues(
+    question.affects,
+    ctx,
+    [...path, "affects"],
+    `Affected entities for question "${question.id}"`,
+  );
+  question.affects.forEach((reference, referenceIndex) => {
+    addEntityReferenceIssue(reference, relationshipEntities, ctx, [
+      ...path,
+      "affects",
+      referenceIndex,
+    ]);
+  });
+}
 
-  index.questions.forEach((item) => {
-    addDuplicateIssues(
-      item.affects,
-      ctx,
-      [...questionPathIn(index, item), "affects"],
-      `Affected entities for question "${item.id}"`,
-    );
-    item.affects.forEach((reference, referenceIndex) => {
-      addEntityReferenceIssue(reference, relationshipEntities, ctx, [
-        ...questionPathIn(index, item),
-        "affects",
-        referenceIndex,
+type DecisionReferences = {
+  findingIds: ReadonlySet<string>;
+  questionIds: ReadonlySet<string>;
+  relationshipEntities: ReadonlySet<string>;
+  recordsSectionsById: ReadonlyMap<string, RecordsSection>;
+};
+
+function addDecisionIssues(
+  decision: Decision,
+  references: DecisionReferences,
+  ctx: RefinementContext,
+  path: PropertyKey[],
+): void {
+  const { findingIds, questionIds, relationshipEntities, recordsSectionsById } = references;
+  addBasedOnIssues(decision, findingIds, ctx, path, "Decision");
+  addDuplicateIssues(
+    decision.affects,
+    ctx,
+    [...path, "affects"],
+    `Affected entities for decision "${decision.id}"`,
+  );
+  decision.dependsOn.forEach((questionId, dependencyIndex) => {
+    if (!questionIds.has(questionId)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Decision "${decision.id}" depends on unknown question "${questionId}".`,
+        path: [...path, "dependsOn", dependencyIndex],
+      });
+    }
+  });
+  decision.affects.forEach((reference, referenceIndex) => {
+    addEntityReferenceIssue(reference, relationshipEntities, ctx, [
+      ...path,
+      "affects",
+      referenceIndex,
+    ]);
+  });
+
+  decision.options.forEach((option, optionIndex) => {
+    const optionPath = [...path, "options", optionIndex];
+    option.adds.forEach((addition, additionIndex) => {
+      const additionPath = [...optionPath, "adds", additionIndex];
+      const target = recordsSectionsById.get(addition.sectionId);
+      if (!target) {
+        ctx.addIssue({
+          code: "custom",
+          message: `Option addition references unknown records section "${addition.sectionId}".`,
+          path: [...additionPath, "sectionId"],
+        });
+        return;
+      }
+      addRecordIssues(addition, target, findingIds, ctx, additionPath, false);
+    });
+    const optionEntities = new Set([
+      ...relationshipEntities,
+      ...option.adds.map((addition) => addition.id),
+      ...(option.exhibit ? [option.exhibit.id] : []),
+    ]);
+    if (option.exhibit) {
+      const exhibitPath = [...optionPath, "exhibit"];
+      if (option.exhibit.change === "existing") {
+        ctx.addIssue({
+          code: "custom",
+          message: "Decision options may define only changed or preserved exhibits.",
+          path: [...exhibitPath, "change"],
+        });
+      }
+      addBasedOnIssues(option.exhibit, findingIds, ctx, exhibitPath, "Exhibit");
+      addExhibitStructureIssues(option.exhibit, optionEntities, ctx, exhibitPath);
+    }
+    (option.relationships ?? []).forEach((relationship, relationshipIndex) => {
+      addRelationshipIssues(relationship, optionEntities, ctx, [
+        ...optionPath,
+        "relationships",
+        relationshipIndex,
       ]);
     });
   });
-
-  for (const item of index.decisions) {
-    const decisionPath = decisionPathIn(index, item);
-    addBasedOnIssues(item, findingIds, ctx, decisionPath, "Decision");
-    addDuplicateIssues(
-      item.affects,
-      ctx,
-      [...decisionPath, "affects"],
-      `Affected entities for decision "${item.id}"`,
-    );
-    item.dependsOn.forEach((questionId, dependencyIndex) => {
-      if (!questionIds.has(questionId)) {
-        ctx.addIssue({
-          code: "custom",
-          message: `Decision "${item.id}" depends on unknown question "${questionId}".`,
-          path: [...decisionPath, "dependsOn", dependencyIndex],
-        });
-      }
-    });
-    item.affects.forEach((reference, referenceIndex) => {
-      addEntityReferenceIssue(reference, relationshipEntities, ctx, [
-        ...decisionPath,
-        "affects",
-        referenceIndex,
-      ]);
-    });
-
-    item.options.forEach((option, optionIndex) => {
-      option.adds.forEach((addition, additionIndex) => {
-        const path = [...decisionPath, "options", optionIndex, "adds", additionIndex];
-        const target = index.recordsSectionsById.get(addition.sectionId);
-        if (!target) {
-          ctx.addIssue({
-            code: "custom",
-            message: `Option addition references unknown records section "${addition.sectionId}".`,
-            path: [...path, "sectionId"],
-          });
-          return;
-        }
-        addRecordIssues(addition, target, findingIds, ctx, path, false);
-      });
-      const optionEntities = new Set([
-        ...relationshipEntities,
-        ...option.adds.map((addition) => addition.id),
-        ...(option.exhibit ? [option.exhibit.id] : []),
-      ]);
-      if (option.exhibit) {
-        const path = [...decisionPath, "options", optionIndex, "exhibit"];
-        if (option.exhibit.change === "existing") {
-          ctx.addIssue({
-            code: "custom",
-            message: "Decision options may define only changed or preserved exhibits.",
-            path: [...path, "change"],
-          });
-        }
-        addBasedOnIssues(option.exhibit, findingIds, ctx, path, "Exhibit");
-        addExhibitStructureIssues(option.exhibit, optionEntities, ctx, path);
-      }
-      (option.relationships ?? []).forEach((relationship, relationshipIndex) => {
-        addRelationshipIssues(relationship, optionEntities, ctx, [
-          ...decisionPath,
-          "options",
-          optionIndex,
-          "relationships",
-          relationshipIndex,
-        ]);
-      });
-    });
-  }
 }
 
 function addTabIssues(document: BriefDocument, ctx: RefinementContext): void {
@@ -210,24 +233,9 @@ function addTabIssues(document: BriefDocument, ctx: RefinementContext): void {
   }
 }
 
-function documentEntityIds(index: BriefIndex): string[] {
-  return [
-    ...index.sections.map((section) => section.id),
-    ...index.findings.map((item) => item.id),
-    ...index.findings.flatMap((item) => (item.exhibit ? [item.exhibit.id] : [])),
-    ...index.recordsSections.flatMap((section) => section.items.map((item) => item.id)),
-    ...index.planSections.flatMap((section) => planSteps(section).map((step) => step.id)),
-    ...index.sectionExhibits.map((item) => item.id),
-    ...index.questions.map((item) => item.id),
-    ...index.decisions.map((item) => item.id),
-  ];
-}
-
 function specRelationshipEntityIds(index: BriefIndex): string[] {
   return [
-    ...index.specSections
-      .filter((section) => section.kind === "markdown" || section.kind === "list")
-      .map((section) => section.id),
+    ...index.specSections.filter(isDescriptionSection).map((section) => section.id),
     ...index.recordsSections.flatMap((section) => section.items.map((item) => item.id)),
     ...index.sectionExhibits.map((item) => item.id),
     ...index.questions.map((item) => item.id),
@@ -257,7 +265,7 @@ function addRecordsIssues(
   findingIds: ReadonlySet<string>,
   ctx: RefinementContext,
 ): void {
-  const path = sectionPathForId(section.id);
+  const path = sectionPath(section.id);
   if (!section.subject && section.fields.length === 0) {
     ctx.addIssue({
       code: "custom",
@@ -273,7 +281,7 @@ function addRecordsIssues(
 }
 
 function addPlanFieldIssues(section: PlanSection, ctx: RefinementContext): void {
-  const path = sectionPathForId(section.id);
+  const path = sectionPath(section.id);
   addFieldDefinitionIssues(section, ["Step", "Done when", "Status"], ctx, path);
   planStepLocations(section).forEach(({ step, path: stepPath }) => {
     addFieldValuesIssues(step, section, ctx, [...path, ...stepPath]);
@@ -322,7 +330,7 @@ function addExhibitIssues(
   findingIds: ReadonlySet<string>,
   ctx: RefinementContext,
 ): void {
-  const path = sectionPathForId(section.id);
+  const path = sectionPath(section.id);
   section.items.forEach((item, itemIndex) => {
     const itemPath = [...path, "items", itemIndex];
     addSourceIssues(item, section, ctx, itemPath, "Exhibit");
@@ -336,7 +344,7 @@ function addFindingIssues(
   sharedFlowEntityIds: ReadonlySet<string>,
   ctx: RefinementContext,
 ): void {
-  const path = sectionPathForId(section.id);
+  const path = sectionPath(section.id);
   for (const [itemIndex, item] of section.items.entries()) {
     const itemPath = [...path, "items", itemIndex];
     const sources = item.sources ?? [];
@@ -444,7 +452,7 @@ function addFileTreeIssues(
 }
 
 function addRecordIssues(
-  item: BriefRecord | OptionAddition,
+  item: BriefRecord,
   section: RecordsSection,
   findingIds: ReadonlySet<string>,
   ctx: RefinementContext,
@@ -527,7 +535,7 @@ function addSourceIssues(
   }
 }
 
-type FieldValueItem = BriefRecord | OptionAddition | PlanStep;
+type FieldValueItem = BriefRecord | PlanStep;
 
 function fieldValueItemLabel(item: FieldValueItem): string {
   return "title" in item ? item.title : recordLabel(item);

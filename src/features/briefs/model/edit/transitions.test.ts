@@ -1,25 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { planSections, planState } from "../plan";
-import {
-  allDecisions,
-  allFindings,
-  allQuestions,
-  findBriefEntity,
-  findingsForEntity,
-} from "../query/reading";
+import { planState } from "../plan";
+import { findBriefEntity } from "../query/entities";
+import { entityLinks } from "../query/links";
 import { specState } from "../spec";
 import {
+  canRegenerateSection,
+  canRemoveEntity,
   selectDecisionOption,
   clearDecisionChoice,
-  removeExhibit,
-  removeFinding,
-  removeRecord,
-  recordDecision,
-  removeSection,
+  decide,
+  removeEntity,
   reopenDecision,
   reopenQuestion,
   setRecordsView,
-  setSectionCollapsed,
   setSectionsCollapsed,
   updateExhibit,
   updateFinding,
@@ -27,6 +20,10 @@ import {
   updatePlanStep,
 } from "./transitions";
 import {
+  allDecisions,
+  allFindings,
+  allPlanSections,
+  allQuestions,
   exhibitsFixture,
   flowExhibit,
   fixture,
@@ -42,11 +39,11 @@ import {
 describe("brief transitions", () => {
   test("records only dependency-free choices and supports reopen and clear", () => {
     const explored = selectDecisionOption(fixture(), "diff-treatment", "shared");
-    expect(recordDecision(explored, "diff-treatment")).toBe(explored);
+    expect(decide(explored, "diff-treatment")).toBe(explored);
 
     const resolved = structuredClone(explored);
     allQuestions(resolved)[0]!.answer = "Yes.";
-    const decided = recordDecision(resolved, "diff-treatment");
+    const decided = decide(resolved, "diff-treatment");
     expect(allDecisions(decided)[0]).toMatchObject({
       choice: { optionId: "shared", status: "decided" },
     });
@@ -71,10 +68,10 @@ describe("brief transitions", () => {
 
   test("persists disclosure and records view changes", () => {
     const document = fixture();
-    const collapsed = setSectionCollapsed(document, "overview", true);
+    const collapsed = setSectionsCollapsed(document, ["overview"], true);
     expect(collapsed.sections.find((section) => section.id === "overview")?.collapsed).toBe(true);
 
-    const nestedCollapsed = setSectionCollapsed(collapsed, "concepts", true);
+    const nestedCollapsed = setSectionsCollapsed(collapsed, ["concepts"], true);
     expect(recordsSection(nestedCollapsed, "concepts").collapsed).toBe(true);
 
     const allCollapsed = setSectionsCollapsed(
@@ -166,7 +163,7 @@ describe("brief transitions", () => {
       values: { shape: "declared", content: ["shared"] },
       source: "ToolCallMessage.tsx#ToolCallMessage",
     });
-    expect(findingsForEntity(editedRecord, "ordinary-tools").map((item) => item.id)).toEqual([
+    expect(entityLinks(editedRecord, "ordinary-tools").basedOn.map((item) => item.id)).toEqual([
       "finding-shared-owner",
     ]);
 
@@ -175,28 +172,51 @@ describe("brief transitions", () => {
       ...groundedFlow,
       title: "Shared rendering routes",
     });
-    expect(findingsForEntity(editedExhibit, groundedFlow.id).map((item) => item.id)).toEqual([
+    expect(entityLinks(editedExhibit, groundedFlow.id).basedOn.map((item) => item.id)).toEqual([
       "finding-shared-owner",
     ]);
     expect(parse(editedExhibit)).toMatchObject({ ok: true });
   });
 
+  test("clears optional content an update omits while keeping identity and grounding", () => {
+    const document = groundedFixture();
+    const {
+      id: recordId,
+      basedOn: recordBasis,
+      source: _source,
+      ...record
+    } = recordsSection(document, "tool-corpus").items.find((item) => item.id === "ordinary-tools")!;
+    const withoutSource = updateRecord(document, recordId, record);
+    expect(
+      recordsSection(withoutSource, "tool-corpus").items.find((item) => item.id === recordId),
+    ).toEqual({ id: recordId, basedOn: recordBasis, ...record });
+
+    const {
+      id: flowId,
+      basedOn: flowBasis,
+      description: _description,
+      ...flow
+    } = flowExhibit(document, "shared-rendering-flow");
+    const withoutDescription = updateExhibit(document, flowId, flow);
+    expect(flowExhibit(withoutDescription, flowId)).toEqual({
+      id: flowId,
+      basedOn: flowBasis,
+      ...flow,
+    });
+  });
+
   test("removes findings while repairing every grounded spec reference", () => {
     const document = groundedFixture();
-    const withoutOwnerFinding = removeFinding(
-      document,
-      "research-findings",
-      "finding-shared-owner",
-    );
+    const withoutOwnerFinding = removeEntity(document, "finding-shared-owner");
 
     expect(findBriefEntity(withoutOwnerFinding, "finding-shared-owner")).toBeUndefined();
-    expect(findingsForEntity(withoutOwnerFinding, "ordinary-tools")).toEqual([]);
-    expect(findingsForEntity(withoutOwnerFinding, "shared-rendering-flow")).toEqual([]);
+    expect(entityLinks(withoutOwnerFinding, "ordinary-tools").basedOn).toEqual([]);
+    expect(entityLinks(withoutOwnerFinding, "shared-rendering-flow").basedOn).toEqual([]);
     expect(parse(withoutOwnerFinding)).toMatchObject({ ok: true });
 
-    const withoutFindings = removeSection(document, "research-findings");
+    const withoutFindings = removeEntity(document, "research-findings");
     expect(allFindings(withoutFindings)).toEqual([]);
-    expect(findingsForEntity(withoutFindings, "diff-treatment")).toEqual([]);
+    expect(entityLinks(withoutFindings, "diff-treatment").basedOn).toEqual([]);
     expect(parse(withoutFindings)).toMatchObject({ ok: true });
   });
 
@@ -337,21 +357,18 @@ describe("brief transitions", () => {
     });
     expect(parse(document)).toMatchObject({ ok: true });
 
-    const removed = removeExhibit(document, "technical-definitions", "body-declaration");
+    const removed = removeEntity(document, "body-declaration");
     expect(findBriefEntity(removed, "body-declaration")).toBeUndefined();
     expect(findBriefEntity(removed, "implement-declaration")).toBeUndefined();
     expect(allQuestions(removed)[0]!.affects).not.toContain("body-declaration");
-    expect(planSections(removed).map((section) => section.id)).not.toContain("exhibit-plan");
+    expect(allPlanSections(removed).map((section) => section.id)).not.toContain("exhibit-plan");
     expect(parse(removed)).toMatchObject({ ok: true });
 
-    expect(removeExhibit(document, "technical-definitions", "renderer-rollout")).toBe(document);
+    expect(removeEntity(document, "renderer-rollout")).toBe(document);
   });
 
   test("edits a plan step without changing its implementation links or identity", () => {
     const document = plannedFixture();
-    const step = findBriefEntity(document, "foundation-step");
-    if (step?.type !== "plan-step") throw new Error("Missing foundation step");
-    step.step.status = "in-progress";
     const edited = updatePlanStep(document, "foundation-step", {
       title: "Build the durable foundation",
       doneWhen: "The durable API and its boundary tests pass.",
@@ -364,7 +381,6 @@ describe("brief transitions", () => {
       id: "foundation-step",
       title: "Build the durable foundation",
       doneWhen: "The durable API and its boundary tests pass.",
-      status: "in-progress",
       implements: ["durable-result"],
     });
     expect(parse(edited)).toMatchObject({ ok: true });
@@ -428,7 +444,7 @@ describe("brief transitions", () => {
       },
     ];
 
-    const withoutRecords = removeSection(document, "rendering-ownership");
+    const withoutRecords = removeEntity(document, "rendering-ownership");
     expect(withoutRecords.sections.map((section) => section.id)).not.toContain(
       "rendering-ownership",
     );
@@ -444,20 +460,20 @@ describe("brief transitions", () => {
     expect(withoutRecords.tabs?.[1]?.sections).toEqual(["shared-rendering-flow-section"]);
     expect(parse(withoutRecords)).toMatchObject({ ok: true });
 
-    const withoutConcepts = removeSection(withoutRecords, "concepts");
+    const withoutConcepts = removeEntity(withoutRecords, "concepts");
     expect(withoutConcepts.sections.map((section) => section.id)).not.toContain("concepts");
     expect(withoutConcepts.sections.map((section) => section.id)).toContain("invariants");
     expect(parse(withoutConcepts)).toMatchObject({ ok: true });
 
-    const withoutInvariants = removeSection(withoutConcepts, "invariants");
+    const withoutInvariants = removeEntity(withoutConcepts, "invariants");
     expect(withoutInvariants.sections.map((section) => section.id)).not.toContain("invariants");
     expect(parse(withoutInvariants)).toMatchObject({ ok: true });
   });
 
   test("removes plan and flow sections while preserving a valid document", () => {
     const planned = plannedFixture();
-    const withoutPlan = removeSection(planned, "implementation");
-    expect(planSections(withoutPlan)).toEqual([]);
+    const withoutPlan = removeEntity(planned, "implementation");
+    expect(allPlanSections(withoutPlan)).toEqual([]);
     expect(
       (allDecisions(withoutPlan)[0]!.options[0]!.relationships ?? []).map(
         (relationship) => relationship.id,
@@ -466,7 +482,7 @@ describe("brief transitions", () => {
     expect(parse(withoutPlan)).toMatchObject({ ok: true });
 
     const document = fixture();
-    const withoutFlow = removeSection(document, "shared-rendering-flow-section");
+    const withoutFlow = removeEntity(document, "shared-rendering-flow-section");
     expect(withoutFlow.sections.map((section) => section.id)).not.toContain(
       "shared-rendering-flow-section",
     );
@@ -475,7 +491,7 @@ describe("brief transitions", () => {
 
   test("removes option exhibits and their now-orphaned plan steps with the decision section", () => {
     const document = optionExhibitsFixture();
-    const removed = removeSection(document, "decisions");
+    const removed = removeEntity(document, "decisions");
 
     expect(findBriefEntity(removed, "durable-state-preview")).toBeUndefined();
     expect(findBriefEntity(removed, "ephemeral-state-preview")).toBeUndefined();
@@ -484,16 +500,36 @@ describe("brief transitions", () => {
     expect(parse(removed)).toMatchObject({ ok: true });
   });
 
+  test("removes only sections, findings, and new section-authored items", () => {
+    const document = optionExhibitsFixture();
+    expect(canRemoveEntity(document, "decisions")).toBe(true);
+    expect(canRemoveEntity(document, "durable-state-preview")).toBe(false);
+    expect(canRemoveEntity(document, "foundation-step")).toBe(false);
+    expect(canRemoveEntity(groundedFixture(), "finding-shared-owner")).toBe(true);
+    expect(canRemoveEntity(exhibitsFixture(), "body-declaration")).toBe(true);
+    expect(canRemoveEntity(exhibitsFixture(), "renderer-rollout")).toBe(false);
+    expect(canRemoveEntity(document, "missing")).toBe(false);
+  });
+
+  test("keeps a brief's last section", () => {
+    const document = fixture();
+    const concepts = recordsSection(document, "concepts");
+    const single = { ...document, sections: [concepts] };
+    expect(canRemoveEntity(single, "concepts")).toBe(false);
+    expect(removeEntity(single, "concepts")).toBe(single);
+    expect(canRemoveEntity(single, "block")).toBe(true);
+  });
+
   test("removes only shared new records", () => {
     const document = fixture();
-    const withoutBlock = removeRecord(document, "concepts", "block");
+    const withoutBlock = removeEntity(document, "block");
     expect(recordsSection(withoutBlock, "concepts").items.map((item) => item.id)).toEqual([
       "tool-call",
     ]);
-    expect(removeRecord(document, "concepts", "tool-call")).toBe(document);
+    expect(removeEntity(document, "tool-call")).toBe(document);
 
     const explored = selectDecisionOption(document, "diff-treatment", "shared");
-    expect(removeRecord(explored, "rendering-ownership", "shared-diff")).toBe(explored);
+    expect(removeEntity(explored, "shared-diff")).toBe(explored);
   });
 
   test("removes an orphaned final plan step when its last implementation target is removed", () => {
@@ -509,12 +545,11 @@ describe("brief transitions", () => {
     executionPlan.steps[1]!.implements = ["temporary-behavior"];
     expect(parse(document)).toMatchObject({ ok: true });
 
-    const removed = removeRecord(document, "behavior", "temporary-behavior");
+    const removed = removeEntity(document, "temporary-behavior");
     expect(parse(removed)).toMatchObject({ ok: true });
-    const remainingPlanSections = planSections(removed);
-    expect(
-      planState(remainingPlanSections, specState(removed))?.steps.map((step) => step.id),
-    ).toEqual(["foundation-step"]);
+    expect(planState(removed, specState(removed))?.steps.map((step) => step.id)).toEqual([
+      "foundation-step",
+    ]);
   });
 
   test("removes a phase when its last step loses its implementation target", () => {
@@ -530,7 +565,7 @@ describe("brief transitions", () => {
     executionPlan.phases[1]!.steps[0]!.implements = ["temporary-behavior"];
     expect(parse(document)).toMatchObject({ ok: true });
 
-    const removed = removeRecord(document, "behavior", "temporary-behavior");
+    const removed = removeEntity(document, "temporary-behavior");
     const remainingPlan = plan(removed, "implementation");
 
     expect("phases" in remainingPlan ? remainingPlan.phases.map((phase) => phase.id) : []).toEqual([
@@ -558,7 +593,7 @@ describe("brief transitions", () => {
     });
     expect(parse(document)).toMatchObject({ ok: true });
 
-    const removed = removeRecord(document, "behavior", "temporary-behavior");
+    const removed = removeEntity(document, "temporary-behavior");
     const remainingPlan = plan(removed, "implementation");
 
     expect(
@@ -594,9 +629,9 @@ describe("brief transitions", () => {
     });
     expect(parse(document)).toMatchObject({ ok: true });
 
-    const removed = removeRecord(document, "behavior", "temporary-behavior");
+    const removed = removeEntity(document, "temporary-behavior");
     expect(parse(removed)).toMatchObject({ ok: true });
-    expect(planSections(removed).map((section) => section.id)).toEqual(["implementation"]);
+    expect(allPlanSections(removed).map((section) => section.id)).toEqual(["implementation"]);
     expect(findBriefEntity(removed, "temporary-step")).toBeUndefined();
   });
 
@@ -658,7 +693,7 @@ describe("brief transitions", () => {
     );
     expect(parse(document)).toMatchObject({ ok: true });
 
-    const removed = removeRecord(document, "concepts", "block");
+    const removed = removeEntity(document, "block");
     expect(removed.sections.map((section) => section.id)).not.toContain("block-flow-section");
     expect(removed.sections.map((section) => section.id)).not.toContain("block-plan");
 
@@ -676,5 +711,29 @@ describe("brief transitions", () => {
       { id: "rendering-results", title: "Rendering results", nodeIds: ["fallback-owner"] },
     ]);
     expect(parse(removed)).toMatchObject({ ok: true });
+  });
+
+  test("regenerates only content-safe sections", () => {
+    const document = fixture();
+    expect(
+      canRegenerateSection(document.sections.find((section) => section.id === "overview")!),
+    ).toBe(true);
+    expect(
+      canRegenerateSection(document.sections.find((section) => section.id === "concepts")!),
+    ).toBe(true);
+    expect(
+      canRegenerateSection(
+        document.sections.find((section) => section.id === "shared-rendering-flow-section")!,
+      ),
+    ).toBe(true);
+    expect(
+      canRegenerateSection(
+        groundedFixture().sections.find((section) => section.id === "research-findings")!,
+      ),
+    ).toBe(true);
+    expect(
+      canRegenerateSection(document.sections.find((section) => section.id === "decisions")!),
+    ).toBe(false);
+    expect(canRegenerateSection(plan(plannedFixture(), "implementation"))).toBe(false);
   });
 });

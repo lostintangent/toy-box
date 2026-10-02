@@ -1,5 +1,11 @@
 import { isChannelSystemMessage } from ".";
-import type { ChannelArtifact, ChannelEvent, ChannelMessage, ChannelState } from ".";
+import type {
+  ChannelArtifact,
+  ChannelEvent,
+  ChannelMessage,
+  ChannelRoutine,
+  ChannelState,
+} from ".";
 import { workspaceFileId } from "@files/model";
 
 /** Apply one ordered detail event to the current Channel state. */
@@ -45,6 +51,15 @@ export function reduceChannelState(state: ChannelState, event: ChannelEvent): Ch
             content.artifact,
             event.message.timestamp,
           );
+          break;
+
+        case "routine_scheduled":
+        case "routine_edited":
+          next.routines = setRoutine(state.routines, content.routine);
+          break;
+
+        case "routine_deleted":
+          next.routines = state.routines.filter(({ id }) => id !== content.routine.id);
           break;
       }
       return next;
@@ -97,6 +112,16 @@ function upsertMessage(messages: ChannelMessage[], message: ChannelMessage): Cha
   const index = next.findIndex(({ sequence }) => sequence >= message.sequence);
   if (index === -1) return [...next, message];
   return [...next.slice(0, index), message, ...next.slice(index)];
+}
+
+/** Adds a routine, or changes one in place so the list keeps its order. */
+function setRoutine(
+  routines: readonly ChannelRoutine[],
+  routine: ChannelRoutine,
+): ChannelRoutine[] {
+  return routines.some(({ id }) => id === routine.id)
+    ? routines.map((current) => (current.id === routine.id ? routine : current))
+    : [...routines, routine];
 }
 
 /** Adds a newly shared artifact, or retitles one already shared without changing when it was. */

@@ -63,7 +63,8 @@ Managed features supervise sessions because their terminal policies differ. The 
    receive current identity and collaboration instructions between executions. Active delivery never
    refreshes that session. A caller joins an existing stream, shares an in-progress creation, creates a
    new provider connection, or resumes an idle session from its reduced snapshot and cached provider
-   connection.
+   connection. Snapshot reads, subscriptions, and runtime status treat an in-progress acquisition as the
+   current execution, so a session announced before its stream exists never reads as missing.
 2. Connected callers subscribe before delivery. Every logical message has a unique client ID; `SessionStream.deliver` synchronously claims the first turn or emits `message_queued` behind active execution. A queue entry is `queued` while cancellable, `submitting` while its provider call is in flight, and `submitted` until the provider echoes it. Only queued user messages can be steered. Each provider associates native message identity with the client ID and adds it to canonical input events after filtering native subagent and skill inputs. That event removes a queued input, reconciles browser optimism when present, and otherwise appends normally.
 3. Each provider translates raw events into canonical `SessionEvent`s. The event bus stamps a process-monotonic `eventId`, and the shared reducer returns the next immutable `SessionState`.
 4. When the provider emits `end`, the runtime consumes it and drains the next queued message through the same path. With no queued work, the runtime finishes the execution. A `session_title_changed` event updates workspace metadata and does not enter transcript state or its event stream.

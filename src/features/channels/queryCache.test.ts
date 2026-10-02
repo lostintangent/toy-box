@@ -56,6 +56,7 @@ test.each(["channel.upserted", "channel.deleted"] as const)(
       members: [member],
       messages: [],
       artifacts: [],
+      routines: [],
     });
     let reads = 0;
     const pending = client.query({

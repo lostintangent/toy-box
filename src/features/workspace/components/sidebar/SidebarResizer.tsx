@@ -1,6 +1,7 @@
 import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@/shared/utils";
 import { RESIZE_HANDLE_RULE } from "@/shared/ui/resizable";
+import { CARD_CLASS, CARD_INSET_CLASS } from "@workspace/components/layout/card";
 import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
@@ -10,14 +11,14 @@ import {
 /** How far one arrow key nudges the sidebar's edge. */
 const KEYBOARD_STEP = 16;
 
-/** The sidebar draws its own trailing resize rule, and its width includes it. */
-export const SIDEBAR_BORDER = 1;
+/** The sidebar floats as a bordered card, and its width includes that border on both sides. */
+export const SIDEBAR_FRAME = 2;
 
 /**
  * The width a collapsed sidebar holds: the rail's single action between two
- * insets, plus that border. `SidebarRail` lays itself out against this.
+ * insets, plus that frame. `SidebarRail` lays itself out against this.
  */
-export const SIDEBAR_COLLAPSED_WIDTH = 44 + SIDEBAR_BORDER;
+export const SIDEBAR_COLLAPSED_WIDTH = 44 + SIDEBAR_FRAME;
 
 type SidebarDrag = { collapsed: true } | { collapsed: false; width: number };
 
@@ -37,7 +38,7 @@ export function resolveSidebarDrag(width: number): SidebarDrag {
  * this or none of it, so it cannot be collapsed without a way back.
  */
 export type SidebarCollapseControl = {
-  /** The width the sidebar returns to, border included. It is kept while collapsed. */
+  /** The width the sidebar returns to, frame included. It is kept while collapsed. */
   expandedWidth: number;
   collapsed: boolean;
   onExpandedWidthChange: (width: number) => void;
@@ -96,20 +97,23 @@ export function SidebarResizer({
   // is still widening the sidebar has no crossfade and must track the edge live.
   const style: CSSProperties & { "--sidebar-width": string } = {
     width: currentWidth,
-    "--sidebar-width": isDragging && !collapsed ? "100%" : `${expandedWidth - SIDEBAR_BORDER}px`,
+    "--sidebar-width": isDragging && !collapsed ? "100%" : `${expandedWidth - SIDEBAR_FRAME}px`,
   };
 
   return (
     <>
-      <div
-        data-sidebar
-        style={style}
-        className={cn(
-          "shrink-0 border-r",
-          !isDragging && "transition-[width] duration-300 ease-layout",
-        )}
-      >
-        {children}
+      <div className={cn("flex shrink-0", CARD_INSET_CLASS)}>
+        <div
+          data-sidebar
+          style={style}
+          className={cn(
+            CARD_CLASS,
+            "shrink-0",
+            !isDragging && "transition-[width] duration-300 ease-layout",
+          )}
+        >
+          {children}
+        </div>
       </div>
 
       <SidebarEdge
@@ -126,9 +130,9 @@ export function SidebarResizer({
 }
 
 /**
- * The sidebar's trailing edge. It reads as the sidebar's border until it is
- * hovered or dragged, so both layouts show the same one-pixel rule while its
- * desktop-only grab area is slightly wider than the shared pane handles.
+ * The sidebar's trailing edge. Like the pane handles, it is an invisible rule down
+ * the middle of the gutter until hovered or dragged, though its desktop-only grab
+ * area is slightly wider.
  */
 function SidebarEdge({
   width,
@@ -196,7 +200,7 @@ function SidebarEdge({
       onKeyDown={handleKeyDown}
       className={cn(
         RESIZE_HANDLE_RULE,
-        "z-10 -ml-px shrink-0 cursor-col-resize touch-none select-none after:w-1.5",
+        "z-10 shrink-0 cursor-col-resize touch-none select-none after:w-1.5",
         "hover:bg-[image:var(--resize-accent-y)]",
         isDragging && accentGradient,
         hidden && "hidden",

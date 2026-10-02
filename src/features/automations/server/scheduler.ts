@@ -8,7 +8,7 @@ import { runAutomation } from "./index";
 const POLL_INTERVAL_MS = 30_000;
 
 export function startScheduler(): void {
-  scheduleSchedulerTick(0);
+  setInterval(() => void runSchedulerTick(), POLL_INTERVAL_MS).unref?.();
 }
 
 export async function runSchedulerTick(): Promise<void> {
@@ -29,14 +29,4 @@ export async function runSchedulerTick(): Promise<void> {
   } catch (error) {
     console.error("Failed to run automation scheduler tick:", error);
   }
-}
-
-function scheduleSchedulerTick(delayMs = POLL_INTERVAL_MS): void {
-  const timer = setTimeout(() => void runSchedulerLoop(), delayMs);
-  timer.unref?.();
-}
-
-async function runSchedulerLoop(): Promise<void> {
-  await runSchedulerTick();
-  scheduleSchedulerTick();
 }

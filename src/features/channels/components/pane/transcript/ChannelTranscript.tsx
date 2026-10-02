@@ -9,19 +9,28 @@ import {
   type RefObject,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { ArrowDown, ArrowUp } from "lucide-react";
 import { AgentStatus } from "@channels/components/agents/AgentStatus";
 import type { ChannelMessage } from "@channels/model";
 import { channelRequestStates, type ChannelRequestState } from "@channels/model/requests";
 import { TranscriptSkeleton } from "@sessions/components/transcript/TranscriptSkeleton";
+import { Button } from "@/shared/ui/button";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { ScrollToBottomButton } from "@/shared/ui/scroll-to-bottom-button";
+import { WaitingIndicator, waitingOutlineClassName } from "@/shared/ui/waiting-indicator";
 import { cn } from "@/shared/utils";
 import { useChannelPane } from "../ChannelPaneContext";
 import { AgentRun } from "./AgentRun";
 import { ChannelPlaceholder } from "./ChannelPlaceholder";
 import { ChannelUserMessage } from "./ChannelUserMessage";
 import { SystemMessageGroup } from "./SystemMessageGroup";
-import { transcriptDayLabel, transcriptRows, type TranscriptRow } from "./transcriptRows";
+import { scrollToRequest, useRequestPlacement, type RequestPlacement } from "./requestPlacement";
+import {
+  pendingRequestRow,
+  transcriptDayLabel,
+  transcriptRows,
+  type TranscriptRow,
+} from "./transcriptRows";
 
 export function ChannelTranscript({
   messages,
@@ -46,7 +55,7 @@ export function ChannelTranscript({
   const firstUnreadIndex = rows.findIndex((row) => row.startsUnread);
   // A row keeps its first message's identity as later messages join its run.
   const getRowKey = useCallback((index: number) => rows[index]!.messages[0]!.id, [rows]);
-  // eslint-disable-next-line react/react-compiler -- TanStack Virtual intentionally owns its mutable instance.
+  // eslint-disable-next-line react/incompatible-library -- TanStack Virtual intentionally owns its mutable instance.
   const virtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => scrollRef.current,
@@ -76,6 +85,8 @@ export function ChannelTranscript({
     scrollAfterAppendRef.current = true;
   });
 
+  const request = pendingRequestRow(rows, requests);
+  const placement = useRequestPlacement(scrollRef, virtualizer, request);
   const virtualItems = virtualizer.getVirtualItems();
   const firstVirtualIndex = virtualItems[0]?.index;
   const oldestSequence = messages[0]?.sequence;
@@ -158,7 +169,13 @@ export function ChannelTranscript({
           </div>
         )}
       </ScrollableFade>
-      {isReady && (
+      {isReady && request && placement && (
+        <QuestionPill
+          placement={placement}
+          onClick={() => scrollToRequest(scrollRef.current!, virtualizer, request)}
+        />
+      )}
+      {isReady && placement !== "below" && (
         <ScrollToBottomButton
           isAtBottom={virtualizer.isAtEnd()}
           onScrollToBottom={() => virtualizer.scrollToEnd({ behavior: "smooth" })}
@@ -184,6 +201,32 @@ function TranscriptRowContent({
     case "system":
       return <SystemMessageGroup messages={row.messages} />;
   }
+}
+
+/** Points toward the pending request while it's out of view, taking Scroll down's place below. */
+function QuestionPill({
+  placement,
+  onClick,
+}: {
+  placement: RequestPlacement;
+  onClick: () => void;
+}) {
+  const Arrow = placement === "above" ? ArrowUp : ArrowDown;
+  return (
+    <Button
+      variant="secondary"
+      className={cn(
+        "absolute left-1/2 -translate-x-1/2 rounded-full border bg-background shadow-lg",
+        placement === "above" ? "top-4" : "bottom-4",
+        waitingOutlineClassName,
+      )}
+      onClick={onClick}
+    >
+      <WaitingIndicator />
+      Question {placement}
+      <Arrow />
+    </Button>
+  );
 }
 
 function DayDivider({ date }: { date: string }) {

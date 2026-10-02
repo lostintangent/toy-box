@@ -14,6 +14,8 @@
   --color-muted-foreground: var(--muted-foreground);
   /* Opaque equivalent of bg-muted/50 over the application background. */
   --color-panel: color-mix(in srgb, var(--muted) 50%, var(--background));
+  --color-backdrop: var(--backdrop);
+  --shadow-card: var(--card-shadow);
   --color-accent: var(--accent);
   --color-accent-foreground: contrast-color(var(--accent));
   --color-destructive: var(--destructive);

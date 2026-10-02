@@ -11,12 +11,14 @@ import type {
   ChannelMessage,
   ChannelMessageSender,
   ChannelReaction,
+  ChannelRoutine,
   ChannelState,
   CreateChannelMemberInput,
   CreateChannelInput,
   EditChannelInput,
   PostChannelMessageInput,
   SetChannelAgentStatusInput,
+  SetChannelRoutineInput,
   ChannelMemberChanges,
   UpdateChannelInput,
 } from "@channels/model";
@@ -264,7 +266,12 @@ export async function readChannelForSession(channelId: string, beforeSequence?: 
   const database = new ChannelDatabase(await getStateDatabase());
   const channel = await database.getChannel(channelId);
   if (!channel) throw new Error("Channel not found.");
-  return readChannelBefore(database, channel, beforeSequence);
+  const messages = await database.listMessagesBefore(
+    channel.id,
+    beforeSequence,
+    CHANNEL_MESSAGE_LIMIT,
+  );
+  return readChannel(database, channel, messages, (messages[0]?.sequence ?? 1) > 1);
 }
 
 export async function waitForChannelAgents(
@@ -303,35 +310,24 @@ export async function readChannelForAgent(sessionId: string) {
   return result;
 }
 
-async function readChannelBefore(
-  database: ChannelDatabase,
-  channel: Channel,
-  beforeSequence?: number,
-) {
-  const messages = await database.listMessagesBefore(
-    channel.id,
-    beforeSequence,
-    CHANNEL_MESSAGE_LIMIT,
-  );
-  return readChannel(database, channel, messages, (messages[0]?.sequence ?? 1) > 1);
-}
-
 async function readChannel(
   database: ChannelDatabase,
   channel: Channel,
   messages: ChannelMessage[],
   hasMore: boolean,
 ) {
-  const [{ lead, members }, artifacts] = await Promise.all([
+  const [{ lead, members }, artifacts, routines] = await Promise.all([
     database.getRoster(channel.id),
     database.listArtifacts(channel.id),
+    database.listRoutines(channel.id),
   ]);
   return {
     channel: publicChannel(channel),
-    lead: publicChannelLead(lead),
-    members: members.map(publicChannelMember),
+    lead: publicChannelAgent(lead),
+    members: members.map(publicChannelAgent),
     messages,
     artifacts: artifacts.map(publicChannelArtifact),
+    routines: routines.map(({ id, ...routine }) => ({ routineId: id, ...routine })),
     hasMore,
   };
 }
@@ -350,16 +346,9 @@ function publicChannel({ name, purpose, directory, checklist, previewUrl }: Chan
 }
 
 /** Public collaboration facts omit each agent's private read position and runtime details. */
-function publicChannelMember(member: ChannelMember) {
-  return { memberId: member.id, ...publicChannelAgent(member) };
-}
-
-function publicChannelLead(lead: ChannelAgent) {
-  return { leadId: lead.id, ...publicChannelAgent(lead) };
-}
-
 function publicChannelAgent(agent: ChannelAgent) {
   return {
+    agentId: agent.id,
     name: agent.name,
     mention: `@${agentHandleFromName(agent.name)}`,
     role: agent.role,
@@ -415,7 +404,22 @@ export async function setChannelMessageReactionFromAgent(
 ): Promise<ChannelReaction["reaction"] | null> {
   const database = new ChannelDatabase(await getStateDatabase());
   const agent = await requireChannelAgent(database, sessionId);
-  return setChannelAgentReaction(database, agent, input.sequence, input.reaction);
+  const change = await database.setMessageReaction({
+    channelId: agent.channelId,
+    sequence: input.sequence,
+    agentId: agent.id,
+    reaction: input.reaction,
+  });
+  if (!change) return null;
+  const reaction = change.reaction?.reaction ?? null;
+  publishChannelEvent(agent.channelId, {
+    type: "reaction",
+    revision: change.revision,
+    sequence: input.sequence,
+    agentId: agent.id,
+    reaction,
+  });
+  return reaction;
 }
 
 export async function setChannelAgentStatus(
@@ -440,42 +444,81 @@ async function clearChannelAgentWaitingStatus(sessionId: string): Promise<void> 
   if (change) publishChannelStatus(change);
 }
 
+/** Ends a turn. A lead waiting on a member or external work can ask to wake after a delay. */
 export async function finishChannelAgentTurn(
   sessionId: string,
   waitingFor?: string,
+  wakeAfterMinutes?: number,
 ): Promise<void> {
   const database = new ChannelDatabase(await getStateDatabase());
+  const wakeAt = wakeAfterMinutes
+    ? new Date(Date.now() + wakeAfterMinutes * 60_000).toISOString()
+    : undefined;
   const change = await database.setAgentStatus(
     sessionId,
-    waitingFor ? { state: "waiting", text: waitingFor } : undefined,
+    waitingFor ? { state: "waiting", text: waitingFor, ...(wakeAt ? { wakeAt } : {}) } : undefined,
     false,
   );
   if (change) publishChannelStatus(change);
 }
 
-async function setChannelAgentReaction(
-  database: ChannelDatabase,
-  agent: ChannelAgent & { channelId: string },
-  sequence: number,
-  reaction: ChannelReaction["reaction"] | null,
-): Promise<ChannelReaction["reaction"] | null> {
-  const channelId = agent.channelId;
-  const change = await database.setMessageReaction({
+export async function setChannelRoutineFromLead(
+  sessionId: string,
+  input: SetChannelRoutineInput,
+): Promise<ChannelRoutine> {
+  const change = await new ChannelDatabase(await getStateDatabase()).setRoutine(sessionId, input);
+  if (change.changed) publishChannelMessage(change);
+  return change.routine;
+}
+
+/** Returns false when the routine was already gone. */
+export async function deleteChannelRoutine(channelId: string, routineId: string): Promise<boolean> {
+  const change = await new ChannelDatabase(await getStateDatabase()).deleteRoutine(
     channelId,
-    sequence,
-    agentId: agent.id,
-    reaction,
+    routineId,
+  );
+  if (!change) return false;
+  publishChannelMessage(change);
+  return true;
+}
+
+/** Privately wake each lead whose follow-up or routine is due. Claims commit before delivery. */
+export async function wakeDueChannelAgents(now = new Date()): Promise<void> {
+  try {
+    const database = await getStateDatabase({ createIfMissing: false });
+    if (!database) return;
+    const { followUps, routines } = await new ChannelDatabase(database).claimDueWakes(now);
+    for (const { change } of followUps) publishChannelStatus(change);
+    await Promise.all([
+      ...followUps.map(({ change, waitingFor }) =>
+        wakeLead(change.agentId, { type: "channel_follow_up", waitingFor }),
+      ),
+      ...routines.map(({ channelId, title, prompt }) =>
+        wakeLead(channelId, { type: "channel_routine", title, prompt }),
+      ),
+    ]);
+  } catch (error) {
+    console.error("Failed to wake due Channel agents:", error);
+  }
+}
+
+/** Runs a routine now without changing its schedule. Returns false when it's already gone. */
+export async function runChannelRoutine(channelId: string, routineId: string): Promise<boolean> {
+  const routines = await new ChannelDatabase(await getStateDatabase()).listRoutines(channelId);
+  const routine = routines.find(({ id }) => id === routineId);
+  if (!routine) return false;
+  await wakeChannelAgent(channelId, {
+    type: "channel_routine",
+    title: routine.title,
+    prompt: routine.prompt,
   });
-  if (!change) return null;
-  const currentReaction = change.reaction?.reaction ?? null;
-  publishChannelEvent(channelId, {
-    type: "reaction",
-    revision: change.revision,
-    sequence,
-    agentId: agent.id,
-    reaction: currentReaction,
+  return true;
+}
+
+function wakeLead(leadId: string, systemMessage: SessionSystemMessage): Promise<void> {
+  return wakeChannelAgent(leadId, systemMessage).catch((error) => {
+    console.error(`Failed to wake Channel lead ${leadId}:`, error);
   });
-  return currentReaction;
 }
 
 function publishChannelStatus(change: {

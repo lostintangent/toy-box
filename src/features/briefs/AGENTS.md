@@ -17,18 +17,23 @@ review that either leaves it complete or appends ordered follow-up work.
   - `schema.ts` owns the strict Zod schemas, inferred domain types,
     `parseBrief`, and `serializeBrief`. Runtime schemas are the only source of
     domain types and close the parse boundary with semantic validation.
-    `FindingsSection` owns source-backed discoveries. `DefinitionSection` is
-    records or exhibits and `ResolutionSection` is questions or decisions.
-    Together with Markdown and list sections, the latter form `SpecSection`;
-    `BriefSection` adds findings and top-level plan sections. Description
-    remains a semantic role, not another wrapper type.
+    `FindingsSection` owns source-backed discoveries. `DescriptionSection` is
+    Markdown or list, `DefinitionSection` is records or exhibits, and
+    `ResolutionSection` is questions or decisions; together they form
+    `SpecSection`. `BriefSection` adds findings and top-level plan sections.
+    Decisions have a `DecisionStatus`; each option has an `OptionStatus`.
   - `validation.ts` owns document-wide identity, reference, field, source,
     question, decision, exhibit, and tree rules. It delegates flow and plan
     invariants to their semantic owners.
   - `query/` owns pure reads. `structure.ts` builds the flattened section index
-    and schema paths. `reading.ts` resolves tabs, findings and their grounded
-    entities, decision contributions, records, decision-owned relationships,
-    and inspectable entities.
+    and resolves tabs and sections by ID. `entities.ts` resolves every authored
+    identity to a labelled `BriefEntity` and owns how each reads in one line.
+    `options.ts` derives each decision's status, the `ActiveOption` it
+    currently holds, and records as projected through active options.
+    `links.ts` derives the links a reader can follow
+    from one entity: grounding, impact, implementation, record origin, flow
+    connections, and active option relationships. Authored option
+    relationships are domain claims; links are derived navigation.
   - `spec/` owns spec algebra. `state.ts` derives guidance, requirements, open
     questions, unresolved decisions, and settlement. `flow.ts` validates and
     projects authoritative flow exhibits through nodes, connections, paths,
@@ -36,43 +41,53 @@ review that either leaves it complete or appends ordered follow-up work.
   - `plan/` owns plan algebra. `steps.ts` traverses top-level plan sections and
     their flat or phase-owned steps. `state.ts` evaluates the aggregate plan
     against `SpecState` and derives current steps, resolved targets, unplanned
-    requirements, `fullyPlanned`, status, and executability. `validation.ts`
+    requirements, `fullyPlanned`, status, executability, and whether execution
+    is observed now. `validation.ts`
     owns plan invariants. `index.ts` is the internal facade.
   - `issues.ts` owns shared validation issue primitives so document, flow, and
     plan rules report consistent paths and messages.
-  - `edit/` owns immutable editor operations. `policy.ts` decides which sections
-    a worker may regenerate; `transitions.ts` exposes disclosure, decision,
-    question, content-editing, and removal verbs; `repair.ts` synchronously
-    restores every reference invariant after removal; `sections.ts` owns the
-    immutable traversal of authored sections; `index.ts` is the internal facade.
+  - `edit/` owns immutable editor operations as `BriefEdit` document
+    transitions. `transitions.ts` exposes disclosure, decision, question, and
+    content-editing verbs, one `removeEntity` removal verb, and the
+    `canRemoveEntity` and `canRegenerateSection` guards. Each `*Update` is an
+    entity's editable content: updates replace it while keeping the entity's
+    identity and links. `repair.ts` synchronously restores every
+    reference invariant after removal; `immutable.ts` owns the
+    identity-preserving `mapEach` traversal; `index.ts` is the internal facade.
+  - `index.ts` is the one public facade: editor surfaces import schema, reads,
+    spec and plan state, and edits from it; internal modules import their
+    source owner.
   - `testFixtures.ts` owns shared test-only documents and lookups.
 - Runtime dependencies remain acyclic: query structure indexes schema values;
-  plan traversal and query reading build on that structure; spec projections
-  build on query reading; plan state consumes spec state; editing composes these
+  plan traversal, entities, and active options build on that structure; spec
+  projections build on entities and options; entity links compose them with
+  flow projections; plan state consumes spec state; editing composes these
   pure capabilities at the write boundary; validation orchestrates their rules;
   and schema closes parsing. Reverse schema imports are type-only.
 - `actions.ts` owns the host-neutral editor action vocabulary and stable action
-  identity.
+  identity through `briefActionKey`.
 - `BriefEditor.tsx` owns the document shell, browser-local tab selection,
   section order, undo snapshot, serialized document commits, and editor actions
   through a host-neutral content and action contract.
-- `sections/` owns presentation behind `sections/index.ts`. `content.tsx`
-  dispatches the taxonomy; `findings/` renders compact
-  statements with evidence disclosed on demand; `description/` renders Markdown
-  and lists; `definition/`
-  renders records and authoritative exhibits, including flows; `resolution/`
-  renders questions and decisions; `plan/` renders the execution plan.
-  `presentation.ts` owns section counts and `shared.tsx` owns common chrome,
-  tags, and decision-relationship labels.
-- `inspector/` owns contextual entity reading and direct editing behind its
-  facade. `EntityInspector.tsx` composes the selected entity;
-  `FindingEditor.tsx`, `RecordEditor.tsx`, `ExhibitEditor.tsx`, and
-  `PlanStepEditor.tsx` own their distinct forms; `FieldEditor.tsx` owns only
-  their genuinely shared controls.
+- `sections/` owns section presentation, one file per section kind.
+  `SectionPanel.tsx` owns the collapsible chrome and item counts;
+  `SectionContent.tsx` dispatches each kind to `DescriptionContent`,
+  `FindingsContent`, `RecordsContent`, `ExhibitsContent` (with `FlowDiagram`
+  and `PseudocodeBlock`), `QuestionsContent`, or `DecisionsContent`.
+  `PlanContent` renders plan sections from the editor's spec and plan state.
+  `vocabulary.tsx` owns how domain values read everywhere: tags, change and
+  decision-status presentation, relationship labels, and field values.
+- `inspector/` owns contextual entity reading and direct editing.
+  `EntityInspector.tsx` composes the selected entity and submits each form as
+  one `BriefEdit`; `FindingEditor.tsx`, `RecordEditor.tsx`, `ExhibitEditor.tsx`,
+  and `PlanStepEditor.tsx` own their distinct forms; `EditorForm.tsx` owns only
+  their genuinely shared controls (`EditorForm`, `ChangeField`, `SourceField`,
+  and `FieldInput`). `EditorForm` rejects a save when its entity changed after
+  the form opened.
 - [`../files/components/editor/kinds/brief/BriefEditor.tsx`](../files/components/editor/kinds/brief/BriefEditor.tsx)
-  is the Files adapter. It maps file content, revisions, persistence, and
-  worker metadata into the editor contract; this feature does not depend on
-  Files or Workers.
+  is the Files adapter. It maps file content, revisions, persistence, worker
+  metadata, and owning-session activity into the editor contract; this feature
+  does not depend on Files or Workers.
 
 Rendering may ask the model for projections, but it must not reimplement spec
 state, plan state, flow traversal, implementation coverage, repair, or ordering.
@@ -190,9 +205,8 @@ choices remain context.
 
 ## Plan model
 
-Zero or more top-level `plan` sections collectively form one optional plan.
-`planSections(document)` returns them in document order; no sections means no
-plan, not a synthetic missing status. One section is the ordinary case.
+Zero or more top-level `plan` sections collectively form one optional plan in
+document order; no sections means no plan, not a synthetic missing status. One section is the ordinary case.
 Additional sections alter presentation or task-local fields, not execution
 identity or lifecycle.
 
@@ -218,7 +232,7 @@ ordinarily advances status; the editor permits explicit correction. Phase and
 plan status derive from current steps as `not-started`, `in-progress`, or
 `complete`.
 
-`planState(planSections(document), specState(document))` derives current steps,
+`planState(document, specState(document))` derives current steps,
 resolved targets, unplanned requirements, `fullyPlanned`, aggregate status, and
 `canExecute`. A document can execute only when it has a plan, the spec is
 settled, every current requirement is implemented, and plan status is not
@@ -227,6 +241,13 @@ without plan sections exposes no execution action. The completed state exposes
 an optional outcome-review action. Review preserves completed status and, when
 evidence warrants another pass, appends new unstarted work so the same derived
 plan becomes executable again without a separate review state.
+
+`planExecuting(plan, { requested, ownerActive })` derives whether the plan is
+executing now: an `execute-plan` action is pending, or the document's owning
+agent is active on an `in-progress` plan, since an agent may execute the plan
+without an editor action. The execution action then shows progress and is
+disabled. A started plan with neither signal was interrupted and offers to
+resume.
 
 ## Invariants
 
@@ -242,8 +263,8 @@ plan becomes executable again without a separate review state.
 - Keep tabs reference-only and preserve their exact top-level partition when
   sections change.
 - Every editable section exposes its action menu. Regenerate is controlled by
-  `canRegenerateSection`; Delete uses the reference-safe section transition and
-  preserves at least one valid document section.
+  `canRegenerateSection`; Delete uses `removeEntity`, which preserves at least
+  one valid document section.
 - `BriefEditor` retains one pre-removal snapshot for Undo. The next removal
   replaces it; a substantive commit or external revision clears it.
 - Keep decision choice, spec state, planning coverage, status, flow projection,

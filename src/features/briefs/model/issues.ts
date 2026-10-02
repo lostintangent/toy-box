@@ -3,11 +3,16 @@ import type { BriefEntityId } from "./schema";
 
 /**
  * The refinement primitives every semantic validator shares: the narrow issue
- * sink each rule writes to, plus the two structural complaints (uniqueness and
- * unknown references) that would otherwise be restated in each owner.
+ * sink each rule writes to, section issue paths, plus the two structural
+ * complaints (uniqueness and unknown references) that would otherwise be
+ * restated in each owner.
  */
 
 export type RefinementContext = Pick<z.RefinementCtx, "addIssue">;
+
+export function sectionPath(sectionId: string): PropertyKey[] {
+  return ["sections", sectionId];
+}
 
 export function addDuplicateIssues(
   values: readonly string[],

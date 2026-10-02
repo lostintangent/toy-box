@@ -3,15 +3,15 @@ import { ChevronRight, FileCode2, Lightbulb, PanelRightOpen } from "lucide-react
 import { cn } from "@/shared/utils";
 import { InlineMarkdown, Markdown } from "@/shared/ui/markdown";
 import {
-  entitiesGroundedByFinding,
+  entityLinks,
   type FindingsSection,
   type BriefDocument,
   type BriefEntityId,
-} from "../../model/index";
-import { BriefExhibitCard } from "../definition";
+} from "../model/index";
+import { ExhibitCard } from "./ExhibitsContent";
 
 /** Source-backed discoveries that explain why the spec has its authored shape. */
-export function BriefFindingsContent({
+export function FindingsContent({
   document,
   section,
   baseUri,
@@ -28,7 +28,7 @@ export function BriefFindingsContent({
     <div className="overflow-hidden rounded-lg border border-border/60 bg-card/40">
       {section.items.map((finding) => {
         const focused = focusedEntityId === finding.id;
-        const grounded = entitiesGroundedByFinding(document, finding.id);
+        const { grounds: grounded } = entityLinks(document, finding.id);
         const visibleSources = finding.sources?.slice(0, 3) ?? [];
         const hiddenSourceCount = (finding.sources?.length ?? 0) - visibleSources.length;
         const hasDetails =
@@ -88,7 +88,7 @@ export function BriefFindingsContent({
                   )}
 
                   {finding.exhibit && (
-                    <BriefExhibitCard
+                    <ExhibitCard
                       document={document}
                       exhibit={finding.exhibit}
                       baseUri={baseUri}

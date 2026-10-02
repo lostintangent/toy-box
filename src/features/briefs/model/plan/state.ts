@@ -1,5 +1,6 @@
-import type { BriefEntity } from "../query/reading";
-import type { PlanSection, PlanStep, PlanStepStatus } from "../schema";
+import type { BriefEntity } from "../query/entities";
+import { buildBriefIndex } from "../query/structure";
+import type { BriefDocument, PlanStep, PlanStepStatus } from "../schema";
 import type { SpecState } from "../spec";
 import { planSteps } from "./steps";
 
@@ -16,14 +17,12 @@ export type PlanState = {
 };
 
 /**
- * Evaluate every authored plan section as one plan against the effective spec.
+ * Evaluate a document's plan sections as one plan against its effective spec.
  * The spec owns settlement and requirements; PlanState derives current steps,
  * unplanned requirements, lifecycle status, and whether execution is possible.
  */
-export function planState(
-  planSections: readonly PlanSection[],
-  spec: SpecState,
-): PlanState | undefined {
+export function planState(document: BriefDocument, spec: SpecState): PlanState | undefined {
+  const { planSections } = buildBriefIndex(document.sections);
   if (planSections.length === 0) return undefined;
 
   const requirementIds = new Set(spec.requirements.map((entity) => entity.id));
@@ -68,4 +67,17 @@ export function planStatus(steps: readonly PlanStep[]): PlanStatus {
   if (steps.length > 0 && steps.every((step) => step.status === "complete")) return "complete";
   if (steps.some((step) => step.status !== undefined)) return "in-progress";
   return "not-started";
+}
+
+/**
+ * Whether the plan is executing now, given whether an execution was requested and whether the
+ * document's owning agent is active. That agent may execute the plan without a request, so its
+ * activity counts once the plan has started; before then, unrelated activity such as authoring
+ * the brief must not block a first run. A started plan with neither signal was interrupted.
+ */
+export function planExecuting(
+  plan: PlanState | undefined,
+  { requested, ownerActive }: { requested: boolean; ownerActive: boolean },
+): boolean {
+  return requested || (ownerActive && plan?.status === "in-progress");
 }

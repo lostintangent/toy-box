@@ -458,13 +458,12 @@ export type SourcePolicy = z.infer<typeof sourcePolicy>;
 
 export type MarkdownSection = z.infer<typeof markdownSection>;
 export type ListSection = z.infer<typeof listSection>;
+export type DescriptionSection = MarkdownSection | ListSection;
 
 export type Finding = z.infer<typeof finding>;
-export type FindingUpdate = Pick<Finding, "statement" | "whyItMatters" | "sources">;
 export type FindingsSection = z.infer<typeof findingsSection>;
 
 export type BriefRecord = z.infer<typeof briefRecord>;
-export type BriefRecordUpdate = Omit<BriefRecord, "id" | "basedOn">;
 export type OptionAddition = z.infer<typeof optionAddition>;
 export type RecordsSection = z.infer<typeof recordsSection>;
 export type RecordsView = RecordsSection["view"];
@@ -478,8 +477,6 @@ export type FileTreeEntry = z.infer<typeof fileTreeEntry>;
 export type DomainTreeEntry = z.infer<typeof domainTreeEntry>;
 export type TreeExhibit = z.infer<typeof treeExhibit>;
 export type BriefExhibit = z.infer<typeof briefExhibit>;
-type WithoutIdentityOrGrounding<T> = T extends { id: string } ? Omit<T, "id" | "basedOn"> : never;
-export type BriefExhibitUpdate = WithoutIdentityOrGrounding<BriefExhibit>;
 export type ExhibitsSection = z.infer<typeof exhibitsSection>;
 export type DefinitionSection = z.infer<typeof definitionSection>;
 
@@ -487,13 +484,13 @@ export type Question = z.infer<typeof question>;
 export type DecisionOption = z.infer<typeof decisionOption>;
 export type DecisionChoice = z.infer<typeof decisionChoice>;
 export type DecisionStatus = "open" | DecisionChoice["status"];
+export type OptionStatus = "inactive" | DecisionChoice["status"];
 export type Decision = z.infer<typeof decision>;
 export type ResolutionSection = z.infer<typeof resolutionSection>;
 
 export type SpecSection = z.infer<typeof specSection>;
 
 export type PlanStep = z.infer<typeof planStep>;
-export type PlanStepUpdate = Pick<PlanStep, "title" | "doneWhen" | "status" | "values">;
 export type PlanStepStatus = NonNullable<PlanStep["status"]>;
 export type PlanPhase = z.infer<typeof planPhase>;
 export type PlanSection = z.infer<typeof planSection>;

@@ -3,6 +3,7 @@ import type { ChannelAgent } from "@channels/model";
 import { channelAgentPresence, type ChannelAgentPresence } from "@channels/model/presence";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { useWorkspaceSessionRunning } from "@workspace/hooks/state";
+import { ClockTime } from "@/shared/ui/clock-time";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { WaitingIndicator } from "@/shared/ui/waiting-indicator";
@@ -72,12 +73,18 @@ function PresenceMark({ presence }: { presence: ChannelAgentPresence }) {
   }
 }
 
-function presenceDetail(presence: ChannelAgentPresence, role?: string): string | undefined {
+function presenceDetail(presence: ChannelAgentPresence, role?: string): ReactNode {
   switch (presence.state) {
     case "working":
       return presence.text ?? "Working";
     case "waiting":
-      return `Waiting for ${presence.text}`;
+      return presence.wakeAt ? (
+        <>
+          Waiting for {presence.text} · checks back at <ClockTime date={presence.wakeAt} />
+        </>
+      ) : (
+        `Waiting for ${presence.text}`
+      );
     case "idle":
       return role;
   }

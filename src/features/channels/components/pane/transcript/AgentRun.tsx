@@ -13,13 +13,13 @@ import {
 } from "@channels/model";
 import { channelMessageReactions } from "@channels/model/reactions";
 import type { ChannelRequestState } from "@channels/model/requests";
-import { CopyControl } from "@sessions/components/transcript/messages/UserMessage";
+import { CopyControl } from "@/shared/messages/UserMessage";
 import { AttachmentGallery } from "@/shared/attachments/AttachmentGallery";
 import { Button } from "@/shared/ui/button";
 import { ClockTime } from "@/shared/ui/clock-time";
 import { ShowMore, useShowMore } from "@/shared/ui/show-more";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { WaitingIndicator } from "@/shared/ui/waiting-indicator";
+import { WaitingIndicator, waitingOutlineClassName } from "@/shared/ui/waiting-indicator";
 import { cn } from "@/shared/utils";
 import { useChannelPane } from "../ChannelPaneContext";
 import { ChannelReactions } from "./ChannelReactions";
@@ -99,7 +99,10 @@ function AgentMessage({
   const attachments = message.attachments?.map(channelAttachmentPreview) ?? [];
 
   return (
-    <div className="group/entry">
+    <div
+      className="group/entry"
+      data-request-sequence={request === "pending" ? message.sequence : undefined}
+    >
       {showHeader && (
         <div className="mb-1 flex h-4.5 min-w-0 items-center gap-2 text-xs">
           {author && (
@@ -117,7 +120,7 @@ function AgentMessage({
           <div
             className={cn(
               "relative rounded-xl border bg-secondary-background px-3.5 py-2.5 text-left text-sm",
-              request === "pending" && "border-amber-500/40 ring-[3px] ring-amber-500/10",
+              request === "pending" && waitingOutlineClassName,
             )}
           >
             <div

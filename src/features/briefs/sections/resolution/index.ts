@@ -1,1 +1,0 @@
-export { BriefResolutionContent } from "./content";

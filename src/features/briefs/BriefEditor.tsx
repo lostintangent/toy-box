@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
-  Loader2,
   PanelRightOpen,
   Play,
   SearchCheck,
@@ -20,56 +19,34 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
 import { briefActionKey, type BriefAction } from "./actions";
 import {
-  findFindingsSection,
-  findRecordsSection,
+  canRegenerateSection,
+  canRemoveEntity,
   findBriefEntity,
   parseBrief,
-  planSections,
+  planExecuting,
   planState,
-  recordLabel,
   resolveBriefTabs,
   specState,
   serializeBrief,
-  type Finding,
-  type FindingUpdate,
+  removeEntity,
+  setRecordsView,
+  setSectionsCollapsed,
   type BriefDocument,
+  type BriefEdit,
   type BriefEntityId,
-  type BriefExhibit,
-  type BriefExhibitUpdate,
-  type BriefRecord,
-  type BriefRecordUpdate,
-  type OptionAddition,
-  type PlanStep,
-  type PlanStepUpdate,
   type RecordsView,
   type ResolvedBriefTab,
 } from "./model/index";
-import {
-  canRegenerateSection,
-  selectDecisionOption,
-  clearDecisionChoice,
-  recordDecision,
-  removeExhibit,
-  removeFinding,
-  removeSection,
-  removeRecord,
-  reopenDecision,
-  reopenQuestion,
-  setRecordsView,
-  setSectionCollapsed,
-  setSectionsCollapsed,
-  updateExhibit,
-  updateFinding,
-  updateRecord,
-  updatePlanStep,
-} from "./model/edit";
-import { BriefEntityInspector } from "./inspector";
-import { countSectionItems, BriefPlanSection, BriefSectionContent, SectionPanel } from "./sections";
+import { EntityInspector } from "./inspector/EntityInspector";
+import { PlanContent } from "./sections/PlanContent";
+import { SectionContent } from "./sections/SectionContent";
+import { countSectionItems, SectionPanel } from "./sections/SectionPanel";
 
 type RemovalUndo = {
   previousDocument: BriefDocument;
@@ -83,6 +60,8 @@ export type BriefEditorProps = {
   compact: boolean;
   baseUri?: string;
   pendingActions: readonly BriefAction[];
+  /** Whether the agent that owns this document is running or waiting on the user. */
+  ownerActive: boolean;
   onContentChange: (content: string) => void;
   onRunAction?: (request: BriefAction) => Promise<void>;
 };
@@ -255,6 +234,7 @@ export function BriefEditor({
   compact,
   baseUri,
   pendingActions,
+  ownerActive,
   onContentChange,
   onRunAction,
 }: BriefEditorProps) {
@@ -312,10 +292,13 @@ export function BriefEditor({
 
   const brief = parsed.value;
   const spec = specState(brief);
-  const plan = planState(planSections(brief), spec);
+  const plan = planState(brief, spec);
   const { openQuestions, unresolvedDecisions, settled } = spec;
   const specBlockerCount = openQuestions.length + unresolvedDecisions.length;
-  const executionPending = pending.has("execute-plan");
+  const executionPending = planExecuting(plan, {
+    requested: pending.has("execute-plan"),
+    ownerActive,
+  });
   const reviewPending = pending.has("review-outcome");
   const planActionPending = executionPending || reviewPending;
   const canRunAction = editable && Boolean(onRunAction);
@@ -346,15 +329,6 @@ export function BriefEditor({
   );
   const disclosureAction = allSectionsCollapsed ? "Expand all" : "Collapse all";
   const selectedEntity = selectedEntityId ? findBriefEntity(brief, selectedEntityId) : undefined;
-  const selectedExhibitCanBeRemoved =
-    editable &&
-    selectedEntity?.type === "exhibit" &&
-    selectedEntity.owner.kind === "section" &&
-    removeExhibit(brief, selectedEntity.owner.section.id, selectedEntity.id) !== brief;
-  const selectedFindingCanBeRemoved =
-    editable &&
-    selectedEntity?.type === "finding" &&
-    removeFinding(brief, selectedEntity.section.id, selectedEntity.id) !== brief;
 
   function persist(next: BriefDocument) {
     if (next === brief) return;
@@ -368,49 +342,19 @@ export function BriefEditor({
     persist(next);
   }
 
-  function deleteRecord(sectionId: string, recordId: string) {
-    const section = findRecordsSection(brief, sectionId);
-    const record = section?.items.find((candidate) => candidate.id === recordId);
-    if (!record || record.change !== "new") return;
-    const next = removeRecord(brief, sectionId, recordId);
-    if (next === brief) return;
-    commit(next, { previousDocument: brief, label: recordLabel(record) });
-  }
-
-  function deleteSection(sectionId: string) {
-    const entity = findBriefEntity(brief, sectionId);
-    if (entity?.type !== "section") return;
-    const next = removeSection(brief, sectionId);
-    if (next === brief) return;
-    commit(next, { previousDocument: brief, label: `${entity.label} section` });
-  }
-
-  function deleteExhibit(sectionId: string, exhibitId: string) {
-    const entity = findBriefEntity(brief, exhibitId);
-    if (
-      entity?.type !== "exhibit" ||
-      entity.owner.kind !== "section" ||
-      entity.owner.section.id !== sectionId ||
-      entity.exhibit.change !== "new"
-    ) {
-      return;
-    }
-    const next = removeExhibit(brief, sectionId, exhibitId);
-    if (next === brief) return;
-    setInspectorOpen(false);
-    setSelectedEntityId(undefined);
-    commit(next, { previousDocument: brief, label: entity.label });
-  }
-
-  function deleteFinding(sectionId: string, findingId: string) {
-    const section = findFindingsSection(brief, sectionId);
-    const finding = section?.items.find((candidate) => candidate.id === findingId);
-    if (!finding) return;
-    const next = removeFinding(brief, sectionId, findingId);
-    if (next === brief) return;
-    setInspectorOpen(false);
-    setSelectedEntityId(undefined);
-    commit(next, { previousDocument: brief, label: `finding: ${finding.statement}` });
+  /** Remove one entity with undo; the model owns which removals are valid. */
+  function remove(entityId: BriefEntityId) {
+    const entity = findBriefEntity(brief, entityId);
+    const next = removeEntity(brief, entityId);
+    if (!entity || next === brief) return;
+    if (entityId === selectedEntityId) clearFocusedEntity();
+    const label =
+      entity.type === "section"
+        ? `${entity.label} section`
+        : entity.type === "finding"
+          ? `finding: ${entity.label}`
+          : entity.label;
+    commit(next, { previousDocument: brief, label });
   }
 
   function undoRemoval() {
@@ -418,77 +362,10 @@ export function BriefEditor({
     commit(removalUndo.previousDocument);
   }
 
-  function saveRecord(
-    recordId: string,
-    update: BriefRecordUpdate,
-    original: BriefRecord | OptionAddition,
-  ): string | undefined {
-    const current = findBriefEntity(brief, recordId);
-    if (current?.type !== "record") {
-      return "This record is no longer part of the brief.";
-    }
-    if (JSON.stringify(current.record) !== JSON.stringify(original)) {
-      return "This record changed while you were editing. Cancel and reopen it to use the latest version.";
-    }
-    const next = updateRecord(brief, recordId, update);
-    if (next === brief) return "This record is no longer part of the brief.";
-    const validated = parseBrief(serializeBrief(next));
-    if (!validated.ok) return validated.error;
-    commit(validated.value);
-  }
-
-  function saveExhibit(
-    exhibitId: string,
-    update: BriefExhibitUpdate,
-    original: BriefExhibit,
-  ): string | undefined {
-    const current = findBriefEntity(brief, exhibitId);
-    if (current?.type !== "exhibit") {
-      return "This exhibit is no longer part of the brief.";
-    }
-    if (JSON.stringify(current.exhibit) !== JSON.stringify(original)) {
-      return "This exhibit changed while you were editing. Cancel and reopen it to use the latest version.";
-    }
-    const next = updateExhibit(brief, exhibitId, update);
-    if (next === brief) return "This exhibit is no longer part of the brief.";
-    const validated = parseBrief(serializeBrief(next));
-    if (!validated.ok) return validated.error;
-    commit(validated.value);
-  }
-
-  function saveFinding(
-    findingId: string,
-    update: FindingUpdate,
-    original: Finding,
-  ): string | undefined {
-    const current = findBriefEntity(brief, findingId);
-    if (current?.type !== "finding") {
-      return "This finding is no longer part of the brief.";
-    }
-    if (JSON.stringify(current.finding) !== JSON.stringify(original)) {
-      return "This finding changed while you were editing. Cancel and reopen it to use the latest version.";
-    }
-    const next = updateFinding(brief, findingId, update);
-    if (next === brief) return "This finding is no longer part of the brief.";
-    const validated = parseBrief(serializeBrief(next));
-    if (!validated.ok) return validated.error;
-    commit(validated.value);
-  }
-
-  function savePlanStep(
-    stepId: string,
-    update: PlanStepUpdate,
-    original: PlanStep,
-  ): string | undefined {
-    const current = findBriefEntity(brief, stepId);
-    if (current?.type !== "plan-step") {
-      return "This plan step is no longer part of the brief.";
-    }
-    if (JSON.stringify(current.step) !== JSON.stringify(original)) {
-      return "This plan step changed while you were editing. Cancel and reopen it to use the latest version.";
-    }
-    const next = updatePlanStep(brief, stepId, update);
-    if (next === brief) return "This plan step is no longer part of the brief.";
+  /** Save an inspector edit only when it still applies and leaves a valid brief. */
+  function saveEdit(edit: BriefEdit): string | undefined {
+    const next = edit(brief);
+    if (next === brief) return "This is no longer part of the brief.";
     const validated = parseBrief(serializeBrief(next));
     if (!validated.ok) return validated.error;
     commit(validated.value);
@@ -523,7 +400,7 @@ export function BriefEditor({
 
   function setSectionOpen(sectionId: string, open: boolean) {
     if (editable) {
-      persist(setSectionCollapsed(brief, sectionId, !open));
+      persist(setSectionsCollapsed(brief, [sectionId], !open));
       return;
     }
     setSectionOpenById((current) =>
@@ -605,7 +482,7 @@ export function BriefEditor({
                       className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {reviewPending ? (
-                        <Loader2 aria-hidden className="size-3.5 animate-spin" />
+                        <RunningIndicator className="size-3.5" />
                       ) : (
                         <SearchCheck aria-hidden className="size-3.5" />
                       )}
@@ -622,7 +499,7 @@ export function BriefEditor({
                   className="inline-flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {planActionPending ? (
-                    <Loader2 aria-hidden className="size-3.5 animate-spin" />
+                    <RunningIndicator className="size-3.5" />
                   ) : (
                     <Play aria-hidden className="size-3.5 fill-current" />
                   )}
@@ -705,7 +582,12 @@ export function BriefEditor({
                   ? {
                       regenerate: regenerable
                         ? {
-                            busy: pending.has(`regenerate-section:${section.id}`),
+                            busy: pending.has(
+                              briefActionKey({
+                                action: "regenerate-section",
+                                sectionId: section.id,
+                              }),
+                            ),
                             onSelect: canRunAction
                               ? () =>
                                   dispatch({ action: "regenerate-section", sectionId: section.id })
@@ -713,61 +595,54 @@ export function BriefEditor({
                           }
                         : undefined,
                       onDelete:
-                        editable && brief.sections.length > 1
-                          ? () => deleteSection(section.id)
+                        editable && canRemoveEntity(brief, section.id)
+                          ? () => remove(section.id)
                           : undefined,
                     }
                   : undefined
               }
             >
-              <BriefSectionContent
-                document={brief}
-                section={section}
-                editable={editable}
-                baseUri={baseUri}
-                pending={pending}
-                focusedEntityId={selectedEntityId}
-                recordsViewById={editable ? undefined : recordsViewById}
-                renderPlan={(planSection) =>
-                  plan ? (
-                    <BriefPlanSection
-                      spec={spec}
-                      plan={plan}
-                      section={planSection}
-                      showPlanSummary={planSection.id === firstVisiblePlanSectionId}
-                      focusedEntityId={selectedEntityId}
-                      onInspect={inspectEntity}
-                    />
-                  ) : null
-                }
-                onInspect={inspectEntity}
-                onExplainRecord={
-                  canRunAction
-                    ? (recordId) => dispatch({ action: "explain-record", recordId })
-                    : undefined
-                }
-                onRemoveRecord={editable ? deleteRecord : undefined}
-                onInvestigateQuestion={
-                  canRunAction
-                    ? (questionId) => dispatch({ action: "investigate-question", questionId })
-                    : undefined
-                }
-                onSelectDecisionOption={(decisionId, optionId) =>
-                  commit(selectDecisionOption(brief, decisionId, optionId))
-                }
-                onRecordDecision={(decisionId) => commit(recordDecision(brief, decisionId))}
-                onReopenDecision={(decisionId) => commit(reopenDecision(brief, decisionId))}
-                onClearDecisionChoice={(decisionId) =>
-                  commit(clearDecisionChoice(brief, decisionId))
-                }
-                onReopenQuestion={(questionId) => commit(reopenQuestion(brief, questionId))}
-                onRecordsViewChange={changeRecordsView}
-              />
+              {section.kind === "plan" ? (
+                plan && (
+                  <PlanContent
+                    spec={spec}
+                    plan={plan}
+                    section={section}
+                    showPlanSummary={section.id === firstVisiblePlanSectionId}
+                    focusedEntityId={selectedEntityId}
+                    onInspect={inspectEntity}
+                  />
+                )
+              ) : (
+                <SectionContent
+                  document={brief}
+                  section={section}
+                  editable={editable}
+                  baseUri={baseUri}
+                  pending={pending}
+                  focusedEntityId={selectedEntityId}
+                  recordsView={editable ? undefined : recordsViewById[section.id]}
+                  onInspect={inspectEntity}
+                  onExplainRecord={
+                    canRunAction
+                      ? (recordId) => dispatch({ action: "explain-record", recordId })
+                      : undefined
+                  }
+                  onRemove={editable ? remove : undefined}
+                  onInvestigateQuestion={
+                    canRunAction
+                      ? (questionId) => dispatch({ action: "investigate-question", questionId })
+                      : undefined
+                  }
+                  onEdit={(edit) => commit(edit(brief))}
+                  onRecordsViewChange={changeRecordsView}
+                />
+              )}
             </SectionPanel>
           );
         })}
       </div>
-      <BriefEntityInspector
+      <EntityInspector
         document={brief}
         baseUri={baseUri}
         entity={inspectorOpen ? selectedEntity : undefined}
@@ -777,12 +652,8 @@ export function BriefEditor({
         onExplainRecord={
           canRunAction ? (recordId) => dispatch({ action: "explain-record", recordId }) : undefined
         }
-        onRemoveExhibit={selectedExhibitCanBeRemoved ? deleteExhibit : undefined}
-        onRemoveFinding={selectedFindingCanBeRemoved ? deleteFinding : undefined}
-        onUpdateExhibit={editable ? saveExhibit : undefined}
-        onUpdateFinding={editable ? saveFinding : undefined}
-        onUpdateRecord={editable ? saveRecord : undefined}
-        onUpdatePlanStep={editable ? savePlanStep : undefined}
+        onSave={editable ? saveEdit : undefined}
+        onRemove={editable ? remove : undefined}
       />
     </ScrollableFade>
   );

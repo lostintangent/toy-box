@@ -7,7 +7,6 @@ import { Separator } from "@/shared/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { AttachmentGallery } from "@/shared/attachments/AttachmentGallery";
 import type { Attachment } from "@/shared/attachments/model";
-import type { UserMessage as UserMessageType } from "../../../model";
 
 export function UserMessage({
   message,
@@ -15,7 +14,9 @@ export function UserMessage({
   time,
   children,
 }: {
-  message: Pick<UserMessageType, "content" | "timestamp"> & {
+  message: {
+    content: string;
+    timestamp?: string;
     attachments?: (Attachment | { label: string; src: string })[];
   };
   extraActions?: ReactNode;
