@@ -1,18 +1,19 @@
 import { keepPreviousData, queryOptions } from "@tanstack/react-query";
-import { workspaceQueries } from "@workspace/queries";
 import { workspaceFileId, type SessionFile } from "@files/model";
-import { getAppDefinitionBundle, getArtifactAppBundle } from "./server/functions";
+import { getAppDefinitionBundle, getArtifactAppBundle, listApps } from "./server/functions";
 
 export const appQueries = {
   all: () => ["apps"] as const,
 
+  listKey: () => [...appQueries.all(), "list"] as const,
+
   list: () =>
     queryOptions({
-      ...workspaceQueries.state(),
-      select: (workspace) => ({
-        apps: workspace.apps,
-        definitions: workspace.appDefinitions,
-      }),
+      queryKey: appQueries.listKey(),
+      queryFn: listApps,
+      staleTime: Infinity,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
     }),
 
   bundle: (definitionId: string, revision: string) =>

@@ -1,5 +1,7 @@
+import { AgentMention } from "@channels/components/agents/AgentMention";
+import { PreviewCard, PreviewCardContent, PreviewCardTrigger } from "@/shared/ui/preview-card";
+import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { useEffect, useImperativeHandle, useRef, useState, type RefObject } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowUp, MonitorPlay } from "lucide-react";
 import { AgentAvatar } from "@channels/components/agents/AgentAvatar";
 import { AgentPicker } from "@channels/components/agents/AgentPicker";
@@ -8,14 +10,13 @@ import { useAgentCompletions } from "@channels/components/agents/useAgentComplet
 import {
   agentHandleFromName,
   channelAudienceLabel,
+  channelHasPendingRequest,
   channelLead,
   resolveChannelAudience,
-  type Channel,
   type ChannelAgent,
-  type ChannelMember,
+  type ChannelState,
+  type PostChannelMessageInput,
 } from "@channels/model";
-import { channelMutations } from "@channels/mutations";
-import { channelQueries } from "@channels/queries";
 import { outputPillClassName } from "@workspace/components/outputs/ArtifactPill";
 import { ComposerTray } from "@workspace/components/outputs/ComposerTray";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
@@ -33,8 +34,8 @@ import {
 } from "@/shared/ui/input-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useViewport } from "@/shared/hooks/useViewport";
-import { cn, generateUUID } from "@/shared/utils";
-import { channelChecklistItems } from "./channelChecklistItems";
+import { cn } from "@/shared/utils";
+import { channelTaskItems } from "./channelTaskItems";
 
 /** Starts a message from elsewhere in the pane, continuing whatever draft exists. */
 export type ChannelComposerHandle = {
@@ -45,39 +46,39 @@ export type ChannelComposerHandle = {
 };
 
 export function ChannelComposer({
-  channel,
-  members,
+  channelId,
+  state,
   handleRef,
   onSubmit,
+  onShowRequest,
 }: {
-  channel: Channel;
-  members: ChannelMember[];
+  channelId: string;
+  state?: ChannelState;
   handleRef: RefObject<ChannelComposerHandle | null>;
-  onSubmit: () => void;
+  onSubmit: (message: Pick<PostChannelMessageInput, "content" | "attachments">) => void;
+  onShowRequest: () => void;
 }) {
   const [content, setContent] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { isMobile } = useViewport();
+  const { hydrated, isMobile } = useViewport();
   const { revealFile } = useWorkspaceSurface();
   const attachments = useAttachments();
-  const { mutate: postMessage } = useMutation(channelMutations.post());
-  // Shared artifacts arrive with the transcript's state, oldest first. The tray waits for them
-  // and lists the newest first.
-  const { data: artifacts } = useQuery({
-    ...channelQueries.detail(channel.id),
-    select: (state) =>
-      state.artifacts
-        .map(({ file, title, sharedAt }) => ({ file, label: title, time: Date.parse(sharedAt) }))
-        .reverse(),
-  });
-  const lead = channelLead(channel.id);
+  const channel = state?.channel;
+  const request = state?.request;
+  const needsReply = channel ? channelHasPendingRequest(channel) : false;
+  const lead = state?.lead ?? channelLead(channelId);
+  const members = state?.members ?? [];
+  const artifacts = state?.artifacts
+    .map(({ file, title, sharedAt }) => ({ file, label: title, time: Date.parse(sharedAt) }))
+    .reverse();
   const agents = [lead, ...members];
+  const isLoading = !state;
   const completions = useAgentCompletions({
     value: content,
     onValueChange: setContent,
     textareaRef,
     suggestionsFor: (query) => agentPickerSuggestions(query, lead, members),
-    channelId: channel.id,
+    channelId,
   });
   // Delivery resolves the same audience, so this is exactly who the message will wake.
   const audience = resolveChannelAudience({
@@ -85,12 +86,12 @@ export function ChannelComposer({
     sender: { type: "user" },
     lead,
     members,
-    acknowledgedRequest: channel.hasPendingRequest,
+    acknowledgedRequest: needsReply,
   });
 
   useEffect(() => {
-    if (!isMobile) textareaRef.current?.focus();
-  }, [isMobile]);
+    if (hydrated && !isMobile && !isLoading) textareaRef.current?.focus();
+  }, [hydrated, isMobile, isLoading]);
 
   useImperativeHandle(handleRef, () => ({
     reply: (agent) => {
@@ -102,16 +103,13 @@ export function ChannelComposer({
   }));
 
   function submit() {
+    if (isSubmitDisabled) return;
     const message = content.trim();
-    if (attachments.pendingCount > 0 || (!message && attachments.items.length === 0)) return;
     const images = attachments.items;
     setContent("");
     attachments.clear();
     completions.close();
-    onSubmit();
-    postMessage({
-      id: generateUUID(),
-      channelId: channel.id,
+    onSubmit({
       content: message,
       attachments: images.length > 0 ? images : undefined,
     });
@@ -130,7 +128,9 @@ export function ChannelComposer({
   }
 
   const isSubmitDisabled =
-    attachments.pendingCount > 0 || (!content.trim() && attachments.items.length === 0);
+    isLoading ||
+    attachments.pendingCount > 0 ||
+    (!content.trim() && attachments.items.length === 0);
 
   return (
     <form
@@ -142,29 +142,27 @@ export function ChannelComposer({
       {...attachments.dropTargetProps}
     >
       <input {...attachments.fileInputProps} />
-      {artifacts && (
-        <ComposerTray
-          artifacts={artifacts}
-          checklist={channelChecklistItems(channel.checklist, agents)}
-          artifactTimeLabel="Shared"
-          checklistLabel="Checklist"
-          extraOutput={
-            channel.previewUrl && (
-              <a
-                href={channel.previewUrl}
-                target="_blank"
-                rel="noreferrer"
-                title={channel.previewUrl}
-                className={outputPillClassName}
-              >
-                <MonitorPlay className="size-3.5 shrink-0" />
-                Preview
-              </a>
-            )
-          }
-          onOpenArtifact={revealFile}
-        />
-      )}
+      <ComposerTray
+        artifacts={artifacts ?? []}
+        checklist={channelTaskItems(channel?.tasks ?? [], agents)}
+        artifactTimeLabel="Shared"
+        checklistLabel="Tasks"
+        extraOutput={
+          channel?.previewUrl && (
+            <a
+              href={channel.previewUrl}
+              target="_blank"
+              rel="noreferrer"
+              title={channel.previewUrl}
+              className={outputPillClassName}
+            >
+              <MonitorPlay className="size-3.5 shrink-0" />
+              Preview
+            </a>
+          )
+        }
+        onOpenArtifact={revealFile}
+      />
       <InputGroup className={cn(attachments.isDragging && "border-ring ring-[3px] ring-ring/50")}>
         <ImageAttachments
           attachments={attachments.items}
@@ -183,15 +181,16 @@ export function ChannelComposer({
         )}
         <InputGroupTextarea
           ref={textareaRef}
+          disabled={isLoading}
           value={content}
           onChange={completions.handleChange}
           onSelect={completions.handleSelect}
           onKeyDown={handleKeyDown}
           onPaste={attachments.handlePaste}
           placeholder={
-            channel.hasPendingRequest
+            needsReply
               ? `Reply to ${lead.name}, or @mention an agent`
-              : `Message #${channel.name}, or @mention an agent`
+              : `Message ${channel ? `#${channel.name}` : "the channel"}, or @mention an agent`
           }
           className="max-h-18 min-h-14 overflow-y-auto py-2 text-sm"
           rows={1}
@@ -201,6 +200,25 @@ export function ChannelComposer({
           <div className="relative flex min-w-0 items-center gap-1">
             <AttachImageButton onClick={attachments.openPicker} />
             <ChannelAudience audience={audience} agentCount={agents.length} />
+            {request && (
+              <PreviewCard>
+                <PreviewCardTrigger
+                  render={<button type="button" />}
+                  onClick={onShowRequest}
+                  className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs hover:bg-muted"
+                >
+                  <RunningIndicator waiting className="size-3.5" />
+                  Input needed
+                </PreviewCardTrigger>
+                <PreviewCardContent
+                  side="top"
+                  align="start"
+                  className="max-h-72 w-80 overflow-y-auto text-sm"
+                >
+                  <AgentMention content={request.content} />
+                </PreviewCardContent>
+              </PreviewCard>
+            )}
           </div>
           <div className="relative flex items-center">
             <Tooltip>

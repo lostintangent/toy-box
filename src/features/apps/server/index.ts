@@ -4,7 +4,6 @@
 // filesystem registry, SQLite, workspace events, and app-owned workers.
 
 import type { z } from "zod";
-import type { CompiledAppBundle } from "@apps/runtime";
 import type { SessionFile } from "@files/model";
 import { readFile } from "@files/server";
 import { parseAppState } from "@apps/model/state";
@@ -19,6 +18,7 @@ import {
   type updateAppInputSchema,
   type AppDefinition,
   type AppInstance,
+  type AppList,
   type AppShare,
 } from "@apps/model";
 import { broadcast } from "@workspace/server/events";
@@ -33,24 +33,21 @@ import { appDefinitionRegistry, parseAppDefinitionFiles } from "./definitions";
 
 const definitionQueues = sharedMap<SerialTaskQueue>("app-definition-queues");
 
-export async function listAppDefinitions(): Promise<AppDefinition[]> {
-  return appDefinitionRegistry.list();
-}
-
-export async function getAppDefinitionBundle(
-  definitionId: string,
-  revision: string,
-): Promise<CompiledAppBundle> {
-  return appDefinitionRegistry.getBundle(definitionId, revision);
-}
-
 export async function getArtifactAppBundle(file: SessionFile) {
   const source = await readFile(file);
   return compileArtifactApp(file, source.content);
 }
 
-export async function listApps(): Promise<AppInstance[]> {
-  return new AppDatabase(await getStateDatabase()).list();
+export async function listApps(): Promise<AppList> {
+  const [definitions, database] = await Promise.all([
+    appDefinitionRegistry.list(),
+    getStateDatabase({ createIfMissing: false }),
+  ]);
+  if (!database) return { apps: [], definitions, shares: [] };
+
+  const appStore = new AppDatabase(database);
+  const [apps, shares] = await Promise.all([appStore.list(), appStore.listShares()]);
+  return { apps, definitions, shares };
 }
 
 export async function getApp(appId: string): Promise<AppInstance> {
@@ -109,10 +106,10 @@ export async function createApp(
       definitionId: source.id,
       title: input.title ?? source.title,
       color: input.color ?? source.color,
-      state: parseAppState(
-        source.state.schema,
-        input.state === undefined ? source.state.default : input.state,
-      ),
+      state:
+        input.state === undefined
+          ? source.state.default
+          : parseAppState(source.state.schema, input.state),
     });
     broadcast({ type: "app.upserted", app });
     return app;

@@ -21,15 +21,16 @@ The feature is organized by responsibility:
 - `model/` owns schemas and domain values shared across the boundary.
 - `server/schema.ts` defines the SQLite tables, while `server/database.ts` owns saved instance and
   share rows.
-- `queries.ts` and `mutations.ts` are the browser's declarative access to
-  compiled bundles, saved-app reads, and saved-app operations.
+- `queries.ts`, `queryCache.ts`, and `mutations.ts` own the browser's Apps catalog,
+  compiled-bundle reads, cache transitions, and saved-app operations. The catalog is
+  one snapshot of definitions, saved instances, and pending shares, preloaded during SSR.
 - `components/` owns the Apps sidebar and workspace pane. Its private `host/`
   modules adapt Toy Box capabilities to a mounted app; `runtime/` implements the
   authored SDK in the browser.
 - `sdk.ts` is the complete public authoring contract for `@toy-box/sdk`, while
   `runtime.ts` defines the versioned compiler-to-host module bridge.
 - `server/functions.ts` is the validated RPC ingress. `server/index.ts` owns
-  bundle access and installed lifecycle orchestration over the definition registry,
+  artifact bundle access and installed lifecycle orchestration over the definition registry,
   SQLite store, compiler, and Gist installer. Agent tools and authoring guidance
   live beside those server capabilities in `server/tools.ts` and `server/skills/`.
 
@@ -60,11 +61,12 @@ revision active and emit `app.registered`. Invalid or partially edited files nev
 replace the process-local last-known-good revision; the files remain the durable
 authority.
 
-Opening an instance resolves definition metadata from workspace state and fetches
+Opening an instance resolves definition metadata from the Apps catalog and fetches
 its bundle by definition ID and revision. The server compiles and caches that exact
 revision on demand when necessary. Gist installation writes ordinary `app.json` and
 `app.tsx` files, follows the same validation and activation contract, and creates
-the definition's first saved instance. Uninstall refuses while an instance still
+the definition's first saved instance. Each registry entry retains its source and
+optional compiled bundle together. Uninstall refuses while an instance still
 references the definition, removes its files, and emits `app.unregistered`.
 
 ## Instance lifecycle
@@ -81,12 +83,16 @@ Definitions declare the MIME types their instances accept. `shareWithApp` valida
 that capability and any saved source provenance, persists the immutable target-owned
 share, and emits `app.share.created`;
 `consumeAppShare` is scoped to the receiving instance and emits `app.share.deleted`.
-Shares use the ordinary workspace snapshot and event stream, so a receiving app can
-be closed when context is shared with it.
+Shares use the Apps catalog and shared workspace event stream, so a receiving app
+can be closed when context is shared with it.
 
-Instances and definitions appear in the ordinary workspace snapshot. Their
-at-most-once events keep connected clients current, while snapshot refetch repairs
-missed events. Definition-sensitive transitions are serialized by definition ID;
+The Apps-owned `listApps` server function reads definitions, instances, and shares
+from their owners into one catalog snapshot. `appQueries.list()` owns that cache,
+and `queryCache.ts` applies their at-most-once events from the shared workspace
+stream. Snapshot refetch repairs missed events on reconnect; an event received
+during a refetch replaces that read with one started after the accepted change.
+Saved app revisions advance monotonically when applying events and mutation responses.
+Definition-sensitive transitions are serialized by definition ID;
 ordinary instance updates remain independently optimistic.
 
 ## Compilation and SDK boundary
@@ -103,10 +109,15 @@ The public SDK is a feature-owned port, not a separately executing package:
 `sdk.ts` declares what authored code may import, the compiler virtualizes that module,
 and `components/runtime/sdk/` supplies its browser implementation. The host checks
 that implementation against the public contract before exposing it to compiled apps.
+Custom SDK components derive their props from that same contract. Bun compiles the
+in-memory TSX to a CommonJS module; the browser evaluates it with the shared runtime
+as a local argument and renders its default export. No registration globals are needed.
 `runtime.ts` is the single dependency catalog used by both the compiler allowlist and
 the browser bridge. Development compilation reads declarations from the repository;
 `cli/build/index.ts` follows the exact transitive declaration graph rooted at `sdk.ts` and
 stages it as a Bun executable asset for standalone compilation.
+App typechecking inherits the project's TypeScript options with browser-only globals
+and requests diagnostics only for the app source and its component-export check.
 
 Static Tailwind classes use the shared Toy Box theme; custom CSS may live in a scoped
 `<style>` element. Authored code may import `react`, `motion/react-m`, `zod`,
@@ -127,6 +138,12 @@ The SDK exposes:
   failure.
 - `useWorkspace(selector)`, which projects ordinary sessions and child-session
   trees, saved apps, models, published panes, and workers owned by the app.
+- `useChannels()`, the same catalog hook used by the Channels sidebar. It composes
+  the channel list and workspace activity caches into channel, agent identity/running,
+  and unread/reply status entries without opening detail streams or marking read.
+- `useChannel(channelId, options?)`, a direct export of the channel pane hook.
+  It shares the detail cache, stream, paging, and post mutation. Observation is active
+  by default; `mode: "passive"` leaves unread state untouched. Key the observer by channel ID when switching.
 - `useFile`, which reuses the live file lifecycle from editor panes, including
   queued saves, external updates, modes, and file-owned workers.
 - Actions that compose ordinary session, file, and pane capabilities, plus
@@ -134,12 +151,15 @@ The SDK exposes:
 - Host-aware layout, feedback, session-toggle, model, file, location, and share
   components. React state owns their ephemeral interaction state.
 
-`AppHost` owns the common mounted lifetime: workspace projection, portable
-actions, linked-pane retention, bundle execution, and cleanup. `panes/AppPane`
-supplies saved-instance state and worker capabilities; `panes/ArtifactAppPane`
-supplies only its editor pane identity. The `host/` context represents saved
-capabilities as one optional unit, so artifact apps cannot receive a fabricated
-partial instance.
+`AppHost` owns the common mounted lifetime: SDK workspace projection, portable
+actions, linked-pane retention, rendering, and cleanup. It composes the Apps catalog
+with Workspace activity, Sessions, Providers, and the current pane surface without
+copying Apps data into the Workspace cache. `panes/AppPane`
+supplies the saved-instance state store; `panes/ArtifactAppPane` supplies only its
+editor pane identity. The SDK's `useApp()` adds saved-only share and worker actions,
+flushing state before starting a worker. Artifact apps have no saved state store.
+Creating and opening a session refreshes the session catalog before publishing
+its pane, so retention observes the newly created session.
 Its `runtime/` modules contain only what compiled author code can consume. The
 app-state store is intentionally imperative because it owns a debounced
 optimistic write, serialized conflict replay, and rollback lifecycle. Ordinary

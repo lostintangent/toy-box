@@ -6,7 +6,7 @@ import { Button } from "@/shared/ui/button";
 import { InlineMarkdown, Markdown } from "@/shared/ui/markdown";
 import { Input } from "@/shared/ui/input";
 import { cn } from "@/shared/utils";
-import { waitingOutlineClassName } from "@/shared/ui/waiting-indicator";
+import { waitingOutlineClassName } from "@/shared/ui/running-indicator";
 import { useCurrentSession } from "../../../CurrentSessionContext";
 import { sessionMutations } from "../../../../mutations";
 import type { SessionQuestion } from "../../../../model";

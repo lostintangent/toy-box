@@ -1,57 +1,48 @@
-import { expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { expect, onTestFinished, test } from "bun:test";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
+import ts from "app-typescript";
+import { readCompilerOptions } from "../../src/features/apps/server/compiler/config";
 import { writeAppTypeLibrary } from "./index";
 
 const projectRoot = resolve(Bun.fileURLToPath(new URL("../../", import.meta.url)));
 
-test("writes the app compiler's package-shaped transitive type library", async () => {
-  const temporaryDirectory = await mkdtemp(join(tmpdir(), "toy-box-app-types-test-"));
-  try {
-    const outputRoot = join(temporaryDirectory, "app-type-library");
-    await writeAppTypeLibrary(projectRoot, outputRoot);
-
-    expect(await Bun.file(join(outputRoot, "tsconfig.json")).exists()).toBe(true);
-    expect(await Bun.file(join(outputRoot, "src/features/apps/sdk.ts")).exists()).toBe(true);
-    expect(await Bun.file(join(outputRoot, "src/features/files/model/index.ts")).exists()).toBe(
-      true,
-    );
-    expect(await Bun.file(join(outputRoot, "src/features/workers/model/index.ts")).exists()).toBe(
-      true,
-    );
-    expect(
-      await Bun.file(join(outputRoot, "src/features/sessions/model/protocol.ts")).exists(),
-    ).toBe(true);
-    expect(await Bun.file(join(outputRoot, "src/shared/smallJson.ts")).exists()).toBe(true);
-    expect(
-      await Bun.file(join(outputRoot, "node_modules/app-typescript/lib/lib.es2022.d.ts")).exists(),
-    ).toBe(true);
-    expect(
-      await Bun.file(join(outputRoot, "node_modules/@types/react/package.json")).exists(),
-    ).toBe(true);
-    expect(await Bun.file(join(outputRoot, "node_modules/csstype/index.d.ts")).exists()).toBe(true);
-    expect(await Bun.file(join(outputRoot, "node_modules/motion/dist/react-m.d.ts")).exists()).toBe(
-      true,
-    );
-    expect(
-      await Bun.file(join(outputRoot, "node_modules/framer-motion/dist/m.d.ts")).exists(),
-    ).toBe(true);
-    expect(
-      await Bun.file(join(outputRoot, "node_modules/motion-dom/dist/index.d.ts")).exists(),
-    ).toBe(true);
-    expect(
-      await Bun.file(join(outputRoot, "node_modules/motion-utils/dist/index.d.ts")).exists(),
-    ).toBe(true);
-    expect(await Bun.file(join(outputRoot, "node_modules/zod/index.d.cts")).exists()).toBe(true);
-    expect(
-      await Bun.file(join(outputRoot, "node_modules/ts-algebra/lib/index.d.ts")).exists(),
-    ).toBe(true);
-    expect(await Bun.file(join(outputRoot, "node_modules/zod/index.js")).exists()).toBe(false);
-    expect(
-      await Bun.file(join(outputRoot, "node_modules/app-typescript/lib/typescript.js")).exists(),
-    ).toBe(false);
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true });
-  }
+test("packaged types can check an app without the source checkout", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "toy-box-app-types-test-")));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  await writeAppTypeLibrary(projectRoot, root);
+  const source = join(root, "app.tsx");
+  await Bun.write(
+    source,
+    `
+    import { useChannel, useFile } from "./src/features/apps/sdk";
+    import type { FromSchema } from "json-schema-to-ts";
+    import { z } from "zod";
+    import * as m from "motion/react-m";
+    const Article = m.article;
+    const state: FromSchema<{ type: "object", properties: { count: { type: "number" } }, required: ["count"] }> = { count: 3 };
+    export default function App() {
+      const channel = useChannel("channel");
+      const file = useFile({ kind: "session", sessionId: "session", path: "notes.md" }, "shared");
+      return <Article layout="position">{channel.state?.channel.name}{file.content}{z.number().parse(state.count)}</Article>;
+    }
+  `,
+  );
+  const options = { ...readCompilerOptions(root), types: [] };
+  const host = ts.createCompilerHost(options);
+  host.getCurrentDirectory = () => root;
+  host.getDefaultLibLocation = () => join(root, "node_modules/app-typescript/lib");
+  const program = ts.createProgram([source], options, host);
+  const diagnostics = ts.getPreEmitDiagnostics(program, program.getSourceFile(source)!);
+  expect(
+    diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")),
+  ).toEqual([]);
+  expect(
+    program
+      .getSourceFiles()
+      .map(({ fileName }) => fileName)
+      .filter((file) => !file.startsWith(`${root}${sep}`)),
+  ).toEqual([]);
+  expect([...new Bun.Glob("node_modules/**/*.{js,mjs,cjs}").scanSync({ cwd: root })]).toEqual([]);
 });

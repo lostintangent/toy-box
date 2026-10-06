@@ -22,7 +22,7 @@ import type {
   SessionMessage,
   SessionState,
 } from "@sessions/model";
-import { emitSessionNameUpdate } from "@workspace/server/events";
+import { broadcast } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
 import { createSessionEventBus, type SessionStreamSubscription } from "./eventBus";
 
@@ -348,7 +348,10 @@ export class SessionStream {
 
   #handleProviderEvent(event: SessionEvent): void {
     if (event.type === "session_title_changed") {
-      emitSessionNameUpdate(this.sessionId, event.title);
+      broadcast({
+        type: "session.upserted",
+        session: { id: this.sessionId, title: event.title },
+      });
       return;
     }
     if (event.type === "end") {

@@ -26,14 +26,11 @@
   }
 
   html {
-    /* Prevent iOS from resizing viewport when keyboard appears */
-    height: -webkit-fill-available;
     height: 100%;
   }
 
   body {
     @apply bg-background text-foreground;
-    min-height: -webkit-fill-available;
     min-height: 100%;
   }
 
@@ -49,14 +46,9 @@
   letter-spacing: 0.08em;
 }
 
-/* Safe area utilities for iOS Dynamic Island / notch / home indicator */
-/* Padding-based (use on containers) */
+/* Keep the viewport content clear of the notch. */
 .safe-top {
   padding-top: env(safe-area-inset-top);
-}
-
-.safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .safe-x {
@@ -65,7 +57,6 @@
 }
 
 body {
-  margin: 0;
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell",
     "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
@@ -77,42 +68,63 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
 }
 
+/* JavaScript theme consumers need resolved colors from getComputedStyle(). */
+@property --background {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
+@property --foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
+@property --muted-foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
 :root {
+  color-scheme: light dark;
+
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  --background: light-dark(oklch(1 0 0), oklch(0.145 0 0));
+  --foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+  --card: light-dark(oklch(1 0 0), oklch(0.205 0 0));
+  --card-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+  --popover: light-dark(oklch(1 0 0), oklch(0.205 0 0));
+  --popover-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+  --primary: light-dark(oklch(0.205 0 0), oklch(0.922 0 0));
+  --primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.205 0 0));
+  --secondary: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
+  --secondary-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
+  --muted: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
+  --muted-foreground: light-dark(oklch(0.556 0 0), oklch(0.708 0 0));
   --accent: #facc15;
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --destructive: light-dark(oklch(0.577 0.245 27.325), oklch(0.704 0.191 22.216));
+  --border: light-dark(oklch(0.922 0 0), oklch(0.3 0 0));
+  --input: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 15%));
+  --ring: light-dark(oklch(0.708 0 0), oklch(0.556 0 0));
 
   /* The window surface the desktop's cards float over. */
-  --backdrop: oklch(0.96 0 0);
+  --backdrop: light-dark(oklch(0.96 0 0), oklch(0.17 0 0));
   /* Lifts those cards off the backdrop. */
   --card-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 2px 8px rgb(0 0 0 / 0.05);
 
-  --diff-added: oklch(0.527 0.194 149.214);
-  --diff-added-bg: oklch(0.527 0.194 149.214 / 15%);
-  --diff-added-bg-strong: oklch(0.527 0.194 149.214 / 30%);
-  --diff-removed: oklch(0.577 0.245 27.325);
-  --diff-removed-bg: oklch(0.577 0.245 27.325 / 15%);
-  --diff-removed-bg-strong: oklch(0.577 0.245 27.325 / 30%);
-  --diff-modified-old-bg: oklch(0.577 0.245 27.325 / 10%);
-  --diff-modified-new-bg: oklch(0.527 0.194 149.214 / 10%);
+  --diff-added: light-dark(oklch(0.527 0.194 149.214), oklch(0.65 0.18 149.579));
+  --diff-added-bg: --alpha(var(--diff-added) / 15%);
+  --diff-added-bg-strong: --alpha(var(--diff-added) / 30%);
+  --diff-removed: light-dark(oklch(0.577 0.245 27.325), oklch(0.704 0.191 22.216));
+  --diff-removed-bg: --alpha(var(--diff-removed) / 15%);
+  --diff-removed-bg-strong: --alpha(var(--diff-removed) / 30%);
+  --diff-modified-old-bg: --alpha(var(--diff-removed) / 10%);
+  --diff-modified-new-bg: --alpha(var(--diff-added) / 10%);
 
-  /* Unread-activity indicator (session + automation list dots). blue-500. */
-  --unread: oklch(0.623 0.214 259.815);
+  /* Unread-activity indicator (session + automation list dots). blue-500 / blue-400. */
+  --unread: light-dark(oklch(0.623 0.214 259.815), oklch(0.707 0.165 254.624));
 
   /* Agents' ink, alongside the user's --accent. cyan-500, the avatar tint. */
   --agent-accent: oklch(0.715 0.143 215.221);
@@ -120,41 +132,8 @@ code {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(0.3 0 0);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-
-    /*
-      Nothing reads as a shadow against near-black cards, so dark mode separates
-      them by tone alone: the backdrop sits one step above them.
-    */
-    --backdrop: oklch(0.17 0 0);
+    /* Dark cards are separated by tone rather than shadow. */
     --card-shadow: none;
-
-    --diff-added: oklch(0.65 0.18 149.579);
-    --diff-added-bg: oklch(0.65 0.18 149.579 / 15%);
-    --diff-added-bg-strong: oklch(0.65 0.18 149.579 / 30%);
-    --diff-removed: oklch(0.704 0.191 22.216);
-    --diff-removed-bg: oklch(0.704 0.191 22.216 / 15%);
-    --diff-removed-bg-strong: oklch(0.704 0.191 22.216 / 30%);
-    --diff-modified-old-bg: oklch(0.704 0.191 22.216 / 10%);
-    --diff-modified-new-bg: oklch(0.65 0.18 149.579 / 10%);
-
-    /* blue-400 for stronger contrast on dark surfaces. */
-    --unread: oklch(0.707 0.165 254.624);
   }
 }
 

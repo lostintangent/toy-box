@@ -3,7 +3,6 @@ import { Circle, Pencil } from "lucide-react";
 import { DoneIndicator } from "@/shared/ui/done-indicator";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { WaitingIndicator } from "@/shared/ui/waiting-indicator";
 import { cn } from "@/shared/utils";
 
 /** What a sidebar row or collapsed panel is signaling in place of its action. */
@@ -39,7 +38,7 @@ export function SidebarStatus({
 }
 
 const MARKS: Record<SidebarStatus["kind"], ReactNode> = {
-  waiting: <WaitingIndicator className="size-5.5" />,
+  waiting: <RunningIndicator waiting className="size-4.5 text-muted-foreground" />,
   running: <RunningIndicator className="size-4.5 text-muted-foreground" />,
   finished: <DoneIndicator className="size-5.5 animate-in zoom-in-50 motion-reduce:animate-none" />,
   unread: <Circle className="size-2.5 fill-unread text-unread" aria-hidden />,

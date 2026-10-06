@@ -15,7 +15,7 @@ const featureSkillFiles = import.meta.glob<string>("../../features/*/server/skil
   import: "default",
   query: "?raw",
 });
-const featureStartups = import.meta.glob<() => void | Promise<unknown>>(
+const featureStartups = import.meta.glob<() => void | VoidFunction | Promise<void | VoidFunction>>(
   "../../features/*/server/startup.ts",
   { eager: true, import: "default" },
 );
@@ -28,27 +28,31 @@ export default definePlugin((nitroApp) => {
   });
 
   // Keep Toy Box-owned skills and their bundled resources current on disk.
-  start("install bundled skills", () => installBundledSkills(featureSkillFiles));
+  void start("install bundled skills", () => installBundledSkills(featureSkillFiles));
 
-  start("observe session artifacts", () => {
+  void start("observe session artifacts", () => {
     fileWatcher.observeArtifacts(refreshSessionArtifacts);
   });
 
   // Start the shared native processes before the first session-list request needs them.
-  start("discover session providers", listModels);
+  void start("discover session providers", listModels);
 
   // Make sure we retain snapshots for pinned sessions
-  start("retain pinned session snapshots", async () =>
+  void start("retain pinned session snapshots", async () =>
     retainSessionSnapshots((await getSettings()).pinnedSessionIds),
   );
 
   for (const [path, run] of Object.entries(featureStartups)) {
-    start(`run ${path}`, run);
+    const started = start(`run ${path}`, run);
+    nitroApp.hooks.hook("close", async () => (await started)?.());
   }
 });
 
-function start(description: string, run: () => void | Promise<unknown>): void {
-  void (async () => run())().catch((error) =>
+function start<Result>(
+  description: string,
+  run: () => Result | Promise<Result>,
+): Promise<Result | void> {
+  return (async () => run())().catch((error) =>
     console.error(`Unable to ${description} on startup:`, error),
   );
 }

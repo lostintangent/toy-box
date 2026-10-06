@@ -10,10 +10,11 @@ function working(id: string, target: { lookingAt?: number; workingOn?: number })
 describe("channel message reactions", () => {
   test("recorded reactions come first, then working agents' activity on the message", () => {
     expect(
-      channelMessageReactions(message, [
-        working("engine", { lookingAt: 7 }),
-        working("files", { workingOn: 7 }),
-      ]),
+      channelMessageReactions(
+        message,
+        [working("engine", { lookingAt: 7 }), working("files", { workingOn: 7 })],
+        { engine: { state: "working" }, files: { state: "working" } },
+      ),
     ).toEqual([
       { agentId: "critic", reaction: "agree" },
       { agentId: "engine", reaction: "looking" },
@@ -21,12 +22,21 @@ describe("channel message reactions", () => {
     ]);
   });
 
-  test("activity on another message, or a waiting agent, adds nothing", () => {
+  test("other targets, waiting agents, and stale working status add no activity", () => {
     expect(
-      channelMessageReactions(message, [
-        working("engine", { lookingAt: 6 }),
-        { id: "files", status: { state: "waiting", text: "Your call on the palette" } },
-      ]),
+      channelMessageReactions(
+        message,
+        [
+          working("engine", { lookingAt: 6 }),
+          { id: "files", status: { state: "waiting", text: "Your call on the palette" } },
+          working("stale", { workingOn: 7 }),
+        ],
+        {
+          engine: { state: "working" },
+          files: { state: "waiting", text: "Your call" },
+          stale: { state: "idle" },
+        },
+      ),
     ).toEqual([{ agentId: "critic", reaction: "agree" }]);
   });
 });

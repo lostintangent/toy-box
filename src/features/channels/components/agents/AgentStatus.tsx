@@ -1,8 +1,6 @@
 import { useState } from "react";
 import type { ChannelAgent } from "@channels/model";
-import { channelAgentPresence } from "@channels/model/presence";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
-import { selectWorkspaceSessionActivity, useWorkspaceSelector } from "@workspace/hooks/state";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
@@ -16,36 +14,29 @@ type WorkingAgent = {
 /** Present currently working Channel agents. Waiting shows in the overview, since the lead's
  *  request already marks what the user needs to answer. */
 export function AgentStatus({
-  agents,
+  working,
   variant = "normal",
 }: {
-  agents: readonly ChannelAgent[];
+  working: readonly WorkingAgent[];
   variant?: "normal" | "compact";
 }) {
-  const running = useWorkspaceSelector((workspace) =>
-    agents.map(({ id }) => selectWorkspaceSessionActivity(workspace, id).running),
-  );
-  const working: WorkingAgent[] = agents
-    .flatMap((agent, index) => {
-      const presence = channelAgentPresence(agent, running[index]!);
-      return presence.state === "working" ? [{ agent, status: presence.text }] : [];
-    })
-    .sort((left, right) => left.agent.name.localeCompare(right.agent.name));
-
   if (working.length === 0) return null;
+  const entries = [...working].sort((left, right) =>
+    left.agent.name.localeCompare(right.agent.name),
+  );
 
   if (variant === "compact") {
     return (
       <span
         role="status"
-        aria-label={`${working.map(({ agent }) => agent.name).join(", ")} ${working.length === 1 ? "is" : "are"} working`}
+        aria-label={`${entries.map(({ agent }) => agent.name).join(", ")} ${entries.length === 1 ? "is" : "are"} working`}
       >
-        <WorkingAgentAvatars entries={working} />
+        <WorkingAgentAvatars entries={entries} />
       </span>
     );
   }
 
-  return <WorkingAgentStatus entries={working} />;
+  return <WorkingAgentStatus entries={entries} />;
 }
 
 function WorkingAgentStatus({ entries }: { entries: readonly WorkingAgent[] }) {

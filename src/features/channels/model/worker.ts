@@ -1,6 +1,11 @@
 // Interpret opaque Worker metadata as Channel identity and collaboration state.
 import type { Worker } from "@workers/model";
-import { channelAgentMetadataSchema, channelLead, type ChannelMember } from "./index";
+import {
+  channelAgentMetadataSchema,
+  channelLead,
+  compareChannelAgents,
+  type ChannelMember,
+} from "./index";
 
 export function isChannelLead(worker: Extract<Worker, { type: "channel" }>): boolean {
   return worker.sessionId === worker.channelId;
@@ -29,7 +34,7 @@ export function channelMembersFromWorkers(workers: Extract<Worker, { type: "chan
   return workers
     .filter((worker) => !isChannelLead(worker))
     .map((worker) => channelMemberFromWorker(worker))
-    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+    .sort(compareChannelAgents);
 }
 
 export function channelMemberFromWorker(

@@ -5,10 +5,11 @@ import {
   deliverMessage,
   waitForSession,
 } from "@sessions/server/functions";
-import { consumeAppShare } from "@apps/server/functions";
 import { readFile, writeFile } from "@files/server/functions";
+import type { QueryClient } from "@tanstack/react-query";
+import { invalidateSessionsStateQuery } from "@sessions/queryCache";
 import type { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import type { AppActions, useAppActions } from "@apps/sdk";
+import type { useAppActions } from "@apps/sdk";
 import {
   createEditorPane,
   createLinkedSessionPane,
@@ -20,10 +21,12 @@ export function bindAppActions({
   publisherPaneId,
   beforeDeliverMessage,
   surface,
+  queryClient,
 }: {
   publisherPaneId: string;
   beforeDeliverMessage?: () => Promise<void>;
   surface: ReturnType<typeof useWorkspaceSurface>;
+  queryClient: QueryClient;
 }): ReturnType<typeof useAppActions> {
   function changeLinkedPanes(
     change: (current: readonly WorkspacePane[]) => readonly WorkspacePane[],
@@ -63,7 +66,10 @@ export function bindAppActions({
     async createSession(input) {
       const { open, ...launch } = input;
       const result = await startSession({ data: launch });
-      if (open) openPane(createLinkedSessionPane(result.sessionId));
+      if (open) {
+        await invalidateSessionsStateQuery(queryClient);
+        openPane(createLinkedSessionPane(result.sessionId));
+      }
       return result;
     },
     waitForSession(sessionId, timeoutMs) {
@@ -103,35 +109,6 @@ export function bindAppActions({
     },
     async writeFile(file, content) {
       await writeFile({ data: { file, content } });
-    },
-  };
-}
-
-/** Adds saved-instance capabilities to the common mounted app actions. */
-export function bindSavedAppActions({
-  appId,
-  actions,
-  flushState,
-  spawnWorker,
-  cancelWorker,
-}: {
-  appId: string;
-  actions: ReturnType<typeof useAppActions>;
-  flushState: () => Promise<void>;
-  spawnWorker: AppActions["spawnWorker"];
-  cancelWorker: AppActions["cancelWorker"];
-}): AppActions {
-  return {
-    ...actions,
-    consumeShare(shareId) {
-      return consumeAppShare({ data: { appId, shareId } });
-    },
-    async spawnWorker(input) {
-      await flushState();
-      return spawnWorker(input);
-    },
-    cancelWorker(sessionId) {
-      return cancelWorker(sessionId);
     },
   };
 }

@@ -156,7 +156,7 @@ part of the interaction, and verify it in hosted desktop and mobile panes.
 
 The SDK has one portable surface and one saved-instance extension:
 
-- Both artifact and installed apps may use `useWorkspace`, `useFile`,
+- Both artifact and installed apps may use `useWorkspace`, `useChannels`, `useChannel`, `useFile`,
   `useAppActions`, `AppSharePicker`, the design-system components, and React
   mount-local state.
 - Only installed saved apps may use `useApp`, receive or consume pending shares,
@@ -276,6 +276,64 @@ active execution rather than history.
 app state instead of copying session records, resolve those IDs from this live
 projection, and filter or cap interactive rows before rendering them. Scanning
 the summaries is cheap; mounting hundreds of controls usually is not.
+
+### Channels
+
+`useChannels()` returns the same live catalog used by the Channels sidebar:
+
+```tsx
+const channels = useChannels();
+
+return channels.map(({ channel, agents, status }) => (
+  <div key={channel.id}>
+    {channel.name} · {status ?? "Read"}
+    {agents
+      .filter((agent) => agent.isRunning)
+      .map((agent) => agent.name)
+      .join(", ")}
+  </div>
+));
+```
+
+Each result contains `channel`, `agents` (identities plus `isRunning`), and
+`status`: `"waiting"` for a pending user reply, otherwise `"finished"` for unread task
+completion, `"unread"` for other unread messages, or `null`. Opening an app does not mark
+channels read. The hook shares the host's catalog and workspace caches and uses Suspense
+while loading; errors reach the app's error boundary. It does not open channel detail
+streams. Store selected channel IDs in app state rather than copying catalog entries.
+
+`useChannel(channelId, { visible = true, mode = "active" } = {})` observes one
+channel using the same Query cache, stream, reducer, history, and post mutation as
+the native channel pane. Mount it in a child keyed by the selected channel ID:
+
+```tsx
+function Office({ channelId }: { channelId: string }) {
+  const { state, loadPrevious, postMessage } = useChannel(channelId, { mode: "passive" });
+  if (!state) return <AppSkeleton />;
+  return (
+    <>
+      <h2>{state.channel.name}</h2>
+      <button onClick={() => postMessage({ content: "Hello, team!" })}>Say hello</button>
+    </>
+  );
+}
+```
+
+`state` is the canonical `ChannelState`: channel metadata and tasks, lead, members,
+messages, pending `request`, artifacts, routines, and authoritative `presence`.
+Use presence to place agents in working, waiting, or idle areas; waiting includes
+optional `wakeAt`. Avatars contain a hex `color` and SVG path `mark` in a 24×24
+viewBox. Artifact `file`s work with `useFile` and `actions.openFile`.
+`loadPrevious(sequence?)` loads one older page or pages through a target message.
+`postMessage({ content, attachments? })` uses the shared optimistic mutation.
+
+Observation is active by default and marks visible content read. Set `mode: "passive"`
+for previews and visualizations. `unreadAfter` is the reader's stable unread divider.
+Set `visible: false` when the surface
+is hidden. Page visibility is handled automatically. Query keeps one stream per
+channel until its final observer detaches, preserving cached state for incremental
+reconnection. Errors and deletion reach the app error boundary; a catalog picker
+can unmount a selected channel when it disappears from `useChannels()`.
 
 ### Live Workspace Files
 

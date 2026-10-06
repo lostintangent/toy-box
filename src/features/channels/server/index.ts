@@ -1,18 +1,13 @@
 import { isAbsolute, resolve } from "node:path";
 import type {
   Channel,
-  ChannelAgent,
   ChannelAgentStatus,
-  ChannelAttachment,
-  ChannelArtifact,
-  ChannelEvent,
   ChannelList,
   ChannelMember,
   ChannelMessage,
   ChannelMessageSender,
   ChannelReaction,
   ChannelRoutine,
-  ChannelState,
   CreateChannelMemberInput,
   CreateChannelInput,
   EditChannelInput,
@@ -22,8 +17,13 @@ import type {
   ChannelMemberChanges,
   UpdateChannelInput,
 } from "@channels/model";
-import { agentHandleFromName, channelLead, resolveChannelAudience } from "@channels/model";
-import { resolveWorkspaceFile, workspaceFileFromAbsolutePath } from "@files/server/paths";
+import {
+  channelLead,
+  channelMemberIdentity,
+  resolveChannelAudience,
+  isChannelSystemMessage,
+} from "@channels/model";
+import { workspaceFileFromAbsolutePath } from "@files/server/paths";
 import {
   deliverSessionMessage,
   getSessionDirectory,
@@ -33,13 +33,9 @@ import type { SessionSystemMessage } from "@sessions/model";
 import { getStateDatabase } from "@/server/database";
 import { broadcast } from "@workspace/server/events";
 import { deleteWorker, spawnWorker } from "@workers/server";
-import { ChannelDatabase } from "./database";
-import {
-  publishChannelEvent,
-  releaseChannelEvents,
-  replayChannelEvents,
-  subscribeChannelEvents,
-} from "./events";
+import { ChannelDatabase, type StoredChannelMessage, type ChannelChange } from "./database";
+import { resolveMessageResources, resolveEventResources } from "./resources";
+import { publishChannelEvent, releaseChannelEvents } from "./events";
 
 const CHANNEL_MESSAGE_LIMIT = 100;
 
@@ -64,8 +60,7 @@ export async function createChannelMember({
     },
     admit: async (worker) => {
       const change = await database.createMember(worker);
-      publishChannelMessage(change);
-      broadcastChannelMembers();
+      publishChannelChange(change);
       return change.member;
     },
   });
@@ -98,10 +93,7 @@ export async function updateChannelMember(
   const database = new ChannelDatabase(await getStateDatabase());
   const { agentId, ...update } = input;
   const change = await database.updateMember(agentId, update);
-  if (change.changed) {
-    publishChannelMember(change.member, change.revision);
-    broadcastChannelMembers();
-  }
+  publishChannelChange(change);
   return change.member;
 }
 
@@ -111,73 +103,14 @@ export async function updateChannelFromLead(sessionId: string, input: UpdateChan
     throw new Error("Use an absolute working directory.");
   }
   const change = await database.updateChannel(sessionId, input);
-  if (change.changed) publishChannelChange(change);
-  return publicChannel(change.channel);
+  publishChannelChange(change);
+  return change.channel;
 }
 
-export async function getChannelState(channelId: string): Promise<ChannelState> {
-  return requireChannelState(new ChannelDatabase(await getStateDatabase()), channelId);
-}
-
-export async function listChannelMessagesBefore(
-  channelId: string,
-  beforeSequence: number,
-): Promise<ChannelMessage[]> {
+export async function getChannelHistory(channelId: string, beforeSequence: number) {
   const database = new ChannelDatabase(await getStateDatabase());
-  return database.listMessagesBefore(channelId, beforeSequence, CHANNEL_MESSAGE_LIMIT);
-}
-
-/** Replay one Channel after a revision, then continue with committed detail events. */
-export async function streamChannel(
-  channelId: string,
-  afterRevision: number,
-  onEvent: (event: ChannelEvent) => void,
-): Promise<VoidFunction> {
-  let revision = afterRevision;
-  let catchingUp = true;
-  const bufferedEvents: ChannelEvent[] = [];
-
-  const emit = (event: ChannelEvent) => {
-    if (event.revision <= revision) return;
-    revision = event.revision;
-    onEvent(event);
-  };
-  const flush = () => {
-    bufferedEvents.sort((left, right) => left.revision - right.revision);
-    while (bufferedEvents.length > 0) {
-      const event = bufferedEvents[0]!;
-      if (event.revision <= revision) {
-        bufferedEvents.shift();
-      } else if (event.revision === revision + 1) {
-        bufferedEvents.shift();
-        emit(event);
-      } else {
-        return;
-      }
-    }
-  };
-  const unsubscribe = subscribeChannelEvents(channelId, (event) => {
-    bufferedEvents.push(event);
-    if (!catchingUp) flush();
-  });
-  try {
-    const database = new ChannelDatabase(await getStateDatabase());
-    const throughRevision = await database.getRevision(channelId);
-    if (throughRevision === null) throw new Error("Channel not found.");
-    const replay = replayChannelEvents(channelId, afterRevision, throughRevision);
-    if (replay) {
-      for (const event of replay) emit(event);
-    } else {
-      const state = await requireChannelState(database, channelId);
-      emit({ type: "state", revision: state.revision, state });
-    }
-    catchingUp = false;
-    flush();
-    return unsubscribe;
-  } catch (error) {
-    unsubscribe();
-    throw error;
-  }
+  const page = await database.getHistory(channelId, beforeSequence);
+  return page && { ...page, messages: page.messages.map(resolveMessageResources) };
 }
 
 export async function createChannel(input: CreateChannelInput): Promise<Channel> {
@@ -202,28 +135,31 @@ export async function createChannel(input: CreateChannelInput): Promise<Channel>
 export async function editChannel(input: EditChannelInput): Promise<Channel> {
   const database = new ChannelDatabase(await getStateDatabase());
   const change = await database.editChannel(input);
-  if (change.changed) {
-    publishChannelChange(change);
-    if (change.messages.some(({ message }) => message.content.type === "channel_purpose_changed")) {
-      void wakeChannelAgent(change.channel.id, {
-        type: "channel_message",
-        senderName: "the user",
-      }).catch((error) => {
-        console.error(`Failed to notify Channel lead ${change.channel.id}:`, error);
-      });
-    }
+  publishChannelChange(change);
+  if (change.purposeChanged) {
+    void wakeChannelAgent(change.channel.id, {
+      type: "channel_message",
+      senderName: "the user",
+    }).catch((error) => {
+      console.error(`Failed to notify Channel lead ${change.channel.id}:`, error);
+    });
   }
   return change.channel;
 }
 
 export async function deleteChannel(channelId: string): Promise<boolean> {
   const database = new ChannelDatabase(await getStateDatabase());
-  for (const agentId of await database.listAgentIds(channelId)) {
-    await deleteWorker(agentId, "channel");
-  }
-  if (!(await database.deleteChannel(channelId))) return false;
+  const agentIds = await database.deleteChannel(channelId);
+  if (!agentIds) return false;
   releaseChannelEvents(channelId);
   broadcast({ type: "channel.deleted", channelId });
+  const cleanup = await Promise.allSettled(agentIds.map((id) => deleteWorker(id)));
+  const errors = cleanup.flatMap((result, index) =>
+    result.status === "rejected"
+      ? [new Error(`Unable to delete agent ${agentIds[index]}`, { cause: result.reason })]
+      : [],
+  );
+  if (errors.length) throw new AggregateError(errors, "Channel deleted; agent cleanup failed.");
   return true;
 }
 
@@ -233,19 +169,18 @@ export async function removeChannelMember(agentId: string): Promise<void> {
   await deleteWorker(agentId, "channel");
 }
 
-export async function markChannelRead(channelId: string, sequence: number): Promise<void> {
-  const channel = await new ChannelDatabase(await getStateDatabase()).markUserSeen(
-    channelId,
-    sequence,
-  );
-  if (channel) broadcast({ type: "channel.upserted", channel });
+export async function markChannelRead(
+  channelId: string,
+  sequence: number,
+): Promise<Channel | null> {
+  const database = new ChannelDatabase(await getStateDatabase());
+  const change = await database.markUserSeen(channelId, sequence);
+  if (change) publishChannelChange(change);
+  return change?.channel ?? database.getChannel(channelId);
 }
 
-export function postChannelMessage(input: PostChannelMessageInput): Promise<ChannelMessage> {
-  return postMessage({
-    ...input,
-    sender: { type: "user" },
-  });
+export async function postChannelMessage(input: PostChannelMessageInput): Promise<ChannelMessage> {
+  return resolveMessageResources(await postMessage({ ...input, sender: { type: "user" } }));
 }
 
 export async function postChannelMessageFromSession(
@@ -253,7 +188,7 @@ export async function postChannelMessageFromSession(
   input: Omit<PostChannelMessageInput, "attachments"> & {
     attachmentPaths?: readonly string[];
   },
-): Promise<ChannelMessage> {
+): Promise<StoredChannelMessage> {
   const { attachmentPaths, ...message } = input;
   return postMessage({
     ...message,
@@ -313,51 +248,25 @@ export async function readChannelForAgent(sessionId: string) {
 async function readChannel(
   database: ChannelDatabase,
   channel: Channel,
-  messages: ChannelMessage[],
+  messages: StoredChannelMessage[],
   hasMore: boolean,
 ) {
-  const [{ lead, members }, artifacts, routines] = await Promise.all([
+  const [roster, artifacts, routines] = await Promise.all([
     database.getRoster(channel.id),
     database.listArtifacts(channel.id),
     database.listRoutines(channel.id),
   ]);
+  if (!roster) throw new Error("Channel not found.");
+  const { lead, members } = roster;
   return {
-    channel: publicChannel(channel),
-    lead: publicChannelAgent(lead),
-    members: members.map(publicChannelAgent),
+    channel,
+    lead,
+    members,
     messages,
-    artifacts: artifacts.map(publicChannelArtifact),
-    routines: routines.map(({ id, ...routine }) => ({ routineId: id, ...routine })),
+    artifacts,
+    routines,
     hasMore,
   };
-}
-
-async function requireChannelState(
-  database: ChannelDatabase,
-  channelId: string,
-): Promise<ChannelState> {
-  const state = await database.getState(channelId, CHANNEL_MESSAGE_LIMIT);
-  if (!state) throw new Error("Channel not found.");
-  return state;
-}
-
-function publicChannel({ name, purpose, directory, checklist, previewUrl }: Channel) {
-  return { name, purpose, directory, checklist, previewUrl };
-}
-
-/** Public collaboration facts omit each agent's private read position and runtime details. */
-function publicChannelAgent(agent: ChannelAgent) {
-  return {
-    agentId: agent.id,
-    name: agent.name,
-    mention: `@${agentHandleFromName(agent.name)}`,
-    role: agent.role,
-    ...(agent.status ? { status: agent.status } : {}),
-  };
-}
-
-function publicChannelArtifact({ file, title }: Pick<ChannelArtifact, "file" | "title">) {
-  return { path: resolveWorkspaceFile(file)!, title };
 }
 
 export async function sendChannelMessageFromAgent(
@@ -365,8 +274,9 @@ export async function sendChannelMessageFromAgent(
   input: {
     content: string;
     attachmentPaths?: readonly string[];
+    request?: boolean;
   },
-): Promise<ChannelMessage> {
+): Promise<StoredChannelMessage> {
   const agent = await requireChannelAgent(new ChannelDatabase(await getStateDatabase()), sessionId);
   return postMessage({
     id: crypto.randomUUID(),
@@ -377,25 +287,8 @@ export async function sendChannelMessageFromAgent(
     },
     content: input.content,
     attachments: await resolveAttachmentPaths(sessionId, input.attachmentPaths),
+    request: input.request,
   });
-}
-
-export async function markChannelDoneFromLead(sessionId: string): Promise<ChannelMessage> {
-  const change = await new ChannelDatabase(await getStateDatabase()).markDone(sessionId);
-  publishChannelMessage(change);
-  return change.message;
-}
-
-export async function requestChannelUserAttentionFromLead(
-  sessionId: string,
-  requestSequence: number,
-): Promise<ChannelMessage> {
-  const change = await new ChannelDatabase(await getStateDatabase()).requestUserAttention(
-    sessionId,
-    requestSequence,
-  );
-  if (change.changed) publishChannelMessage(change);
-  return change.message;
 }
 
 export async function setChannelMessageReactionFromAgent(
@@ -412,13 +305,7 @@ export async function setChannelMessageReactionFromAgent(
   });
   if (!change) return null;
   const reaction = change.reaction?.reaction ?? null;
-  publishChannelEvent(agent.channelId, {
-    type: "reaction",
-    revision: change.revision,
-    sequence: input.sequence,
-    agentId: agent.id,
-    reaction,
-  });
+  publishChannelChange(change);
   return reaction;
 }
 
@@ -434,14 +321,8 @@ export async function setChannelAgentStatus(
     ...(input.workingOn ? { workingOn: input.workingOn } : {}),
   };
   const change = await database.setAgentStatus(sessionId, status);
-  if (change) publishChannelStatus(change);
+  if (change) publishChannelChange(change);
   return status;
-}
-
-async function clearChannelAgentWaitingStatus(sessionId: string): Promise<void> {
-  const database = new ChannelDatabase(await getStateDatabase());
-  const change = await database.clearWaitingAgentStatus(sessionId);
-  if (change) publishChannelStatus(change);
 }
 
 /** Ends a turn. A lead waiting on a member or external work can ask to wake after a delay. */
@@ -459,7 +340,7 @@ export async function finishChannelAgentTurn(
     waitingFor ? { state: "waiting", text: waitingFor, ...(wakeAt ? { wakeAt } : {}) } : undefined,
     false,
   );
-  if (change) publishChannelStatus(change);
+  if (change) publishChannelChange(change);
 }
 
 export async function setChannelRoutineFromLead(
@@ -467,7 +348,7 @@ export async function setChannelRoutineFromLead(
   input: SetChannelRoutineInput,
 ): Promise<ChannelRoutine> {
   const change = await new ChannelDatabase(await getStateDatabase()).setRoutine(sessionId, input);
-  if (change.changed) publishChannelMessage(change);
+  publishChannelChange(change);
   return change.routine;
 }
 
@@ -478,7 +359,7 @@ export async function deleteChannelRoutine(channelId: string, routineId: string)
     routineId,
   );
   if (!change) return false;
-  publishChannelMessage(change);
+  publishChannelChange(change);
   return true;
 }
 
@@ -488,10 +369,10 @@ export async function wakeDueChannelAgents(now = new Date()): Promise<void> {
     const database = await getStateDatabase({ createIfMissing: false });
     if (!database) return;
     const { followUps, routines } = await new ChannelDatabase(database).claimDueWakes(now);
-    for (const { change } of followUps) publishChannelStatus(change);
+    for (const { change } of followUps) publishChannelChange(change);
     await Promise.all([
-      ...followUps.map(({ change, waitingFor }) =>
-        wakeLead(change.agentId, { type: "channel_follow_up", waitingFor }),
+      ...followUps.map(({ agentId, waitingFor }) =>
+        wakeLead(agentId, { type: "channel_follow_up", waitingFor }),
       ),
       ...routines.map(({ channelId, title, prompt }) =>
         wakeLead(channelId, { type: "channel_routine", title, prompt }),
@@ -521,16 +402,6 @@ function wakeLead(leadId: string, systemMessage: SessionSystemMessage): Promise<
   });
 }
 
-function publishChannelStatus(change: {
-  agentId: string;
-  channelId: string;
-  revision: number;
-  status?: ChannelAgentStatus;
-}): void {
-  const { channelId, ...event } = change;
-  publishChannelEvent(channelId, { type: "status", ...event });
-}
-
 async function resolveAttachmentPaths(sessionId: string, paths: readonly string[] | undefined) {
   if (!paths?.length) return undefined;
   const directory = paths.some((path) => !isAbsolute(path))
@@ -551,30 +422,15 @@ async function resolveAttachmentPaths(sessionId: string, paths: readonly string[
 }
 
 /** Persist once, then apply the same audience plan for user and Agent senders. */
-async function postMessage({
-  id,
-  channelId,
-  sender,
-  content,
-  attachments,
-}: {
-  id: string;
-  channelId: string;
-  sender: Exclude<ChannelMessageSender, { type: "system" }>;
-  content: string;
-  attachments?: ChannelAttachment[];
-}): Promise<ChannelMessage> {
+async function postMessage(
+  input: Parameters<ChannelDatabase["appendMessage"]>[0],
+): Promise<StoredChannelMessage> {
+  const { channelId, sender, content } = input;
   const database = new ChannelDatabase(await getStateDatabase());
   const members = await database.listMembers(channelId);
-  const change = await database.appendMessage({
-    id,
-    channelId,
-    sender,
-    content,
-    attachments,
-  });
+  const change = await database.appendMessage(input);
   const lead = channelLead(change.channel.id);
-  publishChannelMessage(change);
+  publishChannelChange(change);
   const audience = resolveChannelAudience({
     content,
     sender,
@@ -603,10 +459,7 @@ export async function shareChannelArtifactFromAgent(
 ) {
   const database = new ChannelDatabase(await getStateDatabase());
   const agent = await requireChannelAgent(database, sessionId);
-  const channel = await database.getChannel(agent.channelId);
-  if (!channel) throw new Error("Channel not found.");
-  const workspaceDirectory = (await getSessionDirectory(sessionId)) ?? channel.directory;
-  return shareChannelArtifact(database, channel.id, workspaceDirectory, {
+  return shareChannelArtifact(database, sessionId, agent.channelId, {
     ...input,
     actor: { type: "agent", agentId: agent.id },
   });
@@ -614,28 +467,29 @@ export async function shareChannelArtifactFromAgent(
 
 export async function shareChannelArtifactFromSession(
   sessionId: string,
-  input: { channelId: string; path: string; title: string },
+  { channelId, ...input }: { channelId: string; path: string; title: string },
 ) {
   const database = new ChannelDatabase(await getStateDatabase());
-  const channel = await database.getChannel(input.channelId);
-  if (!channel) throw new Error("Channel not found.");
-  const workspaceDirectory = (await getSessionDirectory(sessionId)) ?? channel.directory;
-  return shareChannelArtifact(database, channel.id, workspaceDirectory, {
+  return shareChannelArtifact(database, sessionId, channelId, {
     ...input,
     actor: { type: "user" },
   });
 }
 
+/** Relative paths resolve against the sharing Session's workspace, then the Channel's directory. */
 async function shareChannelArtifact(
   database: ChannelDatabase,
+  sessionId: string,
   channelId: string,
-  workspaceDirectory: string | undefined,
   input: {
     path: string;
     title: string;
     actor: Exclude<ChannelMessageSender, { type: "system" }>;
   },
 ) {
+  const channel = await database.getChannel(channelId);
+  if (!channel) throw new Error("Channel not found.");
+  const workspaceDirectory = (await getSessionDirectory(sessionId)) ?? channel.directory;
   const path = input.path.trim();
   const absolutePath = isAbsolute(path)
     ? resolve(path)
@@ -651,16 +505,15 @@ async function shareChannelArtifact(
     title: input.title,
     actor: input.actor,
   });
-  if ("message" in result) publishChannelMessage(result);
-  return publicChannelArtifact(result.artifact);
+  publishChannelChange(result);
+  return result.artifact;
 }
 
 export async function detachChannelAgentSession(sessionId: string): Promise<void> {
   const database = new ChannelDatabase(await getStateDatabase());
   const change = await database.deleteMember(sessionId);
   if (!change) return;
-  publishChannelMessage(change);
-  broadcastChannelMembers();
+  publishChannelChange(change);
 }
 
 async function requireChannelAgent(database: ChannelDatabase, sessionId: string) {
@@ -669,22 +522,26 @@ async function requireChannelAgent(database: ChannelDatabase, sessionId: string)
   return agent;
 }
 
-function publishChannelMessage(change: {
-  revision: number;
-  message: ChannelMessage;
-  channel: Channel;
-}): void {
-  publishChannelChange({ channel: change.channel, messages: [change] });
-}
-
-function publishChannelChange(change: {
-  channel: Channel;
-  messages: readonly { revision: number; message: ChannelMessage }[];
-}): void {
-  for (const { revision, message } of change.messages) {
-    publishChannelEvent(change.channel.id, { type: "message", revision, message });
+/** Publish the committed detail events and their catalog projections together. */
+export function publishChannelChange({ channelId, events, channel }: ChannelChange): void {
+  if (events.length === 0) return;
+  for (const stored of events) {
+    const event = resolveEventResources(stored);
+    publishChannelEvent(channelId, event);
+    if (event.type === "member") {
+      broadcast({ type: "channel.member.upserted", member: channelMemberIdentity(event.member) });
+    } else if (event.type === "message" && isChannelSystemMessage(event.message)) {
+      const content = event.message.content;
+      if (content.type === "member_joined")
+        broadcast({
+          type: "channel.member.upserted",
+          member: channelMemberIdentity(content.member),
+        });
+      else if (content.type === "member_left")
+        broadcast({ type: "channel.member.deleted", channelId, agentId: content.member.id });
+    }
   }
-  broadcast({ type: "channel.upserted", channel: change.channel });
+  if (channel) broadcast({ type: "channel.upserted", channel });
 }
 
 async function wakeChannelAgent(
@@ -692,13 +549,7 @@ async function wakeChannelAgent(
   systemMessage: SessionSystemMessage,
 ): Promise<void> {
   await deliverSessionMessage(agentId, { systemMessage, immediate: true });
-  await clearChannelAgentWaitingStatus(agentId);
-}
-
-function publishChannelMember(member: ChannelMember, revision: number): void {
-  publishChannelEvent(member.channelId, { type: "member", revision, member });
-}
-
-function broadcastChannelMembers(): void {
-  broadcast({ type: "channel.members.changed" });
+  const database = new ChannelDatabase(await getStateDatabase());
+  const change = await database.clearAgentStatus(agentId, "waiting");
+  if (change) publishChannelChange(change);
 }

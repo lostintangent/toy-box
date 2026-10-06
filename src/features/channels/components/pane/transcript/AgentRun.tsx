@@ -3,7 +3,6 @@ import { Check, Reply } from "lucide-react";
 import { AgentAvatar } from "@channels/components/agents/AgentAvatar";
 import { AgentMention } from "@channels/components/agents/AgentMention";
 import {
-  channelAttachmentPreview,
   channelAudienceLabel,
   DELETED_AGENT_NAME,
   resolveChannelAudience,
@@ -19,7 +18,7 @@ import { Button } from "@/shared/ui/button";
 import { ClockTime } from "@/shared/ui/clock-time";
 import { ShowMore, useShowMore } from "@/shared/ui/show-more";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { WaitingIndicator, waitingOutlineClassName } from "@/shared/ui/waiting-indicator";
+import { RunningIndicator, waitingOutlineClassName } from "@/shared/ui/running-indicator";
 import { cn } from "@/shared/utils";
 import { useChannelPane } from "../ChannelPaneContext";
 import { ChannelReactions } from "./ChannelReactions";
@@ -87,7 +86,7 @@ function AgentMessage({
   /** Absent once the author has been removed from the Channel. */
   agent?: ChannelAgent;
 }) {
-  const { agents, reply } = useChannelPane();
+  const { agents, presence, reply } = useChannelPane();
   const textRef = useRef<HTMLDivElement>(null);
   // Coordination between agents recedes; messages for the user and requests stay whole.
   const { collapsed, clamped, toggle } = useShowMore(
@@ -95,8 +94,8 @@ function AgentMessage({
     message.content,
     addressee !== undefined && request === undefined,
   );
-  const reactions = channelMessageReactions(message, agents);
-  const attachments = message.attachments?.map(channelAttachmentPreview) ?? [];
+  const reactions = channelMessageReactions(message, agents, presence);
+  const attachments = message.attachments ?? [];
 
   return (
     <div
@@ -178,7 +177,7 @@ function AgentMessage({
 function RequestTag({ state }: { state: ChannelRequestState }) {
   return state === "pending" ? (
     <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/10 py-px pr-2 pl-0.5 text-2xs font-medium text-amber-700 dark:text-amber-400">
-      <WaitingIndicator className="size-3.5" />
+      <RunningIndicator waiting className="size-3.5" />
       Needs your reply
     </span>
   ) : (

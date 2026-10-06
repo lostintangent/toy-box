@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseAppState, parseAppStateDefinition } from "./state";
+import { parseAppState, appStateDefinitionSchema } from "./state";
 
 const schema = {
   $defs: {
@@ -24,7 +24,7 @@ const schema = {
 
 describe("app state schema", () => {
   test("validates one definition contract and its values", () => {
-    const state = parseAppStateDefinition({
+    const state = appStateDefinitionSchema.parse({
       schema,
       default: { title: "Today", items: [] },
     });
@@ -37,24 +37,24 @@ describe("app state schema", () => {
 
   test("rejects a default that does not satisfy its schema", () => {
     expect(() =>
-      parseAppStateDefinition({ schema, default: { title: "Missing items" } }),
+      appStateDefinitionSchema.parse({ schema, default: { title: "Missing items" } }),
     ).toThrow();
   });
 
   test("rejects schemas that Zod cannot compile", () => {
-    expect(() => parseAppStateDefinition({ schema: { type: "wat" }, default: null })).toThrow(
-      "Unsupported type",
-    );
     expect(() =>
-      parseAppStateDefinition({ schema: { $ref: "#/$defs/missing" }, default: null }),
+      appStateDefinitionSchema.parse({ schema: { type: "wat" }, default: null }),
+    ).toThrow("Unsupported type");
+    expect(() =>
+      appStateDefinitionSchema.parse({ schema: { $ref: "#/$defs/missing" }, default: null }),
     ).toThrow();
   });
 
   test("accepts the boolean schemas supported by Zod", () => {
-    expect(parseAppStateDefinition({ schema: true, default: { ready: true } })).toEqual({
+    expect(appStateDefinitionSchema.parse({ schema: true, default: { ready: true } })).toEqual({
       schema: true,
       default: { ready: true },
     });
-    expect(() => parseAppStateDefinition({ schema: false, default: null })).toThrow();
+    expect(() => appStateDefinitionSchema.parse({ schema: false, default: null })).toThrow();
   });
 });

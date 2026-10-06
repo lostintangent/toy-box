@@ -1,8 +1,7 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
-import type { AppDefinition, AppInstance, AppShare } from "@apps/model";
-import { workspaceQueries } from "@workspace/queries";
-import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model/state/reducer";
+import type { AppDefinition, AppInstance, AppList, AppShare } from "@apps/model";
+import { appQueries } from "./queries";
 import { appMutations } from "./mutations";
 
 const definition = {
@@ -32,7 +31,7 @@ const createdApp = {
 } satisfies AppInstance;
 
 describe("app mutation options", () => {
-  test("projects successful app lifecycles into the workspace cache", async () => {
+  test("projects successful app lifecycles into the Apps cache", async () => {
     const queryClient = createQueryClient();
 
     await new MutationObserver(queryClient, {
@@ -40,15 +39,15 @@ describe("app mutation options", () => {
       mutationFn: async () => ({ definition, app: installedApp }),
     }).mutate("https://gist.github.com/example/kanban");
 
-    expect(readWorkspace(queryClient).appDefinitions).toEqual([definition]);
-    expect(readWorkspace(queryClient).apps).toEqual([installedApp]);
+    expect(readApps(queryClient).definitions).toEqual([definition]);
+    expect(readApps(queryClient).apps).toEqual([installedApp]);
 
     await new MutationObserver(queryClient, {
       ...appMutations.create(definition.id),
       mutationFn: async () => createdApp,
     }).mutate(createdApp.title);
 
-    expect(readWorkspace(queryClient).apps).toEqual([createdApp, installedApp]);
+    expect(readApps(queryClient).apps).toEqual([createdApp, installedApp]);
 
     const updatedApp = {
       ...createdApp,
@@ -61,7 +60,7 @@ describe("app mutation options", () => {
       mutationFn: async () => ({ status: "updated" as const, app: updatedApp }),
     }).mutate({ title: updatedApp.title });
 
-    expect(readWorkspace(queryClient).apps).toEqual([installedApp, updatedApp]);
+    expect(readApps(queryClient).apps).toEqual([installedApp, updatedApp]);
 
     const share = {
       id: "share-a",
@@ -80,7 +79,7 @@ describe("app mutation options", () => {
       mutationFn: async () => share,
     }).mutate(updatedApp.id);
 
-    expect(readWorkspace(queryClient).appShares).toEqual([share]);
+    expect(readApps(queryClient).shares).toEqual([share]);
 
     for (const appId of [installedApp.id, updatedApp.id]) {
       await new MutationObserver(queryClient, {
@@ -93,7 +92,7 @@ describe("app mutation options", () => {
       mutationFn: async () => undefined,
     }).mutate();
 
-    expect(readWorkspace(queryClient)).toEqual(createEmptyWorkspaceState());
+    expect(readApps(queryClient)).toEqual({ apps: [], definitions: [], shares: [] });
   });
 
   test("treats update conflicts as authoritative results", async () => {
@@ -109,23 +108,20 @@ describe("app mutation options", () => {
       mutationFn: async () => ({ status: "conflict" as const, app: latestApp }),
     });
 
-    await expect(updateMutation.mutate({ title: "My rename" })).resolves.toEqual({
-      status: "conflict",
-      app: latestApp,
-    });
-    expect(readWorkspace(queryClient).apps).toEqual([latestApp]);
+    await updateMutation.mutate({ title: "My rename" });
+    expect(readApps(queryClient).apps).toEqual([latestApp]);
   });
 });
 
 function createQueryClient(): QueryClient {
   const queryClient = new QueryClient();
-  queryClient.setQueryData(workspaceQueries.stateKey(), createEmptyWorkspaceState());
+  queryClient.setQueryData(appQueries.listKey(), { apps: [], definitions: [], shares: [] });
   onTestFinished(() => queryClient.clear());
   return queryClient;
 }
 
-function readWorkspace(queryClient: QueryClient): WorkspaceState {
-  const workspace = queryClient.getQueryData<WorkspaceState>(workspaceQueries.stateKey());
-  if (!workspace) throw new Error("Workspace state was not cached");
-  return workspace;
+function readApps(queryClient: QueryClient): AppList {
+  const apps = queryClient.getQueryData<AppList>(appQueries.listKey());
+  if (!apps) throw new Error("Apps were not cached");
+  return apps;
 }

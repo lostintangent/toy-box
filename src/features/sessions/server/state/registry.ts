@@ -16,11 +16,7 @@ import {
   resumeSession as resumeProviderSession,
 } from "../providers";
 import { getSessionConfiguration } from "@/server/sessionConfiguration";
-import {
-  emitSessionDelete,
-  emitSessionNameUpdate,
-  emitSessionUpsert,
-} from "@workspace/server/events";
+import { broadcast } from "@workspace/server/events";
 import { deleteSessionWorkspaceState, unpinSession } from "@workspace/server/state";
 import { createSessionWorktree, deleteSessionWorktree } from "./worktrees";
 import { deleteSessionRecord, readSession, insertSession } from "./sessions";
@@ -88,12 +84,15 @@ export async function createSessionRecord(
     throw error;
   }
   if (options.hyper) addHyperSession(sessionId);
-  emitSessionUpsert({
-    ...record,
-    createdAt: createdAt.toISOString(),
-    updatedAt: createdAt.toISOString(),
-    title: options.title,
-    sessionType,
+  broadcast({
+    type: "session.upserted",
+    session: {
+      ...record,
+      createdAt: createdAt.toISOString(),
+      updatedAt: createdAt.toISOString(),
+      title: options.title,
+      sessionType,
+    },
   });
 }
 
@@ -140,21 +139,24 @@ export async function createSession(
   cachedSessions.set(sessionId, { session, configurationKey, executionLease: true });
 
   // Publish the execution directory immediately so clients can resolve its location.
-  emitSessionUpsert({
-    id: sessionId,
-    provider: {
-      id: session.provider.id,
-      ...(session.provider.sessionId && session.provider.sessionId !== sessionId
-        ? { sessionId: session.provider.sessionId }
-        : {}),
+  broadcast({
+    type: "session.upserted",
+    session: {
+      id: sessionId,
+      provider: {
+        id: session.provider.id,
+        ...(session.provider.sessionId && session.provider.sessionId !== sessionId
+          ? { sessionId: session.provider.sessionId }
+          : {}),
+      },
+      createdAt: record?.createdAt.toISOString() ?? now,
+      updatedAt: now,
+      title: name ?? "",
+      context: { directory: executionDirectory },
+      worktree,
+      parentSessionId: requested.parentSessionId,
+      sessionType,
     },
-    createdAt: record?.createdAt.toISOString() ?? now,
-    updatedAt: now,
-    title: name ?? "",
-    context: { directory: executionDirectory },
-    worktree,
-    parentSessionId: requested.parentSessionId,
-    sessionType,
   });
 
   return {
@@ -301,13 +303,13 @@ export function evictCachedSessionIfStale(sessionId: string, error: unknown): bo
 /** Rename a session through its provider and broadcast the updated display name. */
 export async function renameSession(sessionId: string, name: string): Promise<void> {
   await withSession(sessionId, (session) => session.rename(name));
-  emitSessionNameUpdate(sessionId, name);
+  broadcast({ type: "session.upserted", session: { id: sessionId, title: name } });
 }
 
 /** Update an inferred title without replacing a name explicitly assigned by its creator or user. */
 export async function updateSessionTitle(sessionId: string, title: string): Promise<boolean> {
   const applied = await withSession(sessionId, (session) => session.rename(title, true));
-  if (applied) emitSessionNameUpdate(sessionId, title);
+  if (applied) broadcast({ type: "session.upserted", session: { id: sessionId, title } });
   return applied;
 }
 
@@ -354,7 +356,7 @@ async function removeDeletedSessionState(
   await unpinSession(sessionId);
   deleteSessionWorkspaceState(sessionId);
   await evictDeletedSessionSnapshot(sessionId);
-  if (publish) emitSessionDelete(sessionId);
+  if (publish) broadcast({ type: "session.deleted", sessionId });
 }
 
 async function removeSessionRuntime(sessionId: string): Promise<void> {

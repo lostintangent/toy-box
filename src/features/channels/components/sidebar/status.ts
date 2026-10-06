@@ -1,21 +1,25 @@
-import { channelHasUnread, type Channel } from "@channels/model";
+import type { Channel, channelStatus } from "@channels/model";
 
 /** Requests remain visible while a Channel is open; other attention is acknowledged by viewing it. */
-export function channelAttention(channel: Channel, isOpen: boolean) {
-  if (channel.hasPendingRequest)
+export function channelSidebarStatus(
+  channel: Channel,
+  status: ReturnType<typeof channelStatus>,
+  isOpen: boolean,
+) {
+  if (status === "waiting")
     return {
       kind: "waiting" as const,
       ariaLabel: `${channel.name} needs your attention`,
       tooltip: "Waiting for your response",
     };
   if (isOpen) return;
-  if (channel.hasUnreadCompletion)
+  if (status === "finished")
     return {
       kind: "finished" as const,
-      ariaLabel: `${channel.name} is done`,
-      tooltip: "Channel marked as done",
+      ariaLabel: `${channel.name} completed its tasks`,
+      tooltip: "All tasks completed",
     };
-  if (channelHasUnread(channel))
+  if (status === "unread")
     return {
       kind: "unread" as const,
       ariaLabel: `${channel.name} has unread messages`,

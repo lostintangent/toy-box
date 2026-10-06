@@ -1,13 +1,13 @@
 import { mutationOptions } from "@tanstack/react-query";
 import type {
-  ChannelState,
   CreateChannelMemberInput,
   CreateChannelInput,
   EditChannelInput,
   PostChannelMessageInput,
   UpdateChannelMemberInput,
 } from "@channels/model";
-import { channelQueries } from "@channels/queries";
+import { channelQueries, type ChannelQueryData } from "@channels/queries";
+import { reduceChannelState } from "@channels/model/reducer";
 import { applyChannelListEvent, invalidateChannelListQuery } from "@channels/queryCache";
 import {
   createChannel,
@@ -69,25 +69,22 @@ export const channelMutations = {
     mutationOptions({
       mutationFn: (input: PostChannelMessageInput) => postChannelMessage({ data: input }),
       onMutate: (input, { client }) => {
-        client.setQueryData<ChannelState>(
+        client.setQueryData<ChannelQueryData | null>(
           channelQueries.detail(input.channelId).queryKey,
-          (state) => {
-            if (!state || state.messages.some(({ id }) => id === input.id)) return state;
-            return {
+          (state) =>
+            state && {
               ...state,
-              messages: [
-                ...state.messages,
-                {
+              ...reduceChannelState(state, {
+                type: "message",
+                message: {
                   id: input.id,
-                  sequence: (state.messages.at(-1)?.sequence ?? 0) + 1,
                   sender: { type: "user" },
                   content: input.content,
                   ...(input.attachments ? { attachments: input.attachments } : {}),
                   timestamp: new Date().toISOString(),
                 },
-              ],
-            };
-          },
+              }),
+            },
         );
       },
     }),

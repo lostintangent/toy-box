@@ -4,7 +4,6 @@ import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
-import { WaitingIndicator } from "@/shared/ui/waiting-indicator";
 import { cn } from "@/shared/utils";
 import {
   CONTAINER_OVERLAY_BOUNDS,
@@ -36,10 +35,8 @@ export function SessionOverlay({
       aria-hidden={isOpen || undefined}
       tabIndex={isOpen ? -1 : undefined}
     >
-      {waiting ? (
-        <WaitingIndicator className="size-4" />
-      ) : running ? (
-        <RunningIndicator className={PANE_OVERLAY_ICON_CLASS} />
+      {running || waiting ? (
+        <RunningIndicator waiting={waiting} className={PANE_OVERLAY_ICON_CLASS} />
       ) : (
         <MessageCircle className={PANE_OVERLAY_ICON_CLASS} />
       )}

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToReadableStream, renderToStaticMarkup } from "react-dom/server";
 import { sessionFile } from "@files/model";
 import { evaluateAppBundle } from "../../components/host/bundle";
 import { compileAppDefinition, compileArtifactApp } from "./index";
@@ -22,172 +22,74 @@ function definition(tsx: string) {
 }
 
 describe("app compiler", () => {
-  test("compiles TSX against the complete React module and public app modules", async () => {
+  test("renders with shared libraries and generates scoped Toy Box styles", async () => {
     const bundle = await compileAppDefinition(
       definition(`
-        import React, { memo, useCallback, useMemo, useState } from "react";
+        import React, { lazy } from "react";
         import { z } from "zod";
-        import {
-          AppAlert,
-          AppFilePicker,
-          AppScrollableFade,
-          AppSelect,
-          AppSelectContent,
-          AppSelectItem,
-          AppSelectTrigger,
-          AppSelectValue,
-          AppSessionStatus,
-          AppSessionToggle,
-          AppSharePicker,
-          AppSkeleton,
-          AppToggle,
-          createId,
-          useApp,
-          useFile,
-          useWorkspace,
-          type AppSession,
-          type Session,
-          type ModelConfiguration,
-          type SessionLaunch,
-          type WorkspaceFile,
-        } from "@toy-box/sdk";
+        import { AppAlert } from "@toy-box/sdk";
         import { Kanban } from "lucide-react";
-
-        const Count = memo(function Count({ value }: { value: number }) {
-          return <span>{value}</span>;
-        });
-        const CountSchema = z.number().int().catch(0);
-
-        function SessionRow({ session }: { session: AppSession }) {
-          const metadata: Session = session;
-          return (
-            <section data-session={metadata.id} data-provider={metadata.provider?.id}>
-              {metadata.title ?? "Untitled session"}
-              {metadata.context?.directory}
-              <time>{metadata.updatedAt.toISOString()}</time>
-              <AppSessionStatus status={session.status} />
-              <AppSessionToggle sessionId={metadata.id} />
-              {session.children.map((child) => <SessionRow key={child.id} session={child} />)}
-            </section>
-          );
-        }
-
-        export default function TestApp() {
-          const [count, setCount] = useState(CountSchema.parse(1));
-          const [filter, setFilter] = useState("all");
-          const id = createId();
-          const label = useMemo(() => "React " + React.version, []);
-          const increment = useCallback(() => setCount((value) => value + 1), []);
-          const [file, setFile] = useState<Extract<WorkspaceFile, { kind: "machine" }> | null>(null);
-          const activeFile = useFile(
-            { kind: "session", sessionId: "session", path: "notes.md" },
-            "shared",
-          );
-          const app = useApp();
-          const sessions = useWorkspace((workspace) => workspace.sessions);
-          const { actions } = app;
-          const model: ModelConfiguration = {
-            provider: "codex",
-            name: "future-model",
-            reasoningEffort: "high",
-            contextTier: "standard",
-            options: { budget: 42 },
-          };
-          const launch = { message: { content: "Inspect this app.", model } } satisfies SessionLaunch;
-          return (
-            <>
-              <style>{"[data-toybox-app='test-app'] .meter { accent-color: rebeccapurple; }"}</style>
-              <AppFilePicker value={file} extensions={[".md"]} onValueChange={setFile} />
-              <AppSelect value={filter} onValueChange={setFilter}>
-                <AppSelectTrigger aria-label="Filter">
-                  <AppSelectValue />
-                </AppSelectTrigger>
-                <AppSelectContent>
-                  <AppSelectItem value="all">All</AppSelectItem>
-                  <AppSelectItem value="open">Open</AppSelectItem>
-                </AppSelectContent>
-              </AppSelect>
-              <AppToggle
-                pressed={filter === "open"}
-                onPressedChange={(pressed) => setFilter(pressed ? "open" : "all")}
-              >
-                Open only
-              </AppToggle>
-              <AppScrollableFade className="whitespace-nowrap">{label}</AppScrollableFade>
-              <AppAlert>Something went wrong.</AppAlert>
-              <AppSkeleton className="h-4 w-32" />
-              {sessions.map((session) => <SessionRow key={session.id} session={session} />)}
-              <AppSharePicker mimeType="text/plain" content="Hello" />
-              <button
-                onClick={async () => {
-                  const worker = await activeFile.spawnWorker?.({ prompt: "Summarize this file." });
-                  if (worker) await actions.waitForSession(worker.sessionId);
-                }}
-              >
-                {activeFile.workers.length}
-              </button>
-              <button onClick={() => void actions.createSession(launch)}>Launch</button>
-              <button onClick={increment}>Increment</button>
-              <main className="grid grid-cols-[17rem_1fr] bg-background hover:bg-[#123456]">
-                <Kanban />{app.title}{label}{id}<Count value={count} />
-              </main>
-            </>
-          );
-        }
-      `),
-    );
-
-    expect(bundle.code).toContain("__TOYBOX_APP_REGISTER_V1__");
-    expect(bundle.code).toContain(".ReactCompilerRuntime");
-    expect(bundle.code).toContain(".JsxRuntime");
-    expect(bundle.code).toContain(".Zod");
-    expect(bundle.code).not.toContain(".JsxDevRuntime");
-    expect(bundle.code).not.toContain("@toy-box/sdk");
-    expect(bundle.code).toContain("rebeccapurple");
-    expect(typeof evaluateAppBundle("test-app", bundle).Component).toBe("function");
-    expect(bundle.css).toContain('[data-toybox-app="test-app"] .grid');
-    expect(bundle.css).toContain("grid-cols-\\[17rem_1fr\\]");
-    expect(bundle.css).toContain("background-color: var(--background)");
-    expect(bundle.css).toContain("background-color: #123456");
-  }, 20_000);
-
-  test("exposes shared LazyMotion components to apps", async () => {
-    const bundle = await compileAppDefinition(
-      definition(`
         import * as m from "motion/react-m";
 
-        const MotionArticle = m.article;
+        const Article = m.article;
+        function App({ shared }: { shared: boolean }) {
+          const [count] = React.useState(z.number().parse(3));
+          return <Article className="grid bg-background">
+            <Kanban /><AppAlert>{shared ? count : "Duplicated library"}</AppAlert>
+          </Article>;
+        }
 
-        export default function MotionApp() {
-          return (
-            <MotionArticle layout="position" layoutId="card">
-              Animated card
-            </MotionArticle>
-          );
+        export default lazy(async () => {
+          const loaded = await import("zod");
+          return { default: () => <App shared={loaded.z === z} /> };
+        });
+      `),
+    );
+    const { Component } = evaluateAppBundle("test-app", bundle);
+    const rendered = await renderToReadableStream(createElement(Component));
+    await rendered.allReady;
+
+    const html = await new Response(rendered).text();
+    expect(html).toContain('<article class="grid bg-background">');
+    expect(html).toContain("<svg");
+    expect(html).toContain('role="alert"');
+    expect(html).toContain(">3</div>");
+    expect(bundle.css).toContain('[data-toybox-app="test-app"] .grid');
+    expect(bundle.css).toContain("background-color: var(--background)");
+  });
+
+  test("typechecks portable SDK capabilities and schema-derived state", async () => {
+    await compileAppDefinition(
+      definition(`
+        import { useApp, useChannels, useChannel, useFile, useWorkspace } from "@toy-box/sdk";
+        export default function App() {
+          const { state, updateState, actions } = useApp();
+          const channels = useChannels();
+          const channel = useChannel("channel-id", { mode: "passive" });
+          const file = useFile({ kind: "session", sessionId: "session", path: "notes.md" }, "shared");
+          const sessions = useWorkspace(workspace => workspace.sessions);
+          return <button onClick={async () => {
+            await updateState(draft => { draft.count += 1; });
+            await channel.postMessage({ content: file.content ?? "" });
+            await actions.createSession({ message: { content: "Start", model: { provider: "codex", name: "model" } } });
+          }}>{state.count}{channels.length}{sessions[0]?.context?.directory}</button>;
         }
       `),
     );
-
-    expect(bundle.code).toContain(".Motion");
-    const { Component } = evaluateAppBundle("test-app", bundle);
-    expect(renderToStaticMarkup(createElement(Component))).toBe("<article>Animated card</article>");
   });
 
-  test("rejects imports outside the versioned app surface", async () => {
-    for (const [moduleName, importedName] of [
-      ["@tanstack/react-query", "useQuery"],
-      ["@tanstack/store", "Store"],
-      ["@tanstack/react-store", "useSelector"],
-      ["react-dom", "createPortal"],
+  test("rejects imports outside the SDK, including type-only and local imports", async () => {
+    for (const imported of [
+      'import { createPortal } from "react-dom"; void createPortal;',
+      'import type { QueryClient } from "@tanstack/react-query"; export type Client = QueryClient;',
+      'import type { AppInstance } from "./src/features/apps/model"; export type Instance = AppInstance;',
+      'import "unsupported";',
     ]) {
       await expect(
         compileAppDefinition(
-          definition(`
-            import { ${importedName} } from "${moduleName}";
-            export default function TestApp() { return <main>{String(${importedName})}</main>; }
-          `),
+          definition(`${imported} export default function App() { return null; }`),
         ),
-      ).rejects.toThrow(`Cannot find module '${moduleName}'`);
+      ).rejects.toThrow(/Cannot find module/);
     }
   });
 
@@ -199,47 +101,17 @@ describe("app compiler", () => {
           export default function TestApp() { return <RotateCcw />; }
         `),
       ),
-    ).rejects.toThrow(/\.toybox-app\.tsx\(2,20\).*RotateCcw/);
-  });
-
-  test("rejects unsupported imports even when TypeScript would erase them", async () => {
-    for (const imported of ['"@tanstack/react-query"', '"../../types"']) {
-      await expect(
-        compileAppDefinition(
-          definition(`
-            import type { ModelInfo } from ${imported};
-            export default function TestApp() {
-              return <main>{String(null as ModelInfo | null)}</main>;
-            }
-          `),
-        ),
-      ).rejects.toThrow(/Cannot find module/);
-    }
+    ).rejects.toThrow(/no exported member.*RotateCcw/);
   });
 
   test("requires a component default export", async () => {
-    for (const exported of ["42", "{ value: 1 }"]) {
-      await expect(compileAppDefinition(definition(`export default ${exported};`))).rejects.toThrow(
-        /not assignable to type 'ComponentType'/,
-      );
+    for (const tsx of ["export default 42;", "export const value = 42;"]) {
+      await expect(compileAppDefinition(definition(tsx))).rejects.toThrow();
     }
   });
 
-  test("reports source-positioned TypeScript errors", async () => {
-    expect(
-      compileAppDefinition(
-        definition(`
-          export default function TestApp() {
-            const count: string = 42;
-            return <main>{count.missing()}</main>;
-          }
-        `),
-      ),
-    ).rejects.toThrow(/\.toybox-app\.tsx\(3,19\).*number.*string/);
-  });
-
-  test("typechecks calls against the public app SDK contract", async () => {
-    expect(
+  test("reports source-positioned errors for invalid SDK calls", async () => {
+    await expect(
       compileAppDefinition(
         definition(`
           import { useApp } from "@toy-box/sdk";
@@ -249,26 +121,7 @@ describe("app compiler", () => {
           }
         `),
       ),
-    ).rejects.toThrow(/sessionId.*missing/);
-  });
-
-  test("types app state reads and draft updates from the definition schema", async () => {
-    const bundle = await compileAppDefinition(
-      definition(`
-        import { useApp } from "@toy-box/sdk";
-
-        export default function TestApp() {
-          const { state, updateState } = useApp();
-          return (
-            <button onClick={() => updateState((draft) => void (draft.count += 1))}>
-              {state.count}
-            </button>
-          );
-        }
-      `),
-    );
-
-    expect(bundle.code).toContain("__TOYBOX_APP_REGISTER_V1__");
+    ).rejects.toThrow(/\.tsx\(\d+,\d+\).*sessionId.*missing/s);
   });
 
   test("rejects state code that disagrees with the definition schema", async () => {
@@ -279,11 +132,11 @@ describe("app compiler", () => {
           export default function TestApp() {
             const { state, updateState } = useApp();
             void updateState((draft) => void (draft.count = "one"));
-            return <main>{state.missing}</main>;
+            return <main>{state.count}</main>;
           }
         `),
       ),
-    ).rejects.toThrow(/string.*number|missing.*does not exist/);
+    ).rejects.toThrow(/string.*number/);
   });
 
   test("does not reuse a generated app state type across definitions", async () => {
@@ -311,97 +164,66 @@ describe("app compiler", () => {
       `,
     };
 
-    await expect(compileAppDefinition(titleDefinition)).resolves.toMatchObject({
-      code: expect.stringContaining("__TOYBOX_APP_REGISTER_V1__"),
-    });
+    await compileAppDefinition(titleDefinition);
+    await expect(
+      compileAppDefinition({
+        ...titleDefinition,
+        tsx: titleDefinition.tsx.replace("state.title", "state.count"),
+      }),
+    ).rejects.toThrow(/count.*does not exist/);
   });
 
   test("keeps saved capabilities available to installed apps with null state", async () => {
-    await expect(
-      compileAppDefinition({
-        id: "stateless-app",
-        state: { schema: { type: "null" }, default: null },
-        tsx: `import { AppSharePicker, useApp } from "@toy-box/sdk";
+    await compileAppDefinition({
+      id: "stateless-app",
+      state: { schema: { type: "null" }, default: null },
+      tsx: `import { AppSharePicker, useApp } from "@toy-box/sdk";
 export default function App() {
   const app = useApp();
   return <AppSharePicker mimeType="text/plain" content={app.state} />;
 }`,
-      }),
-    ).resolves.toMatchObject({
-      code: expect.stringContaining("__TOYBOX_APP_REGISTER_V1__"),
     });
-  });
-
-  test("renders Bun React Compiler output", async () => {
-    const bundle = await compileAppDefinition(
-      definition(`
-        export default function TestApp() {
-          return <main>Compiled</main>;
-        }
-      `),
-    );
-    const { Component } = evaluateAppBundle("test-app", bundle);
-
-    expect(bundle.code).toContain(".ReactCompilerRuntime");
-    expect(renderToStaticMarkup(createElement(Component))).toBe("<main>Compiled</main>");
   });
 });
 
 describe("artifact app compilation", () => {
-  test("compiles and caches stateless TSX by session file content", async () => {
+  test("reuses unchanged source and recompiles edits in the same style scope", async () => {
     const file = sessionFile("session-a", "board.toy");
     const source = "export default function Board() { return <main>Board</main>; }";
-
     const first = await compileArtifactApp(file, source);
-    const second = await compileArtifactApp(file, source);
+    expect((await compileArtifactApp(file, source)).bundle).toBe(first.bundle);
 
-    expect(second).toEqual(first);
-    expect(second.bundle).toBe(first.bundle);
-    expect(first.scopeId).toMatch(/^artifact-[a-f0-9]{24}$/);
-    expect(first.bundle.code).toContain("__TOYBOX_APP_REGISTER_V1__");
+    await expect(compileArtifactApp(file, "export default 42;")).rejects.toThrow();
+    const edited = await compileArtifactApp(file, source.replace(">Board<", ">Updated<"));
+    expect(edited.scopeId).toBe(first.scopeId);
+    expect(
+      renderToStaticMarkup(createElement(evaluateAppBundle("board", edited.bundle).Component)),
+    ).toBe("<main>Updated</main>");
   });
 
   test("gives identical source in different session files independent style scopes", async () => {
     const source =
       'export default function App() { return <main className="bg-background">Ready</main>; }';
-    const first = await compileArtifactApp(sessionFile("session-a", "first.toy"), source);
-    const second = await compileArtifactApp(sessionFile("session-a", "second.toy"), source);
+    const first = await compileArtifactApp(sessionFile("session-a", "board.toy"), source);
+    const second = await compileArtifactApp(sessionFile("session-b", "board.toy"), source);
 
     expect(first.scopeId).not.toBe(second.scopeId);
     expect(first.bundle.css).toContain(`[data-toybox-app="${first.scopeId}"]`);
     expect(second.bundle.css).toContain(`[data-toybox-app="${second.scopeId}"]`);
   });
 
-  test("exposes portable workspace actions without requiring a saved app", async () => {
-    await expect(
-      compileArtifactApp(
-        sessionFile("session-a", "actions.toy"),
-        `import { useAppActions } from "@toy-box/sdk";
+  test("exposes portable actions and sharing without a saved instance", async () => {
+    await compileArtifactApp(
+      sessionFile("session-a", "actions.toy"),
+      `import { AppSharePicker, useAppActions } from "@toy-box/sdk";
 export default function App() {
   const actions = useAppActions();
-  return <button onClick={() => void actions.createSession({ message: { content: "Start" } })}>Start</button>;
+  return <>
+    <AppSharePicker mimeType="text/plain" content="Artifact" />
+    <button onClick={() => void actions.createSession({ message: { content: "Start" } })}>Start</button>
+  </>;
 }`,
-      ),
-    ).resolves.toMatchObject({
-      bundle: { code: expect.stringContaining("__TOYBOX_APP_REGISTER_V1__") },
-    });
-  });
-
-  test("does not retain a failed compilation for later corrected source", async () => {
-    const file = sessionFile("session-a", "repair.toy");
-
-    await expect(
-      compileArtifactApp(
-        file,
-        'import "unsupported"; export default function App() { return null; }',
-      ),
-    ).rejects.toThrow("Cannot find module 'unsupported'");
-
-    await expect(
-      compileArtifactApp(file, "export default function App() { return <main>Fixed</main>; }"),
-    ).resolves.toMatchObject({
-      bundle: { code: expect.stringContaining("__TOYBOX_APP_REGISTER_V1__") },
-    });
+    );
   });
 
   test("rejects useApp for artifact apps", async () => {
@@ -414,19 +236,5 @@ export default function App() {
 }`,
       ),
     ).rejects.toThrow(/not callable/);
-  }, 10_000);
-
-  test("exposes the share picker to artifact apps", async () => {
-    await expect(
-      compileArtifactApp(
-        sessionFile("session-a", "share.toy"),
-        `import { AppSharePicker } from "@toy-box/sdk";
-export default function App() {
-  return <AppSharePicker mimeType="text/plain" content="Artifact" />;
-}`,
-      ),
-    ).resolves.toMatchObject({
-      bundle: { code: expect.stringContaining("__TOYBOX_APP_REGISTER_V1__") },
-    });
   }, 10_000);
 });

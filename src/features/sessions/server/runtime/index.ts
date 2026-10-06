@@ -13,7 +13,7 @@ import type {
 } from "@sessions/model";
 import * as sessionRegistry from "@sessions/server/state/registry";
 import { loadSessionSnapshot, refreshSessionSnapshot } from "@sessions/server/state/snapshots";
-import { emitSessionTouched } from "@workspace/server/events";
+import { broadcast } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
 import { SessionStream, SessionStreamFinishedError } from "./sessionStream";
 import type { SessionStreamSubscription } from "./eventBus";
@@ -147,7 +147,7 @@ export async function rewindSession(sessionId: string, timestamp: string): Promi
   const snapshot = await refreshSessionSnapshot(sessionId);
   // The SDK's snapshot_rewind event is ephemeral and idle sessions have no
   // SessionStream, so notify other browser clients through the shared plane.
-  emitSessionTouched(sessionId);
+  broadcast({ type: "session.touched", sessionId });
   return snapshot;
 }
 

@@ -56,6 +56,7 @@ import { useHasModels } from "@providers/useModels";
 import { channelQueries } from "@channels/queries";
 import { automationQueries } from "@automations/queries";
 import { inboxQueries } from "@inbox/queries";
+import { appQueries } from "@apps/queries";
 const Terminal = lazy(() =>
   import("@terminal/components/Terminal").then((m) => ({
     default: m.Terminal,
@@ -97,6 +98,7 @@ export const Route = createFileRoute("/")({
       context.queryClient.ensureQueryData(channelQueries.list()),
       context.queryClient.ensureQueryData(automationQueries.list()),
       context.queryClient.ensureQueryData(inboxQueries.list()),
+      context.queryClient.ensureQueryData(appQueries.list()),
       context.queryClient.ensureQueryData(providerQueries.catalog()),
     ]);
     return loadWorkspaceLayout();
@@ -294,8 +296,11 @@ function WorkspacePage() {
   const { data: channelList } = useQuery(channelQueries.list());
   const channels = channelList?.channels;
   const { data: automations } = useSuspenseQuery(automationQueries.list());
-  const { apps, hyperSessionIds, pinnedSessionIds } = useWorkspaceSelector((workspace) => ({
-    apps: workspace.apps,
+  const { data: appIds } = useSuspenseQuery({
+    ...appQueries.list(),
+    select: (list) => list.apps.map((app) => app.id),
+  });
+  const { hyperSessionIds, pinnedSessionIds } = useWorkspaceSelector((workspace) => ({
     hyperSessionIds: workspace.hyperSessionIds,
     pinnedSessionIds: workspace.settings.pinnedSessionIds,
   }));
@@ -401,7 +406,7 @@ function WorkspacePage() {
   // remove only the stale app root without disturbing adjacent panes.
   useEffect(() => {
     if (selectedAppIds.length === 0) return;
-    const availableAppIds = new Set(apps.map((app) => app.id));
+    const availableAppIds = new Set(appIds);
     const validAppIds = selectedAppIds.filter((appId) => availableAppIds.has(appId));
     if (validAppIds.length === selectedAppIds.length) return;
 
@@ -413,7 +418,7 @@ function WorkspacePage() {
       }),
       replace: true,
     });
-  }, [apps, navigate, selectedAppIds]);
+  }, [appIds, navigate, selectedAppIds]);
 
   // Channels are durable URL roots, parallel to sessions and apps.
   useEffect(() => {

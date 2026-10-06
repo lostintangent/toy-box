@@ -197,6 +197,26 @@ describe("app state store", () => {
     expect(commits).toEqual([]);
   });
 
+  test("resolves queued edits that cancel each other without saving", async () => {
+    const commits: AppUpdate[] = [];
+    const state = new AppStateStore(app, stateSchema, async (input) => {
+      commits.push(input);
+      return { status: "updated", app };
+    });
+
+    const add = state.updateState<{ cards: string[] }>((draft) => {
+      draft.cards.push("local");
+    });
+    const remove = state.updateState<{ cards: string[] }>((draft) => {
+      draft.cards.pop();
+    });
+    await state.flush();
+    await Promise.all([add, remove]);
+
+    expect(commits).toEqual([]);
+    expect(state.store.state).toEqual(app);
+  });
+
   test("isolates completed state from both the confirmed snapshot and an escaped draft", async () => {
     let draft!: { cards: string[] };
     const state = new AppStateStore(app, stateSchema, async (input) => ({

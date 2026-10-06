@@ -20,24 +20,25 @@ presentation; those reusable capabilities remain independent of their consuming 
 ## Shared projection
 
 `WorkspaceState` is the aggregate read model delivered during SSR and refreshed after reconnects.
-It includes settings, sparse session activity, Hyper membership, environment capabilities, and
-current projections supplied by each feature. Feature databases, registries, files, and session
-history remain authoritative; Workspace only assembles their current values.
-Sessions, Channels, Automations, Inbox, and Providers have independent Query catalogs preloaded by the main
-route. The session catalog supplies durable ownership for generic session classification; feature
-catalogs supply the records needed by their own surfaces.
+It includes settings, sparse session activity, Hyper membership, active workers, custom editors,
+and environment capabilities. Feature databases, registries, files, and session history remain
+authoritative; Workspace only assembles the shared coordination values.
+Sessions, Channels, Automations, Inbox, Apps, and Providers have independent Query catalogs
+preloaded by the main route. The session catalog supplies durable ownership for generic session
+classification; feature catalogs supply the records needed by their own surfaces.
 
 The snapshot path reads those feature-owned facts once; the event path incrementally maintains the
-same flat materialized view. Features publish accepted changes through `server/events.ts`, while
-the central pure reducer owns only composition invariants—for example, removing projected shares
-and workers when an app disappears. It never performs a feature's persistence or lifecycle work.
+owning caches. Features publish accepted changes through `server/events.ts`, while
+the central pure reducer owns only composition invariants—for example, removing projected
+workers when an app disappears. It never performs a feature's persistence or lifecycle work.
 General invalidation hints such as `session.touched` remain reducer no-ops and instead prompt the
 owning feature cache to recover from its authoritative snapshot.
 Inbox owns its list query and handles `inbox.changed` and `inbox.entry.deleted` in its feature cache.
 Its entries are absent from `WorkspaceState`; presentation combines the Inbox list with shared
 Session activity where needed. The shared stream routes its events without another connection.
-Feature-specific Query factories may select from the shared cache, but must not create competing
-copies of the same server state.
+Apps owns its definitions, saved instances, and shares in one catalog query; its cache handles
+app events and share cleanup. Workspace routes those events and refreshes the catalog on reconnect.
+Each server value has one owning cache; cross-feature consumers compose those caches directly.
 
 `disabledProviders` controls model and session discovery, with Claude disabled by default.
 Provider availability and pin changes are published after persistence, then invalidate session
@@ -62,9 +63,9 @@ narrow reactive selectors and the two client command hooks; it does not copy ser
 at-most-once workspace SSE stream. The root route captures the process-scoped broadcast revision
 before its SSR loaders run. The stream's opening message checks that revision without another
 request: an unchanged initial connection reuses the hydrated queries, while a mismatch refreshes
-the aggregate snapshot and Session, Channel, Automation, Inbox, and Provider catalogs in the background. Reconnects
-always refresh, including after page visibility changes, so native history changed outside Toy Box
-is rediscovered. Subsequent events update their owning Query caches. The revision survives HMR,
+the aggregate snapshot and Session, Channel, Automation, Inbox, Apps, and Provider catalogs in the
+background. Reconnects always refresh, including after page visibility changes, so native history
+changed outside Toy Box is rediscovered. Subsequent events update their owning Query caches. The revision survives HMR,
 changes after a server restart, and requires no event buffer. Events announce accepted changes;
 they are synchronization hints, not durable truth or a replay log.
 

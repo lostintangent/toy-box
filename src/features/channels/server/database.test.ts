@@ -1,5 +1,6 @@
 import { channelAgent, createStoredChannel } from "@channels/server/testFixtures";
 import { describe, expect, onTestFinished, setSystemTime, test } from "bun:test";
+import type { ChannelTask } from "@channels/model";
 import { machineFile, sessionFile } from "@files/model";
 import { createTestDatabase } from "@/server/database";
 import { ChannelDatabase } from "./database";
@@ -32,152 +33,128 @@ describe("channel attention", () => {
         sender,
         content,
       });
-    return { channels, channel, post };
+    /** Reopens one task, then completes the list, returning the completion message. */
+    const complete = async (title = "Release") => {
+      await channels.updateChannel(channel.id, { tasks: [{ title, status: "pending" }] });
+      const { events } = await channels.updateChannel(channel.id, {
+        tasks: [{ title, status: "done" }],
+      });
+      return events.find((event) => event.type === "message")!.message;
+    };
+    /** Sends a lead message flagged as a user request, returning the question. */
+    const ask = async (content: string) => {
+      const { events } = await channels.appendMessage({
+        id: crypto.randomUUID(),
+        channelId: channel.id,
+        sender: { type: "agent", agentId: channel.id },
+        content,
+        request: true,
+      });
+      return events[0]!.message;
+    };
+    return { channels, channel, post, complete, ask };
   }
 
-  test("completion rejects blockers without changing state and preserves the lead wait", async () => {
+  test("rewriting a complete list never repeats completion; reopening a task does", async () => {
     const { channels, channel } = await setup();
-    const { member } = await channels.createMember(
-      channelAgent(channel.id, "reviewer", "Reviewer"),
-    );
-    await channels.setAgentStatus(member.id, { state: "waiting", text: "A follow-up" });
-    await channels.updateChannel(channel.id, {
-      checklist: [{ title: "Release", status: "blocked" }],
-    });
-    const before = await channels.getState(channel.id, 100);
-    await expect(channels.markDone(channel.id)).rejects.toThrow("Cannot mark channel done:");
-    expect(await channels.getState(channel.id, 100)).toEqual(before);
-    await channels.updateChannel(channel.id, {
-      checklist: [{ title: "Release", status: "done" }],
-    });
-    await expect(channels.markDone(channel.id)).rejects.toThrow("Reviewer is waiting");
-    await channels.setAgentStatus(member.id, undefined);
-    const lead = await channels.getAgent(channel.id);
-    await channels.setAgentStatus(lead!.id, { state: "waiting", text: "The user's next goal" });
-    expect((await channels.markDone(channel.id)).channel.hasUnreadCompletion).toBe(true);
-    expect((await channels.getAgent(channel.id))?.status?.state).toBe("waiting");
-    await expect(channels.markDone(member.id)).rejects.toThrow("Only the channel lead");
+    const update = async (tasks: ChannelTask[]) =>
+      (await channels.updateChannel(channel.id, { tasks })).events.filter(
+        (event) => event.type === "message",
+      ).length;
+    const release = { title: "Release", status: "done" } as const;
+    expect(await update([release])).toBe(1);
+    expect((await channels.getChannel(channel.id))?.completedSequence).toBe(1);
+    expect(await update([release, { title: "Notes", status: "done" }])).toBe(0);
+    expect(await update([release, { title: "Ship", status: "pending" }])).toBe(0);
+    expect(await update([release, { title: "Ship", status: "done" }])).toBe(1);
+    expect(await update([])).toBe(0);
   });
 
-  test("a reply between posting and registration already acknowledges the request", async () => {
-    const { channels, channel, post } = await setup();
-    await post("Choose a name.");
-    await post("Juniper.", { type: "user" });
-    const notice = await channels.requestUserAttention(channel.id, 1);
-    expect(notice.channel.hasPendingRequest).toBe(false);
-    expect(notice.message).toMatchObject({
-      content: { type: "user_attention_requested", requestSequence: 1 },
-    });
-    const next = await post("Choose a color.");
-    await channels.requestUserAttention(channel.id, next.message.sequence);
-    await channels.requestUserAttention(channel.id, 1);
-    expect((await channels.getChannel(channel.id))?.hasPendingRequest).toBe(true);
+  test("a request persists on the lead message without an extra transcript entry", async () => {
+    const { channels, channel, ask } = await setup();
+    const question = await ask("Choose a name.");
+    expect(question).toMatchObject({ sequence: 1, content: "Choose a name.", request: true });
+    expect(await channels.listMessagesAfter(channel.id)).toEqual([question]);
+    expect((await channels.getChannel(channel.id))?.requestSequence).toBe(1);
   });
 
   test("catalog attention includes messages outside the loaded window", async () => {
-    const { channels, channel, post } = await setup();
-    await channels.markDone(channel.id);
-    const request = await post("What should we do next?");
-    await channels.requestUserAttention(channel.id, request.message.sequence);
+    const { channels, channel, post, complete, ask } = await setup();
+    await complete();
+    await ask("What should we do next?");
     for (let index = 0; index < 105; index++) await post(`Update ${index}`);
-    expect((await channels.getState(channel.id, 100))?.messages).toHaveLength(100);
+    const snapshot = await channels.getSnapshot(channel.id, 100);
+    expect(snapshot?.messages).toHaveLength(100);
+    expect(snapshot?.request).toMatchObject({ content: "What should we do next?" });
     expect((await channels.listChannels()).channels[0]).toMatchObject({
-      hasUnreadCompletion: true,
-      hasPendingRequest: true,
+      completedSequence: 1,
+      requestSequence: 2,
+    });
+    await ask("Which follow-up should we prioritize?");
+    expect((await channels.getSnapshot(channel.id, 1))?.request).toMatchObject({
+      content: "Which follow-up should we prioritize?",
     });
   });
 
-  test("reading acknowledges completion; replying acknowledges a request", async () => {
-    const { channels, channel, post } = await setup();
-    const done = await channels.markDone(channel.id);
-    const request = await post("What should we do next?");
-    const notice = await channels.requestUserAttention(channel.id, request.message.sequence);
-    const through = notice.message.sequence;
+  test("reads and replies persist attention cursors with their receipts", async () => {
+    const { channels, channel, post, complete, ask } = await setup();
+    const done = await complete();
+    const question = await ask("What should we do next?");
+    const through = question.sequence;
     expect(await channels.markUserSeen(channel.id, through)).toMatchObject({
-      hasUnreadCompletion: false,
-      hasPendingRequest: true,
+      channel: { completedSequence: done.sequence, requestSequence: question.sequence },
+      events: [{ type: "read", seenThrough: through }],
     });
-    expect(await post("Build the next batch.", { type: "user" })).toMatchObject({
+    const reply = await post("Build the next batch.", { type: "user" });
+    expect(reply).toMatchObject({
       acknowledgedRequest: true,
-      channel: { hasPendingRequest: false },
+      channel: { requestSequence: null },
     });
-    expect(
-      (await channels.requestUserAttention(channel.id, request.message.sequence)).changed,
-    ).toBe(false);
+    expect(reply.channel).toEqual((await channels.getChannel(channel.id))!);
+    expect((await channels.getSnapshot(channel.id, 1))?.request).toBeNull();
     expect(
       (await channels.listMessagesAfter(channel.id)).filter(
         ({ sender }) => sender.type === "system",
       ),
-    ).toEqual([done.message, notice.message]);
-    await channels.markDone(channel.id);
-    await channels.markUserSeen(channel.id, through);
-    expect((await channels.getChannel(channel.id))?.hasUnreadCompletion).toBe(true);
+    ).toEqual([done]);
   });
 
-  test("metadata edits preserve attention and equivalent checklist values are unchanged", async () => {
-    const { channels, channel, post } = await setup();
-    await channels.markDone(channel.id);
-    const request = await post("What should we do next?");
-    await channels.requestUserAttention(channel.id, request.message.sequence);
-    const changes = [
-      await channels.editChannel({ channelId: channel.id, name: channel.name }),
-      await channels.updateChannel(channel.id, {
-        checklist: [{ title: "First outcome", status: "done" }],
-      }),
-      await channels.updateChannel(channel.id, {
-        checklist: [{ status: "done", title: "First outcome" }],
-      }),
-    ];
-    expect(changes.map(({ changed }) => changed)).toEqual([false, true, false]);
-    for (const change of changes) {
-      expect(change.channel).toMatchObject({
-        hasUnreadCompletion: true,
-        hasPendingRequest: true,
-      });
-    }
-  });
-
-  test("only the lead can flag agent messages in its own channel", async () => {
-    const { channels, channel, post } = await setup();
+  test("only the lead can request input", async () => {
+    const { channels, channel } = await setup();
     const { member } = await channels.createMember(channelAgent(channel.id, "member", "Member"));
-    const memberPost = await post("A member question.", { type: "agent", agentId: member.id });
-    const userPost = await post("A user question.", { type: "user" });
-    for (const sequence of [1, userPost.message.sequence, 999]) {
-      await expect(channels.requestUserAttention(channel.id, sequence)).rejects.toThrow(
-        "Reference an agent message",
-      );
-    }
-    const leadPost = await post("A lead question.");
-    await expect(
-      channels.requestUserAttention(member.id, leadPost.message.sequence),
-    ).rejects.toThrow("Only the channel lead");
     const other = await createStoredChannel(channels, { name: "Other", ...CHANNEL_DEFAULTS });
-    await expect(
-      channels.requestUserAttention(other.id, leadPost.message.sequence),
-    ).rejects.toThrow("Reference an agent message");
-    const attempts = [
-      await channels.requestUserAttention(channel.id, leadPost.message.sequence),
-      await channels.requestUserAttention(channel.id, leadPost.message.sequence),
-    ];
-    expect(attempts.map(({ changed }) => changed)).toEqual([true, false]);
-    expect(attempts[0]!.message).toEqual(attempts[1]!.message);
-    expect(
-      (await channels.requestUserAttention(channel.id, memberPost.message.sequence)).message
-        .content,
-    ).toEqual({ type: "user_attention_requested", requestSequence: memberPost.message.sequence });
+    const senders = [
+      { type: "user" },
+      { type: "agent", agentId: member.id },
+      { type: "agent", agentId: other.id },
+    ] as const;
+    for (const sender of senders) {
+      await expect(
+        channels.appendMessage({
+          id: crypto.randomUUID(),
+          channelId: channel.id,
+          sender,
+          content: "Which color?",
+          request: true,
+        }),
+      ).rejects.toThrow("Only the channel lead can request input.");
+    }
+    expect((await channels.getChannel(channel.id))?.latestSequence).toBe(1);
   });
 
-  test("a rejected append allocates no sequence number", async () => {
-    const { channels, channel, post } = await setup();
-    const request = await post("Please approve.");
+  test("a rejected reply preserves attention and allocates no sequence number", async () => {
+    const { channels, channel, post, ask } = await setup();
+    const request = await ask("Please approve.");
+    const before = await channels.getSnapshot(channel.id, 100);
     await expect(
       channels.appendMessage({
-        id: request.message.id,
+        id: request.id,
         channelId: channel.id,
         sender: { type: "user" },
         content: "Approved.",
       }),
     ).rejects.toThrow();
+    expect(await channels.getSnapshot(channel.id, 100)).toEqual(before);
     expect((await post("Next message")).message.sequence).toBe(2);
   });
 });
@@ -190,13 +167,17 @@ describe("channel database", () => {
       directory: "/workspace/project",
       ...CHANNEL_DEFAULTS,
     });
-    expect((await channels.getState(channel.id, 100))?.lead).toMatchObject({
+    expect((await channels.getSnapshot(channel.id, 100))?.lead).toMatchObject({
       id: channel.id,
       name: "Lead",
     });
     expect(await channels.listMembers(channel.id)).toEqual([]);
     const critic = channelAgent(channel.id, "critic-session", "Critic");
-    const { member, message: joined } = await channels.createMember(critic);
+    const {
+      member,
+      events: [joinedEvent],
+    } = await channels.createMember(critic);
+    const joined = joinedEvent!.message;
     await createStoredChannel(channels, { name: "Another room", ...CHANNEL_DEFAULTS });
 
     const attachments = [
@@ -210,7 +191,7 @@ describe("channel database", () => {
       content: "@critic Please check the invitation flow.",
       attachments,
     });
-    await channels.appendMessage({
+    const second = await channels.appendMessage({
       id: "message-2",
       channelId: channel.id,
       sender: {
@@ -222,6 +203,7 @@ describe("channel database", () => {
 
     expect(first.sequence).toBe(2);
     expect(first.attachments).toEqual(attachments);
+    expect(second.channel).toEqual((await channels.getChannel(channel.id))!);
     expect(await channels.listMembers(channel.id)).toEqual([member]);
     expect((await channels.listChannels()).members).toEqual([member]);
     expect((await channels.getChannel(channel.id))?.latestSequence).toBe(3);
@@ -269,14 +251,16 @@ describe("channel database", () => {
 
     const expectedSequences = Array.from({ length: 12 }, (_, index) => index + 1);
     expect(changes.map(({ message }) => message.sequence)).toEqual(expectedSequences);
-    expect(changes.map(({ revision }) => revision)).toEqual(expectedSequences);
+    expect(changes.flatMap(({ events }) => events.map(({ revision }) => revision))).toEqual(
+      expectedSequences,
+    );
     expect((await channels.getChannel(channel.id))?.latestSequence).toBe(12);
     expect((await channels.listMessagesAfter(channel.id)).map(({ sequence }) => sequence)).toEqual(
       expectedSequences,
     );
   });
 
-  test("sets and clears one current reaction per Agent without advancing transcript state", async () => {
+  test("sets and clears one reaction per Agent without changing Channel metadata", async () => {
     const channels = await openChannels();
     const channel = await createStoredChannel(channels, {
       name: "Reaction room",
@@ -355,10 +339,13 @@ describe("channel database", () => {
     await channels.markAgentSeen(member.id, 2);
     expect((await channels.getMember("planner-session"))?.seenThrough).toBe(2);
     expect((await channels.getChannel(channel.id))?.seenThrough).toBe(0);
-    await channels.markUserSeen(channel.id, 2);
+    expect(await channels.markUserSeen(channel.id, 100)).toMatchObject({
+      events: [{ type: "read", revision: 3, seenThrough: 2 }],
+    });
     expect((await channels.getChannel(channel.id))?.seenThrough).toBe(2);
     await channels.markAgentSeen(member.id, 1);
-    await channels.markUserSeen(channel.id, 1);
+    expect(await channels.markUserSeen(channel.id, 1)).toBeNull();
+    expect((await channels.getRoster(channel.id))?.revision).toBe(3);
     expect((await channels.getMember(member.id))?.seenThrough).toBe(2);
     expect((await channels.getChannel(channel.id))?.seenThrough).toBe(2);
 
@@ -392,7 +379,6 @@ describe("channel database", () => {
     });
 
     expect(change).toMatchObject({
-      changed: true,
       member: {
         name: "Critic Revised",
         role: "Tests product decisions against user needs.",
@@ -406,19 +392,21 @@ describe("channel database", () => {
       seenThrough: 1,
       status,
     });
-    expect((await channels.listChannels()).members).toEqual([change.member]);
+    expect((await channels.listChannels()).members).toEqual([
+      { id: change.member.id, channelId: channel.id, name: "Critic Revised" },
+    ]);
     expect((await channels.listMessagesAfter(channel.id)).map(({ content }) => content)).toEqual([
       { type: "member_joined", member },
     ]);
-    const revision = await channels.getRevision(channel.id);
+    const revision = (await channels.getRoster(channel.id))?.revision;
     expect(
       await channels.updateMember(member.id, {
         name: "Critic Revised",
         role: "Tests product decisions against user needs.",
         model: { reasoningEffort: "high", name: "gpt-6", provider: "copilot" },
       }),
-    ).toEqual({ changed: false, member: change.member });
-    expect(await channels.getRevision(channel.id)).toBe(revision);
+    ).toEqual({ channelId: channel.id, events: [], member: change.member });
+    expect((await channels.getRoster(channel.id))?.revision).toBe(revision);
 
     const inherited = await channels.updateMember(member.id, { model: null });
     expect(inherited.member.model).toBeUndefined();
@@ -431,13 +419,13 @@ describe("channel database", () => {
     const channel = await createStoredChannel(channels, { name: "Review", ...CHANNEL_DEFAULTS });
     await channels.createMember(channelAgent(channel.id, "reviewer", "Reviewer"));
     const { member } = await channels.createMember(channelAgent(channel.id, "builder", "Builder"));
-    const before = await channels.getState(channel.id, 100);
+    const before = await channels.getSnapshot(channel.id, 100);
 
     await expect(
       channels.updateMember(member.id, { name: "Reviewer", role: "New role" }),
     ).rejects.toThrow("already uses the @reviewer mention");
 
-    expect(await channels.getState(channel.id, 100)).toEqual(before);
+    expect(await channels.getSnapshot(channel.id, 100)).toEqual(before);
   });
 
   test("treats equivalent status values as unchanged", async () => {
@@ -464,7 +452,7 @@ describe("channel database", () => {
     ).toBeNull();
   });
 
-  test("records lead name, purpose, and directory changes but keeps checklist and preview quiet", async () => {
+  test("records metadata and preview messages while task revisions remain quiet", async () => {
     const channels = await openChannels();
     const channel = await createStoredChannel(channels, {
       name: "Progress room",
@@ -473,13 +461,13 @@ describe("channel database", () => {
     const { member } = await channels.createMember(
       channelAgent(channel.id, "builder-session", "Builder"),
     );
-    const revision = await channels.getRevision(channel.id);
+    const revision = (await channels.getRoster(channel.id))?.revision;
 
     const update = await channels.updateChannel(channel.id, {
       name: "Delivery room",
       purpose: "Ship and validate the product.",
       directory: "/workspace/delivery",
-      checklist: [
+      tasks: [
         {
           title: "Build the product",
           status: "in_progress",
@@ -490,37 +478,35 @@ describe("channel database", () => {
       previewUrl: "http://127.0.0.1:3000",
     });
 
-    expect(update).toMatchObject({
-      changed: true,
-      channel: {
-        name: "Delivery room",
-        purpose: "Ship and validate the product.",
-        directory: "/workspace/delivery",
-        checklist: [{ ownerId: member.id }],
-        previewUrl: "http://127.0.0.1:3000",
-        latestSequence: 4,
-      },
-    });
     const actor = { type: "agent", agentId: channel.id } as const;
-    expect(update.messages.map(({ message }) => message.content)).toEqual([
+    const messages = update.events.filter((event) => event.type === "message");
+    expect(messages.map(({ message }) => message.content)).toEqual([
       { type: "channel_renamed", actor, name: "Delivery room" },
       { type: "channel_purpose_changed", actor, purpose: "Ship and validate the product." },
       { type: "channel_directory_changed", actor, directory: "/workspace/delivery" },
+      { type: "preview_changed", actor, previewUrl: "http://127.0.0.1:3000" },
     ]);
-    expect(update.messages.map(({ message }) => message.sequence)).toEqual([2, 3, 4]);
-    expect(update.messages.map(({ revision }) => revision)).toEqual([
-      revision! + 1,
-      revision! + 2,
-      revision! + 3,
-    ]);
-    expect(await channels.getRevision(channel.id)).toBe(revision! + 3);
-    const previewOnly = await channels.updateChannel(channel.id, {
-      previewUrl: "http://127.0.0.1:3100",
+    expect(messages.map(({ message }) => message.sequence)).toEqual([2, 3, 4, 5]);
+    expect(update.events[0]).toEqual({
+      type: "tasks",
+      revision: revision! + 1,
+      tasks: update.channel.tasks,
     });
-    expect(previewOnly.messages).toEqual([]);
-    expect(await channels.getRevision(channel.id)).toBe(revision! + 3);
-    expect((await channels.getChannel(channel.id))?.latestSequence).toBe(4);
-    expect(previewOnly.channel.updatedAt).toBe(update.channel.updatedAt);
+    expect(messages.map(({ revision }) => revision)).toEqual(
+      [2, 3, 4, 5].map((offset) => revision! + offset),
+    );
+    expect((await channels.getRoster(channel.id))?.revision).toBe(revision! + 5);
+    expect(await channels.getChannel(channel.id)).toEqual(update.channel);
+    const cleared = await channels.updateChannel(channel.id, { previewUrl: null });
+    expect(cleared.events).toMatchObject([
+      {
+        type: "message",
+        revision: revision! + 6,
+        message: { content: { type: "preview_changed", actor, previewUrl: null } },
+      },
+    ]);
+    expect(cleared.channel.previewUrl).toBeUndefined();
+    expect(await channels.getChannel(channel.id)).toEqual(cleared.channel);
     expect(
       (await channels.updateChannel(channel.id, { purpose: null })).channel.purpose,
     ).toBeUndefined();
@@ -531,47 +517,18 @@ describe("channel database", () => {
     });
     await expect(
       channels.updateChannel(member.id, {
-        checklist: [{ title: "Take over", status: "pending" }],
+        tasks: [{ title: "Take over", status: "pending" }],
       }),
     ).rejects.toThrow("Only the channel lead");
 
     await channels.deleteMember(member.id);
-    expect((await channels.getChannel(channel.id))?.checklist).toEqual([
+    expect((await channels.getChannel(channel.id))?.tasks).toEqual([
       {
         title: "Build the product",
         status: "in_progress",
         children: [{ title: "Verify the preview", status: "pending" }],
       },
     ]);
-  });
-
-  test("user edits attribute changes to the user and ignore repeated edits", async () => {
-    const channels = await openChannels();
-    const channel = await createStoredChannel(channels, {
-      name: "Planning",
-      directory: "/workspace/project",
-      ...CHANNEL_DEFAULTS,
-    });
-    const edit = {
-      channelId: channel.id,
-      purpose: "Work toward a better result.",
-      model: { provider: "copilot", name: "gpt-6", reasoningEffort: "high" },
-    };
-    const changed = await channels.editChannel(edit);
-    expect(changed.channel).toMatchObject({
-      purpose: edit.purpose,
-      model: edit.model,
-      directory: channel.directory,
-    });
-    expect(changed.messages).toMatchObject([{ message: { content: { actor: { type: "user" } } } }]);
-    const revision = await channels.getRevision(channel.id);
-    expect(await channels.editChannel(edit)).toEqual({
-      changed: false,
-      channel: changed.channel,
-      messages: [],
-    });
-    expect(await channels.getChannel(channel.id)).toEqual(changed.channel);
-    expect(await channels.getRevision(channel.id)).toBe(revision);
   });
 
   test("rejecting a provider change leaves all channel fields unchanged", async () => {
@@ -596,10 +553,18 @@ describe("channel database", () => {
       model: { provider: "copilot", name: "gpt-6" },
     });
 
-    expect(change).toMatchObject({ changed: true, channel: { latestSequence: 0 } });
+    expect(change).toMatchObject({ channel: { latestSequence: 0 } });
     expect(change.channel.updatedAt).not.toBe(channel.updatedAt);
-    expect(change.messages).toEqual([]);
-    expect(await channels.getRevision(channel.id)).toBe(0);
+    expect(change.events).toEqual([
+      {
+        type: "model",
+        revision: 1,
+        model: change.channel.model,
+        updatedAt: change.channel.updatedAt,
+      },
+    ]);
+    expect((await channels.getRoster(channel.id))?.revision).toBe(1);
+    expect(await channels.getChannel(channel.id)).toEqual(change.channel);
     expect(await channels.listMessagesAfter(channel.id)).toEqual([]);
   });
 
@@ -618,14 +583,14 @@ describe("channel database", () => {
       title: "Release plan",
       actor: { type: "user" },
     });
-    const revision = await channels.getRevision(channel.id);
+    const revision = (await channels.getRoster(channel.id))?.revision;
     await channels.shareArtifact({
       channelId: channel.id,
       file: machineFile("/workspace/plan.md"),
       title: "Release plan",
       actor: { type: "user" },
     });
-    expect(await channels.getRevision(channel.id)).toBe(revision);
+    expect((await channels.getRoster(channel.id))?.revision).toBe(revision);
     await channels.shareArtifact({
       channelId: channel.id,
       file: sessionFile("designer-session", "plan.md"),
@@ -645,7 +610,7 @@ describe("channel database", () => {
         sharedAt: expect.any(String),
       },
     ]);
-    expect((await channels.getState(channel.id, 100))?.messages).toHaveLength(3);
+    expect((await channels.getSnapshot(channel.id, 100))?.messages).toHaveLength(3);
   });
 
   test("deleting a member retains sender attribution in prior messages", async () => {
@@ -679,7 +644,7 @@ describe("channel database", () => {
   });
 });
 
-describe("channel follow-ups and routines", () => {
+describe("channel routines", () => {
   async function setup() {
     const channels = await openChannels();
     const channel = await createStoredChannel(channels, { name: "Watch", ...CHANNEL_DEFAULTS });
@@ -717,7 +682,7 @@ describe("channel follow-ups and routines", () => {
       { type: "routine_edited", routine: changed.routine },
       { type: "routine_deleted", routine: review.routine },
     ]);
-    expect((await channels.getState(channel.id, 100))?.routines).toEqual([changed.routine]);
+    expect((await channels.getSnapshot(channel.id, 100))?.routines).toEqual([changed.routine]);
   });
 
   test("an identical change and a repeated deletion leave the transcript alone", async () => {
@@ -727,12 +692,12 @@ describe("channel follow-ups and routines", () => {
     const unchanged = await channels.setRoutine(channel.id, { routineId: routine.id, ...input });
     await channels.deleteRoutine(channel.id, routine.id);
 
-    expect(unchanged.changed).toBe(false);
+    expect(unchanged.events).toEqual([]);
     expect(await channels.deleteRoutine(channel.id, routine.id)).toBeNull();
     expect((await channels.getChannel(channel.id))?.latestSequence).toBe(2);
   });
 
-  test("only the lead sets routines, and only its own channel's", async () => {
+  test("routine edits require the channel lead and an existing routine", async () => {
     const { channels, channel } = await setup();
     const { member } = await channels.createMember(channelAgent(channel.id, "watcher", "Watcher"));
     const routine = { title: "CI", schedule: "0 9 * * *", prompt: "Check CI" };

@@ -1,40 +1,30 @@
 import { z, type JSONType } from "zod";
 import { smallJsonSchema } from "@/shared/smallJson";
 
-const appStateDefinitionInputSchema = z
+const validators = new Map<JSONType, z.ZodType>();
+
+export const appStateDefinitionSchema = z
   .object({
     schema: z.unknown(),
     default: z.unknown(),
   })
-  .strict();
-
-const validators = new Map<JSONType, z.ZodType>();
-
-export const appStateDefinitionSchema = z.unknown().transform((value, context) => {
-  try {
-    return parseAppStateDefinitionValue(value);
-  } catch (error) {
-    context.addIssue({
-      code: "custom",
-      message: error instanceof Error ? error.message : String(error),
-    });
-    return z.NEVER;
-  }
-});
+  .strict()
+  .transform((input, context) => {
+    try {
+      const schema = parseAppStateSchema(input.schema);
+      return { schema, default: parseAppState(schema, input.default) };
+    } catch (error) {
+      context.addIssue({
+        code: "custom",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return z.NEVER;
+    }
+  });
 
 export type AppStateDefinition = z.output<typeof appStateDefinitionSchema>;
 
-export function parseAppStateDefinition(value: unknown): AppStateDefinition {
-  return appStateDefinitionSchema.parse(value);
-}
-
-function parseAppStateDefinitionValue(value: unknown) {
-  const input = appStateDefinitionInputSchema.parse(value);
-  const schema = parseAppStateSchema(input.schema);
-  return { schema, default: parseAppState(schema, input.default) };
-}
-
-export function parseAppStateSchema(value: unknown): JSONType {
+function parseAppStateSchema(value: unknown): JSONType {
   const json = smallJsonSchema.parse(value);
   if (
     typeof json !== "boolean" &&

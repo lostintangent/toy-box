@@ -23,7 +23,6 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
-import { WaitingIndicator } from "@/shared/ui/waiting-indicator";
 import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useWorkspaceSelector, useWorkspaceSessionActivity } from "@workspace/hooks/state";
@@ -294,10 +293,8 @@ function HyperSessionStatus({ sessionId, isOpen }: { sessionId: string; isOpen: 
 
   return (
     <>
-      {waiting && !isOpen ? (
-        <WaitingIndicator />
-      ) : running && !isOpen ? (
-        <RunningIndicator />
+      {(running || waiting) && !isOpen ? (
+        <RunningIndicator waiting={waiting} />
       ) : (
         <MessageCirclePlus />
       )}

@@ -1,15 +1,12 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { Store } from "@tanstack/store";
-import type { AppActions, AppWorkspace, useAppActions } from "@apps/sdk";
+import type { AppWorkspace, useAppActions } from "@apps/sdk";
 import type { AppStateStore } from "./state";
 
 type AppHost = {
   workspace: Store<AppWorkspace>;
   actions: ReturnType<typeof useAppActions>;
-  savedApp?: {
-    state: AppStateStore;
-    actions: AppActions;
-  };
+  savedApp?: AppStateStore;
 };
 
 const AppHostContext = createContext<AppHost | null>(null);

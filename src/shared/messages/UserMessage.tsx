@@ -6,7 +6,7 @@ import { RelativeTime } from "@/shared/ui/relative-time";
 import { Separator } from "@/shared/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { AttachmentGallery } from "@/shared/attachments/AttachmentGallery";
-import type { Attachment } from "@/shared/attachments/model";
+import type { Attachment, AttachmentReference } from "@/shared/attachments/model";
 
 export function UserMessage({
   message,
@@ -17,7 +17,7 @@ export function UserMessage({
   message: {
     content: string;
     timestamp?: string;
-    attachments?: (Attachment | { label: string; src: string })[];
+    attachments?: (Attachment | AttachmentReference)[];
   };
   extraActions?: ReactNode;
   /** Replaces the relative timestamp, such as in a timeline already divided by day. */

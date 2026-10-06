@@ -1,25 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { CatchBoundary } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { Store } from "@tanstack/store";
-import {
-  Component,
-  useEffect,
-  useLayoutEffect,
-  useState,
-  type ComponentType,
-  type ErrorInfo,
-  type ReactNode,
-} from "react";
+import { useEffect, useLayoutEffect, useState, type ComponentType, type ReactNode } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
-import type { AppActions } from "@apps/sdk";
+import { appQueries } from "@apps/queries";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { useModels } from "@providers/useModels";
-import { createEmptySessionsState, sessionQueries } from "@sessions/queries";
+import { sessionQueries } from "@sessions/queries";
 import { paneSourceSessionId, type WorkspacePane } from "@workspace/model/panes";
 import { AppHostProvider } from "./context";
-import { bindAppActions, bindSavedAppActions } from "./actions";
+import { bindAppActions } from "./actions";
 import { projectAppWorkspace } from "./workspace";
 import type { AppStateStore } from "./state";
 
@@ -37,15 +30,16 @@ export function AppHost({
   publisherPaneId: string;
   AppComponent: ComponentType;
   css: string;
-  savedApp?: {
-    id: string;
-    state: AppStateStore;
-    spawnWorker: AppActions["spawnWorker"];
-    cancelWorker: AppActions["cancelWorker"];
-  };
+  savedApp?: AppStateStore;
 }) {
-  const workspaceState = useWorkspaceSelector((state) => state);
-  const { data: sessionsState = createEmptySessionsState() } = useQuery(sessionQueries.state());
+  const queryClient = useQueryClient();
+  const workspaceState = useWorkspaceSelector((state) => ({
+    sessionStates: state.sessionStates,
+    hyperSessionIds: state.hyperSessionIds,
+    workers: state.workers,
+  }));
+  const { data: apps } = useSuspenseQuery(appQueries.list());
+  const { data: sessionsState } = useSuspenseQuery(sessionQueries.state());
   const { models, defaultModel } = useModels();
   const surface = useWorkspaceSurface();
   const linkedPanes = useSelector(
@@ -63,31 +57,21 @@ export function AppHost({
     surface.panes.length >= surface.capacity ? visibleLinkedPanes : validLinkedPanes;
   const workspaceSource = {
     workspace: workspaceState,
+    apps,
     sessions: sessionsState,
     models,
     defaultModel,
-    appId: savedApp?.id,
+    appId: savedApp?.store.state.id,
     openPanes: visibleLinkedPanes,
   };
   const [workspaceStore] = useState(() => new Store(projectAppWorkspace(workspaceSource)));
   const workspace = projectAppWorkspace(workspaceSource, workspaceStore.state);
   const actions = bindAppActions({
     publisherPaneId,
-    beforeDeliverMessage: savedApp ? () => savedApp.state.flush() : undefined,
+    queryClient,
+    beforeDeliverMessage: savedApp ? () => savedApp.flush() : undefined,
     surface,
   });
-  const savedAppHost = savedApp
-    ? {
-        state: savedApp.state,
-        actions: bindSavedAppActions({
-          appId: savedApp.id,
-          actions,
-          flushState: () => savedApp.state.flush(),
-          spawnWorker: savedApp.spawnWorker,
-          cancelWorker: savedApp.cancelWorker,
-        }),
-      }
-    : undefined;
 
   useLayoutEffect(() => {
     if (workspace !== workspaceStore.state) workspaceStore.setState(() => workspace);
@@ -97,63 +81,50 @@ export function AppHost({
       surface.panePublications.actions.publishLinkedPanes(publisherPaneId, retainedPanes);
     }
   }, [linkedPanes.length, publisherPaneId, retainedPanes, surface.panePublications]);
-  const appState = savedApp?.state;
   useEffect(
     () => () => {
-      if (appState) {
-        void appState.flush().catch((error) => console.error("Unable to flush app state:", error));
+      if (savedApp) {
+        void savedApp.flush().catch((error) => console.error("Unable to flush app state:", error));
       }
       surface.panePublications.actions.clearLinkedPanes(publisherPaneId);
     },
-    [appState, publisherPaneId, surface.panePublications],
+    [savedApp, publisherPaneId, surface.panePublications],
   );
 
   return (
     <div data-toybox-app={scopeId} className="h-full min-h-0">
       {css && <style>{css}</style>}
-      <AppHostProvider workspace={workspaceStore} actions={actions} savedApp={savedAppHost}>
+      <AppHostProvider workspace={workspaceStore} actions={actions} savedApp={savedApp}>
         <AppComponent />
       </AppHostProvider>
     </div>
   );
 }
 
-export class AppErrorBoundary extends Component<
-  { title: string; resetKey: number; children: ReactNode },
-  { error: Error | null; resetKey: number }
-> {
-  state = { error: null, resetKey: this.props.resetKey };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-
-  static getDerivedStateFromProps(
-    props: Readonly<{ resetKey: number }>,
-    state: Readonly<{ resetKey: number }>,
-  ) {
-    return props.resetKey === state.resetKey ? null : { error: null, resetKey: props.resetKey };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("App render failed:", error, info);
-  }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <AppMessage
-          title={`${this.props.title} crashed`}
-          detail={appErrorMessage(this.state.error)}
-        >
-          <Button size="sm" variant="outline" onClick={() => this.setState({ error: null })}>
+export function AppErrorBoundary({
+  title,
+  resetKey,
+  children,
+}: {
+  title: string;
+  resetKey: number;
+  children: ReactNode;
+}) {
+  return (
+    <CatchBoundary
+      getResetKey={() => resetKey}
+      onCatch={(error, info) => console.error("App render failed:", error, info)}
+      errorComponent={({ error, reset }) => (
+        <AppMessage title={`${title} crashed`} detail={appErrorMessage(error)}>
+          <Button size="sm" variant="outline" onClick={reset}>
             Try again
           </Button>
         </AppMessage>
-      );
-    }
-    return this.props.children;
-  }
+      )}
+    >
+      {children}
+    </CatchBoundary>
+  );
 }
 
 export function AppMessage({

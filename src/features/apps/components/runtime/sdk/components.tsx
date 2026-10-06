@@ -6,8 +6,7 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
-import type { AppSession } from "@apps/sdk";
-import type { ModelConfiguration } from "@providers/model";
+import type * as AppSdk from "@apps/sdk";
 import { cn } from "@/shared/utils";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { useAppHost } from "../../host/context";
@@ -57,10 +56,7 @@ export function AppEmptyState({
   children,
   className,
   ...props
-}: ComponentProps<"div"> & {
-  title: string;
-  description?: string;
-}) {
+}: ComponentProps<typeof AppSdk.AppEmptyState>) {
   return (
     <div
       className={cn(
@@ -99,7 +95,7 @@ export function AppSessionStatus({
   status,
   className,
   ...props
-}: Omit<ComponentProps<"span">, "children"> & { status: AppSession["status"] }) {
+}: ComponentProps<typeof AppSdk.AppSessionStatus>) {
   const running = status === "running";
   const waiting = status === "waiting";
   const finished = status === "unread";
@@ -140,9 +136,7 @@ export function AppSessionToggle({
   variant,
   size = "sm",
   ...props
-}: Omit<ComponentProps<typeof Button>, "aria-pressed" | "onClick" | "type"> & {
-  sessionId: string;
-}) {
+}: ComponentProps<typeof AppSdk.AppSessionToggle>) {
   const { workspace, actions } = useAppHost();
   const isOpen = useSelector(workspace, ({ openSessionIds }) => openSessionIds.includes(sessionId));
   const usesDefaultContent = children == null;
@@ -174,12 +168,7 @@ export function AppSessionPreview({
   align,
   children,
   ...props
-}: ComponentProps<"span"> & {
-  sessionId: string;
-  disabled?: boolean;
-  side?: "top" | "right" | "bottom" | "left";
-  align?: "start" | "center" | "end";
-}) {
+}: ComponentProps<typeof AppSdk.AppSessionPreview>) {
   const { open, onMouseEnter, onMouseLeave } = useSessionPreview(disabled);
   return (
     <SessionPreview
@@ -201,10 +190,7 @@ export function AppSessionPreview({
 export function AppModelPicker({
   value,
   onValueChange,
-}: {
-  value: ModelConfiguration;
-  onValueChange: (value: ModelConfiguration) => void;
-}) {
+}: ComponentProps<typeof AppSdk.AppModelPicker>) {
   const models = useSelector(useAppHost().workspace, (workspace) => workspace.models);
   if (models.length === 0) {
     return <span className="px-2 text-xs text-muted-foreground">{value.name}</span>;

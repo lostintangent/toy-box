@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CalendarClock, FileUp, Pencil, UserMinus, UserPlus } from "lucide-react";
+import { CalendarClock, FileUp, MonitorPlay, Pencil, UserMinus, UserPlus } from "lucide-react";
 import { DELETED_AGENT_NAME, type ChannelSystemMessage } from "@channels/model";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
@@ -16,9 +16,9 @@ export function SystemMessageGroup({ messages }: { messages: readonly ChannelSys
   let tooltip: string | undefined;
 
   switch (systemMessage.type) {
-    case "channel_marked_done":
+    case "tasks_completed":
       icon = <DoneIndicator className="size-4 shrink-0" />;
-      content = "Channel marked as done";
+      content = "All tasks completed";
       break;
     case "channel_renamed":
       content = (
@@ -56,6 +56,24 @@ export function SystemMessageGroup({ messages }: { messages: readonly ChannelSys
         );
       break;
     }
+    case "preview_changed":
+      icon = <MonitorPlay className="size-3.5 shrink-0" />;
+      content = systemMessage.previewUrl ? (
+        <>
+          Preview updated:{" "}
+          <a
+            href={systemMessage.previewUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-foreground underline underline-offset-2"
+          >
+            <Value text={systemMessage.previewUrl} />
+          </a>
+        </>
+      ) : (
+        "Preview cleared"
+      );
+      break;
     case "member_joined":
     case "member_left": {
       const names = membershipAgentNames(messages);

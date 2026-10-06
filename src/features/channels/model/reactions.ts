@@ -1,4 +1,5 @@
 import type { ChannelAgent, ChannelConversationMessage, ChannelReaction } from ".";
+import type { ChannelAgentPresence } from "./presence";
 
 /** A reaction as a message shows it: recorded, or projected from a working agent's activity. */
 export type ChannelMessageReaction = {
@@ -10,10 +11,11 @@ export type ChannelMessageReaction = {
 export function channelMessageReactions(
   message: Pick<ChannelConversationMessage, "sequence" | "reactions">,
   agents: readonly Pick<ChannelAgent, "id" | "status">[],
+  presence: Readonly<Record<string, ChannelAgentPresence>>,
 ): ChannelMessageReaction[] {
   const reactions: ChannelMessageReaction[] = [...(message.reactions ?? [])];
   for (const agent of agents) {
-    if (agent.status?.state !== "working") continue;
+    if (presence[agent.id]?.state !== "working" || agent.status?.state !== "working") continue;
     if (agent.status.lookingAt === message.sequence) {
       reactions.push({ agentId: agent.id, reaction: "looking" });
     }

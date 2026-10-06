@@ -4,7 +4,6 @@ import {
   type ChannelMessage,
   type ChannelSystemMessage,
 } from "@channels/model";
-import type { ChannelRequestState } from "@channels/model/requests";
 
 // Consecutive messages from one agent within this window share a header.
 const RUN_WINDOW_MS = 10 * 60 * 1000;
@@ -25,8 +24,7 @@ export type TranscriptRow = TranscriptRowContent & {
 /**
  * The transcript's rows. A user message stands alone, one agent's consecutive messages form a run,
  * and membership changes merge, as do one agent's artifact shares. Rows never span a day or the
- * start of unread messages, so dividers always fall between rows. Requests mark the message they
- * reference instead of rendering as rows of their own.
+ * start of unread messages, so dividers always fall between rows.
  */
 export function transcriptRows(
   messages: readonly ChannelMessage[],
@@ -34,9 +32,6 @@ export function transcriptRows(
 ): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
   for (const message of messages) {
-    if (isChannelSystemMessage(message) && message.content.type === "user_attention_requested") {
-      continue;
-    }
     const row = rows.at(-1);
     const previous = row?.messages.at(-1);
     const startsDay = !previous || !isSameDay(previous.timestamp, message.timestamp);
@@ -55,10 +50,9 @@ export function transcriptRows(
 /** The latest pending request whose message is loaded, which a reply answers, and its row. */
 export function pendingRequestRow(
   rows: readonly TranscriptRow[],
-  requests: ReadonlyMap<number, ChannelRequestState>,
+  sequence: number | null,
 ): { sequence: number; index: number } | undefined {
-  const pending = [...requests].filter(([, state]) => state === "pending");
-  const sequence = Math.max(...pending.map(([sequence]) => sequence));
+  if (sequence === null) return undefined;
   const index = rows.findIndex((row) =>
     row.messages.some((message) => message.sequence === sequence),
   );

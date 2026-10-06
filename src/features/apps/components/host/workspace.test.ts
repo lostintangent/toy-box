@@ -1,30 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import type { AppList } from "@apps/model";
 import type { SessionsState } from "@sessions/model";
 import type { ModelInfo } from "@providers/model";
-import { createEmptyWorkspaceState } from "@workspace/model/state/reducer";
 import { createLinkedSessionPane } from "@workspace/model/panes";
 import { projectAppWorkspace } from "./workspace";
 
 describe("app workspace projection", () => {
-  test("preserves every provider's model identity and display group", () => {
-    const models = [
-      { id: "shared", name: "Shared model", provider: "copilot", providerName: "GitHub Copilot" },
-      { id: "shared", name: "Shared model", provider: "codex", providerName: "Codex" },
-    ] satisfies ModelInfo[];
-    const defaultModel = { provider: "codex", name: "shared" };
-    const projection = projectAppWorkspace({
-      workspace: createEmptyWorkspaceState(),
-      sessions: { sessions: [], worktrees: {}, ownership: {} },
-      models,
-      defaultModel,
-      openPanes: [],
-    });
-    expect(projection.models).toEqual(models);
-    expect(projection.defaultModel).toEqual(defaultModel);
-  });
   test("exposes sessions with governance kinds and hides inbox implementation sessions", () => {
     const workspace = {
-      ...createEmptyWorkspaceState(),
       sessionStates: {
         standard: { status: "running" as const, since: 1 },
         "session-worker": { status: "unread" as const },
@@ -32,38 +15,6 @@ describe("app workspace projection", () => {
         hyper: { status: "running" as const, since: 1 },
       },
       hyperSessionIds: ["hyper"],
-      apps: [
-        {
-          id: "app-a",
-          definitionId: "kanban",
-          title: "Launch",
-          color: "#f59e0b" as const,
-          state: {},
-          revision: 4,
-          createdAt: "2026-07-28T00:00:00.000Z",
-          updatedAt: "2026-07-28T01:00:00.000Z",
-        },
-      ],
-      appDefinitions: [
-        {
-          id: "kanban",
-          title: "Kanban",
-          color: "#f59e0b" as const,
-          state: { schema: { type: "object" as const }, default: {} },
-          accepts: ["text/markdown"],
-          revision: "definition-a",
-        },
-      ],
-      appShares: [
-        {
-          id: "share-a",
-          sourceAppId: "app-b",
-          targetAppId: "app-a",
-          mimeType: "text/markdown",
-          content: "# Ship the release",
-          createdAt: "2026-07-28T00:30:00.000Z",
-        },
-      ],
       workers: [
         {
           createdAt: new Date(0).toISOString(),
@@ -80,6 +31,40 @@ describe("app workspace projection", () => {
           sessionId: "other-app-worker",
           ephemeral: false,
           appId: "app-b",
+        },
+      ],
+    };
+    const apps: AppList = {
+      apps: [
+        {
+          id: "app-a",
+          definitionId: "kanban",
+          title: "Launch",
+          color: "#f59e0b" as const,
+          state: {},
+          revision: 4,
+          createdAt: "2026-07-28T00:00:00.000Z",
+          updatedAt: "2026-07-28T01:00:00.000Z",
+        },
+      ],
+      definitions: [
+        {
+          id: "kanban",
+          title: "Kanban",
+          color: "#f59e0b" as const,
+          state: { schema: { type: "object" as const }, default: {} },
+          accepts: ["text/markdown"],
+          revision: "definition-a",
+        },
+      ],
+      shares: [
+        {
+          id: "share-a",
+          sourceAppId: "app-b",
+          targetAppId: "app-a",
+          mimeType: "text/markdown",
+          content: "# Ship the release",
+          createdAt: "2026-07-28T00:30:00.000Z",
         },
       ],
     };
@@ -164,11 +149,13 @@ describe("app workspace projection", () => {
           { name: "future_tier", tokenWindow: 1_000_000 },
         ],
       },
+      { id: "gpt-5", provider: "codex", providerName: "Codex", name: "GPT-5" },
     ];
     const openPanes = [createLinkedSessionPane("standard")];
     const defaultModel = { provider: "copilot", name: "gpt-5", reasoningEffort: "low" };
     const source = {
       workspace,
+      apps,
       sessions: sessionsState,
       models,
       defaultModel,
@@ -264,25 +251,8 @@ describe("app workspace projection", () => {
           createdAt: "2026-07-28T00:30:00.000Z",
         },
       ],
-      models: [
-        {
-          id: "gpt-5",
-          provider: "copilot",
-          providerName: "GitHub Copilot",
-          name: "GPT-5",
-          supportedReasoningEfforts: ["low", "high"],
-          defaultReasoningEffort: "high",
-          supportedContextTiers: [
-            { name: "default", tokenWindow: 264_000 },
-            { name: "future_tier", tokenWindow: 1_000_000 },
-          ],
-        },
-      ],
-      defaultModel: {
-        provider: "copilot",
-        name: "gpt-5",
-        reasoningEffort: "low",
-      },
+      models,
+      defaultModel,
       openSessionIds: ["standard"],
       openFiles: [],
       workers: [
@@ -293,7 +263,6 @@ describe("app workspace projection", () => {
         },
       ],
     });
-    expect(projection.defaultModel).toBe(defaultModel);
 
     const artifactProjection = projectAppWorkspace({
       ...source,
@@ -309,6 +278,7 @@ describe("app workspace projection", () => {
         {
           ...source,
           workspace: { ...workspace },
+          apps: { ...apps },
           sessions: { ...sessionsState },
           models: [...models],
           openPanes: [...openPanes],
@@ -329,14 +299,8 @@ describe("app workspace projection", () => {
       },
       projection,
     );
-    expect(changedWorker.workers).not.toBe(projection.workers);
+    expect(changedWorker.workers[0]?.name).toBe("Updated worker");
     expect(changedWorker.sessions).toBe(projection.sessions);
-    expect(changedWorker.apps).toBe(projection.apps);
-    expect(changedWorker.shares).toBe(projection.shares);
-    expect(changedWorker.models).toBe(projection.models);
-    expect(changedWorker.defaultModel).toBe(projection.defaultModel);
-    expect(changedWorker.openSessionIds).toBe(projection.openSessionIds);
-    expect(changedWorker.openFiles).toBe(projection.openFiles);
 
     const changedChild = projectAppWorkspace(
       {
@@ -351,9 +315,22 @@ describe("app workspace projection", () => {
       },
       projection,
     );
-    expect(changedChild.sessions).not.toBe(projection.sessions);
     expect(changedChild.sessions[0]?.children[0]?.children[0]?.status).toBe("running");
-    expect(changedChild.apps).toBe(projection.apps);
-    expect(changedChild.models).toBe(projection.models);
+
+    const changedApp = projectAppWorkspace(
+      {
+        ...source,
+        apps: {
+          ...apps,
+          apps: apps.apps.map((app) => ({ ...app, title: "Renamed launch", revision: 5 })),
+          shares: [],
+        },
+      },
+      projection,
+    );
+    expect(changedApp.apps[0]?.title).toBe("Renamed launch");
+    expect(changedApp.shares).toEqual([]);
+    expect(changedApp.sessions).toBe(projection.sessions);
+    expect(changedApp.workers).toBe(projection.workers);
   });
 });

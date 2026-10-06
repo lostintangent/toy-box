@@ -17,8 +17,10 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-const { applyWorkspaceAction, changeSettings, getWorkspaceState, setSessionStatus, unpinSession } =
-  await import(".");
+mock.module("@files/server/editors", () => ({ loadCustomEditors: async () => [] }));
+
+const { applyWorkspaceAction, changeSettings, setSessionStatus, unpinSession } = await import(".");
+const { getWorkspaceState } = await import("..");
 const { insertSession } = await import("@sessions/server/state/sessions");
 
 async function openWorkspaceTestDatabase(): Promise<void> {
@@ -43,21 +45,11 @@ function cleanup(sessionId: string): void {
   deleteHyperState(sessionId);
 }
 
-function snapshot() {
-  return getWorkspaceState({
-    customEditors: [],
-    appDefinitions: [],
-    apps: [],
-    appShares: [],
-    environment: { voiceEnabled: false },
-  });
-}
-
 describe("workspace state", () => {
   test("merges precise settings updates before broadcasting their complete value", async () => {
     await openWorkspaceTestDatabase();
     const initial = {
-      ...(await snapshot()).settings,
+      ...(await getWorkspaceState()).settings,
       defaultModel: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
       terminalShell: "/bin/zsh",
       pinnedSessionIds: ["session-a"],
@@ -77,7 +69,7 @@ describe("workspace state", () => {
     expect(await changeSettings({ accentColor: settings.accentColor })).toEqual(settings);
     expect(await changeSettings({ accentColor: settings.accentColor })).toEqual(settings);
 
-    expect((await snapshot()).settings).toEqual(settings);
+    expect((await getWorkspaceState()).settings).toEqual(settings);
     expect(events).toEqual([{ type: "settings.changed", settings }]);
   });
 
@@ -89,7 +81,7 @@ describe("workspace state", () => {
       changeSettings({ terminalShell: "/bin/fish" }),
     ]);
 
-    expect((await snapshot()).settings).toMatchObject({
+    expect((await getWorkspaceState()).settings).toMatchObject({
       accentColor: "#123abc",
       terminalShell: "/bin/fish",
     });
@@ -106,7 +98,7 @@ describe("workspace state", () => {
     onTestFinished(unsubscribe);
 
     await unpinSession("deleted");
-    expect((await snapshot()).settings.pinnedSessionIds).toEqual(["kept"]);
+    expect((await getWorkspaceState()).settings.pinnedSessionIds).toEqual(["kept"]);
 
     // Deleting a session that was never pinned commits and broadcasts nothing.
     await unpinSession("never-pinned");
@@ -124,7 +116,7 @@ describe("workspace state", () => {
       prompt: { text: "hello", origin: "client-a", updatedAt: 0 },
     });
 
-    const state = await snapshot();
+    const state = await getWorkspaceState();
     expect(state.sessionStates[sessionId]).toMatchObject({
       status: "idle",
       prompt: { text: "hello", origin: "client-a" },
@@ -138,7 +130,7 @@ describe("workspace state", () => {
     await insertSession({ id, artifactPath: "document.md", createdAt: new Date(42) });
 
     expect(getSessionState(id)).toBeUndefined();
-    expect((await snapshot()).sessionStates[id]).toBeUndefined();
+    expect((await getWorkspaceState()).sessionStates[id]).toBeUndefined();
   });
 
   test("activity statuses broadcast only real transitions", () => {
@@ -188,11 +180,11 @@ describe("workspace state", () => {
 
     startWorker(worker);
     startWorker({ ...worker, metadata: { ignored: true } });
-    expect((await snapshot()).workers).toEqual([worker]);
+    expect((await getWorkspaceState()).workers).toEqual([worker]);
 
     finishWorker(worker.sessionId);
     finishWorker(worker.sessionId);
-    expect((await snapshot()).workers).toEqual([]);
+    expect((await getWorkspaceState()).workers).toEqual([]);
     expect(events).toEqual([
       { type: "worker.started", worker },
       {

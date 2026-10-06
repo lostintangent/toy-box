@@ -14,6 +14,9 @@ import {
   updateAppInputSchema,
 } from "@apps/model";
 import * as apps from "./index";
+import { appDefinitionRegistry } from "./definitions";
+
+export const listApps = createServerFn({ method: "GET" }).handler(() => apps.listApps());
 
 export const createApp = createServerFn({ method: "POST" })
   .validator(zodValidator(createAppInputSchema))
@@ -45,7 +48,7 @@ export const uninstallApp = createServerFn({ method: "POST" })
 
 export const getAppDefinitionBundle = createServerFn({ method: "GET" })
   .validator(zodValidator(appDefinitionBundleInputSchema))
-  .handler(({ data }) => apps.getAppDefinitionBundle(data.definitionId, data.revision));
+  .handler(({ data }) => appDefinitionRegistry.getBundle(data.definitionId, data.revision));
 
 export const getArtifactAppBundle = createServerFn({ method: "GET" })
   .validator(zodValidator(artifactAppBundleInputSchema))

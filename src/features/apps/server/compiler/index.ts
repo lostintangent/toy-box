@@ -1,16 +1,16 @@
-import { APP_REGISTER_GLOBAL, type CompiledAppBundle } from "@apps/runtime";
+import {
+  APP_DEPENDENCIES,
+  APP_RUNTIME_PARAMETER,
+  type AppDependency,
+  type CompiledAppBundle,
+} from "@apps/runtime";
 import { appComponentSourceSchema, type AppStateDefinition } from "@apps/model";
 import type { SessionFile } from "@files/model";
 import { workspaceFileId } from "@files/model";
-import { sharedMap } from "@/shared/server/processState";
-import { APP_DEPENDENCY_SOURCES, unsupportedAppImport } from "./dependencies";
 import { compileAppStyles } from "./styles";
 import { checkAppTypeScript } from "./typecheck";
 
-const artifactBundles = sharedMap<{
-  revision: string;
-  bundle: Promise<CompiledAppBundle>;
-}>("artifact-app-bundles");
+const artifactBundles = new Map<string, { revision: string; bundle: Promise<CompiledAppBundle> }>();
 
 export function compileAppDefinition(source: {
   id: string;
@@ -60,13 +60,13 @@ export async function compileArtifactApp(file: SessionFile, source: string) {
 }
 
 async function bundleAppCode(source: { id: string; tsx: string }): Promise<string> {
-  const namespace = "toybox-app";
+  const entrypoint = "/toybox-app.tsx";
   const runtimeNamespace = "toybox-app-runtime";
   const buildConfig = {
-    entrypoints: ["toybox-app:entry"],
+    entrypoints: [entrypoint],
+    files: { [entrypoint]: source.tsx },
     target: "browser",
-    format: "iife",
-    splitting: false,
+    format: "cjs",
     minify: true,
     throw: false,
     reactCompiler: true,
@@ -76,38 +76,25 @@ async function bundleAppCode(source: { id: string; tsx: string }): Promise<strin
     },
     plugins: [
       {
-        name: "toybox-app-component",
+        name: "toybox-app-runtime",
         setup(build) {
-          build.onResolve({ filter: /^toybox-app:entry$/ }, () => ({
-            path: "entry",
-            namespace,
-          }));
-          build.onResolve({ filter: /^toybox-app:component$/ }, () => ({
-            path: "component",
-            namespace,
-          }));
-          build.onResolve({ filter: /.*/ }, ({ path }) => {
-            if (Object.hasOwn(APP_DEPENDENCY_SOURCES, path)) {
+          build.onResolve({ filter: /.*/ }, ({ path, kind }) => {
+            if (kind === "entry-point-build") return { path, namespace: "file" };
+            if (Object.hasOwn(APP_DEPENDENCIES, path)) {
               return { path, namespace: runtimeNamespace };
             }
-            throw unsupportedAppImport(path);
+            throw new Error(
+              `Unsupported app import "${path}". Supported modules: ${Object.keys(APP_DEPENDENCIES).join(", ")}.`,
+            );
           });
-          build.onLoad({ filter: /^entry$/, namespace }, () => ({
-            loader: "js",
-            contents: appEntryModule("toybox-app:component"),
-          }));
-          build.onLoad({ filter: /^component$/, namespace }, () => ({
-            loader: "tsx",
-            contents: source.tsx,
-          }));
           build.onLoad({ filter: /.*/, namespace: runtimeNamespace }, ({ path }) => ({
             loader: "js",
-            contents: APP_DEPENDENCY_SOURCES[path]!,
+            contents: `module.exports = ${APP_RUNTIME_PARAMETER}.${APP_DEPENDENCIES[path as AppDependency].runtime};`,
           }));
         },
       },
     ],
-  } satisfies Bun.BuildConfig & { reactCompiler: boolean };
+  } satisfies Bun.BuildConfig;
   const result = await Bun.build(buildConfig);
 
   if (!result.success || !result.outputs[0]) {
@@ -117,13 +104,6 @@ async function bundleAppCode(source: { id: string; tsx: string }): Promise<strin
   }
 
   return result.outputs[0].text();
-}
-
-function appEntryModule(componentId: string): string {
-  return (
-    `import AppComponent from ${JSON.stringify(componentId)};` +
-    `globalThis.${APP_REGISTER_GLOBAL}(AppComponent);`
-  );
 }
 
 function hash(value: string): string {

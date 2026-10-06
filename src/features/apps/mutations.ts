@@ -10,6 +10,7 @@ import {
 } from "./server/functions";
 import { smallJsonSchema } from "@/shared/smallJson";
 import { applyWorkspaceEvent } from "@workspace/queries";
+import { applyAppListEvent } from "./queryCache";
 
 type ShareWithApp = {
   sourceAppId: string | null;
@@ -22,7 +23,7 @@ export const appMutations = {
     mutationOptions({
       mutationFn: (title: string) => createApp({ data: { definitionId, title } }),
       onSuccess: (app, _variables, _onMutateResult, { client }) => {
-        applyWorkspaceEvent(client, { type: "app.upserted", app });
+        applyAppListEvent(client, { type: "app.upserted", app });
       },
     }),
 
@@ -30,8 +31,8 @@ export const appMutations = {
     mutationOptions({
       mutationFn: (url: string) => installApp({ data: { url } }),
       onSuccess: ({ definition, app }, _variables, _onMutateResult, { client }) => {
-        applyWorkspaceEvent(client, { type: "app.registered", definition });
-        applyWorkspaceEvent(client, { type: "app.upserted", app });
+        applyAppListEvent(client, { type: "app.registered", definition });
+        applyAppListEvent(client, { type: "app.upserted", app });
       },
     }),
 
@@ -39,7 +40,7 @@ export const appMutations = {
     mutationOptions({
       mutationFn: (update: Omit<AppUpdate, "expectedRevision">) => updateAppInstance(app, update),
       onSuccess: (result, _variables, _onMutateResult, { client }) => {
-        applyWorkspaceEvent(client, { type: "app.upserted", app: result.app });
+        applyAppListEvent(client, { type: "app.upserted", app: result.app });
       },
     }),
 
@@ -53,7 +54,7 @@ export const appMutations = {
         return result.app;
       },
       onSuccess: (renamedApp, _variables, _onMutateResult, { client }) => {
-        applyWorkspaceEvent(client, { type: "app.upserted", app: renamedApp });
+        applyAppListEvent(client, { type: "app.upserted", app: renamedApp });
       },
     }),
 
@@ -61,7 +62,7 @@ export const appMutations = {
     mutationOptions({
       mutationFn: () => uninstallApp({ data: { id: definitionId } }),
       onSuccess: (_result, _variables, _onMutateResult, { client }) => {
-        applyWorkspaceEvent(client, { type: "app.unregistered", definitionId });
+        applyAppListEvent(client, { type: "app.unregistered", definitionId });
       },
     }),
 
@@ -85,7 +86,7 @@ export const appMutations = {
           },
         }),
       onSuccess: (share, _variables, _onMutateResult, { client }) => {
-        applyWorkspaceEvent(client, { type: "app.share.created", share });
+        applyAppListEvent(client, { type: "app.share.created", share });
       },
     }),
 };

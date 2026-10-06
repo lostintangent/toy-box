@@ -117,19 +117,12 @@ export class AppStateStore {
     try {
       while (true) {
         const desired = batch.reduce((app, update) => update.apply(app), this.#confirmed);
-        const request: AppUpdate = { expectedRevision: this.#confirmed.revision };
-        if (!sameJson(desired.state, this.#confirmed.state)) {
-          request.state = desired.state;
-        }
+        if (sameJson(desired.state, this.#confirmed.state)) break;
 
-        if (request.state === undefined) {
-          this.#pending.splice(0, batch.length);
-          for (const update of batch) update.resolve();
-          this.store.setState(() => this.#replay(this.#confirmed));
-          break;
-        }
-
-        const result = await this.#commit(request);
+        const result = await this.#commit({
+          expectedRevision: this.#confirmed.revision,
+          state: desired.state,
+        });
         if (result.status === "conflict") {
           if (result.app.revision > this.#confirmed.revision) this.#confirmed = result.app;
           this.store.setState(() => this.#replay(this.#confirmed));
@@ -141,11 +134,11 @@ export class AppStateStore {
         }
 
         if (result.app.revision >= this.#confirmed.revision) this.#confirmed = result.app;
-        this.#pending.splice(0, batch.length);
-        for (const update of batch) update.resolve();
-        this.store.setState(() => this.#replay(this.#confirmed));
         break;
       }
+      this.#pending.splice(0, batch.length);
+      for (const update of batch) update.resolve();
+      this.store.setState(() => this.#replay(this.#confirmed));
     } catch (error) {
       this.#rejectPending(error);
       throw error;

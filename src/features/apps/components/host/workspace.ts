@@ -1,4 +1,5 @@
 import { replaceEqualDeep } from "@tanstack/react-query";
+import type { AppList } from "@apps/model";
 import type { SessionsState } from "@sessions/model";
 import { selectNonWorkerSessions } from "@sessions/queries";
 import type { WorkspaceState } from "@workspace/model/state/reducer";
@@ -7,7 +8,8 @@ import type { ModelConfiguration, ModelInfo } from "@providers/model";
 import type { AppSession, AppWorkspace } from "@apps/sdk";
 
 type AppWorkspaceSource = {
-  workspace: WorkspaceState;
+  workspace: Pick<WorkspaceState, "sessionStates" | "hyperSessionIds" | "workers">;
+  apps: AppList;
   sessions: SessionsState;
   models: readonly ModelInfo[];
   defaultModel: ModelConfiguration | null;
@@ -16,12 +18,10 @@ type AppWorkspaceSource = {
 };
 
 export function projectAppWorkspace(
-  { workspace, sessions, models, defaultModel, appId, openPanes }: AppWorkspaceSource,
+  { workspace, apps, sessions, models, defaultModel, appId, openPanes }: AppWorkspaceSource,
   previous?: AppWorkspace,
 ): AppWorkspace {
-  const definitions = new Map(
-    workspace.appDefinitions.map((definition) => [definition.id, definition]),
-  );
+  const definitions = new Map(apps.definitions.map((definition) => [definition.id, definition]));
   const hyperSessionIds = new Set(workspace.hyperSessionIds);
   const sessionKind = (sessionId: string): AppSession["kind"] =>
     sessions.ownership[sessionId]?.type === "automation"
@@ -51,7 +51,7 @@ export function projectAppWorkspace(
 
   const next: AppWorkspace = {
     sessions: selectNonWorkerSessions(sessions).map(projectSession),
-    apps: workspace.apps.map(({ id, definitionId, title, revision, updatedAt }) => ({
+    apps: apps.apps.map(({ id, definitionId, title, revision, updatedAt }) => ({
       id,
       definitionId,
       title,
@@ -59,7 +59,7 @@ export function projectAppWorkspace(
       updatedAt,
       accepts: definitions.get(definitionId)?.accepts ?? [],
     })),
-    shares: appId ? workspace.appShares.filter((share) => share.targetAppId === appId) : [],
+    shares: appId ? apps.shares.filter((share) => share.targetAppId === appId) : [],
     models,
     defaultModel,
     openSessionIds: openPanes

@@ -1,9 +1,13 @@
 import { z } from "zod";
-import { machineFile, workspaceFileSchema } from "@files/model";
-import { createFileServeUrl, getPathBasename } from "@files/model/paths";
+import { workspaceFileSchema } from "@files/model";
 import { modelConfigurationSchema, type ModelConfiguration } from "@providers/model";
-import { attachmentSchema, attachmentsSchema } from "@/shared/attachments/model";
+import {
+  attachmentsSchema,
+  type Attachment,
+  type AttachmentReference,
+} from "@/shared/attachments/model";
 import { cronSchema } from "@/shared/cron";
+import type { ChannelAgentPresence } from "./presence";
 import { hasChanges } from "./changes";
 import {
   agentAvatarSchema,
@@ -20,36 +24,45 @@ const durableIdSchema = z.string().trim().min(1).max(255);
 const channelNameSchema = z.string().trim().min(1).max(100);
 const channelPurposeSchema = z.string().trim().min(1).max(12_000);
 const channelDirectorySchema = z.string().trim().min(1).max(4_096);
+const channelPreviewUrlSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2_048)
+  .refine(
+    (url) => {
+      if (url.startsWith("/") && !url.startsWith("//") && !url.startsWith("/\\")) return true;
+      try {
+        return ["http:", "https:"].includes(new URL(url).protocol);
+      } catch {
+        return false;
+      }
+    },
+    {
+      message: "Use a root-relative, HTTP, or HTTPS preview URL.",
+    },
+  );
+
 const channelMessageTextSchema = z.string().trim().max(12_000);
 export const channelMessageContentSchema = channelMessageTextSchema.min(1);
 export const channelReactionKindSchema = z.enum(["done", "agree", "celebrate", "love", "laugh"]);
-export const channelChecklistItemStatusSchema = z.enum([
-  "pending",
-  "in_progress",
-  "blocked",
-  "done",
-]);
-export type ChannelChecklistItemStatus = z.output<typeof channelChecklistItemStatusSchema>;
+const channelTaskStatusSchema = z.enum(["pending", "in_progress", "blocked", "done"]);
 
-export const channelChecklistItemSchema = z
+export const channelTaskSchema = z
   .object({
     title: z.string().trim().min(1).max(240).describe("A concise outcome or next step."),
-    status: channelChecklistItemStatusSchema.describe("The item's current state."),
+    status: channelTaskStatusSchema.describe("The task's current state."),
     ownerId: durableIdSchema
       .optional()
-      .describe("The channel lead ID or current member ID responsible for the item."),
+      .describe("The channel lead ID or current member ID responsible for the task."),
     get children() {
-      return z
-        .array(channelChecklistItemSchema)
-        .max(50)
-        .optional()
-        .describe("Optional nested items.");
+      return z.array(channelTaskSchema).max(50).optional().describe("Optional subtasks.");
     },
   })
   .strict();
-export type ChannelChecklistItem = z.output<typeof channelChecklistItemSchema>;
+export type ChannelTask = z.output<typeof channelTaskSchema>;
 
-export const channelReactionSchema = z
+const channelReactionSchema = z
   .object({
     agentId: durableIdSchema,
     reaction: channelReactionKindSchema,
@@ -62,20 +75,46 @@ export type Channel = {
   purpose?: string;
   directory?: string;
   model: ModelConfiguration;
-  checklist: ChannelChecklistItem[];
+  tasks: ChannelTask[];
   previewUrl?: string;
   latestSequence: number;
   seenThrough: number;
-  /** Transcript-derived: reading acknowledges completion; user replies acknowledge requests. */
-  hasUnreadCompletion: boolean;
-  hasPendingRequest: boolean;
+  /** Transcript-derived: reading acknowledges completed tasks; user replies acknowledge requests. */
+  completedSequence: number | null;
+  requestSequence: number | null;
   updatedAt: string;
 };
 
+/** Attention refers to transcript milestones; reading never answers a request. */
+export function channelHasUnreadCompletion(channel: Channel): boolean {
+  return (channel.completedSequence ?? 0) > channel.seenThrough;
+}
+
+export function channelHasPendingRequest(channel: Channel): boolean {
+  return channel.requestSequence !== null;
+}
+
+export function channelStatus(channel: Channel): "waiting" | "finished" | "unread" | null {
+  if (channelHasPendingRequest(channel)) return "waiting";
+  if (channelHasUnreadCompletion(channel)) return "finished";
+  if (channelHasUnread(channel)) return "unread";
+  return null;
+}
+
 export type ChannelList = {
   channels: Channel[];
-  members: ChannelMember[];
+  members: Pick<ChannelMember, "id" | "channelId" | "name" | "avatar">[];
 };
+
+/** The catalog identifies teammates; their live details belong to the open Channel. */
+export function channelMemberIdentity({
+  id,
+  channelId,
+  name,
+  avatar,
+}: ChannelMember): ChannelList["members"][number] {
+  return { id, channelId, name, ...(avatar ? { avatar } : {}) };
+}
 
 const channelStatusTextSchema = z.string().trim().min(1).max(100);
 
@@ -125,7 +164,6 @@ export const channelAgentMetadataSchema = z
     status: channelAgentStatusSchema.optional(),
   })
   .strict();
-export type ChannelAgentMetadata = z.output<typeof channelAgentMetadataSchema>;
 
 export const setChannelAgentStatusInputSchema = channelStatusTargetSchema.safeExtend({
   status: channelStatusTextSchema.describe("A very brief description of the work being performed."),
@@ -148,6 +186,13 @@ export type ChannelLead = ChannelAgent & {
   avatar: NonNullable<ChannelAgent["avatar"]>;
 };
 
+export function compareChannelAgents(
+  left: Pick<ChannelAgent, "name" | "id">,
+  right: Pick<ChannelAgent, "name" | "id">,
+): number {
+  return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
+}
+
 export function channelLead(id: string, status?: ChannelAgentStatus): ChannelLead {
   return {
     id,
@@ -160,25 +205,21 @@ export type ChannelMessageSender = ChannelMessageActor | { type: "system" };
 
 export type ChannelReaction = z.output<typeof channelReactionSchema>;
 
-export const channelAttachmentSchema = z.union([attachmentSchema, z.string().min(1).max(4_096)]);
-export type ChannelAttachment = z.output<typeof channelAttachmentSchema>;
-
-/** An attachment as it displays: an uploaded image as itself, a machine file by name and URL. */
-export function channelAttachmentPreview(attachment: ChannelAttachment) {
-  return typeof attachment === "string"
-    ? { label: getPathBasename(attachment), src: createFileServeUrl(machineFile(attachment)) }
-    : attachment;
-}
+/** Client attachments carry either uploaded bytes or one resolved file address. */
+export type ChannelAttachment = Attachment | AttachmentReference;
 
 /** A shared file. Sharing it again only changes its title, never when it was first shared. */
-export const channelArtifactSchema = z
+const channelArtifactSchema = z
   .object({
     file: workspaceFileSchema,
     title: z.string().trim().min(1).max(160),
     sharedAt: z.string(),
   })
   .strict();
-export type ChannelArtifact = z.output<typeof channelArtifactSchema>;
+export type ChannelArtifact = z.output<typeof channelArtifactSchema> & {
+  /** Public resource address supplied by the server; never accepted as a command input. */
+  url?: string;
+};
 
 const channelMessageActorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("user") }).strict(),
@@ -205,7 +246,7 @@ export const channelRoutineInputSchema = z
   })
   .strict();
 
-export const channelRoutineSchema = channelRoutineInputSchema.extend({ id: durableIdSchema });
+const channelRoutineSchema = channelRoutineInputSchema.extend({ id: durableIdSchema });
 export type ChannelRoutine = z.output<typeof channelRoutineSchema>;
 
 export const setChannelRoutineInputSchema = channelRoutineInputSchema.extend({
@@ -217,19 +258,8 @@ export const channelRoutineIdentitySchema = z
   .object({ channelId: durableIdSchema, routineId: durableIdSchema })
   .strict();
 
-export const requestChannelUserAttentionInputSchema = z
-  .object({
-    requestSequence: z
-      .number()
-      .int()
-      .positive()
-      .describe("The sequence of the agent message explaining what the user needs to do."),
-  })
-  .strict();
-
 export const channelSystemMessageContentSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("channel_marked_done") }).strict(),
-  requestChannelUserAttentionInputSchema.extend({ type: z.literal("user_attention_requested") }),
+  z.object({ type: z.literal("tasks_completed") }).strict(),
   z.object({ type: z.literal("member_joined"), member: channelMemberSchema }).strict(),
   z.object({ type: z.literal("member_left"), member: channelMemberSchema }).strict(),
   z
@@ -255,6 +285,13 @@ export const channelSystemMessageContentSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("preview_changed"),
+      actor: channelMessageActorSchema,
+      previewUrl: channelPreviewUrlSchema.nullable(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("artifact_shared"),
       actor: channelMessageActorSchema,
       // The message's own timestamp records when it was shared.
@@ -276,10 +313,12 @@ type ChannelMessageBase = {
   timestamp: string;
 };
 
-export type ChannelConversationMessage = ChannelMessageBase & {
+export type ChannelConversationMessage<A = ChannelAttachment> = ChannelMessageBase & {
   sender: ChannelMessageActor;
   content: string;
-  attachments?: ChannelAttachment[];
+  /** The lead asks for the user's response; a later user message acknowledges it. */
+  request?: true;
+  attachments?: A[];
   reactions?: ChannelReaction[];
 };
 
@@ -288,31 +327,40 @@ export type ChannelSystemMessage = ChannelMessageBase & {
   content: ChannelSystemMessageContent;
   attachments?: never;
   reactions?: never;
+  request?: never;
 };
 
-export type ChannelMessage = ChannelConversationMessage | ChannelSystemMessage;
+export type ChannelMessage<A = ChannelAttachment> =
+  | ChannelConversationMessage<A>
+  | ChannelSystemMessage;
 
-export function isChannelSystemMessage(message: ChannelMessage): message is ChannelSystemMessage {
+export function isChannelSystemMessage(
+  message: ChannelMessage<unknown>,
+): message is ChannelSystemMessage {
   return message.sender.type === "system";
 }
 
+/** Canonical reduced state of one Channel; a snapshot is this value at one revision. */
 export type ChannelState = {
   /** Advances with every durable detail change; messages have their own sequence. */
   revision: number;
+  channel: Channel;
   lead: ChannelLead;
   members: ChannelMember[];
   messages: ChannelMessage[];
+  /** The newest unanswered public request, including one outside the message window. */
+  request: ChannelConversationMessage | null;
   /** Oldest first. */
   artifacts: ChannelArtifact[];
   /** Oldest first. */
   routines: ChannelRoutine[];
+  presence: Record<string, ChannelAgentPresence>;
 };
 
-export type ChannelEvent = (
-  | { type: "state"; state: ChannelState }
+export type ChannelEvent<A = ChannelAttachment> = (
   | {
       type: "message";
-      message: ChannelMessage;
+      message: ChannelMessage<A>;
     }
   | {
       type: "reaction";
@@ -320,9 +368,20 @@ export type ChannelEvent = (
       agentId: string;
       reaction: ChannelReaction["reaction"] | null;
     }
+  | { type: "tasks"; tasks: ChannelTask[] }
+  | { type: "model"; model: ModelConfiguration; updatedAt: string }
+  | { type: "read"; seenThrough: number }
   | { type: "member"; member: ChannelMember }
   | { type: "status"; agentId: string; status?: ChannelAgent["status"] }
 ) & { revision: number };
+
+/** Cached clients replay ordered details; only a new client or expired cursor needs a snapshot. */
+export type ChannelObservationEvent =
+  | { type: "snapshot"; state: ChannelState }
+  | { type: "resumed"; presence: Record<string, ChannelAgentPresence> }
+  | { type: "presence"; presence: Record<string, ChannelAgentPresence> }
+  | ChannelEvent
+  | { type: "deleted"; channelId: string };
 
 export const createChannelInputSchema = z
   .object({
@@ -339,25 +398,6 @@ export const channelIdentitySchema = z.object({ channelId: durableIdSchema }).st
 
 export const removeChannelMemberInputSchema = z.object({ agentId: durableIdSchema }).strict();
 
-const channelPreviewUrlSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(2_048)
-  .refine(
-    (url) => {
-      if (url.startsWith("/") && !url.startsWith("//") && !url.startsWith("/\\")) return true;
-      try {
-        return ["http:", "https:"].includes(new URL(url).protocol);
-      } catch {
-        return false;
-      }
-    },
-    {
-      message: "Use a root-relative, HTTP, or HTTPS preview URL.",
-    },
-  );
-
 const channelChangesSchema = z
   .object({
     model: modelConfigurationSchema.optional(),
@@ -372,11 +412,11 @@ const channelChangesSchema = z
       .describe(
         "The working directory for all channel agents on their next execution, or null to clear it.",
       ),
-    checklist: z
-      .array(channelChecklistItemSchema)
+    tasks: z
+      .array(channelTaskSchema)
       .max(50)
       .optional()
-      .describe("The complete public checklist, replacing the previous checklist."),
+      .describe("The complete task list, replacing the previous tasks."),
     previewUrl: channelPreviewUrlSchema
       .nullable()
       .optional()
@@ -396,8 +436,7 @@ export const editChannelInputSchema = channelChangesSchema
 export const updateChannelInputSchema = channelChangesSchema
   .omit({ model: true })
   .refine(hasChanges, {
-    message:
-      "Update the name, purpose, directory, checklist, preview URL, or any combination of them.",
+    message: "Update the name, purpose, directory, tasks, preview URL, or any combination of them.",
   });
 
 export const postChannelMessageInputSchema = z
@@ -424,14 +463,14 @@ export type EditChannelInput = z.output<typeof editChannelInputSchema>;
 export type PostChannelMessageInput = z.output<typeof postChannelMessageInputSchema>;
 export type UpdateChannelInput = z.output<typeof updateChannelInputSchema>;
 
-export function unassignChannelChecklist(
-  checklist: readonly ChannelChecklistItem[],
+export function unassignChannelTasks(
+  tasks: readonly ChannelTask[],
   agentId: string,
-): ChannelChecklistItem[] {
-  return checklist.map(({ ownerId, children, ...item }) => ({
-    ...item,
+): ChannelTask[] {
+  return tasks.map(({ ownerId, children, ...task }) => ({
+    ...task,
     ...(ownerId && ownerId !== agentId ? { ownerId } : {}),
-    ...(children ? { children: unassignChannelChecklist(children, agentId) } : {}),
+    ...(children ? { children: unassignChannelTasks(children, agentId) } : {}),
   }));
 }
 
@@ -439,24 +478,11 @@ export function channelHasUnread(channel: Channel): boolean {
   return channel.latestSequence > channel.seenThrough;
 }
 
-export function channelCompletionBlockers(
-  checklist: readonly ChannelChecklistItem[],
-  members: readonly ChannelAgent[],
-): string[] {
-  const incompleteItems = (items: readonly ChannelChecklistItem[], parent = ""): string[] =>
-    items.flatMap((item) => {
-      const path = parent ? `${parent} / ${item.title}` : item.title;
-      return [
-        ...(item.status === "done" ? [] : [`${path} (${item.status})`]),
-        ...incompleteItems(item.children ?? [], path),
-      ];
-    });
-  return [
-    ...incompleteItems(checklist),
-    ...members.flatMap(({ name, status }) =>
-      status?.state === "waiting" ? [`${name} is waiting: ${status.text}`] : [],
-    ),
-  ];
+/** A task list is complete when it has tasks and every task and subtask is done. */
+export function channelTasksComplete(tasks: readonly ChannelTask[]): boolean {
+  const allDone = (tasks: readonly ChannelTask[]): boolean =>
+    tasks.every(({ status, children = [] }) => status === "done" && allDone(children));
+  return tasks.length > 0 && allDone(tasks);
 }
 
 /** Complete delivery policy for user, lead, and member messages. */

@@ -176,3 +176,10 @@ export type AppInstance = {
   createdAt: string;
   updatedAt: string;
 };
+
+/** Current installed definitions, saved instances, and pending shares. */
+export type AppList = {
+  apps: AppInstance[];
+  definitions: AppDefinition[];
+  shares: AppShare[];
+};

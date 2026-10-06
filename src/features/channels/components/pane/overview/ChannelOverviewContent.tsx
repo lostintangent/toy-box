@@ -35,9 +35,9 @@ import { ShowMore, useShowMore } from "@/shared/ui/show-more";
 import { nextCronOccurrence } from "@/shared/cron";
 import { cn } from "@/shared/utils";
 import { useChannelPane } from "../ChannelPaneContext";
-import { channelChecklistItems } from "../channelChecklistItems";
+import { channelTaskItems } from "../channelTaskItems";
 
-/** What the overview shows: the Channel's context, agents, artifacts, checklist, and routines. */
+/** What the overview shows: the Channel's context, team members, tasks, artifacts, and routines. */
 export function ChannelOverviewContent({
   channel,
   artifacts,
@@ -59,7 +59,7 @@ export function ChannelOverviewContent({
 }) {
   const { lead, members, agents } = useChannelPane();
   const sortedMembers = [...members].sort((left, right) => left.name.localeCompare(right.name));
-  const completedCount = channel.checklist.filter(({ status }) => status === "done").length;
+  const completedCount = channel.tasks.filter(({ status }) => status === "done").length;
 
   return (
     <div className="min-h-0 flex-1 space-y-6 overflow-y-auto bg-panel p-4">
@@ -102,9 +102,9 @@ export function ChannelOverviewContent({
         )}
       </div>
 
-      <OverviewSection title="Agents" count={members.length + 1}>
+      <OverviewSection title="Team members" count={members.length + 1}>
         <div>
-          <div role="list" aria-label={`Agents in #${channel.name}`}>
+          <div role="list" aria-label={`Team members in #${channel.name}`}>
             <AgentItem agent={lead} action={<RowMenu name={lead.name} />} />
             {sortedMembers.map((member) => (
               <AgentItem
@@ -137,6 +137,18 @@ export function ChannelOverviewContent({
         </div>
       </OverviewSection>
 
+      <OverviewSection
+        title="Tasks"
+        count={channel.tasks.length && `${completedCount}/${channel.tasks.length}`}
+        progress={channel.tasks.length > 0 ? completedCount / channel.tasks.length : undefined}
+      >
+        {channel.tasks.length > 0 ? (
+          <Checklist items={channelTaskItems(channel.tasks, agents)} className="text-sm" />
+        ) : (
+          <p className="text-sm text-muted-foreground italic">No tasks yet.</p>
+        )}
+      </OverviewSection>
+
       <OverviewSection title="Artifacts" count={artifacts.length}>
         {artifacts.length > 0 ? (
           <div role="list" aria-label={`Artifacts in #${channel.name}`} className="flex flex-col">
@@ -156,29 +168,17 @@ export function ChannelOverviewContent({
         )}
       </OverviewSection>
 
-      <OverviewSection
-        title="Checklist"
-        count={channel.checklist.length && `${completedCount}/${channel.checklist.length}`}
-        progress={
-          channel.checklist.length > 0 ? completedCount / channel.checklist.length : undefined
-        }
-      >
-        {channel.checklist.length > 0 ? (
-          <Checklist items={channelChecklistItems(channel.checklist, agents)} className="text-sm" />
-        ) : (
-          <p className="text-sm text-muted-foreground italic">The checklist is empty.</p>
-        )}
-      </OverviewSection>
-
-      {routines.length > 0 && (
-        <OverviewSection title="Routines" count={routines.length}>
+      <OverviewSection title="Routines" count={routines.length}>
+        {routines.length > 0 ? (
           <div role="list" aria-label={`Routines in #${channel.name}`} className="space-y-2">
             {routines.map((routine) => (
               <RoutineItem key={routine.id} channelId={channel.id} routine={routine} />
             ))}
           </div>
-        </OverviewSection>
-      )}
+        ) : (
+          <p className="text-sm text-muted-foreground italic">No routines scheduled yet.</p>
+        )}
+      </OverviewSection>
     </div>
   );
 }
@@ -275,8 +275,7 @@ function OverviewSection({
   children,
 }: {
   title: string;
-  /** Hidden when zero, since the section's empty state already says so. */
-  count?: number | string;
+  count: number | string;
   /** Completion from 0 to 1, shown as a bar at the heading's end. */
   progress?: number;
   children: ReactNode;
@@ -285,7 +284,7 @@ function OverviewSection({
     <section className="space-y-3 not-first-of-type:border-t not-first-of-type:pt-6">
       <h3 className="flex h-4.5 items-center gap-1.5">
         <span className="section-heading">{title}</span>
-        {count ? <Badge variant="count">{count}</Badge> : null}
+        <Badge variant="count">{count}</Badge>
         {progress !== undefined && <ProgressBar value={progress} className="ml-auto" />}
       </h3>
       {children}

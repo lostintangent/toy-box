@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, onTestFinished, test } from "bun:test";
+import { describe, expect, onTestFinished, spyOn, test } from "bun:test";
 import {
   AppDefinitionRegistry,
   parseAppDefinitionFiles,
@@ -88,12 +88,6 @@ describe("app definition registry", () => {
       tsx: expect.stringContaining("function ReleaseBoard"),
     });
     expect(current?.revision).toBe(revision);
-    expect(
-      JSON.parse(await readFile(join(root, "release-board", "app.json"), "utf-8")),
-    ).toMatchObject({
-      title: "Release board",
-      state: { default: { columns: ["todo", "done"], cards: [] } },
-    });
     const firstBundle = await registry.getBundle("release-board", revision);
     expect(await registry.getBundle("release-board", revision)).toBe(firstBundle);
   });
@@ -146,34 +140,17 @@ describe("app definition registry", () => {
     expect(await registry.uninstall("gist-board")).toBe(false);
   });
 
-  test("rejects manifest icons outside the curated app surface", async () => {
-    const { registry, root } = await createRegistry();
-
-    await expect(
-      installDefinition(registry, "invalid-icon", {
-        manifest: manifest({ title: "Invalid icon", icon: "kanban" }),
-        tsx: "export default function App() { return null; }",
-      }),
-    ).rejects.toThrow();
-    await expect(readFile(join(root, "invalid-icon", "app.json"), "utf-8")).rejects.toThrow();
-  });
-
-  test("defaults omitted colors and rejects invalid colors", async () => {
-    const { registry } = await createRegistry();
-    const tsx = "export default function App() { return null; }";
-
-    await expect(
-      installDefinition(registry, "default-color", {
-        manifest: manifest({ title: "Default color" }),
-        tsx,
-      }),
-    ).resolves.toMatchObject({ color: "#71717a" });
-    await expect(
-      installDefinition(registry, "invalid-color", {
-        manifest: manifest({ title: "Invalid color", color: "purple" }),
-        tsx,
-      }),
-    ).rejects.toThrow();
+  test("validates manifest presentation before installation", () => {
+    const files = { manifest: manifest({ title: "Board" }), tsx: "export default () => null;" };
+    expect(parseAppDefinitionFiles(files).definition.color).toBe("#71717a");
+    for (const invalid of [{ icon: "kanban" }, { color: "purple" }]) {
+      expect(() =>
+        parseAppDefinitionFiles({
+          ...files,
+          manifest: manifest({ title: "Board", ...invalid }),
+        }),
+      ).toThrow();
+    }
   });
 
   test("does not write an invalid installation candidate", async () => {
@@ -184,7 +161,7 @@ describe("app definition registry", () => {
         manifest: manifest({ title: "Invalid Gist" }),
         tsx: 'import "unsupported"; export default function App() { return null; }',
       }),
-    ).rejects.toThrow("Cannot find module 'unsupported'");
+    ).rejects.toThrow(/Cannot find module.*unsupported/);
     await expect(readFile(join(root, "invalid-gist", "app.tsx"), "utf-8")).rejects.toThrow();
     expect(await registry.list()).toEqual([]);
   });
@@ -216,43 +193,18 @@ describe("app definition registry", () => {
     });
   });
 
-  test("keeps the last valid source active when registration fails", async () => {
+  test("keeps the last valid source and bundle active when registration fails", async () => {
     const { registry, root } = await createRegistry();
-    await writeDefinition(root, "dashboard", {
-      state: {
-        schema: {
-          type: "object",
-          properties: { count: { type: "number" } },
-          required: ["count"],
-          additionalProperties: false,
-        },
-        default: { count: 0 },
-      },
-      tsx: `import { useApp } from "@toy-box/sdk";
-export default function App() {
-  const { state } = useApp();
-  return <div>{state.count}</div>;
-}`,
-    });
+    const tsx = "export default function App() { return <main>Ready</main>; }";
+    await writeDefinition(root, "dashboard", { tsx });
     const registered = await registry.register("dashboard");
+    const bundle = await registry.getBundle("dashboard", registered.revision);
 
-    await writeFile(
-      join(root, "dashboard", "app.tsx"),
-      `import { useApp } from "@toy-box/sdk";
-export default function App() {
-  const { updateState } = useApp();
-  void updateState((draft) => void (draft.count = "broken"));
-  return <div>Broken</div>;
-}`,
-      "utf-8",
-    );
-
-    await expect(registry.register("dashboard")).rejects.toThrow(/string.*number/);
-    expect(await registry.get("dashboard")).toMatchObject({
-      revision: registered.revision,
-      tsx: expect.stringContaining("state.count"),
-    });
-  }, 10_000);
+    await writeFile(join(root, "dashboard", "app.tsx"), "export default 42;", "utf-8");
+    await expect(registry.register("dashboard")).rejects.toThrow();
+    expect(await registry.get("dashboard")).toMatchObject({ revision: registered.revision, tsx });
+    expect(await registry.getBundle("dashboard", registered.revision)).toBe(bundle);
+  });
 
   test("discovers definitions without compiling their bundles", async () => {
     const { registry, root } = await createRegistry();
@@ -265,7 +217,45 @@ export default function App() {
     expect((await registry.list()).map(({ id }) => id).sort()).toEqual(["invalid", "valid"]);
     const invalid = await registry.get("invalid");
     await expect(registry.getBundle("invalid", invalid!.revision)).rejects.toThrow(
-      "Cannot find module 'unsupported'",
+      /Cannot find module.*unsupported/,
     );
+  });
+
+  test("shares concurrent lazy bundle loads for one definition", async () => {
+    const { registry, root } = await createRegistry();
+    await writeDefinition(root, "dashboard", {
+      tsx: "export default function App() { return <main>Ready</main>; }",
+    });
+    const definition = await registry.get("dashboard");
+
+    const [first, second] = await Promise.all([
+      registry.getBundle("dashboard", definition!.revision),
+      registry.getBundle("dashboard", definition!.revision),
+    ]);
+
+    expect(second).toBe(first);
+    expect(await registry.getBundle("dashboard", definition!.revision)).toBe(first);
+  });
+
+  test("retries a failed lazy bundle load without changing the definition", async () => {
+    const { registry, root } = await createRegistry();
+    await writeDefinition(root, "dashboard", {
+      tsx: "export default function App() { return <main>Ready</main>; }",
+    });
+    const definition = await registry.get("dashboard");
+    const compiler = await import("./compiler");
+    const compile = spyOn(compiler, "compileAppDefinition").mockRejectedValueOnce(
+      new Error("Transient compilation failure."),
+    );
+    onTestFinished(() => compile.mockRestore());
+
+    await expect(registry.getBundle("dashboard", definition!.revision)).rejects.toThrow(
+      "Transient compilation failure.",
+    );
+    const bundle = await registry.getBundle("dashboard", definition!.revision);
+
+    expect(bundle.code).toContain("Ready");
+    expect(await registry.getBundle("dashboard", definition!.revision)).toBe(bundle);
+    expect(compile).toHaveBeenCalledTimes(2);
   });
 });

@@ -34,8 +34,12 @@ export function AppsPanel({
   onAppOpen: (appId: string, toggleInWorkspace: boolean) => void;
   onAppOpenInHyper: (appId: string) => void;
 }) {
-  const { data } = useSuspenseQuery(appQueries.list());
-  const { apps, definitions } = data;
+  const {
+    data: { apps, definitions },
+  } = useSuspenseQuery({
+    ...appQueries.list(),
+    select: ({ apps, definitions }) => ({ apps, definitions }),
+  });
   const [createDefinitionId, setCreateDefinitionId] = useState<string | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
   const [uninstallDefinitionId, setUninstallDefinitionId] = useState<string | null>(null);

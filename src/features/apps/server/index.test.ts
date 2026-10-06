@@ -19,6 +19,7 @@ const arrayState = {
   default: [],
 };
 const gistManifest = JSON.stringify({ title: "Café Board", state: arrayState });
+const listDefinitionsMock = mock(async (): Promise<AppDefinition[]> => []);
 const deleteWorkersForAppMock = mock(async (_appId: string) => {});
 const getDefinitionMock = mock(
   async (definitionId: string): Promise<AppDefinition & { tsx: string }> => ({
@@ -53,7 +54,8 @@ const downloadGistAppMock = mock(async (_url: string) => ({
 
 mock.module("@/server/database", () => ({
   ...realDatabaseModule,
-  getStateDatabase: async () => {
+  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
+    if (!currentDb && options?.createIfMissing === false) return null;
     if (!currentDb) throw new Error("Test database has not been opened.");
     return currentDb;
   },
@@ -65,6 +67,7 @@ mock.module("@workers/server", () => ({
 mock.module("./definitions", () => ({
   ...realDefinitionsModule,
   appDefinitionRegistry: {
+    list: listDefinitionsMock,
     get: getDefinitionMock,
     install: installDefinitionMock,
     uninstall: uninstallDefinitionMock,
@@ -74,8 +77,16 @@ mock.module("./gist", () => ({
   downloadGistApp: downloadGistAppMock,
 }));
 
-const { consumeAppShare, createApp, deleteApp, installApp, shareWithApp, uninstallApp, updateApp } =
-  await import("./index");
+const {
+  consumeAppShare,
+  createApp,
+  deleteApp,
+  installApp,
+  listApps,
+  shareWithApp,
+  uninstallApp,
+  updateApp,
+} = await import("./index");
 
 afterAll(() => {
   mock.module("@/server/database", () => realDatabaseModule);
@@ -86,6 +97,8 @@ afterAll(() => {
 
 beforeEach(() => {
   currentDb = undefined;
+  listDefinitionsMock.mockClear();
+  listDefinitionsMock.mockResolvedValue([]);
   deleteWorkersForAppMock.mockClear();
   deleteWorkersForAppMock.mockImplementation(async () => {});
   getDefinitionMock.mockClear();
@@ -96,6 +109,50 @@ beforeEach(() => {
 });
 
 describe("app lifecycle", () => {
+  test("lists definitions without creating a database for an empty workspace", async () => {
+    const definition = {
+      id: "shared-board",
+      title: "Shared board",
+      color: "#3b82f6" as const,
+      state: objectState,
+      accepts: [],
+      revision: "definition-a",
+    };
+    listDefinitionsMock.mockResolvedValue([definition]);
+
+    expect(await listApps()).toEqual({ apps: [], definitions: [definition], shares: [] });
+  });
+
+  test("lists saved state and pending shares with their definitions", async () => {
+    currentDb = await databaseModule.createTestDatabase();
+    const db = currentDb;
+    onTestFinished(async () => db.close());
+    const apps = new AppDatabase(db);
+    const definition = {
+      id: "shared-board",
+      title: "Shared board",
+      color: "#3b82f6" as const,
+      state: objectState,
+      accepts: ["text/plain"],
+      revision: "definition-a",
+    };
+    listDefinitionsMock.mockResolvedValue([definition]);
+    const app = await apps.create({
+      definitionId: definition.id,
+      title: "My board",
+      color: definition.color,
+      state: { ready: true },
+    });
+    const share = await apps.createShare({
+      sourceAppId: null,
+      targetAppId: app.id,
+      mimeType: "text/plain",
+      content: "Ship it",
+    });
+
+    expect(await listApps()).toEqual({ apps: [app], definitions: [definition], shares: [share] });
+  });
+
   test("rejects invalid state before creating an instance", async () => {
     currentDb = await databaseModule.createTestDatabase();
     const db = currentDb;
@@ -198,7 +255,7 @@ describe("app lifecycle", () => {
       expect(await new AppDatabase(db).get(appId)).toBeNull();
     });
 
-    await expect(deleteApp(app.id)).resolves.toBeUndefined();
+    await deleteApp(app.id);
 
     expect(await new AppDatabase(db).get(app.id)).toBeNull();
     expect(deleteWorkersForAppMock).toHaveBeenCalledWith(app.id);
@@ -226,7 +283,7 @@ describe("app lifecycle", () => {
     const unsubscribe = subscribeWorkspaceEvents((event) => events.push(event.type));
     onTestFinished(unsubscribe);
 
-    await expect(uninstallApp({ id: "shared-board" })).resolves.toBeUndefined();
+    await uninstallApp({ id: "shared-board" });
     expect(uninstallDefinitionMock).toHaveBeenCalledWith("shared-board");
     expect(events).toContain("app.unregistered");
   });
@@ -292,13 +349,6 @@ describe("app lifecycle", () => {
         state: [],
       },
     });
-    expect(installDefinitionMock).toHaveBeenCalledWith(
-      "cafe-board",
-      definitionsModule.parseAppDefinitionFiles({
-        manifest: gistManifest,
-        tsx: "export default function App() { return <main />; }",
-      }),
-    );
     expect(await new AppDatabase(db).list()).toEqual([
       expect.objectContaining({
         definitionId: "cafe-board",

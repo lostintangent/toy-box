@@ -12,14 +12,14 @@ import {
 import { createWorkspaceAppUrl } from "@apps/model/paths";
 import { sessionFile } from "@files/model";
 import { createWorkspaceFileUrl } from "@files/model/paths";
+import { getStateDatabase } from "@/server/database";
+import { AppDatabase } from "./database";
+import { appDefinitionRegistry } from "./definitions";
 
 const listAppDefinitionsTool = defineTool("list_app_definitions", {
   description: "Lists installed Toy Box app definitions, including state schemas and defaults.",
   parameters: z.object({}).strict(),
-  handler: async () => {
-    const apps = await import("@apps/server");
-    return JSON.stringify(await apps.listAppDefinitions());
-  },
+  handler: async () => JSON.stringify(await appDefinitionRegistry.list()),
 });
 
 const listAppsTool = defineTool("list_apps", {
@@ -27,8 +27,8 @@ const listAppsTool = defineTool("list_apps", {
     "Lists saved Toy Box app instances without their state. Call get_app to inspect an instance before updating it.",
   parameters: z.object({}).strict(),
   handler: async () => {
-    const appLifecycle = await import("@apps/server");
-    const apps = await appLifecycle.listApps();
+    const database = await getStateDatabase({ createIfMissing: false });
+    const apps = database ? await new AppDatabase(database).list() : [];
     return JSON.stringify(
       apps.map(({ id, definitionId, title, color, revision, createdAt, updatedAt }) => ({
         id,
@@ -203,8 +203,8 @@ export const artifactAppTools = [validateArtifactAppTool];
 
 async function getApp(appId: string) {
   const apps = await import("@apps/server");
-  const [app, definitions] = await Promise.all([apps.getApp(appId), apps.listAppDefinitions()]);
-  const definition = definitions.find(({ id }) => id === app.definitionId);
+  const app = await apps.getApp(appId);
+  const definition = await appDefinitionRegistry.get(app.definitionId);
   if (!definition) throw new Error(`App definition "${app.definitionId}" was not found.`);
   return { ...app, schema: definition.state.schema, previewUrl: createWorkspaceAppUrl(app.id) };
 }

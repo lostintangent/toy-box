@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
+import type * as AppSdk from "@apps/sdk";
 import { ChevronDown, Loader2, Share2 } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
@@ -21,15 +22,9 @@ export function AppSharePicker({
   label = "Share",
   className,
   disabled,
-}: {
-  mimeType: string;
-  content: unknown;
-  label?: string;
-  className?: string;
-  disabled?: boolean;
-}) {
+}: ComponentProps<typeof AppSdk.AppSharePicker>) {
   const host = useAppHost();
-  const sourceAppId = host.savedApp?.state.store.state.id ?? null;
+  const sourceAppId = host.savedApp?.store.state.id ?? null;
   const { workspace } = host;
   const surface = useWorkspaceSurface();
   const apps = useSelector(workspace, (state) => state.apps);

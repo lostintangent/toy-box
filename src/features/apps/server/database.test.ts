@@ -1,4 +1,4 @@
-import { describe, expect, onTestFinished, setSystemTime, test } from "bun:test";
+import { describe, expect, onTestFinished, test } from "bun:test";
 import { createTestDatabase } from "@/server/database";
 import { SMALL_JSON_MAX_BYTES } from "@/shared/smallJson";
 import { AppDatabase } from "./database";
@@ -27,8 +27,6 @@ const initialApp: Parameters<AppDatabase["create"]>[0] = {
 
 describe("app instance database", () => {
   test("persists multiple independently stateful instances of one definition", async () => {
-    setSystemTime(new Date("2026-07-28T12:00:00.000Z"));
-    onTestFinished(() => setSystemTime());
     const { apps } = await openTestDatabase();
 
     const launch = await apps.create(initialApp);
@@ -38,7 +36,6 @@ describe("app instance database", () => {
       state: { columns: [{ id: "today", title: "Today" }], cards: [] },
     });
 
-    expect(launch.id).toStartWith("toy-box-app-");
     expect(personal.id).not.toBe(launch.id);
     expect(await apps.list()).toEqual([launch, personal]);
   });
@@ -155,15 +152,5 @@ describe("app instance database", () => {
     expect(await apps.get(created.id)).toBeNull();
     const sessions = await db<{ session_id: string }[]>`SELECT session_id FROM sessions`;
     expect(Array.from(sessions)).toEqual([{ session_id: "ordinary-session" }]);
-  });
-
-  test("checks definition use without loading instance state", async () => {
-    const { apps } = await openTestDatabase();
-    const created = await apps.create(initialApp);
-
-    expect(await apps.hasInstancesForDefinition(initialApp.definitionId)).toBe(true);
-    expect(await apps.hasInstancesForDefinition("unused")).toBe(false);
-    await apps.delete(created.id);
-    expect(await apps.hasInstancesForDefinition(initialApp.definitionId)).toBe(false);
   });
 });

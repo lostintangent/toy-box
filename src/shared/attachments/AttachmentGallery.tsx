@@ -7,7 +7,7 @@ import { Carousel, useCarousel } from "motion-plus/react";
 import { Button } from "@/shared/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTitle, DialogTrigger } from "@/shared/ui/dialog";
 import { cn } from "@/shared/utils";
-import type { Attachment } from "./model";
+import type { Attachment, AttachmentReference } from "./model";
 
 const attachmentPillClassName =
   "inline-flex h-7 max-w-48 shrink-0 items-center gap-1.5 rounded-md border bg-background px-1 text-xs text-muted-foreground";
@@ -18,7 +18,7 @@ export function AttachmentGallery({
   variant = "thumbnails",
   onRemove,
 }: {
-  attachments: readonly (Attachment | { label: string; src: string })[];
+  attachments: readonly (Attachment | AttachmentReference)[];
   /** The user's own messages show square thumbnails, while agents' messages show a filmstrip that
    *  keeps each image's shape so screenshots read in place. Drafts show removable pills, and queued
    *  messages a one-line summary. */
@@ -26,8 +26,8 @@ export function AttachmentGallery({
   onRemove?: (index: number) => void;
 }) {
   const previews = attachments.map((attachment, index) => ({
-    label: "src" in attachment ? attachment.label : `Image ${index + 1}`,
-    src: "src" in attachment ? attachment.src : toDataUrl(attachment),
+    label: "url" in attachment ? attachment.name : `Image ${index + 1}`,
+    src: "url" in attachment ? attachment.url : toDataUrl(attachment),
   }));
   const images = previews.filter((preview) => preview.src !== undefined);
   const [selectedIndex, setSelectedIndex] = useState(0);

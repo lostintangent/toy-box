@@ -182,7 +182,7 @@ function mockStreamRuntimeModules({
   });
   mock.module("@workspace/server/events", () => ({
     ...realBroadcastExports,
-    emitSessionNameUpdate: () => {},
+    broadcast: () => {},
     ...broadcastOverrides,
   }));
   onTestFinished(() => {
@@ -194,16 +194,19 @@ describe("SessionStream lifecycle", () => {
   test("title events update workspace metadata without entering the session stream", async () => {
     const sessionId = "session-shared-title";
     cleanUpStreamAfterTest(sessionId, { restoreMocks: true });
-    const emitSessionNameUpdate = mock();
-    mockStreamRuntimeModules({ broadcast: { emitSessionNameUpdate } });
+    const broadcast = mock();
+    mockStreamRuntimeModules({ broadcast: { broadcast } });
     const { session, emit } = makeControllableSession();
     const stream = SessionStream.getOrCreate(sessionId, session);
     const received = collectStreamEvents(stream.subscribe());
     await stream.deliver(userMessage("go"));
 
     emit({ type: "session_title_changed", title: "Shared title" });
-    expect(emitSessionNameUpdate).toHaveBeenCalledTimes(1);
-    expect(emitSessionNameUpdate).toHaveBeenCalledWith(sessionId, "Shared title");
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    expect(broadcast).toHaveBeenCalledWith({
+      type: "session.upserted",
+      session: { id: sessionId, title: "Shared title" },
+    });
 
     stream.finish();
     expect((await received).filter((event) => event.type === "session_title_changed")).toEqual([]);
@@ -1906,7 +1909,7 @@ describe("rewindSession", () => {
     const rewind = mock(async (_timestamp: string) => {});
     const snapshot = idleSnapshot("session-rewind", [{ role: "user", content: "retained" }]);
     const refreshSessionSnapshot = mock(async () => snapshot);
-    const emitSessionTouched = mock((_sessionId: string) => {});
+    const broadcast = mock();
     mockStreamRuntimeModules({
       sessionRegistry: {
         withSession: async <T>(
@@ -1915,7 +1918,7 @@ describe("rewindSession", () => {
         ) => operation(makeFakeSession({ rewind })),
       },
       snapshotCache: { refreshSessionSnapshot },
-      broadcast: { emitSessionTouched },
+      broadcast: { broadcast },
     });
     const { rewindSession: importedRewindSession } = await import("./index");
 
@@ -1923,7 +1926,10 @@ describe("rewindSession", () => {
       importedRewindSession("session-rewind", "2026-08-14T20:00:00.000Z"),
     ).resolves.toEqual(snapshot);
     expect(rewind).toHaveBeenCalledWith("2026-08-14T20:00:00.000Z");
-    expect(emitSessionTouched).toHaveBeenCalledWith("session-rewind");
+    expect(broadcast).toHaveBeenCalledWith({
+      type: "session.touched",
+      sessionId: "session-rewind",
+    });
   });
 });
 

@@ -23,10 +23,19 @@ import type {
 } from "@sessions/model";
 import type { ContextTier, ModelConfiguration, ModelInfo } from "@providers/model";
 import type { WorkspaceSessionState } from "@workspace/model/state/reducer";
+import type {
+  Channel,
+  ChannelAgent,
+  ChannelState,
+  PostChannelMessageInput,
+  channelStatus,
+} from "@channels/model";
 
 export type {
   AppInstance,
   AppShare,
+  Channel,
+  ChannelState,
   ContextTier,
   ModelConfiguration,
   ModelInfo,
@@ -42,11 +51,7 @@ export type {
 };
 
 /** Creates an opaque browser-safe ID, including on an HTTP LAN origin. */
-export function createId(): string {
-  return Array.from(crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(36)).join(
-    "-",
-  );
-}
+export declare function createId(): string;
 
 // Components
 
@@ -198,6 +203,24 @@ export declare function AppSharePicker(props: {
 // Hooks
 
 export declare function useWorkspace<T>(selector: (workspace: AppWorkspace) => T): T;
+
+/** The shared channel catalog, including each team's running agents and unread/reply status. */
+export declare function useChannels(): {
+  channel: Channel;
+  agents: (ChannelAgent & { isRunning: boolean })[];
+  status: ReturnType<typeof channelStatus>;
+}[];
+
+/** Observe one channel through the same cached stream as the channel pane. */
+export declare function useChannel(
+  channelId: string,
+  options?: { visible?: boolean; mode?: "active" | "passive" },
+): {
+  state: ChannelState | undefined;
+  unreadAfter: number | null | undefined;
+  loadPrevious(throughSequence?: number): Promise<void>;
+  postMessage(message: Pick<PostChannelMessageInput, "content" | "attachments">): void;
+};
 
 export declare function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): WorkspaceFileState;
 

@@ -9,16 +9,18 @@ import {
   createChannelInputSchema,
   isChannelSystemMessage,
   channelRoutineIdentitySchema,
-  requestChannelUserAttentionInputSchema,
   selfUpdateChannelMemberInputSchema,
   setChannelAgentStatusInputSchema,
   setChannelRoutineInputSchema,
   updateChannelInputSchema,
   type Channel,
-  type ChannelMessage,
+  type ChannelAgent,
+  type ChannelArtifact,
 } from "@channels/model";
 import { resolveWorkspaceFile } from "@files/server/paths";
 import type { Attachment } from "@/shared/attachments/model";
+import { channelAgentPresence } from "@channels/model/presence";
+import { getSessionState } from "@workspace/server/state/sessions";
 
 const filePathSchema = z.string().trim().min(1).max(4_096);
 const agentIdSchema = z.string().trim().min(1).max(255);
@@ -95,7 +97,7 @@ const postChannelMessageTool = defineTool("post_channel_message", {
 
 const readChannelForSessionTool = defineTool("read_channel", {
   description:
-    "Reads the channel purpose, public checklist, preview URL, lead, current members, shared artifacts, routines, attachments, and newest 100 messages before an optional sequence without changing read state. Omit beforeSequence for the latest messages. While hasMore is true, continue with the first returned message's sequence. File attachments are absolute paths. Inline uploads are attached images.",
+    "Reads the channel purpose, tasks, preview URL, lead, current members, shared artifacts, routines, attachments, and newest 100 messages before an optional sequence without changing read state. Omit beforeSequence for the latest messages. While hasMore is true, continue with the first returned message's sequence. File attachments are absolute paths. Inline uploads are attached images.",
   parameters: channelIdentitySchema.extend({
     beforeSequence: z.number().int().positive().optional(),
   }),
@@ -131,7 +133,7 @@ const waitForChannelAgentsTool = defineTool("wait_for_channel_agents", {
 
 const readChannelForAgentTool = defineTool("read_channel", {
   description:
-    "Reads the channel purpose, public checklist, preview URL, lead, current members, shared artifacts, routines, attachments, and this agent's next 100 unread messages, then advances its read position. Repeat while hasMore is true. File attachments are absolute paths. Inline uploads are attached images.",
+    "Reads the channel purpose, tasks, preview URL, lead, current members, shared artifacts, routines, attachments, and this agent's next 100 unread messages, then advances its read position. Repeat while hasMore is true. File attachments are absolute paths. Inline uploads are attached images.",
   parameters: z.object({}),
   handler: async (_args, invocation) => {
     const { readChannelForAgent } = await import("@channels/server");
@@ -139,22 +141,37 @@ const readChannelForAgentTool = defineTool("read_channel", {
   },
 });
 
+const sendChannelMessageParameters = z.object({
+  content: conciseChannelMessageSchema,
+  attachments: z.array(filePathSchema).optional(),
+});
+
+const sendLeadMessageParameters = sendChannelMessageParameters.extend({
+  request: z
+    .boolean()
+    .optional()
+    .describe(
+      "Flags this message as needing the user's decision, context, or action until the user next posts.",
+    ),
+});
+
 const sendChannelMessageTool = defineTool("send_channel_message", {
   description:
     "Publishes a Markdown channel message without ending the turn. Pass screenshot and image paths in attachments. Name-derived @mentions wake the addressed agents. @everyone wakes the lead and all members. Without mentions, member messages wake the lead and lead messages wake nobody.",
-  parameters: z.object({
-    content: conciseChannelMessageSchema,
-    attachments: z.array(filePathSchema).optional(),
-  }),
-  handler: async (args, invocation) => {
+  parameters: sendChannelMessageParameters,
+  handler: async (args: z.output<typeof sendLeadMessageParameters>, invocation) => {
     const { sendChannelMessageFromAgent } = await import("@channels/server");
     const message = await sendChannelMessageFromAgent(invocation.sessionId, {
       content: args.content,
       attachmentPaths: args.attachments,
+      request: args.request,
     });
     return { sequence: message.sequence };
   },
 });
+
+/** The same tool plus an input request, which only the lead can make. */
+const sendLeadMessageTool = { ...sendChannelMessageTool, parameters: sendLeadMessageParameters };
 
 const reactToChannelMessageTool = defineTool("react_to_channel_message", {
   description:
@@ -182,38 +199,13 @@ const setChannelStatusTool = defineTool("set_agent_status", {
   },
 });
 
-const markChannelDoneTool = defineTool("mark_channel_done", {
-  description:
-    "After posting your completion summary with send_channel_message, records a system message marking the current goal done. Rejects unfinished checklist items (including descendants) or waiting members and lists the blockers. Does not end the turn.",
-  parameters: z.object({}).strict(),
-  handler: async (_args, invocation) => {
-    const { markChannelDoneFromLead } = await import("@channels/server");
-    const message = await markChannelDoneFromLead(invocation.sessionId);
-    return { sequence: message.sequence };
-  },
-});
-
-const requestChannelUserAttentionTool = defineTool("request_user_attention", {
-  description:
-    "Flags an agent's already-posted message as a user request and records a system message referencing it. A user message after that request acknowledges it; reading does not. Repeating the same request is a no-op. Does not post request text or end the turn.",
-  parameters: requestChannelUserAttentionInputSchema,
-  handler: async ({ requestSequence }, invocation) => {
-    const { requestChannelUserAttentionFromLead } = await import("@channels/server");
-    const message = await requestChannelUserAttentionFromLead(
-      invocation.sessionId,
-      requestSequence,
-    );
-    return { sequence: message.sequence };
-  },
-});
-
 const updateChannelTool = defineTool("update_channel", {
   description:
-    "Updates this channel's name, purpose, working directory, public checklist, or preview URL. Only the lead can change its working directory; use an existing absolute path, which applies to all agents at their next execution. Rename it when the user changes its title; set the purpose when the user defines or revises what the channel is for. Replace the complete checklist when progress changes. Preserve root-relative preview URLs returned by Toy Box tools. Share file artifacts instead of using them as previews. Set purpose, directory, or previewUrl to null to clear it.",
+    "Updates this channel's name, purpose, working directory, tasks, or preview URL. Only the lead can change its working directory; use an existing absolute path, which applies to all agents at their next execution. Rename it when the user changes its title; set the purpose when the user defines or revises what the channel is for. Replace the complete task list when progress changes. Preserve root-relative preview URLs returned by Toy Box tools. Share file artifacts instead of using them as previews. Set purpose, directory, or previewUrl to null to clear it.",
   parameters: updateChannelInputSchema,
   handler: async (args, invocation) => {
     const { updateChannelFromLead } = await import("@channels/server");
-    return updateChannelFromLead(invocation.sessionId, args);
+    return channelContextForTool(await updateChannelFromLead(invocation.sessionId, args));
   },
 });
 
@@ -311,7 +303,7 @@ const shareChannelArtifactFromSessionTool = defineTool("share_channel_artifact",
   parameters: channelIdentitySchema.extend(shareChannelArtifactInputSchema.shape),
   handler: async (args, invocation) => {
     const { shareChannelArtifactFromSession } = await import("@channels/server");
-    return shareChannelArtifactFromSession(invocation.sessionId, args);
+    return artifactForTool(await shareChannelArtifactFromSession(invocation.sessionId, args));
   },
 });
 
@@ -321,11 +313,13 @@ const shareChannelArtifactFromAgentTool = defineTool("share_channel_artifact", {
   parameters: shareChannelArtifactInputSchema,
   handler: async (args, invocation) => {
     const { shareChannelArtifactFromAgent } = await import("@channels/server");
-    return shareChannelArtifactFromAgent(invocation.sessionId, args);
+    return artifactForTool(await shareChannelArtifactFromAgent(invocation.sessionId, args));
   },
 });
 
-function toChannelReadToolResult<T extends { messages: ChannelMessage[] }>(result: T) {
+function toChannelReadToolResult(
+  result: Awaited<ReturnType<typeof import(".").readChannelForSession>>,
+) {
   const images: Attachment[] = [];
   const messages = result.messages.map((message) => {
     if (isChannelSystemMessage(message)) {
@@ -365,7 +359,18 @@ function toChannelReadToolResult<T extends { messages: ChannelMessage[] }>(resul
   });
   return {
     content: [
-      { type: "text", text: JSON.stringify({ ...result, messages }) },
+      {
+        type: "text",
+        text: JSON.stringify({
+          channel: channelContextForTool(result.channel),
+          lead: agentForTool(result.lead),
+          members: result.members.map(agentForTool),
+          artifacts: result.artifacts.map(artifactForTool),
+          routines: result.routines.map(({ id, ...routine }) => ({ routineId: id, ...routine })),
+          messages,
+          hasMore: result.hasMore,
+        }),
+      },
       ...images.map(({ base64, mimeType }) => ({
         type: "image" as const,
         data: base64,
@@ -373,6 +378,27 @@ function toChannelReadToolResult<T extends { messages: ChannelMessage[] }>(resul
       })),
     ],
   } satisfies ToolResult;
+}
+
+function channelContextForTool({ name, purpose, directory, tasks, previewUrl }: Channel) {
+  return { name, purpose, directory, tasks, previewUrl };
+}
+
+function agentForTool(agent: ChannelAgent) {
+  const presence = channelAgentPresence(agent, getSessionState(agent.id)?.status === "running");
+  return {
+    agentId: agent.id,
+    name: agent.name,
+    mention: `@${agentHandleFromName(agent.name)}`,
+    role: agent.role,
+    ...(presence.state !== "idle"
+      ? { status: { ...(agent.status?.state === presence.state ? agent.status : {}), ...presence } }
+      : {}),
+  };
+}
+
+function artifactForTool({ file, title }: Pick<ChannelArtifact, "file" | "title">) {
+  return { path: resolveWorkspaceFile(file)!, title };
 }
 
 function channelForTool({ id: channelId, name, purpose, directory, model }: Channel) {
@@ -398,23 +424,22 @@ function createdChannelMembers(members: { id: string; name: string }[]) {
 const commonChannelAgentTools = [
   readChannelForAgentTool,
   setChannelStatusTool,
-  sendChannelMessageTool,
   reactToChannelMessageTool,
   shareChannelArtifactFromAgentTool,
 ];
 
 export const channelLeadTools = [
   ...commonChannelAgentTools,
+  sendLeadMessageTool,
   createCurrentChannelMembersTool,
   updateChannelTool,
   setRoutineTool,
   deleteRoutineTool,
-  requestChannelUserAttentionTool,
-  markChannelDoneTool,
   finishLeadTurnTool,
 ];
 export const channelMemberTools = [
   ...commonChannelAgentTools,
+  sendChannelMessageTool,
   updateMemberTool,
   finishChannelAgentTurnTool,
 ];

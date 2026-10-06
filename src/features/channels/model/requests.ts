@@ -1,10 +1,9 @@
-import { isChannelSystemMessage, type ChannelMessage } from ".";
+import type { ChannelMessage } from ".";
 
 export type ChannelRequestState = "pending" | "acknowledged";
 
 /**
- * Each loaded request's state, keyed by the sequence of the message it references. As with the
- * catalog's `hasPendingRequest`, a request is pending until the user posts after that message.
+ * Each loaded question stays pending until a later user message acknowledges it.
  */
 export function channelRequestStates(
   messages: readonly ChannelMessage[],
@@ -16,11 +15,11 @@ export function channelRequestStates(
   );
   const states = new Map<number, ChannelRequestState>();
   for (const message of messages) {
-    if (!isChannelSystemMessage(message) || message.content.type !== "user_attention_requested") {
-      continue;
-    }
-    const { requestSequence } = message.content;
-    states.set(requestSequence, requestSequence > latestUserSequence ? "pending" : "acknowledged");
+    if (message.request)
+      states.set(
+        message.sequence,
+        message.sequence > latestUserSequence ? "pending" : "acknowledged",
+      );
   }
   return states;
 }

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelMessage } from "@channels/model";
-import { channelRequestStates } from "@channels/model/requests";
+import type { ChannelConversationMessage, ChannelMessage } from "@channels/model";
 import {
   pendingRequestRow,
   transcriptDayLabel,
@@ -13,7 +12,11 @@ function at(day: number, hour: number, minute: number): string {
   return new Date(2026, 8, day, hour, minute).toISOString();
 }
 
-function agentPost(sequence: number, agentId: string, timestamp: string): ChannelMessage {
+function agentPost(
+  sequence: number,
+  agentId: string,
+  timestamp: string,
+): ChannelConversationMessage {
   const sender = { type: "agent", agentId } as const;
   return { id: `${sequence}`, sequence, timestamp, sender, content: `Update ${sequence}` };
 }
@@ -81,14 +84,25 @@ describe("transcript rows", () => {
     expect(rowIds(transcriptRows(messages))).toEqual([["1"], ["2"]]);
   });
 
-  test("membership changes merge, and requests render no row of their own", () => {
+  test("membership changes merge while a question remains an ordinary agent message", () => {
     const messages = [
       event(1, { type: "member_joined", member }),
       event(2, { type: "member_joined", member: { ...member, id: "engine", name: "Engine" } }),
-      agentPost(3, "lead", at(26, 9, 1)),
-      event(4, { type: "user_attention_requested", requestSequence: 3 }),
+      { ...agentPost(3, "lead", at(26, 9, 1)), request: true as const },
     ];
     expect(rowIds(transcriptRows(messages))).toEqual([["1", "2"], ["3"]]);
+  });
+
+  test("only consecutive artifact shares from the same agent merge", () => {
+    const artifact = { file: { kind: "machine" as const, path: "/plan.md" }, title: "Plan" };
+    const messages = ["engine", "engine", "files", undefined, undefined].map((agentId, index) =>
+      event(index + 1, {
+        type: "artifact_shared",
+        actor: agentId ? { type: "agent", agentId } : { type: "user" },
+        artifact,
+      }),
+    );
+    expect(rowIds(transcriptRows(messages))).toEqual([["1", "2"], ["3"], ["4"], ["5"]]);
   });
 
   test("a day divider precedes the first row and each row that begins a new day", () => {
@@ -116,30 +130,19 @@ describe("transcript rows", () => {
 });
 
 describe("pending request row", () => {
-  const request = (sequence: number, requestSequence: number) =>
-    event(sequence, { type: "user_attention_requested", requestSequence });
-  const pendingRow = (messages: ChannelMessage[]) =>
-    pendingRequestRow(transcriptRows(messages), channelRequestStates(messages));
+  const rows = transcriptRows([
+    userPost(1, at(26, 10, 0)),
+    agentPost(2, "lead", at(26, 10, 1)),
+    { ...agentPost(3, "lead", at(26, 10, 2)), request: true },
+  ]);
 
-  test("is the latest pending request's message and the row holding it, even mid-run", () => {
-    const messages = [
-      agentPost(1, "lead", at(26, 10, 0)),
-      request(2, 1),
-      userPost(3, at(26, 10, 2)),
-      agentPost(4, "lead", at(26, 10, 3)),
-      agentPost(5, "lead", at(26, 10, 4)),
-      request(6, 4),
-      request(7, 5),
-    ];
-    expect(pendingRow(messages)).toEqual({ sequence: 5, index: 2 });
+  test("locates the canonical pending question within an agent run", () => {
+    expect(pendingRequestRow(rows, 3)).toEqual({ sequence: 3, index: 1 });
   });
 
-  test("is absent without a request, once the user replies, or while its message isn't loaded", () => {
-    expect(pendingRow([agentPost(1, "lead", at(26, 10, 0))])).toBeUndefined();
-    expect(
-      pendingRow([agentPost(1, "lead", at(26, 10, 0)), request(2, 1), userPost(3, at(26, 10, 2))]),
-    ).toBeUndefined();
-    expect(pendingRow([request(2, 1)])).toBeUndefined();
+  test("has no placement after acknowledgement or outside loaded history", () => {
+    expect(pendingRequestRow(rows, null)).toBeUndefined();
+    expect(pendingRequestRow(rows, 9)).toBeUndefined();
   });
 });
 

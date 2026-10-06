@@ -20,6 +20,10 @@ const MANIFEST_FILE = "app.json";
 const COMPONENT_FILE = "app.tsx";
 
 type AppDefinitionSource = AppDefinition & { tsx: string };
+type AppDefinitionEntry = {
+  source: AppDefinitionSource;
+  bundle?: Promise<CompiledAppBundle>;
+};
 
 export type AppDefinitionFiles = { manifest: string; tsx: string };
 
@@ -29,45 +33,36 @@ export type AppDefinitionCandidate = {
 };
 
 export class AppDefinitionRegistry {
-  private installedDefinitions?: Promise<Map<string, AppDefinitionSource>>;
-  private readonly bundles = new Map<
-    string,
-    { revision: string; bundle: Promise<CompiledAppBundle> }
-  >();
+  private installedDefinitions?: Promise<Map<string, AppDefinitionEntry>>;
 
   constructor(private readonly root = defaultAppsRoot()) {}
 
   async list(): Promise<AppDefinition[]> {
-    const definitions = [...(await this.getInstalledDefinitions()).values()].map(
-      definitionFromSource,
+    const definitions = [...(await this.getInstalledDefinitions()).values()].map(({ source }) =>
+      definitionFromSource(source),
     );
     return definitions.sort((left, right) => left.title.localeCompare(right.title));
   }
 
   async get(definitionId: string): Promise<AppDefinitionSource | null> {
     const id = parseDefinitionId(definitionId);
-    return (await this.getInstalledDefinitions()).get(id) ?? null;
+    return (await this.getInstalledDefinitions()).get(id)?.source ?? null;
   }
 
   async getBundle(definitionId: string, revision: string): Promise<CompiledAppBundle> {
-    const source = await this.get(definitionId);
-    if (!source) throw new Error(`App definition "${definitionId}" was not found.`);
-    if (source.revision !== revision) {
+    const id = parseDefinitionId(definitionId);
+    const entry = (await this.getInstalledDefinitions()).get(id);
+    if (!entry) throw new Error(`App definition "${definitionId}" was not found.`);
+    if (entry.source.revision !== revision) {
       throw new Error(`App definition "${definitionId}" changed while it was loading.`);
     }
 
-    const cached = this.bundles.get(source.id);
-    if (cached?.revision === source.revision) return cached.bundle;
-
-    const { compileAppDefinition } = await import("./compiler");
-    const bundle = compileAppDefinition(source);
-    this.bundles.set(source.id, { revision: source.revision, bundle });
-    try {
-      return await bundle;
-    } catch (error) {
-      if (this.bundles.get(source.id)?.bundle === bundle) this.bundles.delete(source.id);
-      throw error;
-    }
+    return (entry.bundle ??= import("./compiler")
+      .then(({ compileAppDefinition }) => compileAppDefinition(entry.source))
+      .catch((error) => {
+        delete entry.bundle;
+        throw error;
+      }));
   }
 
   /** Validate and activate the current files for one installed definition. */
@@ -76,12 +71,13 @@ export class AppDefinitionRegistry {
 
     const installed = await this.getInstalledDefinitions();
     const source = await this.readDiskDefinition(id);
-    const cached = this.bundles.get(id);
-    if (installed.get(id)?.revision !== source.revision || cached?.revision !== source.revision) {
+    const current = installed.get(id);
+    if (current?.source.revision === source.revision && current.bundle) {
+      await current.bundle;
+    } else {
       const { compileAppDefinition } = await import("./compiler");
       const bundle = await compileAppDefinition(source);
-      installed.set(id, source);
-      this.bundles.set(id, { revision: source.revision, bundle: Promise.resolve(bundle) });
+      installed.set(id, { source, bundle: Promise.resolve(bundle) });
     }
     return definitionFromSource(source);
   }
@@ -118,8 +114,7 @@ export class AppDefinitionRegistry {
       throw error;
     }
 
-    installed.set(id, source);
-    this.bundles.set(id, { revision: source.revision, bundle: Promise.resolve(bundle) });
+    installed.set(id, { source, bundle: Promise.resolve(bundle) });
     return definitionFromSource(source);
   }
 
@@ -135,16 +130,15 @@ export class AppDefinitionRegistry {
       if (!installed.has(id)) return false;
     }
     installed.delete(id);
-    this.bundles.delete(id);
     return true;
   }
 
-  private getInstalledDefinitions(): Promise<Map<string, AppDefinitionSource>> {
+  private getInstalledDefinitions(): Promise<Map<string, AppDefinitionEntry>> {
     this.installedDefinitions ??= this.readInstalledDefinitions();
     return this.installedDefinitions;
   }
 
-  private async readInstalledDefinitions(): Promise<Map<string, AppDefinitionSource>> {
+  private async readInstalledDefinitions(): Promise<Map<string, AppDefinitionEntry>> {
     let entries: Dirent[];
     try {
       entries = await readdir(this.root, { withFileTypes: true });
@@ -155,14 +149,13 @@ export class AppDefinitionRegistry {
 
     const diskDefinitions = await Promise.all(
       entries
-        .filter(
-          (entry) => entry.isDirectory() && appDefinitionIdSchema.safeParse(entry.name).success,
-        )
+        .filter((entry) => entry.isDirectory())
         .sort((left, right) => left.name.localeCompare(right.name))
         .map(async (entry) => {
+          const id = appDefinitionIdSchema.safeParse(entry.name);
+          if (!id.success) return null;
           try {
-            const id = parseDefinitionId(entry.name);
-            return await this.readDiskDefinition(id);
+            return await this.readDiskDefinition(id.data);
           } catch (error) {
             console.error(`Skipping invalid app definition "${entry.name}":`, error);
             return null;
@@ -173,7 +166,7 @@ export class AppDefinitionRegistry {
     return new Map(
       diskDefinitions
         .filter((definition): definition is AppDefinitionSource => definition !== null)
-        .map((definition) => [definition.id, definition]),
+        .map((source) => [source.id, { source }]),
     );
   }
 

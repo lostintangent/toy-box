@@ -12,6 +12,7 @@ import { providerQueries } from "@providers/queries";
 import { applyChannelListEvent } from "@channels/queryCache";
 import { applyAutomationListEvent } from "@automations/queryCache";
 import { applyInboxListEvent } from "@inbox/queryCache";
+import { applyAppListEvent } from "@apps/queryCache";
 import { areSettingsEqual, type Settings } from "./model/config/settings";
 import type { WorkspaceEvent } from "./model/events";
 import type { WorkspaceAction } from "./model/state/actions";
@@ -39,11 +40,12 @@ export function applyWorkspaceEvent(queryClient: QueryClient, event: WorkspaceEv
   const previousSettings = queryClient.getQueryData<WorkspaceState>(
     workspaceQueries.stateKey(),
   )?.settings;
-  recordWorkspaceQueryEvent(queryClient, event);
+  getWorkspaceQuerySource(queryClient).recordEvent(event);
   applyWorkspaceEventToSessionQueries(queryClient, event);
   applyChannelListEvent(queryClient, event);
   applyAutomationListEvent(queryClient, event);
   applyInboxListEvent(queryClient, event);
+  applyAppListEvent(queryClient, event);
   queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), (state) =>
     state ? reduceWorkspaceState(state, event) : state,
   );
@@ -147,15 +149,7 @@ function getWorkspaceQuerySource(queryClient: QueryClient) {
   return source;
 }
 
-function recordWorkspaceQueryEvent(queryClient: QueryClient, event: WorkspaceEvent): void {
-  getWorkspaceQuerySource(queryClient).recordEvent(event);
-}
-
-function discardBufferedWorkspaceQueryEvents(queryClient: QueryClient): void {
-  getWorkspaceQuerySource(queryClient).discardBufferedEvents();
-}
-
 export function repairWorkspaceStateQuery(queryClient: QueryClient): Promise<void> {
-  discardBufferedWorkspaceQueryEvents(queryClient);
+  getWorkspaceQuerySource(queryClient).discardBufferedEvents();
   return invalidateWorkspaceStateQuery(queryClient);
 }

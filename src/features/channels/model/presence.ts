@@ -2,7 +2,7 @@ import type { ChannelAgent } from ".";
 
 /**
  * How an agent appears to the rest of the Channel. A running session is working. An idle agent can
- * still be waiting on someone, while a working status left behind by a finished turn means nothing.
+ * still be waiting on someone. Runtime activity wins while turn-start and turn-end writes settle.
  */
 export type ChannelAgentPresence =
   | { state: "working"; text?: string }

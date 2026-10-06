@@ -197,108 +197,28 @@ describe("workspace state reducer", () => {
     expect(state.customEditors).toEqual([updated]);
   });
 
-  test("registers definitions and upserts saved app instances by revision", () => {
-    const definition = {
-      id: "kanban",
-      title: "Kanban",
-      color: "#f59e0b" as const,
-      state: { schema: { type: "object" as const }, default: {} },
-      accepts: [],
-      revision: "definition-a",
+  test("deleting an app removes only its worker links", () => {
+    const worker = {
+      createdAt: new Date(0).toISOString(),
+      type: "app" as const,
+      sessionId: "app-worker",
+      appId: "app-a",
+      ephemeral: true,
     };
-    const app = {
-      id: "app-a",
-      definitionId: definition.id,
-      title: "Launch board",
-      color: "#f59e0b" as const,
-      state: { columns: [], cards: [] },
-      revision: 0,
-      createdAt: "2026-07-28T12:00:00.000Z",
-      updatedAt: "2026-07-28T12:00:00.000Z",
+    const otherWorker = { ...worker, sessionId: "other-app-worker", appId: "app-b" };
+    const fileWorker = {
+      createdAt: new Date(0).toISOString(),
+      type: "file" as const,
+      sessionId: "file-worker",
+      file: sessionFile(sessionId, "plan.md"),
+      ephemeral: true,
     };
-    let state = reduceWorkspaceState(createEmptyWorkspaceState(), {
-      type: "app.registered",
-      definition,
-    });
-    state = reduceWorkspaceState(state, { type: "app.upserted", app });
+    const initial = { ...createEmptyWorkspaceState(), workers: [worker, otherWorker, fileWorker] };
+    const event = { type: "app.deleted", appId: worker.appId } as const;
+    const state = reduceWorkspaceState(initial, event);
 
-    expect(state.appDefinitions).toEqual([definition]);
-    expect(state.apps).toEqual([app]);
-    expect(reduceWorkspaceState(state, { type: "app.upserted", app })).toBe(state);
-
-    const alphabeticallyFirst = {
-      ...app,
-      id: "app-b",
-      title: "Alpha board",
-    };
-    state = reduceWorkspaceState(state, {
-      type: "app.upserted",
-      app: alphabeticallyFirst,
-    });
-    expect(state.apps).toEqual([alphabeticallyFirst, app]);
-
-    const updated = {
-      ...app,
-      state: { cards: [{ id: "card-a" }] },
-      revision: 1,
-      updatedAt: "2026-07-28T12:01:00.000Z",
-    };
-    state = reduceWorkspaceState(state, { type: "app.upserted", app: updated });
-    expect(state.apps).toEqual([alphabeticallyFirst, updated]);
-    state = reduceWorkspaceState(state, {
-      type: "worker.started",
-      worker: {
-        createdAt: new Date(0).toISOString(),
-        type: "app",
-        sessionId: "app-worker",
-        appId: app.id,
-        ephemeral: true,
-      },
-    });
-    const shareEvent = {
-      type: "app.share.created",
-      share: {
-        id: "share-a",
-        sourceAppId: app.id,
-        targetAppId: alphabeticallyFirst.id,
-        mimeType: "text/plain",
-        content: "Ship it",
-        createdAt: "2026-07-28T12:02:00.000Z",
-      },
-    } as const;
-    state = reduceWorkspaceState(state, shareEvent);
-    expect(reduceWorkspaceState(state, shareEvent)).toBe(state);
-
-    state = reduceWorkspaceState(state, { type: "app.share.deleted", shareId: "share-a" });
-    expect(state.appShares).toEqual([]);
-    expect(reduceWorkspaceState(state, { type: "app.share.deleted", shareId: "share-a" })).toBe(
-      state,
-    );
-    state = reduceWorkspaceState(state, shareEvent);
-
-    state = reduceWorkspaceState(state, { type: "app.deleted", appId: app.id });
-    expect(state.apps).toEqual([alphabeticallyFirst]);
-    expect(state.workers).toEqual([]);
-    expect(state.appShares).toEqual([{ ...shareEvent.share, sourceAppId: null }]);
-    expect(state.appDefinitions).toEqual([definition]);
-
-    state = reduceWorkspaceState(state, {
-      type: "app.deleted",
-      appId: alphabeticallyFirst.id,
-    });
-    expect(state.appShares).toEqual([]);
-
-    state = reduceWorkspaceState(state, {
-      type: "app.unregistered",
-      definitionId: definition.id,
-    });
-    expect(state.appDefinitions).toEqual([]);
-    expect(
-      reduceWorkspaceState(state, {
-        type: "app.unregistered",
-        definitionId: definition.id,
-      }),
-    ).toBe(state);
+    expect(state.workers).toEqual([otherWorker, fileWorker]);
+    expect(reduceWorkspaceState(state, event)).toBe(state);
   });
 });
 

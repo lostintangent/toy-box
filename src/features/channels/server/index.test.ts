@@ -1,14 +1,20 @@
+import { getChannelSnapshot } from "./stream";
 import { channelAgent, createStoredChannel } from "@channels/server/testFixtures";
 import { beforeEach, expect, mock, onTestFinished, setSystemTime, spyOn, test } from "bun:test";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChannelEvent } from "@channels/model";
+import { reduceChannelState } from "@channels/model/reducer";
 import { createTestDatabase } from "@/server/database";
+import { detachManagedSession } from "@/server/managedSessions";
 import * as sessions from "@sessions/server/providers";
 import * as sessionRuntime from "@sessions/server/runtime";
 import { normalizeToolResult, type Tool } from "@sessions/server/tools/definition";
 import * as workspaceEvents from "@workspace/server/events";
+import { setSessionStatus } from "@workspace/server/state";
+import { deleteSessionState } from "@workspace/server/state/sessions";
+import startChannels from "./startup";
 
 let currentDb: Bun.SQL | undefined;
 
@@ -22,12 +28,12 @@ mock.module("@/server/database", () => ({
 const { ChannelDatabase } = await import("./database");
 const {
   createChannel,
+  deleteChannel,
   createChannelMember,
   createChannelMembersFromLead,
   editChannel,
   finishChannelAgentTurn,
-  markChannelDoneFromLead,
-  requestChannelUserAttentionFromLead,
+  markChannelRead,
   postChannelMessageFromSession,
   readChannelForSession,
   runChannelRoutine,
@@ -36,12 +42,11 @@ const {
   setChannelMessageReactionFromAgent,
   setChannelRoutineFromLead,
   shareChannelArtifactFromSession,
-  streamChannel,
   updateChannelMember,
   updateChannelFromLead,
   wakeDueChannelAgents,
 } = await import("./index");
-const { publishChannelEvent, releaseChannelEvents } = await import("./events");
+const { subscribeChannelEvents, releaseChannelEvents } = await import("./events");
 const { channelMemberTools, channelTools, createChannelMembersTool } = await import("./tools");
 
 beforeEach(() => {
@@ -74,7 +79,7 @@ test("attention uses normal messages and upserts, and a user reply also wakes th
   const channel = await createStoredChannel(channels, { name: "Attention", ...CHANNEL_DEFAULTS });
   const { member } = await channels.createMember(channelAgent(channel.id, "builder", "Builder"));
   const events: ChannelEvent[] = [];
-  const unsubscribe = await streamChannel(channel.id, 1, (event) => events.push(event));
+  const unsubscribe = subscribeChannelEvents(channel.id, (event) => events.push(event));
   const broadcasts = spyOn(workspaceEvents, "broadcast").mockImplementation(() => {});
   const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockResolvedValue({
     disposition: "started",
@@ -90,21 +95,18 @@ test("attention uses normal messages and upserts, and a user reply also wakes th
   await setChannelAgentStatus(channel.id, { status: "Finishing" });
   const request = await sendChannelMessageFromAgent(channel.id, {
     content: "Choose the next task.",
+    request: true,
   });
-  const notice = await requestChannelUserAttentionFromLead(channel.id, request.sequence);
-  const done = await markChannelDoneFromLead(channel.id);
-  expect(events.filter((event) => event.type === "message").map(({ message }) => message)).toEqual([
-    request,
-    notice,
-    done,
-  ]);
+  await updateChannelFromLead(channel.id, { tasks: [{ title: "Ship", status: "done" }] });
+  expect(
+    events.filter((event) => event.type === "message").map(({ message }) => message.content),
+  ).toEqual([request.content, { type: "tasks_completed" }]);
   expect(broadcasts.mock.calls.map(([event]) => event.type)).toEqual([
-    "channel.upserted",
     "channel.upserted",
     "channel.upserted",
   ]);
   expect(broadcasts.mock.lastCall?.[0]).toMatchObject({
-    channel: { hasPendingRequest: true, hasUnreadCompletion: true },
+    channel: { requestSequence: expect.any(Number), completedSequence: expect.any(Number) },
   });
   expect(deliver).not.toHaveBeenCalled();
   expect((await channels.getAgent(channel.id))?.status?.state).toBe("working");
@@ -115,7 +117,7 @@ test("attention uses normal messages and upserts, and a user reply also wakes th
     content: "@builder use blue.",
   });
   expect(deliver.mock.calls.map(([id]) => id).sort()).toEqual([channel.id, member.id].sort());
-  expect((await channels.getChannel(channel.id))?.hasPendingRequest).toBe(false);
+  expect((await channels.getChannel(channel.id))?.requestSequence).toBeNull();
   expect((await channels.getAgent(channel.id))?.status).toBeUndefined();
 });
 
@@ -156,7 +158,46 @@ test("creating a Channel starts its lead without creating a directory", async ()
   });
 });
 
-test("an addressed Channel post settles after its Agent wake is ready", async () => {
+test.each([false, true])(
+  "channel deletion publishes once and attempts all session cleanup (failure=%s)",
+  async (failCleanup) => {
+    const channels = await openChannels();
+    const channel = await createStoredChannel(channels, { name: "Delete", ...CHANNEL_DEFAULTS });
+    await channels.createMember(channelAgent(channel.id, "builder", "Builder"));
+    await channels.createMember(channelAgent(channel.id, "reviewer", "Reviewer"));
+    const agentIds = await channels.listAgentIds(channel.id);
+    const observed: unknown[] = [];
+    onTestFinished(subscribeChannelEvents(channel.id, (event) => observed.push(event)));
+    const broadcasts = spyOn(workspaceEvents, "broadcast").mockImplementation((event) => {
+      observed.push(event);
+    });
+    const cleanup = spyOn(sessionRuntime, "deleteSessionIfExists").mockImplementation(
+      async (id) => {
+        observed.push(id);
+        await detachManagedSession(id);
+        if (failCleanup && id === "builder") throw new Error("Provider cleanup failed");
+        return true;
+      },
+    );
+    onTestFinished(() => {
+      cleanup.mockRestore();
+      broadcasts.mockRestore();
+    });
+
+    const deletion = deleteChannel(channel.id);
+    if (failCleanup)
+      await expect(deletion).rejects.toThrow("Channel deleted; agent cleanup failed.");
+    else expect(await deletion).toBe(true);
+    expect(await deleteChannel(channel.id)).toBe(false);
+    expect(await channels.getChannel(channel.id)).toBeNull();
+    expect(await channels.listAgentIds(channel.id)).toEqual([]);
+    expect(observed[0]).toEqual({ type: "channel.deleted", channelId: channel.id });
+    expect(observed.slice(1)).toEqual(expect.arrayContaining(agentIds));
+    expect(observed).toHaveLength(agentIds.length + 1);
+  },
+);
+
+test("an addressed post settles after its Agent wake is ready and a duplicate never delivers", async () => {
   const channels = await openChannels();
 
   const channel = await createStoredChannel(channels, {
@@ -186,19 +227,22 @@ test("an addressed Channel post settles after its Agent wake is ready", async ()
   onTestFinished(() => deliver.mockRestore());
 
   let settled = false;
-  const post = postChannelMessageFromSession("coordinator-session", {
+  const input = {
     id: "review-request",
     channelId: channel.id,
     content: "@reviewer please inspect this.",
-  }).then(() => {
+  };
+  const post = postChannelMessageFromSession("coordinator-session", input).then(() => {
     settled = true;
   });
   await wakeStarted;
   expect(settled).toBe(false);
   releaseWake();
   await post;
-  expect(settled).toBe(true);
   expect((await channels.getMember(member.id))?.status).toBeUndefined();
+  await expect(postChannelMessageFromSession("coordinator-session", input)).rejects.toThrow();
+  expect(deliver).toHaveBeenCalledTimes(1);
+  expect((await channels.getChannel(channel.id))?.latestSequence).toBe(2);
 });
 
 test("an Agent can attach an image file to a durable Channel message", async () => {
@@ -327,10 +371,6 @@ test("only the Channel lead can create members", async () => {
   await expect(
     createChannelMembersFromLead(peers[0]!.id, [{ name: "Researcher" }]),
   ).rejects.toThrow("Only the channel lead can create members.");
-  expect((await channels.listMessagesAfter(channel.id)).at(-1)).toMatchObject({
-    sender: { type: "system" },
-    content: { type: "member_joined", member: { id: peers[1]!.id } },
-  });
 });
 
 test("channel tools use agentId across creation, context, profile updates, and waiting", async () => {
@@ -369,6 +409,8 @@ test("channel tools use agentId across creation, context, profile updates, and w
   expect(profile.agentId).toBe(member.agentId);
   expect(profile).not.toHaveProperty("id");
 
+  // Stored work left behind by an idle session must not appear as active work to peers.
+  await setChannelAgentStatus(member.agentId, { status: "Reviewing" });
   const context = await invoke("read_channel", { channelId });
   expect(context.lead.agentId).toBe(channel.lead.agentId);
   expect(context.members).toEqual([
@@ -430,7 +472,7 @@ test("a Session can seed and passively read Channel context", async () => {
   });
   await updateChannelFromLead(channel.id, {
     purpose: "Turn the evidence into a useful recommendation.",
-    checklist: [{ title: "Synthesize the evidence", status: "in_progress" }],
+    tasks: [{ title: "Synthesize the evidence", status: "in_progress" }],
     previewUrl: "http://127.0.0.1:3000",
   });
 
@@ -438,33 +480,24 @@ test("a Session can seed and passively read Channel context", async () => {
   expect(result).toMatchObject({
     channel: {
       purpose: "Turn the evidence into a useful recommendation.",
-      checklist: [{ title: "Synthesize the evidence", status: "in_progress" }],
+      tasks: [{ title: "Synthesize the evidence", status: "in_progress" }],
       previewUrl: "http://127.0.0.1:3000",
     },
     members: [],
-    messages: [
-      {
+    messages: expect.arrayContaining([
+      expect.objectContaining({
         id: "kickoff",
         sender: { type: "user" },
         attachments: [join(directory, "evidence.png")],
-      },
+      }),
+    ]),
+    artifacts: [
       {
-        sender: { type: "system" },
-        content: {
-          type: "artifact_shared",
-          artifact: { title: "Research brief" },
-        },
-      },
-      {
-        sender: { type: "system" },
-        content: {
-          type: "channel_purpose_changed",
-          actor: { type: "agent", agentId: channel.id },
-          purpose: "Turn the evidence into a useful recommendation.",
-        },
+        file: { kind: "machine", path: join(directory, "brief.md") },
+        title: "Research brief",
+        sharedAt: expect.any(String),
       },
     ],
-    artifacts: [{ path: join(directory, "brief.md"), title: "Research brief" }],
     hasMore: false,
   });
   expect((await channels.getChannel(channel.id))?.seenThrough).toBe(0);
@@ -478,17 +511,16 @@ test("a Session can seed and passively read Channel context", async () => {
   });
 });
 
-test("user channel edits publish separate messages and notify the lead once for a new purpose", async () => {
+test("committed edits and reads replay to the durable view and only a new purpose wakes the lead", async () => {
   const channels = await openChannels();
-  const { subscribeChannelEvents, releaseChannelEvents } = await import("./events");
-  const { subscribeWorkspaceEvents } = await import("@workspace/server/events");
   const channel = await createStoredChannel(channels, { name: "Planning", ...CHANNEL_DEFAULTS });
+  const initial = (await getChannelSnapshot(channel.id))!;
   const channelEvents: ChannelEvent[] = [];
   const workspaceUpdates: string[] = [];
   onTestFinished(subscribeChannelEvents(channel.id, (event) => channelEvents.push(event)));
   onTestFinished(() => releaseChannelEvents(channel.id));
   onTestFinished(
-    subscribeWorkspaceEvents((event) => {
+    workspaceEvents.subscribeWorkspaceEvents((event) => {
       if (event.type === "channel.upserted" && event.channel.id === channel.id) {
         workspaceUpdates.push(event.channel.name);
       }
@@ -511,6 +543,7 @@ test("user channel edits publish separate messages and notify the lead once for 
     ["message", 2],
   ]);
   expect(workspaceUpdates).toEqual(["Shipping"]);
+  expect(channelEvents[0]).toMatchObject({ message: { content: { actor: { type: "user" } } } });
   expect(deliver).toHaveBeenCalledWith(channel.id, {
     systemMessage: { type: "channel_message", senderName: "the user" },
     immediate: true,
@@ -523,6 +556,37 @@ test("user channel edits publish separate messages and notify the lead once for 
   await editChannel({ channelId: channel.id, name: "Shipped" });
   expect(channelEvents).toHaveLength(3);
   expect(workspaceUpdates).toEqual(["Shipping", "Shipped"]);
+
+  const beforeTasks = (await channels.getChannel(channel.id))!;
+  const tasks = [{ title: "Verify", status: "pending" }] as const;
+  await updateChannelFromLead(channel.id, { tasks: [...tasks] });
+  expect(await channels.getChannel(channel.id)).toMatchObject({
+    latestSequence: beforeTasks.latestSequence,
+    updatedAt: beforeTasks.updatedAt,
+  });
+  await updateChannelFromLead(channel.id, { previewUrl: "http://localhost:3000" });
+  const model = { provider: "copilot", name: "gpt-6" };
+  await editChannel({ channelId: channel.id, model });
+  await markChannelRead(channel.id, 100);
+  await markChannelRead(channel.id, 1);
+  await updateChannelFromLead(channel.id, {
+    tasks: [...tasks],
+    previewUrl: "http://localhost:3000",
+  });
+  await editChannel({ channelId: channel.id, model });
+  expect(channelEvents.slice(3).map(({ type, revision }) => [type, revision])).toEqual([
+    ["tasks", 4],
+    ["message", 5],
+    ["model", 6],
+    ["read", 7],
+  ]);
+  expect(channelEvents.at(-1)).toEqual({
+    type: "read",
+    revision: 7,
+    seenThrough: 4,
+  });
+  const projected = channelEvents.reduce(reduceChannelState, initial);
+  expect(projected).toEqual((await getChannelSnapshot(channel.id))!);
   expect(deliver).toHaveBeenCalledTimes(1);
 });
 
@@ -532,45 +596,26 @@ test("a lead directory assignment only saves metadata and publishes real changes
   onTestFinished(async () => {
     await rm(root, { recursive: true, force: true });
   });
-  const { subscribeChannelEvents } = await import("./events");
-  const { subscribeWorkspaceEvents } = await import("@workspace/server/events");
   const channel = await createStoredChannel(channels, { name: "Planning", ...CHANNEL_DEFAULTS });
-  const { member } = await channels.createMember(
-    channelAgent(channel.id, "builder-session", "Builder"),
-  );
   const events: ChannelEvent[] = [];
   const updates: string[] = [];
   onTestFinished(subscribeChannelEvents(channel.id, (event) => events.push(event)));
   onTestFinished(() => releaseChannelEvents(channel.id));
   onTestFinished(
-    subscribeWorkspaceEvents((event) => {
+    workspaceEvents.subscribeWorkspaceEvents((event) => {
       if (event.type === "channel.upserted" && event.channel.id === channel.id) {
         updates.push(event.channel.directory ?? "");
       }
     }),
   );
   const nextDirectory = join(root, "nested", "workspace");
-  const unauthorized = join(root, "unauthorized");
-
-  await expect(updateChannelFromLead(member.id, { directory: unauthorized })).rejects.toThrow(
-    "Only the channel lead",
-  );
-  await expect(stat(unauthorized)).rejects.toThrow();
-  expect(await updateChannelFromLead(channel.id, { directory: nextDirectory })).toEqual({
-    name: channel.name,
-    purpose: CHANNEL_DEFAULTS.purpose,
+  expect(await updateChannelFromLead(channel.id, { directory: nextDirectory })).toMatchObject({
     directory: nextDirectory,
-    checklist: [],
-    previewUrl: undefined,
   });
   await expect(stat(nextDirectory)).rejects.toThrow();
   await updateChannelFromLead(channel.id, { directory: nextDirectory });
-  expect(await updateChannelFromLead(channel.id, { directory: null })).toEqual({
-    name: channel.name,
-    purpose: CHANNEL_DEFAULTS.purpose,
-    checklist: [],
+  expect(await updateChannelFromLead(channel.id, { directory: null })).toMatchObject({
     directory: undefined,
-    previewUrl: undefined,
   });
   expect(events.map((event) => event.type)).toEqual(["message", "message"]);
   expect(updates).toEqual([nextDirectory, ""]);
@@ -578,8 +623,6 @@ test("a lead directory assignment only saves metadata and publishes real changes
 
 test("editing member metadata publishes a roster change only when something changed", async () => {
   const channels = await openChannels();
-  const { subscribeChannelEvents } = await import("./events");
-  const { subscribeWorkspaceEvents } = await import("@workspace/server/events");
   const channel = await createStoredChannel(channels, { name: "Review", ...CHANNEL_DEFAULTS });
   const { member } = await channels.createMember(
     channelAgent(channel.id, "reviewer-session", "Reviewer"),
@@ -589,8 +632,9 @@ test("editing member metadata publishes a roster change only when something chan
   onTestFinished(subscribeChannelEvents(channel.id, (event) => events.push(event)));
   onTestFinished(() => releaseChannelEvents(channel.id));
   onTestFinished(
-    subscribeWorkspaceEvents((event) => {
-      if (event.type === "channel.members.changed") rosterChanges++;
+    workspaceEvents.subscribeWorkspaceEvents((event) => {
+      if (event.type === "channel.member.upserted" || event.type === "channel.member.deleted")
+        rosterChanges++;
     }),
   );
 
@@ -623,19 +667,6 @@ test("a Channel Agent publishes focus and settles temporary turn state", async (
     sender: { type: "user" },
     content: "Review the protocol.",
   });
-  const second = await channels.appendMessage({
-    id: "message-2",
-    channelId: channel.id,
-    sender: { type: "user" },
-    content: "Implement the revision.",
-  });
-  const third = await channels.appendMessage({
-    id: "message-3",
-    channelId: channel.id,
-    sender: { type: "user" },
-    content: "Keep this decision.",
-  });
-
   await setChannelAgentStatus(member.id, {
     status: "Reviewing the protocol",
     lookingAt: first.message.sequence,
@@ -649,10 +680,10 @@ test("a Channel Agent publishes focus and settles temporary turn state", async (
   });
   await setChannelAgentStatus(member.id, {
     status: "Implementing the revision",
-    workingOn: second.message.sequence,
+    workingOn: first.message.sequence,
   });
   await setChannelMessageReactionFromAgent(member.id, {
-    sequence: third.message.sequence,
+    sequence: first.message.sequence,
     reaction: "love",
   });
   await finishChannelAgentTurn(member.id, "implementation feedback");
@@ -661,96 +692,61 @@ test("a Channel Agent publishes focus and settles temporary turn state", async (
     status: { state: "waiting", text: "implementation feedback" },
   });
   const messages = await channels.listMessagesAfter(channel.id);
-  expect(messages.find(({ id }) => id === first.message.id)?.reactions).toBeUndefined();
-  expect(messages.find(({ id }) => id === second.message.id)?.reactions).toBeUndefined();
-  expect(messages.find(({ id }) => id === third.message.id)?.reactions).toEqual([
+  expect(messages.find(({ id }) => id === first.message.id)?.reactions).toEqual([
     { agentId: member.id, reaction: "love" },
   ]);
-  expect(await readChannelForSession(channel.id)).toMatchObject({
-    members: [
-      {
-        agentId: member.id,
-        status: { state: "waiting", text: "implementation feedback" },
-      },
-    ],
-  });
-
   await setChannelAgentStatus(member.id, { status: "Checking the revision" });
   await finishChannelAgentTurn(member.id);
   expect((await channels.getMember(member.id))?.status).toBeUndefined();
 });
 
-test("a Channel stream orders and deduplicates published transitions", async () => {
+test("session completion and startup clear working status, preserving waits and subsequent turns", async () => {
   const channels = await openChannels();
-
-  const channel = await createStoredChannel(channels, { name: "Planning", ...CHANNEL_DEFAULTS });
-  const received: number[] = [];
-  const unsubscribe = await streamChannel(channel.id, 0, (event) => {
-    received.push(event.revision);
-  });
+  const channel = await createStoredChannel(channels, { name: "Activity", ...CHANNEL_DEFAULTS });
+  const { member } = await channels.createMember(channelAgent(channel.id, "active", "Active"));
+  const { member: waiting } = await channels.createMember(
+    channelAgent(channel.id, "waiting", "Waiting"),
+  );
+  await setChannelAgentStatus(channel.id, { status: "Left over from shutdown" });
+  await setChannelAgentStatus(member.id, { status: "Still running" });
+  await finishChannelAgentTurn(waiting.id, "CI", 20);
+  const wait = (await channels.getAgent(waiting.id))!.status;
+  setSessionStatus(member.id, "running");
   onTestFinished(() => {
-    unsubscribe();
-    releaseChannelEvents(channel.id);
+    deleteSessionState(member.id);
+    deleteSessionState(waiting.id);
+    deleteSessionState(channel.id);
   });
-
-  const first = await channels.appendMessage({
-    id: "first",
-    channelId: channel.id,
-    sender: { type: "user" },
-    content: "First",
-  });
-  const second = await channels.appendMessage({
-    id: "second",
-    channelId: channel.id,
-    sender: { type: "user" },
-    content: "Second",
-  });
-  const firstEvent = {
-    type: "message",
-    revision: first.revision,
-    message: first.message,
-  } as const;
-  const secondEvent = {
-    type: "message",
-    revision: second.revision,
-    message: second.message,
-  } as const;
-  publishChannelEvent(channel.id, secondEvent);
-  publishChannelEvent(channel.id, secondEvent);
-  publishChannelEvent(channel.id, firstEvent);
-
-  expect(received).toEqual([first.revision, second.revision]);
-});
-
-test("a Channel stream recovers with bounded latest history", async () => {
-  const channels = await openChannels();
-
-  const channel = await createStoredChannel(channels, {
-    name: "Long-running room",
-    ...CHANNEL_DEFAULTS,
-  });
-  for (let sequence = 1; sequence <= 101; sequence++) {
-    await channels.appendMessage({
-      id: `message-${sequence}`,
-      channelId: channel.id,
-      sender: { type: "user" },
-      content: `Message ${sequence}`,
-    });
-  }
-
   const events: ChannelEvent[] = [];
-  const unsubscribe = await streamChannel(channel.id, 0, (event) => events.push(event));
-  onTestFinished(() => {
-    unsubscribe();
-    releaseChannelEvents(channel.id);
-  });
+  onTestFinished(subscribeChannelEvents(channel.id, (event) => events.push(event)));
+  onTestFinished(await startChannels());
+  expect((await channels.getAgent(channel.id))?.status).toBeUndefined();
+  expect((await channels.getAgent(member.id))?.status?.state).toBe("working");
+  expect((await channels.getAgent(waiting.id))?.status).toEqual(wait);
 
-  const event = events[0];
-  if (event?.type !== "state") throw new Error("Expected state recovery.");
-  expect(events).toHaveLength(1);
-  expect(event.state.messages).toHaveLength(100);
-  expect(event.state.messages[0]?.sequence).toBe(2);
-  expect(event.state.messages.at(-1)?.sequence).toBe(101);
+  for (const status of ["idle", "unread"] as const) {
+    await setChannelAgentStatus(member.id, { status: "Finishing" });
+    const cleared = Promise.withResolvers<void>();
+    const unsubscribe = subscribeChannelEvents(channel.id, (event) => {
+      if (event.type === "status" && event.agentId === member.id && !event.status)
+        cleared.resolve();
+    });
+    setSessionStatus(member.id, status);
+    await cleared.promise;
+    unsubscribe();
+    expect((await channels.getAgent(member.id))?.status).toBeUndefined();
+  }
+  setSessionStatus(waiting.id, "idle");
+  await setChannelAgentStatus(member.id, { status: "Old turn" });
+  setSessionStatus(member.id, "idle");
+  setSessionStatus(member.id, "running");
+  await setChannelAgentStatus(member.id, { status: "New turn" });
+  expect((await channels.getAgent(member.id))?.status).toEqual({
+    state: "working",
+    text: "New turn",
+  });
+  expect((await channels.getAgent(waiting.id))?.status).toEqual(wait);
+  expect(events.every(({ type }) => type === "status")).toBe(true);
 });
 
 function spyOnDelivery() {
@@ -821,7 +817,7 @@ test("a due routine privately wakes its lead without adding to the transcript", 
   const channels = await openChannels();
   const channel = await createStoredChannel(channels, { name: "Watch", ...CHANNEL_DEFAULTS });
   const events: ChannelEvent[] = [];
-  const unsubscribe = await streamChannel(channel.id, 0, (event) => events.push(event));
+  const unsubscribe = subscribeChannelEvents(channel.id, (event) => events.push(event));
   onTestFinished(() => {
     unsubscribe();
     releaseChannelEvents(channel.id);
@@ -836,9 +832,9 @@ test("a due routine privately wakes its lead without adding to the transcript", 
   const { latestSequence } = (await channels.getChannel(channel.id))!;
   await wakeDueChannelAgents(new Date(Date.now() + 61 * 60_000));
 
-  expect(events.map((event) => event.type === "message" && event.message.content)).toEqual([
-    { type: "routine_scheduled", routine },
-  ]);
+  expect(
+    events.filter((event) => event.type === "message").map((event) => event.message.content),
+  ).toEqual([{ type: "routine_scheduled", routine }]);
   expect(deliver.mock.calls).toEqual([
     [
       channel.id,

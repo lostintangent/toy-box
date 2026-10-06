@@ -1,34 +1,35 @@
 import {
   agentHandleFromName,
-  channelAttachmentSchema,
   channelAgentMetadataSchema,
-  channelCompletionBlockers,
-  channelChecklistItemSchema,
+  isChannelSystemMessage,
+  channelTaskSchema,
+  channelTasksComplete,
   channelSystemMessageContentSchema,
   CHANNEL_LEAD_PROFILE,
-  unassignChannelChecklist,
+  unassignChannelTasks,
   type Channel,
+  type ChannelEvent as ClientChannelEvent,
   type ChannelChanges,
   type ChannelMessageActor,
   type ChannelMemberChanges,
   type ChannelAgentStatus,
   type ChannelArtifact,
   type ChannelList,
+  channelMemberIdentity,
   type ChannelMember,
-  type ChannelMessage,
-  type ChannelConversationMessage,
+  type ChannelMessage as ClientChannelMessage,
+  type ChannelConversationMessage as ClientConversationMessage,
   type ChannelReaction,
   type ChannelMessageSender,
-  type ChannelState,
   type ChannelSystemMessageContent,
-  type ChannelSystemMessage,
-  type ChannelChecklistItem,
+  type ChannelTask,
   type ChannelRoutine,
   type CreateChannelInput,
   type EditChannelInput,
   type SetChannelRoutineInput,
   type UpdateChannelInput,
 } from "@channels/model";
+import { reduceChannel } from "@channels/model/reducer";
 import { machineFile, sessionFile } from "@files/model";
 import { modelConfigurationSchema } from "@providers/model";
 import { inStateTransaction } from "@/server/database";
@@ -43,22 +44,39 @@ import {
   isChannelLead,
 } from "@channels/model/worker";
 
+import { z } from "zod";
+import { attachmentSchema } from "@/shared/attachments/model";
+
+const channelAttachmentSchema = z.union([attachmentSchema, z.string().min(1).max(4_096)]);
+export type StoredAttachment = z.output<typeof channelAttachmentSchema>;
+export type StoredChannelMessage = ClientChannelMessage<StoredAttachment>;
+type ChannelMessage = StoredChannelMessage;
+type ChannelConversationMessage = ClientConversationMessage<StoredAttachment>;
+type ChannelEvent = ClientChannelEvent<StoredAttachment>;
+
+/** A committed public change; catalog metadata is present only when it changed. */
+export type ChannelChange = {
+  channelId: string;
+  events: readonly ChannelEvent[];
+  channel?: Channel;
+};
+
 /** Durable Channels, ordered messages, agent read positions, and shared file references. */
 export class ChannelDatabase {
   constructor(private readonly db: Bun.SQL) {}
 
   async listChannels(): Promise<ChannelList> {
-    const [channels, workers] = await Promise.all([
-      readChannels(this.db),
+    const [rows, workers] = await Promise.all([
+      readChannelRows(this.db),
       new WorkerDatabase(this.db).list("channel"),
     ]);
-    const channelIds = new Set(channels.map(({ id }) => id));
+    const channelIds = new Set(rows.map(({ id }) => id));
     return {
-      channels,
+      channels: rows.map(channelFromRow),
       members: workers.flatMap((worker) =>
         !channelIds.has(worker.channelId) || isChannelLead(worker)
           ? []
-          : [channelMemberFromWorker(worker)],
+          : [channelMemberIdentity(channelMemberFromWorker(worker))],
       ),
     };
   }
@@ -72,7 +90,7 @@ export class ChannelDatabase {
       await db`
         INSERT INTO channels ${db({
           id,
-          ...channelColumns({ ...input, checklist: [] }),
+          ...channelColumns({ ...input, tasks: [] }),
           updated_at: lead.createdAt,
         })}
       `;
@@ -82,7 +100,8 @@ export class ChannelDatabase {
   }
 
   async getChannel(channelId: string): Promise<Channel | null> {
-    return (await readChannels(this.db, channelId))[0] ?? null;
+    const [row] = await readChannelRows(this.db, channelId);
+    return row ? channelFromRow(row) : null;
   }
 
   async editChannel({ channelId, ...changes }: EditChannelInput) {
@@ -92,7 +111,7 @@ export class ChannelDatabase {
     });
   }
 
-  async deleteChannel(channelId: string): Promise<boolean> {
+  async deleteChannel(channelId: string): Promise<string[] | null> {
     return inStateTransaction(this.db, async (db) => {
       const workerDatabase = new WorkerDatabase(db);
       const workers = await workerDatabase.list({ type: "channel", channelId });
@@ -100,37 +119,49 @@ export class ChannelDatabase {
       const rows = await db<{ id: string }[]>`
         DELETE FROM channels WHERE id = ${channelId} RETURNING id
       `;
-      return rows.length > 0;
+      return rows.length ? workers.map(({ sessionId }) => sessionId) : null;
     });
   }
 
-  async markUserSeen(channelId: string, sequence: number): Promise<Channel | null> {
+  async markUserSeen(channelId: string, sequence: number) {
     return inStateTransaction(this.db, async (db) => {
-      const [row] = await db<{ id: string }[]>`
+      const [row] = await db<ChannelRow[]>`
         UPDATE channels
-        SET seen_through = MIN(latest_sequence, MAX(seen_through, ${sequence}))
+        SET seen_through = MIN(latest_sequence, MAX(seen_through, ${sequence})),
+          revision = revision + 1
         WHERE id = ${channelId} AND seen_through < MIN(latest_sequence, ${sequence})
-        RETURNING id
+        RETURNING *
       `;
-      return row ? requireChannel(db, channelId) : null;
+      if (!row) return null;
+      const channel = channelFromRow(row);
+      return {
+        channelId,
+        channel,
+        events: [
+          {
+            type: "read" as const,
+            revision: row.revision,
+            seenThrough: channel.seenThrough,
+          },
+        ],
+      };
     });
   }
 
-  async getRevision(channelId: string): Promise<number | null> {
-    const [row] = await this.db<Pick<ChannelRow, "revision">[]>`
-      SELECT revision FROM channels WHERE id = ${channelId}
-    `;
-    return row?.revision ?? null;
-  }
-
-  async getState(channelId: string, messageLimit: number): Promise<ChannelState | null> {
+  /** The transcript, human cursor, and pending request describe the same durable instant. */
+  async getSnapshot(channelId: string, messageLimit: number) {
     return inStateTransaction(this.db, async (db) => {
-      const [row] = await db<ChannelRow[]>`SELECT * FROM channels WHERE id = ${channelId}`;
+      const [row] = await readChannelRows(db, channelId);
       if (!row) return null;
-      const workers = await new WorkerDatabase(db).list({ type: "channel", channelId });
+      const channel = channelFromRow(row);
       return {
+        channel,
+        request:
+          channel.requestSequence === null
+            ? null
+            : await readRequest(db, channelId, channel.requestSequence),
         revision: row.revision,
-        ...channelRoster(workers),
+        ...channelRoster(await new WorkerDatabase(db).list({ type: "channel", channelId })),
         messages: await listMessagesBefore(db, channelId, undefined, messageLimit),
         artifacts: await listArtifacts(db, channelId),
         routines: await listRoutines(db, channelId),
@@ -138,12 +169,24 @@ export class ChannelDatabase {
     });
   }
 
+  /** An atomic replay position and presence inputs, without reading public history. */
   async getRoster(channelId: string) {
-    return channelRoster(await new WorkerDatabase(this.db).list({ type: "channel", channelId }));
+    return inStateTransaction(this.db, async (db) => {
+      const [channel] = await db<{ revision: number }[]>`
+        SELECT revision FROM channels WHERE id = ${channelId}
+      `;
+      if (!channel) return null;
+      return {
+        revision: channel.revision,
+        ...channelRoster(await new WorkerDatabase(db).list({ type: "channel", channelId })),
+      };
+    });
   }
 
   async listMembers(channelId: string): Promise<ChannelMember[]> {
-    return listMembers(this.db, channelId);
+    return channelMembersFromWorkers(
+      await new WorkerDatabase(this.db).list({ type: "channel", channelId }),
+    );
   }
 
   async getMember(agentId: string) {
@@ -157,7 +200,7 @@ export class ChannelDatabase {
 
   async createMember(worker: Extract<Worker, { type: "channel" }>) {
     return inStateTransaction(this.db, async (db) => {
-      await requireChannel(db, worker.channelId);
+      const channel = await requireChannel(db, worker.channelId);
       await assertMemberNameAvailable(db, worker.channelId, worker.name);
       await new WorkerDatabase(db).create(worker);
       const member = channelMemberFromWorker(worker);
@@ -165,7 +208,7 @@ export class ChannelDatabase {
         type: "member_joined",
         member,
       });
-      return { ...change, member, channel: await requireChannel(db, worker.channelId) };
+      return { ...(await recordChannelChange(db, channel, [change])), member };
     });
   }
 
@@ -177,16 +220,22 @@ export class ChannelDatabase {
       const metadata = applyPatch(current, profile);
       const member = channelMemberFromWorker({ ...worker, name }, metadata);
       if (name === worker.name && Bun.deepEquals(metadata, current)) {
-        return { changed: false as const, member };
+        return { channelId: worker.channelId, events: [], member };
       }
       if (name !== worker.name) {
         await assertMemberNameAvailable(db, worker.channelId, name, worker.sessionId);
       }
       await new WorkerDatabase(db).update(worker.sessionId, { name, metadata });
       return {
-        changed: true as const,
         member,
-        revision: await advanceRevision(db, worker.channelId),
+        channelId: worker.channelId,
+        events: [
+          {
+            type: "member" as const,
+            member,
+            revision: await advanceRevision(db, worker.channelId),
+          },
+        ],
       };
     });
   }
@@ -206,68 +255,22 @@ export class ChannelDatabase {
     return changeAgentStatus(this.db, agentId, status, required);
   }
 
-  async clearWaitingAgentStatus(agentId: string) {
-    return changeAgentStatus(this.db, agentId, undefined, false, "waiting");
+  async clearAgentStatus(agentId: string, state: ChannelAgentStatus["state"]) {
+    return changeAgentStatus(this.db, agentId, undefined, false, state);
   }
 
   async updateChannel(leadId: string, input: UpdateChannelInput) {
     return inStateTransaction(this.db, async (db) => {
       const channel = await requireLeadChannel(db, leadId);
-      if (input.checklist) {
+      if (input.tasks) {
         const agentIds = new Set(
           (await new WorkerDatabase(db).list({ type: "channel", channelId: channel.id })).map(
             ({ sessionId }) => sessionId,
           ),
         );
-        assertChecklistOwners(input.checklist, agentIds);
+        assertTaskOwners(input.tasks, agentIds);
       }
       return updateChannelFields(db, channel, input, { type: "agent", agentId: leadId });
-    });
-  }
-
-  async markDone(leadId: string) {
-    return inStateTransaction(this.db, async (db) => {
-      const channel = await requireLeadChannel(db, leadId);
-      const blockers = channelCompletionBlockers(
-        channel.checklist,
-        await listMembers(db, channel.id),
-      );
-      if (blockers.length) {
-        throw new Error(
-          `Cannot mark channel done:\n${blockers.map((item) => `- ${item}`).join("\n")}`,
-        );
-      }
-      const change = await appendSystemMessage(db, channel.id, {
-        type: "channel_marked_done",
-      });
-      return { ...change, channel: await requireChannel(db, channel.id) };
-    });
-  }
-
-  async requestUserAttention(leadId: string, requestSequence: number) {
-    return inStateTransaction(this.db, async (db) => {
-      const channel = await requireLeadChannel(db, leadId);
-      const [request] = await db<{ id: string }[]>`
-        SELECT id FROM channel_messages
-        WHERE channel_id = ${channel.id} AND sequence = ${requestSequence}
-          AND sender_type = 'agent'
-      `;
-      if (!request) throw new Error("Reference an agent message in this channel.");
-      const [existing] = await db<ChannelMessageRow[]>`
-        SELECT * FROM channel_messages
-        WHERE channel_id = ${channel.id} AND sender_type = 'system'
-          AND json_extract(content, '$.type') = 'user_attention_requested'
-          AND json_extract(content, '$.requestSequence') = ${requestSequence}
-        ORDER BY sequence DESC LIMIT 1
-      `;
-      if (existing) {
-        return { changed: false as const, channel, message: messageFromRow(existing, []) };
-      }
-      const change = await appendSystemMessage(db, channel.id, {
-        type: "user_attention_requested",
-        requestSequence,
-      });
-      return { changed: true as const, ...change, channel: await requireChannel(db, channel.id) };
     });
   }
 
@@ -278,29 +281,19 @@ export class ChannelDatabase {
       if (!worker || isChannelLead(worker)) return null;
       const member = channelMemberFromWorker(worker);
       if (!(await workers.delete(agentId))) return null;
-      const [channel] = await db<Pick<ChannelRow, "checklist">[]>`
-        SELECT checklist FROM channels WHERE id = ${member.channelId}
-      `;
-      if (!channel) throw new Error("Channel not found.");
-      const checklist = unassignChannelChecklist(
-        channelChecklistItemSchema.array().parse(JSON.parse(channel.checklist)),
-        agentId,
-      );
-      const serializedChecklist = JSON.stringify(checklist);
-      if (serializedChecklist !== channel.checklist) {
+      const channel = await requireChannel(db, member.channelId);
+      const { tasks } = channel;
+      const unassigned = unassignChannelTasks(tasks, agentId);
+      if (!Bun.deepEquals(unassigned, tasks)) {
         await db`
-          UPDATE channels SET checklist = ${serializedChecklist} WHERE id = ${member.channelId}
+          UPDATE channels SET tasks = ${JSON.stringify(unassigned)} WHERE id = ${member.channelId}
         `;
       }
       const change = await appendSystemMessage(db, member.channelId, {
         type: "member_left",
         member,
       });
-      return {
-        ...change,
-        member,
-        channel: await requireChannel(db, member.channelId),
-      };
+      return { ...(await recordChannelChange(db, channel, [change])), member };
     });
   }
 
@@ -332,22 +325,50 @@ export class ChannelDatabase {
     return listMessagesBefore(this.db, channelId, beforeSequence, limit);
   }
 
+  /** History and reactions share a revision, so clients can reject an overtaken page. */
+  async getHistory(channelId: string, beforeSequence: number) {
+    return inStateTransaction(this.db, async (db) => {
+      const [channel] = await db<{ revision: number }[]>`
+        SELECT revision FROM channels WHERE id = ${channelId}
+      `;
+      return channel
+        ? {
+            revision: channel.revision,
+            messages: await listMessagesBefore(db, channelId, beforeSequence),
+          }
+        : null;
+    });
+  }
+
+  /** Appends a user or Agent message. The lead can flag its own message as a request for the user. */
   async appendMessage({
     channelId,
     attachments,
+    request,
     ...message
-  }: Omit<ChannelConversationMessage, "sequence" | "timestamp" | "reactions"> & {
+  }: Omit<ChannelConversationMessage, "sequence" | "timestamp" | "reactions" | "request"> & {
     channelId: string;
+    request?: boolean;
   }) {
+    // A lead's Agent ID is its Channel's ID.
+    if (request && !(message.sender.type === "agent" && message.sender.agentId === channelId)) {
+      throw new Error("Only the channel lead can request input.");
+    }
     return inStateTransaction(this.db, async (db) => {
+      const channel = await requireChannel(db, channelId);
       const acknowledgedRequest =
-        message.sender.type === "user" && (await requireChannel(db, channelId)).hasPendingRequest;
+        message.sender.type === "user" && channel.requestSequence !== null;
       const change = await appendMessage(db, channelId, (position) => ({
         ...message,
         ...position,
+        ...(request ? { request: true as const } : {}),
         ...(attachments?.length ? { attachments } : {}),
       }));
-      return { ...change, acknowledgedRequest, channel: await requireChannel(db, channelId) };
+      return {
+        ...(await recordChannelChange(db, channel, [change])),
+        message: change.message,
+        acknowledgedRequest,
+      };
     });
   }
 
@@ -386,7 +407,19 @@ export class ChannelDatabase {
         if (!row) throw new Error("React to a user or Agent message in this Channel.");
         reaction = { agentId: row.agent_id, reaction: input.reaction };
       }
-      return { reaction, revision: await advanceRevision(db, input.channelId) };
+      return {
+        channelId: input.channelId,
+        reaction,
+        events: [
+          {
+            type: "reaction" as const,
+            sequence: input.sequence,
+            agentId: input.agentId,
+            reaction: input.reaction,
+            revision: await advanceRevision(db, input.channelId),
+          },
+        ],
+      };
     });
   }
 
@@ -413,18 +446,20 @@ export class ChannelDatabase {
         WHERE channel_artifacts.title <> excluded.title
         RETURNING kind, session_id, path, title, created_at
       `;
-      if (!row) return { artifact: { file: input.file, title: input.title } };
+      if (!row)
+        return {
+          channelId: input.channelId,
+          events: [],
+          artifact: { file: input.file, title: input.title },
+        };
+      const channel = await requireChannel(db, input.channelId);
       const artifact = artifactFromRow(row);
       const change = await appendSystemMessage(db, input.channelId, {
         type: "artifact_shared",
         actor: input.actor,
         artifact: { file: artifact.file, title: artifact.title },
       });
-      return {
-        ...change,
-        artifact,
-        channel: await requireChannel(db, input.channelId),
-      };
+      return { ...(await recordChannelChange(db, channel, [change])), artifact };
     });
   }
 
@@ -445,7 +480,7 @@ export class ChannelDatabase {
         `;
         if (!current) throw new Error("Routine not found in this channel.");
         if (Bun.deepEquals(current, routine)) {
-          return { changed: false as const, routine };
+          return { channelId: channel.id, events: [], routine };
         }
         await db`
           UPDATE channel_routines SET ${db({ ...input, next_at: nextAt })} WHERE id = ${routineId}
@@ -464,12 +499,7 @@ export class ChannelDatabase {
         type: routineId ? "routine_edited" : "routine_scheduled",
         routine,
       });
-      return {
-        changed: true as const,
-        ...change,
-        routine,
-        channel: await requireChannel(db, channel.id),
-      };
+      return { ...(await recordChannelChange(db, channel, [change])), routine };
     });
   }
 
@@ -481,11 +511,12 @@ export class ChannelDatabase {
         RETURNING id, title, schedule, prompt
       `;
       if (!row) return null;
+      const channel = await requireChannel(db, channelId);
       const change = await appendSystemMessage(db, channelId, {
         type: "routine_deleted",
         routine: row,
       });
-      return { ...change, channel: await requireChannel(db, channelId) };
+      return recordChannelChange(db, channel, [change]);
     });
   }
 
@@ -507,7 +538,11 @@ export class ChannelDatabase {
         });
         const revision = await advanceRevision(db, worker.channelId);
         followUps.push({
-          change: { agentId: worker.sessionId, channelId: worker.channelId, revision },
+          agentId: worker.sessionId,
+          change: {
+            channelId: worker.channelId,
+            events: [{ type: "status" as const, agentId: worker.sessionId, revision }],
+          },
           waitingFor: status.text,
         });
       }
@@ -556,6 +591,27 @@ async function advanceRevision(db: Bun.SQL, channelId: string): Promise<number> 
   return channel.revision;
 }
 
+/** Fold this transaction's events into metadata and persist their attention cursors. */
+async function recordChannelChange<Event extends ChannelEvent>(
+  db: Bun.SQL,
+  previous: Channel,
+  events: Event[],
+) {
+  const channel = events.reduce(reduceChannel, previous);
+  if (
+    channel.requestSequence !== previous.requestSequence ||
+    channel.completedSequence !== previous.completedSequence
+  ) {
+    await db`
+      UPDATE channels
+      SET request_sequence = ${channel.requestSequence},
+        completed_sequence = ${channel.completedSequence}
+      WHERE id = ${channel.id}
+    `;
+  }
+  return { channelId: channel.id, events, channel };
+}
+
 async function updateChannelFields(
   db: Bun.SQL,
   current: Channel,
@@ -566,8 +622,9 @@ async function updateChannelFields(
     throw new Error("The lead's provider cannot change without losing its session history.");
   }
   const next = applyPatch(current, changes);
+  const events: ChannelEvent[] = [];
   if (Bun.deepEquals(next, current)) {
-    return { changed: false as const, channel: current, messages: [] };
+    return { ...(await recordChannelChange(db, current, events)), purposeChanged: false };
   }
   const updates: ChannelSystemMessageContent[] = [];
   if (next.name !== current.name) updates.push({ type: "channel_renamed", actor, name: next.name });
@@ -575,30 +632,52 @@ async function updateChannelFields(
     updates.push({ type: "channel_purpose_changed", actor, purpose: next.purpose ?? null });
   if (next.directory !== current.directory)
     updates.push({ type: "channel_directory_changed", actor, directory: next.directory ?? null });
-  // User edits count as activity; lead checklist and preview changes stay quiet.
+  if (next.previewUrl !== current.previewUrl)
+    updates.push({ type: "preview_changed", actor, previewUrl: next.previewUrl ?? null });
+  if (!channelTasksComplete(current.tasks) && channelTasksComplete(next.tasks))
+    updates.push({ type: "tasks_completed" });
+  // User edits count as activity; task revisions alone stay quiet.
+  const updatedAt = actor.type === "user" ? new Date().toISOString() : current.updatedAt;
   await db`
     UPDATE channels SET ${db({
       ...channelColumns(next),
-      updated_at: actor.type === "user" ? new Date().toISOString() : current.updatedAt,
+      updated_at: updatedAt,
     })}
     WHERE id = ${current.id}
   `;
-  const messages: { revision: number; message: ChannelSystemMessage }[] = [];
-  for (const content of updates) {
-    messages.push(await appendSystemMessage(db, current.id, content));
+  if (!Bun.deepEquals(next.tasks, current.tasks)) {
+    events.push({
+      type: "tasks",
+      revision: await advanceRevision(db, current.id),
+      tasks: next.tasks,
+    });
   }
-  return { changed: true as const, channel: await requireChannel(db, current.id), messages };
+  if (!Bun.deepEquals(next.model, current.model)) {
+    events.push({
+      type: "model",
+      revision: await advanceRevision(db, current.id),
+      model: next.model,
+      updatedAt,
+    });
+  }
+  for (const content of updates) {
+    events.push(await appendSystemMessage(db, current.id, content));
+  }
+  return {
+    ...(await recordChannelChange(db, current, events)),
+    purposeChanged: next.purpose !== current.purpose,
+  };
 }
 
 function channelColumns(
-  channel: Pick<Channel, "name" | "purpose" | "directory" | "model" | "checklist" | "previewUrl">,
+  channel: Pick<Channel, "name" | "purpose" | "directory" | "model" | "tasks" | "previewUrl">,
 ) {
   return {
     name: channel.name,
     purpose: channel.purpose ?? null,
     directory: channel.directory ?? null,
     model: JSON.stringify(channel.model),
-    checklist: JSON.stringify(channel.checklist),
+    tasks: JSON.stringify(channel.tasks),
     preview_url: channel.previewUrl ?? null,
   };
 }
@@ -636,6 +715,7 @@ async function appendMessage<Message extends ChannelMessage>(
     INSERT INTO channel_messages ${db({ channel_id: channelId, ...messageColumns(message) })}
   `;
   return {
+    type: "message" as const,
     message,
     revision: channel.revision,
   };
@@ -651,6 +731,7 @@ function messageColumns(message: ChannelMessage) {
     content:
       typeof message.content === "string" ? message.content : JSON.stringify(message.content),
     attachments: message.attachments?.length ? JSON.stringify(message.attachments) : null,
+    request: message.request ? 1 : 0,
   };
 }
 
@@ -674,10 +755,15 @@ async function changeAgentStatus(
       metadata: applyPatch(metadata, { status: status ?? null }),
     });
     return {
-      agentId,
       channelId: worker.channelId,
-      status,
-      revision: await advanceRevision(transaction, worker.channelId),
+      events: [
+        {
+          type: "status" as const,
+          agentId,
+          status,
+          revision: await advanceRevision(transaction, worker.channelId),
+        },
+      ],
     };
   });
 }
@@ -688,10 +774,17 @@ async function getAgent(db: Bun.SQL, agentId: string) {
   return channelAgentFromWorker(worker);
 }
 
-async function listMembers(db: Bun.SQL, channelId: string): Promise<ChannelMember[]> {
-  return channelMembersFromWorkers(
-    await new WorkerDatabase(db).list({ type: "channel", channelId }),
-  );
+/** Request content is retained even when its message has left the snapshot window. */
+async function readRequest(
+  db: Bun.SQL,
+  channelId: string,
+  sequence: number,
+): Promise<ChannelConversationMessage | null> {
+  const rows = await db<ChannelMessageRow[]>`
+    SELECT * FROM channel_messages WHERE channel_id = ${channelId} AND sequence = ${sequence}
+  `;
+  const message = (await hydrateMessages(db, channelId, rows))[0];
+  return message && !isChannelSystemMessage(message) ? message : null;
 }
 
 async function listMessagesBefore(
@@ -752,11 +845,13 @@ type ChannelRow = {
   purpose: string | null;
   directory: string | null;
   model: string;
-  checklist: string;
+  tasks: string;
   preview_url: string | null;
   latest_sequence: number;
   revision: number;
   seen_through: number;
+  request_sequence: number | null;
+  completed_sequence: number | null;
   updated_at: string;
 };
 
@@ -767,6 +862,7 @@ type ChannelMessageRow = {
   sender_type: ChannelMessageSender["type"];
   sender_agent_id: string | null;
   content: string;
+  request: number;
   attachments: string | null;
   timestamp: string;
 };
@@ -782,49 +878,28 @@ type ChannelArtifactRow = { path: string; title: string; created_at: string } & 
   | { kind: "machine"; session_id: null }
 );
 
-async function readChannels(db: Bun.SQL, channelId?: string): Promise<Channel[]> {
-  const where = channelId === undefined ? db`` : db`WHERE channel.id = ${channelId}`;
-  const rows = await db<
-    (ChannelRow & { has_unread_completion: number; has_pending_request: number })[]
-  >`
-    SELECT channel.*,
-      EXISTS (
-        SELECT 1 FROM channel_messages AS message
-        WHERE message.channel_id = channel.id AND message.sender_type = 'system'
-          AND message.sequence > channel.seen_through
-          AND json_extract(message.content, '$.type') = 'channel_marked_done'
-      ) AS has_unread_completion,
-      EXISTS (
-        SELECT 1 FROM channel_messages AS message
-        WHERE message.channel_id = channel.id AND message.sender_type = 'system'
-          AND json_extract(message.content, '$.type') = 'user_attention_requested'
-          AND json_extract(message.content, '$.requestSequence') > COALESCE((
-            SELECT MAX(response.sequence) FROM channel_messages AS response
-            WHERE response.channel_id = channel.id AND response.sender_type = 'user'
-          ), 0)
-      ) AS has_pending_request
-    FROM channels AS channel
+async function readChannelRows(db: Bun.SQL, channelId?: string) {
+  const where = channelId === undefined ? db`` : db`WHERE id = ${channelId}`;
+  return db<ChannelRow[]>`
+    SELECT * FROM channels
     ${where}
-    ORDER BY channel.updated_at DESC, channel.id
+    ORDER BY updated_at DESC, id
   `;
-  return rows.map(channelFromRow);
 }
 
-function channelFromRow(
-  row: ChannelRow & { has_unread_completion: number; has_pending_request: number },
-): Channel {
+function channelFromRow(row: ChannelRow): Channel {
   return {
     id: row.id,
     name: row.name,
     ...(row.purpose ? { purpose: row.purpose } : {}),
     ...(row.directory ? { directory: row.directory } : {}),
     model: modelConfigurationSchema.parse(JSON.parse(row.model)),
-    checklist: channelChecklistItemSchema.array().parse(JSON.parse(row.checklist)),
+    tasks: channelTaskSchema.array().parse(JSON.parse(row.tasks)),
     ...(row.preview_url ? { previewUrl: row.preview_url } : {}),
     latestSequence: row.latest_sequence,
     seenThrough: row.seen_through,
-    hasUnreadCompletion: Boolean(row.has_unread_completion),
-    hasPendingRequest: Boolean(row.has_pending_request),
+    completedSequence: row.completed_sequence,
+    requestSequence: row.request_sequence,
     updatedAt: row.updated_at,
   };
 }
@@ -848,15 +923,15 @@ async function requireChannelMemberWorker(
 }
 
 async function requireChannel(db: Bun.SQL, channelId: string): Promise<Channel> {
-  const [channel] = await readChannels(db, channelId);
-  if (!channel) throw new Error("Channel not found.");
-  return channel;
+  const [row] = await readChannelRows(db, channelId);
+  if (!row) throw new Error("Channel not found.");
+  return channelFromRow(row);
 }
 
 async function requireLeadChannel(db: Bun.SQL, leadId: string): Promise<Channel> {
-  const [channel] = await readChannels(db, leadId);
-  if (!channel) throw new Error("Only the channel lead can update the channel.");
-  return channel;
+  const [row] = await readChannelRows(db, leadId);
+  if (!row) throw new Error("Only the channel lead can update the channel.");
+  return channelFromRow(row);
 }
 
 async function assertMemberNameAvailable(
@@ -914,6 +989,7 @@ function messageFromRow(row: ChannelMessageRow, reactions: ChannelReaction[]): C
     ...common,
     sender,
     content: row.content,
+    ...(row.request ? { request: true as const } : {}),
     ...(attachments?.length ? { attachments } : {}),
     ...(reactions.length ? { reactions } : {}),
   };
@@ -929,14 +1005,11 @@ function reactionsByMessage(rows: ChannelReactionRow[]): Map<number, ChannelReac
   return reactions;
 }
 
-function assertChecklistOwners(
-  checklist: readonly ChannelChecklistItem[],
-  agentIds: ReadonlySet<string>,
-): void {
-  for (const item of checklist) {
-    if (item.ownerId && !agentIds.has(item.ownerId)) {
-      throw new Error("Checklist owners must be the channel lead or a current member.");
+function assertTaskOwners(tasks: readonly ChannelTask[], agentIds: ReadonlySet<string>): void {
+  for (const task of tasks) {
+    if (task.ownerId && !agentIds.has(task.ownerId)) {
+      throw new Error("Task owners must be the channel lead or a current member.");
     }
-    if (item.children) assertChecklistOwners(item.children, agentIds);
+    if (task.children) assertTaskOwners(task.children, agentIds);
   }
 }

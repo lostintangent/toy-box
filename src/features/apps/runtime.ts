@@ -1,6 +1,5 @@
 /** Versioned compiler/host bridge used to load apps against Toy Box's shared runtime. */
-export const APP_RUNTIME_GLOBAL = "__TOYBOX_APP_RUNTIME_V1__";
-export const APP_REGISTER_GLOBAL = "__TOYBOX_APP_REGISTER_V1__";
+export const APP_RUNTIME_PARAMETER = "__TOYBOX_APP_RUNTIME_V1__";
 
 export const APP_DEPENDENCIES = {
   react: { runtime: "React", typePackage: "@types/react" },

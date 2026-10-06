@@ -6,5 +6,6 @@ export const attachmentSchema = z.object({
 });
 
 export type Attachment = z.infer<typeof attachmentSchema>;
+export type AttachmentReference = { name: string; url: string };
 
 export const attachmentsSchema = z.array(attachmentSchema);

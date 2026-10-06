@@ -1,70 +1,82 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import type { Channel, ChannelEvent, ChannelState } from "./model";
-import { mergeChannelMessages, reduceChannelState } from "./model/reducer";
+import { useHydrated } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { loadChannelHistory } from "./queryCache";
 import { channelMutations } from "./mutations";
 import { channelQueries } from "./queries";
 import { usePageVisibility } from "@/shared/hooks/usePageVisibility";
+import { generateUUID } from "@/shared/utils";
+import type { PostChannelMessageInput } from "./model";
 
-/** Own one open Channel's state, incremental connection, and read lifecycle. */
-export function useChannel(channel: Channel, paneIsVisible: boolean) {
-  const { id: channelId, latestSequence, seenThrough } = channel;
+/** Shared channel observation; passive observers leave unread state untouched. */
+export function useChannel(
+  channelId: string,
+  { visible = true, mode = "active" }: { visible?: boolean; mode?: "active" | "passive" } = {},
+) {
   const queryClient = useQueryClient();
+  const hydrated = useHydrated();
   const pageIsVisible = usePageVisibility();
-  const isVisible = paneIsVisible && pageIsVisible;
-  const { data: state } = useSuspenseQuery(channelQueries.detail(channelId));
+  const isVisible = visible && pageIsVisible;
+  const options = channelQueries.detail(channelId);
+  const [reading, setReading] = useState(() => ({
+    visible: false,
+    arrivalId: queryClient.getQueryData(options.queryKey)?.arrival.id,
+    unreadAfter: undefined as number | null | undefined,
+  }));
+  const { data: state } = useQuery({
+    ...options,
+    enabled: hydrated && isVisible,
+    subscribed: hydrated && isVisible,
+    throwOnError: true,
+  });
+  const arrival = state?.arrival;
+  const isReading = isVisible && mode === "active";
+  if (isReading !== reading.visible) {
+    // Joining an existing observer reads its current cache; a new connection waits for arrival.
+    const shared = queryClient.getQueryCache().find({ queryKey: options.queryKey })?.isActive();
+    const channel = isReading && shared ? state?.channel : undefined;
+    setReading({
+      visible: isReading,
+      arrivalId: arrival?.id,
+      unreadAfter: channel
+        ? channel.seenThrough < channel.latestSequence
+          ? channel.seenThrough
+          : null
+        : undefined,
+    });
+  } else if (
+    isReading &&
+    reading.unreadAfter === undefined &&
+    arrival &&
+    arrival.id !== reading.arrivalId
+  ) {
+    setReading({ visible: true, arrivalId: arrival.id, unreadAfter: arrival.unreadAfter });
+  }
+
   const { mutate: markRead } = useMutation(channelMutations.markRead());
-  // Where unread messages began when the reader arrived. It follows the read position while the
-  // Channel is out of view and holds while it's read, so messages that arrive meanwhile aren't new.
-  const unread = seenThrough < latestSequence ? seenThrough : undefined;
-  const [unreadAfter, setUnreadAfter] = useState(unread);
-  if (!isVisible && unreadAfter !== unread) setUnreadAfter(unread);
-
+  const { mutate: post } = useMutation(channelMutations.post());
+  const latestSequence = state?.channel.latestSequence;
+  const seenThrough = state?.channel.seenThrough;
   useEffect(() => {
-    if (!isVisible || seenThrough >= latestSequence) return;
+    if (
+      !isReading ||
+      reading.unreadAfter === undefined ||
+      latestSequence === undefined ||
+      seenThrough === undefined ||
+      seenThrough >= latestSequence
+    )
+      return;
     markRead({ channelId, sequence: latestSequence });
-  }, [channelId, isVisible, latestSequence, markRead, seenThrough]);
+  }, [channelId, isReading, latestSequence, markRead, seenThrough, reading.unreadAfter]);
 
-  useEffect(() => {
-    if (!isVisible) return;
-    const queryKey = channelQueries.detail(channelId).queryKey;
-    const revision = queryClient.getQueryData<ChannelState>(queryKey)?.revision ?? 0;
-    const source = new EventSource(
-      `/api/channels/${encodeURIComponent(channelId)}?after=${revision}`,
+  const loadPrevious = (throughSequence?: number) =>
+    loadChannelHistory(queryClient, channelId, throughSequence).catch((error: unknown) =>
+      console.error("Failed to load previous Channel messages:", error),
     );
-    source.onmessage = ({ data }) => {
-      if (!data) return;
-      try {
-        const event = JSON.parse(data) as ChannelEvent;
-        queryClient.setQueryData<ChannelState>(queryKey, (state) =>
-          state ? reduceChannelState(state, event) : state,
-        );
-      } catch (error) {
-        console.error("Failed to parse Channel event:", error);
-      }
-    };
-    return () => source.close();
-  }, [channelId, isVisible, queryClient]);
 
-  const loadPrevious = async () => {
-    const beforeSequence = state.messages[0]?.sequence;
-    if (beforeSequence === undefined || beforeSequence <= 1) return;
-    const messages = await queryClient
-      .query(channelQueries.messagesBefore(channelId, beforeSequence))
-      .catch((error: unknown) => {
-        console.error("Failed to load previous Channel messages:", error);
-        return [];
-      });
-    if (messages.length === 0) return;
-    queryClient.setQueryData<ChannelState>(channelQueries.detail(channelId).queryKey, (state) =>
-      state
-        ? {
-            ...state,
-            messages: mergeChannelMessages(state.messages, messages),
-          }
-        : state,
-    );
-  };
+  const postMessage = (message: Pick<PostChannelMessageInput, "content" | "attachments">) =>
+    post({ ...message, channelId, id: generateUUID() });
 
-  return { state, unreadAfter, loadPrevious };
+  if (state === null) throw new Error("This channel has been deleted.");
+  return { state, unreadAfter: reading.unreadAfter, loadPrevious, postMessage };
 }

@@ -8,23 +8,19 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import { AgentStatus } from "@channels/components/agents/AgentStatus";
 import type { ChannelMessage } from "@channels/model";
 import { channelRequestStates, type ChannelRequestState } from "@channels/model/requests";
 import { TranscriptSkeleton } from "@sessions/components/transcript/TranscriptSkeleton";
-import { Button } from "@/shared/ui/button";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { ScrollToBottomButton } from "@/shared/ui/scroll-to-bottom-button";
-import { WaitingIndicator, waitingOutlineClassName } from "@/shared/ui/waiting-indicator";
 import { cn } from "@/shared/utils";
 import { useChannelPane } from "../ChannelPaneContext";
 import { AgentRun } from "./AgentRun";
 import { ChannelPlaceholder } from "./ChannelPlaceholder";
 import { ChannelUserMessage } from "./ChannelUserMessage";
 import { SystemMessageGroup } from "./SystemMessageGroup";
-import { scrollToRequest, useRequestPlacement, type RequestPlacement } from "./requestPlacement";
 import {
   pendingRequestRow,
   transcriptDayLabel,
@@ -32,29 +28,40 @@ import {
   type TranscriptRow,
 } from "./transcriptRows";
 
+export type ChannelTranscriptHandle = { scrollToBottom: () => void; showRequest: () => void };
+
 export function ChannelTranscript({
   messages,
   unreadAfter,
-  scrollToBottomRef,
+  handleRef,
+  requestSequence,
   onLoadPrevious,
 }: {
   messages: ChannelMessage[];
-  /** The read position when the reader arrived, if anything was unread. */
-  unreadAfter?: number;
-  scrollToBottomRef: RefObject<(() => void) | null>;
-  onLoadPrevious: () => Promise<void>;
+  /** Arrival read position; null means read, undefined awaits the connection's initial state. */
+  unreadAfter: number | null | undefined;
+  handleRef: RefObject<ChannelTranscriptHandle | null>;
+  requestSequence: number | null;
+  onLoadPrevious: (throughSequence?: number) => Promise<void>;
 }) {
-  const { agents } = useChannelPane();
+  const { agents, presence } = useChannelPane();
+  const working = agents.flatMap((agent) => {
+    const activity = presence[agent.id];
+    return activity?.state === "working" ? [{ agent, status: activity.text }] : [];
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollAfterAppendRef = useRef(false);
+  const requestToShowRef = useRef<number | null>(null);
   const jumpedToUnreadRef = useRef(false);
   const [isReady, setIsReady] = useState(messages.length === 0);
   const requests = channelRequestStates(messages);
-  const rows = transcriptRows(messages, unreadAfter);
+  const rows = transcriptRows(messages, unreadAfter ?? undefined);
   const rowCount = rows.length;
   const firstUnreadIndex = rows.findIndex((row) => row.startsUnread);
   // A row keeps its first message's identity as later messages join its run.
   const getRowKey = useCallback((index: number) => rows[index]!.messages[0]!.id, [rows]);
+  // Agent runs are typically 3–5 messages, so each run is one virtual item.
+  // If long runs become common, revisit row sizing and the first-row history trigger together.
   // eslint-disable-next-line react/incompatible-library -- TanStack Virtual intentionally owns its mutable instance.
   const virtualizer = useVirtualizer({
     count: rowCount,
@@ -81,12 +88,25 @@ export function ChannelTranscript({
     useScrollendEvent: true,
   });
 
-  useImperativeHandle(scrollToBottomRef, () => () => {
-    scrollAfterAppendRef.current = true;
-  });
-
-  const request = pendingRequestRow(rows, requests);
-  const placement = useRequestPlacement(scrollRef, virtualizer, request);
+  const request = pendingRequestRow(rows, requestSequence);
+  useImperativeHandle(handleRef, () => ({
+    scrollToBottom: () => {
+      scrollAfterAppendRef.current = true;
+    },
+    showRequest: () => {
+      if (request && scrollRef.current) scrollToRequest(scrollRef.current, virtualizer, request);
+      else if (requestSequence !== null) {
+        requestToShowRef.current = requestSequence;
+        void onLoadPrevious(requestSequence);
+      }
+    },
+  }));
+  useLayoutEffect(() => {
+    if (request && request.sequence === requestToShowRef.current && scrollRef.current) {
+      requestToShowRef.current = null;
+      scrollToRequest(scrollRef.current, virtualizer, request);
+    }
+  }, [request, virtualizer]);
   const virtualItems = virtualizer.getVirtualItems();
   const firstVirtualIndex = virtualItems[0]?.index;
   const oldestSequence = messages[0]?.sequence;
@@ -117,10 +137,10 @@ export function ChannelTranscript({
 
   // Opening a Channel with unread messages lands on where they begin, once, before it paints.
   useLayoutEffect(() => {
-    if (!isReady || jumpedToUnreadRef.current) return;
+    if (!isReady || unreadAfter === undefined || jumpedToUnreadRef.current) return;
     jumpedToUnreadRef.current = true;
     if (firstUnreadIndex >= 0) virtualizer.scrollToIndex(firstUnreadIndex, { align: "start" });
-  }, [firstUnreadIndex, isReady, virtualizer]);
+  }, [firstUnreadIndex, isReady, unreadAfter, virtualizer]);
 
   useLayoutEffect(() => {
     if (!scrollAfterAppendRef.current) return;
@@ -140,7 +160,7 @@ export function ChannelTranscript({
           <div className="@container min-h-full px-4 py-5">
             <ChannelPlaceholder />
             <div className="space-y-2 empty:hidden pt-4">
-              <AgentStatus agents={agents} />
+              <AgentStatus working={working} />
             </div>
           </div>
         ) : (
@@ -160,7 +180,7 @@ export function ChannelTranscript({
                   <TranscriptRowContent row={row} requests={requests} />
                   {isLast && (
                     <div className="space-y-2 empty:hidden pt-4">
-                      <AgentStatus agents={agents} />
+                      <AgentStatus working={working} />
                     </div>
                   )}
                 </div>
@@ -169,13 +189,7 @@ export function ChannelTranscript({
           </div>
         )}
       </ScrollableFade>
-      {isReady && request && placement && (
-        <QuestionPill
-          placement={placement}
-          onClick={() => scrollToRequest(scrollRef.current!, virtualizer, request)}
-        />
-      )}
-      {isReady && placement !== "below" && (
+      {isReady && (
         <ScrollToBottomButton
           isAtBottom={virtualizer.isAtEnd()}
           onScrollToBottom={() => virtualizer.scrollToEnd({ behavior: "smooth" })}
@@ -203,32 +217,6 @@ function TranscriptRowContent({
   }
 }
 
-/** Points toward the pending request while it's out of view, taking Scroll down's place below. */
-function QuestionPill({
-  placement,
-  onClick,
-}: {
-  placement: RequestPlacement;
-  onClick: () => void;
-}) {
-  const Arrow = placement === "above" ? ArrowUp : ArrowDown;
-  return (
-    <Button
-      variant="secondary"
-      className={cn(
-        "absolute left-1/2 -translate-x-1/2 rounded-full border bg-background shadow-lg",
-        placement === "above" ? "top-4" : "bottom-4",
-        waitingOutlineClassName,
-      )}
-      onClick={onClick}
-    >
-      <WaitingIndicator />
-      Question {placement}
-      <Arrow />
-    </Button>
-  );
-}
-
 function DayDivider({ date }: { date: string }) {
   return (
     <div className="mb-5 flex items-center gap-2">
@@ -250,4 +238,21 @@ function NewMessagesRule() {
       New
     </div>
   );
+}
+
+/** Reveal the question within its agent run, bringing a virtualized row into view first. */
+function scrollToRequest(
+  root: HTMLElement,
+  virtualizer: Virtualizer<HTMLDivElement, Element>,
+  request: { sequence: number; index: number },
+) {
+  const element = root.querySelector(`[data-request-sequence="${request.sequence}"]`);
+  if (element) {
+    const top =
+      root.scrollTop + element.getBoundingClientRect().top - root.getBoundingClientRect().top;
+    // Keep the question header below the transcript's top fade.
+    virtualizer.scrollToOffset(top - 32, { behavior: "smooth" });
+  } else {
+    virtualizer.scrollToIndex(request.index, { align: "start", behavior: "smooth" });
+  }
 }

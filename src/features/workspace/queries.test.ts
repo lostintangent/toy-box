@@ -8,6 +8,8 @@ import { providerQueries } from "@providers/queries";
 import { sessionQueries, createEmptySessionsState } from "@sessions/queries";
 import { createInitialSessionState } from "@sessions/model/reducer";
 import type { SessionsState } from "@sessions/model";
+import type { AppInstance, AppList } from "@apps/model";
+import { appQueries } from "@apps/queries";
 
 const automation = {
   id: "automation-a",
@@ -185,6 +187,31 @@ describe("workspace query cache", () => {
 
     const state = await read;
     expect(state.sessionStates["session-a"]).toEqual({ status: "running", since: 1 });
+  });
+
+  test("routes app events to the Apps cache without changing workspace state", () => {
+    const client = createQueryClient();
+    const workspace = createEmptyWorkspaceState();
+    client.setQueryData(workspaceQueries.stateKey(), workspace);
+    client.setQueryData<AppList>(appQueries.listKey(), { apps: [], definitions: [], shares: [] });
+    const app: AppInstance = {
+      id: "app-a",
+      definitionId: "todo",
+      title: "Todos",
+      color: "#123abc",
+      state: {},
+      revision: 0,
+      createdAt: "2026-07-28T12:00:00.000Z",
+      updatedAt: "2026-07-28T12:00:00.000Z",
+    };
+
+    applyWorkspaceEvent(client, { type: "app.upserted", app });
+    expect(client.getQueryData<AppList>(appQueries.listKey())?.apps).toEqual([app]);
+    expect(readWorkspaceState(client)).toBe(workspace);
+
+    applyWorkspaceEvent(client, { type: "app.deleted", appId: app.id });
+    expect(client.getQueryData<AppList>(appQueries.listKey())?.apps).toEqual([]);
+    expect(readWorkspaceState(client)).toBe(workspace);
   });
 
   test("routes automation events to the catalog and session ownership without changing workspace state", () => {

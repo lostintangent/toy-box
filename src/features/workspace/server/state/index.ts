@@ -2,33 +2,14 @@
 
 import type { Settings } from "../../model/config/settings";
 import type { WorkspaceAction } from "../../model/state/actions";
-import { finishWorkersForSession, getWorkers } from "@workers/server/registry";
+import { finishWorkersForSession } from "@workers/server/registry";
 import { normalizeSettings } from "../../model/config/settings";
-import { type WorkspaceSessionEvent, type WorkspaceState } from "../../model/state/reducer";
+import type { WorkspaceSessionEvent } from "../../model/state/reducer";
 import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 import { broadcast } from "@workspace/server/events";
-import { deleteHyperState, getHyperSessionIds } from "./hyperSessions";
-import { applySessionState, getSessionStates, setSessionPrompt } from "./sessions";
+import { deleteHyperState } from "./hyperSessions";
+import { applySessionState, setSessionPrompt } from "./sessions";
 import { getSettings, persistSettings } from "./settings";
-
-export { getEnvironment } from "./environment";
-
-export async function getWorkspaceState(
-  options: Pick<
-    WorkspaceState,
-    "customEditors" | "appDefinitions" | "apps" | "appShares" | "environment"
-  >,
-): Promise<WorkspaceState> {
-  const settings = await getSettings();
-  const sessionStates = getSessionStates();
-  return {
-    settings,
-    sessionStates,
-    hyperSessionIds: getHyperSessionIds(),
-    workers: getWorkers(),
-    ...options,
-  };
-}
 
 // The settings aggregate is persisted with a read-merge-write operation, so patches must not race.
 const settingsChangeQueue = new SerialTaskQueue();

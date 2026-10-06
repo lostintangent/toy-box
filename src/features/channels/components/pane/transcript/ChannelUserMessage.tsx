@@ -1,5 +1,5 @@
 import { AgentMention } from "@channels/components/agents/AgentMention";
-import { channelAttachmentPreview, type ChannelConversationMessage } from "@channels/model";
+import { type ChannelConversationMessage } from "@channels/model";
 import { channelMessageReactions } from "@channels/model/reactions";
 import { UserMessage } from "@/shared/messages/UserMessage";
 import { ClockTime } from "@/shared/ui/clock-time";
@@ -8,12 +8,12 @@ import { ChannelReactions } from "./ChannelReactions";
 
 /** The user's message, shown as in a session, with the reactions agents gave it. */
 export function ChannelUserMessage({ message }: { message: ChannelConversationMessage }) {
-  const { agents } = useChannelPane();
-  const reactions = channelMessageReactions(message, agents);
+  const { agents, presence } = useChannelPane();
+  const reactions = channelMessageReactions(message, agents, presence);
 
   return (
     <UserMessage
-      message={{ ...message, attachments: message.attachments?.map(channelAttachmentPreview) }}
+      message={message}
       time={<ClockTime className="text-xs text-muted-foreground" date={message.timestamp} />}
       extraActions={
         reactions.length ? (

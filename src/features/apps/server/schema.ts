@@ -18,9 +18,6 @@ export async function initializeAppSchema(db: Bun.SQL): Promise<void> {
       updated_at    TEXT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_apps_updated_at
-      ON apps(updated_at DESC);
-
     CREATE INDEX IF NOT EXISTS idx_apps_definition_id
       ON apps(definition_id);
 

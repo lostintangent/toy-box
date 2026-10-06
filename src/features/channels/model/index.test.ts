@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelAgent, ChannelMember } from "./index";
+import type { ChannelAgent, ChannelMember, ChannelTask } from "./index";
 import {
   agentHandleFromName,
   channelAudienceLabel,
   channelLead,
-  channelCompletionBlockers,
   channelRoutineInputSchema,
   channelSystemMessageContentSchema,
+  channelTasksComplete,
   editChannelInputSchema,
+  markChannelReadInputSchema,
+  postChannelMessageInputSchema,
   resolveChannelAudience,
   selfUpdateChannelMemberInputSchema,
   setChannelAgentStatusInputSchema,
@@ -79,35 +81,16 @@ describe("channel audience labels", () => {
   });
 });
 
-test("completion requires every descendant done and every member free of waits", () => {
-  expect(
-    channelCompletionBlockers(
-      [
-        {
-          title: "Release",
-          status: "done",
-          children: [
-            { title: "Validate", status: "blocked" },
-            { title: "Ship", status: "pending" },
-          ],
-        },
-        { title: "Review", status: "in_progress" },
-      ],
-      [{ id: "critic", name: "Critic", status: { state: "waiting", text: "Approval" } }],
-    ),
-  ).toEqual([
-    "Release / Validate (blocked)",
-    "Release / Ship (pending)",
-    "Review (in_progress)",
-    "Critic is waiting: Approval",
-  ]);
-  expect(channelCompletionBlockers([], [])).toEqual([]);
-  expect(
-    channelCompletionBlockers(
-      [{ title: "Done", status: "done" }],
-      [{ id: "builder", name: "Builder", status: { state: "working", text: "Other work" } }],
-    ),
-  ).toEqual([]);
+test("a task list is complete only when it has tasks and every subtask is done", () => {
+  const release = (status: ChannelTask["status"]): ChannelTask => ({
+    title: "Release",
+    status: "done",
+    children: [{ title: "Validate", status }],
+  });
+  expect(channelTasksComplete([])).toBe(false);
+  expect(channelTasksComplete([{ title: "Review", status: "in_progress" }])).toBe(false);
+  expect(channelTasksComplete([release("blocked")])).toBe(false);
+  expect(channelTasksComplete([release("done"), { title: "Ship", status: "done" }])).toBe(true);
 });
 
 describe("channel agent mentions", () => {
@@ -157,11 +140,59 @@ test("channel previews accept only HTTP and root-relative URLs", () => {
     false,
   );
   expect(updateChannelInputSchema.safeParse({ previewUrl: "//example.com" }).success).toBe(false);
+  for (const previewUrl of ["/preview", "https://example.com", null]) {
+    expect(
+      channelSystemMessageContentSchema.safeParse({
+        type: "preview_changed",
+        actor: user,
+        previewUrl,
+      }).success,
+    ).toBe(true);
+  }
+  expect(
+    channelSystemMessageContentSchema.safeParse({
+      type: "preview_changed",
+      actor: user,
+      previewUrl: "javascript:alert(1)",
+    }).success,
+  ).toBe(false);
 });
 
 test("lead edits allow clearing optional fields and require a change", () => {
   expect(updateChannelInputSchema.safeParse({ purpose: null, directory: null }).success).toBe(true);
   expect(updateChannelInputSchema.safeParse({}).success).toBe(false);
+});
+
+test("user messages require content or attachments and exclude agent-controlled fields", () => {
+  const message = { id: "message", channelId: "channel", content: "Hello" };
+  expect(postChannelMessageInputSchema.safeParse(message).success).toBe(true);
+  expect(
+    postChannelMessageInputSchema.safeParse({
+      ...message,
+      content: "",
+      attachments: [{ mimeType: "image/png", base64: "AAEC" }],
+    }).success,
+  ).toBe(true);
+  for (const change of [
+    { content: "" },
+    { content: "A".repeat(12_001) },
+    { sender: { type: "agent", agentId: "lead" } },
+  ]) {
+    expect(postChannelMessageInputSchema.safeParse({ ...message, ...change }).success).toBe(false);
+  }
+});
+
+test("read positions are nonnegative integer sequences", () => {
+  for (const sequence of [0, 1]) {
+    expect(markChannelReadInputSchema.safeParse({ channelId: "channel", sequence }).success).toBe(
+      true,
+    );
+  }
+  for (const sequence of [-1, 1.5]) {
+    expect(markChannelReadInputSchema.safeParse({ channelId: "channel", sequence }).success).toBe(
+      false,
+    );
+  }
 });
 
 test("property events carry exactly the value their field allows", () => {

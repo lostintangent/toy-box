@@ -7,7 +7,7 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
       purpose         TEXT,
       directory       TEXT,
       model           TEXT NOT NULL CHECK (json_valid(model)),
-      checklist       TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(checklist)),
+      tasks           TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tasks)),
       preview_url     TEXT,
       latest_sequence INTEGER NOT NULL DEFAULT 0
         CHECK (typeof(latest_sequence) = 'integer' AND latest_sequence >= 0),
@@ -15,6 +15,8 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
         CHECK (typeof(revision) = 'integer' AND revision >= 0),
       seen_through    INTEGER NOT NULL DEFAULT 0
         CHECK (typeof(seen_through) = 'integer' AND seen_through >= 0),
+      request_sequence INTEGER,
+      completed_sequence INTEGER,
       updated_at      TEXT NOT NULL
     );
 
@@ -30,10 +32,12 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
       sender_agent_id      TEXT,
       content              TEXT NOT NULL
         CHECK (sender_type <> 'system' OR json_valid(content)),
+      request              INTEGER NOT NULL DEFAULT 0 CHECK (request IN (0, 1)),
       attachments          TEXT CHECK (
         attachments IS NULL OR (sender_type <> 'system' AND json_valid(attachments))
       ),
       timestamp            TEXT NOT NULL,
+      CHECK (request = 0 OR (sender_type = 'agent' AND sender_agent_id = channel_id)),
       CHECK (
         (sender_type = 'agent' AND sender_agent_id IS NOT NULL) OR
         (sender_type <> 'agent' AND sender_agent_id IS NULL)

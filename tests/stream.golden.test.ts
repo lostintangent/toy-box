@@ -2,7 +2,7 @@ import { connectCopilotSession } from "@providers/server/copilot/connection";
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { WorkspaceEvent } from "@workspace/model/events";
-import type { SessionEvent, SessionUpdate, SessionState } from "@sessions/model";
+import type { SessionEvent, SessionState } from "@sessions/model";
 import { loadSessionFixture } from "./helpers";
 import * as realSessionRegistry from "@sessions/server/state/registry";
 import * as realBroadcast from "@workspace/server/events";
@@ -61,22 +61,12 @@ mock.module("@sessions/server/state/registry", () => ({
 }));
 mock.module("@workspace/server/events", () => ({
   getWorkspaceRevision: unused,
-  emitSessionNameUpdate: (sessionId: string, name: string) => {
-    sideEffects.push(`title:${sessionId}:${name}`);
-    emitMockWorkspaceEvent({
-      type: "session.upserted",
-      session: {
-        id: sessionId,
-        updatedAt: new Date().toISOString(),
-        title: name,
-      },
-    });
+  broadcast: (event: WorkspaceEvent) => {
+    if (event.type === "session.upserted" && event.session.title !== undefined) {
+      sideEffects.push(`title:${event.session.id}:${event.session.title}`);
+    }
+    emitMockWorkspaceEvent(event);
   },
-  broadcast: emitMockWorkspaceEvent,
-  emitSessionUpsert: (session: SessionUpdate) =>
-    emitMockWorkspaceEvent({ type: "session.upserted", session }),
-  emitSessionDelete: (sessionId: string) =>
-    emitMockWorkspaceEvent({ type: "session.deleted", sessionId }),
   subscribeWorkspaceEvents: (listener: (event: WorkspaceEvent) => void) => {
     workspaceEventListeners.add(listener);
     return () => {

@@ -9,7 +9,7 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary-background: color-mix(in oklab, var(--muted) 50%, transparent);
+  --color-secondary-background: --alpha(var(--muted) / 50%);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   /* Opaque equivalent of bg-muted/50 over the application background. */

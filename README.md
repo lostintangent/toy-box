@@ -41,18 +41,22 @@ In order to access Toy Box from your phone (or other machines), simply configure
 tailscale serve --bg http://127.0.0.1:3000
 ```
 
-You can then open the provided https://<machine>.<tailnet>.ts.net/ URL from any device on the same tailnet as the Toy Box server. After opening this URL in your mobile browser, you can install it to your home screen by doing the following:
+Open the provided `https://<machine>.<tailnet>.ts.net/` URL from any device on the same tailnet as the Toy Box server.
+
+Alternatively, use [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/create-local-tunnel/) with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/) for browser access without installing Tailscale on your devices. Run `cloudflared` on the Toy Box machine and map an HTTPS hostname on your domain to `http://127.0.0.1:3000`. Before publishing the route, protect the hostname with Access, allowing only your chosen email addresses to sign in with GitHub or an email one-time PIN. Use a named tunnel; temporary Quick Tunnels do not support Toy Box's SSE streams.
+
+After opening your HTTPS URL in a mobile browser, you can add Toy Box to your home screen:
 
 | Mobile platform     | Install Step(s)                                |
 | ------------------- | ---------------------------------------------- |
 | iOS (iPhone / iPad) | Use Safari's Share → Add to Home Screen        |
 | Android             | Use Chrome's Install app or Add to Home screen |
 
-> ⚠️ Toy Box has no app-level authentication. Keep it behind Tailscale Serve and tailnet access controls; do not expose it publicly with Funnel.
+> ⚠️ Toy Box has no app-level authentication. Keep it behind Tailscale Serve and tailnet access controls or Cloudflare Access; do not expose it through an unprotected public tunnel.
 
 ## Inbox Webhook
 
-With that private HTTPS URL in place, Toy Box's inbox can accept external tasks by means of simply sending a `POST` to the following URL: `https://<toy-box-host>/api/inbox`.
+With that protected HTTPS URL in place, Toy Box's inbox can accept external tasks by means of simply sending a `POST` to the following URL: `https://<toy-box-host>/api/inbox`. For automated webhook calls through Cloudflare Access, configure [service-token headers and a Service Auth policy](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/).
 
 ```sh
 curl -X POST "https://<toy-box-host>/api/inbox" \
@@ -70,7 +74,7 @@ The webhook supports both JSON and multipart form data:
 The same endpoint works with several ready-made integrations:
 
 - **Browser extension:** Follow [`browser/README.md`](browser/README.md), then set its server URL to the Toy Box base URL without `/api/inbox`. It can include the current page, selected text, and a viewport screenshot, with toolbar, shortcut, and context-menu actions.
-- **Pebble Index 01:** In CoreApp, open **Index Settings → Webhook**, use the full Inbox URL, and choose **Transcription only**. Toy Box accepts CoreApp's `transcription` field directly; no auth token is required.
+- **Pebble Index 01:** In CoreApp, open **Index Settings → Webhook**, use the full Inbox URL, and choose **Transcription only**. Toy Box accepts CoreApp's `transcription` field directly.
 - **QuickCast Hook:** Install it from the [App Store](https://apps.apple.com/us/app/quickcast-hook/id6756369952), then create a `POST` multipart webhook using the full Inbox URL. Enable on-device transcription, name its field `transcription`, and use `attachments` as the file field when sending audio or images.
 
 ## Developing

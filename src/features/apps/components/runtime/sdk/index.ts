@@ -1,5 +1,5 @@
 /** Browser implementation of the authored `@toy-box/sdk` module. */
-export { createId } from "@apps/sdk";
+export { generateUUID as createId } from "@/shared/utils";
 export * from "./components";
 export * from "./hooks";
 export * from "./share";
