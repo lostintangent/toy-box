@@ -7,6 +7,7 @@ import {
   channelReactionKindSchema,
   createChannelMemberInputSchema,
   createChannelInputSchema,
+  editChannelTasksInputSchema,
   isChannelSystemMessage,
   channelRoutineIdentitySchema,
   selfUpdateChannelMemberInputSchema,
@@ -17,6 +18,7 @@ import {
   type ChannelAgent,
   type ChannelArtifact,
 } from "@channels/model";
+import { workspaceFileId } from "@files/model";
 import { resolveWorkspaceFile } from "@files/server/paths";
 import type { Attachment } from "@/shared/attachments/model";
 import { channelAgentPresence } from "@channels/model/presence";
@@ -201,11 +203,30 @@ const setChannelStatusTool = defineTool("set_agent_status", {
 
 const updateChannelTool = defineTool("update_channel", {
   description:
-    "Updates this channel's name, purpose, working directory, tasks, or preview URL. Only the lead can change its working directory; use an existing absolute path, which applies to all agents at their next execution. Rename it when the user changes its title; set the purpose when the user defines or revises what the channel is for. Replace the complete task list when progress changes. Preserve root-relative preview URLs returned by Toy Box tools. Share file artifacts instead of using them as previews. Set purpose, directory, or previewUrl to null to clear it.",
+    "Updates this channel's name, purpose, working directory, tasks, or preview URL. Only the lead can change its working directory; use an existing absolute path, which applies to all agents at their next execution. Rename it when the user changes its title; set the purpose when the user defines or revises what the channel is for. Supply tasks only for initial planning or intentional whole-list replacement, preserving retained IDs and outcomes. Use edit_channel_tasks for progress updates. Preserve root-relative preview URLs returned by Toy Box tools. Share file artifacts instead of using them as previews. Set purpose, directory, or previewUrl to null to clear it.",
   parameters: updateChannelInputSchema,
   handler: async (args, invocation) => {
     const { updateChannelFromLead } = await import("@channels/server");
     return channelContextForTool(await updateChannelFromLead(invocation.sessionId, args));
+  },
+});
+
+const editChannelTasksTool = defineTool("edit_channel_tasks", {
+  description:
+    "Adds, updates, removes, or moves this channel's tasks by stable ID in one atomic batch. Returns targeted task IDs without repeating the tree.",
+  parameters: editChannelTasksInputSchema,
+  handler: async (input, invocation) => {
+    const { editChannelTasksFromLead } = await import("@channels/server");
+    await editChannelTasksFromLead(invocation.sessionId, input);
+    return {
+      taskIds: [
+        ...new Set(
+          input.operations.map((operation) =>
+            operation.type === "add" ? operation.task.id : operation.taskId,
+          ),
+        ),
+      ],
+    };
   },
 });
 
@@ -333,10 +354,7 @@ function toChannelReadToolResult(
             : content.type === "artifact_shared"
               ? {
                   ...content,
-                  artifact: {
-                    path: resolveWorkspaceFile(content.artifact.file)!,
-                    title: content.artifact.title,
-                  },
+                  artifact: artifactForTool(content.artifact),
                 }
               : content,
       };
@@ -398,7 +416,7 @@ function agentForTool(agent: ChannelAgent) {
 }
 
 function artifactForTool({ file, title }: Pick<ChannelArtifact, "file" | "title">) {
-  return { path: resolveWorkspaceFile(file)!, title };
+  return { artifactId: workspaceFileId(file), path: resolveWorkspaceFile(file)!, title };
 }
 
 function channelForTool({ id: channelId, name, purpose, directory, model }: Channel) {
@@ -433,6 +451,7 @@ export const channelLeadTools = [
   sendLeadMessageTool,
   createCurrentChannelMembersTool,
   updateChannelTool,
+  editChannelTasksTool,
   setRoutineTool,
   deleteRoutineTool,
   finishLeadTurnTool,

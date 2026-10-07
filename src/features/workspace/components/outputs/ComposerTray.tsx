@@ -44,6 +44,7 @@ export function ComposerTray({
   artifactTimeLabel,
   checklist,
   checklistLabel,
+  checklistHeaderDetail,
   extraOutput,
   onOpenArtifact,
   children,
@@ -54,6 +55,7 @@ export function ComposerTray({
   artifactTimeLabel: string;
   checklist: readonly ChecklistItem[];
   checklistLabel: string;
+  checklistHeaderDetail?: ReactNode;
   /** The owner's own output after the checklist, such as changed files or a preview. */
   extraOutput?: ReactNode;
   /** Opens an artifact that its owner doesn't publish. By default, focusing its editor pane brings
@@ -89,7 +91,11 @@ export function ComposerTray({
               </span>
             )}
           </div>
-          <ChecklistPopup items={checklist} label={checklistLabel} />
+          <ChecklistPopup
+            items={checklist}
+            label={checklistLabel}
+            headerDetail={checklistHeaderDetail}
+          />
           {extraOutput}
         </div>
       )}

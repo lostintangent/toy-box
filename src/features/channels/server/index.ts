@@ -11,6 +11,7 @@ import type {
   CreateChannelMemberInput,
   CreateChannelInput,
   EditChannelInput,
+  EditChannelTasksInput,
   PostChannelMessageInput,
   SetChannelAgentStatusInput,
   SetChannelRoutineInput,
@@ -105,6 +106,14 @@ export async function updateChannelFromLead(sessionId: string, input: UpdateChan
   const change = await database.updateChannel(sessionId, input);
   publishChannelChange(change);
   return change.channel;
+}
+
+export async function editChannelTasksFromLead(
+  sessionId: string,
+  input: EditChannelTasksInput,
+): Promise<void> {
+  const change = await new ChannelDatabase(await getStateDatabase()).editTasks(sessionId, input);
+  publishChannelChange(change);
 }
 
 export async function getChannelHistory(channelId: string, beforeSequence: number) {

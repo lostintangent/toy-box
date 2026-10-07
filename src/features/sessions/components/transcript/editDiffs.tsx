@@ -1,6 +1,7 @@
 import { createContext, useContext, useState } from "react";
 import type { Message, ToolCall } from "../../model";
-import { computeFileDiffStats, getToolCallFileDiffs, type DiffStats } from "../../model/fileDiffs";
+import { computeFileDiffStats, getToolCallFileDiffs } from "../../model/fileDiffs";
+import type { DiffStats } from "@/shared/diffStats";
 import { toRelativePath } from "@files/model/paths";
 
 const EditDiffsContext = createContext<Map<string, DiffStats> | null>(null);

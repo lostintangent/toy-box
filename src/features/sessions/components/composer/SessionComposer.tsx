@@ -28,7 +28,7 @@ import type {
   TodoItem,
   UserMessage,
 } from "../../model";
-import type { DiffStats } from "../../model/fileDiffs";
+import type { DiffStats } from "@/shared/diffStats";
 import { ModelConfigurationPicker } from "@providers/components/ModelPicker";
 import {
   SessionLocationPicker,

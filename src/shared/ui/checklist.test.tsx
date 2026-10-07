@@ -17,19 +17,28 @@ test("labels every status for assistive tech", () => {
   }
 });
 
-test("starts done parents collapsed and unfinished parents expanded", () => {
+test("starts done parents collapsed without hiding their supporting actions", () => {
   const html = render([
     {
       id: "done",
       title: "Research",
       status: "done",
+      detail: <button type="button">Open report</button>,
       children: [{ id: "hidden", title: "Read the docs", status: "done" }],
     },
     {
       id: "open",
       title: "Build",
       status: "in_progress",
-      children: [{ id: "shown", title: "Write the parser", status: "pending" }],
+      children: [
+        { id: "shown", title: "Write the parser", status: "pending" },
+        {
+          id: "finished",
+          title: "Design",
+          status: "done",
+          children: [{ id: "nested", title: "Review", status: "done" }],
+        },
+      ],
     },
   ]);
 
@@ -37,4 +46,7 @@ test("starts done parents collapsed and unfinished parents expanded", () => {
   expect(html).toContain('aria-expanded="true"');
   expect(html).not.toContain("Read the docs");
   expect(html).toContain("Write the parser");
+  expect(html).toContain("Open report");
+  expect(html).toContain('aria-label="Subtasks of Research"');
+  expect(html).toContain('aria-label="1 of 2 subtasks complete"');
 });

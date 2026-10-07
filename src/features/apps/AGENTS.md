@@ -144,6 +144,8 @@ The SDK exposes:
 - `useChannel(channelId, options?)`, a direct export of the channel pane hook.
   It shares the detail cache, stream, paging, and post mutation. Observation is active
   by default; `mode: "passive"` leaves unread state untouched. Key the observer by channel ID when switching.
+- `channelTasksDiff`, a direct export from Channels, for displaying derived diff totals without
+  duplicating domain logic. Artifacts carry the `id` that tasks reference as `artifactId`.
 - `useFile`, which reuses the live file lifecycle from editor panes, including
   queued saves, external updates, modes, and file-owned workers.
 - Actions that compose ordinary session, file, and pane capabilities, plus

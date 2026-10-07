@@ -20,7 +20,8 @@ and apps compose sessions rather than introducing another transcript or executio
   model-facing prompts, and the structured display codec retained in native provider history.
 - `questions.ts` owns derived queries over pending and blocking transcript questions.
 - `fileDiffs.ts` parses edit and patch tool-call results for transcript presentation and
-  identifying artifact-only tools that stay hidden.
+  identifying artifact-only tools that stay hidden. Its `DiffStats` value comes from
+  `shared/diffStats.ts`, also used by Channel task outcomes.
 - [Providers' model](../providers/model/index.ts) supplies the validated model, reasoning-effort,
   and context-tier configuration used by session state and message ingress.
 - `reducer.ts` is the one pure transition function shared by live server execution, persisted

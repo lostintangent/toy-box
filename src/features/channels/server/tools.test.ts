@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { channelLeadTools, channelMemberTools, channelTools } from "./tools";
 
-test("only leads receive nonterminal routine tools", () => {
-  for (const name of ["set_routine", "delete_routine"]) {
+test("only leads receive nonterminal task and routine tools", () => {
+  for (const name of ["edit_channel_tasks", "set_routine", "delete_routine"]) {
     const tool = channelLeadTools.find((tool) => tool.name === name);
     expect(tool).toBeDefined();
     expect(tool?.isTerminal).not.toBe(true);

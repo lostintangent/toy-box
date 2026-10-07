@@ -5,11 +5,10 @@ import {
 } from "@channels/model";
 import { channelAgentPresence } from "@channels/model/presence";
 import { reduceChannelRoster } from "@channels/model/reducer";
-import { createFileServeUrl } from "@files/model/paths";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import { getSessionState } from "@workspace/server/state/sessions";
 import { getStateDatabase } from "@/server/database";
-import { resolveMessageResources } from "./resources";
+import { resolveArtifactResources, resolveMessageResources } from "./resources";
 import { ChannelDatabase } from "./database";
 import { replayChannelEvents, subscribeChannelEvents } from "./events";
 
@@ -150,10 +149,7 @@ export async function getChannelSnapshot(channelId: string): Promise<ChannelStat
     request: request ? resolveMessageResources(request) : null,
     presence: currentPresence(snapshot),
     messages: snapshot.messages.map(resolveMessageResources),
-    artifacts: snapshot.artifacts.map((artifact) => ({
-      ...artifact,
-      url: createFileServeUrl(artifact.file),
-    })),
+    artifacts: snapshot.artifacts.map(resolveArtifactResources),
   };
 }
 

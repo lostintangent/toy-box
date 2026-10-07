@@ -1,5 +1,7 @@
 /** Complete compile-time contract for the authored `@toy-box/sdk` module. */
 
+export { channelTasksDiff } from "@channels/model";
+
 import type {
   ComponentProps,
   ComponentPropsWithoutRef,

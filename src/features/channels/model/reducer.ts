@@ -206,13 +206,11 @@ function setRoutine(
 /** Retitling a shared artifact preserves its original share time. */
 function shareArtifact(
   artifacts: readonly ChannelArtifact[],
-  incoming: Omit<ChannelArtifact, "sharedAt">,
+  incoming: Omit<ChannelArtifact, "id" | "sharedAt">,
   sharedAt: string,
 ): ChannelArtifact[] {
   const id = workspaceFileId(incoming.file);
-  return artifacts.some((artifact) => workspaceFileId(artifact.file) === id)
-    ? artifacts.map((artifact) =>
-        workspaceFileId(artifact.file) === id ? { ...artifact, ...incoming } : artifact,
-      )
-    : [...artifacts, { ...incoming, sharedAt }];
+  return artifacts.some((artifact) => artifact.id === id)
+    ? artifacts.map((artifact) => (artifact.id === id ? { ...artifact, ...incoming } : artifact))
+    : [...artifacts, { ...incoming, id, sharedAt }];
 }

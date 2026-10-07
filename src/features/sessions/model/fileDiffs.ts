@@ -1,9 +1,5 @@
 import type { ToolCall } from "./index";
-
-export type DiffStats = {
-  added: number;
-  removed: number;
-};
+import type { DiffStats } from "@/shared/diffStats";
 
 export type DiffHunk = {
   oldText: string;

@@ -88,11 +88,16 @@ test("snapshots combine public Channel facts with live presence without exposing
     attachments,
   });
   const snapshot = await getChannelSnapshot(channel.id);
-  expect(snapshot?.artifacts[0]).toMatchObject({
-    file,
-    title: "Plan",
+  const artifact = {
+    id: `session:${channel.id}:docs/Project plan.md`,
     url: `/api/serve/${channel.id}/docs/Project%20plan.md`,
-  });
+  };
+  expect(snapshot?.artifacts[0]).toMatchObject({ ...artifact, file, title: "Plan" });
+  // Live shares carry the same identity, so clients match task outcomes either way.
+  const share = snapshot?.messages.find(
+    ({ content }) => typeof content === "object" && content.type === "artifact_shared",
+  );
+  expect(share).toMatchObject({ content: { artifact } });
   expect<ChannelMessage | null | undefined>(snapshot?.request).toEqual(
     snapshot?.messages.find(({ id }) => id === "images"),
   );
@@ -156,7 +161,7 @@ test("a reply committed after the durable read cannot advance the snapshot beyon
 test("cached reconnects replay before presence; an expired cursor replaces history", async () => {
   const { channel, channels } = await openChannel();
   const changed = await channels.updateChannel(channel.id, {
-    tasks: [{ title: "Work added while disconnected", status: "pending" }],
+    tasks: [{ id: "work", title: "Work added while disconnected", status: "pending" }],
   });
   for (const event of changed.events) publishChannelEvent(channel.id, resolveEventResources(event));
   const reads = spyOn(ChannelDatabase.prototype, "getSnapshot");

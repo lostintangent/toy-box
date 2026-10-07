@@ -47,6 +47,12 @@ Channel        name, purpose, directory, lead model, tasks, preview, user read p
   tasks, optional preview URL, human read position, latest message sequence, and updated time.
   Its `requestSequence` and `completedSequence` refer to transcript milestones. Completion is unread
   when it follows `seenThrough`; a request remains pending until a user reply clears its sequence.
+- `ChannelTask` has a short, stable, channel-unique ID such as `t12`, title, status, optional owner
+  and subtasks. Its optional `artifactId` is a shared artifact's `id`; file metadata
+  stays with the artifact. Its optional `diff: DiffStats` uses `shared/diffStats.ts`, like Session
+  diffs, and measures directly attributed work. `channelTasksDiff` derives totals from direct
+  and descendant diffs, never storing aggregates. Unreported work differs from a measured zero;
+  totals summarize reported work, not necessarily the net repository diff.
 - `ChannelAgent` is the shared public identity of anyone on the team, the lead or a member: ID,
   name, role, avatar, and status. A Channel's agents, lead first, form its team, which the overview
   presents as Team members.
@@ -65,9 +71,11 @@ Channel        name, purpose, directory, lead model, tasks, preview, user read p
   `request: true`; `requestSequence` points to that question until a user replies.
 - `ChannelReaction` is one Agent's durable acknowledgement or sentiment on a user or Agent message.
   It does not wake anyone or advance message sequence.
-- `ChannelArtifact` indexes a shared `WorkspaceFile`, its title, and when it was first shared; sharing
-  it again changes only the title. Files owns the address and editor. Channels owns only the shared
-  index and the `artifact_shared` transcript event, whose own timestamp records the share.
+- `ChannelArtifact` indexes a shared `WorkspaceFile` by its `id` (the file's identity), with its
+  title and when it was first shared; sharing it again changes only the title. Every artifact
+  carries its `id`, so tasks, apps, and native clients never derive it. Files owns the address and
+  editor. Channels owns only the shared index and the `artifact_shared` transcript event, whose own
+  timestamp records the share.
 - `ChannelRoutine` is scheduled, recurring work that serves the purpose: a short title, a prompt, and
   a local-time cron schedule with one fixed minute, so it runs at most hourly. Adding, changing, and
   deleting one each append a typed system message that shows its title. Only the lead adds or changes
@@ -96,6 +104,11 @@ projections for persistence and runtime configuration; private read positions st
   working directory. Name, purpose, and directory changes create a durable system message;
   preview changes also create a system message, like sharing an artifact. Ordinary task updates
   stay out of the transcript and do not create unread state or list movement.
+- Let the lead add, update, remove, and move tasks by ID with `edit_channel_tasks`, committing an ordered
+  batch against the latest tree. Updates preserve omitted fields and children; null clears optional
+  fields. Removal deletes a subtree; moving appends it intact at the root or under a parent outside
+  that subtree. Reserve `update_channel`'s whole-tree replacement for initial
+  planning or restructuring, preserving retained IDs and outcomes.
 - Create, edit, start, finish, and remove Channel members through their owned Workers.
 - Let ordinary Sessions create and staff Channels, then read, post, share, and wait for the lead or
   members on the user's behalf. Let the lead create peers within its own Channel.
@@ -163,16 +176,20 @@ durable long-form work stays in canonical shared artifacts; browser messages ret
 model's 12,000-character limit.
 
 The built-in lead role establishes the purpose with the user when needed, scales planning to the
-work, keeps a lightweight current task list, creates each member only when their work is actionable,
-drives quality through review and iteration, and keeps the public progress surfaces current.
+work, keeps a lightweight task list with reviewable outcomes, creates each member only when their
+work is actionable, drives quality through review and iteration, and keeps the public progress
+surfaces current.
+Each sibling list is capped at 50 tasks; use ID-based moves to regroup growing lists into milestones without discarding
+useful outcomes or copying child counts into a parent's direct diff.
 Routines serve the purpose, so setting one never rewrites the purpose or adds tasks.
 Delegation never transfers accountability for the purpose or the quality of a member's outcome.
 During working communication, the lead flags what it needs from the user by setting
 `request` on `send_channel_message`; the same transaction appends that flagged message and updates
 the pending cursor. Only the lead's version of the tool accepts the flag. Completion
 needs no separate operation:
-when a lead's `update_channel` takes the task list from incomplete to complete, meaning it has tasks
-and every task and subtask is done, the same transaction appends `tasks_completed`. Rewriting an
+when a lead's task edit or replacement takes the list from incomplete to complete, meaning it has
+tasks and every task and subtask is done, the same transaction appends `tasks_completed`. Completion
+compares the committed tree before and after the entire batch, never intermediate edits. Rewriting an
 already complete list never repeats it; reopening and finishing a task does.
 
 A turn start clears only a prior waiting status. Session completion clears any remaining working
@@ -207,8 +224,11 @@ follow-ups and routines in one transaction before delivery: a follow-up clears i
 and a routine moves past now, so runs missed while stopped collapse into one.
 
 The database is authoritative. Lead metadata updates and attention operations authorize against the
-Channel's intrinsic lead ID within their transaction. The list query returns metadata and members for the
-sidebar. The fixed lead identity is derived from the Channel ID.
+Channel's intrinsic lead ID within their transaction. Task edits and replacements also validate
+owners and shared artifact references in that transaction. Tasks stay in the Channel's JSON column;
+granular commands publish the same full-tree `tasks` event as replacement. Outcome-only updates
+stay quiet and unchanged edits allocate no revision. The list query returns metadata and members
+for the sidebar. The fixed lead identity is derived from the Channel ID.
 Commits persist the reducer's request and completion cursors alongside their messages; reads select
 those cursors directly. The snapshot retains request content by that sequence, while transcript
 presentation separately distinguishes each historical request's acknowledgement.
@@ -236,8 +256,11 @@ client, including reactions on older loaded messages. Presence is transient and 
 
 Agent reads move forward from private `seenThrough` and advance it. Passive Session reads page
 backward without changing read state. Agent-facing projections use `agentId` for both the lead and
-members, matching message senders, reactions, and waiting. They expose exact mentions, roles, and
-effective statuses but never private Session IDs as a separate concept or another member's read position.
+members, matching message senders, reactions, and waiting. These projections expose exact mentions,
+roles, and effective statuses, never separate private Session IDs or another member's read position.
+Artifact shares and reads expose
+`artifactId` alongside the path and title, so the lead can attach the same file identity to a task.
+Task-edit receipts return only the targeted IDs.
 Presence governs working/waiting/idle for clients and tool projections; stored status supplies text
 and message targets only while its state matches that presence.
 
@@ -251,8 +274,10 @@ Its snapshot event carries a `ChannelState`; snapshots are part of the stream pr
 The snapshot includes the latest 100 public messages, roster, artifacts, routines, live presence,
 and the pending request even outside that message window. Its durable facts come from one
 transaction. Reads never acknowledge the Channel or expose private Agent context. Artifacts carry
-Files serving URLs. Each attachment is either `{ name, url }` for a file or `{ mimeType, base64 }`
-for an inline upload. Stored paths remain available only in the agent tool projection.
+the `id` that tasks reference as `artifactId` and a Files serving URL, so clients match task
+outcomes without knowing the file identity encoding. Each attachment is either `{ name, url }` for
+a file or `{ mimeType, base64 }` for an inline upload. Stored paths remain available only in the
+agent tool projection.
 
 The stream establishes state and follows changes:
 
@@ -325,12 +350,17 @@ ends observation and reaches the pane's existing unavailable boundary.
 
 - The transcript's rows come from `transcriptRows`: each user message stands alone, one agent's
   consecutive messages form a run, and matching system messages merge. Day dividers and a "New" rule
-  fall between rows. The "New" position comes from the current read position on arrival and holds
+  fall between rows. `SystemMessageGroup` defines each kind's static icon and content function
+  together in one local object. Its shared row renders the resulting content and tooltip;
+  grouping and the durable message model stay separate.
+  The "New" position comes from the current read position on arrival and holds
   while it's read, so arrivals during reading are never marked. A flagged question is marked until a
   later user message acknowledges it. The activity row shows working agents; waiting
   shows in the overview, since a request already marks what the user needs to answer.
 - The composer docks Workspace's [`ComposerTray`](../workspace/components/outputs/ComposerTray.tsx)
-  for shared artifacts, newest first, plus the tasks and preview. While the Channel reports a
+  for shared artifacts, newest first, plus the tasks and preview. On desktop, the preview link
+  shows a sandboxed iframe on hover, matching artifact previews, with its URL in muted text below;
+  clicking still opens the URL in a new tab. While the Channel reports a
   pending request, it asks for a reply. An "Input needed" button beside the composer's audience stays visible
   until the user replies. Hover previews `state.request`; clicking loads
   any older pages needed and scrolls to the question. Scrolling never changes the composer height.
@@ -339,13 +369,25 @@ ends observation and reaches the pane's existing unavailable boundary.
   artifacts with when each was shared, the tasks, and any routines by title with their next
   run, each expanding to its prompt and offering Run routine and Delete routine. A waiting lead shows
   when its follow-up checks back.
+- Both checklists share a task projection with stable identity and compact diff totals (exact counts
+  on hover and for assistive technology). Naturally sized counts and owners float beside the first
+  title line, without reserved columns. Pending rows omit diff counts; reported zeros use the same
+  added/removed colors as other counts. Counts and avatars keep their normal colors on done rows.
+  Artifact references stay on their directly attributed tasks and never roll up. Artifact icon actions
+  share that detail slot and open ordinary file panes without toggling the parent; their hover
+  and accessible labels identify the artifact, while full titles stay in the artifact list.
+  Inline disclosures keep direct-child progress with the title in the same count badge as section
+  headings; a parent's own artifact action remains visible while collapsed. The overview and popup
+  share a heading layout with a count badge and the whole-list diff at the right. The progress bar
+  appears only in the desktop composer-tray pill.
 - Sidebar priority is waiting, unread completion, ordinary unread, then live lead/member activity;
   open channels suppress completion like unread, but never suppress an unanswered request.
 
 ## Code map
 
 - `model/` is the isomorphic domain. `index.ts` owns the types, input schemas, audience policy, and
-  task completion. `agent.ts` owns agent names, roles, avatars, the lead profile, and mention
+  public exports. `tasks.ts` owns task identity, outcome schemas, derived diff totals, tree edits,
+  ownership release, and completion. `agent.ts` owns agent names, roles, avatars, the lead profile, and mention
   handles. `worker.ts` projects Worker metadata into the lead, members, and roster. `reducer.ts`
   reduces the complete public snapshot and owns the metadata and roster transitions shared with
   the server. `presence.ts`, `reactions.ts`, and `requests.ts`

@@ -9,6 +9,7 @@ import {
 import { cronSchema } from "@/shared/cron";
 import type { ChannelAgentPresence } from "./presence";
 import { hasChanges } from "./changes";
+import { channelTasksSchema, type ChannelTask } from "./tasks";
 import {
   agentAvatarSchema,
   agentHandleFromName,
@@ -19,6 +20,7 @@ import {
 } from "./agent";
 
 export * from "./agent";
+export * from "./tasks";
 
 const durableIdSchema = z.string().trim().min(1).max(255);
 const channelNameSchema = z.string().trim().min(1).max(100);
@@ -46,21 +48,6 @@ const channelPreviewUrlSchema = z
 const channelMessageTextSchema = z.string().trim().max(12_000);
 export const channelMessageContentSchema = channelMessageTextSchema.min(1);
 export const channelReactionKindSchema = z.enum(["done", "agree", "celebrate", "love", "laugh"]);
-const channelTaskStatusSchema = z.enum(["pending", "in_progress", "blocked", "done"]);
-
-export const channelTaskSchema = z
-  .object({
-    title: z.string().trim().min(1).max(240).describe("A concise outcome or next step."),
-    status: channelTaskStatusSchema.describe("The task's current state."),
-    ownerId: durableIdSchema
-      .optional()
-      .describe("The channel lead ID or current member ID responsible for the task."),
-    get children() {
-      return z.array(channelTaskSchema).max(50).optional().describe("Optional subtasks.");
-    },
-  })
-  .strict();
-export type ChannelTask = z.output<typeof channelTaskSchema>;
 
 const channelReactionSchema = z
   .object({
@@ -217,6 +204,8 @@ const channelArtifactSchema = z
   })
   .strict();
 export type ChannelArtifact = z.output<typeof channelArtifactSchema> & {
+  /** The shared file's identity, which tasks reference as `artifactId`. */
+  id: string;
   /** Public resource address supplied by the server; never accepted as a command input. */
   url?: string;
 };
@@ -412,11 +401,11 @@ const channelChangesSchema = z
       .describe(
         "The working directory for all channel agents on their next execution, or null to clear it.",
       ),
-    tasks: z
-      .array(channelTaskSchema)
-      .max(50)
+    tasks: channelTasksSchema
       .optional()
-      .describe("The complete task list, replacing the previous tasks."),
+      .describe(
+        "The complete task list for initial planning or intentional replacement. Preserve retained task IDs and outcomes; use edit_channel_tasks for progress updates.",
+      ),
     previewUrl: channelPreviewUrlSchema
       .nullable()
       .optional()
@@ -463,26 +452,8 @@ export type EditChannelInput = z.output<typeof editChannelInputSchema>;
 export type PostChannelMessageInput = z.output<typeof postChannelMessageInputSchema>;
 export type UpdateChannelInput = z.output<typeof updateChannelInputSchema>;
 
-export function unassignChannelTasks(
-  tasks: readonly ChannelTask[],
-  agentId: string,
-): ChannelTask[] {
-  return tasks.map(({ ownerId, children, ...task }) => ({
-    ...task,
-    ...(ownerId && ownerId !== agentId ? { ownerId } : {}),
-    ...(children ? { children: unassignChannelTasks(children, agentId) } : {}),
-  }));
-}
-
 export function channelHasUnread(channel: Channel): boolean {
   return channel.latestSequence > channel.seenThrough;
-}
-
-/** A task list is complete when it has tasks and every task and subtask is done. */
-export function channelTasksComplete(tasks: readonly ChannelTask[]): boolean {
-  const allDone = (tasks: readonly ChannelTask[]): boolean =>
-    tasks.every(({ status, children = [] }) => status === "done" && allDone(children));
-  return tasks.length > 0 && allDone(tasks);
 }
 
 /** Complete delivery policy for user, lead, and member messages. */

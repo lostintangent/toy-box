@@ -13,9 +13,14 @@ import {
   UserMinus,
 } from "lucide-react";
 import { AgentItem } from "@channels/components/agents/AgentItem";
-import type { Channel, ChannelArtifact, ChannelMember, ChannelRoutine } from "@channels/model";
+import {
+  channelTasksDiff,
+  type Channel,
+  type ChannelArtifact,
+  type ChannelMember,
+  type ChannelRoutine,
+} from "@channels/model";
 import { channelMutations } from "@channels/mutations";
-import { workspaceFileId } from "@files/model";
 import { ArtifactPill } from "@workspace/components/outputs/ArtifactPill";
 import { SessionMetadataBadges } from "@sessions/components/location/SessionMetadataBadges";
 import { Badge } from "@/shared/ui/badge";
@@ -28,14 +33,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { ProgressBar } from "@/shared/ui/progress-bar";
+import { SectionHeading } from "@/shared/ui/section-heading";
 import { RelativeTime } from "@/shared/ui/relative-time";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { ShowMore, useShowMore } from "@/shared/ui/show-more";
 import { nextCronOccurrence } from "@/shared/cron";
 import { cn } from "@/shared/utils";
 import { useChannelPane } from "../ChannelPaneContext";
-import { channelTaskItems } from "../channelTaskItems";
+import { channelTaskItems, TaskDiff } from "../channelTaskItems";
 
 /** What the overview shows: the Channel's context, team members, tasks, artifacts, and routines. */
 export function ChannelOverviewContent({
@@ -60,6 +65,7 @@ export function ChannelOverviewContent({
   const { lead, members, agents } = useChannelPane();
   const sortedMembers = [...members].sort((left, right) => left.name.localeCompare(right.name));
   const completedCount = channel.tasks.filter(({ status }) => status === "done").length;
+  const diff = channelTasksDiff(channel.tasks);
 
   return (
     <div className="min-h-0 flex-1 space-y-6 overflow-y-auto bg-panel p-4">
@@ -138,12 +144,20 @@ export function ChannelOverviewContent({
       </OverviewSection>
 
       <OverviewSection
-        title="Tasks"
-        count={channel.tasks.length && `${completedCount}/${channel.tasks.length}`}
-        progress={channel.tasks.length > 0 ? completedCount / channel.tasks.length : undefined}
+        title="Task list"
+        count={`${completedCount}/${channel.tasks.length}`}
+        detail={diff && <TaskDiff diff={diff} />}
       >
         {channel.tasks.length > 0 ? (
-          <Checklist items={channelTaskItems(channel.tasks, agents)} className="text-sm" />
+          <Checklist
+            items={channelTaskItems({
+              tasks: channel.tasks,
+              owners: agents,
+              artifacts,
+              onArtifactOpen,
+            })}
+            className="text-sm"
+          />
         ) : (
           <p className="text-sm text-muted-foreground italic">No tasks yet.</p>
         )}
@@ -154,7 +168,7 @@ export function ChannelOverviewContent({
           <div role="list" aria-label={`Artifacts in #${channel.name}`} className="flex flex-col">
             {artifacts.map((artifact) => (
               <ArtifactPill
-                key={workspaceFileId(artifact.file)}
+                key={artifact.id}
                 file={artifact.file}
                 label={artifact.title}
                 detail={<RelativeTime className="text-muted-foreground" date={artifact.sharedAt} />}
@@ -271,22 +285,17 @@ function RowMenu({ name, children }: { name: string; children?: ReactNode }) {
 function OverviewSection({
   title,
   count,
-  progress,
+  detail,
   children,
 }: {
   title: string;
   count: number | string;
-  /** Completion from 0 to 1, shown as a bar at the heading's end. */
-  progress?: number;
+  detail?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="space-y-3 not-first-of-type:border-t not-first-of-type:pt-6">
-      <h3 className="flex h-4.5 items-center gap-1.5">
-        <span className="section-heading">{title}</span>
-        <Badge variant="count">{count}</Badge>
-        {progress !== undefined && <ProgressBar value={progress} className="ml-auto" />}
-      </h3>
+      <SectionHeading title={title} count={count} detail={detail} />
       {children}
     </section>
   );

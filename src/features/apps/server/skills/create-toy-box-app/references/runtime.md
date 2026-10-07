@@ -324,6 +324,9 @@ messages, pending `request`, artifacts, routines, and authoritative `presence`.
 Use presence to place agents in working, waiting, or idle areas; waiting includes
 optional `wakeAt`. Avatars contain a hex `color` and SVG path `mark` in a 24×24
 viewBox. Artifact `file`s work with `useFile` and `actions.openFile`.
+A task's `artifactId` is the `id` of its artifact in `state.artifacts`. `channelTasksDiff(tasks)`
+sums their direct and reported descendant diffs, or returns `undefined` when none are reported;
+pass `[task]` for one subtree. It reuses the Channels logic.
 `loadPrevious(sequence?)` loads one older page or pages through a target message.
 `postMessage({ content, attachments? })` uses the shared optimistic mutation.
 

@@ -2,7 +2,7 @@ import { Diff } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { cn } from "@/shared/utils";
-import type { DiffStats } from "../../model/fileDiffs";
+import type { DiffStats } from "@/shared/diffStats";
 import type { FileDiffSummary } from "../transcript/editDiffs";
 import { outputPillClassName } from "@workspace/components/outputs/ArtifactPill";
 

@@ -5,6 +5,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChannelEvent } from "@channels/model";
+import { machineFile, workspaceFileId } from "@files/model";
 import { reduceChannelState } from "@channels/model/reducer";
 import { createTestDatabase } from "@/server/database";
 import { detachManagedSession } from "@/server/managedSessions";
@@ -32,6 +33,7 @@ const {
   createChannelMember,
   createChannelMembersFromLead,
   editChannel,
+  editChannelTasksFromLead,
   finishChannelAgentTurn,
   markChannelRead,
   postChannelMessageFromSession,
@@ -41,13 +43,13 @@ const {
   setChannelAgentStatus,
   setChannelMessageReactionFromAgent,
   setChannelRoutineFromLead,
-  shareChannelArtifactFromSession,
   updateChannelMember,
   updateChannelFromLead,
   wakeDueChannelAgents,
 } = await import("./index");
 const { subscribeChannelEvents, releaseChannelEvents } = await import("./events");
-const { channelMemberTools, channelTools, createChannelMembersTool } = await import("./tools");
+const { channelLeadTools, channelMemberTools, channelTools, createChannelMembersTool } =
+  await import("./tools");
 
 beforeEach(() => {
   const create = spyOn(sessionRuntime, "createSession").mockResolvedValue({
@@ -74,6 +76,27 @@ async function openChannels() {
   return new ChannelDatabase(database);
 }
 
+async function invokeTool(name: string, input = {}, sessionId = "coordinator") {
+  const tool = [
+    ...channelTools,
+    createChannelMembersTool,
+    ...channelMemberTools,
+    ...channelLeadTools,
+  ].find((tool) => tool.name === name) as Tool | undefined;
+  if (!tool) throw new Error(`Tool not found: ${name}`);
+  const result = normalizeToolResult(
+    await tool.handler(tool.parameters?.parse(input) ?? input, {
+      sessionId,
+      toolCallId: name,
+      toolName: name,
+      arguments: input,
+    }),
+  );
+  const content = result.content[0];
+  if (content?.type !== "text") throw new Error("Expected a text tool result.");
+  return JSON.parse(content.text);
+}
+
 test("attention uses normal messages and upserts, and a user reply also wakes the lead", async () => {
   const channels = await openChannels();
   const channel = await createStoredChannel(channels, { name: "Attention", ...CHANNEL_DEFAULTS });
@@ -97,7 +120,9 @@ test("attention uses normal messages and upserts, and a user reply also wakes th
     content: "Choose the next task.",
     request: true,
   });
-  await updateChannelFromLead(channel.id, { tasks: [{ title: "Ship", status: "done" }] });
+  await updateChannelFromLead(channel.id, {
+    tasks: [{ id: "ship", title: "Ship", status: "done" }],
+  });
   expect(
     events.filter((event) => event.type === "message").map(({ message }) => message.content),
   ).toEqual([request.content, { type: "tasks_completed" }]);
@@ -375,43 +400,30 @@ test("only the Channel lead can create members", async () => {
 
 test("channel tools use agentId across creation, context, profile updates, and waiting", async () => {
   await openChannels();
-  async function invoke(name: string, input = {}, sessionId = "coordinator") {
-    const tool = [...channelTools, createChannelMembersTool, ...channelMemberTools].find(
-      (tool) => tool.name === name,
-    ) as Tool | undefined;
-    if (!tool) throw new Error(`Tool not found: ${name}`);
-    const result = normalizeToolResult(
-      await tool.handler(tool.parameters?.parse(input) ?? input, {
-        sessionId,
-        toolCallId: name,
-        toolName: name,
-        arguments: input,
-      }),
-    );
-    const content = result.content[0];
-    if (content?.type !== "text") throw new Error("Expected a text tool result.");
-    return JSON.parse(content.text);
-  }
 
-  const { channel } = await invoke("create_channel", { name: "Identity", ...CHANNEL_DEFAULTS });
+  const { channel } = await invokeTool("create_channel", { name: "Identity", ...CHANNEL_DEFAULTS });
   const channelId = channel.channelId;
   onTestFinished(() => releaseChannelEvents(channelId));
   expect(channel.lead).toEqual({ agentId: channelId, mention: "@lead" });
-  expect((await invoke("list_channels")).channels[0].lead).toEqual(channel.lead);
+  expect((await invokeTool("list_channels")).channels[0].lead).toEqual(channel.lead);
 
-  const { members } = await invoke("create_channel_members", {
+  const { members } = await invokeTool("create_channel_members", {
     channelId,
     members: [{ name: "Reviewer" }],
   });
   const member = members[0];
   expect(member).toEqual({ agentId: expect.any(String), mention: "@reviewer" });
-  const profile = await invoke("update_member", { role: "Review the outcome." }, member.agentId);
+  const profile = await invokeTool(
+    "update_member",
+    { role: "Review the outcome." },
+    member.agentId,
+  );
   expect(profile.agentId).toBe(member.agentId);
   expect(profile).not.toHaveProperty("id");
 
   // Stored work left behind by an idle session must not appear as active work to peers.
   await setChannelAgentStatus(member.agentId, { status: "Reviewing" });
-  const context = await invoke("read_channel", { channelId });
+  const context = await invokeTool("read_channel", { channelId });
   expect(context.lead.agentId).toBe(channel.lead.agentId);
   expect(context.members).toEqual([
     {
@@ -423,7 +435,7 @@ test("channel tools use agentId across creation, context, profile updates, and w
   ]);
   expect(context.messages[0].content).toEqual({ type: "member_joined", agentId: member.agentId });
   expect(
-    await invoke("wait_for_channel_agents", {
+    await invokeTool("wait_for_channel_agents", {
       channelId,
       agentIds: [context.lead.agentId, context.members[0].agentId],
     }),
@@ -465,41 +477,55 @@ test("a Session can seed and passively read Channel context", async () => {
     content: "Review the evidence and brief.",
     attachmentPaths: [join(directory, "evidence.png")],
   });
-  await shareChannelArtifactFromSession("coordinator-session", {
-    channelId: channel.id,
-    path: "brief.md",
-    title: "Research brief",
-  });
+  const artifact = await invokeTool(
+    "share_channel_artifact",
+    { channelId: channel.id, path: "brief.md", title: "Research brief" },
+    "coordinator-session",
+  );
   await updateChannelFromLead(channel.id, {
     purpose: "Turn the evidence into a useful recommendation.",
-    tasks: [{ title: "Synthesize the evidence", status: "in_progress" }],
+    tasks: [{ id: "synthesize", title: "Synthesize the evidence", status: "in_progress" }],
     previewUrl: "http://127.0.0.1:3000",
   });
+  const outcome = { artifactId: artifact.artifactId, diff: { added: 32, removed: 8 } };
+  expect(
+    await invokeTool(
+      "edit_channel_tasks",
+      { operations: [{ type: "update", taskId: "synthesize", patch: outcome }] },
+      channel.id,
+    ),
+  ).toEqual({ taskIds: ["synthesize"] });
 
-  const result = await readChannelForSession(channel.id);
+  const result = await invokeTool("read_channel", { channelId: channel.id });
   expect(result).toMatchObject({
     channel: {
       purpose: "Turn the evidence into a useful recommendation.",
-      tasks: [{ title: "Synthesize the evidence", status: "in_progress" }],
+      tasks: [
+        { id: "synthesize", title: "Synthesize the evidence", status: "in_progress", ...outcome },
+      ],
       previewUrl: "http://127.0.0.1:3000",
     },
     members: [],
     messages: expect.arrayContaining([
       expect.objectContaining({
-        id: "kickoff",
+        sequence: message.sequence,
         sender: { type: "user" },
         attachments: [join(directory, "evidence.png")],
+      }),
+      expect.objectContaining({
+        content: { type: "artifact_shared", actor: { type: "user" }, artifact },
       }),
     ]),
     artifacts: [
       {
-        file: { kind: "machine", path: join(directory, "brief.md") },
+        artifactId: workspaceFileId(machineFile(join(directory, "brief.md"))),
+        path: join(directory, "brief.md"),
         title: "Research brief",
-        sharedAt: expect.any(String),
       },
     ],
     hasMore: false,
   });
+  expect(result.artifacts).toEqual([artifact]);
   expect((await channels.getChannel(channel.id))?.seenThrough).toBe(0);
   expect(deliver).toHaveBeenCalledWith(channel.id, {
     systemMessage: { type: "channel_message", senderName: "the user" },
@@ -558,8 +584,12 @@ test("committed edits and reads replay to the durable view and only a new purpos
   expect(workspaceUpdates).toEqual(["Shipping", "Shipped"]);
 
   const beforeTasks = (await channels.getChannel(channel.id))!;
-  const tasks = [{ title: "Verify", status: "pending" }] as const;
-  await updateChannelFromLead(channel.id, { tasks: [...tasks] });
+  const tasks = [
+    { id: "verify", title: "Verify", status: "pending", diff: { added: 3, removed: 1 } },
+  ] as const;
+  await editChannelTasksFromLead(channel.id, {
+    operations: [{ type: "add", task: tasks[0] }],
+  });
   expect(await channels.getChannel(channel.id)).toMatchObject({
     latestSequence: beforeTasks.latestSequence,
     updatedAt: beforeTasks.updatedAt,

@@ -12,14 +12,17 @@ import {
   channelAudienceLabel,
   channelHasPendingRequest,
   channelLead,
+  channelTasksDiff,
   resolveChannelAudience,
   type ChannelAgent,
   type ChannelState,
   type PostChannelMessageInput,
 } from "@channels/model";
+import type { WorkspaceFile } from "@files/model";
 import { outputPillClassName } from "@workspace/components/outputs/ArtifactPill";
 import { ComposerTray } from "@workspace/components/outputs/ComposerTray";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
+import { createEditorPaneId } from "@workspace/model/panes";
 import {
   AttachImageButton,
   ImageAttachments,
@@ -33,9 +36,10 @@ import {
   InputGroupTextarea,
 } from "@/shared/ui/input-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import { HTML_SANDBOX_PERMISSIONS } from "@/shared/embeddedHtml";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { cn } from "@/shared/utils";
-import { channelTaskItems } from "./channelTaskItems";
+import { channelTaskItems, TaskDiff } from "./channelTaskItems";
 
 /** Starts a message from elsewhere in the pane, continuing whatever draft exists. */
 export type ChannelComposerHandle = {
@@ -61,9 +65,10 @@ export function ChannelComposer({
   const [content, setContent] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { hydrated, isMobile } = useViewport();
-  const { revealFile } = useWorkspaceSurface();
+  const { revealFile, focusedPaneAtom } = useWorkspaceSurface();
   const attachments = useAttachments();
   const channel = state?.channel;
+  const diff = channelTasksDiff(channel?.tasks ?? []);
   const request = state?.request;
   const needsReply = channel ? channelHasPendingRequest(channel) : false;
   const lead = state?.lead ?? channelLead(channelId);
@@ -132,6 +137,11 @@ export function ChannelComposer({
     attachments.pendingCount > 0 ||
     (!content.trim() && attachments.items.length === 0);
 
+  function openArtifact(file: WorkspaceFile) {
+    if (revealFile) revealFile(file);
+    else focusedPaneAtom.set(createEditorPaneId(file));
+  }
+
   return (
     <form
       className="@container w-full"
@@ -144,24 +154,56 @@ export function ChannelComposer({
       <input {...attachments.fileInputProps} />
       <ComposerTray
         artifacts={artifacts ?? []}
-        checklist={channelTaskItems(channel?.tasks ?? [], agents)}
+        checklist={channelTaskItems({
+          tasks: channel?.tasks ?? [],
+          owners: agents,
+          artifacts: state?.artifacts ?? [],
+          onArtifactOpen: ({ file }) => openArtifact(file),
+          closeOnArtifactOpen: true,
+        })}
         artifactTimeLabel="Shared"
         checklistLabel="Tasks"
+        checklistHeaderDetail={diff && <TaskDiff diff={diff} />}
         extraOutput={
           channel?.previewUrl && (
-            <a
-              href={channel.previewUrl}
-              target="_blank"
-              rel="noreferrer"
-              title={channel.previewUrl}
-              className={outputPillClassName}
-            >
-              <MonitorPlay className="size-3.5 shrink-0" />
-              Preview
-            </a>
+            <PreviewCard>
+              <PreviewCardTrigger
+                delay={400}
+                render={<a href={channel.previewUrl} target="_blank" rel="noreferrer" />}
+                className={outputPillClassName}
+              >
+                <MonitorPlay className="size-3.5 shrink-0" />
+                Preview
+              </PreviewCardTrigger>
+              <PreviewCardContent
+                side="top"
+                align="end"
+                sideOffset={8}
+                className="hidden p-2 md:block"
+              >
+                <div className="relative aspect-video w-full overflow-hidden rounded-md border bg-background">
+                  <iframe
+                    src={channel.previewUrl}
+                    title={`Preview ${channel.previewUrl}`}
+                    sandbox={HTML_SANDBOX_PERMISSIONS}
+                    loading="lazy"
+                    tabIndex={-1}
+                    width={960}
+                    height={540}
+                    className="absolute top-0 left-0 origin-top-left scale-[0.25] border-0"
+                  />
+                </div>
+                <p
+                  className="mt-2 truncate text-xs text-muted-foreground"
+                  title={channel.previewUrl}
+                >
+                  {channel.previewUrl}
+                </p>
+              </PreviewCardContent>
+            </PreviewCard>
           )
         }
-        onOpenArtifact={revealFile}
+        onOpenArtifact={openArtifact}
       />
       <InputGroup className={cn(attachments.isDragging && "border-ring ring-[3px] ring-ring/50")}>
         <ImageAttachments

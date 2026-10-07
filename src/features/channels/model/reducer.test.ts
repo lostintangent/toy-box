@@ -70,7 +70,15 @@ test("quiet tasks and model changes advance the cursor without creating transcri
   const previous = snapshot();
   previous.channel.requestSequence = 100;
   previous.channel.completedSequence = 101;
-  const tasks = [{ title: "Build", status: "in_progress" as const }];
+  const tasks = [
+    {
+      id: "build",
+      title: "Build",
+      status: "in_progress" as const,
+      artifactId: "machine:/workspace/design.md",
+      diff: { added: 12, removed: 3 },
+    },
+  ];
   const tasked = reduceChannelState(previous, { type: "tasks", revision: 102, tasks });
   expect(tasked.channel).toEqual({ ...previous.channel, tasks });
   expect(tasked.messages).toBe(previous.messages);
@@ -239,17 +247,19 @@ test("presence replaces the reconnect baseline or merges sparse live changes wit
 
 test("member departure removes its presence and recursively releases task ownership", () => {
   const member = { channelId: "channel", id: "reviewer", name: "Reviewer" };
+  const outcome = { artifactId: "session:reviewer:review.md", diff: { added: 12, removed: 3 } };
   const previous = snapshot();
   previous.members = [member];
   previous.presence[member.id] = { state: "working" };
   previous.channel.tasks = [
     {
+      id: "release",
       title: "Release",
       status: "in_progress",
       ownerId: member.id,
       children: [
-        { title: "Review", status: "pending", ownerId: member.id },
-        { title: "Ship", status: "pending", ownerId: "channel" },
+        { id: "review", title: "Review", status: "pending", ownerId: member.id, ...outcome },
+        { id: "ship", title: "Ship", status: "pending", ownerId: "channel" },
       ],
     },
   ];
@@ -258,11 +268,12 @@ test("member departure removes its presence and recursively releases task owners
   expect(departed.presence).toEqual({ channel: { state: "idle" } });
   expect(departed.channel.tasks).toEqual([
     {
+      id: "release",
       title: "Release",
       status: "in_progress",
       children: [
-        { title: "Review", status: "pending" },
-        { title: "Ship", status: "pending", ownerId: "channel" },
+        { id: "review", title: "Review", status: "pending", ...outcome },
+        { id: "ship", title: "Ship", status: "pending", ownerId: "channel" },
       ],
     },
   ]);
@@ -383,9 +394,10 @@ test("sharing an artifact preserves its public URL and original share time when 
   });
   retitled.message.timestamp = "2026-10-04T21:00:00.000Z";
   const next = reduceChannelState(first, retitled);
-  expect(first.artifacts).toEqual([{ ...artifact, sharedAt: shared.message.timestamp }]);
+  const id = "machine:/workspace/plan.md";
+  expect(first.artifacts).toEqual([{ ...artifact, id, sharedAt: shared.message.timestamp }]);
   expect(next.artifacts).toEqual([
-    { ...artifact, title: "Release plan", sharedAt: shared.message.timestamp },
+    { ...artifact, id, title: "Release plan", sharedAt: shared.message.timestamp },
   ]);
 });
 

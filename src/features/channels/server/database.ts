@@ -2,7 +2,8 @@ import {
   agentHandleFromName,
   channelAgentMetadataSchema,
   isChannelSystemMessage,
-  channelTaskSchema,
+  channelTasksSchema,
+  applyChannelTaskEdits,
   channelTasksComplete,
   channelSystemMessageContentSchema,
   CHANNEL_LEAD_PROFILE,
@@ -26,11 +27,13 @@ import {
   type ChannelRoutine,
   type CreateChannelInput,
   type EditChannelInput,
+  type EditChannelTasksInput,
   type SetChannelRoutineInput,
   type UpdateChannelInput,
 } from "@channels/model";
 import { reduceChannel } from "@channels/model/reducer";
-import { machineFile, sessionFile } from "@files/model";
+import { applyPatch } from "@channels/model/changes";
+import { machineFile, sessionFile, workspaceFileId } from "@files/model";
 import { modelConfigurationSchema } from "@providers/model";
 import { inStateTransaction } from "@/server/database";
 import { nextCronOccurrence } from "@/shared/cron";
@@ -262,15 +265,17 @@ export class ChannelDatabase {
   async updateChannel(leadId: string, input: UpdateChannelInput) {
     return inStateTransaction(this.db, async (db) => {
       const channel = await requireLeadChannel(db, leadId);
-      if (input.tasks) {
-        const agentIds = new Set(
-          (await new WorkerDatabase(db).list({ type: "channel", channelId: channel.id })).map(
-            ({ sessionId }) => sessionId,
-          ),
-        );
-        assertTaskOwners(input.tasks, agentIds);
-      }
+      if (input.tasks) await assertTaskReferences(db, channel.id, input.tasks);
       return updateChannelFields(db, channel, input, { type: "agent", agentId: leadId });
+    });
+  }
+
+  async editTasks(leadId: string, { operations }: EditChannelTasksInput) {
+    return inStateTransaction(this.db, async (db) => {
+      const channel = await requireLeadChannel(db, leadId);
+      const tasks = applyChannelTaskEdits(channel.tasks, operations);
+      await assertTaskReferences(db, channel.id, tasks);
+      return updateChannelFields(db, channel, { tasks }, { type: "agent", agentId: leadId });
     });
   }
 
@@ -567,20 +572,6 @@ export class ChannelDatabase {
       };
     });
   }
-}
-
-/** Undefined leaves a property alone; null removes an optional property. */
-function applyPatch<Value extends object>(
-  current: Value,
-  changes: { [Key in keyof Value]?: Value[Key] | null },
-): Value {
-  const next = { ...current };
-  for (const key in changes) {
-    const value = changes[key];
-    if (value === null) delete next[key];
-    else if (value !== undefined) next[key] = value;
-  }
-  return next;
 }
 
 async function advanceRevision(db: Bun.SQL, channelId: string): Promise<number> {
@@ -894,7 +885,7 @@ function channelFromRow(row: ChannelRow): Channel {
     ...(row.purpose ? { purpose: row.purpose } : {}),
     ...(row.directory ? { directory: row.directory } : {}),
     model: modelConfigurationSchema.parse(JSON.parse(row.model)),
-    tasks: channelTaskSchema.array().parse(JSON.parse(row.tasks)),
+    tasks: channelTasksSchema.parse(JSON.parse(row.tasks)),
     ...(row.preview_url ? { previewUrl: row.preview_url } : {}),
     latestSequence: row.latest_sequence,
     seenThrough: row.seen_through,
@@ -957,11 +948,9 @@ async function assertMemberNameAvailable(
 }
 
 function artifactFromRow(row: ChannelArtifactRow): ChannelArtifact {
-  return {
-    file: row.kind === "session" ? sessionFile(row.session_id, row.path) : machineFile(row.path),
-    title: row.title,
-    sharedAt: row.created_at,
-  };
+  const file =
+    row.kind === "session" ? sessionFile(row.session_id, row.path) : machineFile(row.path);
+  return { id: workspaceFileId(file), file, title: row.title, sharedAt: row.created_at };
 }
 
 function messageFromRow(row: ChannelMessageRow, reactions: ChannelReaction[]): ChannelMessage {
@@ -1005,11 +994,27 @@ function reactionsByMessage(rows: ChannelReactionRow[]): Map<number, ChannelReac
   return reactions;
 }
 
-function assertTaskOwners(tasks: readonly ChannelTask[], agentIds: ReadonlySet<string>): void {
-  for (const task of tasks) {
-    if (task.ownerId && !agentIds.has(task.ownerId)) {
-      throw new Error("Task owners must be the channel lead or a current member.");
+async function assertTaskReferences(
+  db: Bun.SQL,
+  channelId: string,
+  tasks: readonly ChannelTask[],
+): Promise<void> {
+  const [agents, artifacts] = await Promise.all([
+    new WorkerDatabase(db).list({ type: "channel", channelId }),
+    listArtifacts(db, channelId),
+  ]);
+  const agentIds = new Set(agents.map(({ sessionId }) => sessionId));
+  const artifactIds = new Set(artifacts.map(({ id }) => id));
+  const visit = (tasks: readonly ChannelTask[]) => {
+    for (const task of tasks) {
+      if (task.ownerId && !agentIds.has(task.ownerId)) {
+        throw new Error("Task owners must be the channel lead or a current member.");
+      }
+      if (task.artifactId && !artifactIds.has(task.artifactId)) {
+        throw new Error(`Task "${task.id}" must reference an artifact shared in this channel.`);
+      }
+      if (task.children) visit(task.children);
     }
-    if (task.children) assertTaskOwners(task.children, agentIds);
-  }
+  };
+  visit(tasks);
 }

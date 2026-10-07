@@ -1,7 +1,7 @@
 import { channelAgent, createStoredChannel } from "@channels/server/testFixtures";
 import { describe, expect, onTestFinished, setSystemTime, test } from "bun:test";
 import type { ChannelTask } from "@channels/model";
-import { machineFile, sessionFile } from "@files/model";
+import { machineFile, sessionFile, workspaceFileId } from "@files/model";
 import { createTestDatabase } from "@/server/database";
 import { ChannelDatabase } from "./database";
 
@@ -35,9 +35,11 @@ describe("channel attention", () => {
       });
     /** Reopens one task, then completes the list, returning the completion message. */
     const complete = async (title = "Release") => {
-      await channels.updateChannel(channel.id, { tasks: [{ title, status: "pending" }] });
+      await channels.updateChannel(channel.id, {
+        tasks: [{ id: "release", title, status: "pending" }],
+      });
       const { events } = await channels.updateChannel(channel.id, {
-        tasks: [{ title, status: "done" }],
+        tasks: [{ id: "release", title, status: "done" }],
       });
       return events.find((event) => event.type === "message")!.message;
     };
@@ -61,12 +63,12 @@ describe("channel attention", () => {
       (await channels.updateChannel(channel.id, { tasks })).events.filter(
         (event) => event.type === "message",
       ).length;
-    const release = { title: "Release", status: "done" } as const;
+    const release = { id: "release", title: "Release", status: "done" } as const;
     expect(await update([release])).toBe(1);
     expect((await channels.getChannel(channel.id))?.completedSequence).toBe(1);
-    expect(await update([release, { title: "Notes", status: "done" }])).toBe(0);
-    expect(await update([release, { title: "Ship", status: "pending" }])).toBe(0);
-    expect(await update([release, { title: "Ship", status: "done" }])).toBe(1);
+    expect(await update([release, { id: "notes", title: "Notes", status: "done" }])).toBe(0);
+    expect(await update([release, { id: "ship", title: "Ship", status: "pending" }])).toBe(0);
+    expect(await update([release, { id: "ship", title: "Ship", status: "done" }])).toBe(1);
     expect(await update([])).toBe(0);
   });
 
@@ -156,6 +158,74 @@ describe("channel attention", () => {
     ).rejects.toThrow();
     expect(await channels.getSnapshot(channel.id, 100)).toEqual(before);
     expect((await post("Next message")).message.sequence).toBe(2);
+  });
+});
+
+describe("channel task edits", () => {
+  async function setup() {
+    const channels = await openChannels();
+    const channel = await createStoredChannel(channels, { name: "Outcomes", ...CHANNEL_DEFAULTS });
+    const task = { id: "t1", title: "Review", status: "pending" } as const;
+    const file = machineFile("/workspace/review.md");
+    await channels.shareArtifact({
+      channelId: channel.id,
+      file,
+      title: "Review findings",
+      actor: { type: "agent", agentId: channel.id },
+    });
+    await channels.updateChannel(channel.id, { tasks: [task] });
+    return { channels, channel, task, artifactId: workspaceFileId(file) };
+  }
+
+  test("only the final batch state can advance revision or complete the list", async () => {
+    const { channels, channel } = await setup();
+    const before = await channels.getSnapshot(channel.id, 100);
+    expect(
+      (
+        await channels.editTasks(channel.id, {
+          operations: [
+            { type: "update", taskId: "t1", patch: { status: "done" } },
+            { type: "update", taskId: "t1", patch: { status: "pending" } },
+          ],
+        })
+      ).events,
+    ).toEqual([]);
+    expect(await channels.getSnapshot(channel.id, 100)).toEqual(before);
+  });
+
+  test("serialized field edits preserve concurrent outcomes on the same task", async () => {
+    const { channels, channel, task, artifactId } = await setup();
+    const diff = { added: 18, removed: 4 };
+    await Promise.all([
+      channels.editTasks(channel.id, {
+        operations: [{ type: "update", taskId: task.id, patch: { artifactId } }],
+      }),
+      channels.editTasks(channel.id, {
+        operations: [{ type: "update", taskId: task.id, patch: { diff } }],
+      }),
+    ]);
+    expect((await channels.getChannel(channel.id))?.tasks).toEqual([{ ...task, artifactId, diff }]);
+  });
+
+  test("out-of-channel references reject replacements and roll back entire edit batches", async () => {
+    const { channels, channel: other, task, artifactId } = await setup();
+    const channel = await createStoredChannel(channels, { name: "Other", ...CHANNEL_DEFAULTS });
+    await channels.updateChannel(channel.id, { tasks: [task] });
+    const before = await channels.getSnapshot(channel.id, 100);
+    for (const patch of [{ artifactId }, { ownerId: other.id }]) {
+      await expect(
+        channels.updateChannel(channel.id, { tasks: [{ ...task, ...patch }] }),
+      ).rejects.toThrow();
+      await expect(
+        channels.editTasks(channel.id, {
+          operations: [
+            { type: "update", taskId: task.id, patch: { status: "done" } },
+            { type: "update", taskId: task.id, patch },
+          ],
+        }),
+      ).rejects.toThrow();
+      expect(await channels.getSnapshot(channel.id, 100)).toEqual(before);
+    }
   });
 });
 
@@ -469,10 +539,11 @@ describe("channel database", () => {
       directory: "/workspace/delivery",
       tasks: [
         {
+          id: "build",
           title: "Build the product",
           status: "in_progress",
           ownerId: member.id,
-          children: [{ title: "Verify the preview", status: "pending" }],
+          children: [{ id: "verify", title: "Verify the preview", status: "pending" }],
         },
       ],
       previewUrl: "http://127.0.0.1:3000",
@@ -517,16 +588,22 @@ describe("channel database", () => {
     });
     await expect(
       channels.updateChannel(member.id, {
-        tasks: [{ title: "Take over", status: "pending" }],
+        tasks: [{ id: "take-over", title: "Take over", status: "pending" }],
+      }),
+    ).rejects.toThrow("Only the channel lead");
+    await expect(
+      channels.editTasks(member.id, {
+        operations: [{ type: "update", taskId: "build", patch: { status: "done" } }],
       }),
     ).rejects.toThrow("Only the channel lead");
 
     await channels.deleteMember(member.id);
     expect((await channels.getChannel(channel.id))?.tasks).toEqual([
       {
+        id: "build",
         title: "Build the product",
         status: "in_progress",
-        children: [{ title: "Verify the preview", status: "pending" }],
+        children: [{ id: "verify", title: "Verify the preview", status: "pending" }],
       },
     ]);
   });
@@ -600,11 +677,13 @@ describe("channel database", () => {
 
     expect(await channels.listArtifacts(channel.id)).toEqual([
       {
+        id: "machine:/workspace/plan.md",
         file: machineFile("/workspace/plan.md"),
         title: "Release plan",
         sharedAt: expect.any(String),
       },
       {
+        id: "session:designer-session:plan.md",
         file: sessionFile("designer-session", "plan.md"),
         title: "Design plan",
         sharedAt: expect.any(String),

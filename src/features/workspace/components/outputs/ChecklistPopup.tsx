@@ -1,16 +1,20 @@
 import { ListTodo } from "lucide-react";
+import type { ReactNode } from "react";
 import { Checklist, type ChecklistItem } from "@/shared/ui/checklist";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { ProgressBar } from "@/shared/ui/progress-bar";
+import { SectionHeading } from "@/shared/ui/section-heading";
 import { emptyOutputPillClassName, outputPillClassName } from "./ArtifactPill";
 
 /** Checklist progress as a tray pill that opens the complete checklist. */
 export function ChecklistPopup({
   items,
   label,
+  headerDetail,
 }: {
   items: readonly ChecklistItem[];
   label: string;
+  headerDetail?: ReactNode;
 }) {
   const completedCount = items.filter((item) => item.status === "done").length;
   if (items.length === 0) {
@@ -33,17 +37,21 @@ export function ChecklistPopup({
         {completedCount}/{items.length}
         <ProgressBar value={completedCount / items.length} className="max-sm:hidden" />
       </PopoverTrigger>
-      <PopoverContent className="w-80 p-0" align="end" side="top">
-        <div className="text-sm">
-          <div className="flex items-center gap-2 border-b px-3 py-2">
-            <ListTodo className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="font-medium">
-              {label} ({completedCount}/{items.length})
-            </span>
-          </div>
-          <div className="max-h-80 overflow-y-auto px-3 py-2">
-            <Checklist items={items} className="space-y-1 text-xs" />
-          </div>
+      <PopoverContent
+        data-slot="checklist-popup"
+        className="w-80 p-0 text-sm"
+        align="end"
+        side="top"
+      >
+        <div className="border-b px-3 py-2">
+          <SectionHeading
+            title={label}
+            count={`${completedCount}/${items.length}`}
+            detail={headerDetail}
+          />
+        </div>
+        <div className="max-h-80 overflow-y-auto px-3 py-2">
+          <Checklist items={items} className="space-y-1 text-xs" />
         </div>
       </PopoverContent>
     </Popover>

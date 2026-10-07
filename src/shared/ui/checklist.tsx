@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ChevronRight, CircleSlash } from "lucide-react";
+import { Badge } from "@/shared/ui/badge";
 import { DoneIndicator } from "@/shared/ui/done-indicator";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { cn } from "@/shared/utils";
@@ -10,8 +11,7 @@ export type ChecklistItem = {
   id: string;
   title: string;
   status: ChecklistStatus;
-  /** Supporting context in a trailing column beside the title's first line, such as who owns the
-   *  item. Details line up across nested items. */
+  /** Supporting context beside the title's first line, such as ownership or outcomes. */
   detail?: ReactNode;
   children?: readonly ChecklistItem[];
 };
@@ -37,39 +37,67 @@ export function Checklist({
 function ChecklistRow({ item }: { item: ChecklistItem }) {
   const children = item.children ?? [];
   const [expanded, setExpanded] = useState(item.status !== "done");
-  const titleClassName = cn(item.status === "done" && "text-muted-foreground");
+  const completedCount = children.filter(({ status }) => status === "done").length;
+  const lastSpace = item.title.lastIndexOf(" ");
+  const titleClassName = cn("wrap-anywhere", item.status === "done" && "text-muted-foreground");
 
   return (
     <li className="space-y-2">
-      <div className="flex min-w-0 items-start gap-2 leading-snug">
+      <div
+        role="presentation"
+        className={cn(
+          "group/checklist-row flex min-w-0 items-start gap-2 leading-snug",
+          children.length > 0 && "cursor-pointer",
+        )}
+        onClick={(event) => {
+          if (
+            children.length > 0 &&
+            event.target instanceof Element &&
+            !event.target.closest("button, a, input, select, textarea, [role=button], [role=link]")
+          ) {
+            setExpanded((current) => !current);
+          }
+        }}
+      >
         <span className="flex h-lh w-4 shrink-0 items-center justify-center *:shrink-0">
           {MARKS[item.status]}
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="flow-root min-w-0 flex-1">
+          {item.detail && (
+            <span className="float-right ms-2.5 flex h-lh items-center">{item.detail}</span>
+          )}
           {children.length > 0 ? (
-            <button
-              type="button"
-              className="flex w-full min-w-0 items-start gap-1 text-left"
-              aria-expanded={expanded}
-              onClick={() => setExpanded((current) => !current)}
-            >
-              <span className={cn("min-w-0 flex-1", titleClassName)}>{item.title}</span>
-              <ChevronRight
-                className={cn(
-                  "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
-                  expanded && "rotate-90",
+            <span className={titleClassName}>
+              {item.title.slice(0, lastSpace + 1)}
+              <span className="whitespace-nowrap">
+                {item.title.slice(lastSpace + 1)}
+                {item.status !== "done" && (
+                  <Badge
+                    variant="count"
+                    className="ms-1.5 align-middle"
+                    aria-label={`${completedCount} of ${children.length} subtasks complete`}
+                  >
+                    {completedCount}/{children.length}
+                  </Badge>
                 )}
-              />
-            </button>
+                <button
+                  type="button"
+                  className="ms-0.5 inline-flex size-[1.15em] items-center justify-center rounded-sm align-[-0.2em] text-muted-foreground outline-none group-hover/checklist-row:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={`Subtasks of ${item.title}`}
+                  aria-expanded={expanded}
+                  onClick={() => setExpanded((current) => !current)}
+                >
+                  <ChevronRight
+                    aria-hidden
+                    className={cn("size-3 transition-transform", expanded && "rotate-90")}
+                  />
+                </button>
+              </span>
+            </span>
           ) : (
-            <p className={titleClassName}>{item.title}</p>
+            <span className={titleClassName}>{item.title}</span>
           )}
         </div>
-        {item.detail && (
-          <span className="flex h-lh shrink-0 items-center gap-1 text-2xs text-muted-foreground">
-            {item.detail}
-          </span>
-        )}
       </div>
       {expanded && children.length > 0 && (
         <Checklist items={children} className="ml-2 border-l pl-4" />

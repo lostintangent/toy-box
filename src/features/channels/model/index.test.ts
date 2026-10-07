@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelAgent, ChannelMember, ChannelTask } from "./index";
+import type { ChannelAgent, ChannelMember } from "./index";
 import {
   agentHandleFromName,
   channelAudienceLabel,
   channelLead,
   channelRoutineInputSchema,
   channelSystemMessageContentSchema,
-  channelTasksComplete,
   editChannelInputSchema,
   markChannelReadInputSchema,
   postChannelMessageInputSchema,
@@ -79,18 +78,6 @@ describe("channel audience labels", () => {
   test("a lone recipient is named, even when it's the only one reachable", () => {
     expect(channelAudienceLabel([lead], 1)).toBe("Lead");
   });
-});
-
-test("a task list is complete only when it has tasks and every subtask is done", () => {
-  const release = (status: ChannelTask["status"]): ChannelTask => ({
-    title: "Release",
-    status: "done",
-    children: [{ title: "Validate", status }],
-  });
-  expect(channelTasksComplete([])).toBe(false);
-  expect(channelTasksComplete([{ title: "Review", status: "in_progress" }])).toBe(false);
-  expect(channelTasksComplete([release("blocked")])).toBe(false);
-  expect(channelTasksComplete([release("done"), { title: "Ship", status: "done" }])).toBe(true);
 });
 
 describe("channel agent mentions", () => {
