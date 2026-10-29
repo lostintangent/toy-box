@@ -5,15 +5,17 @@ export const SCREEN_NATIVE_DIRECTORY = "screen-native";
 export const SCREEN_HELPER_EXECUTABLE = "ToyBoxScreens";
 
 /** Compiles the helper, unless it was already built from its current source. */
-export async function buildScreenNative(destination?: string): Promise<string> {
+export async function buildScreenNative(destination?: string, benchmark = false): Promise<string> {
   if (process.platform !== "darwin" || process.arch !== "arm64")
     throw new Error(
       "Screen sharing currently requires an Apple silicon Mac running macOS 14.2 or later.",
     );
   const source = Bun.fileURLToPath(new URL("./macos/", import.meta.url));
   const root = destination ?? resolve(source, "../../../../../.nitro", SCREEN_NATIVE_DIRECTORY);
-  const executable = join(root, SCREEN_HELPER_EXECUTABLE);
-  const inputs = [join(source, "main.swift"), Bun.fileURLToPath(import.meta.url)];
+  const executable = join(root, `${SCREEN_HELPER_EXECUTABLE}${benchmark ? "Benchmark" : ""}`);
+  const sources = [join(source, "main.swift"), join(source, "pixels.swift")];
+  if (benchmark) sources.push(Bun.fileURLToPath(new URL("../bench/native.swift", import.meta.url)));
+  const inputs = [...sources, Bun.fileURLToPath(import.meta.url)];
   const built = Bun.file(executable);
   if (
     (await built.exists()) &&
@@ -37,7 +39,8 @@ export async function buildScreenNative(destination?: string): Promise<string> {
     "ImageIO",
     "-framework",
     "VideoToolbox",
-    join(source, "main.swift"),
+    ...(benchmark ? ["-D", "SCREEN_BENCHMARK"] : []),
+    ...sources,
     "-o",
     executable,
   ]);

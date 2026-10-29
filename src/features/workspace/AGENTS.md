@@ -123,6 +123,8 @@ surface. That graph contains composition only; it never copies transcripts, Chan
 content, Inbox rows, or app state.
 Explicit focus can bring an overflow artifact or child into the capped layout by replacing an
 unrelated pane while retaining its publishers. Clearing focus restores the ordinary ordering.
+Sessions publish only their selected artifact editor, with the full catalog remaining in their tray;
+switching artifacts replaces that linked editor rather than filling the layout with every file.
 
 `SessionPane` has three interaction modes:
 

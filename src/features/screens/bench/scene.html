@@ -4,15 +4,38 @@
   <div style="height: 32px">
     <button id="increment">Native input</button> <span id="count">0</span>
   </div>
-  <canvas style="display: block; width: 100%; height: calc(100vh - 32px)"></canvas>
+  <canvas id="scene" style="display: block; width: 100%; height: calc(100vh - 32px)"></canvas>
+  <canvas
+    id="localized"
+    width="32"
+    height="32"
+    style="
+      position: absolute;
+      top: calc(50% + 16px);
+      left: 50%;
+      transform: translate(-50%, -50%);
+      display: none;
+      pointer-events: none;
+    "
+  ></canvas>
   <script>
-    const canvas = document.querySelector("canvas"),
+    const canvas = document.querySelector("#scene"),
       context = canvas.getContext("2d");
     const width = innerWidth,
       height = innerHeight - 32;
     canvas.width = width * devicePixelRatio;
     canvas.height = height * devicePixelRatio;
     context.scale(devicePixelRatio, devicePixelRatio);
+    const localized = document.querySelector("#localized"),
+      localContext = localized.getContext("2d");
+    localized.style.width = localized.style.height = `${32 / devicePixelRatio}px`;
+    const patches = [-64, 0, 64].map((offset) => {
+      const patch = localized.cloneNode();
+      patch.removeAttribute("id");
+      patch.style.left = `calc(50% + ${offset}px)`;
+      document.body.append(patch);
+      return { canvas: patch, context: patch.getContext("2d"), value: undefined };
+    });
     window.screenBenchmark = { mode: "static", clicks: 0, spinnerSize: 32 / devicePixelRatio };
     document.querySelector("#increment").onclick = () => {
       document.querySelector("#count").textContent = ++window.screenBenchmark.clicks;
@@ -21,7 +44,28 @@
     function draw(time) {
       const mode = window.screenBenchmark.mode;
       requestAnimationFrame(draw);
-      if (mode === "static" && previous === mode) return;
+      localized.style.display = mode === "localized" ? "block" : "none";
+      for (const [index, patch] of patches.entries()) {
+        patch.canvas.style.display = mode === "patches" ? "block" : "none";
+        const value = (Math.floor(time / 80) >> index) & 1;
+        if (mode === "patches" && patch.value !== value) {
+          patch.context.fillStyle = value ? "#22d3ee" : "#111827";
+          patch.context.fillRect(0, 0, 32, 32);
+          patch.value = value;
+        }
+      }
+      if (mode === "localized") {
+        localContext.fillStyle = "#111827";
+        localContext.fillRect(0, 0, 32, 32);
+        localContext.save();
+        localContext.translate(16, 16);
+        localContext.rotate(time / 200);
+        localContext.fillStyle = "#22d3ee";
+        const side = 32 / Math.SQRT2;
+        localContext.fillRect(-side / 2, -side / 2, side, side);
+        localContext.restore();
+      }
+      if (["static", "localized", "patches"].includes(mode) && previous === mode) return;
       previous = mode;
       context.fillStyle = "#111827";
       context.fillRect(0, 0, width, height);

@@ -7,7 +7,7 @@ import {
 } from "@files/model";
 import { fileName } from "@files/model/paths";
 import type { Settings } from "@workspace/model/config/settings";
-import type { SessionCanvas } from "@sessions/model";
+import type { SessionArtifact, SessionCanvas } from "@sessions/model";
 import type { Preview } from "@/shared/preview";
 import { matchesSessionFeatureScope } from "@workspace/model/config/settings";
 
@@ -137,6 +137,21 @@ export function createEditorPane(
     title: fileName(file.path),
     mode,
   };
+}
+
+export function resolveArtifactSelection(
+  artifacts: readonly SessionArtifact[],
+  selectedPath?: string,
+  initialPath?: string,
+): SessionArtifact | undefined {
+  return (
+    artifacts.find(({ path }) => path === selectedPath) ??
+    artifacts.find(({ path }) => path === initialPath) ??
+    artifacts.reduce<SessionArtifact | undefined>(
+      (latest, artifact) => (!latest || artifact.updatedAt > latest.updatedAt ? artifact : latest),
+      undefined,
+    )
+  );
 }
 
 export function createLinkedCanvasPane(

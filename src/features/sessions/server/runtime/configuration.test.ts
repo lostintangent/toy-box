@@ -16,28 +16,39 @@ import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
 import { createSession, deliverSessionMessage, recreateSession } from "./index";
 import { SessionStream } from "./sessionStream";
 import { createInitialSessionState } from "@sessions/model/reducer";
+import { deleteSessionFiles } from "../artifacts";
+import { deleteSessionState } from "@workspace/server/state/sessions";
 
-async function setup(channelWorker: boolean, agent: "member" | "lead" = "member") {
+async function setup(agent?: "member" | "lead") {
   let sessionId = `configuration-${crypto.randomUUID()}`;
   const db = await state.createTestDatabase();
+  onTestFinished(async () => {
+    try {
+      await SessionStream.remove(sessionId);
+      registry.evictCachedSessionIfStale(sessionId, new Error("Session not found"));
+      snapshots.evictCachedSnapshot(sessionId);
+      deleteSessionState(sessionId);
+      await deleteSessionFiles(sessionId);
+    } finally {
+      mock.restore();
+      await db.close();
+    }
+  });
   spyOn(state, "getStateDatabase").mockResolvedValue(db);
   const readDirectory = spyOn(sdk, "getSessionDirectory").mockResolvedValue(undefined);
   spyOn(snapshots, "loadSessionSnapshot").mockImplementation(async () =>
     createInitialSessionState(),
   );
   const handles: ReturnType<typeof makeSession>[] = [];
-  const create = spyOn(sdk, "createSession").mockImplementation(async () => {
+  const connect = async () => {
     const handle = makeSession();
     handles.push(handle);
     return handle.session;
-  });
-  const resume = spyOn(sdk, "resumeSession").mockImplementation(async () => {
-    const handle = makeSession();
-    handles.push(handle);
-    return handle.session;
-  });
-  const channels = new ChannelDatabase(db);
-  if (channelWorker) {
+  };
+  const create = spyOn(sdk, "createSession").mockImplementation(connect);
+  const resume = spyOn(sdk, "resumeSession").mockImplementation(connect);
+  if (agent) {
+    const channels = new ChannelDatabase(db);
     const channel = await createStoredChannel(channels, {
       name: "Configuration",
       purpose: "Verify channel agent configuration.",
@@ -61,37 +72,32 @@ async function setup(channelWorker: boolean, agent: "member" | "lead" = "member"
       });
     }
   }
-  onTestFinished(async () => {
-    await SessionStream.remove(sessionId);
-    registry.evictCachedSessionIfStale(sessionId, new Error("Session not found"));
-    mock.restore();
-    return db.close();
-  });
   return { sessionId, db, create, resume, readDirectory, handles };
 }
 
 function makeSession(
   provider: SessionConnection["provider"] = { id: "copilot", sessionId: "test" },
 ) {
-  const send = mock(async () => crypto.randomUUID());
+  const send = mock(async () => {});
   const abort = mock(async () => {});
   const disconnect = mock(async () => {});
-  const session = {
+  const session: SessionConnection = {
     provider,
     onEvent: () => () => {},
     setModel: async () => {},
+    answerQuestion: async () => false,
     abort,
     rename: async () => true,
     send,
     disconnect,
-    rpc: { name: { set: async () => {} } },
-  } as unknown as SessionConnection;
+    rewind: async () => {},
+  };
   return { session, send, abort, disconnect };
 }
 
 describe("Session recreation", () => {
   test("recreation can switch providers while retaining the public session ID", async () => {
-    const { sessionId, create, resume } = await setup(false);
+    const { sessionId, create, resume } = await setup();
     const previousProvider = {
       id: "copilot",
       sessionId: "previous-native-id",
@@ -135,7 +141,7 @@ describe("Session recreation", () => {
   });
 
   test("recreation projects its draft before announcing a live runtime", async () => {
-    const { sessionId, create } = await setup(false);
+    const { sessionId, create } = await setup();
     let deletionPublished = false;
     const projected = Promise.withResolvers<void>();
     let running = false;
@@ -172,7 +178,7 @@ describe("Session recreation", () => {
   });
 
   test("removes the replacement draft when its provider cannot be created", async () => {
-    const { sessionId, create } = await setup(false);
+    const { sessionId, create } = await setup();
     const events: string[] = [];
     onTestFinished(
       subscribeWorkspaceEvents((event) => {
@@ -196,7 +202,7 @@ describe("Session recreation", () => {
 
 describe("Session-owned configuration lifetime", () => {
   test("assigns role-specific tools to each Session type", async () => {
-    const { sessionId, db } = await setup(false);
+    const { sessionId, db } = await setup();
     const workerSessionId = `${sessionId}-worker`;
     await new WorkerDatabase(db).create({
       createdAt: new Date(0).toISOString(),
@@ -277,7 +283,7 @@ describe("Session-owned configuration lifetime", () => {
   test.each(["copilot", "codex"] as const)(
     "inherited Channel agent models preserve an existing %s provider when the workspace default changes",
     async (providerId) => {
-      const { sessionId, db } = await setup(true);
+      const { sessionId, db } = await setup("member");
       await new ChannelDatabase(db).updateMember(sessionId, { model: null });
       const defaultModel = {
         provider: providerId === "copilot" ? "codex" : "copilot",
@@ -305,7 +311,7 @@ describe("Session-owned configuration lifetime", () => {
   );
 
   test("Channel agents refresh changed configuration only between executions", async () => {
-    const { sessionId, db, create, resume, handles } = await setup(true);
+    const { sessionId, db, create, resume, handles } = await setup("member");
     const receipt = await createSession(
       sessionId,
       {
@@ -375,7 +381,7 @@ describe("Session-owned configuration lifetime", () => {
   });
 
   test("a lead model edit reaches its existing session on the next execution", async () => {
-    const { sessionId, db, create, resume, handles } = await setup(true, "lead");
+    const { sessionId, db, create, resume, handles } = await setup("lead");
     const channels = new ChannelDatabase(db);
     const agent = await channels.getAgent(sessionId);
     if (!agent) throw new Error("Channel lead not found.");
@@ -405,10 +411,7 @@ describe("Session-owned configuration lifetime", () => {
   test.each(["member", "lead"] as const)(
     "a %s moves to the channel's new directory only on its next execution",
     async (agentType) => {
-      const { sessionId, db, create, resume, readDirectory, handles } = await setup(
-        true,
-        agentType,
-      );
+      const { sessionId, db, create, resume, readDirectory, handles } = await setup(agentType);
       const channels = new ChannelDatabase(db);
       const agent = await channels.getAgent(sessionId);
       if (!agent) throw new Error("Channel agent not found.");
@@ -443,7 +446,7 @@ describe("Session-owned configuration lifetime", () => {
   );
 
   test("bounded SDK operations do not refresh changed Channel agent configuration", async () => {
-    const { sessionId, db, resume, handles } = await setup(true);
+    const { sessionId, db, resume, handles } = await setup("member");
     await createSession(sessionId, { content: "Start" }, { sessionType: "worker" });
     SessionStream.get(sessionId)!.finish();
     await new ChannelDatabase(db).updateMember(sessionId, {
@@ -462,7 +465,7 @@ describe("Session-owned configuration lifetime", () => {
   });
 
   test("automatic titles publish only accepted changes without a native event echo", async () => {
-    const { sessionId, handles } = await setup(false);
+    const { sessionId, handles } = await setup();
     await deliverSessionMessage(sessionId, { content: "First" });
     const rename = spyOn(handles[0]!.session, "rename")
       .mockResolvedValueOnce(true)
@@ -482,7 +485,7 @@ describe("Session-owned configuration lifetime", () => {
   });
 
   test("ordinary Sessions retain their cached SDK sessions between executions", async () => {
-    const { sessionId, resume, handles } = await setup(false);
+    const { sessionId, resume, handles } = await setup();
     await deliverSessionMessage(sessionId, { content: "First" });
     SessionStream.get(sessionId)!.finish();
     await deliverSessionMessage(sessionId, { content: "Second" });
@@ -492,7 +495,7 @@ describe("Session-owned configuration lifetime", () => {
   });
 
   test("deletion waits for the native connection's final history flush", async () => {
-    const { sessionId, handles } = await setup(false);
+    const { sessionId, handles } = await setup();
     await deliverSessionMessage(sessionId, { content: "First" });
     let history: string | undefined = "Transcript";
     const disconnecting = Promise.withResolvers<void>();
@@ -516,15 +519,12 @@ describe("Session-owned configuration lifetime", () => {
   });
 
   test("disconnects after the idle window and waits for detach before resuming", async () => {
-    const { sessionId, resume, handles } = await setup(false);
-
+    const { sessionId, resume, handles } = await setup();
     jest.useFakeTimers();
-    let finishDisconnect!: () => void;
+    const disconnected = Promise.withResolvers<void>();
     try {
       await deliverSessionMessage(sessionId, { content: "First" });
-      handles[0]!.disconnect.mockImplementation(
-        () => new Promise<void>((resolve) => (finishDisconnect = resolve)),
-      );
+      handles[0]!.disconnect.mockImplementation(() => disconnected.promise);
       jest.advanceTimersByTime(30 * 60 * 1000);
       expect(handles[0]!.disconnect).not.toHaveBeenCalled();
 
@@ -541,20 +541,18 @@ describe("Session-owned configuration lifetime", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(resume).toHaveBeenCalledTimes(1);
-    finishDisconnect();
+    disconnected.resolve();
     await nextExecution;
     expect(resume).toHaveBeenCalledTimes(2);
     expect(handles[1]!.send).toHaveBeenCalledTimes(1);
   });
 
   test("retains a cached SDK session when idle disconnect fails", async () => {
-    const { sessionId, resume, handles } = await setup(false);
+    const { sessionId, resume, handles } = await setup();
 
     await deliverSessionMessage(sessionId, { content: "First" });
     SessionStream.get(sessionId)!.finish();
-    handles[0]!.disconnect.mockImplementation(async () => {
-      throw new Error("Detach failed");
-    });
+    handles[0]!.disconnect.mockRejectedValueOnce(new Error("Detach failed"));
 
     await expect(registry.releaseIdleSession(sessionId)).rejects.toThrow("Detach failed");
     await deliverSessionMessage(sessionId, { content: "Second" });
@@ -564,7 +562,7 @@ describe("Session-owned configuration lifetime", () => {
   });
 
   test("short SDK operations restart idle session retention", async () => {
-    const { sessionId, handles } = await setup(false);
+    const { sessionId, handles } = await setup();
 
     jest.useFakeTimers();
     try {
@@ -572,16 +570,13 @@ describe("Session-owned configuration lifetime", () => {
       SessionStream.get(sessionId)!.finish();
       jest.advanceTimersByTime(29 * 60 * 1000);
 
-      let finishOperation!: () => void;
-      const operation = registry.withSession(
-        sessionId,
-        () => new Promise<void>((resolve) => (finishOperation = resolve)),
-      );
+      const pendingOperation = Promise.withResolvers<void>();
+      const operation = registry.withSession(sessionId, () => pendingOperation.promise);
       await Promise.resolve();
       jest.advanceTimersByTime(2 * 60 * 1000);
       expect(handles[0]!.disconnect).not.toHaveBeenCalled();
 
-      finishOperation();
+      pendingOperation.resolve();
       await operation;
       jest.advanceTimersByTime(29 * 60 * 1000);
       expect(handles[0]!.disconnect).not.toHaveBeenCalled();
@@ -594,7 +589,7 @@ describe("Session-owned configuration lifetime", () => {
   });
 
   test("supervisors release completed SDK sessions without interrupting execution", async () => {
-    const { sessionId, resume, handles } = await setup(false);
+    const { sessionId, resume, handles } = await setup();
 
     await deliverSessionMessage(sessionId, { content: "First" });
     await registry.releaseIdleSession(sessionId);

@@ -18,10 +18,37 @@ import {
   INBOX_PANE,
   resolveEditorAutoFocus,
   resolveEditorPaneMode,
+  resolveArtifactSelection,
   type WorkspacePane,
 } from "@workspace/model/panes";
 import { machineFile, sessionFile } from "@files/model";
 import type { SessionCanvas } from "@sessions/model";
+
+describe("artifact selection", () => {
+  const first = { path: "first.md", updatedAt: 1 };
+  const latest = { path: "latest.md", updatedAt: 2 };
+  const oldest = { path: "oldest.md", updatedAt: 0 };
+  const artifacts = Object.freeze([first, latest, oldest]);
+
+  test("opens the most recently updated artifact regardless of catalog order", () => {
+    expect(resolveArtifactSelection(artifacts)?.path).toBe(latest.path);
+  });
+
+  test("retains the selected artifact over newer output", () => {
+    expect(resolveArtifactSelection(artifacts, first.path)?.path).toBe(first.path);
+  });
+
+  test("prefers an artifact-first session's document until another artifact is selected", () => {
+    expect(resolveArtifactSelection(artifacts, undefined, first.path)?.path).toBe(first.path);
+    expect(resolveArtifactSelection(artifacts, latest.path, first.path)?.path).toBe(latest.path);
+  });
+
+  test("falls back when the selected or initial artifact disappears", () => {
+    expect(resolveArtifactSelection(artifacts, "deleted.md", "deleted.md")?.path).toBe(latest.path);
+    expect(resolveArtifactSelection(artifacts, "deleted.md", first.path)?.path).toBe(first.path);
+    expect(resolveArtifactSelection([], first.path, first.path)).toBeUndefined();
+  });
+});
 
 function selectedSessionPane(sessionId: string): Extract<WorkspacePane, { kind: "session" }> {
   return createSessionPane(sessionId, false);

@@ -123,7 +123,13 @@ export function createClaudeProjector(sessionId: string): (message: SDKMessage) 
             return [];
         }
       case "result": {
-        const tokenWindow = mainContext && message.modelUsage?.[mainContext.model]?.contextWindow;
+        const windows = new Map(
+          Object.entries(message.modelUsage ?? {}).map(([model, usage]) => [
+            normalizeModelId(model),
+            usage.contextWindow,
+          ]),
+        );
+        const tokenWindow = mainContext && windows.get(mainContext.model);
         const usage: SessionEvent[] =
           mainContext && tokenWindow
             ? [
@@ -167,7 +173,7 @@ export function createClaudeProjector(sessionId: string): (message: SDKMessage) 
         const usage = message.message.usage;
         if (!parentToolCallId && usage)
           mainContext = {
-            model: message.message.model,
+            model: normalizeModelId(message.message.model),
             tokens:
               usage.input_tokens +
               (usage.cache_read_input_tokens ?? 0) +

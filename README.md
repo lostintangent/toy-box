@@ -82,3 +82,21 @@ The same endpoint works with several ready-made integrations:
 1. Clone this repo
 1. Run `bun install`
 1. Run `bun dev`
+
+## Publishing
+
+Update `package.json` to the next stable version and keep its release notes under a
+matching `## 📅 vX.Y.Z (date)` heading in `CHANGELOG.md`. Commit and push those changes,
+then select **Actions → Publish → Run workflow** on the branch to release.
+
+The workflow reads the version and notes from that exact commit, rejects an already
+published npm version, runs checks and tests, and builds the Apple silicon macOS CLI.
+It publishes the tested package through npm trusted publishing, then creates the
+matching GitHub tag and release with the changelog notes, standalone binary, and npm
+tarball attached. No npm token or separately entered release version is needed.
+
+If a run fails before npm publication, fix the failure and rerun. If npm succeeds but
+GitHub release creation fails, recover the tarball from npm with `npm pack
+@lostintangent/toy-box@X.Y.Z --ignore-scripts`, verify its registry integrity, and use
+that package's executable and the original commit's changelog notes to finish the
+GitHub release manually. Do not rebuild or republish the same npm version.

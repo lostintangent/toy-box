@@ -1,5 +1,6 @@
 // Filesystem behavior behind the validated public operations.
 
+import { $ } from "bun";
 import { open, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
@@ -83,12 +84,17 @@ export async function listDirectory({
         return { name: entry.name, path, kind };
       }),
   );
+  const ignoredNames = await gitIgnoredNames(
+    targetPath,
+    classified.map((entry) => entry.name),
+  );
 
   const directories: DirectoryEntry[] = [];
   const files: DirectoryEntry[] = [];
   for (const { name, path, kind } of classified) {
-    if (kind === "directory") directories.push({ name, path });
-    else if (kind === "file") files.push({ name, path });
+    const entry = { name, path, gitIgnored: name === ".git" || ignoredNames.has(name) };
+    if (kind === "directory") directories.push(entry);
+    else if (kind === "file") files.push(entry);
   }
 
   const byName = (a: DirectoryEntry, b: DirectoryEntry) => a.name.localeCompare(b.name);
@@ -126,6 +132,30 @@ async function listFiles(root: string): Promise<string[]> {
     if (paths.length === SCANNED_FILE_LIMIT) break;
   }
   return paths;
+}
+
+async function gitIgnoredNames(directory: string, names: string[]): Promise<Set<string>> {
+  if (names.length === 0) return new Set();
+
+  const input = Buffer.from(`${names.join("\0")}\0`);
+  const result = await $`LC_ALL=C git check-ignore --stdin -z < ${input}`
+    .cwd(directory)
+    .quiet()
+    .nothrow();
+  if (result.exitCode === 0 || result.exitCode === 1) {
+    return new Set(result.text().split("\0").filter(Boolean));
+  }
+
+  const message = result.stderr.toString().trim();
+  // Ordinary folders and Git's own administrative directories have no ignore metadata.
+  if (
+    result.exitCode === 128 &&
+    (message.startsWith("fatal: not a git repository (or any") ||
+      message === "fatal: this operation must be run in a work tree")
+  ) {
+    return new Set();
+  }
+  throw new Error(`Git ignore check failed (exit ${result.exitCode}): ${message}`);
 }
 
 function requireFilePath(file: WorkspaceFile): string {

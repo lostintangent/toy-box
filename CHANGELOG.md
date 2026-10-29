@@ -1,3 +1,9 @@
+## 📅 v0.3.4 (10/28/26)
+
+- The file browser now shows gitignored files/folders as muted
+- Added push notification support to the server to enable the new iOS app to recieve notifications about lead requests and completed channels
+- Only one session artifact is auto-opened at a time and you can open others by selecting them
+
 ## 📅 v0.3.3 (10/26/26)
 
 - The channel overview now allows collapsing sections (e.g. `Team`, `Tasks`, etc.)

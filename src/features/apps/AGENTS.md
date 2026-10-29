@@ -114,7 +114,7 @@ in-memory TSX to a CommonJS module; the browser evaluates it with the shared run
 as a local argument and renders its default export. No registration globals are needed.
 `runtime.ts` is the single dependency catalog used by both the compiler allowlist and
 the browser bridge. Development compilation reads declarations from the repository;
-`cli/build/index.ts` follows the exact transitive declaration graph rooted at `sdk.ts` and
+`src/cli/build/index.ts` follows the exact transitive declaration graph rooted at `sdk.ts` and
 stages it as a Bun executable asset for standalone compilation.
 App typechecking inherits the project's TypeScript options with browser-only globals
 and requests diagnostics only for the app source and its component-export check.

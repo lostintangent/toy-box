@@ -390,6 +390,21 @@ the same message the browser shows. Unexpected management failures are logged se
 return 500 with a generic `{ error }`, never an internal exception message. A failure can follow
 a committed change, so clients refresh authoritative state rather than automatically retrying writes.
 
+## Native push delivery
+
+Channels lazily publishes committed request/completion milestones; the three-second unread check
+runs only for subscribed topics. `channel:<id>` opens one stream on first interest and closes it on
+last interest. Its initial snapshot includes the latest messages, but only metadata, roster and
+presence are retained for push. A workspace listener publishes the existing catalog's waiting count
+after channel upserts/deletions, covering replies and removals without opening streams for every
+channel. Reading does not close a request. No separate catalog cache or scheduler is added.
+Delivery belongs to [Push](../push/AGENTS.md). Channel payloads live in `model/push.ts`, with four
+ChannelKit wire fixtures in `model/__fixtures__/push-*.apns`.
+After the unread check, alert text uses the current channel name, the Mac's 400-grapheme plain-text
+request policy and attachment fallbacks, completion task-count wording, and the requester's handle.
+Deletion publishes an end through the normal 100ms debounce and dismisses at its push timestamp.
+Completion and removed-task endings retain their content for fifteen minutes.
+
 ## Presentation
 
 `ChannelPane` takes a Channel ID and owns one cached `ChannelState` for its transcript, overview,

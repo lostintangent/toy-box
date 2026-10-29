@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { initializeAppSchema } from "@apps/server/schema";
 import { initializeAutomationSchema } from "@automations/server/schema";
 import { initializeChannelSchema } from "@channels/server/schema";
+import { initializePushSchema } from "@push/server/schema";
 import { initializeSessionSchema } from "@sessions/server/schema";
 import { initializeWorkerSchema } from "@workers/server/schema";
 import { initializeWorkspaceSchema } from "@workspace/server/state/schema";
@@ -78,6 +79,7 @@ async function initializeSchema(db: Bun.SQL, path: string): Promise<void> {
   // and transaction behavior without owning each feature's persistence model.
   await initializeSessionSchema(db);
   await initializeWorkerSchema(db);
+  await initializePushSchema(db);
   await initializeChannelSchema(db);
   await initializeAutomationSchema(db);
   await initializeAppSchema(db);

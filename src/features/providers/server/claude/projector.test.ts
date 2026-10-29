@@ -118,6 +118,36 @@ test("turn results report the main thread's latest request against its model's c
   ).toEqual([{ type: "context_usage_changed", usage: { tokens: 25_500, tokenWindow: 1_000_000 } }]);
 });
 
+test("turn results find a 1M model's context window under its suffixed usage key", () => {
+  const project = createClaudeProjector("test");
+  project(
+    native({
+      type: "assistant",
+      message: {
+        id: "reply",
+        model: "claude-opus-4-6",
+        content: [],
+        usage: { input_tokens: 30_000, output_tokens: 500 },
+      },
+      parent_tool_use_id: null,
+    }),
+  );
+
+  expect(
+    project(
+      native({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        modelUsage: {
+          "claude-haiku-5-5": { contextWindow: 200_000 },
+          "claude-opus-4-6[1m]": { contextWindow: 1_000_000 },
+        },
+      }),
+    ),
+  ).toEqual([{ type: "context_usage_changed", usage: { tokens: 30_500, tokenWindow: 1_000_000 } }]);
+});
+
 test("compaction leaves the context unknown until a request reports it", () => {
   const project = createClaudeProjector("test");
   const reply = (input_tokens: number) =>

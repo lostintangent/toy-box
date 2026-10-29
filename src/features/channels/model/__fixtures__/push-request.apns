@@ -1,0 +1,12 @@
+{
+  "aps": {
+    "alert": { "title": "Toy Box", "body": "Your team is waiting for your reply." },
+    "sound": "default",
+    "category": "request",
+    "mutable-content": 1
+  },
+  "kind": "request",
+  "channelID": "studio-demo",
+  "sequence": 15,
+  "registrationID": "00000000-0000-4000-8000-000000000001"
+}

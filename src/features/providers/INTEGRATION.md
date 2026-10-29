@@ -50,7 +50,7 @@ Run the full checks and dogfood both observing clients across active and histori
 
 Copilot uses `@github/copilot-sdk`; Codex uses bidirectional `codex app-server` JSON-RPC.
 Both resolve the installed CLI from PATH and reuse its existing authentication. The
-Codex protocol snapshot and native smoke tests use CLI 0.163.0; Copilot tests retain
+Codex protocol snapshot and native smoke tests use CLI 0.165.0; Copilot tests retain
 the existing SDK fixtures and also execute against the installed CLI.
 
 Public session UUIDs are allocated before a provider is chosen. Copilot and Claude reuse that UUID;

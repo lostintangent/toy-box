@@ -99,7 +99,13 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var frameStatus: SCFrameStatus?
     private var lastSentPixels = Data()
     private var basePixels = Data()
+    /// Bounds of lastSentPixels differing from basePixels; empty after a full frame or restoration.
+    private var previousRegion = CGRect.zero
+    private var previousFrameTime: Double?
     private let quality: Double
+    #if SCREEN_BENCHMARK
+    private let benchmark: ScreenBenchmark
+    #endif
     /// The pending start, which the stream stopping can settle before startCapture does.
     private var starting: CheckedContinuation<Void, Error>?
 
@@ -113,6 +119,9 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         self.pointPixelScale = Double(filter.pointPixelScale)
         self.maximumSize = CGSize(width: options["width"] as! Int, height: options["height"] as! Int)
         self.configuredSize = filter.contentRect.size
+        #if SCREEN_BENCHMARK
+        self.benchmark = try ScreenBenchmark()
+        #endif
         super.init()
         guard let bounds = currentBounds() else { throw ScreenFailure(message: "Screen is unavailable.") }
         fit(bounds.size)
@@ -155,11 +164,26 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
 
     func stop() async throws {
         defer { stream = nil }
+        #if SCREEN_BENCHMARK
+        defer { finishBenchmark() }
+        #endif
         do { try await stream.stopCapture() }
         // A stream whose source went away has already stopped, which leaves nothing to stop.
         catch let error as SCStreamError where error.code == .attemptToStopStreamState { return }
         try stream.removeStreamOutput(self, type: .screen)
     }
+
+    #if SCREEN_BENCHMARK
+    func finishBenchmark() {
+        queue.sync {
+            do { try benchmark.finish() }
+            catch {
+                FileHandle.standardError.write(Data("Screen benchmark failed: \(error.localizedDescription)\n".utf8))
+                exit(1)
+            }
+        }
+    }
+    #endif
 
     func currentBounds() -> CGRect? {
         if let display = target.display {
@@ -217,6 +241,10 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         }
         guard status == SCFrameStatus.complete.rawValue,
               let pixels = sampleBuffer.imageBuffer else { return }
+        let frameTime = sampleBuffer.presentationTimeStamp.seconds
+        let continuous = framesAreContinuous(frameTime, previous: previousFrameTime,
+                                             interval: configuration.minimumFrameInterval.seconds)
+        previousFrameTime = frameTime
         autoreleasepool {
             do {
                 guard let contentValue = values[.contentRect] as? [String: Any],
@@ -248,39 +276,37 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                 let stride = CVPixelBufferGetBytesPerRow(pixels)
                 let rowBytes = width * 4
                 let byteCount = rowBytes * height
-                // Resume and geometry changes must be delivered even when pixels match.
-                if frameStatus == .complete, !geometryChanged, lastSentPixels.count == byteCount {
-                    let unchanged = lastSentPixels.withUnsafeBytes { previous in
-                        for row in 0..<height {
-                            if memcmp(base.advanced(by: row * stride),
-                                      previous.baseAddress!.advanced(by: row * rowBytes), rowBytes) != 0 { return false }
-                        }
-                        return true
-                    }
-                    if unchanged { return }
-                }
+                #if SCREEN_BENCHMARK
+                benchmark.beginFrame(width: width, height: height, geometryChanged: geometryChanged,
+                                     resumed: frameStatus != .complete, sourceTime: frameTime, continuous: continuous)
+                defer { benchmark.endFrame() }
+                #endif
                 let fullBounds = CGRect(x: 0, y: 0, width: width, height: height)
-                var region = fullBounds
-                if frameStatus == .complete, !geometryChanged, basePixels.count == byteCount {
-                    region = basePixels.withUnsafeBytes { previous in
-                        var left = width, top = height, right = 0, bottom = 0
-                        for y in 0..<height {
-                            let row = base.advanced(by: y * stride).assumingMemoryBound(to: UInt32.self)
-                            let old = previous.baseAddress!.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt32.self)
-                            if memcmp(row, old, rowBytes) == 0 { continue }
-                            top = min(top, y); bottom = y + 1
-                            for x in 0..<width where row[x] != old[x] {
-                                left = min(left, x); right = max(right, x + 1)
-                            }
+                let compared: CGRect?
+                // Resume and geometry changes must be delivered even when pixels match.
+                if frameStatus == .complete, !geometryChanged,
+                   lastSentPixels.count == byteCount, basePixels.count == byteCount {
+                    compared = try lastSentPixels.withUnsafeBytes { previous in
+                        try basePixels.withUnsafeBytes { baseline throws -> CGRect? in
+                            #if SCREEN_BENCHMARK
+                            return try benchmark.compare(base, stride: stride, previous: previous.baseAddress!,
+                                                         baseline: baseline.baseAddress!, previousRegion: previousRegion,
+                                                         dirty: continuous ? values[.dirtyRects] : nil, width: width, height: height)
+                            #else
+                            return compareFrame(base, stride: stride, previous: previous.baseAddress!,
+                                                baseline: baseline.baseAddress!, previousRegion: previousRegion,
+                                                dirty: continuous ? values[.dirtyRects] : nil, width: width, height: height)
+                            #endif
                         }
-                        if right == 0 { return .zero }
-                        left = left / 16 * 16; top = top / 16 * 16
-                        right = min(width, (right + 15) / 16 * 16)
-                        bottom = min(height, (bottom + 15) / 16 * 16)
-                        return CGRect(x: left, y: top, width: right - left, height: bottom - top)
                     }
+                } else {
+                    compared = fullBounds
                 }
-                let full = region.width * region.height > fullBounds.width * fullBounds.height * 0.4
+                #if SCREEN_BENCHMARK
+                benchmark.mark("comparisonMs")
+                #endif
+                guard var region = compared else { return }
+                let full = region.width * region.height > fullBounds.width * fullBounds.height * maximumScreenRegionFraction
                 if full { region = fullBounds }
                 var payload = Data()
                 if !region.isEmpty {
@@ -291,6 +317,9 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                     }
                     payload = try jpeg(image, quality: quality)
                 }
+                #if SCREEN_BENCHMARK
+                benchmark.mark("encodeMs")
+                #endif
                 sequence += 1
                 if full { basePixels = Data() }
                 if frameStatus != .complete {
@@ -306,6 +335,9 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                                           "width": Int(region.width), "height": Int(region.height)]
                 }
                 writer.send(metadata, payload: payload)
+                #if SCREEN_BENCHMARK
+                benchmark.mark("writeMs")
+                #endif
                 if lastSentPixels.count != byteCount { lastSentPixels = Data(count: byteCount) }
                 lastSentPixels.withUnsafeMutableBytes { previous in
                     for row in 0..<height {
@@ -314,6 +346,10 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                     }
                 }
                 if full { basePixels = lastSentPixels }
+                previousRegion = full ? .zero : region
+                #if SCREEN_BENCHMARK
+                benchmark.mark("copyMs")
+                #endif
             } catch {
                 writer.send(["type": "state", "screenId": id, "status": "ended", "reason": error.localizedDescription])
             }
@@ -659,6 +695,9 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private func shutdown() -> Never {
         do { try releaseInput() }
         catch { FileHandle.standardError.write(Data("Unable to release screen input: \(error.localizedDescription)\n".utf8)) }
+        #if SCREEN_BENCHMARK
+        for capture in captures.values { capture.finishBenchmark() }
+        #endif
         exit(0)
     }
 }
@@ -684,6 +723,16 @@ private let keyCodes: [String: CGKeyCode] = [
     "PageDown": 121, "F1": 122, "ArrowLeft": 123, "ArrowRight": 124, "ArrowDown": 125,
     "ArrowUp": 126
 ]
+
+#if SCREEN_BENCHMARK
+if CommandLine.arguments.contains("--verify") {
+    do { try verifyChangedRegions(); exit(0) }
+    catch {
+        FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
+}
+#endif
 
 signal(SIGPIPE, SIG_IGN)
 // Ctrl+C in a terminal signals the server's whole process group. The server ends this

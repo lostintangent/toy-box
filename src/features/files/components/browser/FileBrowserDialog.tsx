@@ -312,6 +312,7 @@ function DirectoryChildren({ listing, depth }: { listing: DirectoryListing; dept
             depth={depth}
             icon={FileIcon}
             label={file.name}
+            muted={file.gitIgnored}
             onActivate={() => onOpenFile(file.path)}
           />
         ))}
@@ -352,6 +353,7 @@ function DirectoryNode({ entry, depth }: { entry: DirectoryEntry; depth: number 
         depth={depth}
         icon={FolderClosed}
         label={entry.name}
+        muted={entry.gitIgnored}
         expanded={expanded}
         onToggle={toggle}
         // Picker: activating a folder selects it and reveals its contents; browser: it expands.

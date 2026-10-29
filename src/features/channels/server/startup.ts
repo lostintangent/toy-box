@@ -4,6 +4,7 @@ import { getSessionState } from "@workspace/server/state/sessions";
 import { WorkerDatabase } from "@workers/server/database";
 import { ChannelDatabase } from "./database";
 import { publishChannelChange, wakeDueChannelAgents } from "./index";
+import { startChannelPush } from "./push";
 
 /** Working status belongs to an execution; waiting survives it and can schedule a wake. */
 export default async function startChannels(): Promise<VoidFunction> {
@@ -20,7 +21,9 @@ export default async function startChannels(): Promise<VoidFunction> {
   }
   const timer = setInterval(() => void wakeDueChannelAgents(), 60_000);
   timer.unref?.();
+  const stopPush = startChannelPush();
   return () => {
+    stopPush();
     unsubscribe();
     clearInterval(timer);
   };

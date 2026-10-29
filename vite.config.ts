@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { constants } from "node:zlib";
 import compression from "compression";
 import tailwindcss from "@tailwindcss/vite";
-import { removeUncompressedAssets } from "./cli/build/publicAssets";
+import { removeUncompressedAssets } from "./src/cli/build/publicAssets";
 import { socketDevelopment } from "./src/server/socketDevelopment";
 
 export default defineConfig(({ mode }) => {

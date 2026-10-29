@@ -2,15 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import ts from "app-typescript";
-import { APP_DEPENDENCIES } from "../../src/features/apps/runtime";
-import { readCompilerOptions } from "../../src/features/apps/server/compiler/config";
-import {
-  buildScreenNative,
-  SCREEN_NATIVE_DIRECTORY,
-} from "../../src/features/screens/native/build";
+import { APP_DEPENDENCIES } from "../../features/apps/runtime";
+import { readCompilerOptions } from "../../features/apps/server/compiler/config";
+import { buildScreenNative, SCREEN_NATIVE_DIRECTORY } from "../../features/screens/native/build";
 
 async function buildCli(): Promise<void> {
-  const projectRoot = resolve(Bun.fileURLToPath(new URL("../../", import.meta.url)));
+  const projectRoot = resolve(Bun.fileURLToPath(new URL("../../../", import.meta.url)));
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "toy-box-build-"));
   const appTypeLibrary = join(temporaryDirectory, "app-type-library");
   const screenNative = join(temporaryDirectory, SCREEN_NATIVE_DIRECTORY);
@@ -20,7 +17,7 @@ async function buildCli(): Promise<void> {
     await buildScreenNative(screenNative);
 
     const result = await Bun.build({
-      entrypoints: [join(projectRoot, "cli/index.ts")],
+      entrypoints: [join(projectRoot, "src/cli/index.ts")],
       minify: true,
       throw: false,
       compile: {

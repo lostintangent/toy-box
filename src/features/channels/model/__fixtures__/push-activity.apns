@@ -1,0 +1,14 @@
+{
+  "aps": {
+    "timestamp": 1793086200,
+    "event": "update",
+    "stale-date": 1793087100,
+    "content-state": {
+      "workingAgents": [{ "id": "studio-demo", "name": "Lead" }],
+      "tasksDone": 1,
+      "tasksTotal": 3,
+      "waitingRequestSequence": 15,
+      "updatedAt": 1793086200
+    }
+  }
+}

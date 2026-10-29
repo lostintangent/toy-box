@@ -1,6 +1,6 @@
 # Terminal
 
-The terminal runtime lets a shell survive refreshes and short disconnects without losing the PTY or corrupting its visible scrollback. The shared [socket gateway](../../../cli/AGENTS.md#socket-gateway) dispatches `/socket?service=terminal` to Terminal's hooks; the PTY manager owns process, reconnect, and replay policy.
+The terminal runtime lets a shell survive refreshes and short disconnects without losing the PTY or corrupting its visible scrollback. The shared [socket gateway](../../cli/AGENTS.md#socket-gateway) dispatches `/socket?service=terminal` to Terminal's hooks; the PTY manager owns process, reconnect, and replay policy.
 
 `model/protocol.ts` defines the validated client control plane shared by both sides. `client/` owns the browser WebSocket, xterm instance, buffering, and resize lifetime; `server/` owns the PTY, replay policy, and WebSocket handler; and `components/` mounts that capability into React. Workspace owns only whether the terminal is visible and where its shell is placed. Nitro's route adapter, shutdown hook, and the Vite development proxy remain in their application composition roots.
 

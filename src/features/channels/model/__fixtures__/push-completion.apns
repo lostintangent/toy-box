@@ -1,0 +1,12 @@
+{
+  "aps": {
+    "alert": { "title": "Toy Box", "body": "All tasks completed" },
+    "sound": "default",
+    "category": "completion",
+    "mutable-content": 1
+  },
+  "kind": "completion",
+  "channelID": "studio-demo",
+  "sequence": 16,
+  "registrationID": "00000000-0000-4000-8000-000000000001"
+}

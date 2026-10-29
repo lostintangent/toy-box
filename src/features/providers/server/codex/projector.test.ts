@@ -231,6 +231,23 @@ test("generated images appear on their tool call live and after history replay",
   ]);
 });
 
+test("a generated image stored as a file reference completes without its image", () => {
+  const stored: ThreadItem = {
+    type: "imageGeneration",
+    id: "image-1",
+    status: "completed",
+    revisedPrompt: "A red circle on white",
+    fileId: "file-image-1",
+    failure: null,
+  };
+  expect(createCodexProjector("native-images", "native")(itemEvent(stored)).at(-1)).toEqual({
+    type: "tool_end",
+    toolCallId: "image-1",
+    success: true,
+    result: "A red circle on white",
+  });
+});
+
 test("image generation limits fail the tool call without an image", () => {
   const failure = { type: "usageLimitExceeded" as const, limitId: "images", resetsAt: null };
   expect(

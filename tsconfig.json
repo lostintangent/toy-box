@@ -1,6 +1,6 @@
 {
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["test-results"],
+  "exclude": ["test-results", "relay/*.config.ts"],
   "compilerOptions": {
     "target": "ES2022",
     "jsx": "react-jsx",
@@ -26,6 +26,7 @@
       "@apps/*": ["./src/features/apps/*"],
       "@automations/*": ["./src/features/automations/*"],
       "@providers/*": ["./src/features/providers/*"],
+      "@push/*": ["./src/features/push/*"],
       "@files/*": ["./src/features/files/*"],
       "@inbox/*": ["./src/features/inbox/*"],
       "@briefs/*": ["./src/features/briefs/*"],

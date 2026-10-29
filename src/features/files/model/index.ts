@@ -48,6 +48,7 @@ export type FileWatchEvent = { type: "modified"; timestamp: number } | { type: "
 export type DirectoryEntry = {
   name: string;
   path: string;
+  gitIgnored: boolean;
 };
 
 /** A directory's immediate subdirectories and files. */

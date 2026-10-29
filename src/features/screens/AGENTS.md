@@ -125,7 +125,16 @@ the native backing scale. Full-frame updates cost more bandwidth; regions keep
 small changes cheap and slow viewers skip to the newest image. Bounds follow
 window resize. Identical pixels send nothing. Changed regions align outward to
 16-pixel blocks and apply to the latest full frame, never another region.
-Changes over 40% or new geometry send a new full frame. An empty region restores
+Unchanged rows use `memcmp`; changed rows extend the bounds already found using
+16-pixel comparisons, rather than locating individual changed pixels.
+On continuous frames, small ScreenCaptureKit dirty bounds narrow the unchanged
+check. Baseline comparison searches those bounds plus the previously sent region,
+so persistent differences and reversions remain correct. Dirty rectangles are
+already in encoded pixels, even for scaled capture. Missing or unusable metadata,
+search bounds over 40%, and discontinuous complete-frame timestamps retain the
+whole-image block scan. Gaps matter: after backpressure, OS damage can omit changes
+from skipped frames. Slow, isolated updates conservatively use that full scan too.
+Changes over 40%, new geometry or resuming capture send a new full frame. An empty region restores
 it. The client redraws its full frame before each region, so skipped updates
 cannot leave stale pixels. Reconnect sends the current full frame before the latest
 region. Three unacknowledged frames per viewer bound delivery without a round-trip
@@ -136,6 +145,43 @@ native output.
 drives headed native capture with counting peers: 5 seconds static sends nothing,
 ten clicks reach the next frame within 250 ms p95, full-canvas scrolling delivers
 at least 27 fps and at most 1.28 MB/frame at 2560x1600 (about 25% above the measured
-1.02 MB). A 32px spinner stays within 10 KB/frame, and 50 ms delayed ACKs
-still deliver at least 25 fps. This measures frame receipt, not browser draw or scanout.
-Run it while no dev server from the same checkout has a helper running.
+1.02 MB). A 32px spinner stays within 10 KB/frame, as does a second 32px canvas that
+animates without redrawing the main canvas. Both sparse workloads require 27 fps;
+50 ms delayed ACKs still deliver at least 25 fps. This measures frame receipt,
+not browser draw or scanout.
+
+Add `--compare` to time full-image blocks and adaptive dirty bounds on identical
+captured buffers and baselines. It alternates evaluation order and fails on any
+output difference, including unchanged frames and empty baseline restores.
+Comparison mode adds independently changing/reverting patches; it does not take
+native control or test input (`input` is `null`). The normal command retains the
+native-input check.
+
+Add `--display=display:<id>` to capture a listed display instead of the window:
+display damage can be precise even when Chromium's window damage is full-frame.
+The motion byte budget scales by captured pixel area; the other performance
+budgets remain unchanged, and unrelated desktop changes count. Add
+`--compare --stall-ms=350` to deliberately stall every 30 captured frames and
+verify damage coverage through backpressure. This explicitly labeled
+`coverage-stress` mode checks capture errors and output equality, not delivery
+performance. Keep the desktop idle during performance measurements: browser
+chrome and other display activity are captured changes.
+
+The JSON contains `runs`, each with delivery metrics, explicit budget `failures`,
+and native comparison, image conversion/JPEG, pipe write and pixel-copy timing
+distributions per workload. Raw native samples retain search areas, frame
+timestamps, continuity, geometry/resume flags and paired matches. Native CPU is
+measured over the entire capture, including warmups; 100% means one CPU core.
+With `paired: true`, CPU and aggregate comparison time include both detectors, not shipping
+cost; compare `blockComparisonMs` with `adaptiveComparisonMs` instead.
+Failed budget checks still save their reports and fail the command.
+The instrumented helper and its pixel oracle are
+compiled only for benchmarks. Each capture uses its own temporary executable path,
+so it does not interrupt a dev server's existing macOS capture service; normal
+capture has no profiling clocks or algorithm switches.
+
+`bun test src/features/screens/native/pixels.test.ts` compiles the native
+detectors and compares their output for every single-pixel position across
+aligned and unaligned dimensions, padded rows, persistent changes, reversions
+and full-frame baseline resets. It also checks dirty metadata validation, global
+block alignment, gap fallback and adaptive sequences against the pixel oracle.

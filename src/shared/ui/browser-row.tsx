@@ -45,7 +45,8 @@ export function BrowserRow({
         >
           <ChevronRight
             className={cn(
-              "h-3.5 w-3.5 text-muted-foreground transition-transform group-hover:text-accent-foreground",
+              "h-3.5 w-3.5 transition-transform",
+              muted && "text-muted-foreground",
               expanded && "rotate-90",
             )}
           />
@@ -64,7 +65,8 @@ export function BrowserRow({
       >
         <Icon
           className={cn(
-            "h-4 w-4 shrink-0 text-muted-foreground group-hover:text-accent-foreground",
+            "h-4 w-4 shrink-0",
+            muted && "text-muted-foreground",
             spin && "animate-spin",
           )}
         />

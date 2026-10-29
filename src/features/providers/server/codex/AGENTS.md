@@ -30,11 +30,13 @@ here. No additional OpenAI npm SDK or Toy Box login is required.
   only native history, with no staged attachment files.
   Native image generation is on by default. Its items become `image_generation` tool calls whose
   PNG results are attachments; the revised prompt arrives only at completion, so it is the result.
+  A host that stores generated images sends a file reference instead, which completes the call
+  without its image; the local app-server keeps them inline.
   Failed turns project their `Turn.error.message` through the same `turn/completed` case
   live and during history replay. Retrying `error` notifications are not transcript
   failures; the final `turn/completed` outcome is authoritative.
 - `protocol/index.ts` is the checked-in Apache-2.0 upstream protocol generated against CLI
-  0.163.0. Run `bun src/features/providers/server/codex/protocol/generate.ts` after a deliberate protocol
+  0.165.0. Run `bun src/features/providers/server/codex/protocol/generate.ts` after a deliberate protocol
   upgrade and verify changed methods against the installed CLI.
 
 ## Native constraints
@@ -66,9 +68,10 @@ including on models whose catalog defaults to V1. Instant interrupts stay off: a
 that preempts a streaming reply drops that reply from history after the live transcript
 showed it, so steering waits for the current reply to finish.
 
-Successful terminal tools reject subsequent host calls in their turn. Interruption
-waits until Codex records the successful dynamic tool result, then targets that native turn.
-This ordering is essential to preserve the result in durable history.
+Codex runs host tool calls in parallel, each as its own request. Successful terminal tools
+reject subsequent host calls in their turn. Interruption waits until Codex records the
+successful dynamic tool result, then targets that native turn. This ordering is essential to
+preserve the result in durable history.
 
 Verify real CLI create/resume, deferred tool discovery and invocation, questions, terminal results,
 subagents, rename, and deletion alongside protocol tests and the shared reducer/queue fixtures.

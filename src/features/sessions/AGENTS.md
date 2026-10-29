@@ -157,6 +157,11 @@ default does not change already-open panes; overlays and passive previews keep t
 The composer stacks what a session produced (artifacts newest first, plus todo progress and changed
 files) and what is waiting (queued messages) above the message being written. Sessions and Channels
 share Workspace's [`ComposerTray`](../workspace/components/outputs/ComposerTray.tsx).
+An active Session pane publishes only one selected artifact editor. Its initial choice is the
+session's designated artifact, or otherwise the most recently updated file. That choice stays put
+as other artifacts arrive or change; tray and transcript clicks replace it. If the selected file
+disappears, the same initial-choice policy supplies a replacement. The full artifact catalog remains
+available without mounting its other editors, and explicit file opens remain independent.
 Queued user messages can be sent now, removed, or edited:
 editing takes a message out of the queue and back into the draft, as does stopping the turn, so
 queued input never disappears. Draft text is a Workspace saved draft, so it follows the

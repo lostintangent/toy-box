@@ -378,12 +378,15 @@ function toolResult(item: ThreadItem): ToolCompletion {
           : item.error?.message,
       };
     case "imageGeneration":
-      return item.status === "completed" && item.result
+      return item.status === "completed"
         ? {
             success: true,
             result: item.revisedPrompt ?? "",
-            // The built-in tool always returns PNG data without a MIME type.
-            attachments: [{ base64: item.result, mimeType: "image/png" }],
+            // The built-in tool returns PNG data without a MIME type. Hosts that store generated
+            // images send a file reference instead, which this host cannot read.
+            ...("result" in item
+              ? { attachments: [{ base64: item.result, mimeType: "image/png" }] }
+              : {}),
           }
         : {
             success: false,

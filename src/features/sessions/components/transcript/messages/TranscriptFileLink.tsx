@@ -3,13 +3,10 @@ import { defaultRehypePlugins, type Components, type ExtraProps } from "streamdo
 import { sessionFile } from "@files/model";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { createEditorPaneId } from "@workspace/model/panes";
+import type { SessionArtifact } from "../../../model";
 import { useCurrentSession } from "../../CurrentSessionContext";
 
 type TranscriptLinkProps = ComponentProps<"a"> & ExtraProps;
-type ResolvedArtifactLink = {
-  paneId: string;
-  path: string;
-};
 
 function artifactPathFromHref(href: string | undefined): string | undefined {
   if (
@@ -36,26 +33,35 @@ function artifactPathFromHref(href: string | undefined): string | undefined {
   }
 }
 
-function resolveTranscriptArtifactLink(
+export function resolveTranscriptArtifactPath(
   href: string | undefined,
   sessionId: string,
   panes: readonly { id: string }[],
-): ResolvedArtifactLink | undefined {
+  artifacts: readonly SessionArtifact[] = [],
+): string | undefined {
   const path = artifactPathFromHref(href);
   if (!path) return undefined;
 
   const paneId = createEditorPaneId(sessionFile(sessionId, path));
-  return panes.some((pane) => pane.id === paneId) ? { paneId, path } : undefined;
+  return panes.some((pane) => pane.id === paneId) ||
+    artifacts.some((artifact) => artifact.path === path)
+    ? path
+    : undefined;
 }
 
 function TranscriptLink({ node: _node, href, children, ...linkProps }: TranscriptLinkProps) {
-  const { sessionId } = useCurrentSession();
+  const { sessionId, artifacts, onOpenArtifact } = useCurrentSession();
   const { focusedPaneAtom, panes } = useWorkspaceSurface();
-  const artifactLink = resolveTranscriptArtifactLink(href, sessionId, panes);
+  const artifactPath = resolveTranscriptArtifactPath(
+    href,
+    sessionId,
+    panes,
+    onOpenArtifact ? artifacts : undefined,
+  );
 
   if (!href) return <span>{children}</span>;
 
-  if (!artifactLink) {
+  if (!artifactPath) {
     const external = /^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith("//");
     return (
       <a
@@ -73,11 +79,15 @@ function TranscriptLink({ node: _node, href, children, ...linkProps }: Transcrip
   return (
     <button
       type="button"
-      title={`Open ${artifactLink.path}`}
+      title={`Open ${artifactPath}`}
       className="wrap-anywhere appearance-none text-left font-medium text-primary underline"
       data-incomplete="false"
       data-streamdown="link"
-      onClick={() => focusedPaneAtom.set(artifactLink.paneId)}
+      onClick={() =>
+        onOpenArtifact && artifacts?.some(({ path }) => path === artifactPath)
+          ? onOpenArtifact(artifactPath)
+          : focusedPaneAtom.set(createEditorPaneId(sessionFile(sessionId, artifactPath)))
+      }
     >
       {children}
     </button>

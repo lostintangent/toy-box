@@ -17,13 +17,16 @@ jobs:
         with:
           bun-version: canary
 
-      - name: Install dependencies
+      - name: Install
         run: bun install --frozen-lockfile
         env:
           MOTION_TOKEN: ${{ secrets.MOTION_TOKEN }}
 
       - name: Check
         run: bun check
+
+      - name: Test
+        run: bun test
 
       - name: Build
         run: bun run build

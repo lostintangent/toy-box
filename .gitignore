@@ -8,12 +8,14 @@ count.txt
 .nitro
 .tanstack
 .wrangler
+.cloudflare
 .output
 test-results
 playwright-report
 
 # CLI binary
 toy-box
+
 # Riptide artifacts (cloud-synced)
 .humanlayer/tasks/
 

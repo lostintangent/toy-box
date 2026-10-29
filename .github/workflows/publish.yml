@@ -1,21 +1,56 @@
 name: Publish
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: macos-latest
     permissions:
       contents: write
+      id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: canary
 
-      - uses: actions/setup-node@v4
+      - name: Prepare release
+        id: release
+        run: |
+          bun run - <<'BUN'
+          import { $ } from "bun";
+          import { appendFileSync } from "node:fs";
+
+          const { name, version } = await Bun.file("package.json").json();
+          if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Publish requires a stable package version");
+          const tag = `v${version}`;
+          const changelog = await Bun.file("CHANGELOG.md").text();
+          const headings = [...changelog.matchAll(/^##[ \t]+(.+)$/gm)];
+          const matches = headings.filter(heading => heading[1].match(/(?:^|\s)v(\d+\.\d+\.\d+)(?=\s|$)/)?.[1] === version);
+          if (matches.length !== 1) throw new Error(`Expected exactly one CHANGELOG.md section for v${version}`);
+          const heading = matches[0];
+          const next = headings[headings.indexOf(heading) + 1];
+          const notes = changelog.slice(heading.index + heading[0].length, next?.index).trim();
+          if (!notes) throw new Error(`Release notes for v${version} are empty`);
+
+          const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}/${version}`);
+          if (response.ok) throw new Error(`${name}@${version} is already published`);
+          if (response.status !== 404) throw new Error(`Cannot verify npm version availability: HTTP ${response.status}`);
+          const existingTag = await $`git ls-remote --tags origin refs/tags/${tag}`.text();
+          if (existingTag.trim()) throw new Error(`Tag ${tag} already exists`);
+
+          await Bun.write(`${process.env.RUNNER_TEMP}/release-notes.md`, `${notes}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ntag=${tag}\n`);
+          BUN
+
+      - uses: actions/setup-node@v7
         with:
           registry-url: https://registry.npmjs.org
 
@@ -24,17 +59,42 @@ jobs:
         env:
           MOTION_TOKEN: ${{ secrets.MOTION_TOKEN }}
 
+      - name: Check
+        run: bun check
+
+      - name: Test
+        run: bun test
+
       - name: Build CLI
         run: bun run build:cli
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Publish to npm
-        run: npm publish
+      - name: Pack and check the standalone executable
+        id: package
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          npm pack --ignore-scripts
+          package_file="lostintangent-toy-box-$RELEASE_VERSION.tgz"
+          smoke_dir="$(mktemp -d)"
+          tar -xzf "$package_file" -C "$smoke_dir"
+          built_version="$(cd "$smoke_dir" && ./package/toy-box --version)"
+          test "$built_version" = "$RELEASE_VERSION"
+          cp "$smoke_dir/package/toy-box" toy-box-darwin-arm64
+          echo "file=$package_file" >> "$GITHUB_OUTPUT"
 
-      - name: Upload binary to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: toy-box
+      - name: Publish to npm
+        env:
+          RELEASE_PACKAGE: ${{ steps.package.outputs.file }}
+        run: npm publish "$RELEASE_PACKAGE" --ignore-scripts
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_PACKAGE: ${{ steps.package.outputs.file }}
+        run: |
+          gh release create "$RELEASE_TAG" toy-box-darwin-arm64 "$RELEASE_PACKAGE" \
+            --target "$GITHUB_SHA" --title "$RELEASE_TAG" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"

@@ -1,6 +1,6 @@
 # Toy Box CLI
 
-The CLI bundles two parts into one Bun binary: the browser app and the Nitro server that renders and serves it, including server functions and HTTP, SSE, and WebSocket routes. Launch the binary in any working directory and it runs one server process, with no dependencies to install and no services to wire up. The launcher itself (`cli/index.ts`) is small on purpose. What deserves explaining in this folder is the composition: how those parts get built and then collapsed into one file. That runs through Vite and Rolldown, then Nitro, then Bun, driven by two `package.json` scripts (`build` and `build:cli`) and configured in `vite.config.ts`.
+The CLI bundles two parts into one Bun binary: the browser app and the Nitro server that renders and serves it, including server functions and HTTP, SSE, and WebSocket routes. Launch the binary in any working directory and it runs one server process, with no dependencies to install and no services to wire up. The launcher itself (`src/cli/index.ts`) is small on purpose. What deserves explaining in this folder is the composition: how those parts get built and then collapsed into one file. That runs through Vite and Rolldown, then Nitro, then Bun, driven by two `package.json` scripts (`build` and `build:cli`) and configured in `vite.config.ts`.
 
 ## Building the binary
 
@@ -8,7 +8,7 @@ The CLI bundles two parts into one Bun binary: the browser app and the Nitro ser
 
 The server build goes to Nitro. Its `bun` preset turns it into one runnable entry, `.output/server/index.mjs`, that owns SSR, server functions, API and stream endpoints, and the shared `/socket` WebSocket route. Terminal and Screens provide feature-owned handlers behind that route. On its own it is an ordinary Bun server you could run directly.
 
-`bun run build:cli` delegates this composition to `cli/build/index.ts`. After the web build,
+`bun run build:cli` delegates this composition to `src/cli/build/index.ts`. After the web build,
 it writes a temporary, declaration-only `app-type-library/node_modules` tree for the app
 compiler. Public app packages come from the shared runtime dependency catalog;
 compiler-only and type-support packages are listed alongside the writer. `Bun.build()`
@@ -19,7 +19,7 @@ compilation, and the finished binary reads nothing from `.output` or `node_modul
 disk. The npm package ships only this binary and its metadata, currently for Apple
 silicon on macOS; new platforms mean extending the build matrix, not changing the model.
 
-The build also embeds Screens' native helper; [Screens](../src/features/screens/AGENTS.md) owns its packaging and permission contract.
+The build also embeds Screens' native helper; [Screens](../features/screens/AGENTS.md) owns its packaging and permission contract.
 
 The shape is fan out, then collapse. `vite build` fans the app into browser and server builds; `Bun.build()` collapses the Nitro server, browser assets, launcher, and Bun runtime into one native file.
 
@@ -30,7 +30,7 @@ those compressed assets; the server's executable code and SSR bundles are separa
 
 ## Process startup
 
-`cli/index.ts` is the entry point when the binary runs. It reads the HTTP host and port, then turns off Bun's HTTP idle timeout so long-lived streams are not dropped. The Copilot SDK sometimes re-invokes this same binary as a subprocess with a file path as the first argument, so the launcher treats that argument as a working directory only when it is actually a directory. It imports the built Nitro server and, for an interactive run, opens the browser unless the user opted out. Nitro owns application startup and shutdown, including the terminal runtime, bundled skills, scheduler, and worker cleanup; that policy lives under `src/server` rather than in the launcher.
+`src/cli/index.ts` is the entry point when the binary runs. It reads the HTTP host and port, then turns off Bun's HTTP idle timeout so long-lived streams are not dropped. The Copilot SDK sometimes re-invokes this same binary as a subprocess with a file path as the first argument, so the launcher treats that argument as a working directory only when it is actually a directory. It imports the built Nitro server and, for an interactive run, opens the browser unless the user opted out. Nitro owns application startup and shutdown, including the terminal runtime, bundled skills, scheduler, and worker cleanup; that policy lives under `src/server` rather than in the launcher.
 
 ## Socket gateway
 

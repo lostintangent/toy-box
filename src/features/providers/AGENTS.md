@@ -92,6 +92,6 @@ check the list whenever a provider is upgraded:
   `readDirectory` reads the first transcript entry that records one instead. Remove once the SDK
   finds it itself.
 - Copilot computer use (`server/copilot/computerUse.ts`): headless SDK servers load no built-in
-  plugins, so sessions cannot request computer use (seen through CLI 1.0.104-1). Respect the
+  plugins, so sessions cannot request computer use (seen through CLI 1.0.105-1). Respect the
   user's opt-in by registering that runtime version's bundled stdio server. Remove when the SDK
   exposes activation or headless honors the setting.

@@ -1,4 +1,5 @@
 {
+  "ignorePatterns": ["relay/*.config.ts"],
   "plugins": ["react", "typescript", "import"],
   "jsPlugins": [
     "./.oxlint/react.js",

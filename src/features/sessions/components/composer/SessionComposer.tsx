@@ -54,6 +54,7 @@ type SessionComposerCommonProps = {
   todos?: TodoItem[];
   sessionDiff?: { total: DiffStats; byFile: FileDiffSummary[] };
   artifacts?: SessionArtifact[];
+  onOpenArtifact?: (path: string) => void;
   preview?: Preview;
   /** Working directory whose files and skills the prompt can complete. */
   directory?: string;
@@ -92,6 +93,7 @@ export function SessionComposer(props: SessionComposerProps) {
     todos,
     sessionDiff,
     artifacts = [],
+    onOpenArtifact,
     preview,
     directory,
     queuedMessages = [],
@@ -177,6 +179,7 @@ export function SessionComposer(props: SessionComposerProps) {
                 time: updatedAt,
               }))}
             artifactTimeLabel="Updated"
+            onOpenArtifact={onOpenArtifact && ((file) => onOpenArtifact(file.path))}
             checklist={getDisplayTodos(todos ?? [], isBusy)}
             checklistLabel="Todos"
             extraOutput={

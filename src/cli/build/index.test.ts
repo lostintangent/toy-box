@@ -3,10 +3,10 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import ts from "app-typescript";
-import { readCompilerOptions } from "../../src/features/apps/server/compiler/config";
+import { readCompilerOptions } from "../../features/apps/server/compiler/config";
 import { writeAppTypeLibrary } from "./index";
 
-const projectRoot = resolve(Bun.fileURLToPath(new URL("../../", import.meta.url)));
+const projectRoot = resolve(Bun.fileURLToPath(new URL("../../../", import.meta.url)));
 
 test("packaged types can check an app without the source checkout", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "toy-box-app-types-test-")));

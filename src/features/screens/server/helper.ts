@@ -46,6 +46,8 @@ export type ScreenHelper = {
 export type StartScreenHelper = (
   onEvent: (event: CaptureEvent, packet: Uint8Array) => void,
   onFailure: (error: Error) => void,
+  /** An isolated instrumented executable and environment for native benchmarks. */
+  options?: { executable: string; env: Record<string, string | undefined> },
 ) => Promise<ScreenHelper>;
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -58,8 +60,9 @@ const CLOSE_TIMEOUT_MS = 2000;
  * server closes it on shutdown; it can't outlive the server either way. A crash, timeout
  * or unreadable packet fails every pending request, and `onFailure` hears about it once.
  */
-export const startScreenHelper: StartScreenHelper = async (onEvent, onFailure) => {
-  const helper = Bun.spawn([await helperExecutable()], {
+export const startScreenHelper: StartScreenHelper = async (onEvent, onFailure, options) => {
+  const helper = Bun.spawn([options?.executable ?? (await helperExecutable())], {
+    env: options?.env,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "inherit",

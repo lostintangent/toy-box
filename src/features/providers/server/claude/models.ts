@@ -10,7 +10,7 @@ export function toModelInfo(model: ClaudeModelInfo): ModelInfo {
   };
 }
 
-// The catalog and startup can include [1m]; assistant messages and history omit it.
+// The catalog, startup, and turn usage can include [1m]; assistant messages and history omit it.
 export function normalizeModelId(id: string): string {
   return id.replace(/\[1m\]$/i, "");
 }

@@ -1,7 +1,11 @@
 {
   "name": "@lostintangent/toy-box",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Your personal coding agent server",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lostintangent/toy-box.git"
+  },
   "bin": {
     "toy-box": "toy-box"
   },
@@ -21,15 +25,15 @@
   "scripts": {
     "dev": "vite dev --port 3100",
     "build": "vite build",
-    "build:cli": "bun run build && bun run cli/build/index.ts",
+    "build:cli": "bun run build && bun run src/cli/build/index.ts",
     "check": "bun fmt --check && bun lint && bun check",
-    "prepare": "git config core.hooksPath .githooks"
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "dependencies": {},
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.310",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.312",
     "@base-ui/react": "^1.9.0",
-    "@github/copilot-sdk": "^1.0.26",
+    "@github/copilot-sdk": "^1.0.27",
     "@lostintangent/documint": "latest",
     "@lostintangent/leafnode": "^0.0.1",
     "@modelcontextprotocol/sdk": "1.30.0",
@@ -73,11 +77,11 @@
     "cmdk": "^1.1.1",
     "compression": "^1.8.2",
     "cron-parser": "^5.10.2",
-    "crossws": "^0.4.16",
+    "crossws": "^0.4.17",
     "eventsource-parser": "3.1.1",
     "h3-compression": "1.1.0",
     "json-schema-to-ts": "^3.1.1",
-    "lucide-react": "^1.61.0",
+    "lucide-react": "^1.62.0",
     "marked": "^17.0.6",
     "motion": "^13.5.1",
     "motion-plus": "npm:@motionplus/core@^3.0.0",
@@ -88,7 +92,7 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-resizable-panels": "^2.1.9",
-    "shadcn": "^4.22.1",
+    "shadcn": "^4.23.0",
     "shiki": "latest",
     "streamdown": "^2.7.1",
     "tailwind-merge": "^3.7.0",

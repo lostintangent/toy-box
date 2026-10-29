@@ -14,6 +14,8 @@ import {
 } from "./location/SessionLocationPicker";
 import { SessionMetadataBadges } from "./location/SessionMetadataBadges";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
+import { createEditorPaneId, resolveArtifactSelection } from "@workspace/model/panes";
+import { sessionFile } from "@files/model";
 import { useModels } from "@providers/useModels";
 import { EditDiffsProvider, useEditDiffs } from "./transcript/editDiffs";
 import { SessionComposer } from "./composer/SessionComposer";
@@ -49,7 +51,8 @@ export function SessionPane({
   variant,
   isVisible = true,
 }: SessionPaneProps) {
-  const { panePublications } = useWorkspaceSurface();
+  const { panePublications, focusedPaneAtom } = useWorkspaceSurface();
+  const [selectedArtifactPath, setSelectedArtifactPath] = useState<string>();
   const isPassive = mode === "passive";
   const workspaceSessionStatus = useWorkspaceSelector(
     (workspace) => workspace.sessionStates[sessionId]?.status ?? "idle",
@@ -144,20 +147,28 @@ export function SessionPane({
     setDefaultModel(nextModel);
   }
 
+  const selectedArtifact = resolveArtifactSelection(
+    artifacts,
+    selectedArtifactPath,
+    session?.artifactPath,
+  );
+  if (selectedArtifactPath !== selectedArtifact?.path) {
+    setSelectedArtifactPath(selectedArtifact?.path);
+  }
+
   useEffect(() => {
     if (mode !== "active") return;
     if (!isDraft && !hasLoadedSessionState) return;
-
     panePublications.actions.publishSessionPanes(
       sessionId,
       linkedSessionIds,
       canvases,
-      artifacts.map(({ path }) => path),
+      selectedArtifact?.path ? [selectedArtifact.path] : [],
       openedFiles,
       preview,
     );
   }, [
-    artifacts,
+    selectedArtifact?.path,
     openedFiles,
     canvases,
     preview,
@@ -168,6 +179,19 @@ export function SessionPane({
     linkedSessionIds,
     sessionId,
   ]);
+
+  function handleOpenArtifact(path: string) {
+    setSelectedArtifactPath(path);
+    panePublications.actions.publishSessionPanes(
+      sessionId,
+      linkedSessionIds,
+      canvases,
+      [path],
+      openedFiles,
+      preview,
+    );
+    focusedPaneAtom.set(createEditorPaneId(sessionFile(sessionId, path)));
+  }
 
   // ---------------------------------------------------------------------------
   // Render state and handlers
@@ -276,7 +300,15 @@ export function SessionPane({
         ) : isLoadingSessionState ? (
           <TranscriptSkeleton />
         ) : (
-          <CurrentSessionProvider value={{ sessionId, cwd: effectiveDirectory, mode }}>
+          <CurrentSessionProvider
+            value={{
+              sessionId,
+              cwd: effectiveDirectory,
+              mode,
+              artifacts,
+              onOpenArtifact: mode === "active" ? handleOpenArtifact : undefined,
+            }}
+          >
             <EditDiffsProvider value={editDiffs.byToolCallId}>
               <SessionMessageList
                 messages={messages}
@@ -312,6 +344,7 @@ export function SessionPane({
             todos={todos}
             sessionDiff={editDiffs}
             artifacts={mode === "active" ? artifacts : []}
+            onOpenArtifact={mode === "active" ? handleOpenArtifact : undefined}
             preview={preview}
             directory={effectiveDirectory}
             queuedMessages={queuedMessages}

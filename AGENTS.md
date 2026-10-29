@@ -40,6 +40,7 @@ Each guide explains one capability end to end, including adjacent callers and co
 - [`src/features/sessions/AGENTS.md`](src/features/sessions/AGENTS.md): the foundational session model, runtime, registry, SDK projection, browser lifecycle, and presentation
 - [`src/features/providers/AGENTS.md`](src/features/providers/AGENTS.md): the native provider contract, catalogs, Copilot, Codex, and Claude implementations, and history projection
 - [`src/features/channels/AGENTS.md`](src/features/channels/AGENTS.md): durable shared message buses, membership cursors, delivery policy, artifacts, and channel presentation
+- [`src/features/push/AGENTS.md`](src/features/push/AGENTS.md): install registrations, opaque topic subscriptions, lazy publication, and APNs delivery
 - [`src/features/workspace/AGENTS.md`](src/features/workspace/AGENTS.md): TanStack application composition, aggregate workspace state, synchronization, pane identity, and layout
 - [`src/features/automations/AGENTS.md`](src/features/automations/AGENTS.md): dependable recurring work by scheduling ordinary managed sessions
 - [`src/features/inbox/AGENTS.md`](src/features/inbox/AGENTS.md): durable background results presented through ordinary managed sessions
@@ -50,7 +51,7 @@ Each guide explains one capability end to end, including adjacent callers and co
 - [`src/features/files/AGENTS.md`](src/features/files/AGENTS.md): browsable workspace files presented as live, bidirectionally editable surfaces
 - [`src/features/terminal/AGENTS.md`](src/features/terminal/AGENTS.md): reconnectable PTYs with mode-aware scrollback that preserves the visible terminal
 - [`src/features/screens/AGENTS.md`](src/features/screens/AGENTS.md): native window capture, shared preview references, remote input handoff, and remoting benchmarks
-- [`cli/AGENTS.md`](cli/AGENTS.md): one installable binary that assembles the browser app and Nitro server
+- [`src/cli/AGENTS.md`](src/cli/AGENTS.md): one installable binary that assembles the browser app and Nitro server
 - [`tests/AGENTS.md`](tests/AGENTS.md): live runtime and historical replay behavior locked against real SDK fixtures
 
 ## Writing Great Code

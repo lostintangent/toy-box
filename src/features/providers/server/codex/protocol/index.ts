@@ -1,4 +1,4 @@
-// Generated from codex-cli 0.163.0 (experimental app-server schema).
+// Generated from codex-cli 0.165.0 (experimental app-server schema).
 // OpenAI Codex, Apache-2.0: https://github.com/openai/codex
 // Regenerate using ./generate.ts. Do not edit wire types by hand.
 /* oxlint-disable typescript/no-redundant-type-constituents -- Upstream unions list known variants beside open fallbacks. */
@@ -210,7 +210,8 @@ export type GetAccountResponse = {
 export type Account =
   | { type: "apiKey" }
   | { type: "chatgpt"; email: string | null; planType: PlanType }
-  | { type: "amazonBedrock"; usesCodexManagedCredentials: boolean };
+  | { type: "amazonBedrock"; usesCodexManagedCredentials: boolean }
+  | { type: "gcp" };
 
 export type PlanType =
   | "free"
@@ -230,6 +231,8 @@ export type PlanType =
   | "edu"
   | "edu_plus"
   | "edu_pro"
+  | "sci"
+  | "sci_plus"
   | "unknown";
 
 export type WorkspaceRouting = {
@@ -538,6 +541,12 @@ export type ThreadListParams = {
    * ancestor itself. Mutually exclusive with `parentThreadId`.
    */
   ancestorThreadId?: string | null;
+  /**
+   * Return only persistent threads attached to this thread, including empty threads.
+   * Mutually exclusive with parentThreadId and ancestorThreadId.
+   * Omitting this filter keeps attached threads hidden from ordinary listings.
+   */
+  attachedToThreadId?: string | null;
 };
 
 export type SortDirection = "asc" | "desc";
@@ -1025,16 +1034,30 @@ export type ImageGenerationItem = {
   id: string;
   status: string;
   revisedPrompt: string | null;
-  result: string;
   transparentBackground?: boolean;
   failure: ImageGenerationFailure | null;
   savedPath?: AbsolutePathBuf;
-};
+  /**
+   * Observed local inputs for a completed generation, absent on older items.
+   */
+  inputImages?: Array<ImageGenerationInputImage>;
+} & ({ fileId: string } | { result: string });
 
 export type ImageGenerationFailure = {
   type: "usageLimitExceeded";
   limitId: string;
   resetsAt: number | null;
+};
+
+/**
+ * A local image file successfully read for this exact image-generation request.
+ */
+export type ImageGenerationInputImage = {
+  path: AbsolutePathBuf;
+  /**
+   * Lowercase SHA-256 of the file bytes read before image normalization.
+   */
+  sha256: string;
 };
 
 /**
@@ -1217,6 +1240,7 @@ export type CodexErrorInfo =
   | "rateLimitExceeded"
   | "flexUnavailable"
   | "serverOverloaded"
+  | "modelNotFound"
   | "cyberPolicy"
   | "misalignmentPolicyViolation"
   | "tooManyDenials"
@@ -2019,6 +2043,7 @@ export type TurnStartParams = {
   toolOutput?: TurnToolOutput | null;
   /**
    * Optional metadata to enrich Codex's ResponsesAPI turn metadata.
+   * Replaces unprotected client-provided entries when supplied; an empty map clears them.
    *
    * Entries are flattened into the JSON string sent as
    * `client_metadata["x-codex-turn-metadata"]` on ResponsesAPI HTTP and websocket requests.
@@ -2027,6 +2052,11 @@ export type TurnStartParams = {
    * such as `session_id`, `thread_id`, `turn_id`, and `window_id` cannot be overridden.
    */
   responsesapiClientMetadata?: { [key in string]?: string } | null;
+  /**
+   * Merge entries into the ResponsesAPI turn metadata without removing existing entries.
+   * Applied after `responsesapiClientMetadata` if both are provided; reserved keys remain protected.
+   */
+  responsesapiClientMetadataPatch?: { [key in string]?: string } | null;
   /**
    * Optional client-provided context fragments keyed by an opaque source identifier.
    */
@@ -2146,6 +2176,7 @@ export type TurnSteerParams = {
   input: Array<UserInput>;
   /**
    * Optional metadata to enrich Codex's ResponsesAPI turn metadata.
+   * Replaces unprotected client-provided entries when supplied; an empty map clears them.
    *
    * Entries are flattened into the JSON string sent as
    * `client_metadata["x-codex-turn-metadata"]` on ResponsesAPI HTTP and websocket requests.
@@ -2154,6 +2185,11 @@ export type TurnSteerParams = {
    * such as `session_id`, `thread_id`, `turn_id`, and `window_id` cannot be overridden.
    */
   responsesapiClientMetadata?: { [key in string]?: string } | null;
+  /**
+   * Merge entries into the ResponsesAPI turn metadata without removing existing entries.
+   * Applied after `responsesapiClientMetadata` if both are provided; reserved keys remain protected.
+   */
+  responsesapiClientMetadataPatch?: { [key in string]?: string } | null;
   /**
    * Optional client-provided context fragments keyed by an opaque source identifier.
    */

@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import type { CopilotClient, SessionConfig } from "@github/copilot-sdk";
 
-// Workaround seen through CLI 1.0.104-1: headless SDK servers load no built-in plugins.
+// Workaround seen through CLI 1.0.105-1: headless SDK servers load no built-in plugins.
 // Remove when the SDK exposes computer use or the headless CLI honors the user's setting.
 export async function computerUseServers(
   client: Pick<CopilotClient, "getStatus">,

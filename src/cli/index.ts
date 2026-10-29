@@ -3,7 +3,7 @@
 import { defineCommand, runMain } from "citty";
 import open from "open";
 
-import { version } from "../package.json";
+import { version } from "../../package.json";
 
 async function isDirectory(path: string): Promise<boolean> {
   try {
@@ -57,7 +57,7 @@ const main = defineCommand({
 
     // Start the Nitro server.
     // @ts-expect-error - built output has no types
-    await import("../.output/server/index.mjs");
+    await import("../../.output/server/index.mjs");
 
     const shouldOpenBrowser = args["no-open"] === false && process.stdout.isTTY;
     if (shouldOpenBrowser) {

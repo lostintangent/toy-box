@@ -7,4 +7,5 @@ export default rootRoute("__root.tsx", [
   physical("/api", "../../files/routes"),
   physical("/api", "../../channels/routes"),
   physical("/api", "../../providers/routes"),
+  physical("/api", "../../push/routes"),
 ]);

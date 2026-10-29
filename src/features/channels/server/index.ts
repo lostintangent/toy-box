@@ -44,6 +44,7 @@ import {
 } from "./database";
 import { resolveMessageResources, resolveEventResources } from "./resources";
 import { publishChannelEvent, releaseChannelEvents } from "./events";
+import { publishChannelNotification } from "./push";
 
 const CHANNEL_MESSAGE_LIMIT = 100;
 
@@ -573,6 +574,7 @@ export function publishChannelChange({ channelId, events, channel }: ChannelChan
   for (const stored of events) {
     const event = resolveEventResources(stored);
     publishChannelEvent(channelId, event);
+    if (channel && event.type === "message") publishChannelNotification(channel, event.message);
     if (event.type === "member") {
       broadcast({ type: "channel.member.upserted", member: channelMemberIdentity(event.member) });
     } else if (event.type === "message" && isChannelSystemMessage(event.message)) {
