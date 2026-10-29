@@ -1,10 +1,8 @@
 # Toy Box Push Relay
 
-This is a tiny Cloudflare Worker that lets any Toy Box server send push notifications and Live Activity
-updates to the Toy Box iPhone app.
+This is a tiny Cloudflare Worker that lets any Toy Box server send push notifications to Toy Box mobile.
 
-**Why it's needed:** every Toy Box server is self-hosted, but they all push to the same iPhone app.
-Apple only accepts those pushes when they're signed with the app's private key, and that key can't
+**Why it's needed:** every Toy Box server is self-hosted, but they all push to the same iPhone app. Apple only accepts those pushes when they're signed with the app's private key, and that key can't
 be given to every server. So pushes need one trusted, hosted proxy to Apple.
 
 **What it does:** the relay is that proxy. It holds the iPhone app's Apple key, and your server
@@ -28,15 +26,20 @@ and Reply handles, and badge pushes carry only the count. The phone does not fet
 channel names and task counts. This content passes through the relay and Apple without
 application-level encryption, as approved by the user. The relay does not parse or log the body.
 
-## Deploy
+## Deployment
+
+Workers Builds deploys the relay whenever a push to `main` changes `relay/`. It runs `bun run test`
+and then `bun run deploy` in this folder, so a failing test stops the deploy. Each build shows as a
+check on its GitHub commit, with logs under the Worker's Deployments in the Cloudflare dashboard.
+
+To set the relay up in a new Cloudflare account, deploy it once by hand:
 
 ```sh
 bun install --frozen-lockfile
 bun run deploy
 ```
 
-The first deploy creates the Worker. Then set its two secrets once. The `.p8` key travels only
-through stdin:
+That creates the Worker. Then set its two secrets once. The `.p8` key travels only through stdin:
 
 ```sh
 cf workers secrets update APNS_KEY_ID --worker toy-box-push-relay --type secret_text --text YOUR_KEY_ID
@@ -51,6 +54,9 @@ node --input-type=module -e '
 ' /path/to/Key.p8 | cf workers secrets update APNS_PRIVATE_KEY --worker toy-box-push-relay --body @/dev/stdin
 ```
 
+Finally, connect this repo under the Worker's Settings › Build, with branch `main`, root directory
+`relay`, build command `bun run test`, deploy command `bun run deploy` and watch path `relay/*`.
+
 Later deploys keep both secrets. To rotate the key, rerun both commands with the new key, check
 that a real push arrives, then revoke the old key in Apple's developer portal. The app and servers
 don't change.
@@ -58,7 +64,7 @@ don't change.
 The team ID (`RHFNBL7EG4`) and bundle ID are constants in `src/index.ts`. A relay under another
 Apple team only works with a phone app built under that team.
 
-## Develop
+## Development
 
 `bun test` runs the handler's tests against a mocked Apple. The repo root's `bun test` and
 `bun run check` include them too, without installing the relay's dependencies.
@@ -71,4 +77,4 @@ change against real APNs before deploying it:
 2. Point your dev server's `TOY_BOX_PUSH_RELAY_URL` at that version's preview URL.
 3. Send a push to your own phone. Preview versions share the production secrets, so use only your
    own device.
-4. Run `bun run deploy` to promote it.
+4. Merge it to `main`, which deploys it.
