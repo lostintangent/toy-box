@@ -6,9 +6,11 @@ import {
   createFileInputSchema,
   listDirectoryInputSchema,
   searchFilesInputSchema,
+  watchFileInputSchema,
   workspaceFileInputSchema,
   writeFileInputSchema,
 } from "../model";
+import { loadCustomEditors } from "./editors";
 import * as files from "./index";
 
 export const readFile = createServerFn({ method: "GET" })
@@ -18,6 +20,10 @@ export const readFile = createServerFn({ method: "GET" })
 export const writeFile = createServerFn({ method: "POST" })
   .validator(zodValidator(writeFileInputSchema))
   .handler(({ data }) => files.writeFile(data.file, data.content));
+
+export const watchFile = createServerFn({ method: "POST" })
+  .validator(zodValidator(watchFileInputSchema))
+  .handler(({ data }) => files.watchFile(data.connection, data.file));
 
 export const createFile = createServerFn({ method: "POST" })
   .validator(zodValidator(createFileInputSchema))
@@ -30,3 +36,7 @@ export const listDirectory = createServerFn({ method: "GET" })
 export const searchFiles = createServerFn({ method: "GET" })
   .validator(zodValidator(searchFilesInputSchema))
   .handler(({ data }) => files.searchFiles(data));
+
+export const listCustomEditors = createServerFn({ method: "GET" }).handler(() =>
+  loadCustomEditors(),
+);

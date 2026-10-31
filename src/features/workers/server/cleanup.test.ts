@@ -18,7 +18,7 @@ const realSessionRuntimeModule = { ...sessionRuntimeModule };
 const realSupervisorModule = { ...supervisorModule };
 
 let currentDb: Bun.SQL | undefined;
-const cancelWorkerMock = mock(async (_sessionId: string) => false);
+const abortWorkerMock = mock(async (_sessionId: string) => false);
 const deleteSessionIfExistsMock = mock(async (_sessionId: string) => true);
 
 mock.module("@/server/database", () => ({
@@ -31,7 +31,7 @@ mock.module("@/server/database", () => ({
 }));
 mock.module("@workers/server/supervisor", () => ({
   ...realSupervisorModule,
-  cancelWorker: cancelWorkerMock,
+  abortWorker: abortWorkerMock,
 }));
 mock.module("@sessions/server/runtime", () => ({
   ...realSessionRuntimeModule,
@@ -50,8 +50,8 @@ afterAll(() => {
 
 beforeEach(() => {
   currentDb = undefined;
-  cancelWorkerMock.mockClear();
-  cancelWorkerMock.mockImplementation(async () => false);
+  abortWorkerMock.mockClear();
+  abortWorkerMock.mockImplementation(async () => false);
   deleteSessionIfExistsMock.mockClear();
   deleteSessionIfExistsMock.mockImplementation(async () => true);
 });
@@ -96,7 +96,7 @@ describe("worker cleanup", () => {
     expect(hasWorker(parent)).toBe(true);
     expect(hasWorker(sessionChild)).toBe(false);
     expect(hasWorker(fileChild)).toBe(false);
-    expect(cancelWorkerMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
+    expect(abortWorkerMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
       fileChild,
       sessionChild,
     ]);
@@ -141,7 +141,7 @@ describe("worker cleanup", () => {
 
     expect(hasWorker(active)).toBe(false);
     expect(hasWorker(queued)).toBe(false);
-    expect(cancelWorkerMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
+    expect(abortWorkerMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
       abandoned,
       active,
       queued,
@@ -169,7 +169,7 @@ describe("worker cleanup", () => {
       appId: "app-a",
       ephemeral: true,
     });
-    cancelWorkerMock.mockImplementation(async (sessionId) => {
+    abortWorkerMock.mockImplementation(async (sessionId) => {
       if (sessionId === "failed-cleanup") throw new Error("cancel failed");
       return false;
     });
@@ -178,7 +178,7 @@ describe("worker cleanup", () => {
 
     await deleteWorkersForApp("app-a");
 
-    expect(cancelWorkerMock).toHaveBeenCalledTimes(2);
+    expect(abortWorkerMock).toHaveBeenCalledTimes(2);
     expect(deleteSessionIfExistsMock).toHaveBeenCalledTimes(2);
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("failed-cleanup");
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("successful-cleanup");

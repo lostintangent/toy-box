@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { EditorProps } from "@files/components/editor/kinds";
 import type { SessionFile } from "@files/model";
 import { appQueries } from "@apps/queries";
-import { createEditorPaneId } from "@workspace/model/panes";
+import { createEditorPane } from "@files/model/panes";
 import { PaneMessage } from "@/shared/ui/pane-message";
 import { AppErrorBoundary, AppHost, appErrorMessage } from "../host/AppHost";
 
@@ -53,7 +53,7 @@ function MountedApp({
     <AppErrorBoundary title={title} resetKey={revision}>
       <AppHost
         scopeId={scopeId}
-        publisherPaneId={createEditorPaneId(source)}
+        publisherPaneId={createEditorPane(source).id}
         AppComponent={AppComponent}
         css={css}
       />

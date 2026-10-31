@@ -1,14 +1,8 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { SvgDocument } from "../../document";
-import {
-  resolveActiveTool,
-  styleColor,
-  toDocumentPoint,
-  type EditorStore,
-  type Point,
-} from "../../store";
+import { resolveActiveTool, styleColor, type EditorStore } from "../../store";
 import { startDrawingGesture } from "../gestures/drawing";
-import type { GestureSource } from "../gestures/gesture";
+import { pointerCoordinates, type GestureSource } from "../gestures/gesture";
 
 /** Offers drawing gestures using the active tool and style defaults. */
 export function createDrawingGestureSource({
@@ -45,23 +39,5 @@ export function createDrawingGestureSource({
       };
       return startDrawingGesture({ document, store, tool, start, style });
     },
-  };
-}
-
-function pointerCoordinates(
-  store: EditorStore,
-  event: ReactPointerEvent<HTMLDivElement>,
-): {
-  viewport: Point;
-  document: Point;
-} {
-  const viewportBounds = event.currentTarget.getBoundingClientRect();
-  const viewportPoint = {
-    x: event.clientX - viewportBounds.left,
-    y: event.clientY - viewportBounds.top,
-  };
-  return {
-    viewport: viewportPoint,
-    document: toDocumentPoint(store.state.viewport, viewportPoint),
   };
 }

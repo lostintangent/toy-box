@@ -2,38 +2,36 @@ import { describe, expect, test } from "bun:test";
 import type { AppList } from "@apps/model";
 import type { SessionsState } from "@sessions/model";
 import type { ModelInfo } from "@providers/model";
-import { createLinkedSessionPane } from "@workspace/model/panes";
+import { createSessionPane } from "@sessions/model/panes";
 import { projectAppWorkspace } from "./workspace";
 
 describe("app workspace projection", () => {
   test("exposes sessions with governance kinds and hides inbox implementation sessions", () => {
-    const workspace = {
-      sessionStates: {
-        standard: { status: "running" as const, since: 1 },
-        "session-worker": { status: "unread" as const },
-        automation: { status: "unread" as const },
-        hyper: { status: "running" as const, since: 1 },
-      },
-      hyperSessionIds: ["hyper"],
-      workers: [
-        {
-          createdAt: new Date(0).toISOString(),
-          type: "app" as const,
-          sessionId: "app-worker",
-          ephemeral: true,
-          appId: "app-a",
-          name: "Generate expression",
-          metadata: { requestId: "request-a" },
-        },
-        {
-          createdAt: new Date(0).toISOString(),
-          type: "app" as const,
-          sessionId: "other-app-worker",
-          ephemeral: false,
-          appId: "app-b",
-        },
-      ],
+    const activities = {
+      standard: { status: "running" as const, since: 1 },
+      "session-worker": { status: "unread" as const },
+      automation: { status: "unread" as const },
+      hyper: { status: "running" as const, since: 1 },
     };
+    const hyperSessionIds = ["hyper"];
+    const workers = [
+      {
+        createdAt: new Date(0).toISOString(),
+        type: "app" as const,
+        sessionId: "app-worker",
+        ephemeral: true,
+        appId: "app-a",
+        name: "Generate expression",
+        metadata: { requestId: "request-a" },
+      },
+      {
+        createdAt: new Date(0).toISOString(),
+        type: "app" as const,
+        sessionId: "other-app-worker",
+        ephemeral: false,
+        appId: "app-b",
+      },
+    ];
     const apps: AppList = {
       apps: [
         {
@@ -151,10 +149,12 @@ describe("app workspace projection", () => {
       },
       { id: "gpt-5", provider: "codex", providerName: "Codex", name: "GPT-5" },
     ];
-    const openPanes = [createLinkedSessionPane("standard")];
+    const openPanes = [createSessionPane("standard", true)];
     const defaultModel = { provider: "copilot", name: "gpt-5", reasoningEffort: "low" };
     const source = {
-      workspace,
+      activities,
+      hyperSessionIds,
+      workers,
       apps,
       sessions: sessionsState,
       models,
@@ -277,7 +277,9 @@ describe("app workspace projection", () => {
       projectAppWorkspace(
         {
           ...source,
-          workspace: { ...workspace },
+          activities: { ...activities },
+          hyperSessionIds: [...hyperSessionIds],
+          workers: [...workers],
           apps: { ...apps },
           sessions: { ...sessionsState },
           models: [...models],
@@ -290,12 +292,9 @@ describe("app workspace projection", () => {
     const changedWorker = projectAppWorkspace(
       {
         ...source,
-        workspace: {
-          ...workspace,
-          workers: workspace.workers.map((worker) =>
-            worker.sessionId === "app-worker" ? { ...worker, name: "Updated worker" } : worker,
-          ),
-        },
+        workers: workers.map((worker) =>
+          worker.sessionId === "app-worker" ? { ...worker, name: "Updated worker" } : worker,
+        ),
       },
       projection,
     );
@@ -305,12 +304,9 @@ describe("app workspace projection", () => {
     const changedChild = projectAppWorkspace(
       {
         ...source,
-        workspace: {
-          ...workspace,
-          sessionStates: {
-            ...workspace.sessionStates,
-            "nested-worker": { status: "running" as const, since: 1 },
-          },
+        activities: {
+          ...activities,
+          "nested-worker": { status: "running" as const, since: 1 },
         },
       },
       projection,

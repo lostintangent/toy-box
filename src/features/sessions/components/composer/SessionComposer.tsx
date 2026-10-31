@@ -17,8 +17,8 @@ import {
   SessionLocationPicker,
   type SessionLocationPickerProps,
 } from "../location/SessionLocationPicker";
-import { ComposerTray } from "@workspace/components/outputs/ComposerTray";
-import { WorkspacePreview } from "@workspace/components/outputs/WorkspacePreview";
+import { ComposerTray } from "../outputs/ComposerTray";
+import { WorkspacePreview } from "../outputs/WorkspacePreview";
 import type { Preview } from "@/shared/preview";
 import { DiffPopup } from "./DiffPopup";
 import { ContextMeter } from "./ContextMeter";

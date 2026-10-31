@@ -7,36 +7,9 @@ import { replaySessionHistory } from "@sessions/model/reducer";
 import { createSdkEventProjector } from "@providers/server/copilot/projector";
 import type { SessionEvent } from "@sessions/model";
 
-function createStreamingContext() {
-  return createSdkEventProjector("toy-box-session");
-}
-
-function projectSdkEvent(
-  event: SdkSessionEvent,
-  projector: ReturnType<typeof createSdkEventProjector>,
-) {
-  return projector(event);
-}
-
 function sdkEvent(event: unknown): SdkSessionEvent {
   return event as SdkSessionEvent;
 }
-
-// Every tool name resolved by the omitted-tool policy.
-const OMITTED_TOOL_NAMES = [
-  "skill",
-  "read_agent",
-  "write_agent",
-  "list_agents",
-  "check_session_status",
-  "wait_for_sessions",
-  "deliver_message",
-  "send_to_inbox",
-  "list_automations",
-  "create_automation",
-  "update_automation",
-  "run_automation",
-];
 
 // Shared apply_patch fixtures (the SDK sends the patch as a bare string).
 const PATCH_TEXT = `*** Begin Patch
@@ -51,46 +24,8 @@ const PATCH_DIFF = `diff --git a/Users/lostintangent/Desktop/toy-box/docs/notes.
 @@ -1 +1 @@
 -old
 +new`;
-const ARTIFACT_PATCH_PATH = `${homedir()}/.toy-box/sessions/toy-box-session/artifacts/plan.md`;
-const ARTIFACT_HTML_PATCH_PATH = `${homedir()}/.toy-box/sessions/toy-box-session/artifacts/plan.html`;
-const HOME_RELATIVE_ARTIFACT_PATCH_PATH = ".toy-box/sessions/toy-box-session/artifacts/plan.html";
-const SESSION_STATE_PATCH_PATH = `${homedir()}/.toy-box/sessions/toy-box-session/plan.md`;
-const OTHER_SESSION_ARTIFACT_PATH = `${homedir()}/.toy-box/sessions/other-session/artifacts/plan.md`;
-const NON_ARTIFACT_PATCH_PATH = `${homedir()}/.toy-box/sessions/toy-box-session/artifacts/run-tests.sh`;
 const ARTIFACT_PATCH_TEXT = `*** Begin Patch
-*** Add File: ${ARTIFACT_PATCH_PATH}
-+# Plan
-*** End Patch`;
-const NON_ARTIFACT_PATCH_TEXT = `*** Begin Patch
-*** Add File: ${NON_ARTIFACT_PATCH_PATH}
-+bun test
-*** End Patch`;
-const HOME_RELATIVE_ARTIFACT_PATCH_TEXT = `*** Begin Patch
-*** Add File: ${HOME_RELATIVE_ARTIFACT_PATCH_PATH}
-<!doctype html>
-*** End Patch`;
-const ARTIFACT_PATCH_DELETE_TEXT = `*** Begin Patch
-*** Delete File: ${ARTIFACT_PATCH_PATH}
-*** End Patch`;
-const ARTIFACT_CONVERSION_PATCH_TEXT = `*** Begin Patch
-*** Add File: ${ARTIFACT_HTML_PATCH_PATH}
-<!doctype html>
-*** Delete File: ${ARTIFACT_PATCH_PATH}
-*** End Patch`;
-const MIXED_ARTIFACT_PATCH_TEXT = `*** Begin Patch
-*** Add File: ${ARTIFACT_PATCH_PATH}
-+# Plan
-*** Update File: /Users/lostintangent/Desktop/toy-box/docs/notes.md
-@@
--old
-+new
-*** End Patch`;
-const SESSION_STATE_PATCH_TEXT = `*** Begin Patch
-*** Add File: ${SESSION_STATE_PATCH_PATH}
-+# Plan
-*** End Patch`;
-const OTHER_SESSION_ARTIFACT_PATCH_TEXT = `*** Begin Patch
-*** Add File: ${OTHER_SESSION_ARTIFACT_PATH}
+*** Add File: ${homedir()}/.toy-box/sessions/toy-box-session/artifacts/plan.md
 +# Plan
 *** End Patch`;
 
@@ -226,7 +161,7 @@ function userInputCompleted(
 }
 
 function expectOmittedToolLifecycle(
-  context: ReturnType<typeof createStreamingContext>,
+  project: ReturnType<typeof createSdkEventProjector>,
   options: {
     toolName: string;
     toolCallId: string;
@@ -238,74 +173,20 @@ function expectOmittedToolLifecycle(
   },
 ) {
   expect(
-    projectSdkEvent(
-      toolExecutionStart(options.toolName, options.toolCallId, options.argumentsRecord),
-      context,
-    ),
+    project(toolExecutionStart(options.toolName, options.toolCallId, options.argumentsRecord)),
   ).toEqual(options.startEvents ?? []);
 
-  expect(
-    projectSdkEvent(toolExecutionProgress(options.toolCallId, "still omitted"), context),
-  ).toEqual([]);
+  expect(project(toolExecutionProgress(options.toolCallId, "still omitted"))).toEqual([]);
 
   expect(
-    projectSdkEvent(
+    project(
       toolExecutionComplete(options.toolCallId, {
         success: options.completionSuccess ?? true,
         resultContent: options.completionResultContent,
         errorMessage: options.completionErrorMessage,
       }),
-      context,
     ),
   ).toEqual([]);
-}
-
-function expectVisibleToolLifecycle(
-  context: ReturnType<typeof createStreamingContext>,
-  options: {
-    toolName: string;
-    toolCallId: string;
-    argumentsRecord?: { [key: string]: JSONType };
-    progressMessage: string;
-    resultContent: string;
-  },
-) {
-  expect(
-    projectSdkEvent(
-      toolExecutionStart(options.toolName, options.toolCallId, options.argumentsRecord),
-      context,
-    ),
-  ).toEqual([
-    {
-      type: "tool_start",
-      toolName: options.toolName,
-      toolCallId: options.toolCallId,
-      arguments: options.argumentsRecord ?? {},
-    },
-  ]);
-
-  // Progress events carry no canonical meaning (nothing downstream consumes
-  // them) and project to nothing for visible and omitted tools alike.
-  expect(
-    projectSdkEvent(toolExecutionProgress(options.toolCallId, options.progressMessage), context),
-  ).toEqual([]);
-
-  expect(
-    projectSdkEvent(
-      toolExecutionComplete(options.toolCallId, {
-        success: true,
-        resultContent: options.resultContent,
-      }),
-      context,
-    ),
-  ).toEqual([
-    {
-      type: "tool_end",
-      toolCallId: options.toolCallId,
-      success: true,
-      result: options.resultContent,
-    },
-  ]);
 }
 
 describe("projector", () => {
@@ -313,49 +194,33 @@ describe("projector", () => {
 
   describe("streaming: visible tool calls", () => {
     test("projects normal tool calls into visible tool lifecycle events", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
+      const args = { filePath: "notes.md" };
 
-      expectVisibleToolLifecycle(context, {
-        toolName: "write_file",
-        toolCallId: "tool-write",
-        argumentsRecord: { filePath: "notes.md" },
-        progressMessage: "Writing file",
-        resultContent: "done",
-      });
-    });
-
-    test.each([
-      { sessionId: "toy-box-created-1" },
-      { sessionId: "toy-box-created-1", opened: true },
-    ])("spawn_worker stays visible without opening a pane for result %j", (result) => {
-      expectVisibleToolLifecycle(createStreamingContext(), {
-        toolName: "spawn_worker",
-        toolCallId: "tool-spawn-worker",
-        argumentsRecord: { task: "Review the auth flow" },
-        progressMessage: "Creating worker",
-        resultContent: JSON.stringify(result),
-      });
+      expect(project(toolExecutionStart("write_file", "tool-write", args))).toEqual([
+        { type: "tool_start", toolName: "write_file", toolCallId: "tool-write", arguments: args },
+      ]);
+      // Progress events carry no canonical meaning (nothing downstream consumes
+      // them) and project to nothing for visible and omitted tools alike.
+      expect(project(toolExecutionProgress("tool-write", "Writing file"))).toEqual([]);
+      expect(project(toolExecutionComplete("tool-write", { resultContent: "done" }))).toEqual([
+        { type: "tool_end", toolCallId: "tool-write", success: true, result: "done" },
+      ]);
     });
 
     test("native output images become attachments while model-only images do not", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
       const image = { type: "image", data: "aW1hZ2U=", mimeType: "image/png" };
       const complete = (toolCallId: string, result: object) =>
         sdkEvent({
           type: "tool.execution_complete",
           data: { toolCallId, success: true, result: { content: "Done", ...result } },
         });
-      projectSdkEvent(
-        toolExecutionStart("image_generation", "tool-image", { prompt: "A red circle" }),
-        context,
-      );
-      projectSdkEvent(toolExecutionStart("observe_screen", "tool-screen"), context);
+      project(toolExecutionStart("image_generation", "tool-image", { prompt: "A red circle" }));
+      project(toolExecutionStart("observe_screen", "tool-screen"));
 
       expect(
-        projectSdkEvent(
-          complete("tool-image", { contents: [{ type: "text", text: "Done" }, image] }),
-          context,
-        ),
+        project(complete("tool-image", { contents: [{ type: "text", text: "Done" }, image] })),
       ).toEqual([
         {
           type: "tool_end",
@@ -365,19 +230,18 @@ describe("projector", () => {
           attachments: [{ base64: "aW1hZ2U=", mimeType: "image/png" }],
         },
       ]);
-      expect(
-        projectSdkEvent(complete("tool-screen", { binaryResultsForLlm: [image] }), context),
-      ).toEqual([{ type: "tool_end", toolCallId: "tool-screen", success: true, result: "Done" }]);
+      expect(project(complete("tool-screen", { binaryResultsForLlm: [image] }))).toEqual([
+        { type: "tool_end", toolCallId: "tool-screen", success: true, result: "Done" },
+      ]);
     });
 
     test("failed tool calls surface the error message as the result", () => {
-      const context = createStreamingContext();
-      projectSdkEvent(toolExecutionStart("bash", "tool-fail", { command: "exit 1" }), context);
+      const project = createSdkEventProjector("toy-box-session");
+      project(toolExecutionStart("bash", "tool-fail", { command: "exit 1" }));
 
       expect(
-        projectSdkEvent(
+        project(
           toolExecutionComplete("tool-fail", { success: false, errorMessage: "command failed" }),
-          context,
         ),
       ).toEqual([
         {
@@ -391,11 +255,9 @@ describe("projector", () => {
     });
 
     test("projects apply_patch as patch with freeform arguments and detailed completion diffs", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
 
-      expect(
-        projectSdkEvent(toolExecutionStart("apply_patch", "tool-patch", PATCH_TEXT), context),
-      ).toEqual([
+      expect(project(toolExecutionStart("apply_patch", "tool-patch", PATCH_TEXT))).toEqual([
         {
           type: "tool_start",
           toolName: "patch",
@@ -405,13 +267,12 @@ describe("projector", () => {
       ]);
 
       expect(
-        projectSdkEvent(
+        project(
           toolExecutionComplete("tool-patch", {
             success: true,
             resultContent: "Modified 1 file(s)",
             detailedContent: PATCH_DIFF,
           }),
-          context,
         ),
       ).toEqual([
         {
@@ -425,7 +286,7 @@ describe("projector", () => {
     });
 
     test("keeps open_canvas visible and projects typed canvas-opened events", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
       const args = {
         extensionId: "user:documint",
         canvasId: "documint-markdown-agent",
@@ -436,9 +297,7 @@ describe("projector", () => {
         },
       };
 
-      expect(
-        projectSdkEvent(toolExecutionStart("open_canvas", "tool-canvas", args), context),
-      ).toEqual([
+      expect(project(toolExecutionStart("open_canvas", "tool-canvas", args))).toEqual([
         {
           type: "tool_start",
           toolName: "open_canvas",
@@ -448,11 +307,10 @@ describe("projector", () => {
       ]);
 
       expect(
-        projectSdkEvent(
+        project(
           toolExecutionComplete("tool-canvas", {
             resultContent: "Opened canvas",
           }),
-          context,
         ),
       ).toEqual([
         {
@@ -465,7 +323,7 @@ describe("projector", () => {
       ]);
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "session.canvas.opened",
             data: {
@@ -482,7 +340,6 @@ describe("projector", () => {
               url: "http://127.0.0.1:51460/?instanceId=review-plan",
             },
           }),
-          context,
         ),
       ).toEqual([
         {
@@ -505,9 +362,9 @@ describe("projector", () => {
     });
 
     test("drops canvas-opened events without a renderable URL", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "session.canvas.opened",
             data: {
@@ -517,7 +374,6 @@ describe("projector", () => {
               title: "Review Plan",
             },
           }),
-          context,
         ),
       ).toEqual([]);
     });
@@ -525,16 +381,11 @@ describe("projector", () => {
 
   describe("streaming: user questions", () => {
     test("projects a live question and suppresses duplicate durable resolution", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
       const question = "Which database should I use?";
       const choices = ["SQLite", "PostgreSQL"];
 
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("ask_user", "question-1", { question, choices }),
-          context,
-        ),
-      ).toEqual([
+      expect(project(toolExecutionStart("ask_user", "question-1", { question, choices }))).toEqual([
         {
           type: "tool_start",
           toolName: "ask_user",
@@ -544,9 +395,7 @@ describe("projector", () => {
         },
       ]);
 
-      expect(
-        projectSdkEvent(userInputRequested("request-1", "question-1", question, choices), context),
-      ).toEqual([
+      expect(project(userInputRequested("request-1", "question-1", question, choices))).toEqual([
         {
           type: "question_requested",
           toolCallId: "question-1",
@@ -555,7 +404,7 @@ describe("projector", () => {
         },
       ]);
 
-      expect(projectSdkEvent(userInputCompleted("request-1", "SQLite", false), context)).toEqual([
+      expect(project(userInputCompleted("request-1", "SQLite", false))).toEqual([
         {
           type: "question_resolved",
           toolCallId: "question-1",
@@ -564,11 +413,10 @@ describe("projector", () => {
       ]);
 
       expect(
-        projectSdkEvent(
+        project(
           toolExecutionComplete("question-1", {
             resultContent: "User selected: SQLite",
           }),
-          context,
         ),
       ).toEqual([
         {
@@ -586,18 +434,15 @@ describe("projector", () => {
         ["question-choice", "User selected: SQLite", "SQLite"],
         ["question-freeform", "User responded: Deploy after 5 PM", "Deploy after 5 PM"],
       ] as const) {
-        const context = createStreamingContext();
-        projectSdkEvent(
+        const project = createSdkEventProjector("toy-box-session");
+        project(
           toolExecutionStart("ask_user", toolCallId, {
             question: "How should I proceed?",
             choices: ["SQLite"],
           }),
-          context,
         );
 
-        expect(
-          projectSdkEvent(toolExecutionComplete(toolCallId, { resultContent: result }), context),
-        ).toEqual([
+        expect(project(toolExecutionComplete(toolCallId, { resultContent: result }))).toEqual([
           {
             type: "question_resolved",
             toolCallId,
@@ -617,7 +462,7 @@ describe("projector", () => {
 
   describe("streaming: subagents", () => {
     test("nests native subagent replies and work beneath the spawning agent call", () => {
-      const project = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
       const nativeAgentId = "native-agent-9";
       const parentToolCallId = "call-task-9";
       const state = replaySessionHistory(
@@ -660,12 +505,11 @@ describe("projector", () => {
     });
 
     test("background agent calls suppress the early tool_end and complete via subagent.completed", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
 
       expect(
-        projectSdkEvent(
+        project(
           toolExecutionStart("task", "call-bg-1", { agentName: "explore", mode: "background" }),
-          context,
         ),
       ).toEqual([
         {
@@ -678,599 +522,94 @@ describe("projector", () => {
 
       // The SDK emits an early tool_end ("Agent started in background...") — skipped.
       expect(
-        projectSdkEvent(
+        project(
           toolExecutionComplete("call-bg-1", {
             success: true,
             resultContent: "Agent started in background",
           }),
-          context,
         ),
       ).toEqual([]);
 
       // The real completion signal arrives via subagent.completed.
       expect(
-        projectSdkEvent(
-          sdkEvent({ type: "subagent.completed", data: { toolCallId: "call-bg-1" } }),
-          context,
-        ),
+        project(sdkEvent({ type: "subagent.completed", data: { toolCallId: "call-bg-1" } })),
       ).toEqual([{ type: "tool_end", toolCallId: "call-bg-1", success: true }]);
     });
 
     test("failed background agents emit a failed tool_end via subagent.failed", () => {
-      const context = createStreamingContext();
-      projectSdkEvent(toolExecutionStart("task", "call-bg-2", { mode: "background" }), context);
-      projectSdkEvent(toolExecutionComplete("call-bg-2", { success: true }), context);
+      const project = createSdkEventProjector("toy-box-session");
+      project(toolExecutionStart("task", "call-bg-2", { mode: "background" }));
+      project(toolExecutionComplete("call-bg-2", { success: true }));
 
       expect(
-        projectSdkEvent(
-          sdkEvent({ type: "subagent.failed", data: { toolCallId: "call-bg-2" } }),
-          context,
-        ),
+        project(sdkEvent({ type: "subagent.failed", data: { toolCallId: "call-bg-2" } })),
       ).toEqual([{ type: "tool_end", toolCallId: "call-bg-2", success: false }]);
     });
   });
 
   describe("streaming: omitted and translated tools", () => {
-    test("every omitted tool is omitted across start, progress, and completion", () => {
-      const context = createStreamingContext();
+    test("resolves Sessions tool policies through Copilot's tool aliases", () => {
+      const project = createSdkEventProjector("toy-box-session");
+      const path = "~/.toy-box/sessions/toy-box-session/artifacts/report.md";
 
-      for (const [i, toolName] of OMITTED_TOOL_NAMES.entries()) {
-        expectOmittedToolLifecycle(context, {
-          toolName,
-          toolCallId: `tool-omitted-${i}`,
-          argumentsRecord: {},
-          completionResultContent: "done",
-        });
-      }
+      expect(project(toolExecutionStart("view", "tool-view", { path }))).toEqual([]);
+      expect(project(toolExecutionStart("str_replace", "tool-edit", { path }))).toEqual([]);
+      expect(project(toolExecutionStart("apply_patch", "tool-patch", ARTIFACT_PATCH_TEXT))).toEqual(
+        [],
+      );
+      expect(project(toolExecutionStart("view", "tool-read", { path: "/tmp/report.md" }))).toEqual([
+        {
+          type: "tool_start",
+          toolName: "read",
+          toolCallId: "tool-read",
+          arguments: { path: "/tmp/report.md" },
+        },
+      ]);
     });
 
-    test("open_session and close_session emit linked-session events immediately and are omitted", () => {
-      const context = createStreamingContext();
+    test("omitted tools stay hidden through progress and completion, even when they fail", () => {
+      expectOmittedToolLifecycle(createSdkEventProjector("toy-box-session"), {
+        toolName: "read_agent",
+        toolCallId: "tool-read-agent",
+        completionSuccess: false,
+        completionErrorMessage: "boom",
+      });
+    });
 
-      expectOmittedToolLifecycle(context, {
+    test("tools translated on start publish their events and are otherwise hidden", () => {
+      expectOmittedToolLifecycle(createSdkEventProjector("toy-box-session"), {
         toolName: "open_session",
         toolCallId: "tool-open-session",
         argumentsRecord: { sessionId: "toy-box-linked-1" },
         startEvents: [{ type: "linked_session_added", sessionId: "toy-box-linked-1" }],
         completionResultContent: "Session toy-box-linked-1 opened.",
       });
-
-      expectOmittedToolLifecycle(context, {
-        toolName: "close_session",
-        toolCallId: "tool-close-session",
-        argumentsRecord: { sessionId: "toy-box-linked-1" },
-        startEvents: [{ type: "linked_session_removed", sessionId: "toy-box-linked-1" }],
-        completionResultContent: "Session toy-box-linked-1 closed.",
-      });
     });
 
-    test("delete_session removes linked sessions immediately and is omitted", () => {
-      const context = createStreamingContext();
-
-      expectOmittedToolLifecycle(context, {
-        toolName: "delete_session",
-        toolCallId: "tool-delete-session",
-        argumentsRecord: { sessionId: "toy-box-created-1" },
-        startEvents: [{ type: "linked_session_removed", sessionId: "toy-box-created-1" }],
-        completionResultContent: '{"deleted":true}',
-      });
-    });
-
-    test("create stays hidden without publishing artifact membership", () => {
-      const context = createStreamingContext();
-      const artifactPath = "~/.toy-box/sessions/toy-box-session/artifacts/report.md";
-
-      expectOmittedToolLifecycle(context, {
-        toolName: "create",
-        toolCallId: "tool-create-artifact",
-        argumentsRecord: { path: artifactPath },
-        completionResultContent: "Created report.md",
-      });
-    });
-
-    test("create remains visible for files in another copilot session", () => {
-      const context = createStreamingContext();
-
-      expectVisibleToolLifecycle(context, {
-        toolName: "create",
-        toolCallId: "tool-create-other-session",
-        argumentsRecord: {
-          path: "~/.toy-box/sessions/other-session/artifacts/report.md",
-        },
-        progressMessage: "Creating report.md",
-        resultContent: "Created report.md",
-      });
-    });
-
-    test("create remains visible for root copilot session state files", () => {
-      const context = createStreamingContext();
-
-      expectVisibleToolLifecycle(context, {
-        toolName: "create",
-        toolCallId: "tool-create-session-state",
-        argumentsRecord: { path: "~/.toy-box/sessions/toy-box-session/report.md" },
-        progressMessage: "Creating report.md",
-        resultContent: "Created report.md",
-      });
-    });
-
-    test("create remains visible for files outside copilot session state", () => {
-      const context = createStreamingContext();
-
-      expectVisibleToolLifecycle(context, {
-        toolName: "create",
-        toolCallId: "tool-create-visible",
-        argumentsRecord: { path: "/tmp/report.md" },
-        progressMessage: "Creating report.md",
-        resultContent: "Created report.md",
-      });
-    });
-
-    test("successful artifact edits stay hidden without publishing artifact membership", () => {
-      const context = createStreamingContext();
-      const artifactPath = "~/.toy-box/sessions/toy-box-session/artifacts/report.md";
+    test("tools translated on completion publish their events only once they complete", () => {
+      const project = createSdkEventProjector("toy-box-session");
 
       expect(
-        projectSdkEvent(
-          toolExecutionStart("edit", "tool-edit-artifact", { path: artifactPath }),
-          context,
-        ),
-      ).toEqual([]);
-
-      expect(
-        projectSdkEvent(toolExecutionProgress("tool-edit-artifact", "Editing"), context),
-      ).toEqual([]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-edit-artifact", {
-            success: true,
-            resultContent: "Edited report.md",
+        project(
+          toolExecutionStart("create_session", "tool-create-session", {
+            prompt: "Start a visible investigation",
+            open: true,
           }),
-          context,
         ),
       ).toEqual([]);
-    });
-
-    test("edit normalizes the str_replace alias for artifacts", () => {
-      const context = createStreamingContext();
-      const artifactPath = "~/.toy-box/sessions/toy-box-session/artifacts/report.md";
-
       expect(
-        projectSdkEvent(
-          toolExecutionStart("str_replace", "tool-edit-alias", {
-            path: artifactPath,
-          }),
-          context,
-        ),
-      ).toEqual([]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-edit-alias", { success: true, resultContent: "Edited" }),
-          context,
-        ),
-      ).toEqual([]);
-    });
-
-    test("edit emits no artifact and stays hidden when the edit fails", () => {
-      const context = createStreamingContext();
-      const artifactPath = "~/.toy-box/sessions/toy-box-session/artifacts/report.md";
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("edit", "tool-edit-failed", { path: artifactPath }),
-          context,
-        ),
-      ).toEqual([]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-edit-failed", {
-            success: false,
-            errorMessage: "String to replace not found",
-          }),
-          context,
-        ),
-      ).toEqual([]);
-    });
-
-    test("edit remains visible for files outside copilot session state", () => {
-      const context = createStreamingContext();
-
-      expectVisibleToolLifecycle(context, {
-        toolName: "edit",
-        toolCallId: "tool-edit-visible",
-        argumentsRecord: { path: "/tmp/report.md" },
-        progressMessage: "Editing report.md",
-        resultContent: "Edited report.md",
-      });
-    });
-
-    test("read tools are omitted for artifact paths", () => {
-      const context = createStreamingContext();
-      const artifactPath = "~/.toy-box/sessions/toy-box-session/artifacts/report.md";
-
-      expectOmittedToolLifecycle(context, {
-        toolName: "view",
-        toolCallId: "tool-read-artifact",
-        argumentsRecord: { path: artifactPath },
-        completionResultContent: "# Report",
-      });
-
-      expectOmittedToolLifecycle(context, {
-        toolName: "view",
-        toolCallId: "tool-view-artifact",
-        argumentsRecord: { filePath: artifactPath },
-        completionResultContent: "# Report",
-      });
-    });
-
-    test("read tools stay visible for root copilot session state files", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("view", "tool-read-session-state", {
-            path: "~/.toy-box/sessions/toy-box-session/report.md",
-          }),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_start",
-          toolName: "read",
-          toolCallId: "tool-read-session-state",
-          arguments: { path: "~/.toy-box/sessions/toy-box-session/report.md" },
-        },
-      ]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-read-session-state", {
-            success: true,
-            resultContent: "# Report",
-          }),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_end",
-          toolCallId: "tool-read-session-state",
-          success: true,
-          result: "# Report",
-          details: undefined,
-        },
-      ]);
-    });
-
-    test("read tools stay visible for non-artifact paths", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("view", "tool-read-visible", { path: "/tmp/report.md" }),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_start",
-          toolName: "read",
-          toolCallId: "tool-read-visible",
-          arguments: { path: "/tmp/report.md" },
-        },
-      ]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-read-visible", {
-            success: true,
-            resultContent: "# Report",
-          }),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_end",
-          toolCallId: "tool-read-visible",
-          success: true,
-          result: "# Report",
-          details: undefined,
-        },
-      ]);
-    });
-
-    test("successful artifact-only patches stay hidden without publishing artifact membership", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("apply_patch", "tool-patch-artifact", ARTIFACT_PATCH_TEXT),
-          context,
-        ),
-      ).toEqual([]);
-
-      expect(
-        projectSdkEvent(toolExecutionProgress("tool-patch-artifact", "Applying"), context),
-      ).toEqual([]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-patch-artifact", {
-            success: true,
-            resultContent: "Added 1 file(s)",
-          }),
-          context,
-        ),
-      ).toEqual([]);
-    });
-
-    test("apply_patch does not project unsupported session files as artifacts", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("apply_patch", "tool-patch-non-artifact", NON_ARTIFACT_PATCH_TEXT),
-          context,
-        ),
-      ).toEqual([]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-patch-non-artifact", {
-            success: true,
-            resultContent: "Added 1 file(s)",
-          }),
-          context,
-        ),
-      ).toEqual([]);
-    });
-
-    test("apply_patch stays visible for root copilot session state files", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("apply_patch", "tool-patch-session-state", SESSION_STATE_PATCH_TEXT),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_start",
-          toolName: "patch",
-          toolCallId: "tool-patch-session-state",
-          arguments: { patch: SESSION_STATE_PATCH_TEXT },
-        },
-      ]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-patch-session-state", {
-            success: true,
-            resultContent: "Added 1 file(s)",
-          }),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_end",
-          toolCallId: "tool-patch-session-state",
-          success: true,
-          result: "Added 1 file(s)",
-          details: undefined,
-        },
-      ]);
-    });
-
-    test("apply_patch stays visible for files in another copilot session", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart(
-            "apply_patch",
-            "tool-patch-other-session",
-            OTHER_SESSION_ARTIFACT_PATCH_TEXT,
-          ),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_start",
-          toolName: "patch",
-          toolCallId: "tool-patch-other-session",
-          arguments: { patch: OTHER_SESSION_ARTIFACT_PATCH_TEXT },
-        },
-      ]);
-    });
-
-    test("apply_patch normalizes home-relative copilot session files artifact paths", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart(
-            "apply_patch",
-            "tool-patch-home-relative-artifact",
-            HOME_RELATIVE_ARTIFACT_PATCH_TEXT,
-          ),
-          context,
-        ),
-      ).toEqual([]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-patch-home-relative-artifact", {
-            success: true,
-            resultContent: "Added 1 file(s)",
-          }),
-          context,
-        ),
-      ).toEqual([]);
-    });
-
-    test("artifact deletion tools leave membership to filesystem observation", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("apply_patch", "tool-delete-artifact", ARTIFACT_PATCH_DELETE_TEXT),
-          context,
-        ),
-      ).toEqual([]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-delete-artifact", {
-            success: true,
-            resultContent: "Deleted 1 file(s)",
-          }),
-          context,
-        ),
-      ).toEqual([]);
-    });
-
-    test("artifact additions and deletions stay hidden without publishing membership", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart(
-            "apply_patch",
-            "tool-convert-artifact",
-            ARTIFACT_CONVERSION_PATCH_TEXT,
-          ),
-          context,
-        ),
-      ).toEqual([]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-convert-artifact", {
-            success: true,
-            resultContent: "Added 1 file(s)\nDeleted 1 file(s)",
-          }),
-          context,
-        ),
-      ).toEqual([]);
-    });
-
-    test("mixed patches remain visible without publishing artifact membership", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("apply_patch", "tool-patch-mixed", MIXED_ARTIFACT_PATCH_TEXT),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_start",
-          toolName: "patch",
-          toolCallId: "tool-patch-mixed",
-          arguments: { patch: MIXED_ARTIFACT_PATCH_TEXT },
-        },
-      ]);
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-patch-mixed", {
-            success: true,
-            resultContent: "Modified 2 file(s)",
-            detailedContent: "diff",
-          }),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "tool_end",
-          toolCallId: "tool-patch-mixed",
-          success: true,
-          result: "Modified 2 file(s)",
-          details: "diff",
-        },
-      ]);
-    });
-
-    test("create_session does not project a linked pane for a new top-level session", () => {
-      const context = createStreamingContext();
-      projectSdkEvent(
-        toolExecutionStart("create_session", "tool-create-session", {
-          prompt: "Start a durable investigation",
-        }),
-        context,
-      );
-
-      expect(
-        projectSdkEvent(
+        project(
           toolExecutionComplete("tool-create-session", {
-            success: true,
-            resultContent: JSON.stringify({ sessionId: "toy-box-created-1", opened: false }),
-          }),
-          context,
-        ),
-      ).toEqual([]);
-    });
-
-    test("create_session projects a linked pane when opening is explicitly requested", () => {
-      const context = createStreamingContext();
-      projectSdkEvent(
-        toolExecutionStart("create_session", "tool-create-session", {
-          prompt: "Start a visible investigation",
-          open: true,
-        }),
-        context,
-      );
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-create-session", {
-            success: true,
             resultContent: JSON.stringify({ sessionId: "toy-box-created-1", opened: true }),
           }),
-          context,
         ),
       ).toEqual([{ type: "linked_session_added", sessionId: "toy-box-created-1" }]);
-    });
-
-    test("failed create_session completions are omitted and emit no linked session", () => {
-      const context = createStreamingContext();
-
-      expectOmittedToolLifecycle(context, {
-        toolName: "create_session",
-        toolCallId: "tool-create-session-failed",
-        argumentsRecord: { task: "Review the auth flow" },
-        completionSuccess: false,
-        completionErrorMessage: "boom",
-      });
-    });
-
-    test("malformed create_session results stay omitted at the SDK boundary", () => {
-      const context = createStreamingContext();
-      projectSdkEvent(
-        toolExecutionStart("create_session", "tool-create-session-malformed", {
-          task: "Review the auth flow",
-        }),
-        context,
-      );
-
-      expect(
-        projectSdkEvent(
-          toolExecutionComplete("tool-create-session-malformed", {
-            success: true,
-            resultContent: "not json",
-          }),
-          context,
-        ),
-      ).toEqual([]);
     });
   });
 
   describe("streaming: todo SQL", () => {
-    test("sql insert and update statements emit todo patches and are omitted", () => {
-      const context = createStreamingContext();
-
-      expectOmittedToolLifecycle(context, {
+    test("sql mutations publish todo patches on start and keep them when the call fails", () => {
+      expectOmittedToolLifecycle(createSdkEventProjector("toy-box-session"), {
         toolName: "sql",
         toolCallId: "tool-insert",
         argumentsRecord: {
@@ -1296,74 +635,17 @@ describe("projector", () => {
             ],
           },
         ],
-        completionResultContent: "done",
+        completionSuccess: false,
+        completionErrorMessage: "boom",
       });
     });
 
-    test("sql select statements are omitted without emitting todo patches", () => {
-      const context = createStreamingContext();
-
-      expectOmittedToolLifecycle(context, {
+    test("sql reads of todo tables are omitted without publishing todo patches", () => {
+      expectOmittedToolLifecycle(createSdkEventProjector("toy-box-session"), {
         toolName: "sql",
         toolCallId: "tool-select",
         argumentsRecord: { query: "SELECT id, title, status FROM todos;" },
-        startEvents: [],
         completionResultContent: "3 row(s) returned.",
-      });
-    });
-
-    test("sql delete statements emit delete patches and are omitted", () => {
-      const context = createStreamingContext();
-
-      expectOmittedToolLifecycle(context, {
-        toolName: "sql",
-        toolCallId: "tool-delete",
-        argumentsRecord: { query: "DELETE FROM todos WHERE id = 'inspect-sql-events';" },
-        startEvents: [
-          {
-            type: "todos_patch",
-            patches: [{ type: "delete", id: "inspect-sql-events" }],
-          },
-        ],
-        completionResultContent: "1 row(s) deleted.",
-      });
-    });
-
-    test("sql bulk status updates emit update-all patches on start", () => {
-      const context = createStreamingContext();
-
-      expect(
-        projectSdkEvent(
-          toolExecutionStart("sql", "tool-update-all", {
-            query: "UPDATE todos SET status = 'done';",
-          }),
-          context,
-        ),
-      ).toEqual([
-        {
-          type: "todos_patch",
-          patches: [{ type: "update_all", status: "done" }],
-        },
-      ]);
-    });
-
-    test("failed sql mutations keep their optimistic todo patches and are omitted", () => {
-      const context = createStreamingContext();
-
-      expectOmittedToolLifecycle(context, {
-        toolName: "sql",
-        toolCallId: "tool-failed",
-        argumentsRecord: {
-          query: "UPDATE todos SET status = 'done' WHERE id = 'inspect-sql-events';",
-        },
-        startEvents: [
-          {
-            type: "todos_patch",
-            patches: [{ type: "upsert", id: "inspect-sql-events", status: "done" }],
-          },
-        ],
-        completionSuccess: false,
-        completionErrorMessage: "boom",
       });
     });
   });
@@ -1376,7 +658,7 @@ describe("projector", () => {
         data: { toolCallId: "call-bash", sequence: 0, text: "12 pass\n" },
       });
 
-      expect(projectSdkEvent(shellOutput, createStreamingContext())).toEqual([
+      expect(createSdkEventProjector("toy-box-session")(shellOutput)).toEqual([
         { type: "tool_output_delta", toolCallId: "call-bash", content: "12 pass\n" },
       ]);
     });
@@ -1400,16 +682,16 @@ describe("projector", () => {
         ...history,
       ];
       const replay = (events: SdkSessionEvent[]) =>
-        replaySessionHistory(events.flatMap(createStreamingContext())).messages;
+        replaySessionHistory(events.flatMap(createSdkEventProjector("toy-box-session"))).messages;
       expect(replay(live)).toEqual([{ role: "assistant", messageId: "answer", content: "Done." }]);
       expect(replay(history)).toEqual(replay(live));
     });
 
     test("projects committed user and assistant messages", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "user.message",
             timestamp: "2026-01-01T00:00:00.000Z",
@@ -1427,7 +709,6 @@ describe("projector", () => {
               ],
             },
           }),
-          context,
         ),
       ).toEqual([
         {
@@ -1439,17 +720,16 @@ describe("projector", () => {
       ]);
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "assistant.message",
             data: { content: "Root response", messageId: "root" },
           }),
-          context,
         ),
       ).toEqual([{ type: "assistant_message", content: "Root response", messageId: "root" }]);
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "assistant.message",
             data: {
@@ -1460,18 +740,16 @@ describe("projector", () => {
               ],
             },
           }),
-          context,
         ),
       ).toEqual([{ type: "assistant_message", content: "", messageId: "tools" }]);
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "assistant.message",
             agentId: "native-agent-1",
             data: { content: "Agent response", parentToolCallId: "call-agent-1" },
           }),
-          context,
         ),
       ).toEqual([
         {
@@ -1484,20 +762,19 @@ describe("projector", () => {
 
     test("drops agent-scoped user messages", () => {
       expect(
-        projectSdkEvent(
+        createSdkEventProjector("toy-box-session")(
           sdkEvent({
             type: "user.message",
             agentId: "call-agent-1",
             data: { content: "Agent prompt" },
           }),
-          createStreamingContext(),
         ),
       ).toEqual([]);
     });
 
     test("drops user messages from the system source", () => {
       expect(
-        projectSdkEvent(
+        createSdkEventProjector("toy-box-session")(
           sdkEvent({
             type: "user.message",
             data: {
@@ -1507,14 +784,13 @@ describe("projector", () => {
               delivery: "steering",
             },
           }),
-          createStreamingContext(),
         ),
       ).toEqual([]);
     });
 
     test("drops user messages from skill sources without parsing their content", () => {
       expect(
-        projectSdkEvent(
+        createSdkEventProjector("toy-box-session")(
           sdkEvent({
             type: "user.message",
             data: {
@@ -1522,14 +798,13 @@ describe("projector", () => {
               source: "skill-plan",
             },
           }),
-          createStreamingContext(),
         ),
       ).toEqual([]);
     });
 
     test("projects invoked skills as completed calls containing the skill path", () => {
       expect(
-        projectSdkEvent(
+        createSdkEventProjector("toy-box-session")(
           sdkEvent({
             type: "skill.invoked",
             id: "skill-event-1",
@@ -1540,7 +815,6 @@ describe("projector", () => {
               trigger: "agent-invoked",
             },
           }),
-          createStreamingContext(),
         ),
       ).toEqual([
         {
@@ -1562,7 +836,7 @@ describe("projector", () => {
 
     test("keeps context-loaded skills out of the transcript", () => {
       expect(
-        projectSdkEvent(
+        createSdkEventProjector("toy-box-session")(
           sdkEvent({
             type: "skill.invoked",
             id: "skill-event-1",
@@ -1573,19 +847,15 @@ describe("projector", () => {
               trigger: "context-load",
             },
           }),
-          createStreamingContext(),
         ),
       ).toEqual([]);
     });
 
     test("does not expose SDK delivery bookkeeping on canonical user messages", () => {
-      const project = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
       const deliveries = (["idle", "steering", "queued"] as const).map(
         (delivery) =>
-          projectSdkEvent(
-            sdkEvent({ type: "user.message", data: { content: delivery, delivery } }),
-            project,
-          )[0],
+          project(sdkEvent({ type: "user.message", data: { content: delivery, delivery } }))[0],
       );
 
       expect(deliveries).toEqual([
@@ -1595,28 +865,6 @@ describe("projector", () => {
       ]);
     });
 
-    test.each([
-      { path: "/repo/src/foo.ts", file: { kind: "machine", path: "/repo/src/foo.ts" } },
-      {
-        path: ARTIFACT_PATCH_PATH,
-        file: { kind: "session", sessionId: "toy-box-session", path: "plan.md" },
-      },
-    ])("file visibility derives $file.kind identity from the recorded path", ({ path, file }) => {
-      const project = createStreamingContext();
-      for (const [tool, type] of [
-        ["open_file", "file_opened"],
-        ["close_file", "file_closed"],
-      ] as const) {
-        expect(project(toolExecutionStart(tool, tool, { path }))).toEqual([]);
-        expect(
-          project(toolExecutionComplete(tool, { success: true, resultContent: "OK" })),
-        ).toEqual([{ type, file }]);
-
-        project(toolExecutionStart(tool, `${tool}-failed`, { path }));
-        expect(project(toolExecutionComplete(`${tool}-failed`, { success: false }))).toEqual([]);
-      }
-    });
-
     test("decodes system messages at the SDK boundary", () => {
       const content = encodeSystemMessage({
         type: "file_edited",
@@ -1624,7 +872,7 @@ describe("projector", () => {
       });
 
       expect(
-        projectSdkEvent(
+        createSdkEventProjector("toy-box-session")(
           sdkEvent({
             type: "user.message",
             timestamp: "2026-01-01T00:00:00.000Z",
@@ -1634,7 +882,6 @@ describe("projector", () => {
               delivery: "steering",
             },
           }),
-          createStreamingContext(),
         ),
       ).toEqual([
         {
@@ -1649,49 +896,38 @@ describe("projector", () => {
     });
 
     test("drops empty-content deltas at the source", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
 
       expect(
-        projectSdkEvent(
-          sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "" } }),
-          context,
-        ),
+        project(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "" } })),
       ).toEqual([]);
       expect(
-        projectSdkEvent(
-          sdkEvent({ type: "assistant.reasoning_delta", data: { deltaContent: "" } }),
-          context,
-        ),
+        project(sdkEvent({ type: "assistant.reasoning_delta", data: { deltaContent: "" } })),
       ).toEqual([]);
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "assistant.message_delta",
             data: { deltaContent: "Hi", messageId: "root" },
           }),
-          context,
         ),
       ).toEqual([{ type: "delta", content: "Hi", messageId: "root" }]);
       expect(
-        projectSdkEvent(
-          sdkEvent({ type: "assistant.reasoning_delta", data: { deltaContent: "Hmm" } }),
-          context,
-        ),
+        project(sdkEvent({ type: "assistant.reasoning_delta", data: { deltaContent: "Hmm" } })),
       ).toEqual([{ type: "reasoning_delta", content: "Hmm" }]);
     });
 
     test("drops transient subagent text deltas", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "assistant.message_delta",
             agentId: "native-agent-1",
             data: { deltaContent: "Subagent text" },
           }),
-          context,
         ),
       ).toEqual([]);
     });
@@ -1709,7 +945,7 @@ describe("projector", () => {
           data: { content: "", reasoningText, toolRequests: [{ toolCallId: "t", name: "view" }] },
         });
       const subagentReasoning = (events: SdkSessionEvent[]) => {
-        const project = createStreamingContext();
+        const project = createSdkEventProjector("toy-box-session");
         const state = replaySessionHistory(
           [
             toolExecutionStart("task", parentToolCallId, { description: "Inspect" }),
@@ -1747,7 +983,7 @@ describe("projector", () => {
 
   describe("streaming: session events", () => {
     test("reports only the root agent's context usage", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
       const usageInfo = (agentId?: string) =>
         sdkEvent({
           type: "session.usage_info",
@@ -1756,61 +992,51 @@ describe("projector", () => {
           data: { currentTokens: 41_000, tokenLimit: 200_000, messagesLength: 12 },
         });
 
-      expect(projectSdkEvent(usageInfo(), context)).toEqual([
+      expect(project(usageInfo())).toEqual([
         { type: "context_usage_changed", usage: { tokens: 41_000, tokenWindow: 200_000 } },
       ]);
-      expect(projectSdkEvent(usageInfo("native-agent-9"), context)).toEqual([]);
+      expect(project(usageInfo("native-agent-9"))).toEqual([]);
     });
 
     test("drops subagent status events so they do not mutate root status", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
 
-      expect(projectSdkEvent(sdkEvent({ type: "assistant.idle", data: {} }), context)).toEqual([
+      expect(project(sdkEvent({ type: "assistant.idle", data: {} }))).toEqual([
         { type: "status", status: "background" },
       ]);
       expect(
-        projectSdkEvent(
-          sdkEvent({ type: "assistant.idle", agentId: "call-agent-1", data: {} }),
-          context,
-        ),
+        project(sdkEvent({ type: "assistant.idle", agentId: "call-agent-1", data: {} })),
       ).toEqual([]);
 
+      expect(project(sdkEvent({ type: "assistant.turn_start", data: {} }))).toEqual([
+        { type: "status", status: "thinking" },
+      ]);
       expect(
-        projectSdkEvent(sdkEvent({ type: "assistant.turn_start", data: {} }), context),
-      ).toEqual([{ type: "status", status: "thinking" }]);
-      expect(
-        projectSdkEvent(
-          sdkEvent({ type: "assistant.turn_start", agentId: "call-agent-1", data: {} }),
-          context,
-        ),
+        project(sdkEvent({ type: "assistant.turn_start", agentId: "call-agent-1", data: {} })),
       ).toEqual([]);
 
+      expect(project(sdkEvent({ type: "session.compaction_start", data: {} }))).toEqual([
+        { type: "status", status: "compacting" },
+      ]);
       expect(
-        projectSdkEvent(sdkEvent({ type: "session.compaction_start", data: {} }), context),
-      ).toEqual([{ type: "status", status: "compacting" }]);
-      expect(
-        projectSdkEvent(
-          sdkEvent({ type: "session.compaction_start", agentId: "call-agent-1", data: {} }),
-          context,
-        ),
+        project(sdkEvent({ type: "session.compaction_start", agentId: "call-agent-1", data: {} })),
       ).toEqual([]);
 
+      expect(project(sdkEvent({ type: "session.compaction_complete", data: {} }))).toEqual([
+        { type: "status", status: "thinking" },
+      ]);
       expect(
-        projectSdkEvent(sdkEvent({ type: "session.compaction_complete", data: {} }), context),
-      ).toEqual([{ type: "status", status: "thinking" }]);
-      expect(
-        projectSdkEvent(
+        project(
           sdkEvent({ type: "session.compaction_complete", agentId: "call-agent-1", data: {} }),
-          context,
         ),
       ).toEqual([]);
     });
 
     test("projects native model, title, and failure transitions", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "session.start",
             data: {
@@ -1823,7 +1049,6 @@ describe("projector", () => {
               contextTier: "future_tier",
             },
           }),
-          context,
         ),
       ).toEqual([
         {
@@ -1838,7 +1063,7 @@ describe("projector", () => {
       ]);
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "session.resume",
             data: {
@@ -1848,7 +1073,6 @@ describe("projector", () => {
               reasoningEffort: "none",
             },
           }),
-          context,
         ),
       ).toEqual([
         {
@@ -1857,11 +1081,11 @@ describe("projector", () => {
         },
       ]);
 
-      expect(projectSdkEvent(modelChange("claude-sonnet-4.6"), context)).toEqual([
+      expect(project(modelChange("claude-sonnet-4.6"))).toEqual([
         { type: "model_changed", model: { provider: "copilot", name: "claude-sonnet-4.6" } },
       ]);
 
-      expect(projectSdkEvent(modelChange("gpt-5", "high", "future_tier"), context)).toEqual([
+      expect(project(modelChange("gpt-5", "high", "future_tier"))).toEqual([
         {
           type: "model_changed",
           model: {
@@ -1873,74 +1097,35 @@ describe("projector", () => {
         },
       ]);
 
-      expect(projectSdkEvent(modelChange("gpt-5", null, null), context)).toEqual([
+      expect(project(modelChange("gpt-5", null, null))).toEqual([
         {
           type: "model_changed",
           model: { provider: "copilot", name: "gpt-5" },
         },
       ]);
 
-      expect(projectSdkEvent(titleChanged("Friendly title"), context)).toEqual([
+      expect(project(titleChanged("Friendly title"))).toEqual([
         { type: "session_title_changed", title: "Friendly title" },
       ]);
       expect(
-        projectSdkEvent(
-          sdkEvent({ type: "session.handoff", data: { summary: "Compacted summary" } }),
-          context,
-        ),
+        project(sdkEvent({ type: "session.handoff", data: { summary: "Compacted summary" } })),
       ).toEqual([{ type: "session_title_changed", title: "Compacted summary" }]);
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "session.error",
             data: { message: "Native model history is incompatible." },
           }),
-          context,
         ),
       ).toEqual([{ type: "end", reason: "error", error: "Native model history is incompatible." }]);
     });
 
-    test("SDK workspace-file events do not publish artifact membership", () => {
-      const context = createStreamingContext();
-
-      for (const path of [
-        "document.md",
-        "document.html",
-        "document.json",
-        "document.svg",
-        "document.brief",
-        "document.toy",
-      ]) {
-        expect(
-          projectSdkEvent(
-            sdkEvent({
-              type: "session.workspace_file_changed",
-              data: { operation: "update", path },
-            }),
-            context,
-          ),
-        ).toEqual([]);
-      }
-    });
-
-    test("does not project SDK workspace-file events for unsupported artifact extensions", () => {
-      expect(
-        projectSdkEvent(
-          sdkEvent({
-            type: "session.workspace_file_changed",
-            data: { operation: "update", path: "run-tests.sh" },
-          }),
-          createStreamingContext(),
-        ),
-      ).toEqual([]);
-    });
-
     test("projects subagent start model as a scoped model change", () => {
-      const context = createStreamingContext();
+      const project = createSdkEventProjector("toy-box-session");
 
       expect(
-        projectSdkEvent(
+        project(
           sdkEvent({
             type: "subagent.started",
             agentId: "native-agent-1",
@@ -1952,7 +1137,6 @@ describe("projector", () => {
               model: "claude-haiku-4.5",
             },
           }),
-          context,
         ),
       ).toEqual([
         {
@@ -1965,34 +1149,10 @@ describe("projector", () => {
 
     test("returns no events for unknown SDK event types", () => {
       expect(
-        projectSdkEvent(sdkEvent({ type: "unknown.event", data: {} }), createStreamingContext()),
-      ).toEqual([]);
-    });
-
-    test("keeps transient skill discovery out of canonical session events", () => {
-      expect(
-        projectSdkEvent(
-          sdkEvent({
-            type: "session.skills_loaded",
-            data: {
-              skills: [
-                {
-                  name: "review",
-                  description: "Review Toy Box code.",
-                  source: "project",
-                  userInvocable: true,
-                  enabled: true,
-                },
-              ],
-            },
-          }),
-          createStreamingContext(),
-        ),
+        createSdkEventProjector("toy-box-session")(sdkEvent({ type: "unknown.event", data: {} })),
       ).toEqual([]);
     });
   });
-
-  // ── History: replaying a recorded session into a transcript ───────────
 });
 
 // Golden replays of real session fixtures live in tests/ (see tests/AGENTS.md).

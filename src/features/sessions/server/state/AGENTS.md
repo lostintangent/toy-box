@@ -17,7 +17,7 @@ creating another source of transcript truth.
   Accepted explicit and automatic title changes publish workspace metadata here; callers do not
   depend on a provider echoing a native rename event.
   One teardown path releases the live runtime, provider persistence, worktree, session record, cached
-  snapshot, managed relationships, pin, and workspace projection. Permanent deletion publishes that
+  snapshot, activity, managed relationships, pin, and workspace projection. Permanent deletion publishes that
   the identity is gone; stable-ID recreation suppresses that publication and inserts the replacement.
   Native connections finish disconnecting before their history is deleted, so a final flush cannot
   recreate a deleted session.
@@ -30,12 +30,16 @@ creating another source of transcript truth.
   catalog discovery enriches it with native metadata. `native_id` is an optional override:
   when absent, the canonical session UUID is also the native ID. Providers own
   names and message and attachment history, including after rewind.
+- `activity.ts` keeps every session's process-local activity and is its only writer. The runtime
+  sets running, waiting, background, idle, or unread, and clients mark a session read; each
+  transition goes through the shared activity reducer and is broadcast only when it changes state.
+  Activity doesn't survive a restart, like the execution it describes.
 - `worktrees.ts` keeps a session worktree and its SQLite record in one lifecycle.
   Apply and merge require committed session changes and operate in the source checkout;
   unfinished edits reject the operation before any resource is removed.
   The shared SQLite connection remains application infrastructure in
-  [`../../../../server/database.ts`](../../../../server/database.ts). Workspace status and shared
-  snapshot composition remain in [`../../../workspace/AGENTS.md`](../../../workspace/AGENTS.md).
+  [`../../../../server/database.ts`](../../../../server/database.ts). Shared workspace snapshot
+  composition remains in [`../../../workspace/AGENTS.md`](../../../workspace/AGENTS.md).
   Application-level role classification and managed ownership remain in
   [`../../../../server/managedSessions.ts`](../../../../server/managedSessions.ts).
 

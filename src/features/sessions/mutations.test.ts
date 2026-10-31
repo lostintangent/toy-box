@@ -3,11 +3,12 @@ import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import { workspaceQueries } from "@workspace/queries";
 import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model/state/reducer";
 import type { Session, SessionState } from "./model";
+import type { SessionsActivity } from "./model/activity";
 import { createInitialSessionState } from "./model/reducer";
 import { sessionMutations } from "./mutations";
 import type { SessionsState } from "./model";
 import { createEmptySessionsState, sessionQueries } from "./queries";
-import { snapshotSessionsState } from "./queryCache";
+import { snapshotSessionsState } from "./cache";
 
 const sessionId = "session-a";
 const session = {
@@ -198,7 +199,7 @@ describe("session mutation options", () => {
     expect(readSession(queryClient)).toEqual(session);
   });
 
-  test("projects successful deletion into shared workspace state", async () => {
+  test("projects successful deletion into shared session activity", async () => {
     const queryClient = createSessionListQueryClient();
 
     await new MutationObserver(queryClient, {
@@ -207,7 +208,21 @@ describe("session mutation options", () => {
     }).mutate();
 
     expect(readSessionsState(queryClient).sessions).toEqual([]);
-    expect(readWorkspaceState(queryClient)).toEqual(createEmptyWorkspaceState());
+    expect(readActivity(queryClient)).toEqual({});
+  });
+
+  test("marks a session read before the server confirms and refreshes activity on failure", async () => {
+    const queryClient = createSessionListQueryClient();
+    const markRead = new MutationObserver(queryClient, {
+      ...sessionMutations.markRead(sessionId),
+      mutationFn: async () => {
+        expect(readActivity(queryClient)).toEqual({});
+        throw new Error("read failed");
+      },
+    });
+
+    await expect(markRead.mutate()).rejects.toThrow("read failed");
+    expect(queryClient.getQueryState(sessionQueries.activityKey())?.isInvalidated).toBe(true);
   });
 });
 
@@ -234,9 +249,8 @@ function createSessionListQueryClient(): QueryClient {
     ...createEmptySessionsState(),
     sessions: [session],
   });
-  queryClient.setQueryData(workspaceQueries.stateKey(), {
-    ...createEmptyWorkspaceState(),
-    sessionStates: { [sessionId]: { status: "unread" } },
+  queryClient.setQueryData<SessionsActivity>(sessionQueries.activityKey(), {
+    [sessionId]: { status: "unread" },
   });
   onTestFinished(() => queryClient.clear());
   return queryClient;
@@ -259,6 +273,10 @@ function readSession(queryClient: QueryClient): Session {
   const cachedSession = readSessionsState(queryClient).sessions[0];
   if (!cachedSession) throw new Error("Session was not cached");
   return cachedSession;
+}
+
+function readActivity(queryClient: QueryClient): SessionsActivity | undefined {
+  return queryClient.getQueryData<SessionsActivity>(sessionQueries.activityKey());
 }
 
 function readWorkspaceState(queryClient: QueryClient): WorkspaceState {

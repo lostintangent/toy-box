@@ -108,11 +108,11 @@ export function useKeyboard({
     }
     if ((event.ctrlKey || event.metaKey) && (event.key === "+" || event.key === "=")) {
       event.preventDefault();
-      if (!store.state.gesture) store.actions.zoomIn();
+      if (!store.state.gesture) store.actions.zoomAt("in");
     }
     if ((event.ctrlKey || event.metaKey) && event.key === "-") {
       event.preventDefault();
-      if (!store.state.gesture) store.actions.zoomOut();
+      if (!store.state.gesture) store.actions.zoomAt("out");
     }
   }
 

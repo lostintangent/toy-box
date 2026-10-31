@@ -1,18 +1,13 @@
-import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { selectAutomationSessionIds, sessionQueries } from "@sessions/queries";
-import { useEffect, useRef, type ReactNode } from "react";
-import { createAtom, createStoreContext } from "@tanstack/react-store";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
+import { useEffect, type ReactNode } from "react";
+import { createAtom, createStoreContext, useSelector } from "@tanstack/react-store";
 import { createPanePublicationsStore } from "@workspace/hooks/layout/panePublications";
 import {
-  createEditorPaneId,
-  createScreenPane,
+  deriveReachablePaneIds,
+  deriveVisibleWorkspacePanes,
   MAX_HYPER_PANES,
   MAX_WORKSPACE_PANES,
-  resolveEditorAutoFocus,
   type WorkspacePane,
 } from "@workspace/model/panes";
-import { sessionFile, type WorkspaceFile } from "@files/model";
 
 // Store identities follow the browser workspace, not a host mount; Hyper may
 // unmount while minimized.
@@ -34,11 +29,8 @@ export type WorkspaceSurface = keyof typeof workspaceSurfaces;
 const { StoreProvider, useStoreContext: useWorkspaceSurface } = createStoreContext<
   (typeof workspaceSurfaces)[WorkspaceSurface] & {
     panes: readonly WorkspacePane[];
-    openApp: (appId: string) => void;
-    openFile?: (path: string) => void;
-    /** Brings a file's pane forward, opening the file when it isn't showing. */
-    revealFile?: (file: WorkspaceFile) => void;
-    revealScreen: (screenId: string) => boolean;
+    /** Brings a pane forward: focuses it where the surface can reach it, and opens it otherwise. */
+    reveal: (pane: WorkspacePane) => void;
     /** Whether Channel overviews stay pinned open, where the surface remembers it. */
     channelOverviewPinned?: boolean;
     setChannelOverviewPinned?: (pinned: boolean) => void;
@@ -51,109 +43,72 @@ export function focusWorkspaceSurfacePane(surface: WorkspaceSurface, paneId: str
   workspaceSurfaces[surface].focusedPaneAtom.set(paneId);
 }
 
-export function useFocusedPaneAtom() {
-  return useWorkspaceSurface().focusedPaneAtom;
+/**
+ * The panes a surface shows: its roots and the panes they publish, within its capacity and
+ * around its focus. Publishers its roots can no longer reach are pruned from its pane graph.
+ */
+export function useSurfacePanes(
+  surface: WorkspaceSurface,
+  rootPanes: WorkspacePane[],
+): WorkspacePane[] {
+  const { capacity, focusedPaneAtom, panePublications } = workspaceSurfaces[surface];
+  const publications = useSelector(panePublications);
+  const focusedPaneId = useSelector(focusedPaneAtom);
+
+  const reachablePaneIds = deriveReachablePaneIds(rootPanes, publications);
+  useEffect(() => {
+    panePublications.actions.prunePanePublishers(new Set(reachablePaneIds));
+  }, [panePublications, reachablePaneIds]);
+
+  return deriveVisibleWorkspacePanes({
+    rootPanes,
+    panePublications: publications,
+    maxVisible: capacity,
+    focusedPaneId,
+  });
 }
 
 export function WorkspaceSurfaceProvider({
   surface,
   panes,
-  onOpenApp,
-  onOpenFile,
-  onRevealFile,
-  onOpenScreen,
+  onOpen,
   channelOverviewPinned,
   onChannelOverviewPinnedChange,
   children,
 }: {
   surface: WorkspaceSurface;
   panes: WorkspacePane[];
-  onOpenApp: (appId: string) => void;
-  onOpenFile?: (path: string) => void;
-  onRevealFile?: (file: WorkspaceFile) => void;
-  onOpenScreen?: (screenId: string) => Promise<void>;
+  /** Opens a pane this surface can't reach yet. */
+  onOpen: (pane: WorkspacePane) => void;
   channelOverviewPinned?: boolean;
   onChannelOverviewPinnedChange?: (pinned: boolean) => void;
   children: ReactNode;
 }) {
   const workspaceSurface = workspaceSurfaces[surface];
-  const autoFocusArtifacts = useWorkspaceSelector(
-    (workspace) => workspace.settings.autoFocusArtifacts,
-  );
-  const { data: automationSessionIds } = useSuspenseQuery({
-    ...sessionQueries.state(),
-    select: selectAutomationSessionIds,
-  });
-  const { data: initialEditorPaneIds = [] } = useQuery({
-    ...sessionQueries.state(),
-    select: (state) =>
-      state.sessions.flatMap((session) =>
-        !session.provider && session.artifactPath
-          ? [createEditorPaneId(sessionFile(session.id, session.artifactPath))]
-          : [],
-      ),
-  });
-  const seenPaneIdsRef = useRef<ReadonlySet<string> | null>(null);
 
-  function revealScreen(screenId: string): boolean {
-    const paneId = createScreenPane(screenId).id;
-    const published = Object.values(workspaceSurface.panePublications.get()).some((linked) =>
-      linked.some((pane) => pane.id === paneId),
-    );
-    if (published || panes.some((pane) => pane.id === paneId)) {
-      workspaceSurface.focusedPaneAtom.set(paneId);
-      return true;
-    }
-    if (!onOpenScreen) return false;
-    void onOpenScreen(screenId)
-      .then(() => workspaceSurface.focusedPaneAtom.set(paneId))
-      .catch((error) => console.error("Unable to open screen:", error));
-    return true;
+  function reveal(pane: WorkspacePane) {
+    const isReachable =
+      panes.some(({ id }) => id === pane.id) ||
+      Object.values(workspaceSurface.panePublications.get()).some((linked) =>
+        linked.some(({ id }) => id === pane.id),
+      );
+    if (isReachable) workspaceSurface.focusedPaneAtom.set(pane.id);
+    else onOpen(pane);
   }
 
-  // Panes present when a surface mounts are not newly opened, except for an
-  // artifact-first draft whose artifact is the surface's initial destination.
-  if (seenPaneIdsRef.current === null) {
-    const initialEditorPaneIdSet = new Set(initialEditorPaneIds);
-    seenPaneIdsRef.current = new Set(
-      panes.filter((pane) => !initialEditorPaneIdSet.has(pane.id)).map((pane) => pane.id),
-    );
-  }
-
-  // Keep this surface's focus valid and let newly opened artifacts claim it.
+  // Keep this surface's focus on a pane it shows.
   useEffect(() => {
-    const initialEditorPaneIdSet = new Set(initialEditorPaneIds);
-    const { focusPane, seenPaneIds } = resolveEditorAutoFocus(
-      seenPaneIdsRef.current!,
-      panes,
-      autoFocusArtifacts,
-      automationSessionIds,
-      initialEditorPaneIdSet,
+    workspaceSurface.focusedPaneAtom.set((current) =>
+      current !== null && panes.some((pane) => pane.id === current) ? current : null,
     );
-    seenPaneIdsRef.current = seenPaneIds;
-
-    workspaceSurface.focusedPaneAtom.set((current) => {
-      const currentIsVisible = current !== null && panes.some((pane) => pane.id === current);
-      if (currentIsVisible) return current;
-      return focusPane?.id ?? null;
-    });
-  }, [
-    autoFocusArtifacts,
-    automationSessionIds,
-    initialEditorPaneIds,
-    panes,
-    workspaceSurface.focusedPaneAtom,
-  ]);
+  }, [panes, workspaceSurface.focusedPaneAtom]);
 
   return (
     <StoreProvider
       value={{
         ...workspaceSurface,
         panes,
-        openApp: onOpenApp,
-        openFile: onOpenFile,
-        revealFile: onRevealFile,
-        revealScreen,
+        reveal,
         channelOverviewPinned,
         setChannelOverviewPinned: onChannelOverviewPinnedChange,
       }}

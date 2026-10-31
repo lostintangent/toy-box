@@ -2,7 +2,6 @@ import { utimes } from "node:fs/promises";
 import { resolveSessionArtifactPath } from "@files/server/paths";
 import { deleteSessionFiles } from "@sessions/server/artifacts";
 import { expect, mock, onTestFinished, test } from "bun:test";
-import type { ToolInvocation } from "@github/copilot-sdk";
 import { createTestDatabase } from "@/server/database";
 
 let currentDb: Bun.SQL | undefined;
@@ -28,15 +27,6 @@ async function openInboxToolTestDatabase(): Promise<void> {
   });
 }
 
-function invocation(sessionId: string): ToolInvocation {
-  return {
-    sessionId,
-    toolCallId: "tool-call",
-    toolName: "send_to_inbox",
-    arguments: {},
-  };
-}
-
 function createInboxWorker(sessionId: string) {
   return new WorkerDatabase(currentDb!).create({
     type: "inbox",
@@ -58,10 +48,7 @@ test("send_to_inbox attaches an existing nested file without rewriting it, and c
 
   const [sendToInbox] = inboxTools;
   expect(sendToInbox.isTerminal).toBe(true);
-  const result = await sendToInbox.handler(
-    { message: "Research is ready", artifact },
-    invocation(sessionId),
-  );
+  const result = await sendToInbox.handler({ message: "Research is ready", artifact }, sessionId);
   expect(JSON.parse(String(result))).toEqual({ entryId: sessionId });
   expect(await Bun.file(path).text()).toBe("# Research");
   expect(Bun.file(path).lastModified).toBe(0);
@@ -73,7 +60,7 @@ test("send_to_inbox attaches an existing nested file without rewriting it, and c
     artifact,
   });
 
-  await sendToInbox.handler({ message: "Updated answer" }, invocation(sessionId));
+  await sendToInbox.handler({ message: "Updated answer" }, sessionId);
   expect(await getInboxEntry(sessionId)).toEqual({
     id: sessionId,
     createdAt: new Date(0).toISOString(),
@@ -90,11 +77,11 @@ test("send_to_inbox rejects invalid artifacts without replacing the existing res
   await Bun.write(resolveSessionArtifactPath(sessionId, "reports/result.md")!, "Result");
   onTestFinished(() => deleteSessionFiles(sessionId));
   const [sendToInbox] = inboxTools;
-  await sendToInbox.handler({ message: "Keep this answer" }, invocation(sessionId));
+  await sendToInbox.handler({ message: "Keep this answer" }, sessionId);
   const existing = await getInboxEntry(sessionId);
   for (const artifact of ["missing.md", "reports", "../outside.md", "/etc/passwd"]) {
     await expect(
-      sendToInbox.handler({ message: "Invalid", artifact }, invocation(sessionId)),
+      sendToInbox.handler({ message: "Invalid", artifact }, sessionId),
     ).rejects.toThrow();
     expect(await getInboxEntry(sessionId)).toEqual(existing);
   }

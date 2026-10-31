@@ -77,7 +77,7 @@ mock.module("@workers/server/database", () => ({
   registerWorkerSession: registerWorkerSessionMock,
 }));
 
-const { cancelWorker, superviseWorker, sweepAbandonedWorkers, WorkerCanceledError } =
+const { abortWorker, superviseWorker, sweepAbandonedWorkers, WorkerCanceledError } =
   await import("./supervisor");
 const { sharedMap, sharedSet } = await import("@/shared/server/processState");
 
@@ -217,7 +217,7 @@ describe("superviseWorker", () => {
       message: { content: "Start work." },
     });
     await persisting.promise;
-    await cancelWorker(sessionWorker.sessionId);
+    await abortWorker(sessionWorker.sessionId);
     release.resolve();
 
     await expect(spawning).rejects.toBeInstanceOf(WorkerCanceledError);
@@ -234,7 +234,7 @@ describe("superviseWorker", () => {
       message: { content: "Start work." },
     });
     await waitFor(() => expect(getSessionDirectoryMock).toHaveBeenCalledTimes(1));
-    await expect(cancelWorker(sessionWorker.sessionId)).resolves.toBe(true);
+    await expect(abortWorker(sessionWorker.sessionId)).resolves.toBe(true);
     directory.resolve(parentDirectory);
     await expect(spawning).rejects.toBeInstanceOf(WorkerCanceledError);
 
@@ -342,10 +342,10 @@ describe("superviseWorker", () => {
     await waitFor(() => expect(createSessionMock).toHaveBeenCalledTimes(1));
     workerIsLive = true;
 
-    await expect(cancelWorker("toy-box-worker")).resolves.toBe(true);
+    await expect(abortWorker("toy-box-worker")).resolves.toBe(true);
     expect(abortSessionMock).toHaveBeenCalledWith("toy-box-worker");
     await expect(receipt.waitForCompletion()).rejects.toBeInstanceOf(WorkerCanceledError);
-    await expect(cancelWorker("toy-box-worker")).resolves.toBe(false);
+    await expect(abortWorker("toy-box-worker")).resolves.toBe(false);
   });
 
   test("cleans up a reserved worker id when session creation fails", async () => {
@@ -425,7 +425,7 @@ describe("superviseWorker", () => {
       message: { content: "Cancel me." },
     });
     await starting.promise;
-    await cancelWorker(sessionWorker.sessionId);
+    await abortWorker(sessionWorker.sessionId);
     release.resolve();
     await expect(receipt.waitForCompletion()).rejects.toBeInstanceOf(WorkerCanceledError);
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith(sessionWorker.sessionId);
@@ -453,11 +453,11 @@ describe("superviseWorker", () => {
       message: { content: "Start background work." },
     });
     await starting.promise;
-    await expect(cancelWorker("toy-box-worker")).resolves.toBe(true);
+    await expect(abortWorker("toy-box-worker")).resolves.toBe(true);
     release.resolve();
     await expect(receipt.waitForCompletion()).rejects.toBeInstanceOf(WorkerCanceledError);
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
-    expect(await cancelWorker("toy-box-worker")).toBe(false);
+    expect(await abortWorker("toy-box-worker")).toBe(false);
   });
 
   test("cleans up a reserved worker id when parent directory loading fails", async () => {
@@ -603,7 +603,7 @@ describe("superviseWorker", () => {
       retention,
     });
     await waitFor(() => expect(createSessionMock).toHaveBeenCalled());
-    if (action === "canceled") await cancelWorker(sessionWorker.sessionId);
+    if (action === "canceled") await abortWorker(sessionWorker.sessionId);
     else storedWorker = null;
     workerCompletion.resolve({ status: "completed" });
     if (action === "canceled")
@@ -626,7 +626,7 @@ describe("superviseWorker", () => {
     });
     workerCompletion.resolve({ status: "completed" });
     await deciding.promise;
-    await cancelWorker(sessionWorker.sessionId);
+    await abortWorker(sessionWorker.sessionId);
     decision.resolve(false);
     await expect(receipt.waitForCompletion()).rejects.toBeInstanceOf(WorkerCanceledError);
     expect(storedWorker).toEqual(sessionWorker);

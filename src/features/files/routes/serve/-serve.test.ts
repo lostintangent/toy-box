@@ -4,6 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServeResponse } from "./$scope/$";
 
+test("rejects a missing or out-of-sandbox path", async () => {
+  const request = new Request("http://toy-box.test/api/serve/toy-box-session/");
+
+  const missing = await createServeResponse({ scope: "toy-box-session" }, request);
+  const traversal = await createServeResponse(
+    { scope: "toy-box-session", _splat: "../outside.md" },
+    request,
+  );
+
+  expect(missing.status).toBe(400);
+  expect(traversal.status).toBe(403);
+});
+
 test("revalidates unchanged files and serves changed bytes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "toy-box-serve-"));
   const path = join(directory, "image.svg");

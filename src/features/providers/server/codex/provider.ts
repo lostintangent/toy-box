@@ -7,7 +7,12 @@ import type { SessionSkill } from "@sessions/model";
 import { startCodexClient, stopCodexClient } from "./protocol/transport";
 import { CodexConnection } from "./connection";
 import { readThreadHistory } from "./history";
-import { codexHistoryEvents, createCodexProjector, subagentThreadId } from "./projector";
+import {
+  codexHistoryEvents,
+  codexModel,
+  createCodexProjector,
+  subagentThreadId,
+} from "./projector";
 import type {
   GetAccountRateLimitsResponse,
   Model,
@@ -19,11 +24,13 @@ import type {
 export const codexProvider: SessionProvider = {
   id: "codex",
   name: "OpenAI Codex",
+  async isSignedIn() {
+    const rpc = await startCodexClient();
+    const { account, requiresOpenaiAuth } = await rpc.request("account/read", {});
+    return !!account || !requiresOpenaiAuth;
+  },
   async listModels() {
     const rpc = await startCodexClient();
-    const auth = await rpc.request("account/read", {});
-    if (auth.requiresOpenaiAuth && !auth.account)
-      throw new Error("Run `codex login` to sign in to Codex, then refresh Toy Box.");
     const models: Model[] = [];
     let cursor: string | null = null;
     do {
@@ -61,7 +68,7 @@ export const codexProvider: SessionProvider = {
         .map(async (threadId) => [
           ...(await readThreadHistory(rpc, threadId).then(codexHistoryEvents, () => [])),
           // Closed or unreadable subagent threads still complete their agent cards.
-          { method: "thread/closed", params: { threadId } },
+          { method: "thread/closed" as const, params: { threadId } },
         ]),
     );
     return [...codexHistoryEvents(thread), ...subagents.flat()].flatMap(
@@ -115,7 +122,7 @@ export const codexProvider: SessionProvider = {
               type: "object",
               properties: {},
             }) as JsonValue,
-            deferLoading: true,
+            deferLoading: !tool.alwaysLoad,
           })),
         },
       ],
@@ -124,11 +131,7 @@ export const codexProvider: SessionProvider = {
       rpc,
       { id: sessionId, provider: { id: "codex", sessionId: result.thread.id } },
       configuration,
-      {
-        provider: "codex",
-        name: result.model,
-        ...(result.reasoningEffort ? { reasoningEffort: result.reasoningEffort } : {}),
-      },
+      codexModel(result.model, result.reasoningEffort),
       skills,
     );
     try {
@@ -152,12 +155,7 @@ export const codexProvider: SessionProvider = {
       rpc,
       session,
       configuration,
-      {
-        provider: "codex",
-        name: result.model,
-        ...(result.reasoningEffort ? { reasoningEffort: result.reasoningEffort } : {}),
-        ...configuration.model,
-      },
+      codexModel(result.model, result.reasoningEffort),
       skills,
     );
   },
@@ -279,16 +277,8 @@ async function listSkills(
     const path = join(root, "SKILL.md");
     const file = Bun.file(path);
     if (!(await file.exists())) continue;
-    const markdown = await file.text();
-    const name = markdown
-      .match(/^name:\s*(.+)$/m)?.[1]
-      ?.trim()
-      .replace(/^["']|["']$/g, "");
-    const description =
-      markdown
-        .match(/^description:\s*(.+)$/m)?.[1]
-        ?.trim()
-        .replace(/^["']|["']$/g, "") ?? "";
+    const frontmatter = (await file.text()).match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+    const { name, description = "" } = (Bun.YAML.parse(frontmatter) ?? {}) as Partial<SessionSkill>;
     if (name && !skills.some((skill) => skill.name === name))
       skills.push({ name, description, path, type: "global" });
   }

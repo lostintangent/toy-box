@@ -33,6 +33,18 @@ export type SvgDocumentSnapshot = {
   isEmpty: boolean;
 };
 
+/** The given elements, deduplicated, without any that descend from another given element, so a
+ *  group and its descendant are never transformed or removed twice. */
+export function topLevelElements<T extends Element>(elements: readonly T[]): T[] {
+  const included = new Set<Element>(elements);
+  return [...new Set(elements)].filter((element) => {
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      if (included.has(parent)) return false;
+    }
+    return true;
+  });
+}
+
 /** Owns one parsed SVG document, its mounted DOM, and serialized source. */
 export class SvgDocument {
   #root: SVGSVGElement | null = null;
@@ -257,9 +269,8 @@ export class SvgDocument {
   }
 
   deleteElements(elements: readonly Element[]): HistoryEntry | null {
-    const connected = new Set(elements.filter((element) => isDescendantOf(element, this.root)));
-    const topLevel = [...connected].filter(
-      (element) => !ancestorsOf(element).some((ancestor) => connected.has(ancestor)),
+    const topLevel = topLevelElements(
+      elements.filter((element) => isDescendantOf(element, this.root)),
     );
     const beforeByParent = new Map<Element, readonly Node[]>();
     for (const element of topLevel) {
@@ -443,16 +454,6 @@ function collectSelectionCandidates(parent: Element, candidates: SVGGraphicsElem
       candidates.push(child as SVGGraphicsElement);
     }
   }
-}
-
-function ancestorsOf(element: Element): Element[] {
-  const ancestors: Element[] = [];
-  let current = element.parentElement;
-  while (current) {
-    ancestors.push(current);
-    current = current.parentElement;
-  }
-  return ancestors;
 }
 
 function isDescendantOf(element: Element, ancestor: Element): boolean {

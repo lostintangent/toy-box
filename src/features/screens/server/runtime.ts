@@ -138,7 +138,7 @@ export class ScreenRuntime {
    * Viewers close without their screens ending, so they reconnect, and the next one starts
    * a new helper.
    */
-  async close(): Promise<void> {
+  async dispose(): Promise<void> {
     const helper = this.#helper;
     this.#helper = undefined;
     this.#controller = undefined;

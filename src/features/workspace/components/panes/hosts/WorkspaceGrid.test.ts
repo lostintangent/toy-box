@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { sessionFile } from "@files/model";
-import { createEditorPane, createSessionPane } from "@workspace/model/panes";
+import { createEditorPane } from "@files/model/panes";
+import { createSessionPane } from "@sessions/model/panes";
 import { applyWorkspaceGridCountChange, resolveGridSessionOverlayId } from "./WorkspaceGrid";
 
 function layout(rows: [number, number], top: [number, number], bottom: [number, number]) {
@@ -50,7 +51,7 @@ describe("workspace pane grid transitions", () => {
 });
 
 describe("workspace pane grid session overlay", () => {
-  const sessionPane = createSessionPane("session-a", false);
+  const sessionPane = createSessionPane("session-a");
   const artifactPane = createEditorPane(sessionFile("session-a", "result.md"));
 
   test("omits the overlay while the source session is visible", () => {

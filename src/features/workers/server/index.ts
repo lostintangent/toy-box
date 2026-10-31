@@ -3,11 +3,7 @@ import type { Worker, WorkerOwner } from "../model";
 import { WorkerDatabase } from "./database";
 
 export { deleteWorker, deleteWorkersForApp, deleteWorkersForSession } from "./cleanup";
-export { spawnSessionWorker, spawnWorker } from "./admission";
-export type { WorkerSpawn } from "./admission";
-export type { WorkerReceipt, WorkerRetention } from "./supervisor";
-export { WorkerCanceledError } from "./supervisor";
-export { getWorkers as getActiveWorkers } from "./registry";
+export { spawnWorker } from "./admission";
 
 export async function listWorkers<Type extends Worker["type"]>(
   scope: Type | Extract<WorkerOwner, { type: Type }>,

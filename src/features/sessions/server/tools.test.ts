@@ -11,7 +11,6 @@ import {
 import { z } from "zod";
 import * as streamModule from "@sessions/server/runtime";
 import * as registryModule from "@sessions/server/state/registry";
-import type { ToolInvocation } from "@sessions/server/tools/definition";
 import * as modelProviders from "@providers/server";
 import * as providers from "./providers";
 
@@ -75,8 +74,8 @@ test("model discovery returns the client catalog with provider and option metada
   onTestFinished(() => list.mockRestore());
 
   const [tool] = modelTools;
-  expect(await tool.handler({ provider: undefined }, invocation(tool.name))).toEqual(catalog);
-  expect(await tool.handler({ provider: "codex" }, invocation(tool.name))).toEqual([catalog[1]]);
+  expect(await tool.handler({ provider: undefined }, "toy-box-caller")).toEqual(catalog);
+  expect(await tool.handler({ provider: "codex" }, "toy-box-caller")).toEqual([catalog[1]]);
   expect(tool.parameters?.safeParse({ provider: "other" }).success).toBe(false);
 });
 
@@ -93,14 +92,14 @@ test("session discovery bounds results and searches titles across providers, new
   ]);
   onTestFinished(() => list.mockRestore());
   const tool = sessionHistoryTools[0];
-  const all = (await tool.handler({}, invocation(tool.name))) as {
+  const all = (await tool.handler({}, "toy-box-caller")) as {
     sessions: { id: string; provider: { id: string } }[];
     total: number;
   };
   expect(all.total).toBe(25);
   expect(all.sessions).toHaveLength(20);
   expect(all.sessions[0]?.id).toBe("session-24");
-  const filtered = await tool.handler({ query: " PAGER ", limit: 2 }, invocation(tool.name));
+  const filtered = await tool.handler({ query: " PAGER ", limit: 2 }, "toy-box-caller");
   expect(filtered).toMatchObject({
     total: 13,
     sessions: [
@@ -129,20 +128,19 @@ describe("SDK coordination tools", () => {
     await expect(
       deliverMessageTool.handler(
         { sessionId: "toy-box-caller", message: "Ownership returned to parent." },
-        invocation("deliver_message"),
+        "toy-box-caller",
       ),
     ).rejects.toThrow("cannot target the invoking session");
     expect(deliverSessionMessageMock).not.toHaveBeenCalled();
   });
 
-  test("uses the source tool call as cross-session delivery identity", async () => {
+  test("delivers the message to another session and reports its disposition", async () => {
     const result = await deliverMessageTool.handler(
       { sessionId: "toy-box-recipient", message: "Please review this", model: undefined },
-      invocation("deliver_message"),
+      "toy-box-caller",
     );
 
     expect(deliverSessionMessageMock).toHaveBeenCalledWith("toy-box-recipient", {
-      clientId: "tool-call",
       content: "Please review this",
       model: undefined,
     });
@@ -156,7 +154,7 @@ describe("SDK session title tool", () => {
 
     const result = await tool?.handler?.(
       { title: "Terminal Reconnect Scrollback" },
-      invocation("update_session_title"),
+      "toy-box-caller",
     );
 
     expect(updateSessionTitleMock).toHaveBeenCalledWith(
@@ -173,7 +171,7 @@ describe("SDK lifecycle tools", () => {
 
     const result = await tool?.handler?.(
       { prompt: "Start a durable investigation" },
-      invocation("create_session"),
+      "toy-box-caller",
     );
 
     const { sessionId, opened } = JSON.parse(String(result)) as {
@@ -206,7 +204,7 @@ describe("SDK lifecycle tools", () => {
         useWorktree: true,
         open: true,
       },
-      invocation("create_session"),
+      "toy-box-caller",
     );
 
     expect(JSON.parse(String(result))).toEqual({
@@ -221,12 +219,3 @@ describe("SDK lifecycle tools", () => {
     });
   });
 });
-
-function invocation(toolName: string): ToolInvocation {
-  return {
-    sessionId: "toy-box-caller",
-    toolCallId: "tool-call",
-    toolName,
-    arguments: {},
-  };
-}

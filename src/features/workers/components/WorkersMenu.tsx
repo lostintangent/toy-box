@@ -8,12 +8,9 @@ import { cn } from "@/shared/utils";
 import { workerMutations } from "../mutations";
 import type { Worker } from "../model";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
-import { useWorkspaceSessionRunning } from "@workspace/hooks/state";
-import {
-  PANE_OVERLAY_BUTTON_CLASS,
-  PANE_OVERLAY_ICON_CLASS,
-} from "@workspace/components/panes/shell/paneControls";
-import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
+import { useSessionActivity } from "@sessions/useSessionActivity";
+import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "@/shared/panes/paneControls";
+import type { PaneVariant } from "@/shared/panes/PaneSlots";
 
 /** Lists one pane's active workers and previews their ordinary session details. */
 export function WorkersMenu({
@@ -75,7 +72,7 @@ function WorkerItem({
   index: number;
 }) {
   const cancelMutation = useMutation(workerMutations.cancel);
-  const running = useWorkspaceSessionRunning(worker.sessionId);
+  const { running } = useSessionActivity(worker.sessionId);
   const preview = useSessionPreview(!running);
   const name = worker.name ?? `Worker ${index + 1}`;
   const action = running ? "Stop" : "Delete queued";

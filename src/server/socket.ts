@@ -1,12 +1,14 @@
 import type { Hooks } from "crossws";
+import { byFeature } from "@/shared/features";
 
-const services = {
-  terminal: async () => (await import("@terminal/server/websocket")).terminalWebSocket,
-  screens: async () => (await import("@screens/server/websocket")).screenWebSocket,
-};
-const loaded: Partial<Record<keyof typeof services, Promise<Partial<Hooks>>>> = {};
+/** Each feature's `server/websocket.ts` serves `/socket?service=<feature folder>`,
+ * loaded when its first connection arrives. */
+const services = byFeature(
+  import.meta.glob<Partial<Hooks>>("../features/*/server/websocket.ts", { import: "default" }),
+);
+const loaded: Record<string, Promise<Partial<Hooks>>> = {};
 
-function isService(value: string | null): value is keyof typeof services {
+function isService(value: string | null): value is string {
   return value !== null && Object.hasOwn(services, value);
 }
 

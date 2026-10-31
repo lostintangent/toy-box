@@ -9,8 +9,7 @@ import {
   updateApp,
 } from "./server/functions";
 import { smallJsonSchema } from "@/shared/smallJson";
-import { applyWorkspaceEvent } from "@workspace/queries";
-import { applyAppListEvent } from "./queryCache";
+import { applyWorkspaceEvent } from "@workspace/sync";
 
 type ShareWithApp = {
   sourceAppId: string | null;
@@ -23,7 +22,7 @@ export const appMutations = {
     mutationOptions({
       mutationFn: (title: string) => createApp({ data: { definitionId, title } }),
       onSuccess: (app, _variables, _onMutateResult, { client }) => {
-        applyAppListEvent(client, { type: "app.upserted", app });
+        applyWorkspaceEvent(client, { type: "app.upserted", app });
       },
     }),
 
@@ -31,30 +30,24 @@ export const appMutations = {
     mutationOptions({
       mutationFn: (url: string) => installApp({ data: { url } }),
       onSuccess: ({ definition, app }, _variables, _onMutateResult, { client }) => {
-        applyAppListEvent(client, { type: "app.registered", definition });
-        applyAppListEvent(client, { type: "app.upserted", app });
+        applyWorkspaceEvent(client, { type: "app.registered", definition });
+        applyWorkspaceEvent(client, { type: "app.upserted", app });
       },
     }),
 
   update: (app: AppInstance) =>
     mutationOptions({
       mutationFn: (update: Omit<AppUpdate, "expectedRevision">) => updateAppInstance(app, update),
-      onSuccess: (result, _variables, _onMutateResult, { client }) => {
-        applyAppListEvent(client, { type: "app.upserted", app: result.app });
+      onSuccess: (updatedApp, _variables, _onMutateResult, { client }) => {
+        applyWorkspaceEvent(client, { type: "app.upserted", app: updatedApp });
       },
     }),
 
   rename: (app: AppInstance) =>
     mutationOptions({
-      mutationFn: async (title: string) => {
-        const result = await updateAppInstance(app, { title });
-        if (result.status === "conflict") {
-          throw new Error("The app changed repeatedly while being renamed. Try again.");
-        }
-        return result.app;
-      },
+      mutationFn: (title: string) => updateAppInstance(app, { title }),
       onSuccess: (renamedApp, _variables, _onMutateResult, { client }) => {
-        applyAppListEvent(client, { type: "app.upserted", app: renamedApp });
+        applyWorkspaceEvent(client, { type: "app.upserted", app: renamedApp });
       },
     }),
 
@@ -62,7 +55,7 @@ export const appMutations = {
     mutationOptions({
       mutationFn: () => uninstallApp({ data: { id: definitionId } }),
       onSuccess: (_result, _variables, _onMutateResult, { client }) => {
-        applyAppListEvent(client, { type: "app.unregistered", definitionId });
+        applyWorkspaceEvent(client, { type: "app.unregistered", definitionId });
       },
     }),
 
@@ -86,11 +79,12 @@ export const appMutations = {
           },
         }),
       onSuccess: (share, _variables, _onMutateResult, { client }) => {
-        applyAppListEvent(client, { type: "app.share.created", share });
+        applyWorkspaceEvent(client, { type: "app.share.created", share });
       },
     }),
 };
 
+/** Title and color are last-writer-wins, so retry once at the latest revision. */
 async function updateAppInstance(app: AppInstance, update: Omit<AppUpdate, "expectedRevision">) {
   let result = await updateApp({
     data: { appId: app.id, expectedRevision: app.revision, ...update },
@@ -100,5 +94,8 @@ async function updateAppInstance(app: AppInstance, update: Omit<AppUpdate, "expe
       data: { appId: app.id, expectedRevision: result.app.revision, ...update },
     });
   }
-  return result;
+  if (result.status === "conflict") {
+    throw new Error("The app changed repeatedly while being updated. Try again.");
+  }
+  return result.app;
 }

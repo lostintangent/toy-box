@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import {
-  ALT_BUFFER_ENTER_SEQUENCE,
-  ALT_BUFFER_EXIT_SEQUENCE,
-  CLEAR_SCROLLBACK_SEQUENCE,
-  TERMINAL_RESET_SEQUENCE,
-} from "./ansi";
 import { ScrollbackBuffer } from "./scrollback";
+
+const ALT_BUFFER_ENTER_SEQUENCE = "\x1b[?1049h";
+const ALT_BUFFER_EXIT_SEQUENCE = "\x1b[?1049l";
+const CLEAR_SCROLLBACK_SEQUENCE = "\x1b[3J";
+const TERMINAL_RESET_SEQUENCE = "\x1bc";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -26,15 +25,6 @@ function collectReplay(buffer: ScrollbackBuffer) {
   };
 }
 
-function collectModeState(buffer: ScrollbackBuffer) {
-  const chunks: Uint8Array[] = [];
-  buffer.replayModeState((chunk) => {
-    chunks.push(chunk);
-  });
-
-  return chunks.map((chunk) => textDecoder.decode(chunk)).join("");
-}
-
 describe("ScrollbackBuffer", () => {
   describe("common terminal scenarios", () => {
     test("replays only normal-mode output when alternate mode has exited", () => {
@@ -52,7 +42,7 @@ describe("ScrollbackBuffer", () => {
       expect(replay.text).not.toContain("TUI FRAME");
     });
 
-    test("replay is skipped while alternate mode is active", () => {
+    test("replays only mode state while alternate mode is active", () => {
       const buffer = new ScrollbackBuffer();
 
       buffer.add(encode("prompt$ "));
@@ -60,7 +50,7 @@ describe("ScrollbackBuffer", () => {
       buffer.add(encode("ACTIVE TUI FRAME"));
 
       const replay = collectReplay(buffer);
-      expect(replay.text).toBe("");
+      expect(replay.text).toBe(ALT_BUFFER_ENTER_SEQUENCE);
       expect(buffer.isAlternateMode()).toBe(true);
     });
 
@@ -153,7 +143,7 @@ describe("ScrollbackBuffer", () => {
       buffer.add(encode("\x1b[?1006h"));
       buffer.add(encode("\x1b[?1000h"));
 
-      const modeState = collectModeState(buffer);
+      const modeState = collectReplay(buffer).text;
       expect(modeState).toBe("\x1b[?1000;1006;1049h");
     });
 
@@ -164,7 +154,7 @@ describe("ScrollbackBuffer", () => {
       buffer.add(encode("\x1b[?1000h"));
       buffer.add(encode("\x1b[?25l"));
 
-      const modeState = collectModeState(buffer);
+      const modeState = collectReplay(buffer).text;
       expect(modeState).toBe("\x1b[?1000;1049h\x1b[?25l");
     });
 
@@ -175,7 +165,7 @@ describe("ScrollbackBuffer", () => {
       buffer.add(encode("\x1b[?1000h"));
       buffer.add(encode("\x1b[?1000l"));
 
-      const modeState = collectModeState(buffer);
+      const modeState = collectReplay(buffer).text;
       expect(modeState).toBe("\x1b[?1049h\x1b[?1000l");
     });
 
@@ -187,7 +177,7 @@ describe("ScrollbackBuffer", () => {
       buffer.add(encode("\x1b[?1047h"));
       buffer.add(encode("\x1b[?25l"));
 
-      const modeState = collectModeState(buffer);
+      const modeState = collectReplay(buffer).text;
       expect(modeState).toBe("\x1b[?1047h\x1b[?25l");
     });
 
@@ -198,7 +188,7 @@ describe("ScrollbackBuffer", () => {
       buffer.add(encode(ALT_BUFFER_EXIT_SEQUENCE));
       buffer.add(encode("\x1b[?2004h"));
 
-      const normalState = collectModeState(buffer);
+      const normalState = collectReplay(buffer).text;
       expect(normalState).toBe("\x1b[?2004h");
     });
 
@@ -206,88 +196,34 @@ describe("ScrollbackBuffer", () => {
       const buffer = new ScrollbackBuffer();
 
       buffer.add(encode("\x1b[?25l"));
-      const normalState = collectModeState(buffer);
+      const normalState = collectReplay(buffer).text;
       expect(normalState).toBe("\x1b[?25l");
     });
   });
 
-  describe("memory and replay performance behavior", () => {
-    test("evicts oldest chunks when byte budget is exceeded", () => {
-      const buffer = new ScrollbackBuffer({
-        maxNormalBytes: 10,
-        coalesceThresholdBytes: 0,
-        replayBatchBytes: 64,
-      });
+  describe("history budget", () => {
+    test("keeps the newest output within the byte budget", () => {
+      const buffer = new ScrollbackBuffer({ maxBytes: 10, pageBytes: 4 });
 
       buffer.add(encode("12345"));
       buffer.add(encode("6789"));
-      buffer.add(encode("ABCD"));
+      buffer.add(encode("ABCDEFGHIJ"));
 
       const replay = collectReplay(buffer);
-      expect(replay.text).toBe("6789ABCD");
+      expect(replay.text.endsWith("ABCDEFGHIJ")).toBe(true);
+      expect(replay.text.length).toBeLessThan(10 + 4);
     });
 
-    test("keeps newest bytes when a single chunk exceeds the byte budget", () => {
-      const buffer = new ScrollbackBuffer({
-        maxNormalBytes: 5,
-        coalesceThresholdBytes: 0,
-        replayBatchBytes: 64,
-      });
-
-      buffer.add(encode("1234567890"));
-
-      const replay = collectReplay(buffer);
-      expect(replay.text).toBe("67890");
-    });
-
-    test("coalesces small chunks before replay", () => {
-      const buffer = new ScrollbackBuffer({
-        maxNormalBytes: 1024,
-        coalesceThresholdBytes: 16,
-        replayBatchBytes: 64,
-      });
-
-      buffer.add(encode("a"));
-      buffer.add(encode("b"));
-      buffer.add(encode("c"));
-      buffer.add(encode("d"));
-
-      const replay = collectReplay(buffer);
-      expect(replay.text).toBe("abcd");
-      expect(replay.chunks).toHaveLength(1);
-    });
-
-    test("replay batches multiple chunks into fewer websocket writes", () => {
-      const buffer = new ScrollbackBuffer({
-        maxNormalBytes: 1024,
-        coalesceThresholdBytes: 0,
-        replayBatchBytes: 8,
-      });
+    test("replays history in writes no larger than a page", () => {
+      const buffer = new ScrollbackBuffer({ maxBytes: 1024, pageBytes: 8 });
 
       buffer.add(encode("abcd"));
-      buffer.add(encode("ef"));
-      buffer.add(encode("gh"));
-      buffer.add(encode("ij"));
+      buffer.add(encode("efghijklmnopq"));
+      buffer.add(encode("rs"));
 
       const replay = collectReplay(buffer);
-      expect(replay.text).toBe("abcdefghij");
-      expect(replay.chunks).toHaveLength(2);
-      expect(textDecoder.decode(replay.chunks[0]!)).toBe("abcdefgh");
-      expect(textDecoder.decode(replay.chunks[1]!)).toBe("ij");
-    });
-
-    test("does not lose all history when coalescing creates an oversized tail chunk", () => {
-      const buffer = new ScrollbackBuffer({
-        maxNormalBytes: 10,
-        coalesceThresholdBytes: 16,
-        replayBatchBytes: 64,
-      });
-
-      buffer.add(encode("123456"));
-      buffer.add(encode("789012"));
-
-      const replay = collectReplay(buffer);
-      expect(replay.text).toBe("3456789012");
+      expect(replay.text).toBe("abcdefghijklmnopqrs");
+      expect(replay.chunks.every((chunk) => chunk.byteLength <= 8)).toBe(true);
     });
   });
 });

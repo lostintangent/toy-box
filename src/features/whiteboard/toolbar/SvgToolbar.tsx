@@ -16,6 +16,7 @@ import {
   resolveActiveTool,
   styleColor,
   type EditorStore,
+  type ShapeTool,
   type Tool,
 } from "../store";
 import {
@@ -49,7 +50,7 @@ const STROKE_WIDTHS = [1, 2, 4, 8, 16];
 const FONT_SIZES = [12, 16, 20, 24, 32, 48];
 
 const SHAPE_OPTIONS: Array<{
-  type: "rectangle" | "ellipse" | "line" | "arrow";
+  type: ShapeTool;
   icon: React.ReactNode;
   label: string;
 }> = [
@@ -100,9 +101,7 @@ export function SvgToolbar({
       ? selectedStyle.strokeWidth
       : styleDefaults.strokeWidth;
 
-  const [lastShape, setLastShape] = useState<"rectangle" | "ellipse" | "line" | "arrow">(
-    "rectangle",
-  );
+  const [lastShape, setLastShape] = useState<ShapeTool>("rectangle");
   const shape = isShapeTool(selectedTool) ? selectedTool : lastShape;
   const isFillableShape = shape === "rectangle" || shape === "ellipse";
   const showFillPicker =
@@ -113,7 +112,7 @@ export function SvgToolbar({
       ? (selectedStyle.fill ?? null)
       : styleDefaults.fill;
 
-  function activateShape(nextShape: "rectangle" | "ellipse" | "line" | "arrow") {
+  function activateShape(nextShape: ShapeTool) {
     setLastShape(nextShape);
     store.actions.activateTool(nextShape);
   }
@@ -409,8 +408,8 @@ function SizeSelector({ size, sizes, onSizeChange, label, disabled }: SizeSelect
 
 type ShapePickerProps = {
   active: boolean;
-  shape: "rectangle" | "ellipse" | "line" | "arrow";
-  onActivate: (shape: "rectangle" | "ellipse" | "line" | "arrow") => void;
+  shape: ShapeTool;
+  onActivate: (shape: ShapeTool) => void;
   muted?: boolean;
   disabled?: boolean;
 };
@@ -471,6 +470,6 @@ function ShapePicker({ active, shape, onActivate, muted, disabled }: ShapePicker
   );
 }
 
-function isShapeTool(tool: Tool): tool is "rectangle" | "ellipse" | "line" | "arrow" {
+function isShapeTool(tool: Tool): tool is ShapeTool {
   return tool === "rectangle" || tool === "ellipse" || tool === "line" || tool === "arrow";
 }

@@ -125,7 +125,7 @@ export function superviseWorker<Value = void>(
 }
 
 /** Cancel a worker whether its session stream is still spawning or already running. */
-export async function cancelWorker(sessionId: string): Promise<boolean> {
+export async function abortWorker(sessionId: string): Promise<boolean> {
   if (!activeWorkers.has(sessionId)) return false;
 
   cancelingWorkers.add(sessionId);

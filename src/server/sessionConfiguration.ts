@@ -7,7 +7,7 @@ import { AUTOMATION_SESSION_INSTRUCTIONS, automationTools } from "@automations/s
 import { channelTools, createChannelMembersTool } from "@channels/server/tools";
 import { editorTools, fileTools } from "@files/server/tools";
 import { INBOX_SESSION_INSTRUCTIONS, inboxTools } from "@inbox/server/tools";
-import { listModels } from "@providers/server";
+import { getModelChoices } from "@providers/server";
 import type { ModelConfiguration } from "@providers/model";
 import type { SessionType } from "@sessions/model";
 import { SESSION_HISTORY_DISCOVERY_INSTRUCTIONS } from "@sessions/server/instructions";
@@ -27,7 +27,6 @@ import type { Tool } from "@sessions/server/tools/definition";
 import { getPersistedWorker } from "@workers/server/database";
 import { workerTools } from "@workers/server/tools";
 import { settingsTools } from "@workspace/server/tools";
-import { getSettings } from "@workspace/server/state/settings";
 import { screenTools } from "@screens/server/tools";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -95,6 +94,15 @@ export async function getSessionConfiguration(sessionId: string, sessionType: Se
       const model = configuration.model ?? (await getWorkspaceDefaultModel(sessionId));
       return {
         ...configuration,
+        tools: [
+          ...screenTools,
+          ...artifactAppTools,
+          ...appLifecycleTools,
+          ...automationTools,
+          ...createAppStateTools(),
+          ...modelTools,
+          ...configuration.tools,
+        ],
         model,
         configurationKey: JSON.stringify([
           model,
@@ -146,17 +154,5 @@ async function getWorkspaceDefaultModel(
   sessionId: string,
 ): Promise<ModelConfiguration | undefined> {
   const provider = (await readSession(sessionId))?.provider;
-  const settings = await getSettings();
-  if (
-    settings.defaultModel &&
-    (provider || !settings.disabledProviders.includes(settings.defaultModel.provider))
-  ) {
-    return !provider || settings.defaultModel.provider === provider.id
-      ? settings.defaultModel
-      : undefined;
-  }
-  const model = (await listModels()).find(
-    (candidate) => !provider || candidate.provider === provider.id,
-  );
-  return model ? { name: model.id, provider: model.provider } : undefined;
+  return (await getModelChoices(provider?.id)).defaultModel ?? undefined;
 }

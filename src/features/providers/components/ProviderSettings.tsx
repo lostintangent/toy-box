@@ -15,9 +15,7 @@ import { useProviders } from "../useProviders";
 
 export function ProviderSettings() {
   const { providers, setEnabled } = useProviders();
-  const updateableProviderIds = providers.flatMap(({ id, installed, enabled }) =>
-    installed && enabled ? [id] : [],
-  );
+  const updateableProviderIds = providers.flatMap(({ id, enabled }) => (enabled ? [id] : []));
   // Limits stay collapsed so the provider list reads at a glance.
   const [isShowingUsage, setIsShowingUsage] = useState(false);
   const {
@@ -61,23 +59,28 @@ export function ProviderSettings() {
           </Button>
         </div>
       </legend>
-      {providers.map(({ id, name, installed, enabled }) => (
+      {providers.map(({ id, name, status, enabled }) => (
         <div key={id} className="grid gap-1">
           <div className="flex min-h-6 items-center gap-2 text-sm">
             <label className="flex items-center gap-2">
               <Checkbox
                 checked={enabled}
-                disabled={!installed}
+                disabled={status === "unavailable"}
                 onCheckedChange={(checked) => setEnabled(id, checked)}
               />
-              <span className={installed ? undefined : "text-muted-foreground"}>{name}</span>
+              <span className={status === "ready" ? undefined : "text-muted-foreground"}>
+                {name}
+              </span>
             </label>
-            {!installed && (
+            {status === "unavailable" && (
               <span className="ml-auto text-xs text-muted-foreground">Not installed</span>
             )}
-            {installed && <ProviderVersion id={id} />}
-            {installed && enabled && <ProviderPlan id={id} />}
-            {installed && (
+            {status !== "unavailable" && <ProviderVersion id={id} />}
+            {status === "signedOut" && (
+              <span className="text-xs text-muted-foreground">Signed out</span>
+            )}
+            {status === "ready" && enabled && <ProviderPlan id={id} />}
+            {status !== "unavailable" && (
               <ProviderUpdate
                 id={id}
                 name={name}
@@ -86,7 +89,7 @@ export function ProviderSettings() {
               />
             )}
           </div>
-          {isShowingUsage && installed && enabled && <ProviderPlanLimits id={id} />}
+          {isShowingUsage && status === "ready" && enabled && <ProviderPlanLimits id={id} />}
         </div>
       ))}
     </fieldset>

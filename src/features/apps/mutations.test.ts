@@ -1,8 +1,9 @@
-import { describe, expect, onTestFinished, test } from "bun:test";
+import { describe, expect, onTestFinished, spyOn, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import type { AppDefinition, AppInstance, AppList, AppShare } from "@apps/model";
 import { appQueries } from "./queries";
 import { appMutations } from "./mutations";
+import * as functions from "./server/functions";
 
 const definition = {
   id: "kanban",
@@ -57,7 +58,7 @@ describe("app mutation options", () => {
     } satisfies AppInstance;
     await new MutationObserver(queryClient, {
       ...appMutations.update(createdApp),
-      mutationFn: async () => ({ status: "updated" as const, app: updatedApp }),
+      mutationFn: async () => updatedApp,
     }).mutate({ title: updatedApp.title });
 
     expect(readApps(queryClient).apps).toEqual([installedApp, updatedApp]);
@@ -95,7 +96,7 @@ describe("app mutation options", () => {
     expect(readApps(queryClient)).toEqual({ apps: [], definitions: [], shares: [] });
   });
 
-  test("treats update conflicts as authoritative results", async () => {
+  test("retries one conflict at the latest revision before rejecting", async () => {
     const queryClient = createQueryClient();
     const latestApp = {
       ...createdApp,
@@ -103,13 +104,23 @@ describe("app mutation options", () => {
       revision: 2,
       updatedAt: "2026-07-28T12:02:00.000Z",
     } satisfies AppInstance;
-    const updateMutation = new MutationObserver(queryClient, {
-      ...appMutations.update(createdApp),
-      mutationFn: async () => ({ status: "conflict" as const, app: latestApp }),
-    });
+    const recoloredApp = { ...latestApp, color: "#0ea5e9", revision: 3 } satisfies AppInstance;
+    const updateApp = spyOn(functions, "updateApp")
+      .mockResolvedValueOnce({ status: "conflict", app: latestApp })
+      .mockResolvedValueOnce({ status: "updated", app: recoloredApp });
+    onTestFinished(() => updateApp.mockRestore());
 
-    await updateMutation.mutate({ title: "My rename" });
-    expect(readApps(queryClient).apps).toEqual([latestApp]);
+    await new MutationObserver(queryClient, appMutations.update(createdApp)).mutate({
+      color: recoloredApp.color,
+    });
+    expect(updateApp.mock.calls.map(([{ data }]) => data.expectedRevision)).toEqual([0, 2]);
+    expect(readApps(queryClient).apps).toEqual([recoloredApp]);
+
+    updateApp.mockResolvedValue({ status: "conflict", app: latestApp });
+    await expect(
+      new MutationObserver(queryClient, appMutations.rename(recoloredApp)).mutate("My rename"),
+    ).rejects.toThrow("changed repeatedly");
+    expect(readApps(queryClient).apps).toEqual([recoloredApp]);
   });
 });
 

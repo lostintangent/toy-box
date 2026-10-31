@@ -1,4 +1,4 @@
-// Generated from codex-cli 0.165.0 (experimental app-server schema).
+// Generated from codex-cli 0.166.0 (experimental app-server schema).
 // OpenAI Codex, Apache-2.0: https://github.com/openai/codex
 // Regenerate using ./generate.ts. Do not edit wire types by hand.
 /* oxlint-disable typescript/no-redundant-type-constituents -- Upstream unions list known variants beside open fallbacks. */
@@ -209,7 +209,15 @@ export type GetAccountResponse = {
 
 export type Account =
   | { type: "apiKey" }
-  | { type: "chatgpt"; email: string | null; planType: PlanType }
+  | {
+      type: "chatgpt";
+      email: string | null;
+      planType: PlanType;
+      /**
+       * Display name of the selected ChatGPT workspace, when available.
+       */
+      workspaceName: string | null;
+    }
   | { type: "amazonBedrock"; usesCodexManagedCredentials: boolean }
   | { type: "gcp" };
 
@@ -848,7 +856,19 @@ export type Turn = {
   durationMs: number | null;
 };
 
-export type ThreadItem =
+/**
+ * A thread item and its recorded lifecycle times. The payload stays flat on the wire.
+ */
+export type ThreadItem = {
+  /**
+   * Unix timestamp in milliseconds when the item started, if recorded.
+   */
+  startedAtMs?: number | null;
+  /**
+   * Unix timestamp in milliseconds when the item completed, if recorded.
+   */
+  completedAtMs?: number | null;
+} & (
   | { type: "userMessage"; id: string; clientId: string | null; content: Array<UserInput> }
   | { type: "hookPrompt"; id: string; fragments: Array<HookPromptFragment> }
   | {
@@ -1014,7 +1034,8 @@ export type ThreadItem =
   | ({ type: "imageGeneration" } & ImageGenerationItem)
   | { type: "enteredReviewMode"; id: string; review: string }
   | { type: "exitedReviewMode"; id: string; review: string }
-  | { type: "contextCompaction"; id: string };
+  | { type: "contextCompaction"; id: string }
+);
 
 export type FunctionCallOutputBody = string | Array<FunctionCallOutputContentItem>;
 
@@ -1041,6 +1062,10 @@ export type ImageGenerationItem = {
    * Observed local inputs for a completed generation, absent on older items.
    */
   inputImages?: Array<ImageGenerationInputImage>;
+  /**
+   * Image generation identifier for the generated image, when provided by the image backend.
+   */
+  generationId: string | null;
 } & ({ fileId: string } | { result: string });
 
 export type ImageGenerationFailure = {
@@ -1241,6 +1266,7 @@ export type CodexErrorInfo =
   | "flexUnavailable"
   | "serverOverloaded"
   | "modelNotFound"
+  | "policyCapacityUnavailable"
   | "cyberPolicy"
   | "misalignmentPolicyViolation"
   | "tooManyDenials"
@@ -2154,7 +2180,14 @@ export type TurnStartParams = {
  */
 export type ReasoningSummary = "auto" | "concise" | "detailed" | "none";
 
-export type AdditionalContextEntry = { value: string; kind: AdditionalContextKind };
+export type AdditionalContextEntry = {
+  value: string;
+  kind: AdditionalContextKind;
+  /**
+   * Optional name for untrusted context, used to label its tool output.
+   */
+  name?: string | null;
+};
 
 export type AdditionalContextKind = "untrusted" | "application";
 
@@ -2265,54 +2298,11 @@ export type ToolRequestUserInputResponse = {
  */
 export type ToolRequestUserInputAnswer = { answers: Array<string> };
 
-export type ItemCompletedNotification = {
-  item: ThreadItem;
-  threadId: string;
-  turnId: string;
-  /**
-   * Unix timestamp (in milliseconds) when this item lifecycle completed.
-   */
-  completedAtMs: number;
-};
-
 export type ThreadStartedNotification = { thread: Thread };
 
-export type TurnStartedNotification = { threadId: string; turn: Turn };
+export type ThreadClosedNotification = { threadId: string };
 
-export type TurnCompletedNotification = { threadId: string; turn: Turn };
-
-export type TurnPlanUpdatedNotification = {
-  threadId: string;
-  turnId: string;
-  explanation: string | null;
-  plan: Array<TurnPlanStep>;
-};
-
-export type TurnPlanStep = { step: string; status: TurnPlanStepStatus };
-
-export type TurnPlanStepStatus = "pending" | "inProgress" | "completed";
-
-export type AgentMessageDeltaNotification = {
-  threadId: string;
-  turnId: string;
-  itemId: string;
-  delta: string;
-};
-
-export type ReasoningTextDeltaNotification = {
-  threadId: string;
-  turnId: string;
-  itemId: string;
-  delta: string;
-  contentIndex: number;
-};
-
-export type CommandExecutionOutputDeltaNotification = {
-  threadId: string;
-  turnId: string;
-  itemId: string;
-  delta: string;
-};
+export type ThreadNameUpdatedNotification = { threadId: string; threadName?: string };
 
 export type ThreadTokenUsageUpdatedNotification = {
   threadId: string;
@@ -2335,11 +2325,81 @@ export type TokenUsageBreakdown = {
   reasoningOutputTokens: number;
 };
 
+export type TurnStartedNotification = { threadId: string; turn: Turn };
+
+export type TurnCompletedNotification = { threadId: string; turn: Turn };
+
+export type TurnPlanUpdatedNotification = {
+  threadId: string;
+  turnId: string;
+  explanation: string | null;
+  plan: Array<TurnPlanStep>;
+};
+
+export type TurnPlanStep = { step: string; status: TurnPlanStepStatus };
+
+export type TurnPlanStepStatus = "pending" | "inProgress" | "completed";
+
+export type ItemStartedNotification = {
+  item: ThreadItem;
+  threadId: string;
+  turnId: string;
+  /**
+   * Unix timestamp (in milliseconds) when this item lifecycle started.
+   */
+  startedAtMs: number;
+};
+
+export type ItemCompletedNotification = {
+  item: ThreadItem;
+  threadId: string;
+  turnId: string;
+  /**
+   * Unix timestamp (in milliseconds) when this item lifecycle completed.
+   */
+  completedAtMs: number;
+};
+
+export type AgentMessageDeltaNotification = {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  delta: string;
+};
+
+export type ReasoningTextDeltaNotification = {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  delta: string;
+  contentIndex: number;
+};
+
+export type ReasoningSummaryTextDeltaNotification = {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  delta: string;
+  summaryIndex: number;
+};
+
+export type ReasoningSummaryPartAddedNotification = {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  summaryIndex: number;
+};
+
+export type CommandExecutionOutputDeltaNotification = {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  delta: string;
+};
+
 export type ServerRequestResolvedNotification = { threadId: string; requestId: RequestId };
 
 export type RequestId = string | number;
-
-export type ThreadNameUpdatedNotification = { threadId: string; threadName?: string };
 
 export type CodexMethods = {
   initialize: { params: InitializeParams; result: InitializeResponse };
@@ -2362,4 +2422,30 @@ export type CodexMethods = {
   "turn/start": { params: TurnStartParams; result: TurnStartResponse };
   "turn/steer": { params: TurnSteerParams; result: TurnSteerResponse };
   "turn/interrupt": { params: TurnInterruptParams; result: TurnInterruptResponse };
+};
+
+export type CodexServerRequests = {
+  "item/tool/call": { params: DynamicToolCallParams; result: DynamicToolCallResponse };
+  "item/tool/requestUserInput": {
+    params: ToolRequestUserInputParams;
+    result: ToolRequestUserInputResponse;
+  };
+};
+
+export type CodexNotifications = {
+  "thread/started": ThreadStartedNotification;
+  "thread/closed": ThreadClosedNotification;
+  "thread/name/updated": ThreadNameUpdatedNotification;
+  "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotification;
+  "turn/started": TurnStartedNotification;
+  "turn/completed": TurnCompletedNotification;
+  "turn/plan/updated": TurnPlanUpdatedNotification;
+  "item/started": ItemStartedNotification;
+  "item/completed": ItemCompletedNotification;
+  "item/agentMessage/delta": AgentMessageDeltaNotification;
+  "item/reasoning/textDelta": ReasoningTextDeltaNotification;
+  "item/reasoning/summaryTextDelta": ReasoningSummaryTextDeltaNotification;
+  "item/reasoning/summaryPartAdded": ReasoningSummaryPartAddedNotification;
+  "item/commandExecution/outputDelta": CommandExecutionOutputDeltaNotification;
+  "serverRequest/resolved": ServerRequestResolvedNotification;
 };

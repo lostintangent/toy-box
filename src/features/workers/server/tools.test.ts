@@ -1,9 +1,8 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { ToolInvocation } from "@github/copilot-sdk";
 import * as workersModule from "./index";
 
 const realWorkersModule = { ...workersModule };
-type SpawnWorkerInput = Parameters<typeof workersModule.spawnSessionWorker>[0];
+type SpawnWorkerInput = Parameters<typeof workersModule.spawnWorker>[0];
 
 const spawnWorkerMock = mock(async (_input: SpawnWorkerInput) => ({
   sessionId: "toy-box-worker",
@@ -11,7 +10,7 @@ const spawnWorkerMock = mock(async (_input: SpawnWorkerInput) => ({
 
 mock.module("@workers/server", () => ({
   ...realWorkersModule,
-  spawnSessionWorker: spawnWorkerMock,
+  spawnWorker: spawnWorkerMock,
 }));
 
 const { workerTools } = await import("./tools");
@@ -37,13 +36,13 @@ describe("worker SDK tool", () => {
         directory: "/workspace",
         useWorktree: true,
       },
-      invocation(),
+      "toy-box-caller",
     );
 
     expect(JSON.parse(String(result))).toEqual({ sessionId: "toy-box-worker" });
     expect(spawnWorkerMock).toHaveBeenCalledWith({
-      parentSessionId: "toy-box-caller",
-      ephemeral: false,
+      owner: { type: "session", parentSessionId: "toy-box-caller" },
+      retention: "durable",
       name: "Runtime reviewer",
       message: { content: "Review the runtime", model },
       location: { directory: "/workspace", useWorktree: true },
@@ -53,20 +52,11 @@ describe("worker SDK tool", () => {
   test("can make a child ephemeral", async () => {
     const tool = workerTools.find((candidate) => candidate.name === "spawn_worker");
 
-    const result = await tool?.handler?.({ task: "Run once", ephemeral: true }, invocation());
+    const result = await tool?.handler?.({ task: "Run once", ephemeral: true }, "toy-box-caller");
 
     expect(JSON.parse(String(result))).toEqual({
       sessionId: "toy-box-worker",
     });
-    expect(spawnWorkerMock.mock.calls[0]?.[0].ephemeral).toBe(true);
+    expect(spawnWorkerMock.mock.calls[0]?.[0].retention).toBe("ephemeral");
   });
 });
-
-function invocation(): ToolInvocation {
-  return {
-    sessionId: "toy-box-caller",
-    toolCallId: "tool-call",
-    toolName: "spawn_worker",
-    arguments: {},
-  };
-}

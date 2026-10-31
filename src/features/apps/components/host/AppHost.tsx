@@ -10,8 +10,10 @@ import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { useModels } from "@providers/useModels";
 import { sessionQueries } from "@sessions/queries";
-import { paneSourceSessionId, type WorkspacePane } from "@workspace/model/panes";
-import { AppHostProvider } from "./context";
+import { useSessionsActivity } from "@sessions/useSessionActivity";
+import { workerQueries } from "@workers/queries";
+import type { WorkspacePane } from "@workspace/model/panes";
+import { AppHostContext } from "./context";
 import { bindAppActions } from "./actions";
 import { projectAppWorkspace } from "./workspace";
 import type { AppStateStore } from "./state";
@@ -33,11 +35,9 @@ export function AppHost({
   savedApp?: AppStateStore;
 }) {
   const queryClient = useQueryClient();
-  const workspaceState = useWorkspaceSelector((state) => ({
-    sessionStates: state.sessionStates,
-    hyperSessionIds: state.hyperSessionIds,
-    workers: state.workers,
-  }));
+  const activities = useSessionsActivity((activities) => activities);
+  const hyperSessionIds = useWorkspaceSelector((state) => state.hyperSessionIds);
+  const { data: workers } = useSuspenseQuery(workerQueries.active());
   const { data: apps } = useSuspenseQuery(appQueries.list());
   const { data: sessionsState } = useSuspenseQuery(sessionQueries.state());
   const { models, defaultModel } = useModels();
@@ -47,16 +47,17 @@ export function AppHost({
     (published) => published[publisherPaneId] ?? NO_LINKED_PANES,
   );
   const activeSessionIds = new Set(sessionsState.sessions.map(({ id }) => id));
-  const validLinkedPanes = linkedPanes.filter((candidate) => {
-    const sessionId = paneSourceSessionId(candidate);
-    return sessionId === undefined || activeSessionIds.has(sessionId);
-  });
+  const validLinkedPanes = linkedPanes.filter(
+    ({ sessionId }) => sessionId === undefined || activeSessionIds.has(sessionId),
+  );
   const visiblePaneIds = new Set(surface.panes.map(({ id }) => id));
   const visibleLinkedPanes = validLinkedPanes.filter(({ id }) => visiblePaneIds.has(id));
   const retainedPanes =
     surface.panes.length >= surface.capacity ? visibleLinkedPanes : validLinkedPanes;
   const workspaceSource = {
-    workspace: workspaceState,
+    activities,
+    hyperSessionIds,
+    workers,
     apps,
     sessions: sessionsState,
     models,
@@ -94,9 +95,9 @@ export function AppHost({
   return (
     <div data-toybox-app={scopeId} className="h-full min-h-0">
       {css && <style>{css}</style>}
-      <AppHostProvider workspace={workspaceStore} actions={actions} savedApp={savedApp}>
+      <AppHostContext value={{ workspace: workspaceStore, actions, savedApp }}>
         <AppComponent />
-      </AppHostProvider>
+      </AppHostContext>
     </div>
   );
 }

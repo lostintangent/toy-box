@@ -4,16 +4,19 @@ import { $ } from "bun";
 import { open, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
+import { attachToConnection } from "@workspace/server/connections";
 import type {
   CreateFileInput,
   DirectoryEntry,
   DirectoryListing,
+  FileChange,
   ListDirectoryInput,
   SearchFilesInput,
   WorkspaceFile,
 } from "../model";
 import { rankFilePaths } from "../model/paths";
 import { resolveWorkspaceFile } from "./paths";
+import { fileWatcher, readFileChange } from "./watcher";
 
 const SEARCH_RESULT_LIMIT = 12;
 const SCANNED_FILE_LIMIT = 20_000;
@@ -34,6 +37,17 @@ export async function writeFile(
   const absolutePath = requireFilePath(file);
   await Bun.write(absolutePath, content);
   return { timestamp: (await Bun.file(absolutePath).stat()).mtimeMs };
+}
+
+/** Publish a file's changes while a tab's connection holds the returned lease. The file's current
+ *  state comes back too, so a change between the caller's read and this watch isn't missed. */
+export async function watchFile(
+  connection: string,
+  file: WorkspaceFile,
+): Promise<{ lease?: string; change: FileChange }> {
+  const path = requireFilePath(file);
+  const lease = attachToConnection(connection, fileWatcher.watch(file, path));
+  return { lease, change: await readFileChange(file, path) };
 }
 
 /** Create one empty file without replacing an existing entry. */

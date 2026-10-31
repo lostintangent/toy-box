@@ -2,15 +2,15 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import { useAtom } from "@tanstack/react-store";
 import { X, Maximize2, Minimize2 } from "lucide-react";
-import { useFocusedPaneAtom } from "@workspace/hooks/layout/surface";
+import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/shared/ui/resizable";
 import type { ImperativePanelGroupHandle } from "react-resizable-panels";
-import { WorkspacePaneView } from "../shell/WorkspacePaneView";
-import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "../shell/paneControls";
+import { WorkspacePaneView } from "../WorkspacePaneView";
+import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "@/shared/panes/paneControls";
 import { SessionOverlay } from "@sessions/components/SessionOverlay";
 import { cn } from "@/shared/utils";
 import { CARD_CLASS, CARD_INSET_CLASS } from "@workspace/components/layout/card";
-import { paneSourceSessionId, type WorkspacePane } from "@workspace/model/panes";
+import type { WorkspacePane } from "@workspace/model/panes";
 
 /** Resizable desktop host for up to four workspace panes. Pane count determines
  *  the grid shape; user resizing is preserved across incremental changes, and
@@ -35,53 +35,21 @@ function defaultWorkspaceGridLayout(count: number): WorkspaceGridLayout {
   };
 }
 
-function applyWorkspaceGridCountStep(
-  prevCount: number,
-  nextCount: number,
-  layout: WorkspaceGridLayout,
-): WorkspaceGridLayout {
-  if (nextCount > prevCount) {
-    if (nextCount === 2) {
-      return { ...layout, top: [50, 50] };
-    }
-    if (nextCount === 3) {
-      return { ...layout, rows: [50, 50], bottom: [100, 0] };
-    }
-    if (nextCount === 4) {
-      return { ...layout, bottom: [50, 50] };
-    }
-  }
-
-  if (nextCount === 1) {
-    return { ...layout, rows: [100, 0], top: [100, 0] };
-  }
-  if (nextCount === 2) {
-    return { ...layout, rows: [100, 0] };
-  }
-  if (nextCount === 3) {
-    return { ...layout, bottom: [100, 0] };
-  }
-
-  return layout;
-}
-
+/** A split keeps its user-set sizes while it stays split; every other split takes the new count's canonical size. */
 export function applyWorkspaceGridCountChange(
   prevCount: number,
   nextCount: number,
   layout: WorkspaceGridLayout,
 ): WorkspaceGridLayout {
-  if (nextCount === prevCount) {
-    return layout;
-  }
+  if (nextCount === prevCount) return layout;
 
-  const direction = nextCount > prevCount ? 1 : -1;
-  let nextLayout = layout;
-
-  for (let currentCount = prevCount; currentCount !== nextCount; currentCount += direction) {
-    nextLayout = applyWorkspaceGridCountStep(currentCount, currentCount + direction, nextLayout);
-  }
-
-  return nextLayout;
+  const canonical = defaultWorkspaceGridLayout(nextCount);
+  const staysSplit = (minCount: number) => prevCount >= minCount && nextCount >= minCount;
+  return {
+    rows: staysSplit(3) ? layout.rows : canonical.rows,
+    top: staysSplit(2) ? layout.top : canonical.top,
+    bottom: staysSplit(4) ? layout.bottom : canonical.bottom,
+  };
 }
 
 export function resolveGridSessionOverlayId(
@@ -89,10 +57,8 @@ export function resolveGridSessionOverlayId(
   panes: readonly WorkspacePane[],
   isMaximized: boolean,
 ): string | undefined {
-  if (pane.kind === "session") return undefined;
-
-  const sourceSessionId = paneSourceSessionId(pane);
-  if (sourceSessionId === undefined) return undefined;
+  const sourceSessionId = pane.sessionId;
+  if (pane.kind === "session" || sourceSessionId === undefined) return undefined;
 
   const sourceSessionIsVisible = panes.some(
     (candidate) => candidate.kind === "session" && candidate.sessionId === sourceSessionId,
@@ -137,7 +103,7 @@ function applyWorkspaceGridLayout(
 export function WorkspaceGrid({ panes, resolvePaneClose }: WorkspaceGridProps) {
   const count = panes.length;
   const [isDragging, setIsDragging] = useState(false);
-  const [focusedPaneId, setFocusedPaneId] = useAtom(useFocusedPaneAtom());
+  const [focusedPaneId, setFocusedPaneId] = useAtom(useWorkspaceSurface().focusedPaneAtom);
 
   // Group defaults are fixed at mount; later count changes apply a complete layout.
   const [initialLayout] = useState(() => defaultWorkspaceGridLayout(count));

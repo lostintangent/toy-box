@@ -1,67 +1,22 @@
 import { describe, expect, test } from "bun:test";
+import { createAppPane } from "@apps/model";
+import { machineFile, sessionFile } from "@files/model";
+import { createEditorPane } from "@files/model/panes";
+import { INBOX_PANE } from "@inbox/model";
+import { createScreenPane } from "@screens/model";
+import type { SessionCanvas } from "@sessions/model";
+import { createCanvasPane, createSessionPane } from "@sessions/model/panes";
 import {
-  createEditorPane,
-  createScreenPane,
-  createAppPane,
-  createChannelPane,
-  createCanvasPaneId,
-  createLinkedCanvasPane,
-  createLinkedPanes,
-  createLinkedSessionPane,
-  deriveOpenSessionIds,
-  paneSourceSessionId,
   deriveReachablePaneIds,
-  createSessionPane,
-  createSessionPaneId,
   deriveVisibleWorkspacePanes,
-  deriveWorkspaceRootPanes,
-  INBOX_PANE,
-  resolveEditorAutoFocus,
-  resolveEditorPaneMode,
-  resolveArtifactSelection,
   type WorkspacePane,
 } from "@workspace/model/panes";
-import { machineFile, sessionFile } from "@files/model";
-import type { SessionCanvas } from "@sessions/model";
-
-describe("artifact selection", () => {
-  const first = { path: "first.md", updatedAt: 1 };
-  const latest = { path: "latest.md", updatedAt: 2 };
-  const oldest = { path: "oldest.md", updatedAt: 0 };
-  const artifacts = Object.freeze([first, latest, oldest]);
-
-  test("opens the most recently updated artifact regardless of catalog order", () => {
-    expect(resolveArtifactSelection(artifacts)?.path).toBe(latest.path);
-  });
-
-  test("retains the selected artifact over newer output", () => {
-    expect(resolveArtifactSelection(artifacts, first.path)?.path).toBe(first.path);
-  });
-
-  test("prefers an artifact-first session's document until another artifact is selected", () => {
-    expect(resolveArtifactSelection(artifacts, undefined, first.path)?.path).toBe(first.path);
-    expect(resolveArtifactSelection(artifacts, latest.path, first.path)?.path).toBe(latest.path);
-  });
-
-  test("falls back when the selected or initial artifact disappears", () => {
-    expect(resolveArtifactSelection(artifacts, "deleted.md", "deleted.md")?.path).toBe(latest.path);
-    expect(resolveArtifactSelection(artifacts, "deleted.md", first.path)?.path).toBe(first.path);
-    expect(resolveArtifactSelection([], first.path, first.path)).toBeUndefined();
-  });
-});
-
-function selectedSessionPane(sessionId: string): Extract<WorkspacePane, { kind: "session" }> {
-  return createSessionPane(sessionId, false);
-}
 
 function derivePanes(
-  selectedSessionIds: string[],
+  rootPanes: WorkspacePane[],
   panePublications: Record<string, WorkspacePane[]>,
 ) {
-  return deriveVisibleWorkspacePanes({
-    rootPanes: deriveWorkspaceRootPanes(selectedSessionIds),
-    panePublications,
-  });
+  return deriveVisibleWorkspacePanes({ rootPanes, panePublications });
 }
 
 function canvas(overrides: Partial<SessionCanvas> = {}): SessionCanvas {
@@ -77,92 +32,33 @@ function canvas(overrides: Partial<SessionCanvas> = {}): SessionCanvas {
   };
 }
 
-describe("workspace pane derivation", () => {
-  test("a screen preview preserves source identity and deduplicates with its root pane", () => {
-    const linked = createLinkedPanes("A", [], [], [], [], [], {
-      kind: "screen",
-      screenId: "window",
-    });
-    expect(linked).toEqual([createScreenPane("window", "A")]);
-    expect(linked[0]?.id).toBe("screen:window");
-    expect(paneSourceSessionId(linked[0]!)).toBe("A");
-    const publications = { [createSessionPaneId("A")]: linked };
-    expect(
-      deriveVisibleWorkspacePanes({
-        rootPanes: deriveWorkspaceRootPanes(["A"], [], [], [], ["window", "window"]),
-        panePublications: publications,
-      }),
-    ).toHaveLength(2);
+describe("workspace pane graph", () => {
+  test("shows linked panes in their publisher's order after the roots", () => {
+    const root = createAppPane("factory");
+    const linked = [
+      createSessionPane("child", true),
+      createEditorPane(machineFile("/repo/notes.md")),
+    ];
+
+    expect(derivePanes([root], { [root.id]: linked })).toEqual([root, ...linked]);
   });
 
-  test("uses Inbox as the fallback root pane", () => {
-    expect(deriveWorkspaceRootPanes([])).toEqual([INBOX_PANE]);
-    expect(deriveWorkspaceRootPanes(["A"])).toEqual([selectedSessionPane("A")]);
-  });
+  test("shows a pane that is both a root and linked once", () => {
+    const session = createSessionPane("A");
+    const screen = createScreenPane("window");
+    const linkedScreen = createScreenPane("window", "A");
 
-  test("appends user-opened files as root panes without losing their identity", () => {
-    const path = "/repo/notes.md";
-    const file = machineFile(path);
-    const artifact = sessionFile("B", "plan.md");
-    expect(deriveWorkspaceRootPanes(["A"], [file, artifact])).toEqual([
-      selectedSessionPane("A"),
-      createEditorPane(file),
-      createEditorPane(artifact),
+    expect(derivePanes([session, screen], { [session.id]: [linkedScreen] })).toEqual([
+      session,
+      screen,
     ]);
-    // Files present with no session replace the Inbox fallback.
-    expect(deriveWorkspaceRootPanes([], [file])).toEqual([createEditorPane(file)]);
-  });
-
-  test("adds saved apps as durable root panes without assigning a source session", () => {
-    const appPane = createAppPane("app-a");
-    expect(deriveWorkspaceRootPanes([], [], ["app-a"])).toEqual([appPane]);
-    expect(paneSourceSessionId(appPane)).toBeUndefined();
-    expect(deriveWorkspaceRootPanes(["A"], [], ["app-a"])).toEqual([
-      selectedSessionPane("A"),
-      appPane,
-    ]);
-  });
-
-  test("keeps selected surfaces ahead of the files opened from them", () => {
-    const path = "/repo/notes.md";
-    const editorPane = createEditorPane(machineFile(path));
-
-    expect(deriveWorkspaceRootPanes([], [machineFile(path)], ["app-a"])).toEqual([
-      createAppPane("app-a"),
-      editorPane,
-    ]);
-    expect(deriveWorkspaceRootPanes([], [machineFile(path)], [], ["channel-a"])).toEqual([
-      createChannelPane("channel-a"),
-      editorPane,
-    ]);
-  });
-
-  test("deduplicates roots and enforces one combined workspace cap", () => {
-    expect(
-      deriveWorkspaceRootPanes(
-        ["A", "A", "B"],
-        [machineFile("/one.md"), machineFile("/two.md")],
-        ["app-a"],
-      ),
-    ).toEqual([
-      selectedSessionPane("A"),
-      selectedSessionPane("B"),
-      createAppPane("app-a"),
-      createEditorPane(machineFile("/one.md")),
-    ]);
-  });
-
-  test("resolves source sessions without assigning one to Inbox", () => {
-    expect(paneSourceSessionId(INBOX_PANE)).toBeUndefined();
-    expect(paneSourceSessionId(selectedSessionPane("A"))).toBe("A");
-    expect(paneSourceSessionId(createEditorPane(sessionFile("A", "report.md")))).toBe("A");
   });
 
   test("lets the Inbox pane publish an Inbox artifact", () => {
     const artifactPane = createEditorPane(sessionFile("inbox-1", "result.md"), "edit");
     const panePublications = { [INBOX_PANE.id]: [artifactPane] };
 
-    expect(derivePanes([], panePublications)).toEqual([INBOX_PANE, artifactPane]);
+    expect(derivePanes([INBOX_PANE], panePublications)).toEqual([INBOX_PANE, artifactPane]);
     expect(deriveReachablePaneIds([INBOX_PANE], panePublications)).toEqual([
       INBOX_PANE.id,
       artifactPane.id,
@@ -179,131 +75,23 @@ describe("workspace pane derivation", () => {
     });
 
     expect(
-      derivePanes(["A", "B"], {
-        [createSessionPaneId("A")]: [
-          createLinkedCanvasPane("A", firstCanvas),
-          createLinkedCanvasPane("A", secondCanvas),
+      derivePanes([createSessionPane("A"), createSessionPane("B")], {
+        [createSessionPane("A").id]: [
+          createCanvasPane("A", firstCanvas),
+          createCanvasPane("A", secondCanvas),
         ],
       }),
     ).toEqual([
-      { kind: "session", id: "session:A", sessionId: "A", isLinkedOnly: false },
-      { kind: "session", id: "session:B", sessionId: "B", isLinkedOnly: false },
-      {
-        kind: "canvas",
-        id: createCanvasPaneId("A", firstCanvas),
-        sourceSessionId: "A",
-        canvas: firstCanvas,
-      },
-      {
-        kind: "canvas",
-        id: createCanvasPaneId("A", secondCanvas),
-        sourceSessionId: "A",
-        canvas: secondCanvas,
-      },
-    ]);
-  });
-
-  test("prioritizes canvases over linked-only sessions without evicting selected sessions", () => {
-    const firstCanvas = canvas();
-    const secondCanvas = canvas({
-      key: JSON.stringify(["user:documint", "documint-markdown-agent", "notes"]),
-      instanceId: "notes",
-      title: "Notes",
-      revision: 3,
-    });
-
-    expect(
-      derivePanes(["A"], {
-        [createSessionPaneId("A")]: [
-          createLinkedSessionPane("B"),
-          createLinkedCanvasPane("A", firstCanvas),
-          createLinkedCanvasPane("A", secondCanvas),
-        ],
-      }),
-    ).toEqual([
-      { kind: "session", id: "session:A", sessionId: "A", isLinkedOnly: false },
-      {
-        kind: "canvas",
-        id: createCanvasPaneId("A", firstCanvas),
-        sourceSessionId: "A",
-        canvas: firstCanvas,
-      },
-      {
-        kind: "canvas",
-        id: createCanvasPaneId("A", secondCanvas),
-        sourceSessionId: "A",
-        canvas: secondCanvas,
-      },
-      { kind: "session", id: "session:B", sessionId: "B", isLinkedOnly: true },
-    ]);
-  });
-
-  test("places artifact panes after selected sessions and before canvases", () => {
-    const firstCanvas = canvas();
-    const markdownPane = createEditorPane(sessionFile("A", "plan.md"));
-
-    expect(
-      derivePanes(["A"], {
-        [createSessionPaneId("A")]: [
-          createLinkedSessionPane("B"),
-          markdownPane,
-          createLinkedCanvasPane("A", firstCanvas),
-        ],
-      }),
-    ).toEqual([
-      { kind: "session", id: "session:A", sessionId: "A", isLinkedOnly: false },
-      markdownPane,
-      {
-        kind: "canvas",
-        id: createCanvasPaneId("A", firstCanvas),
-        sourceSessionId: "A",
-        canvas: firstCanvas,
-      },
-      { kind: "session", id: "session:B", sessionId: "B", isLinkedOnly: true },
-    ]);
-  });
-
-  test("creates artifact identity from its source session and path", () => {
-    const htmlPane = createEditorPane(sessionFile("A", "preview.html"));
-
-    expect(htmlPane).toEqual({
-      kind: "editor",
-      id: "editor:session:A:preview.html",
-      file: sessionFile("A", "preview.html"),
-      title: "preview.html",
-      mode: undefined,
-    });
-  });
-
-  test("uses product names for recognized artifact paths", () => {
-    expect(createEditorPane(sessionFile("A", "plan.md")).title).toBe("Plan");
-  });
-
-  test("automation membership supplies the default mode without overriding explicit choices", () => {
-    const sourceSessionId = "11111111-1111-4111-8111-111111111111";
-    const pane = createEditorPane(sessionFile(sourceSessionId, "plan.md"));
-
-    expect(resolveEditorPaneMode(pane, [sourceSessionId])).toBe("read");
-    expect(resolveEditorPaneMode(pane, [])).toBe("edit");
-    expect(resolveEditorPaneMode({ ...pane, mode: "edit" }, [sourceSessionId])).toBe("edit");
-  });
-
-  test("publishes artifacts with linked panes and preserves artifact modes", () => {
-    const path = "plan.md";
-    const previousPane = {
-      ...createEditorPane(sessionFile("A", path)),
-      mode: "edit" as const,
-    };
-
-    expect(createLinkedPanes("A", ["B"], [], [path], [], [previousPane])).toEqual([
-      createLinkedSessionPane("B"),
-      previousPane,
+      createSessionPane("A"),
+      createSessionPane("B"),
+      createCanvasPane("A", firstCanvas),
+      createCanvasPane("A", secondCanvas),
     ]);
   });
 
   test("keeps a linked session visible ahead of the panes it publishes", () => {
     const appPane = createAppPane("factory");
-    const coordinatorPane = createLinkedSessionPane("coordinator");
+    const coordinatorPane = createSessionPane("coordinator", true);
     const artifacts = ["plan.md", "implementation.md", "review.md"].map((path) =>
       createEditorPane(sessionFile("coordinator", path)),
     );
@@ -319,26 +107,12 @@ describe("workspace pane derivation", () => {
     ).toEqual([appPane, coordinatorPane, artifacts[0], artifacts[1]]);
   });
 
-  test("derives open session ids from the rendered panes", () => {
-    const pane = createLinkedCanvasPane("A", canvas());
-    const markdownPane = createEditorPane(sessionFile("A", "plan.md"));
-
-    expect(
-      deriveOpenSessionIds([
-        { kind: "session", id: "session:A", sessionId: "A", isLinkedOnly: false },
-        pane,
-        markdownPane,
-        createLinkedSessionPane("B"),
-      ]),
-    ).toEqual(["A", "B"]);
-  });
-
   test("focuses an overflow artifact or child without losing its publishing session", () => {
-    const root = selectedSessionPane("A");
+    const root = createSessionPane("A");
     const artifacts = ["one.md", "two.md", "three.md", "four.toy"].map((path) =>
       createEditorPane(sessionFile("A", path)),
     );
-    const child = createLinkedSessionPane("child");
+    const child = createSessionPane("child", true);
     const panePublications = { [root.id]: [...artifacts, child] };
     for (const focusedPane of [artifacts[3]!, child]) {
       expect(
@@ -357,7 +131,7 @@ describe("workspace pane derivation", () => {
 
   test("retains a publishing app when explicit focus displaces a root in a full workspace", () => {
     const rootPanes = ["a", "b", "c", "owner"].map(createAppPane);
-    const child = createLinkedSessionPane("child");
+    const child = createSessionPane("child", true);
     const panePublications = { [rootPanes[3]!.id]: [child] };
     expect(
       deriveVisibleWorkspacePanes({
@@ -373,141 +147,5 @@ describe("workspace pane derivation", () => {
         focusedPaneId: "departed",
       }),
     ).toEqual(rootPanes);
-  });
-});
-
-describe("artifact auto-focus", () => {
-  const automationSessionId = "22222222-2222-4222-8222-222222222222";
-  const chatPane = selectedSessionPane(automationSessionId);
-  const artifactPane = createEditorPane(sessionFile(automationSessionId, "report.md"));
-  const regularChatPane = selectedSessionPane("session-1");
-  const regularEditorPane = createEditorPane(sessionFile("session-1", "notes.md"));
-
-  test("always scope focuses session and automation artifact panes", () => {
-    expect(
-      resolveEditorAutoFocus(new Set([chatPane.id]), [chatPane, artifactPane], "always").focusPane,
-    ).toEqual(artifactPane);
-
-    expect(
-      resolveEditorAutoFocus(
-        new Set([regularChatPane.id]),
-        [regularChatPane, regularEditorPane],
-        "always",
-      ).focusPane,
-    ).toEqual(regularEditorPane);
-  });
-
-  test("automations scope focuses automation artifacts only", () => {
-    const { focusPane, seenPaneIds } = resolveEditorAutoFocus(
-      new Set([chatPane.id]),
-      [chatPane, artifactPane],
-      "automations",
-      [automationSessionId],
-    );
-
-    expect(focusPane).toEqual(artifactPane);
-    expect(seenPaneIds).toEqual(new Set([chatPane.id, artifactPane.id]));
-
-    expect(
-      resolveEditorAutoFocus(
-        new Set([regularChatPane.id]),
-        [regularChatPane, regularEditorPane],
-        "automations",
-        [automationSessionId],
-      ).focusPane,
-    ).toBeUndefined();
-  });
-
-  test("sessions scope focuses regular session artifacts only", () => {
-    expect(
-      resolveEditorAutoFocus(
-        new Set([regularChatPane.id]),
-        [regularChatPane, regularEditorPane],
-        "sessions",
-        [automationSessionId],
-      ).focusPane,
-    ).toEqual(regularEditorPane);
-
-    expect(
-      resolveEditorAutoFocus(new Set([chatPane.id]), [chatPane, artifactPane], "sessions", [
-        automationSessionId,
-      ]).focusPane,
-    ).toBeUndefined();
-  });
-
-  test("never scope does not focus artifacts", () => {
-    expect(
-      resolveEditorAutoFocus(new Set([chatPane.id]), [chatPane, artifactPane], "never").focusPane,
-    ).toBeUndefined();
-
-    expect(
-      resolveEditorAutoFocus(
-        new Set([regularChatPane.id]),
-        [regularChatPane, regularEditorPane],
-        "never",
-      ).focusPane,
-    ).toBeUndefined();
-  });
-
-  test("an artifact-first draft focuses its artifact independently of the preference", () => {
-    expect(
-      resolveEditorAutoFocus(
-        new Set([regularChatPane.id]),
-        [regularChatPane, regularEditorPane],
-        "never",
-        [],
-        new Set([regularEditorPane.id]),
-      ).focusPane,
-    ).toEqual(regularEditorPane);
-  });
-
-  test("focuses a pane at most once per appearance", () => {
-    const first = resolveEditorAutoFocus(
-      new Set([chatPane.id]),
-      [chatPane, artifactPane],
-      "always",
-    );
-
-    expect(
-      resolveEditorAutoFocus(first.seenPaneIds, [chatPane, artifactPane], "always").focusPane,
-    ).toBeUndefined();
-  });
-
-  test("ignores newly appearing session and canvas panes", () => {
-    expect(
-      resolveEditorAutoFocus(
-        new Set(),
-        [chatPane, createLinkedCanvasPane(automationSessionId, canvas())],
-        "always",
-      ).focusPane,
-    ).toBeUndefined();
-  });
-
-  test("does not claim focus in multi-session layouts, but still marks panes seen", () => {
-    const multi = resolveEditorAutoFocus(
-      new Set(),
-      [chatPane, selectedSessionPane("session-2"), artifactPane],
-      "always",
-    );
-    expect(multi.focusPane).toBeUndefined();
-
-    // Back to a single-session layout: the artifact was already seen, so it
-    // does not retroactively grab focus.
-    expect(
-      resolveEditorAutoFocus(multi.seenPaneIds, [chatPane, artifactPane], "always").focusPane,
-    ).toBeUndefined();
-  });
-
-  test("prunes departed panes so a reopened source can focus its artifact again", () => {
-    const opened = resolveEditorAutoFocus(new Set(), [chatPane, artifactPane], "always");
-    expect(opened.focusPane).toEqual(artifactPane);
-
-    // Closing the source clears its panes and re-arms the trigger.
-    const closed = resolveEditorAutoFocus(opened.seenPaneIds, [], "always");
-    expect(closed.seenPaneIds).toEqual(new Set());
-
-    expect(
-      resolveEditorAutoFocus(closed.seenPaneIds, [chatPane, artifactPane], "always").focusPane,
-    ).toEqual(artifactPane);
   });
 });

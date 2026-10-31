@@ -8,20 +8,20 @@ import {
   createSession,
   deleteSession,
   deliverMessage,
+  markSessionRead,
   mergeSessionWorktree,
   renameSession,
   rewindSession as requestSessionRewind,
   steerQueuedMessage,
 } from "./server/functions";
-import { sessionQueries } from "./queries";
+import { sessionActivityJournal, sessionQueries } from "./queries";
 import {
   cancelSessionsStateQuery,
   removeSessionFromState,
   restoreSessionsState,
   snapshotSessionsState,
-  upsertSessionInState,
-} from "./queryCache";
-import { applyWorkspaceEvent } from "@workspace/queries";
+} from "./cache";
+import { applyWorkspaceEvent } from "@workspace/sync";
 import type { SessionLaunch } from "./model";
 import type { SessionQuestionAnswer } from "./model/protocol";
 
@@ -41,7 +41,10 @@ export const sessionMutations = {
       // could drop it; omitting timestamps keeps this idempotent with the broadcast.
       onSuccess: ({ sessionId }, _launch, _context, { client }) => {
         void cancelSessionsStateQuery(client);
-        upsertSessionInState(client, { id: sessionId, sessionType: "standard" });
+        applyWorkspaceEvent(client, {
+          type: "session.upserted",
+          session: { id: sessionId, sessionType: "standard" },
+        });
       },
     }),
 
@@ -100,7 +103,10 @@ export const sessionMutations = {
       onMutate: async (name, { client }) => {
         await cancelSessionsStateQuery(client);
         const previousSessionsState = snapshotSessionsState(client);
-        upsertSessionInState(client, { id: sessionId, title: name });
+        applyWorkspaceEvent(client, {
+          type: "session.upserted",
+          session: { id: sessionId, title: name },
+        });
         return { previousSessionsState };
       },
       onError: (_error, _variables, context, { client }) => {
@@ -108,6 +114,15 @@ export const sessionMutations = {
           restoreSessionsState(client, context.previousSessionsState);
         }
       },
+    }),
+
+  markRead: (sessionId: string) =>
+    mutationOptions({
+      mutationFn: () => markSessionRead({ data: { sessionId } }),
+      onMutate: (_variables, { client }) => {
+        applyWorkspaceEvent(client, { type: "session.read", sessionId });
+      },
+      onError: (_error, _variables, _context, { client }) => sessionActivityJournal.repair(client),
     }),
 
   deliverMessage: (sessionId: string) =>

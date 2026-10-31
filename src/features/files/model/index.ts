@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CustomEditorKind } from "./editors";
 
 export * from "./editors";
 
@@ -22,6 +23,10 @@ export const writeFileInputSchema = workspaceFileInputSchema.extend({
   content: z.string(),
 });
 
+export const watchFileInputSchema = workspaceFileInputSchema.extend({
+  connection: z.string().min(1),
+});
+
 export const createFileInputSchema = z.object({
   directory: z.string().min(1),
   name: z.string().trim().min(1),
@@ -39,11 +44,22 @@ export const searchFilesInputSchema = z.object({
 
 export type WorkspaceFile = z.infer<typeof workspaceFileSchema>;
 export type SessionFile = z.infer<typeof sessionFileSchema>;
+export type MachineFile = Extract<WorkspaceFile, { kind: "machine" }>;
 export type CreateFileInput = z.infer<typeof createFileInputSchema>;
 export type ListDirectoryInput = z.infer<typeof listDirectoryInputSchema>;
 export type SearchFilesInput = z.infer<typeof searchFilesInputSchema>;
 export type WorkspaceFileMode = "read" | "edit" | "shared";
-export type FileWatchEvent = { type: "modified"; timestamp: number } | { type: "deleted" };
+
+/** A watched file's current state on disk, published whenever it changes. */
+export type FileChange =
+  | { type: "file.changed"; file: WorkspaceFile; timestamp: number }
+  | { type: "file.deleted"; file: WorkspaceFile };
+
+declare module "@workspace/model/events" {
+  interface WorkspaceEvents {
+    files: { type: "editor.registered"; kind: CustomEditorKind } | FileChange;
+  }
+}
 
 export type DirectoryEntry = {
   name: string;
@@ -89,6 +105,6 @@ export function sessionFile(sessionId: string, path: string): SessionFile {
 }
 
 /** A machine file: a real file on the host, addressed by its absolute path. */
-export function machineFile(path: string): Extract<WorkspaceFile, { kind: "machine" }> {
+export function machineFile(path: string): MachineFile {
   return { kind: "machine", path };
 }

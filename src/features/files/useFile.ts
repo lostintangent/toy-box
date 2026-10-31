@@ -1,21 +1,23 @@
-import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
+import { useSelector } from "@tanstack/react-store";
 import { sendSystemMessage } from "@sessions/server/functions";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
-import { invalidateWorkspaceStateQuery } from "@workspace/queries";
+import { invalidateActiveWorkersQuery } from "@workers/cache";
 import { workerMutations } from "@workers/mutations";
+import { workerQueries } from "@workers/queries";
 import type { SpawnWorkerInput, Worker } from "@workers/model";
+import { releaseLease } from "@workspace/server/functions";
+import { applyWorkspaceEvent, workspaceConnection } from "@workspace/sync";
 import { fileMutations } from "./mutations";
 import {
   ownerSessionId,
   workspaceFileId,
-  type FileWatchEvent,
   type WorkspaceFile,
   type WorkspaceFileMode,
 } from "./model";
-import { createFileWatchUrl } from "./model/paths";
 import { fileQueries } from "./queries";
+import { watchFile } from "./server/functions";
 
 const SAVE_DEBOUNCE_MS = 2_000;
 const SAVE_SETTLE_MS = 1_000;
@@ -58,19 +60,23 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
   });
 
   const [showSaveIndicator, setShowSaveIndicator] = useState(false);
-  const [watchError, setWatchError] = useState<string | null>(null);
+  const [writtenTimestamp, setWrittenTimestamp] = useState<number | null>(null);
 
   const pendingContentRef = useRef("");
   const flushOptionsRef = useRef<FileFlushOptions | undefined>(undefined);
   const latestSaveRef = useRef<Promise<unknown> | null>(null);
-  const lastWrittenTimestampRef = useRef<number | null>(null);
   const settleTask = useDebouncer(() => setShowSaveIndicator(false), { wait: SAVE_SETTLE_MS });
 
   // Stable string identity so the watch effect keys off value, not object identity.
   const fileId = workspaceFileId(file);
 
   const read = useQuery(fileQueries.detail(file));
-  const content = read.data?.content ?? null;
+  // This surface's view of the file follows every version except its own saves, so a save never
+  // pushes possibly older content back into its renderer, while other surfaces of the file in this
+  // tab still pick the save up.
+  const [known, setKnown] = useState(read.data);
+  if (read.data !== known && read.data?.timestamp !== writtenTimestamp) setKnown(read.data);
+  const content = known?.content ?? null;
 
   const write = useMutation({
     ...fileMutations.write(file),
@@ -78,9 +84,13 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
       settleTask.cancel();
       setShowSaveIndicator(true);
     },
-    onSuccess: (result, { notifyAgent }) => {
-      lastWrittenTimestampRef.current = result.timestamp;
-      setWatchError(null);
+    onSuccess: (result, { content: written, notifyAgent }) => {
+      setWrittenTimestamp(result.timestamp);
+      // The save is now the file's known version, so its own change notice is no news.
+      queryClient.setQueryData(fileQueries.detailKey(fileId), {
+        content: written,
+        timestamp: result.timestamp,
+      });
       if (notifyAgent) scheduleFileEditSystemMessage();
     },
     onSettled: () => {
@@ -92,12 +102,14 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
   const cancel = useMutation(workerMutations.cancel);
 
   // Pending workers scoped to this file. A machine file has no owner, so no workers.
-  const workers = useWorkspaceSelector((workspace) =>
-    workspace.workers.filter(
-      (worker): worker is Extract<Worker, { type: "file" }> =>
-        worker.type === "file" && workspaceFileId(worker.file) === fileId,
-    ),
-  );
+  const { data: workers } = useSuspenseQuery({
+    ...workerQueries.active(),
+    select: (active) =>
+      active.filter(
+        (worker): worker is Extract<Worker, { type: "file" }> =>
+          worker.type === "file" && workspaceFileId(worker.file) === fileId,
+      ),
+  });
 
   const saveTask = useDebouncer(
     () => {
@@ -143,7 +155,7 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
       file,
       message: { content: prompt },
     });
-    await invalidateWorkspaceStateQuery(queryClient);
+    await invalidateActiveWorkersQuery(queryClient);
     return worker;
   }
 
@@ -152,42 +164,40 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
     await cancel.mutateAsync({ type: "file", file, workerSessionId });
   }
 
-  // Watch the file once it exists, invalidating the read on external change.
-  // Own writes are suppressed by timestamp so a save never re-baselines the renderer.
-  const watchUrl = createFileWatchUrl(file);
+  // Once read, the file stays watched for as long as this tab's workspace connection holds it.
+  // Changes arrive as workspace events; the watch's own reply covers any change since the read.
+  const connection = useSelector(workspaceConnection);
+  const watching = connection !== null && read.isSuccess;
+  const watch = useEffectEvent((connection: string) => watchFile({ data: { connection, file } }));
 
   useEffect(() => {
-    if (!read.isSuccess) return;
-    const source = new EventSource(watchUrl);
-    source.onmessage = ({ data }) => {
-      const event = JSON.parse(data) as FileWatchEvent;
-      if (event.type === "deleted") {
-        queryClient.setQueryData(fileQueries.detailKey(fileId), null);
-        setWatchError("This file was deleted.");
-        return;
-      }
-      if (event.timestamp === lastWrittenTimestampRef.current) return;
-      setWatchError(null);
-      void queryClient.invalidateQueries({ queryKey: fileQueries.detailKey(fileId) });
+    if (!watching) return;
+    const watched = watch(connection).catch((error) => {
+      console.error("Unable to watch this file:", error);
+    });
+    void watched.then((result) => result && applyWorkspaceEvent(queryClient, result.change));
+    return () => {
+      void watched.then((result) => {
+        if (result?.lease) void releaseLease({ data: { connection, lease: result.lease } });
+      });
     };
-    source.onerror = () => setWatchError("Unable to watch this file.");
-    return () => source.close();
-  }, [watchUrl, fileId, read.isSuccess, queryClient]);
+  }, [watching, connection, fileId, queryClient]);
 
   return {
     source: file,
     content,
-    revision: read.data?.timestamp ?? 0,
+    revision: known?.timestamp ?? 0,
     isReady: content !== null,
     isLoading: read.isPending,
     isSaving: write.isPending || showSaveIndicator,
     error:
-      watchError ??
-      (write.isError
-        ? "Unable to save this file."
-        : read.isError
-          ? "Unable to load this file."
-          : null),
+      known === null
+        ? "This file was deleted."
+        : write.isError
+          ? "Unable to save this file."
+          : read.isError
+            ? "Unable to load this file."
+            : null,
     save,
     flush,
     workers,
@@ -215,7 +225,7 @@ function useFileEditSystemMessage({
       });
     },
     {
-      enabled: enabled && owner !== undefined,
+      enabled,
       wait: FILE_EDIT_SYSTEM_MESSAGE_DEBOUNCE_MS,
       onUnmount: (debouncer) => debouncer.flush(),
     },

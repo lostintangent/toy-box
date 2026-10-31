@@ -4,3 +4,6 @@ bun = true
 [fmt]
 flavor = "oxfmt"
 ignorePatterns = ["src/features/workspace/routeTree.gen.ts"]
+
+[test]
+preload = ["./src/server/importMetaGlob.ts"]

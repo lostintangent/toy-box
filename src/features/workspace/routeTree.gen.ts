@@ -17,7 +17,6 @@ import { Route as ApiServeScopeSplatRouteImport } from './../files/routes/serve/
 import { Route as ApiV1ChannelsDotindexRouteImport } from './../channels/routes/v1/channels.index'
 import { Route as ApiV1ChannelsChannelIdRouteImport } from './../channels/routes/v1/channels/$channelId'
 import { Route as ApiV1PushRegistrationIDRouteImport } from './../push/routes/v1/push/$registrationID'
-import { Route as ApiWatchScopeSplatRouteImport } from './../files/routes/watch/$scope/$'
 import { Route as ApiV1ChannelsChannelIdDotmembersRouteImport } from './../channels/routes/v1/channels/$channelId.members'
 import { Route as ApiV1ChannelsChannelIdDotmessagesRouteImport } from './../channels/routes/v1/channels/$channelId.messages'
 import { Route as ApiV1ChannelsChannelIdDotreadRouteImport } from './../channels/routes/v1/channels/$channelId.read'
@@ -65,11 +64,6 @@ const ApiV1ChannelsChannelIdRoute = ApiV1ChannelsChannelIdRouteImport.update({
 const ApiV1PushRegistrationIDRoute = ApiV1PushRegistrationIDRouteImport.update({
   id: '/api/v1/push/$registrationID',
   path: '/api/v1/push/$registrationID',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiWatchScopeSplatRoute = ApiWatchScopeSplatRouteImport.update({
-  id: '/api/watch/$scope/$',
-  path: '/api/watch/$scope/$',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiV1ChannelsChannelIdDotmembersRoute =
@@ -129,7 +123,6 @@ export interface FileRoutesByFullPath {
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/v1/channels/$channelId': typeof ApiV1ChannelsChannelIdRouteWithChildren
   '/api/v1/push/$registrationID': typeof ApiV1PushRegistrationIDRouteWithChildren
-  '/api/watch/$scope/$': typeof ApiWatchScopeSplatRoute
   '/api/v1/channels/': typeof ApiV1ChannelsDotindexRoute
   '/api/v1/channels/$channelId/members': typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   '/api/v1/channels/$channelId/messages': typeof ApiV1ChannelsChannelIdDotmessagesRoute
@@ -148,7 +141,6 @@ export interface FileRoutesByTo {
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/v1/channels/$channelId': typeof ApiV1ChannelsChannelIdRouteWithChildren
   '/api/v1/push/$registrationID': typeof ApiV1PushRegistrationIDRouteWithChildren
-  '/api/watch/$scope/$': typeof ApiWatchScopeSplatRoute
   '/api/v1/channels': typeof ApiV1ChannelsDotindexRoute
   '/api/v1/channels/$channelId/members': typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   '/api/v1/channels/$channelId/messages': typeof ApiV1ChannelsChannelIdDotmessagesRoute
@@ -168,7 +160,6 @@ export interface FileRoutesById {
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/v1/channels/$channelId': typeof ApiV1ChannelsChannelIdRouteWithChildren
   '/api/v1/push/$registrationID': typeof ApiV1PushRegistrationIDRouteWithChildren
-  '/api/watch/$scope/$': typeof ApiWatchScopeSplatRoute
   '/api/v1/channels/': typeof ApiV1ChannelsDotindexRoute
   '/api/v1/channels/$channelId/members': typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   '/api/v1/channels/$channelId/messages': typeof ApiV1ChannelsChannelIdDotmessagesRoute
@@ -189,7 +180,6 @@ export interface FileRouteTypes {
     | '/api/serve/$scope/$'
     | '/api/v1/channels/$channelId'
     | '/api/v1/push/$registrationID'
-    | '/api/watch/$scope/$'
     | '/api/v1/channels/'
     | '/api/v1/channels/$channelId/members'
     | '/api/v1/channels/$channelId/messages'
@@ -208,7 +198,6 @@ export interface FileRouteTypes {
     | '/api/serve/$scope/$'
     | '/api/v1/channels/$channelId'
     | '/api/v1/push/$registrationID'
-    | '/api/watch/$scope/$'
     | '/api/v1/channels'
     | '/api/v1/channels/$channelId/members'
     | '/api/v1/channels/$channelId/messages'
@@ -227,7 +216,6 @@ export interface FileRouteTypes {
     | '/api/serve/$scope/$'
     | '/api/v1/channels/$channelId'
     | '/api/v1/push/$registrationID'
-    | '/api/watch/$scope/$'
     | '/api/v1/channels/'
     | '/api/v1/channels/$channelId/members'
     | '/api/v1/channels/$channelId/messages'
@@ -247,7 +235,6 @@ export interface RootRouteChildren {
   ApiServeScopeSplatRoute: typeof ApiServeScopeSplatRoute
   ApiV1ChannelsChannelIdRoute: typeof ApiV1ChannelsChannelIdRouteWithChildren
   ApiV1PushRegistrationIDRoute: typeof ApiV1PushRegistrationIDRouteWithChildren
-  ApiWatchScopeSplatRoute: typeof ApiWatchScopeSplatRoute
   ApiV1ChannelsDotindexRoute: typeof ApiV1ChannelsDotindexRoute
 }
 
@@ -307,13 +294,6 @@ declare module '@tanstack/react-router' {
       path: '/api/v1/push/$registrationID'
       fullPath: '/api/v1/push/$registrationID'
       preLoaderRoute: typeof ApiV1PushRegistrationIDRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/watch/$scope/$': {
-      id: '/api/watch/$scope/$'
-      path: '/api/watch/$scope/$'
-      fullPath: '/api/watch/$scope/$'
-      preLoaderRoute: typeof ApiWatchScopeSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/v1/channels/$channelId/members': {
@@ -466,7 +446,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiServeScopeSplatRoute: ApiServeScopeSplatRoute,
   ApiV1ChannelsChannelIdRoute: ApiV1ChannelsChannelIdRouteWithChildren,
   ApiV1PushRegistrationIDRoute: ApiV1PushRegistrationIDRouteWithChildren,
-  ApiWatchScopeSplatRoute: ApiWatchScopeSplatRoute,
   ApiV1ChannelsDotindexRoute: ApiV1ChannelsDotindexRoute,
 }
 export const routeTree = rootRouteImport

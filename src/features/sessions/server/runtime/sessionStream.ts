@@ -9,7 +9,7 @@
 import type { SessionConnection } from "@providers/server/provider";
 import { evictCachedSessionIfStale, releaseSession } from "@sessions/server/state/registry";
 import { cacheSnapshot, loadSessionSnapshot } from "@sessions/server/state/snapshots";
-import { setSessionStatus } from "@workspace/server/state";
+import { setSessionActivity } from "@sessions/server/state/activity";
 import { systemMessageCoalesceKey } from "@sessions/model/systemMessages";
 import { areModelConfigurationsEqual, type ModelConfiguration } from "@providers/model";
 import type { SessionQuestionAnswer, SessionSubscriptionMode } from "@sessions/model/protocol";
@@ -99,7 +99,8 @@ export class SessionStream {
 
   #bus = createSessionEventBus(MAX_REPLAY_EVENTS);
 
-  readonly #completionWaiters = new Set<() => void>();
+  // Settles once, when this execution finishes or is deleted.
+  readonly #completion = Promise.withResolvers<SessionCompletion>();
   #unsubscribeProvider: () => void;
 
   // Live session state survives turn boundaries; only replay history is
@@ -111,7 +112,7 @@ export class SessionStream {
   #hasOpenedTurn = false;
   #abortRequested = false;
   #finished = false;
-  #completionResult: SessionCompletion | undefined;
+
   private constructor(
     sessionId: string,
     connection: SessionConnection,
@@ -145,11 +146,7 @@ export class SessionStream {
       return "started";
     }
 
-    const isSubmittingMessage = this.#sessionState.queuedMessages.some(
-      ({ status }) => status === "submitting",
-    );
-    const queuedMessage =
-      message.immediate && isSubmittingMessage ? deferMessage(message) : message;
+    const queuedMessage = message.immediate && this.#isSubmitting ? deferMessage(message) : message;
 
     if (queuedMessage.immediate) {
       await this.#submitMessage(queuedMessage);
@@ -174,12 +171,7 @@ export class SessionStream {
   }
 
   async steerQueuedMessage(clientId: string): Promise<boolean> {
-    if (
-      this.#abortRequested ||
-      this.#sessionState.queuedMessages.some(({ status }) => status === "submitting")
-    ) {
-      return false;
-    }
+    if (this.#abortRequested || this.#isSubmitting) return false;
 
     const message = this.#sessionState.queuedMessages.find(
       (candidate) => candidate.clientId === clientId,
@@ -228,31 +220,25 @@ export class SessionStream {
 
   /** Wait for this stream instance to complete, not future replacements with the same ID. */
   waitForCompletion(timeoutMs?: number): Promise<SessionCompletion> {
-    if (SessionStream.get(this.sessionId) !== this) {
-      return Promise.resolve(
-        this.#completionResult ?? completionResult(this.#sessionState.messages),
+    if (timeoutMs === undefined || timeoutMs < 0) return this.#completion.promise;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<SessionCompletion>((resolve) => {
+      timer = setTimeout(
+        () => resolve(completionResult(this.#sessionState.messages, "timed_out")),
+        timeoutMs,
       );
-    }
-
-    return new Promise((resolve) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-
-      const finish = (status: SessionCompletion["status"] = "completed") => {
-        if (timer) clearTimeout(timer);
-        this.#completionWaiters.delete(finish);
-        resolve(this.#completionResult ?? completionResult(this.#sessionState.messages, status));
-      };
-
-      this.#completionWaiters.add(finish);
-
-      if (timeoutMs !== undefined && timeoutMs >= 0) {
-        timer = setTimeout(() => finish("timed_out"), timeoutMs);
-      }
     });
+    return Promise.race([this.#completion.promise, timeout]).finally(() => clearTimeout(timer));
   }
 
   getSessionState(): SessionState {
     return this.#sessionState;
+  }
+
+  updateArtifacts(artifacts: SessionArtifact[]): void {
+    if (this.#finished) return;
+    this.#emit({ type: "artifacts_changed", artifacts });
   }
 
   // ── Stream controls ──────────────────────────────────────────────────
@@ -262,14 +248,13 @@ export class SessionStream {
     if (this.#finished) return;
     this.#finished = true;
     this.#emit({ type: "end", reason, ...(error ? { error } : {}) });
-    this.#completionResult = completionResult(
-      this.#sessionState.messages,
-      reason === "error" ? "failed" : "completed",
+    this.#completion.resolve(
+      completionResult(this.#sessionState.messages, reason === "error" ? "failed" : "completed"),
     );
     if (reason === "idle" && !this.#abortRequested) {
       cacheSnapshot(this.sessionId, this.#sessionState);
     }
-    setSessionStatus(
+    setSessionActivity(
       this.sessionId,
       this.#abortRequested || this.#bus.hasActiveSubscribers ? "idle" : "unread",
     );
@@ -358,7 +343,7 @@ export class SessionStream {
     if (
       this.#abortRequested ||
       this.#finished ||
-      this.#sessionState.queuedMessages.some(({ status }) => status === "submitting") ||
+      this.#isSubmitting ||
       hasBlockingSessionQuestion(this.#sessionState)
     ) {
       return;
@@ -390,7 +375,7 @@ export class SessionStream {
       published.type === "question_cancelled"
     ) {
       const status = this.#sessionState.status === "background" ? "background" : "running";
-      setSessionStatus(
+      setSessionActivity(
         this.sessionId,
         hasBlockingSessionQuestion(this.#sessionState) ? "waiting" : status,
       );
@@ -398,6 +383,11 @@ export class SessionStream {
   }
 
   // ── Internal helpers ─────────────────────────────────────────────────
+
+  /** A queued message is mid-submission, so the next one must wait. */
+  get #isSubmitting(): boolean {
+    return this.#sessionState.queuedMessages.some(({ status }) => status === "submitting");
+  }
 
   async #submitMessage(message: SessionMessage): Promise<void> {
     this.#emit({ type: "message_queued", message });
@@ -436,11 +426,6 @@ export class SessionStream {
     }
   }
 
-  updateArtifacts(artifacts: SessionArtifact[]): void {
-    if (this.#finished) return;
-    this.#emit({ type: "artifacts_changed", artifacts });
-  }
-
   #dispose(): void {
     // Session deletion can dispose without the domain finish transition. Mark
     // the stream finished so a stale reference cannot emit a terminal event or
@@ -448,7 +433,7 @@ export class SessionStream {
     this.#finished = true;
 
     this.#bus.close();
-    for (const resolve of this.#completionWaiters) resolve();
+    this.#completion.resolve(completionResult(this.#sessionState.messages));
     this.#unsubscribeProvider();
     SessionStream.streams.delete(this.sessionId);
   }

@@ -8,11 +8,11 @@ import type { SessionCompletion, SessionLaunch } from "@sessions/model";
 import { getWorker, listWorkers, updateWorker } from "@workers/server";
 import { WorkerDatabase, registerWorkerSession } from "@workers/server/database";
 import { detachManagedSession } from "@/server/managedSessions";
-import { dispatchInboxTask } from "./dispatcher";
 import { SMALL_JSON_MAX_BYTES } from "@/shared/smallJson";
 import type { InboxEntry } from "../model";
 import {
   deleteInboxEntry,
+  dispatchInboxTask,
   ensureInboxRecovered,
   failInboxTask,
   getInboxEntry,

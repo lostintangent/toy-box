@@ -36,11 +36,11 @@ seeds the live Session stream at creation and resume; persisted `session.start` 
 events project those selections into historical replay.
 Explicit/automatic names and conversation-only rewind use native SDK RPCs.
 Skills include native discovery and the role-scoped bundled directories supplied by
-Sessions. Native permissions follow Toy Box's existing trusted-owner policy.
-`computerUse.ts` respects the user's `enabledMcpServers` computer-use opt-in.
-Headless SDK servers load no built-in plugins, so create and resume register
-the matching CLI version's cached computer-use binary as a stdio MCP server.
-If that optional binary is missing, it warns and starts without computer use.
+Sessions. Native permissions follow Toy Box's existing trusted-owner policy: create and resume
+set `allow-all` mode, so the CLI doesn't journal each approval with its full file contents.
+Headless SDK servers load no bundled plugins, so `client.ts` registers the running CLI version's
+cached computer-use plugin at start, and the CLI applies the user's opt-in. If registration fails,
+Copilot warns and runs without computer use.
 This supplies the provider's tools; Screens itself only lists human-viewable screens.
 
 Session discovery, workspace context, and snapshot freshness use `listSessions()` and

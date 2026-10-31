@@ -1,81 +1,17 @@
-import type { AppDefinition, AppInstance, AppShare } from "@apps/model";
-import type { Automation } from "@automations/model";
-import type { CustomEditorKind } from "@files/model";
-import type { SessionUpdate } from "@sessions/model";
-import type { WorkerEvent } from "@workers/model";
-import type { Channel, ChannelList } from "@channels/model";
 import type { Settings } from "./config/settings";
 import type { WorkspaceAction } from "./state/actions";
 
-/** Shared updates broadcast from the server to every connected workspace. */
-export type WorkspaceEvent =
-  | WorkspaceAction
-  | WorkerEvent
-  | { type: "workspace.connected"; revision: string }
-  | { type: "providers.changed" }
-  | { type: "channel.upserted"; channel: Channel }
-  | { type: "channel.deleted"; channelId: string }
-  | { type: "channel.member.upserted"; member: ChannelList["members"][number] }
-  | { type: "channel.member.deleted"; channelId: string; agentId: string }
-  | {
-      type: "settings.changed";
-      settings: Settings;
-    }
-  | {
-      type: "session.upserted";
-      session: SessionUpdate;
-    }
-  | {
-      type: "session.running" | "session.waiting" | "session.background";
-      sessionId: string;
-      at: number;
-    }
-  | SimpleSessionUpdateEvents<"deleted" | "idle" | "unread" | "touched">
-  | { type: "inbox.changed" }
-  | {
-      type: "inbox.entry.deleted";
-      entryId: string;
-    }
-  | {
-      type: "editor.registered";
-      kind: CustomEditorKind;
-    }
-  | {
-      type: "app.registered";
-      definition: AppDefinition;
-    }
-  | {
-      type: "app.unregistered";
-      definitionId: string;
-    }
-  | {
-      type: "app.upserted";
-      app: AppInstance;
-    }
-  | {
-      type: "app.deleted";
-      appId: string;
-    }
-  | {
-      type: "app.share.created";
-      share: AppShare;
-    }
-  | {
-      type: "app.share.deleted";
-      shareId: string;
-    }
-  | {
-      type: "automation.upserted";
-      automation: Automation;
-    }
-  | {
-      type: "automation.deleted";
-      automationId: string;
-    };
+/**
+ * The events each feature publishes on the shared workspace stream, keyed by
+ * feature folder. A feature adds its events by augmenting this interface from
+ * its own model, so the stream never lists features by hand.
+ */
+export interface WorkspaceEvents {
+  workspace:
+    | WorkspaceAction
+    | { type: "workspace.connected"; revision: string; connection: string }
+    | { type: "settings.changed"; settings: Settings };
+}
 
-type SimpleSessionUpdateEvents<EventName extends string> = EventName extends string
-  ? {
-      type: `session.${EventName}`;
-      sessionId: string;
-    }
-  : never;
+/** One shared update broadcast from the server to every connected workspace. */
+export type WorkspaceEvent = WorkspaceEvents[keyof WorkspaceEvents];

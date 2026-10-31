@@ -1,4 +1,5 @@
 import { useEffect, useState, type MouseEvent } from "react";
+import { useWorkspaceSelector } from "@workspace/hooks/state";
 import {
   SidebarListItemAction,
   SidebarListItemButton,
@@ -15,7 +16,6 @@ type SidebarSessionItemProps = Omit<SidebarListItemProps, "status"> & {
     waiting: boolean;
     background: boolean;
     unread: boolean;
-    hasDraft: boolean;
   };
   previewDisabled?: boolean;
 };
@@ -43,8 +43,11 @@ export function SidebarSessionItem({
   ...props
 }: SidebarSessionItemProps) {
   const preview = useSessionPreview(isActive || previewDisabled || disabled);
+  const hasDraft = useWorkspaceSelector((workspace) =>
+    Boolean(workspace.drafts[`session:${sessionId}`]?.text.trim()),
+  );
   const justFinished = useJustFinished(activity.running || activity.waiting || activity.background);
-  const status = getSessionListItemStatus(title, activity, isActive, justFinished);
+  const status = getSessionListItemStatus(title, activity, hasDraft, isActive, justFinished);
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
     preview.close();
@@ -119,7 +122,8 @@ function useJustFinished(live: boolean): boolean {
 
 function getSessionListItemStatus(
   title: string,
-  { running, waiting, background, unread, hasDraft }: SidebarSessionItemProps["activity"],
+  { running, waiting, background, unread }: SidebarSessionItemProps["activity"],
+  hasDraft: boolean,
   isActive: boolean,
   justFinished: boolean,
 ): SidebarStatus | undefined {

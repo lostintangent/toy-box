@@ -1,5 +1,7 @@
-export async function initializePushSchema(db: Bun.SQL): Promise<void> {
-  await db.unsafe(`
+/** The versions of the tables owned by Push, in order. To change a table,
+ * append a version. */
+export default [
+  `
     CREATE TABLE IF NOT EXISTS push_registrations (
       registration_id TEXT PRIMARY KEY,
       token TEXT NOT NULL,
@@ -12,5 +14,5 @@ export async function initializePushSchema(db: Bun.SQL): Promise<void> {
       started_at REAL,
       PRIMARY KEY (registration_id, topic)
     );
-  `);
-}
+  `,
+];

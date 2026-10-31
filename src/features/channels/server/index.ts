@@ -116,9 +116,6 @@ export async function updateChannelMember(
 
 export async function updateChannelFromLead(sessionId: string, input: UpdateChannelInput) {
   const database = new ChannelDatabase(await getStateDatabase());
-  if (input.directory && !isAbsolute(input.directory)) {
-    throw new Error("Use an absolute working directory.");
-  }
   const change = await database.updateChannel(sessionId, input);
   publishChannelChange(change);
   return change.channel;
@@ -162,12 +159,7 @@ export async function editChannel(input: EditChannelInput): Promise<Channel> {
   const change = await database.editChannel(input);
   publishChannelChange(change);
   if (change.purposeChanged) {
-    void wakeChannelAgent(change.channel.id, {
-      type: "channel_message",
-      senderName: "the user",
-    }).catch((error) => {
-      console.error(`Failed to notify Channel lead ${change.channel.id}:`, error);
-    });
+    void wakeQuietly(change.channel.id, { type: "channel_message", senderName: "the user" });
   }
   return change.channel;
 }
@@ -192,7 +184,7 @@ export async function deleteChannel(channelId: string): Promise<boolean> {
 export async function removeChannelMember(agentId: string): Promise<void> {
   const member = await new ChannelDatabase(await getStateDatabase()).getMember(agentId);
   if (!member) return;
-  await deleteWorker(agentId, "channel");
+  await deleteWorker(agentId);
 }
 
 /** The intrinsic lead is never a member. */
@@ -415,13 +407,13 @@ export async function wakeDueChannelAgents(now = new Date()): Promise<void> {
       publishChannelChange(change);
     await Promise.all([
       ...followUps.map(({ agentId, waitingFor }) =>
-        wakeDueAgent(agentId, { type: "channel_follow_up", waitingFor }),
+        wakeQuietly(agentId, { type: "channel_follow_up", waitingFor }),
       ),
       ...routines.map(({ channelId, title, prompt }) =>
-        wakeDueAgent(channelId, { type: "channel_routine", title, prompt }),
+        wakeQuietly(channelId, { type: "channel_routine", title, prompt }),
       ),
       ...checkIns.map(({ agentId, ...task }) =>
-        wakeDueAgent(agentId, { type: "channel_task_check_in", ...task }),
+        wakeQuietly(agentId, { type: "channel_task_check_in", ...task }),
       ),
     ]);
   } catch (error) {
@@ -442,7 +434,7 @@ export async function runChannelRoutine(channelId: string, routineId: string): P
   return true;
 }
 
-function wakeDueAgent(agentId: string, systemMessage: SessionSystemMessage): Promise<void> {
+function wakeQuietly(agentId: string, systemMessage: SessionSystemMessage): Promise<void> {
   return wakeChannelAgent(agentId, systemMessage).catch((error) => {
     console.error(`Failed to wake Channel agent ${agentId}:`, error);
   });
@@ -490,11 +482,7 @@ async function postMessage(
       ? ([lead, ...members].find(({ id }) => id === sender.agentId)?.name ?? "an agent")
       : "the user";
   await Promise.all(
-    audience.map((member) =>
-      wakeChannelAgent(member.id, { type: "channel_message", senderName }).catch((error) => {
-        console.error(`Failed to wake Channel Agent ${member.id}:`, error);
-      }),
-    ),
+    audience.map((member) => wakeQuietly(member.id, { type: "channel_message", senderName })),
   );
   return change.message;
 }

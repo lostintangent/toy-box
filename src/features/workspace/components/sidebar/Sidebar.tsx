@@ -1,8 +1,12 @@
 import { AutomationPanel } from "@automations/components/AutomationPanel";
 import { cn } from "@/shared/utils";
 import type { Session } from "@sessions/model";
+import { createSessionPane } from "@sessions/model/panes";
 import type { SessionFilters } from "@sessions/components/sidebar/sessionFilters";
 import { AppsPanel } from "@apps/components/AppsPanel";
+import { createAppPane } from "@apps/model";
+import { createChannelPane } from "@channels/model";
+import type { WorkspacePane } from "@workspace/model/panes";
 import { SidebarHeader } from "./SidebarHeader";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarRail } from "./SidebarRail";
@@ -31,7 +35,8 @@ export type SidebarProps = {
 
   sessions: Session[];
   isSessionsLoading: boolean;
-  onSessionSelect: (sessionId: string, toggleInWorkspace: boolean) => void;
+  /** Selects a root pane in place of the others, or toggles it beside them. */
+  selectRoot: (pane: WorkspacePane, toggleInWorkspace?: boolean) => void;
   openSessionIds: string[];
   worktreeSessionIds: string[];
   emptyMessage?: string;
@@ -40,10 +45,8 @@ export type SidebarProps = {
   onPanelExpanded: (panel: keyof SidebarPanels, expanded: boolean) => void;
 
   openAppIds: string[];
-  onAppOpen: (appId: string, toggleInWorkspace: boolean) => void;
   onAppOpenInHyper: (appId: string) => void;
   openChannelIds: string[];
-  onChannelOpen: (channelId: string, toggleInWorkspace: boolean) => void;
 
   /**
    * Desktop only, and the presence of this is what makes the sidebar
@@ -70,7 +73,7 @@ export function Sidebar({
 
   sessions,
   isSessionsLoading,
-  onSessionSelect,
+  selectRoot,
   openSessionIds,
   worktreeSessionIds,
   emptyMessage,
@@ -79,10 +82,8 @@ export function Sidebar({
   onPanelExpanded,
 
   openAppIds,
-  onAppOpen,
   onAppOpenInHyper,
   openChannelIds,
-  onChannelOpen,
 
   collapsible,
   className,
@@ -130,7 +131,9 @@ export function Sidebar({
             className="px-3 py-2"
             sessions={sessions}
             isLoading={isSessionsLoading}
-            onSessionSelect={onSessionSelect}
+            onSessionSelect={(sessionId, toggle) =>
+              selectRoot(createSessionPane(sessionId), toggle)
+            }
             openSessionIds={openSessionIds}
             worktreeSessionIds={worktreeSessionIds}
             emptyMessage={emptyMessage}
@@ -140,7 +143,7 @@ export function Sidebar({
             isExpanded={panels.channels ?? false}
             onExpandedChange={(expanded) => onPanelExpanded("channels", expanded)}
             openChannelIds={openChannelIds}
-            onChannelOpen={onChannelOpen}
+            onChannelOpen={(channelId, toggle) => selectRoot(createChannelPane(channelId), toggle)}
             onBrowseDirectory={(directory) => openWorkspaceDialog({ kind: "files", directory })}
             onCreate={() => openWorkspaceDialog({ kind: "channel" })}
           />
@@ -149,7 +152,7 @@ export function Sidebar({
             isExpanded={panels.apps ?? false}
             onExpandedChange={(expanded) => onPanelExpanded("apps", expanded)}
             openAppIds={openAppIds}
-            onAppOpen={onAppOpen}
+            onAppOpen={(appId, toggle) => selectRoot(createAppPane(appId), toggle)}
             onAppOpenInHyper={onAppOpenInHyper}
           />
 
@@ -157,7 +160,7 @@ export function Sidebar({
             isExpanded={panels.automations ?? false}
             onExpandedChange={(expanded) => onPanelExpanded("automations", expanded)}
             openSessionIds={openSessionIds}
-            onSessionOpen={(sessionId) => onSessionSelect(sessionId, false)}
+            onSessionOpen={(sessionId) => selectRoot(createSessionPane(sessionId))}
             onCreate={() => openWorkspaceDialog({ kind: "automation" })}
           />
         </div>

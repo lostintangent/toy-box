@@ -1,8 +1,16 @@
 import { createStoredChannel } from "@channels/server/testFixtures";
 import { describe, expect, jest, mock, onTestFinished, spyOn, test } from "bun:test";
 import { homedir } from "node:os";
-import type { SessionConnection } from "@providers/server/provider";
+import {
+  SessionConnectionUnavailableError,
+  SessionNotFoundError,
+  type SessionConnection,
+} from "@providers/server/provider";
 import { ChannelDatabase } from "@channels/server/database";
+import { stopProviders } from "@providers/server";
+import * as cli from "@providers/server/cli";
+import { codexProvider } from "@providers/server/codex/provider";
+import { copilotProvider } from "@providers/server/copilot/provider";
 import { WorkerDatabase } from "@workers/server/database";
 import * as state from "@/server/database";
 import * as sdk from "../providers";
@@ -17,7 +25,7 @@ import { createSession, deliverSessionMessage, recreateSession } from "./index";
 import { SessionStream } from "./sessionStream";
 import { createInitialSessionState } from "@sessions/model/reducer";
 import { deleteSessionFiles } from "../artifacts";
-import { deleteSessionState } from "@workspace/server/state/sessions";
+import { deleteSessionActivity } from "@sessions/server/state/activity";
 
 async function setup(agent?: "member" | "lead") {
   let sessionId = `configuration-${crypto.randomUUID()}`;
@@ -25,9 +33,9 @@ async function setup(agent?: "member" | "lead") {
   onTestFinished(async () => {
     try {
       await SessionStream.remove(sessionId);
-      registry.evictCachedSessionIfStale(sessionId, new Error("Session not found"));
+      registry.evictCachedSessionIfStale(sessionId, new SessionNotFoundError(sessionId));
       snapshots.evictCachedSnapshot(sessionId);
-      deleteSessionState(sessionId);
+      deleteSessionActivity(sessionId);
       await deleteSessionFiles(sessionId);
     } finally {
       mock.restore();
@@ -198,6 +206,18 @@ describe("Session recreation", () => {
     expect(SessionStream.get(sessionId)).toBeUndefined();
     expect(events).toEqual(["session.upserted", "session.deleted"]);
   });
+
+  test("recreation replaces a session whose native history is already gone", async () => {
+    const { sessionId, create } = await setup();
+    await insertSession({ id: sessionId, createdAt: new Date(0), artifactPath: "old.md" });
+    await setSessionProvider(sessionId, { id: "claude", sessionId: "missing-native-id" });
+    spyOn(sdk, "deleteSession").mockRejectedValue(new SessionNotFoundError(sessionId));
+
+    await recreateSession(sessionId, { content: "Start fresh" }, {});
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect((await readSession(sessionId))?.artifactPath).toBeUndefined();
+  });
 });
 
 describe("Session-owned configuration lifetime", () => {
@@ -284,6 +304,16 @@ describe("Session-owned configuration lifetime", () => {
     "inherited Channel agent models preserve an existing %s provider when the workspace default changes",
     async (providerId) => {
       const { sessionId, db } = await setup("member");
+      await stopProviders();
+      onTestFinished(() => stopProviders());
+      spyOn(cli, "isInstalled").mockImplementation((id) => id === "copilot" || id === "codex");
+      for (const provider of [copilotProvider, codexProvider]) {
+        spyOn(provider, "isSignedIn").mockResolvedValue(true);
+        spyOn(provider, "listModels").mockResolvedValue([
+          { id: "new-default", name: "New default", provider: provider.id },
+          { id: "updated-model", name: "Updated model", provider: provider.id },
+        ]);
+      }
       await new ChannelDatabase(db).updateMember(sessionId, { model: null });
       const defaultModel = {
         provider: providerId === "copilot" ? "codex" : "copilot",
@@ -340,6 +370,17 @@ describe("Session-owned configuration lifetime", () => {
     );
     expect(initialToolNames).not.toContain("create_channel_members");
     expect(initialToolNames).not.toContain("list_sessions");
+    expect(
+      initialConfiguration.tools?.filter((tool) => tool.alwaysLoad).map((tool) => tool.name),
+    ).toEqual([
+      "read_channel",
+      "set_agent_status",
+      "react_to_channel_message",
+      "share_channel_artifact",
+      "finish_agent_turn",
+      "send_channel_message",
+      "update_member",
+    ]);
     await new ChannelDatabase(db).updateMember(sessionId, {
       role: "Evolved role",
       avatar: { mark: "M5 12h14M12 5v14", color: "#7c3aed" },
@@ -492,6 +533,18 @@ describe("Session-owned configuration lifetime", () => {
     expect(resume).toHaveBeenCalledTimes(1);
     expect(handles[0]!.disconnect).not.toHaveBeenCalled();
     expect(handles[0]!.send).toHaveBeenCalledTimes(2);
+  });
+
+  test("a cached SDK session whose connection is gone is resumed fresh on the next delivery", async () => {
+    const { sessionId, resume, handles } = await setup();
+    await deliverSessionMessage(sessionId, { content: "First" });
+    SessionStream.get(sessionId)!.finish();
+    handles[0]!.send.mockRejectedValueOnce(new SessionConnectionUnavailableError("Gone"));
+
+    await deliverSessionMessage(sessionId, { content: "Second" });
+
+    expect(resume).toHaveBeenCalledTimes(2);
+    expect(handles[1]!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "Second" }));
   });
 
   test("deletion waits for the native connection's final history flush", async () => {

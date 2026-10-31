@@ -1,12 +1,9 @@
 import { createFileRoute, useNavigate, useRouterState, ClientOnly } from "@tanstack/react-router";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createIsomorphicFn } from "@tanstack/react-start";
-import { zodValidator } from "@tanstack/zod-adapter";
 import { useState, useEffect, useDeferredValue, lazy, Suspense } from "react";
-import { useSelector } from "@tanstack/react-store";
-import { z } from "zod";
 import { useSessions } from "@sessions/useSessions";
-import { useHyperSession, type HyperSessionState } from "@workspace/hooks/layout/useHyperSession";
+import { useHyperSession } from "@workspace/hooks/layout/useHyperSession";
 import { useWarmSessionSnapshots } from "@sessions/useWarmSessionSnapshots";
 import { useWorkspaceSync } from "@workspace/hooks/useWorkspaceSync";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
@@ -22,27 +19,16 @@ import {
 } from "@workspace/components/layout/WorkspaceLayout";
 import {
   focusWorkspaceSurfacePane,
+  useSurfacePanes,
   workspaceSurfaces,
   WorkspaceSurfaceProvider,
 } from "@workspace/hooks/layout/surface";
-import {
-  createAppPane,
-  createEditorPaneId,
-  createScreenPane,
-  deriveOpenSessionIds,
-  deriveReachablePaneIds,
-  deriveVisibleWorkspacePanes,
-  deriveWorkspaceRootPanes,
-  INBOX_PANE,
-  MAX_WORKSPACE_PANES,
-  type WorkspacePane,
-} from "@workspace/model/panes";
-import {
-  machineFile,
-  workspaceFileId,
-  workspaceFileSchema,
-  type WorkspaceFile,
-} from "@files/model";
+import { MAX_WORKSPACE_PANES, type WorkspacePane } from "@workspace/model/panes";
+import { parseRootPanes, serializeRootPanes } from "@workspace/components/panes/kinds";
+import { createSessionPane } from "@sessions/model/panes";
+import { useEditorAutoFocus } from "@sessions/useEditorAutoFocus";
+import { createAppPane } from "@apps/model";
+import { INBOX_PANE } from "@inbox/model";
 import {
   readWorkspaceLayout,
   serializeWorkspaceLayout,
@@ -59,54 +45,28 @@ import { channelQueries } from "@channels/queries";
 import { automationQueries } from "@automations/queries";
 import { inboxQueries } from "@inbox/queries";
 import { appQueries } from "@apps/queries";
+import { fileQueries } from "@files/queries";
+import { workerQueries } from "@workers/queries";
 const Terminal = lazy(() =>
   import("@terminal/components/Terminal").then((m) => ({
     default: m.Terminal,
   })),
 );
 
-const searchSchema = z
-  .object({
-    sessions: z.array(z.string()).optional(),
-    files: z.array(workspaceFileSchema).optional(),
-    apps: z.array(z.string()).optional(),
-    channels: z.array(z.string()).optional(),
-    screens: z.array(z.string()).optional(),
-  })
-  .transform(({ sessions = [], files = [], apps = [], channels = [], screens = [] }) => {
-    const roots = deriveWorkspaceRootPanes(sessions, files, apps, channels, screens);
-    const normalizedSessions = roots.flatMap((pane) =>
-      pane.kind === "session" ? [pane.sessionId] : [],
-    );
-    const normalizedFiles = roots.flatMap((pane) => (pane.kind === "editor" ? [pane.file] : []));
-    const normalizedApps = roots.flatMap((pane) => (pane.kind === "app" ? [pane.appId] : []));
-    const normalizedChannels = roots.flatMap((pane) =>
-      pane.kind === "channel" ? [pane.channelId] : [],
-    );
-    const normalizedScreens = roots.flatMap((pane) =>
-      pane.kind === "screen" ? [pane.screenId] : [],
-    );
-    return {
-      sessions: normalizedSessions.length > 0 ? normalizedSessions : undefined,
-      files: normalizedFiles.length > 0 ? normalizedFiles : undefined,
-      apps: normalizedApps.length > 0 ? normalizedApps : undefined,
-      channels: normalizedChannels.length > 0 ? normalizedChannels : undefined,
-      screens: normalizedScreens.length > 0 ? normalizedScreens : undefined,
-    };
-  });
-
-type WorkspaceSearch = z.output<typeof searchSchema>;
-
 export const Route = createFileRoute("/")({
-  validateSearch: zodValidator(searchSchema),
+  // Each root pane kind declares its URL key, so the workspace URL is just the panes it opens.
+  validateSearch: (search: Record<string, unknown>) => serializeRootPanes(parseRootPanes(search)),
   loader: async ({ context }) => {
     await Promise.all([
       context.queryClient.ensureQueryData(sessionQueries.state()),
+      context.queryClient.ensureQueryData(sessionQueries.activity()),
       context.queryClient.ensureQueryData(channelQueries.list()),
       context.queryClient.ensureQueryData(automationQueries.list()),
       context.queryClient.ensureQueryData(inboxQueries.list()),
       context.queryClient.ensureQueryData(appQueries.list()),
       context.queryClient.ensureQueryData(providerQueries.catalog()),
+      context.queryClient.ensureQueryData(workerQueries.active()),
+      context.queryClient.ensureQueryData(fileQueries.editors()),
     ]);
     return loadWorkspaceLayout();
   },
@@ -125,177 +85,66 @@ async function loadWorkspaceLayout() {
   return readWorkspaceLayout(cookieHeader);
 }
 
-type HyperLayoutState = Pick<HyperSessionState, "open" | "position">;
-
-function restoreHyperSessionState(
-  sessionId: string | undefined,
-  layout: HyperLayoutState,
-): HyperSessionState | null {
-  return sessionId ? { sessionId, appIds: [], ...layout } : null;
-}
-
 function WorkspacePage() {
   const navigate = useNavigate();
   const { workspaceRevision } = Route.useRouteContext();
-  const selectedSessionIds = Route.useSearch({
-    select: (search) => search.sessions ?? [],
-    structuralSharing: true,
-  });
+  const selectedRoots = parseRootPanes(Route.useSearch());
   const targetSelectedSessionIds = useRouterState({
-    select: (state) => state.location.search.sessions ?? [],
+    select: (state) => selectSessionIds(parseRootPanes(state.location.search)),
     structuralSharing: true,
   });
-  const selectedAppIds = Route.useSearch({
-    select: (search) => search.apps ?? [],
-    structuralSharing: true,
-  });
-  const selectedChannelIds = Route.useSearch({
-    select: (search) => search.channels ?? [],
-    structuralSharing: true,
-  });
-  const openFiles = Route.useSearch({
-    select: (search) => search.files ?? [],
-    structuralSharing: true,
-  });
-  const selectedScreenIds = Route.useSearch({
-    select: (search) => search.screens ?? [],
-    structuralSharing: true,
-  });
+  const selectedSessionIds = selectSessionIds(selectedRoots);
   const initialLayout = Route.useLoaderData();
   const { isMobile: isMobileLayout, hydrated } = useViewport();
 
-  function updateWorkspaceRoot<Key extends keyof WorkspaceSearch>(
-    key: Key,
-    update: (current: NonNullable<WorkspaceSearch[Key]>) => NonNullable<WorkspaceSearch[Key]>,
-    options?: { replaceWorkspace?: boolean; replaceHistory?: boolean },
+  function updateRoots(
+    update: (roots: WorkspacePane[]) => WorkspacePane[],
+    options?: { replace?: boolean },
   ) {
     return navigate({
       to: "/",
-      search: (prev) => {
-        const current = (prev[key] ?? []) as NonNullable<WorkspaceSearch[Key]>;
-        const next = update(current);
-        const search = options?.replaceWorkspace
-          ? {
-              ...prev,
-              sessions: undefined,
-              files: undefined,
-              apps: undefined,
-              channels: undefined,
-              screens: undefined,
-            }
-          : prev;
-        return { ...search, [key]: next.length > 0 ? next : undefined };
-      },
-      replace: options?.replaceHistory,
+      search: (prev) => serializeRootPanes(update(parseRootPanes(prev))),
+      replace: options?.replace,
     });
   }
 
-  function updateSelectedSessionIds(
-    nextSelectedSessionIds: string[],
-    options?: { replaceWorkspace?: boolean },
-  ) {
-    // A focus reset replaces the whole workspace; an augment preserves its other roots.
-    void updateWorkspaceRoot("sessions", () => nextSelectedSessionIds, options);
-  }
-
-  // Browser-opened files live in the URL beside the selected sessions, so they
-  // survive a reload and can be shared. Both derive into root panes below.
-  function openWorkspaceFile(file: WorkspaceFile) {
-    // Opening a file augments the workspace, so — like a modifier-click on a
-    // session — it's ignored when the four-pane surface is full (which keeps the
-    // URL within its cap); re-opening an already-open file is idempotent.
-    const id = workspaceFileId(file);
-    if (
-      !openFiles.some((open) => workspaceFileId(open) === id) &&
-      openPanes.length >= MAX_WORKSPACE_PANES
-    )
+  // Selecting a root replaces the workspace; a modifier toggles it beside the other roots.
+  function selectRoot(pane: WorkspacePane, toggleInWorkspace = false) {
+    if (!toggleInWorkspace || isMobileLayout) {
+      void updateRoots(() => [pane]);
       return;
-    const navigation = updateWorkspaceRoot(
-      "files",
-      (files) => (files.some((open) => workspaceFileId(open) === id) ? files : [...files, file]),
-      { replaceHistory: true },
-    );
-    // The desktop grid shows the new file as a cell; the mobile pager has to be
-    // slid over to the workspace track and paged to it.
-    if (isMobileLayout) {
-      void navigation.then(() => focusWorkspaceSurfacePane("main", createEditorPaneId(file)));
     }
-  }
-
-  function openFile(path: string) {
-    openWorkspaceFile(machineFile(path));
-  }
-
-  function closeWorkspaceRoot(key: "apps" | "channels" | "screens", id: string) {
-    void updateWorkspaceRoot(key, (current) => current.filter((open) => open !== id), {
-      replaceHistory: true,
-    });
-  }
-
-  function closeFile(file: WorkspaceFile) {
-    const id = workspaceFileId(file);
-    void updateWorkspaceRoot(
-      "files",
-      (current) => current.filter((open) => workspaceFileId(open) !== id),
-      { replaceHistory: true },
-    );
-  }
-
-  // Opening a file that's already showing brings its pane forward instead.
-  function revealFile(file: WorkspaceFile) {
-    const paneId = createEditorPaneId(file);
-    if (openPanes.some(({ id }) => id === paneId)) focusWorkspaceSurfacePane("main", paneId);
-    else openWorkspaceFile(file);
-  }
-
-  async function openScreen(screenId: string) {
-    const paneId = createScreenPane(screenId).id;
-    if (!openPanes.some((pane) => pane.id === paneId)) {
-      const full = openPanes.length >= MAX_WORKSPACE_PANES;
-      await updateWorkspaceRoot("screens", (ids) => (full ? [screenId] : [...ids, screenId]), {
-        replaceWorkspace: full,
-      });
+    if (selectedRoots.some(({ id }) => id === pane.id)) {
+      closeRoot(pane);
+      return;
     }
-    focusWorkspaceSurfacePane("main", paneId);
+    if (openPanes.length >= MAX_WORKSPACE_PANES && !openPanes.some(({ id }) => id === pane.id))
+      return;
+    void updateRoots((roots) => [...roots, pane]);
+  }
+
+  /** Opens a root beside the others, or in their place when the workspace is full. */
+  async function openRoot(pane: WorkspacePane) {
+    const isFull =
+      openPanes.length >= MAX_WORKSPACE_PANES && !openPanes.some(({ id }) => id === pane.id);
+    await updateRoots((roots) => (isFull ? [pane] : [...roots, pane]));
+    // The mobile pager has to be paged to it.
+    if (isMobileLayout) focusWorkspaceSurfacePane("main", pane.id);
+  }
+
+  function closeRoot(pane: WorkspacePane) {
+    if (!selectedRoots.some(({ id }) => id === pane.id)) return;
+    void updateRoots((roots) => roots.filter(({ id }) => id !== pane.id), { replace: true });
   }
 
   const primarySelectedSessionId = selectedSessionIds[0];
-  const panePublications = useSelector(workspaceSurfaces.main.panePublications);
-  const hyperPanePublications = useSelector(workspaceSurfaces.hyper.panePublications);
-  const rootPanes = deriveWorkspaceRootPanes(
-    selectedSessionIds,
-    openFiles,
-    selectedAppIds,
-    selectedChannelIds,
-    selectedScreenIds,
-  );
-  const rootPaneIds = new Set(rootPanes.map((pane) => pane.id));
-  const resolvePaneClose = (pane: WorkspacePane): (() => void) | undefined => {
-    if (!rootPaneIds.has(pane.id)) return undefined;
-    switch (pane.kind) {
-      case "session":
-        return () => handleCloseVisibleSession(pane.sessionId);
-      case "editor":
-        return () => closeFile(pane.file);
-      case "app":
-        return () => closeWorkspaceRoot("apps", pane.appId);
-      case "channel":
-        return () => closeWorkspaceRoot("channels", pane.channelId);
-      case "screen":
-        return () => closeWorkspaceRoot("screens", pane.screenId);
-      case "inbox":
-      case "canvas":
-        return undefined;
-    }
-  };
-  const reachablePaneIds = deriveReachablePaneIds(rootPanes, panePublications);
-  const focusedPaneId = useSelector(workspaceSurfaces.main.focusedPaneAtom);
-  const openPanes = deriveVisibleWorkspacePanes({
-    rootPanes,
-    panePublications,
-    focusedPaneId,
-  });
-  const openSessionIds = deriveOpenSessionIds(openPanes);
+  const hasWorkspaceRoot = selectedRoots.length > 0;
+  const rootPanes = hasWorkspaceRoot ? selectedRoots : [INBOX_PANE];
+  const resolvePaneClose = (pane: WorkspacePane) =>
+    selectedRoots.some(({ id }) => id === pane.id) ? () => closeRoot(pane) : undefined;
+  const openPanes = useSurfacePanes("main", rootPanes);
+  const openSessionIds = selectSessionIds(openPanes);
+  useEditorAutoFocus("main", openPanes);
   const selectedSessionIdSet = new Set(selectedSessionIds);
   const sidebarOpenSessionIds = [
     ...new Set([
@@ -342,129 +191,47 @@ function WorkspacePage() {
     hiddenSessionIds: hyperSessionIds,
   });
 
-  function handleCloseVisibleSession(sessionId: string) {
-    if (!selectedSessionIds.includes(sessionId)) return;
-    updateSelectedSessionIds(selectedSessionIds.filter((id) => id !== sessionId));
-  }
-
-  function handleSessionSelect(sessionId: string, toggleInWorkspace = false) {
-    if (!toggleInWorkspace || isMobileLayout) {
-      updateSelectedSessionIds([sessionId], { replaceWorkspace: true });
-      return;
-    }
-
-    if (selectedSessionIds.includes(sessionId)) {
-      handleCloseVisibleSession(sessionId);
-      return;
-    }
-
-    if (openPanes.length >= MAX_WORKSPACE_PANES && !openSessionIds.includes(sessionId)) return;
-    updateSelectedSessionIds([...selectedSessionIds, sessionId]);
-  }
-
-  function handleWorkspaceRootOpen(
-    key: "apps" | "channels",
-    id: string,
-    selectedIds: string[],
-    toggleInWorkspace = false,
-  ) {
-    if (!toggleInWorkspace || isMobileLayout) {
-      void updateWorkspaceRoot(key, () => [id], { replaceWorkspace: true });
-      return;
-    }
-
-    if (selectedIds.includes(id)) {
-      closeWorkspaceRoot(key, id);
-      return;
-    }
-    if (openPanes.length >= MAX_WORKSPACE_PANES) return;
-    void updateWorkspaceRoot(key, (current) => [...current, id]);
-  }
-
-  function handleAppOpen(appId: string, toggleInWorkspace = false) {
-    handleWorkspaceRootOpen("apps", appId, selectedAppIds, toggleInWorkspace);
-  }
-
-  function handleChannelOpen(channelId: string, toggleInWorkspace = false) {
-    handleWorkspaceRootOpen("channels", channelId, selectedChannelIds, toggleInWorkspace);
-  }
-
   // Create a draft session, optionally with an initial artifact or alongside the workspace.
   function handleCreateSession(options: SessionCreationOptions = {}) {
-    const id = createSession(options.artifact ? { artifact: options.artifact } : undefined);
-
-    if (options.addToWorkspace && openPanes.length > 0 && openPanes.length < MAX_WORKSPACE_PANES) {
-      // Add to the workspace.
-      updateSelectedSessionIds([...selectedSessionIds, id]);
-    } else {
-      // Replace current view
-      updateSelectedSessionIds([id], { replaceWorkspace: true });
-    }
+    const pane = createSessionPane(
+      createSession(options.artifact ? { artifact: options.artifact } : undefined),
+    );
+    if (options.addToWorkspace) void openRoot(pane);
+    else selectRoot(pane);
   }
 
-  // Close panes when their session leaves the catalog, including an older session losing its pin.
+  // Close roots whose content left its catalog, such as a deleted channel or app, or an older
+  // session losing its pin.
   useEffect(() => {
-    if (isSessionsLoading) return;
-    if (selectedSessionIds.length === 0) return;
-
-    const availableSessionIds = new Set(sessions?.map((session) => session.id) ?? []);
+    const sessionIds = new Set(sessions?.map(({ id }) => id));
     for (const automation of automations) {
-      if (!disabledProviders.includes(automation.model.provider))
-        availableSessionIds.add(automation.id);
+      if (!disabledProviders.includes(automation.model.provider)) sessionIds.add(automation.id);
     }
-
-    const validSessionIds = selectedSessionIds.filter((sessionId) =>
-      availableSessionIds.has(sessionId),
-    );
-
-    if (validSessionIds.length === selectedSessionIds.length) return;
-
-    void navigate({
-      to: "/",
-      search: (prev) => ({
-        ...prev,
-        sessions: validSessionIds.length > 0 ? validSessionIds : undefined,
-      }),
-      replace: true,
-    });
-  }, [automations, disabledProviders, isSessionsLoading, navigate, selectedSessionIds, sessions]);
-
-  // Saved apps are durable URL roots, so a deletion from another client must
-  // remove only the stale app root without disturbing adjacent panes.
-  useEffect(() => {
-    if (selectedAppIds.length === 0) return;
-    const availableAppIds = new Set(appIds);
-    const validAppIds = selectedAppIds.filter((appId) => availableAppIds.has(appId));
-    if (validAppIds.length === selectedAppIds.length) return;
+    const isStale = (pane: WorkspacePane) =>
+      pane.kind === "session"
+        ? !isSessionsLoading && !sessionIds.has(pane.sessionId)
+        : pane.kind === "app"
+          ? !appIds.includes(pane.appId)
+          : pane.kind === "channel" &&
+            channels !== undefined &&
+            !channels.some(({ id }) => id === pane.channelId);
+    if (!selectedRoots.some(isStale)) return;
 
     void navigate({
       to: "/",
-      search: (prev) => ({
-        ...prev,
-        apps: validAppIds.length > 0 ? validAppIds : undefined,
-      }),
+      search: (prev) => serializeRootPanes(parseRootPanes(prev).filter((pane) => !isStale(pane))),
       replace: true,
     });
-  }, [appIds, navigate, selectedAppIds]);
-
-  // Channels are durable URL roots, parallel to sessions and apps.
-  useEffect(() => {
-    if (!channels || selectedChannelIds.length === 0) return;
-    const availableChannelIds = new Set(channels.map((channel) => channel.id));
-    const validChannelIds = selectedChannelIds.filter((channelId) =>
-      availableChannelIds.has(channelId),
-    );
-    if (validChannelIds.length === selectedChannelIds.length) return;
-
-    void navigate({
-      to: "/",
-      search: (prev) => ({
-        ...prev,
-        channels: validChannelIds.length > 0 ? validChannelIds : undefined,
-      }),
-      replace: true,
-    });
-  }, [channels, navigate, selectedChannelIds]);
+  }, [
+    appIds,
+    automations,
+    channels,
+    disabledProviders,
+    isSessionsLoading,
+    navigate,
+    selectedRoots,
+    sessions,
+  ]);
 
   const [filter, setFilter] = useState<SessionFilters>({
     query: "",
@@ -500,35 +267,14 @@ function WorkspacePage() {
     pinnedSessionIds,
   );
 
-  function handleSessionDelete(sessionIdToDelete: string) {
-    if (selectedSessionIds.includes(sessionIdToDelete)) {
-      updateSelectedSessionIds(selectedSessionIds.filter((id) => id !== sessionIdToDelete));
-    }
-  }
-
-  function openSessionInWorkspace(sessionId: string) {
-    if (!selectedSessionIds.includes(sessionId)) {
-      const nextSelectedSessionIds =
-        openPanes.length >= MAX_WORKSPACE_PANES && !openSessionIds.includes(sessionId)
-          ? [sessionId]
-          : [...selectedSessionIds, sessionId];
-      updateSelectedSessionIds(nextSelectedSessionIds);
-    }
-  }
-
   const hyperSessionId = hyperSessionIds.find((id) =>
     sessions?.some((session) => session.id === id),
   );
-  const restoredHyperSession = restoreHyperSessionState(hyperSessionId, {
-    position: initialLayout.hyperPosition,
-    open: initialLayout.hyperOpen,
-  });
-
   const hyper = useHyperSession({
-    initialState: restoredHyperSession,
     hyperSessionId,
+    initialLayout: { open: initialLayout.hyperOpen, position: initialLayout.hyperPosition },
     createSession,
-    openSessionInWorkspace,
+    openRoot,
   });
   const hyperSession = hyper.state;
   const { getOrCreateSessionId: getOrCreateHyperSessionId, toggle: toggleHyperSession } = hyper;
@@ -555,9 +301,7 @@ function WorkspacePage() {
       toggleHyperSession();
       return;
     }
-    updateSelectedSessionIds([getOrCreateHyperSessionId()], {
-      replaceWorkspace: true,
-    });
+    void updateRoots(() => [createSessionPane(getOrCreateHyperSessionId())]);
   }
 
   // "Open" is viewport-relative: the deck is open on desktop; on mobile the hyper
@@ -567,54 +311,15 @@ function WorkspacePage() {
     : hyper.isOpen;
 
   function handleAppOpenInHyper(appId: string) {
-    if (isMobileLayout) {
-      handleAppOpen(appId);
-      return;
-    }
-    hyper.openApp(appId);
+    if (isMobileLayout) selectRoot(createAppPane(appId));
+    else hyper.openApp(appId);
   }
 
-  function openAppInMainSurface(appId: string) {
-    if (!selectedAppIds.includes(appId)) {
-      void updateWorkspaceRoot(
-        "apps",
-        (current) => (openPanes.length >= MAX_WORKSPACE_PANES ? [appId] : [...current, appId]),
-        { replaceWorkspace: openPanes.length >= MAX_WORKSPACE_PANES },
-      );
-    }
-    focusWorkspaceSurfacePane("main", createAppPane(appId).id);
-  }
-
-  // Each surface prunes its own browser-local pane graph from its own roots.
-  useEffect(() => {
-    workspaceSurfaces.main.panePublications.actions.prunePanePublishers(new Set(reachablePaneIds));
-  }, [panePublications, reachablePaneIds]);
-
-  useEffect(() => {
-    const hyperReachablePaneIds = hyperSession
-      ? deriveReachablePaneIds(
-          deriveWorkspaceRootPanes([hyperSession.sessionId], [], hyperSession.appIds),
-          hyperPanePublications,
-        )
-      : [];
-    workspaceSurfaces.hyper.panePublications.actions.prunePanePublishers(
-      new Set(hyperReachablePaneIds),
-    );
-  }, [hyperPanePublications, hyperSession]);
-
-  const hasWorkspaceRoot =
-    selectedSessionIds.length > 0 ||
-    selectedAppIds.length > 0 ||
-    selectedChannelIds.length > 0 ||
-    selectedScreenIds.length > 0 ||
-    openFiles.length > 0;
   const isInboxOpen = !hasWorkspaceRoot && (!isMobileLayout || isSidebarCollapsed);
 
   function handleOpenInbox() {
     if (isMobileLayout) setIsSidebarCollapsed(true);
-    if (hasWorkspaceRoot) {
-      updateSelectedSessionIds([], { replaceWorkspace: true });
-    }
+    if (hasWorkspaceRoot) void updateRoots(() => []);
   }
 
   const commands = createWorkspaceCommands({
@@ -630,9 +335,7 @@ function WorkspacePage() {
   function handleMobileWorkspaceBack() {
     workspaceSurfaces.main.panePublications.actions.clearLinkedPanes(INBOX_PANE.id);
     setIsSidebarCollapsed(false);
-    if (hasWorkspaceRoot) {
-      updateSelectedSessionIds([], { replaceWorkspace: true });
-    }
+    if (hasWorkspaceRoot) void updateRoots(() => []);
   }
 
   const isMobileWorkspaceVisible = hasWorkspaceRoot || isSidebarCollapsed;
@@ -666,7 +369,7 @@ function WorkspacePage() {
     onFilterChange: setFilter,
     sessions: filteredSessions,
     isSessionsLoading,
-    onSessionSelect: handleSessionSelect,
+    selectRoot,
     openSessionIds: sidebarOpenSessionIds,
     worktreeSessionIds,
     emptyMessage:
@@ -675,11 +378,11 @@ function WorkspacePage() {
         : undefined,
     panels: sidebarPanels,
     onPanelExpanded: handlePanelExpanded,
-    openAppIds: selectedAppIds,
-    onAppOpen: handleAppOpen,
+    openAppIds: selectedRoots.flatMap((pane) => (pane.kind === "app" ? [pane.appId] : [])),
     onAppOpenInHyper: handleAppOpenInHyper,
-    openChannelIds: selectedChannelIds,
-    onChannelOpen: handleChannelOpen,
+    openChannelIds: selectedRoots.flatMap((pane) =>
+      pane.kind === "channel" ? [pane.channelId] : [],
+    ),
   } satisfies SidebarProps;
 
   const mobileLayoutProps = {
@@ -734,10 +437,7 @@ function WorkspacePage() {
       <WorkspaceSurfaceProvider
         surface="main"
         panes={openPanes}
-        onOpenApp={openAppInMainSurface}
-        onOpenFile={openFile}
-        onRevealFile={revealFile}
-        onOpenScreen={openScreen}
+        onOpen={(pane) => void openRoot(pane)}
         channelOverviewPinned={isChannelOverviewPinned}
         onChannelOverviewPinnedChange={setIsChannelOverviewPinned}
       >
@@ -752,22 +452,14 @@ function WorkspacePage() {
           onOpenChange={setIsPaletteOpen}
           sessions={listedSessions}
           openSessionIds={openSessionIds}
-          navigation={{
-            openSession: handleSessionSelect,
-            addSession: openSessionInWorkspace,
-            openChannel: handleChannelOpen,
-            openApp: handleAppOpen,
-            addApp: openAppInMainSurface,
-            openFile,
-          }}
+          navigation={{ selectRoot, openRoot }}
         />
       </WorkspaceSurfaceProvider>
-      <WorkspaceDialogs
-        onOpenFile={openFile}
-        onOpenScreen={openScreen}
-        onChannelOpen={handleChannelOpen}
-        onSessionDelete={handleSessionDelete}
-      />
+      <WorkspaceDialogs selectRoot={selectRoot} openRoot={openRoot} closeRoot={closeRoot} />
     </CommandProvider>
   );
+}
+
+function selectSessionIds(panes: readonly WorkspacePane[]): string[] {
+  return panes.flatMap((pane) => (pane.kind === "session" ? [pane.sessionId] : []));
 }

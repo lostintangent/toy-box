@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
 import {
   Circle,
   FileText,
@@ -15,13 +15,11 @@ import { Markdown } from "@/shared/ui/markdown";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
-import {
-  useDispatchWorkspaceAction,
-  useWorkspaceSelector,
-  useWorkspaceSessionActivity,
-} from "@workspace/hooks/state";
 import { cn } from "@/shared/utils";
 import type { Session } from "@sessions/model";
+import { sessionMutations } from "@sessions/mutations";
+import { useSessionActivity, useSessionsActivity } from "@sessions/useSessionActivity";
+import { workerQueries } from "@workers/queries";
 import type { InboxEntry } from "../model";
 import { inboxMutations } from "../mutations";
 import { isInboxTaskRunning, sortInboxEntries } from "../queries";
@@ -37,7 +35,10 @@ export function InboxEntries({
   linkedEntryId?: string;
   onSelect: (entry: InboxEntry) => void;
 }) {
-  const sortedEntries = useWorkspaceSelector((workspace) => sortInboxEntries(entries, workspace));
+  const { data: workers } = useSuspenseQuery(workerQueries.active());
+  const sortedEntries = useSessionsActivity((activities) =>
+    sortInboxEntries(entries, activities, workers),
+  );
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
 
   return (
@@ -82,9 +83,12 @@ function InboxEntryRow({
 }) {
   const deleteMutation = useMutation(inboxMutations.deleteEntry(entry.id));
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const { unread } = useWorkspaceSessionActivity(entry.id);
-  const running = useWorkspaceSelector((workspace) => isInboxTaskRunning(workspace, entry.id));
-  const dispatchWorkspaceAction = useDispatchWorkspaceAction();
+  const { unread } = useSessionActivity(entry.id);
+  const { data: workers } = useSuspenseQuery(workerQueries.active());
+  const running = useSessionsActivity((activities) =>
+    isInboxTaskRunning(activities, workers, entry.id),
+  );
+  const { mutate: markRead } = useMutation(sessionMutations.markRead(entry.id));
   const pending = entry.kind === "pending";
   const preview = useSessionPreview(!pending || !session);
   const label =
@@ -95,7 +99,7 @@ function InboxEntryRow({
 
   function handleSelect() {
     preview.close();
-    if (unread) dispatchWorkspaceAction({ type: "session.read", sessionId: entry.id });
+    if (unread) markRead();
     onSelect();
   }
 

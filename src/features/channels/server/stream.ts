@@ -6,7 +6,7 @@ import {
 import { channelAgentPresence } from "@channels/model/presence";
 import { reduceChannelRoster } from "@channels/model/reducer";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
-import { getSessionState } from "@workspace/server/state/sessions";
+import { getSessionActivity } from "@sessions/server/state/activity";
 import { getStateDatabase } from "@/server/database";
 import { resolveArtifactResources, resolveMessageResources } from "./resources";
 import { ChannelDatabase } from "./database";
@@ -158,7 +158,7 @@ function currentPresence({ lead, members }: Roster): ChannelState["presence"] {
   return Object.fromEntries(
     [lead, ...members].map((agent) => [
       agent.id,
-      channelAgentPresence(agent, getSessionState(agent.id)?.status === "running"),
+      channelAgentPresence(agent, getSessionActivity(agent.id)?.status === "running"),
     ]),
   );
 }

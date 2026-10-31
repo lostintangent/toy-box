@@ -3,6 +3,12 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { cronToSchedule, scheduleToCron, type ScheduleDraft } from "../model";
 
+const MODE_OPTIONS = [
+  { value: "daily", label: "Daily" },
+  { value: "interval", label: "Interval" },
+  { value: "cron", label: "Cron" },
+] as const;
+
 const WEEKDAY_OPTIONS = [
   { value: 0, label: "Sunday" },
   { value: 1, label: "Monday" },
@@ -54,33 +60,18 @@ export function AutomationScheduleEditor({
   return (
     <div className="space-y-2">
       <div className="inline-flex rounded-md border border-border/70 bg-muted/30 p-0.5">
-        <Button
-          type="button"
-          size="sm"
-          variant={value.mode === "daily" ? "secondary" : "ghost"}
-          className="h-7 px-2"
-          onClick={() => changeMode("daily")}
-        >
-          Daily
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={value.mode === "interval" ? "secondary" : "ghost"}
-          className="h-7 px-2"
-          onClick={() => changeMode("interval")}
-        >
-          Interval
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={value.mode === "cron" ? "secondary" : "ghost"}
-          className="h-7 px-2"
-          onClick={() => changeMode("cron")}
-        >
-          Cron
-        </Button>
+        {MODE_OPTIONS.map(({ value: mode, label }) => (
+          <Button
+            key={mode}
+            type="button"
+            size="sm"
+            variant={value.mode === mode ? "secondary" : "ghost"}
+            className="h-7 px-2"
+            onClick={() => changeMode(mode)}
+          >
+            {label}
+          </Button>
+        ))}
       </div>
 
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}

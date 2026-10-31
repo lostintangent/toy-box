@@ -7,17 +7,13 @@ import { getRecentDirectories } from "@sessions/model/recentDirectories";
 import { useModels } from "@providers/useModels";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import {
-  createEditorPane,
-  createLinkedSessionPane,
-  INBOX_PANE,
-  paneSourceSessionId,
-} from "@workspace/model/panes";
 import { sessionFile } from "@files/model";
+import { createEditorPane } from "@files/model/panes";
+import { createSessionPane } from "@sessions/model/panes";
 import { sessionMutations } from "@sessions/mutations";
 import { sessionQueries } from "@sessions/queries";
 import type { UserMessage } from "@sessions/model";
-import type { InboxEntry } from "../model";
+import { INBOX_PANE, type InboxEntry } from "../model";
 import { inboxMutations } from "../mutations";
 import { inboxQueries, selectInboxSessions } from "../queries";
 import { InkCloud, type Ink, type Traveler } from "@/shared/ink-cloud/InkCloud";
@@ -127,7 +123,7 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
           <InboxEntries
             entries={entries}
             sessions={sessions}
-            linkedEntryId={linkedPane && paneSourceSessionId(linkedPane)}
+            linkedEntryId={linkedPane?.sessionId}
             onSelect={handleInboxEntrySelect}
           />
         </div>
@@ -137,7 +133,7 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
 }
 
 function createInboxEntryPane(entry: InboxEntry) {
-  if (entry.kind !== "result" || !entry.artifact) return createLinkedSessionPane(entry.id);
+  if (entry.kind !== "result" || !entry.artifact) return createSessionPane(entry.id, true);
   const pane = createEditorPane(sessionFile(entry.id, entry.artifact));
   return { ...pane, title: entry.message };
 }

@@ -5,13 +5,15 @@ import {
   getWorkerSessionIdsForParent,
 } from "./database";
 import { cancelAdmittedWorker } from "./admission";
-import { finishWorkersForApp, finishWorkersOwnedBySession, getWorker } from "./registry";
-import type { Worker } from "../model";
+import { getRegisteredWorker, getWorkers } from "./registry";
+import { workerParentSessionId, type Worker } from "../model";
 
 /** Remove every worker owned by a deleted session, including file workers. */
 export async function deleteWorkersForSession(sessionId: string): Promise<void> {
   const sessionIds = new Set([
-    ...finishWorkersOwnedBySession(sessionId),
+    ...getWorkers()
+      .filter((worker) => workerParentSessionId(worker) === sessionId)
+      .map((worker) => worker.sessionId),
     ...(await getWorkerSessionIdsForParent(sessionId)),
   ]);
   const errors = await deleteWorkers(sessionIds);
@@ -23,7 +25,9 @@ export async function deleteWorkersForSession(sessionId: string): Promise<void> 
 /** Remove every live or retained worker owned by a deleted app. */
 export async function deleteWorkersForApp(appId: string): Promise<void> {
   const sessionIds = new Set([
-    ...finishWorkersForApp(appId),
+    ...getWorkers()
+      .filter((worker) => worker.type === "app" && worker.appId === appId)
+      .map((worker) => worker.sessionId),
     ...(await getWorkerSessionIdsForApp(appId)),
   ]);
   for (const error of await deleteWorkers(sessionIds)) {
@@ -38,7 +42,7 @@ async function deleteWorkers(sessionIds: ReadonlySet<string>): Promise<unknown[]
 
 export async function deleteWorker(sessionId: string, type?: Worker["type"]): Promise<boolean> {
   if (type) {
-    const worker = (await getPersistedWorker(sessionId)) ?? getWorker(sessionId);
+    const worker = (await getPersistedWorker(sessionId)) ?? getRegisteredWorker(sessionId);
     if (worker?.type !== type) return false;
   }
   const errors: unknown[] = [];

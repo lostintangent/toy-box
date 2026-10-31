@@ -1,6 +1,7 @@
-/** Install the current tables whose meaning is owned by Sessions. */
-export async function initializeSessionSchema(db: Bun.SQL): Promise<void> {
-  await db.unsafe(`
+/** The versions of the tables owned by Sessions, in order. To change a table,
+ * append a version. */
+export default [
+  `
     CREATE TABLE IF NOT EXISTS sessions (
       session_id TEXT PRIMARY KEY,
       provider_id TEXT,
@@ -21,5 +22,5 @@ export async function initializeSessionSchema(db: Bun.SQL): Promise<void> {
       lines_added          INTEGER,
       lines_removed        INTEGER
     );
-  `);
-}
+  `,
+];

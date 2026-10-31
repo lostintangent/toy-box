@@ -6,7 +6,6 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { useSelector } from "@tanstack/react-store";
 import { Maximize2, Minus, X } from "lucide-react";
 import { WorkspacePager } from "../panes/hosts/WorkspacePager";
 import {
@@ -15,17 +14,20 @@ import {
   clampViewportOverlayPosition,
   type OverlayPosition,
 } from "@workspace/components/overlayWindow";
-import { workspaceSurfaces, WorkspaceSurfaceProvider } from "@workspace/hooks/layout/surface";
-import { arePaneListsEqual } from "@workspace/hooks/layout/panePublications";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import {
-  createSessionPaneId,
-  deriveVisibleWorkspacePanes,
-  deriveWorkspaceRootPanes,
-  MAX_HYPER_PANES,
-} from "@workspace/model/panes";
-import type { HyperSessionState } from "@workspace/hooks/layout/useHyperSession";
+  useSurfacePanes,
+  useWorkspaceSurface,
+  WorkspaceSurfaceProvider,
+} from "@workspace/hooks/layout/surface";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import type { WorkspacePane } from "@workspace/model/panes";
+import {
+  deriveHyperRootPanes,
+  type HyperSessionState,
+} from "@workspace/hooks/layout/useHyperSession";
 import { sessionMutations } from "@sessions/mutations";
+import { createSessionPane } from "@sessions/model/panes";
+import { useEditorAutoFocus } from "@sessions/useEditorAutoFocus";
 import { cn } from "@/shared/utils";
 
 type DragState = {
@@ -167,19 +169,17 @@ export function HyperSession({
   // The hyper session hosts its own mini-workspace: its interactive session
   // publishes linked panes under its pane id, which the pager pages through as
   // a self-contained deck. Promote is what graduates it to the main grid.
-  const rootPanes = deriveWorkspaceRootPanes([state.sessionId], [], state.appIds);
-  const focusedPaneId = useSelector(workspaceSurfaces.hyper.focusedPaneAtom);
-  const hyperPanes = useSelector(
-    workspaceSurfaces.hyper.panePublications,
-    (panePublications) =>
-      deriveVisibleWorkspacePanes({
-        rootPanes,
-        panePublications,
-        maxVisible: MAX_HYPER_PANES,
-        focusedPaneId,
-      }),
-    { compare: arePaneListsEqual },
-  );
+  const rootPanes = deriveHyperRootPanes(state);
+  const hyperPanes = useSurfacePanes("hyper", rootPanes);
+  useEditorAutoFocus("hyper", hyperPanes);
+  const mainSurface = useWorkspaceSurface();
+
+  // The deck opens its own apps and hands every other pane to the main workspace.
+  function openPane(pane: WorkspacePane) {
+    if (pane.kind === "app") onOpenApp(pane.appId);
+    else mainSurface.reveal(pane);
+  }
+
   return (
     <div
       ref={surfaceRef}
@@ -220,10 +220,10 @@ export function HyperSession({
         <div ref={setToolbarSlot} className="flex min-w-0 flex-1 items-center gap-2" />
       </div>
       <div className="min-h-0 flex-1">
-        <WorkspaceSurfaceProvider surface="hyper" panes={hyperPanes} onOpenApp={onOpenApp}>
+        <WorkspaceSurfaceProvider surface="hyper" panes={hyperPanes} onOpen={openPane}>
           <WorkspacePager
             panes={hyperPanes}
-            primaryPaneId={createSessionPaneId(state.sessionId)}
+            primaryPaneId={createSessionPane(state.sessionId).id}
             toolbarSlot={toolbarSlot}
             resolvePaneClose={(pane) =>
               pane.kind === "app" ? () => onCloseApp(pane.appId) : undefined

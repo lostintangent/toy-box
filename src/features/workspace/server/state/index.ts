@@ -3,20 +3,29 @@
 import type { Settings } from "../../model/config/settings";
 import type { WorkspaceAction } from "../../model/state/actions";
 import type { DraftKey } from "../../model/state/drafts";
-import { finishWorkersForSession } from "@workers/server/registry";
-import { normalizeSettings } from "../../model/config/settings";
-import type { WorkspaceSessionEvent } from "../../model/state/reducer";
+import { areSettingsEqual, normalizeSettings } from "../../model/config/settings";
+import type { WorkspaceState } from "../../model/state/reducer";
 import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 import { broadcast } from "@workspace/server/events";
-import { deleteHyperState } from "./hyperSessions";
-import { deleteSavedDraft, saveDraft } from "./drafts";
-import { applySessionState } from "./sessions";
-import { getSettings, persistSettings } from "./settings";
+import { getEnvironment } from "./environment";
+import { deleteHyperState, getHyperSessionIds } from "./hyperSessions";
+import { deleteSavedDraft, getSavedDrafts, saveDraft } from "./drafts";
+import { getSettings, saveSettings } from "./settings";
+
+/** Assemble the current projection of the shared facts workspace owns. */
+export async function getWorkspaceState(): Promise<WorkspaceState> {
+  return {
+    settings: await getSettings(),
+    drafts: getSavedDrafts(),
+    hyperSessionIds: getHyperSessionIds(),
+    environment: getEnvironment(),
+  };
+}
 
 // The settings aggregate is persisted with a read-merge-write operation, so patches must not race.
 const settingsChangeQueue = new SerialTaskQueue();
 
-export function changeSettings(update: Partial<Settings>): Promise<Settings> {
+export function updateSettings(update: Partial<Settings>): Promise<Settings> {
   return settingsChangeQueue.enqueue(() => commitSettingsChange(update));
 }
 
@@ -34,46 +43,24 @@ export function unpinSession(sessionId: string): Promise<void> {
 }
 
 async function commitSettingsChange(update: Partial<Settings>): Promise<Settings> {
-  const settings = normalizeSettings({ ...(await getSettings()), ...update });
-  if (await persistSettings(settings)) {
+  const current = await getSettings();
+  const settings = normalizeSettings({ ...current, ...update });
+  if (!areSettingsEqual(current, settings)) {
+    await saveSettings(settings);
     broadcast({ type: "settings.changed", settings });
   }
   return settings;
 }
 
 export function deleteSessionWorkspaceState(sessionId: string): void {
-  applySessionState({ type: "session.deleted", sessionId });
   deleteSavedDraft(`session:${sessionId}`);
   deleteHyperState(sessionId);
-  finishWorkersForSession(sessionId);
-}
-
-/**
- * Server twin of the client's applyWorkspaceEvent for the process-local
- * sessionStates map: reduce the transition in, then broadcast it only if the
- * reducer accepted it.
- */
-function commitSessionEvent(event: WorkspaceSessionEvent): boolean {
-  if (!applySessionState(event)) return false;
-  broadcast(event);
-  return true;
 }
 
 /** Stamp a draft with server time, then broadcast it iff it changed. */
 function commitDraft(key: DraftKey, text: string, origin: string): void {
   const draft = saveDraft(key, text, origin);
   if (draft) broadcast({ type: "draft.changed", key, draft });
-}
-
-export function setSessionStatus(
-  sessionId: string,
-  status: "running" | "waiting" | "background" | "idle" | "unread",
-): void {
-  commitSessionEvent(
-    status === "running" || status === "waiting" || status === "background"
-      ? { type: `session.${status}`, sessionId, at: Date.now() }
-      : { type: `session.${status}`, sessionId },
-  );
 }
 
 export function applyWorkspaceAction(action: WorkspaceAction): void {
@@ -83,9 +70,6 @@ export function applyWorkspaceAction(action: WorkspaceAction): void {
       return;
     case "session.hyper.promoted":
       if (deleteHyperState(action.sessionId)) broadcast(action);
-      return;
-    case "session.read":
-      commitSessionEvent(action);
       return;
     default:
       action satisfies never;

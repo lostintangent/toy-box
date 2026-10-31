@@ -1,4 +1,5 @@
-import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
+import { machineFile } from "@files/model";
+import { useRevealFile } from "@files/useRevealFile";
 import { CompletionMenu } from "@/shared/composers/completions/CompletionMenu";
 import type { Completions } from "@/shared/composers/completions/useCompletions";
 import { Badge } from "@/shared/ui/badge";
@@ -10,7 +11,7 @@ export function PromptCompletionMenu({
 }: {
   completions: Completions<PromptCompletionItem>;
 }) {
-  const { openFile } = useWorkspaceSurface();
+  const revealFile = useRevealFile();
   return (
     <CompletionMenu
       completions={completions}
@@ -27,7 +28,7 @@ export function PromptCompletionMenu({
           )}
         </>
       )}
-      edit={({ filePath }) => (filePath && openFile ? () => openFile(filePath) : undefined)}
+      edit={({ filePath }) => (filePath ? () => revealFile(machineFile(filePath)) : undefined)}
     />
   );
 }

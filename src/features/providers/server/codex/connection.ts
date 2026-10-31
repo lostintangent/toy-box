@@ -7,13 +7,9 @@ import { normalizeToolResult, type ToolResult } from "@sessions/server/tools/def
 import type {
   DynamicToolCallParams,
   DynamicToolCallResponse,
-  ItemCompletedNotification,
-  ServerRequestResolvedNotification,
-  ToolRequestUserInputParams,
+  ThreadListResponse,
   ToolRequestUserInputResponse,
   Turn,
-  TurnCompletedNotification,
-  TurnStartedNotification,
   ReasoningEffort,
 } from "./protocol";
 import { CodexTransport, type RpcNotification, type RpcRequest } from "./protocol/transport";
@@ -114,6 +110,7 @@ export class CodexConnection implements SessionConnection {
     return true;
   }
 
+  /** Stop interrupts the session tree's running turns: the root's and its subagents'. */
   async abort(): Promise<void> {
     this.#cancelRequests();
     if (this.#turn)
@@ -121,6 +118,13 @@ export class CodexConnection implements SessionConnection {
         threadId: this.provider.sessionId,
         turnId: this.#turn.id,
       });
+    const subagents = await this.#loadedSubagents();
+    // Workaround (Codex CLI 0.166.0; listed in providers/AGENTS.md): an empty turn ID interrupts
+    // whatever a subagent is running, so Stop needs no subagent turn tracking. Replace with
+    // thread/interrupt (openai/codex#40953).
+    await Promise.all(
+      subagents.map((threadId) => this.rpc.request("turn/interrupt", { threadId, turnId: "" })),
+    );
   }
 
   async disconnect(): Promise<void> {
@@ -178,20 +182,20 @@ export class CodexConnection implements SessionConnection {
     if (params.threadId === this.provider.sessionId) {
       switch (method) {
         case "turn/started": {
-          const { turn } = params as TurnStartedNotification;
+          const { turn } = params;
           this.#turn = { id: turn.id, controller: new AbortController() };
           this.#emit({ type: "model_changed", model: this.#model });
           break;
         }
         case "turn/completed": {
-          const { turn } = params as TurnCompletedNotification;
+          const { turn } = params;
           if (this.#turn?.id !== turn.id) return;
           this.#cancelRequests();
           this.#turn = undefined;
           break;
         }
         case "serverRequest/resolved": {
-          const { requestId } = params as ServerRequestResolvedNotification;
+          const { requestId } = params;
           this.#cancelQuestions(requestId);
           break;
         }
@@ -199,7 +203,7 @@ export class CodexConnection implements SessionConnection {
     }
     for (const event of this.#project(notification)) this.#emit(event);
     if (method === "item/completed") {
-      const { item, turnId } = params as ItemCompletedNotification;
+      const { item, turnId } = params;
       const terminal = this.#terminal;
       if (
         item.type === "dynamicToolCall" &&
@@ -216,22 +220,35 @@ export class CodexConnection implements SessionConnection {
     }
   }
 
+  /** Spawned subagents at any depth that are still loaded, and so may still be working. */
+  async #loadedSubagents(): Promise<string[]> {
+    const loaded: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: ThreadListResponse = await this.rpc.request("thread/list", {
+        cursor,
+        limit: 100,
+        ancestorThreadId: this.provider.sessionId,
+        sourceKinds: ["subAgentThreadSpawn"],
+        useStateDbOnly: true,
+      });
+      for (const { id, status } of page.data) if (status.type !== "notLoaded") loaded.push(id);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return loaded;
+  }
+
   #request(request: RpcRequest): boolean {
-    if (
-      !request.params ||
-      typeof request.params !== "object" ||
-      !("threadId" in request.params) ||
-      request.params.threadId !== this.provider.sessionId
-    )
-      return false;
+    // JSON-RPC allows omitted params; unknown requests must decline rather than throw.
+    if (request.params?.threadId !== this.provider.sessionId) return false;
     if (request.method === "item/tool/call") {
-      const params = request.params as DynamicToolCallParams;
+      const { params } = request;
       if (params.namespace !== "toy_box") return false;
       void this.#callTool(request.id, params).catch((error) => this.#fail(error));
       return true;
     }
     if (request.method === "item/tool/requestUserInput") {
-      const { itemId, questions, isBlocking } = request.params as ToolRequestUserInputParams;
+      const { itemId, questions, isBlocking } = request.params;
       if (!questions.length) {
         this.rpc.respond(request.id, { answers: {} });
         return true;
@@ -278,15 +295,7 @@ export class CodexConnection implements SessionConnection {
       const tool = this.configuration.tools.find((candidate) => candidate.name === name);
       if (!tool) throw new Error(`Tool ${name} is unavailable in this session.`);
       const parsed = tool.parameters ? tool.parameters.parse(args) : args;
-      result = normalizeToolResult(
-        await tool.handler(parsed, {
-          sessionId: this.sessionId,
-          toolCallId: callId,
-          toolName: name,
-          arguments: args,
-          signal,
-        }),
-      );
+      result = normalizeToolResult(await tool.handler(parsed, this.sessionId));
       signal.throwIfAborted();
       if (tool.isTerminal && !result.isError) this.#terminal = { turnId: turn.id, callId };
     } catch (error) {

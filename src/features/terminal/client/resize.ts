@@ -20,7 +20,7 @@ export type TerminalResizeCallbacks = {
   onSizeChanged: (cols: number, rows: number) => void;
 };
 
-export function isValidSize(cols: number, rows: number) {
+function isValidSize(cols: number, rows: number) {
   return Number.isFinite(cols) && Number.isFinite(rows) && cols >= 2 && rows >= 1;
 }
 
@@ -75,9 +75,5 @@ export class TerminalResize {
 
     if (this.#xterm.cols !== cols || this.#xterm.rows !== rows) this.#fitAddon.fit();
     this.#callbacks.onSizeChanged(cols, rows);
-  }
-
-  dispose() {
-    this.uninstall();
   }
 }

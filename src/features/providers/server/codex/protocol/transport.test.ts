@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { CodexTransport } from "./transport";
-import { SessionConnectionUnavailableError } from "@providers/server/provider";
+import {
+  SessionConnectionUnavailableError,
+  SessionNotFoundError,
+} from "@providers/server/provider";
 
 describe("Codex bidirectional transport", () => {
   test("frames fragmented large responses, notifications, and out-of-order replies", async () => {
@@ -50,7 +53,7 @@ describe("Codex bidirectional transport", () => {
     const first = rpc.request("thread/read", { threadId: "missing" });
     const second = rpc.request("thread/read", { threadId: "present" });
     rpc.receive('{"id":1,"error":{"code":-32000,"message":"thread not found"}}\n');
-    await expect(first).rejects.toThrow("thread not found");
+    await expect(first).rejects.toBeInstanceOf(SessionNotFoundError);
     rpc.close(new Error("Process exited"));
     await expect(second).rejects.toThrow("Process exited");
     // An interrupted submission is ambiguous. Only subsequent, unsubmitted

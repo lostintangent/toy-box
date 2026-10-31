@@ -9,7 +9,7 @@ const updateSettingsTool = defineTool("update_settings", {
     "Returns the complete authoritative settings value.",
   parameters: settingsUpdateSchema,
   handler: async (update) => {
-    const { updateSettings } = await import("@workspace/server");
+    const { updateSettings } = await import("@workspace/server/state");
     const settings = await updateSettings(update);
     return JSON.stringify({ settings });
   },

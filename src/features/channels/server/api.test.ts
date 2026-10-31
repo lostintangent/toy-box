@@ -8,8 +8,7 @@ import * as providers from "@providers/server";
 import * as sessionRuntime from "@sessions/server/runtime";
 import { setSessionProvider } from "@sessions/server/state/sessions";
 import { broadcast } from "@workspace/server/events";
-import { setSessionStatus } from "@workspace/server/state";
-import { deleteSessionState } from "@workspace/server/state/sessions";
+import { deleteSessionActivity, setSessionActivity } from "@sessions/server/state/activity";
 import * as workspaceSettings from "@workspace/server/state/settings";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
 import * as database from "@/server/database";
@@ -46,7 +45,7 @@ async function openChannel() {
   onTestFinished(async () => {
     access.mockRestore();
     releaseChannelEvents(channel.id);
-    deleteSessionState(channel.id);
+    deleteSessionActivity(channel.id);
     await db.close();
   });
   return { channel, channels };
@@ -87,8 +86,8 @@ test("snapshots combine public Channel facts with live presence without exposing
   const worker = channelAgent(channel.id, "reviewer", "Reviewer");
   worker.metadata = { seenThrough: 72 };
   const { member } = await channels.createMember(worker);
-  onTestFinished(() => deleteSessionState(member.id));
-  setSessionStatus(channel.id, "running");
+  onTestFinished(() => deleteSessionActivity(member.id));
+  setSessionActivity(channel.id, "running");
 
   const file = { kind: "session" as const, sessionId: channel.id, path: "docs/Project plan.md" };
   await channels.shareArtifact({
@@ -135,7 +134,7 @@ test("snapshots combine public Channel facts with live presence without exposing
   expect(snapshot?.members[0]).not.toHaveProperty("seenThrough");
   expect(snapshot?.members[0]).not.toHaveProperty("sessionId");
   expect(snapshot?.lead).not.toHaveProperty("metadata");
-  expect(snapshot).not.toHaveProperty("sessionStates");
+  expect(snapshot).not.toHaveProperty("activities");
 });
 
 test("a reply committed after the durable read cannot advance the snapshot beyond its transcript", async () => {
@@ -222,22 +221,22 @@ test("live events and presence send only changed facts without rereading durable
     type: "presence",
     presence: { [channel.id]: { state: "waiting", text: "A reply" } },
   });
-  setSessionStatus(channel.id, "running");
+  setSessionActivity(channel.id, "running");
   expect(await client.next()).toEqual({
     type: "presence",
     presence: { [channel.id]: { state: "working" } },
   });
-  setSessionStatus(channel.id, "background");
+  setSessionActivity(channel.id, "background");
   expect(await client.next()).toEqual({
     type: "presence",
     presence: { [channel.id]: { state: "waiting", text: "A reply" } },
   });
-  setSessionStatus(channel.id, "running");
+  setSessionActivity(channel.id, "running");
   expect(await client.next()).toEqual({
     type: "presence",
     presence: { [channel.id]: { state: "working" } },
   });
-  setSessionStatus(channel.id, "idle");
+  setSessionActivity(channel.id, "idle");
   expect(await client.next()).toEqual({
     type: "presence",
     presence: { [channel.id]: { state: "waiting", text: "A reply" } },
@@ -473,9 +472,9 @@ test("the HTTP catalog names working agents the way Channel presence does", asyn
   const { channel, channels } = await openChannel();
   await channels.createMember(channelAgent(channel.id, "idle", "Idle"));
   const { member: busy } = await channels.createMember(channelAgent(channel.id, "busy", "Busy"));
-  onTestFinished(() => deleteSessionState(busy.id));
-  setSessionStatus(channel.id, "running");
-  setSessionStatus(busy.id, "running");
+  onTestFinished(() => deleteSessionActivity(busy.id));
+  setSessionActivity(channel.id, "running");
+  setSessionActivity(busy.id, "running");
 
   const response = await listChannelsResponse();
   expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -539,7 +538,7 @@ test("HTTP member commands reach only members of the routed Channel", async () =
   onTestFinished(() => {
     cleanup.mockRestore();
     releaseChannelEvents(other.id);
-    deleteSessionState(member.id);
+    deleteSessionActivity(member.id);
   });
 
   const update = await updateChannelMemberResponse(channel.id, member.id, post({ role: "Build" }));
@@ -587,7 +586,7 @@ test("HTTP member models scope choices and allow clearing incompatible defaults"
   onTestFinished(() => {
     catalog.mockRestore();
     settings.mockRestore();
-    deleteSessionState(member.id);
+    deleteSessionActivity(member.id);
   });
   const models = async () => (await listChannelMemberModelsResponse(channel.id, member.id)).json();
 

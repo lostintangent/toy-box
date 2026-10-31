@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToReadableStream, renderToStaticMarkup } from "react-dom/server";
+import { APP_DEPENDENCIES } from "@apps/runtime";
 import { sessionFile } from "@files/model";
 import { evaluateAppBundle } from "../../components/host/bundle";
 import { compileAppDefinition, compileArtifactApp } from "./index";
@@ -20,6 +21,13 @@ function definition(tsx: string) {
     tsx,
   };
 }
+
+// Parsing the TypeScript libraries and every app dependency's declarations is a one-time
+// process cost, so pay it once instead of inside whichever test happens to run first.
+beforeAll(() => {
+  const imports = Object.keys(APP_DEPENDENCIES).map((name) => `import "${name}";`);
+  return compileAppDefinition(definition(`${imports.join("\n")}\nexport default () => null;`));
+}, 60_000);
 
 describe("app compiler", () => {
   test("renders with shared libraries and generates scoped Toy Box styles", async () => {
@@ -239,5 +247,5 @@ export default function App() {
 }`,
       ),
     ).rejects.toThrow(/not callable/);
-  }, 10_000);
+  });
 });

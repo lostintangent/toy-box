@@ -95,6 +95,9 @@ ownership.
   parent relationships, so generic consumers need no separate Worker-classification cache.
 - `server/registry.ts` contains only currently admitted background work and publishes
   `worker.started` and `worker.finished`. Durable Channel membership is not active work.
+  [`queries.ts`](queries.ts) reads it, and [`cache.ts`](cache.ts) keeps that list current from those
+  events and from session and app deletion. Shared Session teardown finishes a deleted session's
+  own and child registrations.
 - `components/WorkersMenu.tsx` presents active background work. Files and Apps select the Workers they
   own. Channels presents its durable Workers as the lead and members.
 - Sessions owns execution, history, streaming, completion, provider configuration, and worktrees.

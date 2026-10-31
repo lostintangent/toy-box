@@ -10,12 +10,9 @@ import type { Channel, ChannelArtifact, ChannelMember, ChannelRoutine } from "@c
 import { channelMutations } from "@channels/mutations";
 import { FileBrowserDialog } from "@files/components/browser/FileBrowserDialog";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
-import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
-import {
-  PANE_OVERLAY_BUTTON_CLASS,
-  PANE_OVERLAY_ICON_CLASS,
-} from "@workspace/components/panes/shell/paneControls";
+import { useRevealFile } from "@files/useRevealFile";
+import { PaneActions, type PaneVariant } from "@/shared/panes/PaneSlots";
+import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "@/shared/panes/paneControls";
 import { Button } from "@/shared/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/shared/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/shared/ui/sheet";
@@ -47,12 +44,8 @@ export function ChannelOverview({
   /** The pane's other actions, which precede the overview's trigger and give way to it when pinned. */
   actions?: ReactNode;
 }) {
-  const {
-    openFile,
-    revealFile,
-    channelOverviewPinned = false,
-    setChannelOverviewPinned,
-  } = useWorkspaceSurface();
+  const { channelOverviewPinned = false, setChannelOverviewPinned } = useWorkspaceSurface();
+  const revealFile = useRevealFile();
   const { mention } = useChannelPane();
   const overviewRef = useRef<HTMLDivElement>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -87,7 +80,7 @@ export function ChannelOverview({
 
   function openArtifact(artifact: ChannelArtifact) {
     closeSheet();
-    revealFile?.(artifact.file);
+    revealFile(artifact.file);
   }
 
   function openDialog(next: OverviewDialog) {
@@ -217,7 +210,7 @@ export function ChannelOverview({
           onOpenChange={onDialogOpenChange}
           title="Open a file"
           initialPath={channel.directory}
-          onOpenFile={openFile}
+          onOpenFile={revealFile}
         />
       )}
       {dialog?.type === "remove_member" && (

@@ -12,7 +12,7 @@ import {
 } from "@channels/model";
 import { getModelChoices } from "@providers/server";
 import { createSseResponse } from "@/shared/server/sse";
-import { getSessionState } from "@workspace/server/state/sessions";
+import { getSessionActivity } from "@sessions/server/state/activity";
 import {
   createChannel,
   createChannelMember,
@@ -35,10 +35,10 @@ import { ChannelInputError } from "./database";
 /** HTTP ingress over the public Channel capabilities. */
 export async function listChannelsResponse(): Promise<Response> {
   const list = await listChannels();
-  // Native catalogs cannot read workspace session state, so name who is working as presence would.
+  // Native catalogs cannot read Sessions' activity, so name who is working as presence would.
   const working = [...list.channels, ...list.members]
     .map(({ id }) => id)
-    .filter((agentId) => getSessionState(agentId)?.status === "running");
+    .filter((agentId) => getSessionActivity(agentId)?.status === "running");
   return Response.json(
     { version: 1, ...list, lead: CHANNEL_LEAD_PROFILE, working },
     { headers: { "Cache-Control": "no-store" } },

@@ -202,7 +202,7 @@ test("pausing a screen releases control", async () => {
 test("closing for a restart lets go of the helper and reconnects viewers to a new one", async () => {
   const f = setup();
   const viewer = await f.view();
-  await f.runtime.close();
+  await f.runtime.dispose();
   // Its screen didn't end, so the viewer reconnects.
   expect(viewer.closed).toBe(true);
   expect(viewer.states.map((state) => state.status)).toEqual(["live"]);

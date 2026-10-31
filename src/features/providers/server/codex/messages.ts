@@ -42,7 +42,7 @@ export function decodeInput(
     type: "user_message",
     content: text.join("\n"),
     ...identity,
-    ...(attachments?.length ? { attachments } : {}),
+    ...(attachments.length ? { attachments } : {}),
   };
 }
 

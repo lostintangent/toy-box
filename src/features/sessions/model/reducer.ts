@@ -43,19 +43,17 @@ import type {
 
 export function createInitialSessionState(initial: Partial<SessionState> = {}): SessionState {
   return {
-    messages: initial.messages ? [...initial.messages] : [],
-    queuedMessages: initial.queuedMessages ? [...initial.queuedMessages] : [],
-    todos: initial.todos ? initial.todos.map((todo) => ({ ...todo })) : [],
-    linkedSessionIds: initial.linkedSessionIds ? [...initial.linkedSessionIds] : [],
-    canvases: initial.canvases ? initial.canvases.map((canvas) => ({ ...canvas })) : [],
-    ...(initial.preview ? { preview: { ...initial.preview } } : {}),
-    artifacts: initial.artifacts ? initial.artifacts.map((artifact) => ({ ...artifact })) : [],
-    openedFiles: initial.openedFiles ? [...initial.openedFiles] : [],
-    status: initial.status ?? "idle",
-    reasoningContent: initial.reasoningContent ?? "",
-    model: initial.model,
-    ...(initial.contextUsage ? { contextUsage: { ...initial.contextUsage } } : {}),
-    ...(initial.lastSeenEventId !== undefined ? { lastSeenEventId: initial.lastSeenEventId } : {}),
+    messages: [],
+    queuedMessages: [],
+    todos: [],
+    linkedSessionIds: [],
+    canvases: [],
+    artifacts: [],
+    openedFiles: [],
+    status: "idle",
+    reasoningContent: "",
+    model: undefined,
+    ...initial,
   };
 }
 
@@ -121,7 +119,7 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
         state.status === "reasoning" ||
         state.status === "responding";
 
-      upsertCommittedAssistantMessage(state, event.content, reconcileLiveMessage, event.messageId);
+      writeAssistantText(state, event.messageId, reconcileLiveMessage, () => event.content);
       if (reconcileLiveMessage && event.content) {
         state.status = "responding";
         state.reasoningContent = "";
@@ -156,10 +154,10 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
       // Empty deltas carry no content and must not create a message boundary.
       if (event.content.length === 0) return;
 
-      ensureCleanAssistantMessage(state, event.messageId);
+      // Live text continues the reply in progress; text after tool calls starts a new message.
+      writeAssistantText(state, event.messageId, true, (content) => content + event.content);
       state.status = "responding";
       state.reasoningContent = "";
-      appendAssistantDelta(state, event.content);
       return;
     }
 
@@ -323,7 +321,7 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
     }
 
     case "preview_changed": {
-      if (event.preview) state.preview = { ...event.preview };
+      if (event.preview) state.preview = event.preview;
       else delete state.preview;
       return;
     }
@@ -340,7 +338,7 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
         )
       )
         return;
-      state.artifacts = event.artifacts.map((artifact) => ({ ...artifact }));
+      state.artifacts = event.artifacts;
       return;
     }
 
@@ -381,9 +379,6 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
         return;
       }
 
-      if (state.status === "idle" && state.reasoningContent === "") {
-        return;
-      }
       state.status = "idle";
       state.reasoningContent = "";
       return;
@@ -394,74 +389,27 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
   }
 }
 
-function finishWithError(state: SessionState, error?: string): void {
-  const message = state.messages[state.messages.length - 1];
-  const errorContent =
-    error ||
-    (message?.role === "assistant" && message.error) ||
-    "An error occurred. Please try again.";
-  if (message?.role === "assistant") {
-    replaceMessage(state, state.messages.length - 1, {
-      ...message,
-      error: errorContent,
-    });
-  } else {
-    appendMessage(state, {
-      role: "assistant",
-      content: "",
-      error: errorContent,
-    });
-  }
-
-  state.status = "idle";
-  state.reasoningContent = "";
-}
-
-// ============================================================================
-// Canvas and artifact helpers
-// ============================================================================
-
-function createCanvasKey(
-  canvas: Pick<SessionCanvas, "extensionId" | "canvasId" | "instanceId">,
-): string {
-  return JSON.stringify([canvas.extensionId ?? null, canvas.canvasId, canvas.instanceId]);
-}
-
-function upsertCanvas(state: SessionState, canvas: Omit<SessionCanvas, "key" | "revision">): void {
-  const key = createCanvasKey(canvas);
-  const index = state.canvases.findIndex((candidate) => candidate.key === key);
-
-  if (index === -1) {
-    state.canvases = [...state.canvases, { ...canvas, key, revision: 1 }];
-    return;
-  }
-
-  const current = state.canvases[index];
-  const next = [...state.canvases];
-  next[index] = {
-    ...canvas,
-    key,
-    revision: current.revision + 1,
-  };
-  state.canvases = next;
-}
-
-function openFile(state: SessionState, file: WorkspaceFile): void {
-  const id = workspaceFileId(file);
-  if (state.openedFiles.some((opened) => workspaceFileId(opened) === id)) return;
-  state.openedFiles = [...state.openedFiles, file];
-}
-
-function closeFile(state: SessionState, file: WorkspaceFile): void {
-  const id = workspaceFileId(file);
-  const openedFiles = state.openedFiles.filter((opened) => workspaceFileId(opened) !== id);
-  if (openedFiles.length === state.openedFiles.length) return;
-  state.openedFiles = openedFiles;
-}
-
 // ============================================================================
 // Message helpers
 // ============================================================================
+
+/** One client ID identifies a user input while queued, optimistically
+ *  rendered, and canonically echoed. Canonical data replaces an existing
+ *  transcript entry; otherwise the input moves from the queue into history. */
+function upsertUserMessage(
+  state: SessionState,
+  event: Extract<SessionEvent, { type: "user_message" }>,
+): void {
+  if (event.clientId) removeQueuedMessage(state, event.clientId);
+  const message = inputMessageFromEvent(event);
+  const index = event.clientId
+    ? state.messages.findIndex(
+        (candidate) => candidate.role === "user" && candidate.clientId === event.clientId,
+      )
+    : -1;
+  if (index === -1) appendMessage(state, message);
+  else replaceMessage(state, index, message);
+}
 
 type InputEvent = Extract<SessionEvent, { type: "user_message" | "system_message" }>;
 type InputMessage = Extract<Message, { role: "user" | "system" }>;
@@ -484,22 +432,37 @@ function inputMessageFromEvent(event: InputEvent): InputMessage {
       };
 }
 
-/** One client ID identifies a user input while queued, optimistically
- *  rendered, and canonically echoed. Canonical data replaces an existing
- *  transcript entry; otherwise the input moves from the queue into history. */
-function upsertUserMessage(
+// Subagent assistant messages are whole committed messages, joined as separate paragraphs.
+function appendCommittedSubagentContent(existing: string, incoming: string): string {
+  if (incoming.length === 0) return existing;
+  if (existing.length === 0) return incoming;
+  return `${existing}\n\n${incoming}`;
+}
+
+/** Assistant text continues the last assistant message until an error, a tool group,
+ *  or a different native ID closes it, and otherwise starts a new message. Text without
+ *  a native ID continues only when `continuesUnidentified` allows it. */
+function writeAssistantText(
   state: SessionState,
-  event: Extract<SessionEvent, { type: "user_message" }>,
+  messageId: string | undefined,
+  continuesUnidentified: boolean,
+  write: (content: string) => string,
 ): void {
-  if (event.clientId) removeQueuedMessage(state, event.clientId);
-  const message = inputMessageFromEvent(event);
-  const index = event.clientId
-    ? state.messages.findIndex(
-        (candidate) => candidate.role === "user" && candidate.clientId === event.clientId,
-      )
-    : -1;
-  if (index === -1) appendMessage(state, message);
-  else replaceMessage(state, index, message);
+  const last = state.messages.at(-1);
+  if (
+    last?.role === "assistant" &&
+    !last.error &&
+    !last.toolCalls?.length &&
+    (messageId === undefined ? continuesUnidentified : last.messageId === messageId)
+  ) {
+    replaceMessage(state, state.messages.length - 1, { ...last, content: write(last.content) });
+    return;
+  }
+  appendMessage(state, {
+    role: "assistant",
+    content: write(""),
+    ...(messageId !== undefined ? { messageId } : {}),
+  });
 }
 
 function ensureAssistantMessage(state: SessionState): void {
@@ -511,99 +474,60 @@ function ensureAssistantMessage(state: SessionState): void {
   });
 }
 
-// Like ensureAssistantMessage, but also starts a new message when the current
-// one already has tool calls — so that text after tool execution lands on a
-// fresh assistant message, preserving the interleaving of text and tool groups.
-function ensureCleanAssistantMessage(state: SessionState, messageId?: string): void {
-  const last = state.messages[state.messages.length - 1];
-  if (
-    last?.role === "assistant" &&
-    !last.error &&
-    !last.toolCalls?.length &&
-    (messageId === undefined || last.messageId === messageId)
-  ) {
-    return;
-  }
-  appendMessage(state, {
-    role: "assistant",
-    content: "",
-    ...(messageId !== undefined ? { messageId } : {}),
-  });
+function appendMessage(state: SessionState, message: Message): void {
+  state.messages = [...state.messages, message];
 }
 
-function upsertCommittedAssistantMessage(
+function replaceMessage(state: SessionState, index: number, message: Message): void {
+  state.messages = replaceAt(state.messages, index, message);
+}
+
+function replaceAt<T>(items: T[], index: number, item: T): T[] {
+  return [...items.slice(0, index), item, ...items.slice(index + 1)];
+}
+
+// ============================================================================
+// Queue helpers
+// ============================================================================
+
+function upsertQueuedMessage(
   state: SessionState,
-  content: string,
-  reconcileLiveMessage: boolean,
-  messageId?: string,
+  message: SessionState["queuedMessages"][number],
 ): void {
-  const last = state.messages[state.messages.length - 1];
-  if (
-    last?.role === "assistant" &&
-    !last.error &&
-    !last.toolCalls?.length &&
-    (messageId !== undefined ? last.messageId === messageId : reconcileLiveMessage)
-  ) {
-    replaceMessage(state, state.messages.length - 1, {
-      ...last,
-      content,
-    });
-    return;
-  }
-  appendMessage(state, {
-    role: "assistant",
-    content,
-    ...(messageId !== undefined ? { messageId } : {}),
+  const index = state.queuedMessages.findIndex(
+    (candidate) => candidate.clientId === message.clientId,
+  );
+  state.queuedMessages =
+    index === -1
+      ? [...state.queuedMessages, message]
+      : replaceAt(state.queuedMessages, index, message);
+}
+
+function setQueuedMessageStatus(
+  state: SessionState,
+  clientId: string,
+  status: SessionState["queuedMessages"][number]["status"],
+): void {
+  const index = state.queuedMessages.findIndex((message) => message.clientId === clientId);
+  if (index === -1 || state.queuedMessages[index].status === status) return;
+  state.queuedMessages = replaceAt(state.queuedMessages, index, {
+    ...state.queuedMessages[index],
+    status,
   });
 }
 
-// Subagent assistant messages are whole committed messages, joined as separate paragraphs.
-function appendCommittedSubagentContent(existing: string, incoming: string): string {
-  if (incoming.length === 0) return existing;
-  if (existing.length === 0) return incoming;
-  return `${existing}\n\n${incoming}`;
-}
-
-function appendAssistantDelta(state: SessionState, content: string): void {
-  const last = state.messages[state.messages.length - 1];
-  if (!last || last.role !== "assistant") return;
-  replaceMessage(state, state.messages.length - 1, {
-    ...last,
-    content: last.content + content,
-  });
+function removeQueuedMessage(state: SessionState, clientId: string): void {
+  const index = state.queuedMessages.findIndex((message) => message.clientId === clientId);
+  if (index === -1) return;
+  state.queuedMessages = [
+    ...state.queuedMessages.slice(0, index),
+    ...state.queuedMessages.slice(index + 1),
+  ];
 }
 
 // ============================================================================
-// Tool call helpers
+// Tool call and question helpers
 // ============================================================================
-
-function toQuestionBase(question: SessionQuestion): SessionQuestionBase {
-  return {
-    question: question.question,
-    ...(question.choices ? { choices: question.choices } : {}),
-    allowFreeform: question.allowFreeform,
-    ...(question.blocking !== undefined ? { blocking: question.blocking } : {}),
-    ...(question.secret !== undefined ? { secret: question.secret } : {}),
-  };
-}
-
-function markPendingQuestionUnanswered(messages: Message[]): Message[] {
-  let result = messages;
-  for (const [messageIndex, message] of messages.entries()) {
-    if (message.role !== "assistant" || !message.toolCalls) continue;
-    let tools = message.toolCalls;
-    for (const [index, tool] of tools.entries()) {
-      if (tool.question?.state !== "pending") continue;
-      tools = replaceAt(tools, index, {
-        ...tool,
-        question: { ...toQuestionBase(tool.question), state: "unanswered" },
-      });
-    }
-    if (tools !== message.toolCalls)
-      result = replaceAt(result, messageIndex, { ...message, toolCalls: tools });
-  }
-  return result;
-}
 
 function upsertToolCallOnLastAssistant(state: SessionState, toolCall: ToolCall): void {
   const last = state.messages[state.messages.length - 1];
@@ -682,55 +606,14 @@ function updateQuestion(
   }
 }
 
-// ============================================================================
-// Queue helpers
-// ============================================================================
-
-function upsertQueuedMessage(
-  state: SessionState,
-  message: SessionState["queuedMessages"][number],
-): void {
-  const index = state.queuedMessages.findIndex(
-    (candidate) => candidate.clientId === message.clientId,
-  );
-  state.queuedMessages =
-    index === -1
-      ? [...state.queuedMessages, message]
-      : replaceAt(state.queuedMessages, index, message);
-}
-
-function setQueuedMessageStatus(
-  state: SessionState,
-  clientId: string,
-  status: SessionState["queuedMessages"][number]["status"],
-): void {
-  const index = state.queuedMessages.findIndex((message) => message.clientId === clientId);
-  if (index === -1 || state.queuedMessages[index].status === status) return;
-  state.queuedMessages = replaceAt(state.queuedMessages, index, {
-    ...state.queuedMessages[index],
-    status,
-  });
-}
-
-function removeQueuedMessage(state: SessionState, clientId: string): void {
-  const index = state.queuedMessages.findIndex((message) => message.clientId === clientId);
-  if (index === -1) return;
-  state.queuedMessages = [
-    ...state.queuedMessages.slice(0, index),
-    ...state.queuedMessages.slice(index + 1),
-  ];
-}
-
-function appendMessage(state: SessionState, message: Message): void {
-  state.messages = [...state.messages, message];
-}
-
-function replaceMessage(state: SessionState, index: number, message: Message): void {
-  state.messages = replaceAt(state.messages, index, message);
-}
-
-function replaceAt<T>(items: T[], index: number, item: T): T[] {
-  return [...items.slice(0, index), item, ...items.slice(index + 1)];
+function toQuestionBase(question: SessionQuestion): SessionQuestionBase {
+  return {
+    question: question.question,
+    ...(question.choices ? { choices: question.choices } : {}),
+    allowFreeform: question.allowFreeform,
+    ...(question.blocking !== undefined ? { blocking: question.blocking } : {}),
+    ...(question.secret !== undefined ? { secret: question.secret } : {}),
+  };
 }
 
 // ============================================================================
@@ -780,4 +663,91 @@ function applyTodoPatches(current: TodoItem[], patches: TodoItemPatch[]): TodoIt
   }
 
   return next;
+}
+
+// ============================================================================
+// Canvas and file helpers
+// ============================================================================
+
+function createCanvasKey(
+  canvas: Pick<SessionCanvas, "extensionId" | "canvasId" | "instanceId">,
+): string {
+  return JSON.stringify([canvas.extensionId ?? null, canvas.canvasId, canvas.instanceId]);
+}
+
+function upsertCanvas(state: SessionState, canvas: Omit<SessionCanvas, "key" | "revision">): void {
+  const key = createCanvasKey(canvas);
+  const index = state.canvases.findIndex((candidate) => candidate.key === key);
+
+  if (index === -1) {
+    state.canvases = [...state.canvases, { ...canvas, key, revision: 1 }];
+    return;
+  }
+
+  const current = state.canvases[index];
+  const next = [...state.canvases];
+  next[index] = {
+    ...canvas,
+    key,
+    revision: current.revision + 1,
+  };
+  state.canvases = next;
+}
+
+function openFile(state: SessionState, file: WorkspaceFile): void {
+  const id = workspaceFileId(file);
+  if (state.openedFiles.some((opened) => workspaceFileId(opened) === id)) return;
+  state.openedFiles = [...state.openedFiles, file];
+}
+
+function closeFile(state: SessionState, file: WorkspaceFile): void {
+  const id = workspaceFileId(file);
+  const openedFiles = state.openedFiles.filter((opened) => workspaceFileId(opened) !== id);
+  if (openedFiles.length === state.openedFiles.length) return;
+  state.openedFiles = openedFiles;
+}
+
+// ============================================================================
+// Lifecycle helpers
+// ============================================================================
+
+function markPendingQuestionUnanswered(messages: Message[]): Message[] {
+  let result = messages;
+  for (const [messageIndex, message] of messages.entries()) {
+    if (message.role !== "assistant" || !message.toolCalls) continue;
+    let tools = message.toolCalls;
+    for (const [index, tool] of tools.entries()) {
+      if (tool.question?.state !== "pending") continue;
+      tools = replaceAt(tools, index, {
+        ...tool,
+        question: { ...toQuestionBase(tool.question), state: "unanswered" },
+      });
+    }
+    if (tools !== message.toolCalls)
+      result = replaceAt(result, messageIndex, { ...message, toolCalls: tools });
+  }
+  return result;
+}
+
+function finishWithError(state: SessionState, error?: string): void {
+  const message = state.messages[state.messages.length - 1];
+  const errorContent =
+    error ||
+    (message?.role === "assistant" && message.error) ||
+    "An error occurred. Please try again.";
+  if (message?.role === "assistant") {
+    replaceMessage(state, state.messages.length - 1, {
+      ...message,
+      error: errorContent,
+    });
+  } else {
+    appendMessage(state, {
+      role: "assistant",
+      content: "",
+      error: errorContent,
+    });
+  }
+
+  state.status = "idle";
+  state.reasoningContent = "";
 }

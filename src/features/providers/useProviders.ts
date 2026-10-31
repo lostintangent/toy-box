@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
 import { providerQueries } from "./queries";
 
-/** Installation is discovered; enablement is the owner's workspace preference. */
+/** Status is discovered; an installed provider is enabled unless the owner turns it off. */
 export function useProviders() {
   const { data } = useQuery(providerQueries.catalog());
   const disabledProviders = useWorkspaceSelector(
@@ -22,7 +22,7 @@ export function useProviders() {
   return {
     providers: (data?.providers ?? []).map((provider) => ({
       ...provider,
-      enabled: !disabledProviders.includes(provider.id),
+      enabled: provider.status !== "unavailable" && !disabledProviders.includes(provider.id),
     })),
     hasModels: (data?.models.length ?? 0) > 0,
     setEnabled,

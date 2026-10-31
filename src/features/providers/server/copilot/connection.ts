@@ -14,7 +14,7 @@ export function connectCopilotSession(
 ): SessionConnection {
   const pendingInputs = new Map<string, string>();
   return {
-    provider: { id: "copilot", sessionId: native.sessionId ?? sessionId },
+    provider: { id: "copilot", sessionId: native.sessionId },
     onEvent(listener) {
       // Native start and resume events predate subscription; seed the live stream with their model.
       if (appliedModel) listener({ type: "model_changed", model: appliedModel });
@@ -70,13 +70,8 @@ export function connectCopilotSession(
         await native.rpc.ui.handlePendingUserInput({ requestId, response: { answer, wasFreeform } })
       ).success;
     },
-    async abort() {
-      try {
-        await native.rpc.queue.clear();
-      } finally {
-        await native.abort();
-      }
-    },
+    // Native abort also cancels queued and steering input.
+    abort: () => native.abort(),
     disconnect: () => native.disconnect(),
     async rename(name, automatic) {
       if (automatic) return (await native.rpc.name.setAuto({ summary: name })).applied;

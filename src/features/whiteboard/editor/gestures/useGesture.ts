@@ -13,6 +13,7 @@ import {
   type GestureOwner,
   type GestureSource,
   type TouchPointPair,
+  viewportPoint,
 } from "./gesture";
 import type { EditorStore, Point, Tool } from "../../store";
 
@@ -124,7 +125,7 @@ export function useGesture({
       return true;
     }
 
-    activeTouches.set(event.pointerId, viewportPoint(event));
+    activeTouches.set(event.pointerId, viewportPoint(event, event.currentTarget));
     const points = touchPointPair(activeTouches);
     if (!points) return false;
     const viewportSource = sourceFor("viewport");
@@ -194,7 +195,7 @@ export function useGesture({
 
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.pointerType === "touch" && activeTouchesRef.current.has(event.pointerId)) {
-      activeTouchesRef.current.set(event.pointerId, viewportPoint(event));
+      activeTouchesRef.current.set(event.pointerId, viewportPoint(event, event.currentTarget));
     }
     const gesture = capturedGestureRef.current;
     if (gesture?.pointerIds.includes(event.pointerId)) gesture.update(event);
@@ -226,14 +227,6 @@ export function useGesture({
       return store.state.gesture ? gestureOwnerForState(store.state.gesture) === owner : false;
     },
     leaveHover,
-  };
-}
-
-function viewportPoint(event: ReactPointerEvent<HTMLDivElement>): Point {
-  const bounds = event.currentTarget.getBoundingClientRect();
-  return {
-    x: event.clientX - bounds.left,
-    y: event.clientY - bounds.top,
   };
 }
 

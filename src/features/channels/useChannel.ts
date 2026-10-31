@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useHydrated } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { loadChannelHistory } from "./queryCache";
+import { loadChannelHistory } from "./cache";
 import { channelMutations } from "./mutations";
 import { channelQueries, type ChannelQueryData } from "./queries";
 import { usePageVisibility } from "@/shared/hooks/usePageVisibility";

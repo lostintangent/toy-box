@@ -21,9 +21,9 @@ its stored artifact reference cannot be trusted. A valid result replacement clea
 without modifying the original metadata during reads.
 
 `model/` owns the entry and ingress schemas and projects validated result metadata from Workers.
-`server/index.ts` uses the public Worker read, detail-update, metadata-initialization, and delete capabilities; Inbox has
-no table or SQL. `server/dispatcher.ts` calls `spawnWorker` with the complete launch configuration,
-Inbox ownership, and a retention callback.
+`server/index.ts` uses the public Worker spawn, read, detail-update, metadata-initialization, and delete
+capabilities; Inbox has no table or SQL. Dispatch calls `spawnWorker` with the complete launch
+configuration, Inbox ownership, and a retention callback.
 Result writes acknowledge persistence without rebuilding an entry; reads own the Inbox projection.
 `server/functions.ts` is the validated RPC ingress used by Query mutations and matching server
 callers; `server/tools.ts` validates and handles the agent-only result operation. `routes/v1/inbox.ts`
@@ -61,7 +61,7 @@ function projects retained Inbox Workers after recovery. The main route preloads
 feature catalogs. The existing workspace event connection routes `inbox.changed` to this query;
 reconnect and visibility recovery invalidate it in parallel with the other catalogs.
 
-`queryCache.ts` owns invalidation and immediate entry deletion. A change hint cancels an overlapping
+`cache.ts` owns invalidation and immediate entry deletion. A change hint cancels an overlapping
 read, including an initial fetch, before requesting current data. A deletion removes the cached row
 and replaces any overlapping read so its older snapshot cannot restore the entry. No separate event
 journal or connection is needed. Inactive queries become stale and reload when consumed.

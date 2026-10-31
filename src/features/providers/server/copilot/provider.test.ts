@@ -1,16 +1,8 @@
-import { beforeEach, expect, mock, onTestFinished, spyOn, test } from "bun:test";
+import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
 import type { CopilotClient } from "@github/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
 import * as client from "./client";
 import { copilotProvider, toSubscription } from "./provider";
-import * as computerUse from "./computerUse";
-
-beforeEach(() => {
-  const servers = spyOn(computerUse, "computerUseServers").mockResolvedValue({
-    "computer-use": { type: "stdio", command: "/copilot/computer-use-mcp" },
-  });
-  onTestFinished(() => servers.mockRestore());
-});
 
 test("a subscription meters premium requests only when its plan limits them", () => {
   const premium = {
@@ -76,6 +68,7 @@ test("creation uses the canonical ID and configures the working directory", asyn
   const createSession = mock(async ({ sessionId }: { sessionId: string }) => ({
     sessionId,
     on: () => () => {},
+    rpc: { permissions: { setMode: async () => ({}) } },
   }));
   const start = spyOn(client, "startCopilotClient").mockResolvedValue({
     createSession,
@@ -96,7 +89,6 @@ test("creation uses the canonical ID and configures the working directory", asyn
     expect.objectContaining({
       sessionId: "public",
       workingDirectory: "/repo",
-      mcpServers: { "computer-use": { type: "stdio", command: "/copilot/computer-use-mcp" } },
       imageGeneration: { enabled: true },
     }),
   );
@@ -109,9 +101,10 @@ test("creation uses the canonical ID and configures the working directory", asyn
   expect(events).toEqual([{ type: "model_changed", model }]);
 });
 
-test("resume requests the configured model and computer use from the native session", async () => {
+test("resume requests the configured model and tool loading from the native session", async () => {
   const resumeSession = mock(async (_id: string, _configuration: object) => ({
     sessionId: "native",
+    rpc: { permissions: { setMode: async () => ({}) } },
   }));
   const start = spyOn(client, "startCopilotClient").mockResolvedValue({
     resumeSession,
@@ -129,7 +122,10 @@ test("resume requests the configured model and computer use from the native sess
       },
       directory: "/repo",
       allowUserQuestions: false,
-      tools: [],
+      tools: [
+        { name: "deferred", handler: () => "" },
+        { name: "loaded", alwaysLoad: true, handler: () => "" },
+      ],
       instructions: "",
       skillDirectories: [],
     },
@@ -138,10 +134,13 @@ test("resume requests the configured model and computer use from the native sess
   expect(resumeSession).toHaveBeenCalledWith(
     "native",
     expect.objectContaining({
+      tools: [
+        expect.objectContaining({ name: "deferred", defer: "auto" }),
+        expect.objectContaining({ name: "loaded", defer: "never" }),
+      ],
       model: "gpt-6-luna",
       reasoningEffort: "max",
       contextTier: "long_context",
-      mcpServers: { "computer-use": { type: "stdio", command: "/copilot/computer-use-mcp" } },
       imageGeneration: { enabled: true },
     }),
   );

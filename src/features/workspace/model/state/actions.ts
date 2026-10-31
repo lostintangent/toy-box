@@ -8,12 +8,7 @@ export const workspaceActionSchema = z.discriminatedUnion("type", [
     key: draftKeySchema,
     draft: savedDraftSchema,
   }),
-  sessionAction("hyper.promoted"),
-  sessionAction("read"),
+  z.object({ type: z.literal("session.hyper.promoted"), sessionId: z.string() }),
 ]);
 
 export type WorkspaceAction = z.infer<typeof workspaceActionSchema>;
-
-function sessionAction<Name extends string>(name: Name) {
-  return z.object({ type: z.literal(`session.${name}`), sessionId: z.string() });
-}

@@ -39,6 +39,21 @@ export type InboxEntry = {
   | { kind: "error"; error: string }
 );
 
+declare module "@workspace/model/events" {
+  interface WorkspaceEvents {
+    inbox: { type: "inbox.changed" } | { type: "inbox.entry.deleted"; entryId: string };
+  }
+}
+
+declare module "@workspace/model/panes" {
+  interface WorkspacePanes {
+    /** The one Inbox, which the workspace shows when nothing else is open. */
+    inbox: {};
+  }
+}
+
+export const INBOX_PANE = { kind: "inbox", id: "inbox" } as const;
+
 export const inboxEntryIdInputSchema = z.object({
   entryId: inboxEntryIdSchema,
 });

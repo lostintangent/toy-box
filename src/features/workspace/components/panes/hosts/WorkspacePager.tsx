@@ -4,11 +4,12 @@ import { useAtom } from "@tanstack/react-store";
 import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
-import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
-import { useFocusedPaneAtom } from "@workspace/hooks/layout/surface";
+import { useSessionActivity } from "@sessions/useSessionActivity";
+import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { cn } from "@/shared/utils";
 import type { WorkspacePane } from "@workspace/model/panes";
-import { WorkspacePaneView } from "../shell/WorkspacePaneView";
+import { paneKinds } from "../kinds";
+import { WorkspacePaneView } from "../WorkspacePaneView";
 
 export type WorkspacePagerProps = {
   panes: WorkspacePane[];
@@ -31,7 +32,7 @@ export function WorkspacePager({
   resolvePaneClose,
   toolbarSlot,
 }: WorkspacePagerProps) {
-  const [focusedPaneId, setFocusedPaneId] = useAtom(useFocusedPaneAtom());
+  const [focusedPaneId, setFocusedPaneId] = useAtom(useWorkspaceSurface().focusedPaneAtom);
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const [statusSlot, setStatusSlot] = useState<HTMLDivElement | null>(null);
   const [initialPaneIds] = useState<ReadonlySet<string>>(
@@ -196,13 +197,13 @@ function SessionPagerDot({
   pane,
   ...props
 }: Omit<PagerDotProps, "pane"> & {
-  pane: Extract<WorkspacePane, { kind: "session" }>;
+  pane: WorkspacePane<"session">;
 }) {
   const {
     running: isRunning,
     waiting: isWaiting,
     unread: isUnread,
-  } = useWorkspaceSessionActivity(pane.sessionId);
+  } = useSessionActivity(pane.sessionId);
 
   return (
     <PagerDotButton
@@ -224,19 +225,16 @@ function PagerDotButton({
   isWaiting = false,
   isUnread = false,
 }: PagerDotButtonProps) {
-  const presentation = getPagerDotPresentation(pane);
+  const { label, color } = paneKinds[pane.kind];
   // Visual state priority: active > running > waiting > unread > pane kind
   const dotClass = isActive
     ? "bg-foreground h-3 w-3"
-    : cn(
-        "h-2.5 w-2.5",
-        isWaiting ? "bg-amber-500" : isUnread ? "bg-unread" : presentation.colorClassName,
-      );
+    : cn("h-2.5 w-2.5", isWaiting ? "bg-amber-500" : isUnread ? "bg-unread" : color);
 
   return (
     <button
       type="button"
-      aria-label={presentation.label}
+      aria-label={label(pane)}
       aria-current={isActive ? "page" : undefined}
       className="flex items-center justify-center h-5 w-5 md:h-4 md:w-4 touch-manipulation"
       onClick={() => onPress(pane.id)}
@@ -254,29 +252,4 @@ function PagerDotButton({
       )}
     </button>
   );
-}
-
-function getPagerDotPresentation(pane: WorkspacePane): {
-  label: string;
-  colorClassName: string;
-} {
-  switch (pane.kind) {
-    case "inbox":
-      return { label: "Inbox", colorClassName: "bg-muted-foreground/40" };
-    case "app":
-      return { label: "App", colorClassName: "bg-amber-500" };
-    case "channel":
-      return { label: "Channel", colorClassName: "bg-cyan-500" };
-    case "screen":
-      return { label: "Screen", colorClassName: "bg-sky-500" };
-    case "session":
-      return { label: "Session", colorClassName: "bg-muted-foreground/40" };
-    case "canvas":
-      return {
-        label: `Canvas ${pane.canvas.title || pane.canvas.canvasId}`,
-        colorClassName: "bg-violet-500",
-      };
-    case "editor":
-      return { label: pane.title, colorClassName: "bg-emerald-500" };
-  }
 }

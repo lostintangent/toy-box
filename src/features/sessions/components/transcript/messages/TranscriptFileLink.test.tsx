@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Streamdown, type Components, type ExtraProps } from "streamdown";
-import { createEditorPaneId } from "@workspace/model/panes";
+import { createEditorPane } from "@files/model/panes";
 import { sessionFile } from "@files/model";
 import { resolveTranscriptArtifactPath, transcriptRehypePlugins } from "./TranscriptFileLink";
 
@@ -27,7 +27,7 @@ describe("transcript artifact links", () => {
   });
 
   test("still recognizes an already visible artifact without a catalog", () => {
-    const paneId = createEditorPaneId(sessionFile("session", "report.md"));
+    const paneId = createEditorPane(sessionFile("session", "report.md")).id;
     expect(resolveTranscriptArtifactPath("./report.md#heading", "session", [{ id: paneId }])).toBe(
       "report.md",
     );

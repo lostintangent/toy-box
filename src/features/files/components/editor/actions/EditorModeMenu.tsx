@@ -11,7 +11,6 @@ import type { WorkspaceFileMode } from "../../../model";
 import { cn } from "@/shared/utils";
 
 type EditorModeOption = {
-  value: WorkspaceFileMode;
   label: string;
   description: string;
   Icon: LucideIcon;
@@ -27,17 +26,15 @@ type EditorModeMenuProps = {
   showLabel?: boolean;
 };
 
-const ARTIFACT_MODE_OPTIONS = [
-  {
-    value: "read",
+const MODE_OPTIONS: Record<WorkspaceFileMode, EditorModeOption> = {
+  read: {
     label: "Read",
     description: "Read-only file",
     Icon: Eye,
     badgeClassName: "border-primary/40 text-primary",
     iconClassName: "text-primary hover:text-primary",
   },
-  {
-    value: "edit",
+  edit: {
     label: "Edit",
     description: "Edit without notifying the agent",
     Icon: Pencil,
@@ -45,8 +42,7 @@ const ARTIFACT_MODE_OPTIONS = [
     iconClassName:
       "text-amber-600 hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-400",
   },
-  {
-    value: "shared",
+  shared: {
     label: "Shared",
     description: "Edit and notify the agent",
     Icon: UsersRound,
@@ -54,9 +50,7 @@ const ARTIFACT_MODE_OPTIONS = [
     iconClassName:
       "text-green-600 hover:text-green-600 dark:text-green-400 dark:hover:text-green-400",
   },
-] satisfies EditorModeOption[];
-
-const DEFAULT_OPTION = ARTIFACT_MODE_OPTIONS[2];
+};
 
 export function EditorModeMenu({
   mode,
@@ -65,7 +59,7 @@ export function EditorModeMenu({
   iconClassName,
   showLabel = true,
 }: EditorModeMenuProps) {
-  const option = ARTIFACT_MODE_OPTIONS.find((entry) => entry.value === mode) ?? DEFAULT_OPTION;
+  const option = MODE_OPTIONS[mode];
   const { Icon } = option;
 
   return (
@@ -105,22 +99,24 @@ export function EditorModeMenu({
         }
       />
       <DropdownMenuContent align="end" className="w-max min-w-max" finalFocus={false}>
-        {ARTIFACT_MODE_OPTIONS.map(({ value, label, description, Icon: OptionIcon }) => (
-          <DropdownMenuItem
-            key={value}
-            className={cn("gap-2 text-xs", mode === value && "bg-accent text-accent-foreground")}
-            onClick={() => onModeChange(value)}
-          >
-            <OptionIcon
-              className={cn(
-                "h-3.5 w-3.5",
-                mode === value ? "text-accent-foreground" : "text-muted-foreground",
-              )}
-            />
-            <span>{label}</span>
-            <span className="sr-only">{description}</span>
-          </DropdownMenuItem>
-        ))}
+        {(Object.entries(MODE_OPTIONS) as [WorkspaceFileMode, EditorModeOption][]).map(
+          ([value, { label, description, Icon: OptionIcon }]) => (
+            <DropdownMenuItem
+              key={value}
+              className={cn("gap-2 text-xs", mode === value && "bg-accent text-accent-foreground")}
+              onClick={() => onModeChange(value)}
+            >
+              <OptionIcon
+                className={cn(
+                  "h-3.5 w-3.5",
+                  mode === value ? "text-accent-foreground" : "text-muted-foreground",
+                )}
+              />
+              <span>{label}</span>
+              <span className="sr-only">{description}</span>
+            </DropdownMenuItem>
+          ),
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

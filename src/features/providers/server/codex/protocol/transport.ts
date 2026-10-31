@@ -2,11 +2,25 @@
 // issue their own RPC, and blocking the read loop would deadlock that response.
 import { homedir } from "node:os";
 import { sharedMap } from "@/shared/server/processState";
-import type { CodexMethods } from ".";
-import { SessionConnectionUnavailableError } from "@providers/server/provider";
+import type { CodexMethods, CodexNotifications, CodexServerRequests } from ".";
+import {
+  SessionConnectionUnavailableError,
+  SessionNotFoundError,
+} from "@providers/server/provider";
 
-export type RpcRequest = { id: string | number; method: string; params: unknown };
-export type RpcNotification = { method: string; params: unknown };
+// App-server reports a missing thread only through these error messages.
+const missingThread = /no rollout found|thread not found|thread not loaded/;
+
+export type RpcRequest = {
+  [M in keyof CodexServerRequests]: {
+    id: string | number;
+    method: M;
+    params: CodexServerRequests[M]["params"];
+  };
+}[keyof CodexServerRequests];
+export type RpcNotification = {
+  [M in keyof CodexNotifications]: { method: M; params: CodexNotifications[M] };
+}[keyof CodexNotifications];
 type Pending = {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
@@ -34,7 +48,8 @@ export class CodexTransport {
     if (this.#failure)
       return Promise.reject(new SessionConnectionUnavailableError(this.#failure.message));
     const id = this.#nextId++;
-    return new Promise((resolve, reject) => {
+    const threadId = (params as { threadId?: string } | undefined)?.threadId;
+    return new Promise<CodexMethods[K]["result"]>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);
         reject(new Error(`Codex ${method} timed out.`));
@@ -46,12 +61,16 @@ export class CodexTransport {
       } catch (error) {
         this.close(error instanceof Error ? error : new Error(String(error)));
       }
+    }).catch((error: Error) => {
+      throw threadId && missingThread.test(error.message)
+        ? new SessionNotFoundError(threadId)
+        : error;
     });
   }
 
-  notify(method: string, params?: unknown): void {
+  notify(method: string): void {
     if (this.#failure) throw this.#failure;
-    this.write(JSON.stringify({ method, ...(params === undefined ? {} : { params }) }) + "\n");
+    this.write(JSON.stringify({ method }) + "\n");
   }
 
   respond(id: string | number, result: unknown): void {
@@ -98,16 +117,16 @@ export class CodexTransport {
         const message = value as Record<string, unknown>;
         if (typeof message.method === "string") {
           if (typeof message.id === "string" || typeof message.id === "number") {
-            const request: RpcRequest = {
+            const request = {
               id: message.id,
               method: message.method,
               params: message.params,
-            };
+            } as RpcRequest;
             if (![...this.#requests].some((handle) => handle(request)))
               this.reject(request.id, `Unsupported Codex request: ${request.method}`);
           } else {
             for (const listener of this.#notifications)
-              listener({ method: message.method, params: message.params });
+              listener({ method: message.method, params: message.params } as RpcNotification);
           }
         } else if (typeof message.id === "number") {
           const pending = this.#pending.get(message.id);

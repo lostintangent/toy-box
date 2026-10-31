@@ -9,6 +9,13 @@ import type { Tool } from "@sessions/server/tools/definition";
 /** The operation was not submitted; reacquiring the connection is safe. */
 export class SessionConnectionUnavailableError extends Error {}
 
+/** The provider has no history for this session. */
+export class SessionNotFoundError extends Error {
+  constructor(sessionId: string) {
+    super(`Session not found: ${sessionId}.`);
+  }
+}
+
 export type SessionConfiguration = {
   model?: ModelConfiguration;
   directory: string;
@@ -27,6 +34,10 @@ export interface SessionConnection {
   send(message: SessionMessage): Promise<void>;
   setModel(model: ModelConfiguration): Promise<void>;
   answerQuestion(answer: SessionQuestionAnswer): Promise<boolean>;
+  /**
+   * Resolves once the agent has stopped: its active turn, input it hasn't reached, and its
+   * subagents. Processes it launched are left to the native runtime.
+   */
   abort(): Promise<void>;
   disconnect(): Promise<void>;
   rename(name: string, automatic?: true): Promise<boolean>;
@@ -37,6 +48,8 @@ export interface SessionConnection {
 export interface SessionProvider {
   readonly id: string;
   readonly name: string;
+  /** Whether the native runtime has credentials to start new work. */
+  isSignedIn(): Promise<boolean>;
   listModels(): Promise<ModelInfo[]>;
   /** Read the signed-in account's subscription; an account using an API key has none. */
   readSubscription(): Promise<ProviderSubscription | undefined>;
@@ -58,6 +71,7 @@ export interface SessionProvider {
   readDirectory(nativeId: string): Promise<string | undefined>;
   /** The provider owns persistence precision and any trailing-flush policy. */
   isHistoryCurrent(nativeId: string, capturedAt: number): Promise<boolean>;
+  /** Rejects with SessionNotFoundError when the history is already gone. */
   delete(nativeId: string): Promise<void>;
   stop(): Promise<void>;
 }

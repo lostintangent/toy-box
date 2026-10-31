@@ -1,6 +1,7 @@
 // Preserves native element transforms while applying screen-space selection gestures.
 
-import type { Point } from "../../store";
+import { createAttributesHistoryEntry, snapshotAttribute } from "../../document/history";
+import type { HistoryEntry, Point } from "../../store";
 import type { SelectionFrame, SelectionHandle } from "./frame";
 
 export type Matrix2D = {
@@ -19,6 +20,19 @@ export type ElementTransformCapture = {
   parentScreenInverse: Matrix2D;
   beforeTransform: string | null;
 };
+
+/** Records how a gesture changed each captured element's transform, or null if none moved. */
+export function createTransformHistoryEntry(
+  captures: readonly ElementTransformCapture[],
+): HistoryEntry | null {
+  return createAttributesHistoryEntry(
+    captures.map((capture) => ({
+      element: capture.element,
+      before: { namespace: null, name: "transform", value: capture.beforeTransform },
+      after: snapshotAttribute(capture.element, "transform"),
+    })),
+  );
+}
 
 const MIN_RESIZE_SCALE = 0.05;
 const ROTATION_SNAP_DEGREES = 15;

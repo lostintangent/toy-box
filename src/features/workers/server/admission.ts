@@ -9,19 +9,13 @@ import {
 import * as supervisor from "./supervisor";
 import { WorkerCanceledError } from "./supervisor";
 import type { WorkerReceipt, WorkerRetention } from "./supervisor";
-import { finishWorker, getWorker, hasWorker, startWorker } from "./registry";
+import { finishWorker, getRegisteredWorker, hasWorker, startWorker } from "./registry";
 import { createWorker } from "./database";
 import { getStateDatabase } from "@/server/database";
 import { AppDatabase } from "@apps/server/database";
 import { resolveWorkspaceFile } from "@files/server/paths";
 import { workspaceFileId } from "@files/model";
 import type { SessionLaunch } from "@sessions/model";
-
-type SessionWorkerInput = SessionLaunch & {
-  parentSessionId: string;
-  name?: Worker["name"];
-  ephemeral?: boolean;
-};
 
 export type WorkerSpawn<Owner extends WorkerOwner = WorkerOwner, Value = void> = SessionLaunch &
   Pick<Worker, "name"> & {
@@ -83,20 +77,6 @@ export async function spawnWorkerFromRequest(
   return { sessionId };
 }
 
-/** Spawn a worker whose trusted owner is injected by the invoking session tool. */
-export async function spawnSessionWorker(
-  input: SessionWorkerInput,
-): Promise<{ sessionId: string }> {
-  const { sessionId } = await spawnWorker({
-    owner: { type: "session", parentSessionId: input.parentSessionId },
-    retention: input.ephemeral ? "ephemeral" : "durable",
-    ...(input.name === undefined ? {} : { name: input.name }),
-    message: input.message,
-    location: input.location,
-  });
-  return { sessionId };
-}
-
 /** Start trusted owner-supplied work through the same admission and completion lifecycle. */
 export function spawnWorker<Owner extends WorkerOwner, Value>(
   input: WorkerSpawn<Owner, Value> & Required<Pick<WorkerSpawn<Owner, Value>, "admit">>,
@@ -152,7 +132,7 @@ export async function cancelAdmittedWorker(sessionId: string): Promise<boolean> 
   // preparing the worker's runtime.
   finishWorker(sessionId);
   rejectWorkerCompletion(sessionId);
-  return supervisor.cancelWorker(sessionId);
+  return supervisor.abortWorker(sessionId);
 }
 
 function superviseAdmittedWorker<Value>(
@@ -185,7 +165,7 @@ function reportWorkerError(error: unknown): void {
 }
 
 function getRequestedWorker(input: CancelWorkerInput): Worker | undefined {
-  const worker = getWorker(input.workerSessionId);
+  const worker = getRegisteredWorker(input.workerSessionId);
   if (!worker || worker.type !== input.type) return;
   if (worker.type === "file" && input.type === "file") {
     return workspaceFileId(worker.file) === workspaceFileId(input.file) ? worker : undefined;

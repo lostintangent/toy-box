@@ -35,7 +35,7 @@ The session runtime owns every execution transition: the first turn publishes ru
 ## Client synchronization
 
 `automationQueries.list()` owns the Automation catalog independently of Workspace. The main route
-preloads it during SSR before mounting the shared workspace subscription. `queryCache.ts` patches
+preloads it during SSR before mounting the shared workspace subscription. `cache.ts` patches
 committed upsert/delete events and replaces an overlapping fetch with a post-commit read; events
 never seed a partial catalog. `useWorkspaceSync` reuses SSR data when the initial stream revision
 matches and refetches the catalog after reconnects or missed updates.
@@ -47,7 +47,7 @@ caches. Components consume these options directly and retain only local interact
 
 The mounted automation dialog owns one schedule draft. Daily, interval, and cron are editing modes; inactive tab inputs are remembered, and only the selected mode determines the saved cron.
 
-A user-triggered run displays as running immediately through the mutation's pending state, without opening its pane. The mutation calls Sessions' `recreateSessionInCache` with the cached prompt and model. Only the automation ID and client message ID accompany the request; the server uses the saved definition and carries that message ID into delivery. Sessions owns replacing the old transcript and reconciling the canonical message. Settled requests call Sessions' `invalidateSessionQueries` to reconcile success, overlap, or failure. Automation list items combine the pending request with workspace activity for presentation; the server announces running when the live stream exists.
+A user-triggered run displays as running immediately through the mutation's pending state, without opening its pane. The mutation calls Sessions' `recreateSessionInCache` with the cached prompt and model. Only the automation ID and client message ID accompany the request; the server uses the saved definition and carries that message ID into delivery. Sessions owns replacing the old transcript and reconciling the canonical message. Settled requests call Sessions' `invalidateSessionQueries` to reconcile success, overlap, or failure. Automation list items combine the pending request with Session activity for presentation; the server announces running when the live stream exists.
 
 Automation events synchronize definition and schedule metadata through the shared workspace
 transport. Sessions consumes the same events to maintain ownership, without copying definitions.

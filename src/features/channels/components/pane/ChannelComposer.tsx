@@ -18,18 +18,16 @@ import {
   type PostChannelMessageInput,
 } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
-import type { WorkspaceFile } from "@files/model";
-import { ComposerTray } from "@workspace/components/outputs/ComposerTray";
-import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
+import { useRevealFile } from "@files/useRevealFile";
+import { ComposerTray } from "@sessions/components/outputs/ComposerTray";
 import { useSavedDraft } from "@workspace/hooks/useSavedDraft";
-import { createEditorPaneId } from "@workspace/model/panes";
 import { Composer, ComposerSendButton } from "@/shared/composers/Composer";
 import { useComposerDraft } from "@/shared/composers/useComposerDraft";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
 import { useChannelPane } from "./ChannelPaneContext";
 import { useChannelTaskItems, TaskDiff } from "./channelTaskItems";
-import { WorkspacePreview } from "@workspace/components/outputs/WorkspacePreview";
+import { WorkspacePreview } from "@sessions/components/outputs/WorkspacePreview";
 
 /** Starts a message from elsewhere in the pane, continuing whatever draft exists. */
 export type ChannelComposerHandle = {
@@ -52,7 +50,7 @@ export function ChannelComposer({
   onSubmit: (message: Pick<PostChannelMessageInput, "content" | "attachments">) => void;
   onShowRequest: () => void;
 }) {
-  const { revealFile, focusedPaneAtom } = useWorkspaceSurface();
+  const openArtifact = useRevealFile();
   const channel = state?.channel;
   const diff = channelTasksDiff(channel?.tasks ?? []);
   const request = state?.request;
@@ -88,11 +86,6 @@ export function ChannelComposer({
       draft.focus();
     },
   }));
-
-  function openArtifact(file: WorkspaceFile) {
-    if (revealFile) revealFile(file);
-    else focusedPaneAtom.set(createEditorPaneId(file));
-  }
 
   const checklist = useChannelTaskItems({
     tasks: channel?.tasks ?? [],

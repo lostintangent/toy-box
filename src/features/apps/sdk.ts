@@ -24,7 +24,7 @@ import type {
   SessionWorktree,
 } from "@sessions/model";
 import type { ContextTier, ModelConfiguration, ModelInfo } from "@providers/model";
-import type { WorkspaceSessionStatus } from "@workspace/model/state/reducer";
+import type { SessionActivityStatus } from "@sessions/model/activity";
 import type {
   Channel,
   ChannelAgent,
@@ -262,7 +262,7 @@ export type WorkspaceFileState = {
 };
 
 export type AppSession = Session & {
-  status: WorkspaceSessionStatus;
+  status: SessionActivityStatus;
   /**
    * How the session is governed: an ordinary conversation, a scheduled
    * automation's durable run session, or a member of the Hyper workspace.

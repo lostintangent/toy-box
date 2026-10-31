@@ -13,7 +13,7 @@ export function isSupportedSvgImage(file: Pick<Blob, "size" | "type">): boolean 
   return SVG_RASTER_IMAGE_TYPES.has(file.type) && file.size <= MAX_IMAGE_FILE_SIZE_BYTES;
 }
 
-export function fileToDataUrl(file: Blob): Promise<string> {
+function fileToDataUrl(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -26,7 +26,7 @@ export function fileToDataUrl(file: Blob): Promise<string> {
   });
 }
 
-export function loadBrowserImage(source: string): Promise<HTMLImageElement> {
+function loadBrowserImage(source: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve(image);

@@ -40,7 +40,7 @@ export function SidebarHeader({
       <div className="relative flex-1">
         <DropdownMenu>
           <DropdownMenuTrigger
-            disabled={!hasModels}
+            disabled={!providers.some((provider) => provider.enabled)}
             render={
               <button
                 className={cn(
@@ -63,7 +63,7 @@ export function SidebarHeader({
                 Model Providers
               </DropdownMenuLabel>
               {providers
-                .filter((provider) => provider.installed && provider.enabled)
+                .filter((provider) => provider.enabled)
                 .map(({ id, name }) => (
                   <DropdownMenuCheckboxItem
                     key={id}

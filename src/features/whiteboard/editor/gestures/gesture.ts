@@ -1,4 +1,11 @@
-import type { Gesture, Point, Tool } from "../../store";
+import type { PointerEvent as ReactPointerEvent } from "react";
+import {
+  toDocumentPoint,
+  type EditorStore,
+  type Gesture,
+  type Point,
+  type Tool,
+} from "../../store";
 
 export type GestureOwner = "viewport" | "drawing" | "selection";
 export type GestureOutcome = "commit" | "cancel";
@@ -21,6 +28,24 @@ export type GestureSource<Event> = {
     leave: () => void;
   };
 };
+
+/** Where a pointer lands relative to the viewport element. */
+export function viewportPoint(
+  { clientX, clientY }: Pick<MouseEvent, "clientX" | "clientY">,
+  viewportElement: Element,
+): Point {
+  const bounds = viewportElement.getBoundingClientRect();
+  return { x: clientX - bounds.left, y: clientY - bounds.top };
+}
+
+/** Where a pointer on the viewport element lands, in viewport and document coordinates. */
+export function pointerCoordinates(
+  store: EditorStore,
+  event: ReactPointerEvent<HTMLDivElement>,
+): { viewport: Point; document: Point } {
+  const viewport = viewportPoint(event, event.currentTarget);
+  return { viewport, document: toDocumentPoint(store.state.viewport, viewport) };
+}
 
 /** Resolves the active gesture tool while Space is held. */
 export function activeToolForGesture({

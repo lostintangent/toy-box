@@ -6,21 +6,7 @@ import {
   type ToolCallProjectionPolicy,
   type ToolCompletion,
 } from "@sessions/server/toolProjection";
-import type {
-  AgentMessageDeltaNotification,
-  CommandExecutionOutputDeltaNotification,
-  ItemCompletedNotification,
-  ReasoningTextDeltaNotification,
-  Thread,
-  ThreadItem,
-  ThreadNameUpdatedNotification,
-  ThreadStartedNotification,
-  ThreadTokenUsageUpdatedNotification,
-  Turn,
-  TurnCompletedNotification,
-  TurnPlanUpdatedNotification,
-  TurnStartedNotification,
-} from "./protocol";
+import type { Thread, ThreadItem, Turn } from "./protocol";
 import type { RpcNotification } from "./protocol/transport";
 import { decodeInput } from "./messages";
 import { fileChangesDiff } from "./fileChanges";
@@ -30,6 +16,10 @@ export function subagentThreadId(item: ThreadItem): string | undefined {
   return item.type === "subAgentActivity" && item.kind === "started"
     ? item.agentThreadId
     : undefined;
+}
+
+export function codexModel(name: string, reasoningEffort: string | null) {
+  return { provider: "codex", name, ...(reasoningEffort ? { reasoningEffort } : {}) };
 }
 
 /** Project one root thread, nesting its subagent threads inside their agent cards. */
@@ -45,31 +35,22 @@ export function createCodexProjector(sessionId: string, threadId: string) {
 
   return (event: RpcNotification): SessionEvent[] => {
     const { method, params } = event;
-    const target = params as { threadId?: string; thread?: Pick<Thread, "id"> } | undefined;
-    const eventThread = target?.threadId ?? target?.thread?.id;
-    if (eventThread !== undefined && eventThread !== threadId)
-      return projectSubagent(eventThread, event);
+    const eventThread = "threadId" in params ? params.threadId : params.thread.id;
+    if (eventThread !== threadId) return projectSubagent(eventThread, event);
     const events: SessionEvent[] = [];
     switch (method) {
       case "thread/started": {
-        const { thread } = params as ThreadStartedNotification;
-        if (thread.model)
-          events.push({
-            type: "model_changed",
-            model: {
-              provider: "codex",
-              name: thread.model,
-              ...(thread.reasoningEffort ? { reasoningEffort: thread.reasoningEffort } : {}),
-            },
-          });
+        const { model, reasoningEffort } = params.thread;
+        if (model)
+          events.push({ type: "model_changed", model: codexModel(model, reasoningEffort) });
         break;
       }
       case "turn/started":
-        turn = (params as TurnStartedNotification).turn;
+        turn = params.turn;
         itemIndex = 0;
         return [{ type: "status", status: "thinking" }];
       case "turn/completed": {
-        const { turn } = params as TurnCompletedNotification;
+        const { turn } = params;
         for (const [index, item] of turn.items.entries())
           events.push(...projectItem(item, turn.id, true, itemTimestamp(turn, index)));
         events.push({
@@ -81,28 +62,27 @@ export function createCodexProjector(sessionId: string, threadId: string) {
       }
       case "item/started":
       case "item/completed": {
-        const { item, turnId } = params as ItemCompletedNotification;
+        const { item, turnId } = params;
         return projectItem(item, turnId, method === "item/completed");
       }
       case "item/agentMessage/delta": {
-        const { delta, itemId } = params as AgentMessageDeltaNotification;
+        const { delta, itemId } = params;
         return delta ? [{ type: "delta", content: delta, messageId: itemId }] : [];
       }
       case "item/reasoning/summaryTextDelta":
       case "item/reasoning/textDelta": {
-        const { delta } = params as ReasoningTextDeltaNotification;
+        const { delta } = params;
         return delta ? [{ type: "reasoning_delta", content: delta }] : [];
       }
       case "item/reasoning/summaryPartAdded":
         return [{ type: "reasoning_delta", content: "\n\n" }];
       case "item/commandExecution/outputDelta": {
-        const { delta, itemId } = params as CommandExecutionOutputDeltaNotification;
+        const { delta, itemId } = params;
         return delta ? [{ type: "tool_output_delta", toolCallId: itemId, content: delta }] : [];
       }
       case "thread/tokenUsage/updated": {
         // Codex counts the last request's total tokens as the context in use.
-        const { last, modelContextWindow } = (params as ThreadTokenUsageUpdatedNotification)
-          .tokenUsage;
+        const { last, modelContextWindow } = params.tokenUsage;
         return modelContextWindow
           ? [
               {
@@ -118,7 +98,7 @@ export function createCodexProjector(sessionId: string, threadId: string) {
           patches: [
             {
               type: "replace_all",
-              items: (params as TurnPlanUpdatedNotification).plan.map((step, index) => ({
+              items: params.plan.map((step, index) => ({
                 id: `codex-plan-${index}`,
                 title: step.step,
                 status:
@@ -133,7 +113,7 @@ export function createCodexProjector(sessionId: string, threadId: string) {
         });
         break;
       case "thread/name/updated": {
-        const name = (params as ThreadNameUpdatedNotification).threadName;
+        const name = params.threadName;
         return name ? [{ type: "session_title_changed", title: name }] : [];
       }
     }
@@ -250,12 +230,12 @@ export function codexHistoryEvents(thread: Thread): RpcNotification[] {
   return [
     { method: "thread/started", params: { thread } },
     ...thread.turns.map((turn) => ({
-      method: "turn/completed",
+      method: "turn/completed" as const,
       params: { threadId: thread.id, turn },
     })),
     {
       method: "thread/name/updated",
-      params: { threadId: thread.id, threadName: thread.name },
+      params: { threadId: thread.id, threadName: thread.name ?? undefined },
     },
   ];
 }

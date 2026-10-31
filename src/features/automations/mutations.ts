@@ -9,11 +9,12 @@ import {
   invalidateSessionQueries,
   invalidateSessionsStateQuery,
   recreateSessionInCache,
-} from "@sessions/queryCache";
-import { applyWorkspaceEvent, workspaceQueries } from "@workspace/queries";
-import { isWorkspaceSessionLive, type WorkspaceState } from "@workspace/model/state/reducer";
+} from "@sessions/cache";
+import { isLiveActivity, type SessionsActivity } from "@sessions/model/activity";
+import { sessionQueries } from "@sessions/queries";
+import { applyWorkspaceEvent } from "@workspace/sync";
 import type { Automation, AutomationOptions } from "./model";
-import { invalidateAutomationListQuery } from "./queryCache";
+import { invalidateAutomationListQuery } from "./cache";
 
 export const automationMutations = {
   create: () =>
@@ -44,9 +45,10 @@ export const automationMutations = {
       mutationFn: (clientId: string) =>
         runAutomation({ data: { automationId: automation.id, clientId } }),
       onMutate: (clientId, { client }) => {
-        const status = client.getQueryData<WorkspaceState>(workspaceQueries.stateKey())
-          ?.sessionStates[automation.id]?.status;
-        if (isWorkspaceSessionLive(status)) return;
+        const status = client.getQueryData<SessionsActivity>(sessionQueries.activityKey())?.[
+          automation.id
+        ]?.status;
+        if (isLiveActivity(status)) return;
 
         return recreateSessionInCache(
           client,

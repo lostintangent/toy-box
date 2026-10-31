@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   createFileServeBaseUrl,
   createFileServeUrl,
-  createFileWatchUrl,
   fileName,
   getPathBasename,
   getPathDirname,
@@ -29,12 +28,12 @@ describe("file path display", () => {
 describe("artifact route paths", () => {
   test("encodes session IDs and artifact path segments while preserving hierarchy", () => {
     expect(
-      createFileWatchUrl({
+      createFileServeUrl({
         kind: "session",
         sessionId: "toy box/session",
         path: String.raw`nested\file name#.md`,
       }),
-    ).toBe("/api/watch/toy%20box%2Fsession/nested/file%20name%23.md");
+    ).toBe("/api/serve/toy%20box%2Fsession/nested/file%20name%23.md");
   });
 
   test("routes machine files under the machine scope", () => {

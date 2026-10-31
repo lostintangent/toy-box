@@ -27,6 +27,14 @@ export type Automation = AutomationOptions & {
   lastRunAt?: string;
 };
 
+declare module "@workspace/model/events" {
+  interface WorkspaceEvents {
+    automations:
+      | { type: "automation.upserted"; automation: Automation }
+      | { type: "automation.deleted"; automationId: string };
+  }
+}
+
 export const automationIdInputSchema = z.object({
   automationId: automationIdSchema,
 });

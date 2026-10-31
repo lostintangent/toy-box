@@ -8,8 +8,8 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { cn } from "@/shared/utils";
 import type { WhiteboardActions } from "@whiteboard/Whiteboard";
-import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
-import { PANE_OVERLAY_BUTTON_CLASS } from "@workspace/components/panes/shell/paneControls";
+import { PaneActions } from "@/shared/panes/PaneSlots";
+import { PANE_OVERLAY_BUTTON_CLASS } from "@/shared/panes/paneControls";
 import { Check, ChevronDown, Copy, ImagePlus, Maximize2, Minus, Plus, Trash2 } from "lucide-react";
 
 const COPY_SUCCESS_DURATION_MS = 2_000;

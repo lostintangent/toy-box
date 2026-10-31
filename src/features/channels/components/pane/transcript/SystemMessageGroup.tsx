@@ -15,11 +15,11 @@ import type {
   ChannelSystemMessageContent,
 } from "@channels/model";
 import type { WorkspaceFile } from "@files/model";
+import { useRevealFile } from "@files/useRevealFile";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { DoneIndicator } from "@/shared/ui/done-indicator";
 import { useChannelPane } from "../ChannelPaneContext";
-import { WorkspacePreview } from "@workspace/components/outputs/WorkspacePreview";
+import { WorkspacePreview } from "@sessions/components/outputs/WorkspacePreview";
 
 type ContentByKind = {
   [Content in ChannelSystemMessageContent as Content["type"]]: Content;
@@ -31,13 +31,13 @@ type Contents<Kind extends SystemMessageKind> = [ContentByKind[Kind], ...Content
 
 type PresentationContext = {
   agent: (id: string) => ChannelAgentIdentity;
-  revealFile?: (file: WorkspaceFile) => void;
+  revealFile: (file: WorkspaceFile) => void;
 };
 
 /** One system message, or a run of membership changes or one agent's artifact shares, merged. */
 export function SystemMessageGroup({ messages }: { messages: readonly ChannelSystemMessage[] }) {
   const { agent } = useChannelPane();
-  const { revealFile } = useWorkspaceSurface();
+  const revealFile = useRevealFile();
   const { icon, content, tooltip } = presentSystemMessages(
     messages.map(({ content }) => content),
     { agent, revealFile },
@@ -176,7 +176,7 @@ const SYSTEM_MESSAGES: {
                   type="button"
                   title={artifact.file.path}
                   className="font-medium text-foreground underline decoration-current/40 underline-offset-2 hover:decoration-current focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => revealFile?.(artifact.file)}
+                  onClick={() => revealFile(artifact.file)}
                 >
                   {artifact.title}
                 </button>

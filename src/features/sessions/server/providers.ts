@@ -6,7 +6,11 @@ import {
 } from "@providers/server";
 import type { Session, SessionType } from "../model";
 import { normalizeModelConfiguration, type ModelConfiguration } from "@providers/model";
-import type { SessionConfiguration, SessionProvider } from "@providers/server/provider";
+import {
+  SessionNotFoundError,
+  type SessionConfiguration,
+  type SessionProvider,
+} from "@providers/server/provider";
 import { setSessionProvider, readSession, readSessions } from "./state/sessions";
 import { buildSessionSystemPrompt } from "./instructions";
 import { getSessionSkillDirectories } from "./bundledSkills";
@@ -38,7 +42,7 @@ export async function resolveSession(
       return { id, provider: { id: provider.id, sessionId: id.slice(provider.id.length + 1) } };
     }
   }
-  throw new Error(`Session not found: ${id}.`);
+  throw new SessionNotFoundError(id);
 }
 
 export async function listSessions(): Promise<Session[]> {

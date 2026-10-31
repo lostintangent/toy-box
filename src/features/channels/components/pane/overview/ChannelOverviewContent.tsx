@@ -20,7 +20,7 @@ import {
   type ChannelRoutine,
 } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
-import { ArtifactPill } from "@workspace/components/outputs/ArtifactPill";
+import { ArtifactPill } from "@sessions/components/outputs/ArtifactPill";
 import { SessionMetadataBadges } from "@sessions/components/location/SessionMetadataBadges";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -40,7 +40,7 @@ import { nextCronOccurrence } from "@/shared/cron";
 import { cn } from "@/shared/utils";
 import { useChannelPane } from "../ChannelPaneContext";
 import { useChannelTaskItems, TaskDiff } from "../channelTaskItems";
-import { WorkspacePreview } from "@workspace/components/outputs/WorkspacePreview";
+import { WorkspacePreview } from "@sessions/components/outputs/WorkspacePreview";
 
 /** What the overview shows: the Channel's context, team members, tasks, artifacts, and routines. */
 export function ChannelOverviewContent({

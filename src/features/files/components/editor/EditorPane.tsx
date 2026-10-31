@@ -1,36 +1,43 @@
 import { Component, Suspense, type ReactNode } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
+import { createAtom, useSelector } from "@tanstack/react-store";
 import { selectAutomationSessionIds, sessionQueries } from "@sessions/queries";
 import { Skeleton } from "@/shared/ui/skeleton";
-import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import { resolveEditorPaneMode, type EditorWorkspacePane } from "@workspace/model/panes";
-import { PaneActions, PaneStatus } from "@workspace/components/panes/shell/PaneSlots";
+import type { WorkspacePane } from "@workspace/model/panes";
+import { workspaceFileId, type WorkspaceFileMode } from "../../model";
+import { resolveEditorPaneMode } from "../../model/panes";
+import { createFileServeBaseUrl } from "../../model/paths";
+import { PaneActions, PaneStatus, type PaneVariant } from "@/shared/panes/PaneSlots";
 import { WorkersMenu } from "@workers/components/WorkersMenu";
-import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
 import { useFile } from "../../useFile";
 import { useEditorKind, type EditorProps, type EditorKind } from "./kinds";
 import { EditorActions } from "./actions";
-import { createFileBaseUri } from "./kinds/html/bridge";
 
 type EditorPaneProps = {
-  pane: EditorWorkspacePane;
+  pane: WorkspacePane<"editor">;
   variant?: PaneVariant;
 };
 
+/** The mode the user picked for each file in this tab, by file id, wherever the file is shown. */
+const chosenModes = createAtom<Readonly<Record<string, WorkspaceFileMode>>>({});
+
 /** Composes one workspace file's lifecycle — content, workers, actions, and renderer. */
 export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
-  const { panePublications } = useWorkspaceSurface();
   const { file, title } = pane;
+  const fileId = workspaceFileId(file);
   const { data: automationSessionIds } = useSuspenseQuery({
     ...sessionQueries.state(),
     select: selectAutomationSessionIds,
   });
-  const mode = resolveEditorPaneMode(pane, automationSessionIds);
+  const chosenMode = useSelector(chosenModes, (modes) => modes[fileId]);
+  const mode = resolveEditorPaneMode(pane, automationSessionIds, chosenMode);
   const kind = useEditorKind(file);
   const { editable = true } = kind;
   const { workers, spawnWorker, ...fileState } = useFile(file, mode);
   const baseUri =
-    typeof window === "undefined" ? undefined : createFileBaseUri(file, window.location.origin);
+    typeof window === "undefined"
+      ? undefined
+      : `${window.location.origin}${createFileServeBaseUrl(file)}`;
   const { error, isLoading, isSaving, isReady } = fileState;
 
   return (
@@ -46,7 +53,9 @@ export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
             editable={editable}
             mode={mode}
             isSaving={isSaving}
-            onModeChange={(nextMode) => panePublications.actions.setEditorPaneMode(pane, nextMode)}
+            onModeChange={(nextMode) =>
+              chosenModes.set((modes) => ({ ...modes, [fileId]: nextMode }))
+            }
             variant={variant}
           />
         </PaneActions>

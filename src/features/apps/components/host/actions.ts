@@ -7,14 +7,12 @@ import {
 } from "@sessions/server/functions";
 import { readFile, writeFile } from "@files/server/functions";
 import type { QueryClient } from "@tanstack/react-query";
-import { invalidateSessionsStateQuery } from "@sessions/queryCache";
+import { invalidateSessionsStateQuery } from "@sessions/cache";
 import type { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import type { useAppActions } from "@apps/sdk";
-import {
-  createEditorPane,
-  createLinkedSessionPane,
-  type WorkspacePane,
-} from "@workspace/model/panes";
+import { createEditorPane } from "@files/model/panes";
+import { createSessionPane } from "@sessions/model/panes";
+import type { WorkspacePane } from "@workspace/model/panes";
 
 /** Binds capabilities shared by every mounted app to its workspace surface. */
 export function bindAppActions({
@@ -28,18 +26,12 @@ export function bindAppActions({
   surface: ReturnType<typeof useWorkspaceSurface>;
   queryClient: QueryClient;
 }): ReturnType<typeof useAppActions> {
-  function changeLinkedPanes(
-    change: (current: readonly WorkspacePane[]) => readonly WorkspacePane[],
-  ) {
-    const publications = surface.panePublications;
-    publications.actions.publishLinkedPanes(
-      publisherPaneId,
-      change(publications.get()[publisherPaneId] ?? []),
-    );
-  }
+  const publications = surface.panePublications.actions;
 
   function closePane(paneId: string) {
-    changeLinkedPanes((current) => current.filter((candidate) => candidate.id !== paneId));
+    publications.publishLinkedPanes(publisherPaneId, (current) =>
+      current.filter((candidate) => candidate.id !== paneId),
+    );
   }
 
   function openPane(nextPane: WorkspacePane) {
@@ -48,7 +40,7 @@ export function bindAppActions({
       closePane(nextPane.id);
       return;
     }
-    changeLinkedPanes((current) => [
+    publications.publishLinkedPanes(publisherPaneId, (current) => [
       ...current.filter((candidate) => candidate.id !== nextPane.id),
       nextPane,
     ]);
@@ -68,7 +60,7 @@ export function bindAppActions({
       const result = await startSession({ data: launch });
       if (open) {
         await invalidateSessionsStateQuery(queryClient);
-        openPane(createLinkedSessionPane(result.sessionId));
+        openPane(createSessionPane(result.sessionId, true));
       }
       return result;
     },
@@ -77,7 +69,7 @@ export function bindAppActions({
     },
     async deleteSession(sessionId) {
       await deleteSession({ data: { sessionId } });
-      closePane(createLinkedSessionPane(sessionId).id);
+      closePane(createSessionPane(sessionId, true).id);
     },
     async deliverMessage(sessionId, message) {
       await beforeDeliverMessage?.();
@@ -87,13 +79,13 @@ export function bindAppActions({
       await abortSession({ data: { sessionId } });
     },
     openSession(sessionId) {
-      openPane(createLinkedSessionPane(sessionId));
+      openPane(createSessionPane(sessionId, true));
     },
     closeSession(sessionId) {
-      closePane(createLinkedSessionPane(sessionId).id);
+      closePane(createSessionPane(sessionId, true).id);
     },
     toggleSession(sessionId) {
-      togglePane(createLinkedSessionPane(sessionId));
+      togglePane(createSessionPane(sessionId, true));
     },
     openFile(file, mode) {
       openPane(createEditorPane(file, mode));

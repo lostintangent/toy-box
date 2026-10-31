@@ -1,5 +1,6 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
 import {
+  applyHistoryEntry,
   createAttributesHistoryEntry,
   snapshotAttribute,
   type AttributeSnapshot,
@@ -8,6 +9,7 @@ import type { EditorStore, Point } from "../../store";
 import type { SelectionFrame, SelectionHandle } from "../selection/frame";
 import {
   applyScreenTransform,
+  createTransformHistoryEntry,
   resizeSelectionTransform,
   rotateSelectionTransform,
   transformPoint,
@@ -80,11 +82,9 @@ export function startTransformGesture(
     },
     finish(outcome) {
       if (state.mode === "pending-move") return;
-      if (outcome === "cancel") {
-        restoreTransforms(state.captures);
-        return;
-      }
-      commitTransforms(store, state.captures);
+      const entry = createTransformHistoryEntry(state.captures);
+      if (outcome === "commit") store.actions.commit(entry);
+      else if (entry) applyHistoryEntry(entry, "undo");
     },
   };
 }
@@ -113,22 +113,15 @@ export function startLineEndpointGesture({
       element.setAttribute(`y${prefix}`, String(Number(point.y.toFixed(3))));
     },
     finish(outcome) {
-      if (outcome === "cancel") {
-        for (const attribute of before) {
-          if (attribute.value === null) element.removeAttribute(attribute.name);
-          else element.setAttribute(attribute.name, attribute.value);
-        }
-        return;
-      }
-      store.actions.commit(
-        createAttributesHistoryEntry(
-          before.map((attribute) => ({
-            element,
-            before: attribute,
-            after: snapshotAttribute(element, attribute.name, attribute.namespace),
-          })),
-        ),
+      const entry = createAttributesHistoryEntry(
+        before.map((attribute) => ({
+          element,
+          before: attribute,
+          after: snapshotAttribute(element, attribute.name, attribute.namespace),
+        })),
       );
+      if (outcome === "commit") store.actions.commit(entry);
+      else if (entry) applyHistoryEntry(entry, "undo");
     },
   };
 }
@@ -179,30 +172,4 @@ function updateTransform(
         }),
       };
   }
-}
-
-function restoreTransforms(captures: readonly ElementTransformCapture[]): void {
-  for (const capture of captures) {
-    if (capture.beforeTransform === null) capture.element.removeAttribute("transform");
-    else capture.element.setAttribute("transform", capture.beforeTransform);
-  }
-}
-
-function commitTransforms(
-  store: EditorStore,
-  captures: readonly ElementTransformCapture[],
-): boolean {
-  return store.actions.commit(
-    createAttributesHistoryEntry(
-      captures.map((capture) => ({
-        element: capture.element,
-        before: {
-          namespace: null,
-          name: "transform",
-          value: capture.beforeTransform,
-        },
-        after: snapshotAttribute(capture.element, "transform"),
-      })),
-    ),
-  );
 }

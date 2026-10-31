@@ -1,6 +1,9 @@
 import { queryOptions, skipToken } from "@tanstack/react-query";
+import { snapshotJournal } from "@/shared/query";
 import type { SessionsState, SessionType } from "./model";
+import { reduceSessionsActivity } from "./model/activity";
 import {
+  getSessionsActivity,
   getSessionsState,
   listSkills,
   querySession,
@@ -12,12 +15,25 @@ export const sessionQueries = {
 
   stateKey: () => [...sessionQueries.all(), "state"] as const,
 
-  // Durable sidebar/list snapshot. Shared lifecycle and composer state lives
-  // in the workspace state query.
+  // Durable sidebar/list snapshot. Live activity has its own query below, and
+  // composer drafts live in the workspace state query.
   state: () =>
     queryOptions({
       queryKey: sessionQueries.stateKey(),
       queryFn: getSessionsState,
+      staleTime: Infinity,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    }),
+
+  activityKey: () => [...sessionQueries.all(), "activity"] as const,
+
+  // Every session's shared activity. Live events update it, and the shared SSE
+  // connection refreshes it after missed updates or reconnects.
+  activity: () =>
+    queryOptions({
+      queryKey: sessionQueries.activityKey(),
+      queryFn: ({ client }) => sessionActivityJournal.read(client, getSessionsActivity),
       staleTime: Infinity,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
@@ -45,6 +61,12 @@ export const sessionQueries = {
       retry: false, // Don't retry on "session not found" errors
     }),
 };
+
+/** Reconciles the activity snapshot with live events. */
+export const sessionActivityJournal = snapshotJournal(
+  sessionQueries.activityKey(),
+  reduceSessionsActivity,
+);
 
 export function createEmptySessionsState(): SessionsState {
   return {

@@ -31,11 +31,11 @@ const spawnWorkerTool = defineTool("spawn_worker", {
         "Delete the worker, transcript, and any worktree after its initial execution. Defaults to false.",
       ),
   }),
-  handler: async (args, invocation) => {
-    const { spawnSessionWorker } = await import("@workers/server");
-    const { sessionId } = await spawnSessionWorker({
-      parentSessionId: invocation.sessionId,
-      ephemeral: args.ephemeral ?? false,
+  handler: async (args, parentSessionId) => {
+    const { spawnWorker } = await import("@workers/server");
+    const { sessionId } = await spawnWorker({
+      owner: { type: "session", parentSessionId },
+      retention: args.ephemeral ? "ephemeral" : "durable",
       ...(args.name === undefined ? {} : { name: args.name }),
       message: { content: args.task, model: args.model },
       location: { directory: args.directory, useWorktree: args.useWorktree },

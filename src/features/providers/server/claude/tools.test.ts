@@ -4,35 +4,32 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
 import { createClaudeTools } from "./tools";
 
-test("SDK tools preserve recursive schemas, validation, public identity, and terminal results", async () => {
+test("SDK tools preserve recursive schemas, validation, public identity, loading, and terminal results", async () => {
   const server = createClaudeTools("public-session", [
     {
       name: "echo",
       parameters: z
         .object({ value: z.json(), allowed: z.boolean() })
         .refine((args) => args.allowed),
-      handler: (args, context) => {
-        expect(context.sessionId).toBe("public-session");
-        expect(context.toolCallId).toBe("native-call");
-        expect(context.signal).toBeInstanceOf(AbortSignal);
+      handler: (args, sessionId) => {
+        expect(sessionId).toBe("public-session");
         return args.value;
       },
     },
-    { name: "finish", isTerminal: true, handler: () => "Done" },
+    { name: "finish", isTerminal: true, alwaysLoad: true, handler: () => "Done" },
   ]);
   const client = new Client({ name: "test", version: "1" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   try {
     await Promise.all([server.instance.connect(serverTransport), client.connect(clientTransport)]);
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["echo", "finish"]);
+    expect((await client.listTools()).tools.map(({ name, _meta }) => ({ name, _meta }))).toEqual([
+      { name: "echo", _meta: undefined },
+      { name: "finish", _meta: { "anthropic/alwaysLoad": true } },
+    ]);
     const args = { value: { nested: ["value", null] }, allowed: true };
-    expect(
-      await client.callTool({
-        name: "echo",
-        arguments: args,
-        _meta: { "claudecode/toolUseId": "native-call" },
-      }),
-    ).toMatchObject({ content: [{ type: "text", text: JSON.stringify(args.value) }] });
+    expect(await client.callTool({ name: "echo", arguments: args })).toMatchObject({
+      content: [{ type: "text", text: JSON.stringify(args.value) }],
+    });
     expect(
       await client.callTool({ name: "echo", arguments: { ...args, allowed: false } }),
     ).toMatchObject({ isError: true });

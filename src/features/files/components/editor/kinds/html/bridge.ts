@@ -1,5 +1,3 @@
-import type { WorkspaceFile } from "../../../../model";
-import { createFileServeBaseUrl } from "../../../../model/paths";
 import { HTML_BASE_ATTRIBUTE } from "@/shared/embeddedHtml";
 
 export { HTML_BASE_ATTRIBUTE, injectBaseHref } from "@/shared/embeddedHtml";
@@ -12,14 +10,6 @@ export { HTML_BASE_ATTRIBUTE, injectBaseHref } from "@/shared/embeddedHtml";
 export const HTML_BRIDGE_ATTRIBUTE = "data-toybox-html-bridge";
 export const HTML_CHANGE_MESSAGE_TYPE = "toybox-html:change";
 export const HTML_EDITABLE_MESSAGE_TYPE = "toybox-html:set-editable";
-
-/** Origin-qualified, directory-rooted base URI for a file's relative embeds, pointing at
- *  the serve route for the file's own directory. Trailing-slashed so `new URL(embed, base)`
- *  lands inside the file namespace instead of the site root. Used as the HTML pane's
- *  `<base href>` and to resolve sibling embeds in rendered Markdown. */
-export function createFileBaseUri(file: WorkspaceFile, origin: string): string {
-  return `${origin}${createFileServeBaseUrl(file)}`;
-}
 
 /** Inject the script that connects a rendered HTML document to its editor pane. */
 export function injectHtmlBridge(html: string): string {

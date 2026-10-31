@@ -1,4 +1,4 @@
-import type { Fill, Point, Rect, Size } from "../store";
+import type { Fill, Point, Rect, ShapeTool, Size } from "../store";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
@@ -19,10 +19,7 @@ type SvgDefinitionReference<T extends SVGElement> = {
 };
 
 /** Applies the shaft style shared by detached line and arrow nodes. */
-export function applySvgLineStyle(
-  element: SVGElement,
-  style: { color: string; width: number },
-): void {
+function applySvgLineStyle(element: SVGElement, style: { color: string; width: number }): void {
   element.setAttribute("fill", "none");
   element.setAttribute("stroke", style.color);
   element.setAttribute("stroke-width", String(style.width));
@@ -31,7 +28,7 @@ export function applySvgLineStyle(
 }
 
 /** Creates the open arrowhead used by native arrow nodes. */
-export function createSvgArrowMarker(document: Document, id: string): SVGMarkerElement {
+function createSvgArrowMarker(document: Document, id: string): SVGMarkerElement {
   const marker = document.createElementNS(SVG_NAMESPACE, "marker") as SVGMarkerElement;
   marker.setAttribute("id", id);
   marker.setAttribute("viewBox", "0 0 12 12");
@@ -106,7 +103,7 @@ export function createSvgImage(
 
 export function createSvgShape(
   root: SVGSVGElement,
-  shapeType: "rectangle" | "ellipse" | "line" | "arrow",
+  shapeType: ShapeTool,
   start: Point,
   end: Point,
   style: { color: string; width: number; fill?: Fill },
@@ -152,7 +149,7 @@ export function createSvgShape(
 /** Mutates one provisional shape using document-space pointer geometry. */
 export function updateSvgShape(
   element: SVGGraphicsElement,
-  shapeType: "rectangle" | "ellipse" | "line" | "arrow",
+  shapeType: ShapeTool,
   start: Point,
   end: Point,
 ): void {

@@ -24,7 +24,10 @@ beforeEach(() => {
     disabledProviders: [],
   });
   spyOn(cli, "isInstalled").mockReturnValue(false);
-  for (const provider of sessionProviders) spyOn(provider, "stop").mockResolvedValue();
+  for (const provider of sessionProviders) {
+    spyOn(provider, "isSignedIn").mockResolvedValue(true);
+    spyOn(provider, "stop").mockResolvedValue();
+  }
 });
 afterEach(async () => {
   await stopProviders();
@@ -39,7 +42,7 @@ test("no installed providers returns empty catalogs without starting a provider"
   expect(await listModels()).toEqual([]);
   expect(await listSessions()).toEqual([]);
   expect((await getProviderCatalog()).providers).toEqual(
-    sessionProviders.map(({ id, name }) => ({ id, name, installed: false })),
+    sessionProviders.map(({ id, name }) => ({ id, name, status: "unavailable" })),
   );
   for (const reader of readers) expect(reader).not.toHaveBeenCalled();
 });
@@ -77,10 +80,29 @@ test("failed discovery leaves provider settings reachable and the next request c
     .mockResolvedValue([MODEL]);
   expect(await getProviderCatalog()).toMatchObject({
     models: [],
-    providers: expect.arrayContaining([{ id: "codex", name: codexProvider.name, installed: true }]),
+    providers: expect.arrayContaining([{ id: "codex", name: codexProvider.name, status: "ready" }]),
   });
   expect(await listModels()).toEqual([{ ...MODEL, providerName: codexProvider.name }]);
   expect(read).toHaveBeenCalledTimes(2);
+});
+
+test("a signed-out provider keeps its sessions but contributes no models", async () => {
+  spyOn(cli, "isInstalled").mockImplementation((id) => id === "codex");
+  spyOn(codexProvider, "isSignedIn").mockResolvedValue(false);
+  const models = spyOn(codexProvider, "listModels");
+  spyOn(codexProvider, "listSessions").mockResolvedValue([
+    { id: "history", createdAt: new Date(0), updatedAt: new Date(0) },
+  ]);
+  expect(await getProviderCatalog()).toEqual({
+    providers: sessionProviders.map(({ id, name }) => ({
+      id,
+      name,
+      status: id === "codex" ? "signedOut" : "unavailable",
+    })),
+    models: [],
+  });
+  expect((await listSessions()).map(({ id }) => id)).toEqual(["history"]);
+  expect(models).not.toHaveBeenCalled();
 });
 
 test.each(sessionProviders.map((provider) => provider.id))(

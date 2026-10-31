@@ -1,19 +1,7 @@
+import { generateUUID } from "@/shared/utils";
+
 const CLIENT_ID_STORAGE_KEY = "toybox_client_id";
 let inMemoryClientId: string | null = null;
-
-function createClientId() {
-  // Try crypto.randomUUID() (requires HTTPS), fallback for HTTP
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
-  // Fallback UUID generator for HTTP (non-secure contexts)
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
 
 function getSessionStorage(): Storage | null {
   if (typeof window === "undefined") return null;
@@ -38,7 +26,7 @@ export function getOrCreateClientId(): string {
       const existing = storage.getItem(CLIENT_ID_STORAGE_KEY);
       if (existing) return existing;
 
-      const nextClientId = createClientId();
+      const nextClientId = generateUUID();
       storage.setItem(CLIENT_ID_STORAGE_KEY, nextClientId);
       return nextClientId;
     } catch {
@@ -47,7 +35,7 @@ export function getOrCreateClientId(): string {
   }
 
   if (!inMemoryClientId) {
-    inMemoryClientId = createClientId();
+    inMemoryClientId = generateUUID();
   }
   return inMemoryClientId;
 }

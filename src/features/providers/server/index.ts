@@ -3,6 +3,7 @@ import {
   normalizeModelConfiguration,
   type ModelInfo,
   type ProviderCatalog,
+  type SessionProviderStatus,
 } from "@providers/model";
 import { getSettings } from "@workspace/server/state/settings";
 import { broadcast } from "@workspace/server/events";
@@ -19,7 +20,8 @@ export const sessionProviders: readonly SessionProvider[] = [
   claudeProvider,
 ];
 
-const modelsByProvider = sharedMap<Promise<ModelInfo[]>>("provider-models");
+type Discovery = { status: SessionProviderStatus; models: ModelInfo[] };
+const discoveryByProvider = sharedMap<Promise<Discovery>>("provider-discovery");
 
 export function getSessionProvider(id: string): SessionProvider {
   const provider = sessionProviders.find((candidate) => candidate.id === id);
@@ -28,8 +30,21 @@ export function getSessionProvider(id: string): SessionProvider {
 }
 
 export async function getProviderCatalog(): Promise<ProviderCatalog> {
-  const providers = providerInfo();
-  return { providers, models: await collectAvailable(readModels, providers) };
+  const enabled = await enabledProviders();
+  // Disabled providers aren't started just to check their account.
+  const discoveries = await Promise.all(
+    sessionProviders.map(async (provider) =>
+      enabled.includes(provider) ? discover(provider) : undefined,
+    ),
+  );
+  return {
+    providers: sessionProviders.map(({ id, name }, index) => ({
+      id,
+      name,
+      status: discoveries[index]?.status ?? (cli.isInstalled(id) ? "ready" : "unavailable"),
+    })),
+    models: discoveries.flatMap((discovery) => discovery?.models ?? []),
+  };
 }
 
 export async function getModelChoices(provider?: string) {
@@ -50,24 +65,30 @@ export async function updateProvider(providerId: string) {
   const { id } = getSessionProvider(providerId);
   const result = await cli.updateProvider(id);
   // Refresh even when unchanged: the CLI may have been upgraded outside Toy Box.
-  modelsByProvider.delete(id);
+  discoveryByProvider.delete(id);
   broadcast({ type: "providers.changed" });
   return result;
 }
 
-function readModels(provider: SessionProvider): Promise<ModelInfo[]> {
-  const cached = modelsByProvider.get(provider.id);
+/** Failed discovery leaves the provider ready without models until a later request retries it. */
+function discover(provider: SessionProvider): Promise<Discovery> {
+  const cached = discoveryByProvider.get(provider.id);
   if (cached) return cached;
 
-  const models = provider
-    .listModels()
-    .then((models) => models.map((model) => ({ ...model, providerName: provider.name })))
-    .catch((error) => {
-      modelsByProvider.delete(provider.id);
-      throw error;
-    });
-  modelsByProvider.set(provider.id, models);
-  return models;
+  const discovery = (async (): Promise<Discovery> => {
+    if (!(await provider.isSignedIn())) return { status: "signedOut", models: [] };
+    const models = await provider.listModels();
+    return {
+      status: "ready",
+      models: models.map((model) => ({ ...model, providerName: provider.name })),
+    };
+  })().catch((error): Discovery => {
+    discoveryByProvider.delete(provider.id);
+    console.error(`Unable to discover ${provider.name}:`, error);
+    return { status: "ready", models: [] };
+  });
+  discoveryByProvider.set(provider.id, discovery);
+  return discovery;
 }
 
 /** Catalog IDs belong to the native providers; Sessions maps them to public IDs. */
@@ -81,18 +102,22 @@ export function listSessions(): Promise<Session[]> {
 }
 
 export async function stopProviders(): Promise<void> {
-  modelsByProvider.clear();
+  discoveryByProvider.clear();
   await Promise.allSettled(sessionProviders.map((provider) => provider.stop()));
+}
+
+/** Installed providers the owner hasn't disabled. */
+async function enabledProviders(): Promise<SessionProvider[]> {
+  const { disabledProviders } = await getSettings();
+  return sessionProviders.filter(
+    (provider) => cli.isInstalled(provider.id) && !disabledProviders.includes(provider.id),
+  );
 }
 
 async function collectAvailable<T>(
   read: (provider: SessionProvider) => Promise<T[]>,
-  catalog = providerInfo(),
 ): Promise<T[]> {
-  const { disabledProviders } = await getSettings();
-  const providers = catalog
-    .filter((provider) => provider.installed && !disabledProviders.includes(provider.id))
-    .map((provider) => getSessionProvider(provider.id));
+  const providers = await enabledProviders();
   const results = await Promise.allSettled(providers.map(read));
   const values: T[] = [];
   for (const [index, result] of results.entries()) {
@@ -101,12 +126,4 @@ async function collectAvailable<T>(
     } else console.error(`Unable to discover ${providers[index]!.name}:`, result.reason);
   }
   return values;
-}
-
-function providerInfo() {
-  return sessionProviders.map((provider) => ({
-    id: provider.id,
-    name: provider.name,
-    installed: cli.isInstalled(provider.id),
-  }));
 }

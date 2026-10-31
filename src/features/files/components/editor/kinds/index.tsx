@@ -16,14 +16,15 @@ import {
   Table,
   type LucideIcon,
 } from "lucide-react";
-import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
+import type { PaneVariant } from "@/shared/panes/PaneSlots";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import type { CustomEditorKind, WorkspaceFile } from "@files/model";
 import { ARTIFACT_APP_EXTENSION } from "@apps/model";
 import type { Worker } from "@workers/model";
 import type { FileState, WorkerRequest } from "../../../useFile";
 import type { WorkspaceFileMode } from "../../../model";
 import { fileName, getPathBasename } from "../../../model/paths";
+import { fileQueries } from "../../../queries";
 import { HtmlEditor } from "./html/HtmlEditor";
 import { CustomEditor } from "./custom/CustomEditor";
 
@@ -154,7 +155,7 @@ export function resolveEditorKind(
 }
 
 export function useEditorKind(file: WorkspaceFile): EditorKind {
-  const customKinds = useWorkspaceSelector((workspace) => workspace.customEditors);
+  const { data: customKinds } = useSuspenseQuery(fileQueries.editors());
   return resolveEditorKind(file, customKinds);
 }
 

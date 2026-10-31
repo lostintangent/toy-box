@@ -3,8 +3,8 @@ import { Undo2 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
-import { isWorkspaceSessionLive } from "@workspace/model/state/reducer";
+import { isLiveActivity } from "../../../model/activity";
+import { useSessionsActivity } from "../../../useSessionActivity";
 import type { UserMessage as UserMessageType } from "../../../model";
 import { sessionMutations } from "../../../mutations";
 import { useCurrentSession } from "../../CurrentSessionContext";
@@ -13,8 +13,8 @@ import { PromptReferenceMarkdown } from "../../references/PromptReferences";
 
 export function SessionUserMessage({ message }: { message: UserMessageType }) {
   const { sessionId, mode } = useCurrentSession();
-  const isSessionLive = useWorkspaceSelector((workspace) =>
-    isWorkspaceSessionLive(workspace.sessionStates[sessionId]?.status),
+  const isSessionLive = useSessionsActivity((activities) =>
+    isLiveActivity(activities[sessionId]?.status),
   );
 
   const rewindAction =

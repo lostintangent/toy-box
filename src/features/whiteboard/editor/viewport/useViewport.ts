@@ -1,6 +1,6 @@
 import { useLayoutEffect, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import type { EditorStore } from "../../store";
-import type { GestureSource } from "../gestures/gesture";
+import { viewportPoint, type GestureSource } from "../gestures/gesture";
 import { startPanGesture } from "../gestures/pan";
 import { startPinchGesture } from "../gestures/pinch";
 
@@ -30,11 +30,7 @@ export function useViewport({
       event.preventDefault();
       if (store.state.gesture) return;
 
-      const bounds = viewportElement!.getBoundingClientRect();
-      store.actions.zoomAt(event.deltaY > 0 ? "out" : "in", {
-        x: event.clientX - bounds.left,
-        y: event.clientY - bounds.top,
-      });
+      store.actions.zoomAt(event.deltaY > 0 ? "out" : "in", viewportPoint(event, viewportElement!));
     }
 
     observer.observe(viewportElement);

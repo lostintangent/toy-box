@@ -19,27 +19,16 @@ import { applySessionEvent, createInitialSessionState } from "./model/reducer";
 import type { Session, SessionEvent, SessionLaunch, SessionState, UserMessage } from "./model";
 import type { SessionSubscriptionMode, StreamSessionRequest } from "./model/protocol";
 import { sessionMutations } from "./mutations";
-import { sessionQueries } from "./queries";
-import {
-  cancelSessionsStateQuery,
-  invalidateSessionsStateQuery,
-  upsertSessionInState,
-} from "./queryCache";
+import { sessionActivityJournal, sessionQueries } from "./queries";
+import { cancelSessionsStateQuery, invalidateSessionsStateQuery } from "./cache";
+import { isLiveActivity } from "./model/activity";
+import { useSessionsActivity } from "./useSessionActivity";
 import { streamSession } from "./server/functions";
 import { usePageVisibility } from "@/shared/hooks/usePageVisibility";
 import { generateUUID } from "@/shared/utils";
-import {
-  applyWorkspaceEvent,
-  dispatchWorkspaceAction,
-  repairWorkspaceStateQuery,
-} from "@workspace/queries";
-import {
-  isWorkspaceSessionLive,
-  type WorkspaceSessionStatus,
-} from "@workspace/model/state/reducer";
+import { applyWorkspaceEvent } from "@workspace/sync";
 
 interface SessionConfig {
-  workspaceSessionStatus: WorkspaceSessionStatus;
   mode?: SessionSubscriptionMode;
   /** Whether the owning pane is currently presented by its workspace host. */
   isVisible?: boolean;
@@ -57,7 +46,6 @@ interface SessionConfig {
 export function useSession(
   sessionId: string,
   {
-    workspaceSessionStatus,
     mode: subscriptionMode = "active",
     isVisible: paneIsVisible = true,
     defaultModel,
@@ -69,8 +57,9 @@ export function useSession(
   const queryClient = useQueryClient();
   const sessionQuery = sessionQueries.detail(sessionId);
   const isDraft = session !== undefined && !session.provider;
-  const isSessionLive = isWorkspaceSessionLive(workspaceSessionStatus);
-  const isSessionUnread = workspaceSessionStatus === "unread";
+  const activityStatus = useSessionsActivity((activities) => activities[sessionId]?.status);
+  const isSessionLive = isLiveActivity(activityStatus);
+  const isSessionUnread = activityStatus === "unread";
   const pageIsVisible = usePageVisibility();
   const isVisible = pageIsVisible && paneIsVisible;
 
@@ -115,23 +104,9 @@ export function useSession(
     });
   };
 
-  const {
-    messages,
-    queuedMessages,
-    todos,
-    linkedSessionIds,
-    canvases,
-    preview,
-    artifacts,
-    openedFiles,
-    status: baseStatus,
-    reasoningContent,
-    model,
-    contextUsage,
-  } = publishedSession;
-
   // During connection handshake we still want a spinner even if no events arrived yet.
-  const status = isStreaming && baseStatus === "idle" ? "thinking" : baseStatus;
+  const status =
+    isStreaming && publishedSession.status === "idle" ? "thinking" : publishedSession.status;
 
   // ---------------------------------------------------------------------------
   // Event application
@@ -256,6 +231,8 @@ export function useSession(
     if (abortControllerRef.current) abort();
   };
 
+  const { mutate: markRead } = useMutation(sessionMutations.markRead(sessionId));
+
   // ---------------------------------------------------------------------------
   // Messaging
   // ---------------------------------------------------------------------------
@@ -302,13 +279,16 @@ export function useSession(
     } satisfies SessionLaunch["message"] & { clientId: string };
 
     if (isDraft) void cancelSessionsStateQuery(queryClient);
-    upsertSessionInState(queryClient, {
-      id: sessionId,
-      updatedAt: now.toISOString(),
-      ...(isDraft && {
-        provider: model ? { id: model.provider } : undefined,
-        context: { directory: sessionDirectory },
-      }),
+    applyWorkspaceEvent(queryClient, {
+      type: "session.upserted",
+      session: {
+        id: sessionId,
+        updatedAt: now.toISOString(),
+        ...(isDraft && {
+          provider: model ? { id: model.provider } : undefined,
+          context: { directory: sessionDirectory },
+        }),
+      },
     });
 
     // Server running state owns the send-vs-queue distinction. The controller
@@ -355,7 +335,7 @@ export function useSession(
       if (isDraft) {
         // Creation may have failed before or after creating native history. Read
         // the authoritative lifecycle rather than guessing whether to undo it.
-        await repairWorkspaceStateQuery(queryClient);
+        await sessionActivityJournal.repair(queryClient);
         await invalidateSessionsStateQuery(queryClient);
       } else {
         applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
@@ -369,11 +349,8 @@ export function useSession(
   // ---------------------------------------------------------------------------
   useEffect(
     () => () => {
-      const controller = abortControllerRef.current;
-      controller?.abort();
-      if (abortControllerRef.current === controller) {
-        abortControllerRef.current = null;
-      }
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
 
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
@@ -421,7 +398,7 @@ export function useSession(
     if (subscriptionMode === "passive" || !isSessionUnread) return;
 
     void invalidateSessionSnapshot();
-    dispatchWorkspaceAction(queryClient, { type: "session.read", sessionId });
+    markRead();
   });
 
   // Every visible pane streams live work. A passive subscriber never
@@ -439,24 +416,11 @@ export function useSession(
   ]);
 
   return {
-    // Session state
-    messages,
-    queuedMessages,
-    isStreaming,
+    ...publishedSession,
     status,
-    reasoningContent,
-    model,
-    contextUsage,
-    todos,
-    linkedSessionIds,
-    canvases,
-    preview,
-    artifacts,
-    openedFiles,
+    isStreaming,
     hasLoadedSessionState,
     error,
-
-    // User commands
     setModel,
     stop,
     sendMessage,

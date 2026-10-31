@@ -14,8 +14,7 @@ import * as sessionRuntime from "@sessions/server/runtime";
 import { setSessionProvider } from "@sessions/server/state/sessions";
 import { normalizeToolResult, type Tool } from "@sessions/server/tools/definition";
 import * as workspaceEvents from "@workspace/server/events";
-import { setSessionStatus } from "@workspace/server/state";
-import { deleteSessionState } from "@workspace/server/state/sessions";
+import { deleteSessionActivity, setSessionActivity } from "@sessions/server/state/activity";
 import startChannels from "./startup";
 
 let currentDb: Bun.SQL | undefined;
@@ -86,12 +85,7 @@ async function invokeTool(name: string, input = {}, sessionId = "coordinator", a
   ].find((tool) => tool.name === name) as Tool | undefined;
   if (!tool) throw new Error(`Tool not found: ${name}`);
   const result = normalizeToolResult(
-    await tool.handler(tool.parameters?.parse(input) ?? input, {
-      sessionId,
-      toolCallId: name,
-      toolName: name,
-      arguments: input,
-    }),
+    await tool.handler(tool.parameters?.parse(input) ?? input, sessionId),
   );
   const content = result.content[0];
   if (content?.type !== "text") throw new Error("Expected a text tool result.");
@@ -637,8 +631,8 @@ test("compact reads scope tasks and live statuses without losing idle authors or
     workingOn: message.sequence,
   });
   await channels.setAgentStatus(reviewer.id, { state: "working", text: "Stale work" });
-  setSessionStatus(builder.id, "running");
-  onTestFinished(() => deleteSessionState(builder.id));
+  setSessionActivity(builder.id, "running");
+  onTestFinished(() => deleteSessionActivity(builder.id));
 
   const compact = await invokeTool("read_channel", {}, builder.id, true);
   expect(Object.keys(compact).sort()).toEqual(["agents", "hasMore", "messages", "unfinishedTasks"]);
@@ -697,14 +691,7 @@ test("compact and full reads share paging and preserve inline images and file at
     });
   }
   const tool = channelMemberTools.find(({ name }) => name === "read_channel") as Tool;
-  const result = normalizeToolResult(
-    await tool.handler(tool.parameters?.parse({}), {
-      sessionId: member.id,
-      toolCallId: "read",
-      toolName: "read_channel",
-      arguments: {},
-    }),
-  );
+  const result = normalizeToolResult(await tool.handler(tool.parameters?.parse({}), member.id));
   const text = result.content[0];
   if (text?.type !== "text") throw new Error("Expected a text tool result.");
   const compact = JSON.parse(text.text);
@@ -960,11 +947,11 @@ test("session completion and startup clear working status, preserving waits and 
   await setChannelAgentStatus(member.id, { status: "Still running" });
   await finishChannelAgentTurn(waiting.id, "CI", 20);
   const wait = (await channels.getAgent(waiting.id))!.status;
-  setSessionStatus(member.id, "running");
+  setSessionActivity(member.id, "running");
   onTestFinished(() => {
-    deleteSessionState(member.id);
-    deleteSessionState(waiting.id);
-    deleteSessionState(channel.id);
+    deleteSessionActivity(member.id);
+    deleteSessionActivity(waiting.id);
+    deleteSessionActivity(channel.id);
   });
   const events: ChannelEvent[] = [];
   onTestFinished(subscribeChannelEvents(channel.id, (event) => events.push(event)));
@@ -980,15 +967,15 @@ test("session completion and startup clear working status, preserving waits and 
       if (event.type === "status" && event.agentId === member.id && !event.status)
         cleared.resolve();
     });
-    setSessionStatus(member.id, status);
+    setSessionActivity(member.id, status);
     await cleared.promise;
     unsubscribe();
     expect((await channels.getAgent(member.id))?.status).toBeUndefined();
   }
-  setSessionStatus(waiting.id, "idle");
+  setSessionActivity(waiting.id, "idle");
   await setChannelAgentStatus(member.id, { status: "Old turn" });
-  setSessionStatus(member.id, "idle");
-  setSessionStatus(member.id, "running");
+  setSessionActivity(member.id, "idle");
+  setSessionActivity(member.id, "running");
   await setChannelAgentStatus(member.id, { status: "New turn" });
   expect((await channels.getAgent(member.id))?.status).toEqual({
     state: "working",

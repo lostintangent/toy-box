@@ -20,7 +20,8 @@ import {
 import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { useWorkspaceSelector, useWorkspaceSessionActivity } from "@workspace/hooks/state";
+import { useSessionActivity } from "@sessions/useSessionActivity";
+import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { cn } from "@/shared/utils";
 
 /** The box every sidebar action occupies, which is also what the rail is one of across. */
@@ -246,7 +247,7 @@ export function SettingsButton() {
 }
 
 function HyperSessionStatus({ sessionId, isOpen }: { sessionId: string; isOpen: boolean }) {
-  const { running, waiting } = useWorkspaceSessionActivity(sessionId);
+  const { running, waiting } = useSessionActivity(sessionId);
 
   return (
     <>

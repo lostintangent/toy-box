@@ -4,8 +4,8 @@
 // (`editor.json`) and its viewer template (`index.html`). The folder — not a
 // database — is the source of truth, so an editor is inspectable, editable, and
 // removable as plain files, and the disk is the only place that needs to persist.
-// `loadCustomEditors` feeds workspace state on every hydration; the SDK
-// `register_editor` tool is the sole writer.
+// `loadCustomEditors` backs the editors query, and `registerEditorKind`, called by
+// the `register_editor` tool, is the sole writer.
 
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -35,25 +35,23 @@ export async function loadCustomEditors(): Promise<CustomEditorKind[]> {
   return kinds.filter((kind): kind is CustomEditorKind => kind !== null);
 }
 
-/** Write (or overwrite) an editor's folder. The name is validated as a safe path segment. */
-async function writeCustomEditor(kind: CustomEditorKind): Promise<void> {
-  const directory = editorDirectory(kind.name);
+/** Write (or overwrite) an editor's folder, announce it, and return the normalized kind. */
+export async function registerEditorKind(input: CustomEditorKind): Promise<CustomEditorKind> {
+  const extensions = normalizeExtensions(input.extensions);
+  if (extensions.length === 0) {
+    throw new Error("At least one valid file extension is required.");
+  }
 
-  const metadata = {
-    extensions: kind.extensions,
-    icon: kind.icon,
-    editable: kind.editable ?? false,
-  };
-
+  const kind = { ...input, extensions, editable: input.editable ?? false };
+  const directory = join(editorsRoot(), kind.name);
+  const metadata = { extensions, icon: kind.icon, editable: kind.editable };
   await Promise.all([
     Bun.write(join(directory, METADATA_FILE), `${JSON.stringify(metadata, null, 2)}\n`),
     Bun.write(join(directory, TEMPLATE_FILE), kind.html),
   ]);
-}
 
-export async function registerEditorKind(kind: CustomEditorKind): Promise<void> {
-  await writeCustomEditor(kind);
   broadcast({ type: "editor.registered", kind });
+  return kind;
 }
 
 /** Bare, lowercased, de-duplicated extensions (a leading dot is tolerated and stripped). */
@@ -109,11 +107,6 @@ function parseCustomEditor(
 
 function editorsRoot(): string {
   return join(homedir(), ".toy-box", "editors");
-}
-
-function editorDirectory(name: string): string {
-  if (!isCanonicalEditorName(name)) throw new Error(`Invalid editor name: ${name}`);
-  return join(editorsRoot(), name);
 }
 
 function isCanonicalEditorName(name: string): boolean {

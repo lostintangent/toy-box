@@ -53,12 +53,10 @@ export class ClaudeConnection implements SessionConnection {
         title: configuration.name,
         model: configuration.model?.name,
         effort: configuration.model?.reasoningEffort as EffortLevel | undefined,
-        // Native idle must include background agents and their completion notifications, and
-        // newer models omit native checklist tools unless explicitly enabled.
+        // Native idle ends work, and newer models omit native checklist tools unless enabled.
         env: {
           ...process.env,
           CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
-          CLAUDE_CODE_BG_TASKS_REPORT_RUNNING: "1",
           CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
         },
         includePartialMessages: true,
@@ -146,16 +144,18 @@ export class ClaudeConnection implements SessionConnection {
     return true;
   }
 
+  /** Stops the turn and cancels the steers it has not reached. */
   async abort(): Promise<void> {
-    await this.#native?.interrupt();
+    // Workaround (Claude Agent SDK 0.3.314; listed in providers/AGENTS.md): `Query.interrupt()`
+    // sends `cancelQueued` as the protocol's `cancel_queued`, but its type omits the option.
+    // @ts-expect-error
+    await this.#native?.interrupt({ cancelQueued: true });
   }
 
   async disconnect(): Promise<void> {
     if (!this.#native) return;
     const native = this.#native;
     this.#native = undefined;
-    for (const resolve of this.#questions.values()) resolve(undefined);
-    this.#pendingInputs.clear();
     this.#input.close();
     await closeClaudeQuery(native);
   }

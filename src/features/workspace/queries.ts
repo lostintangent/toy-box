@@ -1,22 +1,7 @@
-import { queryOptions, type QueryClient } from "@tanstack/react-query";
-import {
-  dispatchWorkspaceAction as requestWorkspaceAction,
-  getWorkspaceState,
-  updateSettings as requestSettingsUpdate,
-} from "./server/functions";
-import {
-  applyWorkspaceEventToSessionQueries,
-  invalidateSessionsStateQuery,
-} from "@sessions/queryCache";
-import { providerQueries } from "@providers/queries";
-import { applyChannelListEvent } from "@channels/queryCache";
-import { applyAutomationListEvent } from "@automations/queryCache";
-import { applyInboxListEvent } from "@inbox/queryCache";
-import { applyAppListEvent } from "@apps/queryCache";
-import { areSettingsEqual, type Settings } from "./model/config/settings";
-import type { WorkspaceEvent } from "./model/events";
-import type { WorkspaceAction } from "./model/state/actions";
-import { reduceWorkspaceState, type WorkspaceState } from "./model/state/reducer";
+import { queryOptions } from "@tanstack/react-query";
+import { snapshotJournal } from "@/shared/query";
+import { getWorkspaceState } from "./server/functions";
+import { reduceWorkspaceState } from "./model/state/reducer";
 
 /** The canonical SSR and browser query for the shared workspace projection. */
 export const workspaceQueries = {
@@ -27,7 +12,7 @@ export const workspaceQueries = {
   state: () =>
     queryOptions({
       queryKey: workspaceQueries.stateKey(),
-      queryFn: ({ client }) => getWorkspaceQuerySource(client).readSnapshot(getWorkspaceState),
+      queryFn: ({ client }) => workspaceJournal.read(client, getWorkspaceState),
       // The shared SSE connection validates SSR's revision and refreshes after
       // missed updates or reconnects; ordinary live events update this cache.
       staleTime: Infinity,
@@ -36,120 +21,5 @@ export const workspaceQueries = {
     }),
 };
 
-export function applyWorkspaceEvent(queryClient: QueryClient, event: WorkspaceEvent): void {
-  const previousSettings = queryClient.getQueryData<WorkspaceState>(
-    workspaceQueries.stateKey(),
-  )?.settings;
-  getWorkspaceQuerySource(queryClient).recordEvent(event);
-  applyWorkspaceEventToSessionQueries(queryClient, event);
-  applyChannelListEvent(queryClient, event);
-  applyAutomationListEvent(queryClient, event);
-  applyInboxListEvent(queryClient, event);
-  applyAppListEvent(queryClient, event);
-  queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), (state) =>
-    state ? reduceWorkspaceState(state, event) : state,
-  );
-  if (event.type === "providers.changed")
-    void queryClient.invalidateQueries({ queryKey: providerQueries.all() });
-  if (event.type === "settings.changed") {
-    const providersChanged =
-      previousSettings?.disabledProviders.length !== event.settings.disabledProviders.length ||
-      previousSettings.disabledProviders.some(
-        (id) => !event.settings.disabledProviders.includes(id),
-      );
-    const pinsChanged =
-      previousSettings?.pinnedSessionIds.length !== event.settings.pinnedSessionIds.length ||
-      previousSettings.pinnedSessionIds.some((id) => !event.settings.pinnedSessionIds.includes(id));
-    if (providersChanged) void queryClient.invalidateQueries({ queryKey: providerQueries.all() });
-    if (providersChanged || pinsChanged) void invalidateSessionsStateQuery(queryClient);
-  }
-}
-
-export function dispatchWorkspaceAction(queryClient: QueryClient, action: WorkspaceAction): void {
-  applyWorkspaceEvent(queryClient, action);
-
-  // The server echo is idempotent. A rejected command repairs the optimistic
-  // transition from a fresh authoritative snapshot.
-  void requestWorkspaceAction({ data: action }).catch(() => repairWorkspaceStateQuery(queryClient));
-}
-
-export function updateWorkspaceSetting<Key extends keyof Settings>(
-  queryClient: QueryClient,
-  key: Key,
-  value: Settings[Key],
-): void {
-  const workspace = queryClient.getQueryData<WorkspaceState>(workspaceQueries.stateKey());
-  if (!workspace) return;
-
-  const settings = { ...workspace.settings, [key]: value };
-  if (areSettingsEqual(workspace.settings, settings)) return;
-  // Catalog membership depends on persisted providers and pins. Publish those
-  // preferences after saving so their refetch sees the accepted selection.
-  const changesCatalog = key === "disabledProviders" || key === "pinnedSessionIds";
-  if (!changesCatalog) applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
-
-  void requestSettingsUpdate({ data: { [key]: value } })
-    .then((settings) => {
-      if (changesCatalog) applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
-    })
-    .catch(() => repairWorkspaceStateQuery(queryClient));
-}
-
-export async function invalidateWorkspaceStateQuery(queryClient: QueryClient): Promise<void> {
-  // invalidateQueries alone can reuse an initial fetch that has no cached data yet.
-  await queryClient.cancelQueries({ queryKey: workspaceQueries.stateKey(), exact: true });
-  return queryClient.invalidateQueries({ queryKey: workspaceQueries.stateKey(), exact: true });
-}
-
-type ReadWorkspaceState = () => Promise<WorkspaceState>;
-type WorkspaceSnapshotRead = { events: WorkspaceEvent[] };
-
-/** Reconciles one QueryClient's snapshot reads with concurrent live events. */
-export function createWorkspaceQuerySource() {
-  let activeRead: WorkspaceSnapshotRead | undefined;
-
-  function recordEvent(event: WorkspaceEvent): void {
-    activeRead?.events.push(event);
-  }
-
-  async function readSnapshot(readWorkspaceState: ReadWorkspaceState): Promise<WorkspaceState> {
-    // A replacement fetch inherits events from the fetch Query cancelled so
-    // reconnect invalidations cannot drop transitions already received.
-    const read = { events: activeRead?.events ?? [] };
-    activeRead = read;
-
-    try {
-      const snapshot = await readWorkspaceState();
-      return read.events.reduce(reduceWorkspaceState, snapshot);
-    } finally {
-      if (activeRead === read) activeRead = undefined;
-    }
-  }
-
-  function discardBufferedEvents(): void {
-    // Mutate the shared buffer so even a request that cannot be cancelled
-    // cannot replay a rejected optimistic transition when it resolves.
-    if (activeRead) activeRead.events.length = 0;
-  }
-
-  return { discardBufferedEvents, readSnapshot, recordEvent };
-}
-
-const workspaceQuerySources = new WeakMap<
-  QueryClient,
-  ReturnType<typeof createWorkspaceQuerySource>
->();
-
-function getWorkspaceQuerySource(queryClient: QueryClient) {
-  let source = workspaceQuerySources.get(queryClient);
-  if (!source) {
-    source = createWorkspaceQuerySource();
-    workspaceQuerySources.set(queryClient, source);
-  }
-  return source;
-}
-
-export function repairWorkspaceStateQuery(queryClient: QueryClient): Promise<void> {
-  getWorkspaceQuerySource(queryClient).discardBufferedEvents();
-  return invalidateWorkspaceStateQuery(queryClient);
-}
+/** Reconciles the workspace snapshot with live events. */
+export const workspaceJournal = snapshotJournal(workspaceQueries.stateKey(), reduceWorkspaceState);

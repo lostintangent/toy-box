@@ -1,7 +1,7 @@
 import { getStateDatabase } from "@/server/database";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
-import { getSessionState } from "@workspace/server/state/sessions";
-import { WorkerDatabase } from "@workers/server/database";
+import { getSessionActivity } from "@sessions/server/state/activity";
+import { listWorkers } from "@workers/server";
 import { ChannelDatabase } from "./database";
 import { publishChannelChange, wakeDueChannelAgents } from "./index";
 import { startChannelPush } from "./push";
@@ -15,8 +15,8 @@ export default async function startChannels(): Promise<VoidFunction> {
       void clearWorkingStatus(event.sessionId);
     }
   });
-  for (const worker of await new WorkerDatabase(db).list("channel")) {
-    const status = getSessionState(worker.sessionId)?.status;
+  for (const worker of await listWorkers("channel")) {
+    const status = getSessionActivity(worker.sessionId)?.status;
     if (status !== "running" && status !== "waiting") await clearWorkingStatus(worker.sessionId);
   }
   const timer = setInterval(() => void wakeDueChannelAgents(), 60_000);

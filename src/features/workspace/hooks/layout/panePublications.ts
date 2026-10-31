@@ -1,46 +1,23 @@
+import { replaceEqualDeep } from "@tanstack/react-query";
 import { createStore } from "@tanstack/react-store";
-import type { WorkspaceFile, WorkspaceFileMode } from "@files/model";
-import type { SessionCanvas } from "@sessions/model";
-import type { Preview } from "@/shared/preview";
-import {
-  createSessionPaneId,
-  createLinkedPanes,
-  isEditorPane,
-  type EditorWorkspacePane,
-  type PanePublications,
-  type WorkspacePane,
-} from "@workspace/model/panes";
+import type { PanePublications, WorkspacePane } from "@workspace/model/panes";
+
+type LinkedPanes = readonly WorkspacePane[];
 
 export function createPanePublicationsStore() {
   const initialState: PanePublications = {};
 
   return createStore(initialState, ({ setState }) => ({
-    publishSessionPanes(
-      sourceSessionId: string,
-      linkedSessionIds: readonly string[],
-      canvases: readonly SessionCanvas[],
-      artifacts: readonly string[],
-      openedFiles: readonly WorkspaceFile[],
-      preview?: Preview,
+    /** Replace the panes one publisher links, or derive them from what it links now. */
+    publishLinkedPanes(
+      publisherPaneId: string,
+      panes: LinkedPanes | ((current: LinkedPanes) => LinkedPanes),
     ) {
       setState((current) => {
-        const publisherPaneId = createSessionPaneId(sourceSessionId);
-        const nextPanes = createLinkedPanes(
-          sourceSessionId,
-          linkedSessionIds,
-          canvases,
-          artifacts,
-          openedFiles,
-          current[publisherPaneId],
-          preview,
-        );
-
-        return replacePublishedPanes(current, publisherPaneId, nextPanes);
+        const next = typeof panes === "function" ? panes(current[publisherPaneId] ?? []) : panes;
+        if (next.length === 0) return removePanePublisher(current, publisherPaneId);
+        return replaceEqualDeep(current, { ...current, [publisherPaneId]: next });
       });
-    },
-
-    publishLinkedPanes(publisherPaneId: string, panes: readonly WorkspacePane[]) {
-      setState((current) => replacePublishedPanes(current, publisherPaneId, panes));
     },
 
     clearLinkedPanes(publisherPaneId: string) {
@@ -58,72 +35,13 @@ export function createPanePublicationsStore() {
         return Object.fromEntries(nextEntries);
       });
     },
-
-    setEditorPaneMode(pane: EditorWorkspacePane, mode: WorkspaceFileMode) {
-      setState((current) => updateEditorPaneMode(current, pane, mode));
-    },
   }));
-}
-
-export function updateEditorPaneMode(
-  current: PanePublications,
-  pane: EditorWorkspacePane,
-  mode: WorkspaceFileMode,
-): PanePublications {
-  let next: Record<string, readonly WorkspacePane[]> | undefined;
-
-  for (const [publisherPaneId, publishedPanes] of Object.entries(current)) {
-    const paneIndex = publishedPanes.findIndex((publishedPane) => publishedPane.id === pane.id);
-    const publishedPane = publishedPanes[paneIndex];
-    if (!publishedPane || !isEditorPane(publishedPane) || publishedPane.mode === mode) continue;
-
-    const nextPublishedPanes = [...publishedPanes];
-    nextPublishedPanes[paneIndex] = { ...publishedPane, mode };
-    next ??= { ...current };
-    next[publisherPaneId] = nextPublishedPanes;
-  }
-
-  return next ?? current;
-}
-
-function replacePublishedPanes(
-  current: PanePublications,
-  publisherPaneId: string,
-  panes: readonly WorkspacePane[],
-): PanePublications {
-  if (panes.length === 0) return removePanePublisher(current, publisherPaneId);
-  if (arePaneListsEqual(current[publisherPaneId] ?? [], panes)) return current;
-
-  return { ...current, [publisherPaneId]: panes };
 }
 
 function removePanePublisher(current: PanePublications, publisherPaneId: string): PanePublications {
   if (!(publisherPaneId in current)) return current;
 
-  const next: Record<string, readonly WorkspacePane[]> = { ...current };
+  const next: Record<string, LinkedPanes> = { ...current };
   delete next[publisherPaneId];
   return next;
-}
-
-export function arePaneListsEqual(
-  left: readonly WorkspacePane[],
-  right: readonly WorkspacePane[],
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every((pane, index) => {
-      const nextPane = right[index];
-      if (pane.id !== nextPane?.id || pane.kind !== nextPane.kind) return false;
-
-      if (isEditorPane(pane) && isEditorPane(nextPane)) {
-        return pane.mode === nextPane.mode && pane.title === nextPane.title;
-      }
-
-      if (pane.kind === "session" && nextPane.kind === "session") {
-        return pane.isLinkedOnly === nextPane.isLinkedOnly;
-      }
-
-      return true;
-    })
-  );
 }

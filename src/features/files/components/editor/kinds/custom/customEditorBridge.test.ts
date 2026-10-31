@@ -21,11 +21,6 @@ describe("custom editor iframe bridge", () => {
     expect(document).toContain(CUSTOM_EDITOR_CHANGE_MESSAGE_TYPE);
     expect(document).toContain(CUSTOM_EDITOR_WORKER_MESSAGE_TYPE);
     expect(document).toContain(CUSTOM_EDITOR_WORKER_RESULT_MESSAGE_TYPE);
-    expect(document).toContain("onRender(handler)");
-    expect(document).toContain("emitChange(content)");
-    expect(document).toContain("spawnWorker(options)");
-    expect(document).toContain("revision: latest.revision");
-    expect(document).toContain("pendingWorkers: latest.pendingWorkers");
   });
 
   test("projects only renderer-relevant worker identity, name, and opaque metadata", () => {

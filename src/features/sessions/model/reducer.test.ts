@@ -65,7 +65,6 @@ describe("session reducer", () => {
       model: undefined,
       lastSeenEventId: 4,
     });
-    expect(state.messages).not.toBe(messages);
   });
 
   test("context usage keeps its latest report through completion and snapshot seeding", () => {

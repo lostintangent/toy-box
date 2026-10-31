@@ -44,7 +44,6 @@ export function toRelativePath(absolutePath: string, cwd?: string): string {
 }
 
 export const createFileServeUrl = (file: WorkspaceFile) => createFileRouteUrl("/api/serve", file);
-export const createFileWatchUrl = (file: WorkspaceFile) => createFileRouteUrl("/api/watch", file);
 export const createWorkspaceFileUrl = (file: WorkspaceFile) =>
   `/${defaultStringifySearch({ files: [file] })}`;
 

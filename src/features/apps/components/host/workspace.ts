@@ -1,14 +1,17 @@
 import { replaceEqualDeep } from "@tanstack/react-query";
 import type { AppList } from "@apps/model";
 import type { SessionsState } from "@sessions/model";
+import type { SessionsActivity } from "@sessions/model/activity";
 import { selectNonWorkerSessions, selectSessionChildren } from "@sessions/queries";
-import type { WorkspaceState } from "@workspace/model/state/reducer";
 import type { WorkspacePane } from "@workspace/model/panes";
 import type { ModelConfiguration, ModelInfo } from "@providers/model";
 import type { AppSession, AppWorkspace } from "@apps/sdk";
+import type { Worker } from "@workers/model";
 
 type AppWorkspaceSource = {
-  workspace: Pick<WorkspaceState, "sessionStates" | "hyperSessionIds" | "workers">;
+  activities: SessionsActivity;
+  hyperSessionIds: readonly string[];
+  workers: readonly Worker[];
   apps: AppList;
   sessions: SessionsState;
   models: readonly ModelInfo[];
@@ -18,15 +21,25 @@ type AppWorkspaceSource = {
 };
 
 export function projectAppWorkspace(
-  { workspace, apps, sessions, models, defaultModel, appId, openPanes }: AppWorkspaceSource,
+  {
+    activities,
+    hyperSessionIds,
+    workers,
+    apps,
+    sessions,
+    models,
+    defaultModel,
+    appId,
+    openPanes,
+  }: AppWorkspaceSource,
   previous?: AppWorkspace,
 ): AppWorkspace {
   const definitions = new Map(apps.definitions.map((definition) => [definition.id, definition]));
-  const hyperSessionIds = new Set(workspace.hyperSessionIds);
+  const hyperIds = new Set(hyperSessionIds);
   const sessionKind = (sessionId: string): AppSession["kind"] =>
     sessions.ownership[sessionId]?.type === "automation"
       ? "automation"
-      : hyperSessionIds.has(sessionId)
+      : hyperIds.has(sessionId)
         ? "hyper"
         : "standard";
   const childrenByParent = selectSessionChildren(sessions);
@@ -34,7 +47,7 @@ export function projectAppWorkspace(
   function projectSession(session: SessionsState["sessions"][number]): AppSession {
     return {
       ...session,
-      status: workspace.sessionStates[session.id]?.status ?? "idle",
+      status: activities[session.id]?.status ?? "idle",
       kind: sessionKind(session.id),
       worktree: sessions.worktrees[session.id],
       children: (childrenByParent[session.id] ?? []).map(projectSession),
@@ -59,7 +72,7 @@ export function projectAppWorkspace(
       .map((pane) => pane.sessionId),
     openFiles: openPanes.filter((pane) => pane.kind === "editor").map((pane) => pane.file),
     workers: appId
-      ? workspace.workers
+      ? workers
           .filter((worker) => worker.type === "app" && worker.appId === appId)
           .map(({ sessionId, name, metadata }) => ({ sessionId, name, metadata }))
       : [],

@@ -220,7 +220,7 @@ async function run(executable: string, profilePath: string) {
       return report;
     } finally {
       for (const timer of timers) clearTimeout(timer);
-      await screenRuntime.close();
+      await screenRuntime.dispose();
     }
   }
   const report = await capture();

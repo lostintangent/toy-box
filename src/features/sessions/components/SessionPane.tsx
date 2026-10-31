@@ -8,21 +8,22 @@ import { getRecentDirectories } from "../model/recentDirectories";
 import { sessionMutations } from "../mutations";
 import { sessionQueries } from "../queries";
 import { useSession } from "../useSession";
+import { useSessionActivity } from "../useSessionActivity";
 import {
   SessionLocationPicker,
   type SessionLocationPickerProps,
 } from "./location/SessionLocationPicker";
 import { SessionMetadataBadges } from "./location/SessionMetadataBadges";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import { createEditorPaneId, resolveArtifactSelection } from "@workspace/model/panes";
 import { sessionFile } from "@files/model";
+import { createEditorPane } from "@files/model/panes";
+import { createLinkedPanes, createSessionPane, resolveArtifactSelection } from "../model/panes";
 import { useModels } from "@providers/useModels";
 import { EditDiffsProvider, useEditDiffs } from "./transcript/editDiffs";
 import { SessionComposer } from "./composer/SessionComposer";
 import { CurrentSessionProvider, type SessionPaneMode } from "./CurrentSessionContext";
-import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
-import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
-import { PaneViewMenu } from "@workspace/components/panes/shell/PaneViewMenu";
+import { PaneActions, type PaneVariant } from "@/shared/panes/PaneSlots";
+import { PaneViewMenu } from "@/shared/panes/PaneViewMenu";
 import { SessionMessageList } from "./transcript/MessageList";
 import type { TranscriptView } from "./transcript/transcriptView";
 import { TranscriptSkeleton } from "@/shared/messages/TranscriptSkeleton";
@@ -54,9 +55,7 @@ export function SessionPane({
   const { panePublications, focusedPaneAtom } = useWorkspaceSurface();
   const [selectedArtifactPath, setSelectedArtifactPath] = useState<string>();
   const isPassive = mode === "passive";
-  const workspaceSessionStatus = useWorkspaceSelector(
-    (workspace) => workspace.sessionStates[sessionId]?.status ?? "idle",
-  );
+  const { waiting } = useSessionActivity(sessionId);
   const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);
   // In the "compact" variant (the pager) the session surfaces its location picker
   // + message badges in the host's title bar and hides them from the composer; in
@@ -127,7 +126,6 @@ export function SessionPane({
     setModel: setSessionModel,
     stop,
   } = useSession(sessionId, {
-    workspaceSessionStatus,
     mode: isPassive ? "passive" : "active",
     isVisible,
     defaultModel: fallbackModel ?? undefined,
@@ -159,13 +157,16 @@ export function SessionPane({
   useEffect(() => {
     if (mode !== "active") return;
     if (!isDraft && !hasLoadedSessionState) return;
-    panePublications.actions.publishSessionPanes(
-      sessionId,
-      linkedSessionIds,
-      canvases,
-      selectedArtifact?.path ? [selectedArtifact.path] : [],
-      openedFiles,
-      preview,
+    panePublications.actions.publishLinkedPanes(
+      createSessionPane(sessionId).id,
+      createLinkedPanes(
+        sessionId,
+        linkedSessionIds,
+        canvases,
+        selectedArtifact?.path ? [selectedArtifact.path] : [],
+        openedFiles,
+        preview,
+      ),
     );
   }, [
     selectedArtifact?.path,
@@ -182,15 +183,11 @@ export function SessionPane({
 
   function handleOpenArtifact(path: string) {
     setSelectedArtifactPath(path);
-    panePublications.actions.publishSessionPanes(
-      sessionId,
-      linkedSessionIds,
-      canvases,
-      [path],
-      openedFiles,
-      preview,
+    panePublications.actions.publishLinkedPanes(
+      createSessionPane(sessionId).id,
+      createLinkedPanes(sessionId, linkedSessionIds, canvases, [path], openedFiles, preview),
     );
-    focusedPaneAtom.set(createEditorPaneId(sessionFile(sessionId, path)));
+    focusedPaneAtom.set(createEditorPane(sessionFile(sessionId, path)).id);
   }
 
   // ---------------------------------------------------------------------------
@@ -314,7 +311,7 @@ export function SessionPane({
                 messages={messages}
                 view={view}
                 isStreaming={isStreaming}
-                isWaiting={workspaceSessionStatus === "waiting"}
+                isWaiting={waiting}
                 status={status}
                 reasoningContent={reasoningContent}
                 scrollToBottomRef={scrollToBottomRef}

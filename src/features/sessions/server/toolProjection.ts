@@ -5,6 +5,7 @@ import { isAbsolute } from "node:path";
 import { projectSessionArtifactPath, workspaceFileFromAbsolutePath } from "@files/server/paths";
 import { parsePatchTouchedFiles } from "@sessions/model/fileDiffs";
 import { previewUpdateSchema } from "@/shared/preview";
+import { z } from "zod";
 
 export type ToolCompletion = {
   success: boolean;
@@ -127,26 +128,20 @@ function projectLinkedSessionEvent(
   return sessionId ? [{ type, sessionId }] : [];
 }
 
+const createdSessionSchema = z.object({ sessionId: z.string(), opened: z.boolean() });
+
 function projectCreatedSession(eventData: ToolCompletion): SessionEvent[] {
   if (!eventData.success) return [];
-  const result = readCreatedSessionResult(eventData);
-  return result?.opened ? [{ type: "linked_session_added", sessionId: result.sessionId }] : [];
+  const result = createdSessionSchema.safeParse(readToolResult(eventData));
+  return result.success && result.data.opened
+    ? [{ type: "linked_session_added", sessionId: result.data.sessionId }]
+    : [];
 }
 
 function projectPreview(eventData: ToolCompletion): SessionEvent[] {
   if (!eventData.success) return [];
   const result = previewUpdateSchema.strip().safeParse(readToolResult(eventData));
   return result.success ? [{ type: "preview_changed", preview: result.data.preview }] : [];
-}
-
-function readCreatedSessionResult(
-  eventData: ToolCompletion,
-): { sessionId: string; opened: boolean } | undefined {
-  const parsed = readToolResult(eventData);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-  const result = parsed as Record<string, unknown>;
-  if (typeof result.sessionId !== "string" || typeof result.opened !== "boolean") return undefined;
-  return { sessionId: result.sessionId, opened: result.opened };
 }
 
 function readToolResult(eventData: ToolCompletion): unknown {

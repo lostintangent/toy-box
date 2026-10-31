@@ -9,19 +9,25 @@ import type {
 } from "@github/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
 import type { ProviderSubscription } from "@providers/model";
-import type { SessionConfiguration, SessionProvider } from "@providers/server/provider";
+import {
+  SessionNotFoundError,
+  type SessionConfiguration,
+  type SessionProvider,
+} from "@providers/server/provider";
 import { normalizeToolResult } from "@sessions/server/tools/definition";
 import { startCopilotClient, stopCopilotClient } from "./client";
 import { connectCopilotSession } from "./connection";
 import { toModelInfo } from "./models";
-import { toSdkSessionModelOptions } from "./modelConfiguration";
+import { toSdkSetModelOptions } from "./modelConfiguration";
 import { toSessionSkills } from "./skills";
 import { createSdkEventProjector } from "./projector";
-import { computerUseServers } from "./computerUse";
 
 export const copilotProvider: SessionProvider = {
   id: "copilot",
   name: "GitHub Copilot",
+  async isSignedIn() {
+    return (await (await startCopilotClient()).getAuthStatus()).isAuthenticated;
+  },
   async listModels() {
     return (await (await startCopilotClient()).listModels()).map(toModelInfo);
   },
@@ -80,18 +86,17 @@ export const copilotProvider: SessionProvider = {
   async create(sessionId, configuration) {
     const client = await startCopilotClient();
     const session = await client.createSession({
-      ...(await nativeConfiguration(sessionId, configuration, client)),
+      ...nativeConfiguration(sessionId, configuration),
       sessionId,
+      name: configuration.name || undefined,
     });
     try {
-      const connection = await connect(
+      return await connect(
         session,
         sessionId,
         configuration.allowUserQuestions,
         configuration.model,
       );
-      if (configuration.name) await connection.rename(configuration.name);
-      return connection;
     } catch (error) {
       await client.deleteSession(session.sessionId).catch(console.error);
       throw error;
@@ -101,7 +106,7 @@ export const copilotProvider: SessionProvider = {
     const client = await startCopilotClient();
     const native = await client.resumeSession(
       session.provider?.sessionId ?? session.id,
-      await nativeConfiguration(session.id, configuration, client),
+      nativeConfiguration(session.id, configuration),
     );
     return connect(native, session.id, configuration.allowUserQuestions, configuration.model);
   },
@@ -116,7 +121,9 @@ export const copilotProvider: SessionProvider = {
     return !!metadata && metadata.modifiedTime.getTime() <= capturedAt + 2_000;
   },
   async delete(nativeId) {
-    await (await startCopilotClient()).deleteSession(nativeId);
+    const client = await startCopilotClient();
+    if (!(await client.getSessionMetadata(nativeId))) throw new SessionNotFoundError(nativeId);
+    await client.deleteSession(nativeId);
   },
   stop: stopCopilotClient,
 };
@@ -149,25 +156,24 @@ async function connect(
   allowUserQuestions: boolean,
   appliedModel?: SessionConfiguration["model"],
 ) {
+  // Toy Box approves every request; allow-all also keeps the CLI from journaling each one.
+  await session.rpc.permissions.setMode({ mode: "allow-all" });
   if (allowUserQuestions)
     await session.rpc.eventLog.registerInterest({ eventType: "user_input.requested" });
   return connectCopilotSession(session, sessionId, appliedModel);
 }
 
-async function nativeConfiguration(
+function nativeConfiguration(
   sessionId: string,
   configuration: SessionConfiguration,
-  client: CopilotClient,
-): Promise<SessionConfig> {
+): SessionConfig {
   const tools: CopilotTool<any>[] = configuration.tools.map((tool) => ({
     ...tool,
     skipPermission: true,
-    handler: async (args, invocation) => {
+    defer: tool.alwaysLoad ? "never" : "auto",
+    handler: async (args) => {
       const result = normalizeToolResult(
-        await tool.handler(tool.parameters ? tool.parameters.parse(args) : args, {
-          ...invocation,
-          sessionId,
-        }),
+        await tool.handler(tool.parameters ? tool.parameters.parse(args) : args, sessionId),
       );
       return {
         textResultForLlm: result.content
@@ -183,10 +189,10 @@ async function nativeConfiguration(
   return {
     streaming: true,
     requestCanvasRenderer: true,
-    ...toSdkSessionModelOptions(configuration.model),
+    model: configuration.model?.name,
+    ...toSdkSetModelOptions(configuration.model),
     workingDirectory: configuration.directory,
     enableConfigDiscovery: true,
-    mcpServers: await computerUseServers(client),
     imageGeneration: { enabled: true },
     enableSkills: true,
     skillDirectories: configuration.skillDirectories,

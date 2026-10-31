@@ -26,7 +26,12 @@ import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/utils";
 import { fileMutations } from "../../mutations";
-import type { DirectoryEntry, DirectoryListing } from "../../model";
+import {
+  machineFile,
+  type DirectoryEntry,
+  type DirectoryListing,
+  type MachineFile,
+} from "../../model";
 import { fileQueries } from "../../queries";
 import { PathBreadcrumbs } from "./PathBreadcrumbs";
 
@@ -51,7 +56,7 @@ export function FileBrowserDialog({
   title: string;
   initialPath?: string;
   extensions?: readonly string[];
-  onOpenFile?: (path: string) => void;
+  onOpenFile?: (file: MachineFile) => void;
   onSelectDirectory?: (path: string) => void;
 }) {
   const [creatingFileIn, setCreatingFileIn] = useState<string | undefined>(undefined);
@@ -90,7 +95,7 @@ export function FileBrowserDialog({
           creatingFileIn={creatingFileIn}
           setCreatingFileIn={setCreatingFileIn}
           onCancel={() => changeOpen(false)}
-          onOpenFile={onOpenFile && complete(onOpenFile)}
+          onOpenFile={onOpenFile && complete((path) => onOpenFile(machineFile(path)))}
           onSelectDirectory={onSelectDirectory && complete(onSelectDirectory)}
         />
       </DialogContent>

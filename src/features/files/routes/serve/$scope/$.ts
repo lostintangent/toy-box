@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { HTML_SANDBOX_CONTENT_SECURITY_POLICY } from "@/shared/embeddedHtml";
-import { resolveFileRequest } from "@files/server/request";
+import { decodeFileRoute } from "@files/model";
+import { resolveWorkspaceFile } from "@files/server/paths";
 
 type ServeRouteParams = {
   scope: string;
@@ -29,14 +30,21 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 export async function createServeResponse(
-  params: ServeRouteParams,
+  { scope, _splat }: ServeRouteParams,
   request: Request,
 ): Promise<Response> {
-  const { scope, _splat } = params;
-  const resolution = await resolveFileRequest(scope, _splat);
-  if ("error" in resolution) return resolution.error;
-  const { absolutePath, size, modifiedTime } = resolution;
-  const etag = `W/"${size}-${modifiedTime}"`;
+  const requestPath = _splat?.replace(/^\/+/, "");
+  if (!requestPath) return new Response("Missing file path.", { status: 400 });
+  const absolutePath = resolveWorkspaceFile(decodeFileRoute(scope, requestPath));
+  if (!absolutePath) return new Response("Invalid file path.", { status: 403 });
+  const stats = await Bun.file(absolutePath)
+    .stat()
+    .catch(() => null);
+  if (!stats) return new Response("File not found.", { status: 404 });
+  if (!stats.isFile()) return new Response("Requested path is not a file.", { status: 404 });
+
+  const { size, mtimeMs } = stats;
+  const etag = `W/"${size}-${mtimeMs}"`;
   const headers = {
     "Cache-Control": "private, no-cache",
     "Content-Security-Policy": HTML_SANDBOX_CONTENT_SECURITY_POLICY,

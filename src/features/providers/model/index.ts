@@ -42,10 +42,19 @@ export type ModelInfo = ModelOptionInfo & {
   providerName?: string;
 };
 
+/** Only a ready provider contributes models; a signed-out one still lists its history. */
+export type SessionProviderStatus = "unavailable" | "signedOut" | "ready";
+
 export type ProviderCatalog = {
-  providers: { id: string; name: string; installed: boolean }[];
+  providers: { id: string; name: string; status: SessionProviderStatus }[];
   models: ModelInfo[];
 };
+
+declare module "@workspace/model/events" {
+  interface WorkspaceEvents {
+    providers: { type: "providers.changed" };
+  }
+}
 
 /** The signed-in account's subscription: its plan and how much of each of its limits is used. */
 export type ProviderSubscription = {

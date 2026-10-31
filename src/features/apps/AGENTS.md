@@ -21,7 +21,7 @@ The feature is organized by responsibility:
 - `model/` owns schemas and domain values shared across the boundary.
 - `server/schema.ts` defines the SQLite tables, while `server/database.ts` owns saved instance and
   share rows.
-- `queries.ts`, `queryCache.ts`, and `mutations.ts` own the browser's Apps catalog,
+- `queries.ts`, `cache.ts`, and `mutations.ts` own the browser's Apps catalog,
   compiled-bundle reads, cache transitions, and saved-app operations. The catalog is
   one snapshot of definitions, saved instances, and pending shares, preloaded during SSR.
 - `components/` owns the Apps sidebar and workspace pane. Its private `host/`
@@ -88,7 +88,7 @@ can be closed when context is shared with it.
 
 The Apps-owned `listApps` server function reads definitions, instances, and shares
 from their owners into one catalog snapshot. `appQueries.list()` owns that cache,
-and `queryCache.ts` applies their at-most-once events from the shared workspace
+and `cache.ts` applies their at-most-once events from the shared workspace
 stream. Snapshot refetch repairs missed events on reconnect; an event received
 during a refetch replaces that read with one started after the accepted change.
 Saved app revisions advance monotonically when applying events and mutation responses.
@@ -139,7 +139,7 @@ The SDK exposes:
 - `useWorkspace(selector)`, which projects ordinary sessions and child-session
   trees, saved apps, models, published panes, and workers owned by the app.
 - `useChannels()`, the same catalog hook used by the Channels sidebar. It composes
-  the channel list and workspace activity caches into channel, agent identity/running,
+  the channel list and Session activity caches into channel, agent identity/running,
   and unread/reply status entries without opening detail streams or marking read.
 - `useChannel(channelId, options?)`, a direct export of the channel pane hook.
   It shares the detail cache, stream, paging, and post mutation. Observation is active
@@ -155,7 +155,7 @@ The SDK exposes:
 
 `AppHost` owns the common mounted lifetime: SDK workspace projection, portable
 actions, linked-pane retention, rendering, and cleanup. It composes the Apps catalog
-with Workspace activity, Sessions, Providers, and the current pane surface without
+with Session activity, Sessions, Providers, and the current pane surface without
 copying Apps data into the Workspace cache. `panes/AppPane`
 supplies the saved-instance state store; `panes/ArtifactAppPane` supplies only its
 editor pane identity. The SDK's `useApp()` adds saved-only share and worker actions,
@@ -189,7 +189,7 @@ projection. Model identity is `{ provider, name }`; the catalog includes provide
 display names for grouping. Apps pass that configuration through ordinary Session
 operations and contain no native-provider selection or execution branches.
 
-`AppSession` extends shared `Session` with workspace status, governance kind,
+`AppSession` extends shared `Session` with its activity status, governance kind,
 worktree, and child sessions. Metadata retains its canonical names and values, including
 `sessionId`, optional `title` and `directory`, and available native Git display fields;
 apps choose display fallbacks. Creation still receives only the directory and worktree choice.

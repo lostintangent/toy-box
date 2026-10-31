@@ -28,8 +28,8 @@ and apps compose sessions rather than introducing another transcript or executio
 - [Providers' model](../providers/model/index.ts) supplies the validated model, reasoning-effort,
   and context-tier configuration used by session state and message ingress.
 - `reducer.ts` is the one pure transition function shared by live server execution, persisted
-  history replay, and browser streaming. Its status records provider activity; the workspace
-  projects the user-facing waiting state from pending blocking questions.
+  history replay, and browser streaming. Its status records provider activity; the runtime
+  projects the user-facing waiting activity from pending blocking questions.
 - `SessionState.preview` is the optional current runnable result: a URL or
   Screen ID, using `shared/preview.ts` like Channels. Successful
   `set_session_preview` results project to `preview_changed`.
@@ -56,6 +56,15 @@ before a backing session. Worker ownership includes its optional parent relation
 consumers use this index for filtering, draft reuse, editor defaults, and SDK classification rather
 than consulting feature catalogs. Hyper membership remains process-local Workspace coordination.
 Managed sessions remain addressable for linked children, previews, and activity.
+
+`model/activity.ts` owns session activity: whether a session is running, waiting on a blocking
+question, working in the background, or finished with unread results. Its pure reducer is shared
+by the server store and every browser, and a session without an entry is idle. Live activity
+carries `since`, stamped from the `at` of the event that began the run; waiting and background keep
+it and a new run restarts it. Background sessions remain live but do not count as foreground work.
+The runtime writes activity through `server/state/activity.ts`, which broadcasts each accepted
+transition as a `session.*` workspace event. Browsers read it through `sessionQueries.activity()`
+and `useSessionActivity.ts`, and `sessionMutations.markRead` clears unread before the server confirms.
 
 `src/server/managedSessions.ts` at the application composition boundary selects the 250 most recent
 ordinary, unpinned sessions, plus all managed and pinned sessions. Drafts and sessions with shared
@@ -94,7 +103,7 @@ creation, first-turn launch, delivery, queue control, abort, rewind, rename, del
 owns only the cache transitions that make those operations immediate and rolls optimistic changes
 back when the request fails.
 
-`queryCache.ts` applies shared workspace session events to session-owned queries. The workspace
+`cache.ts` applies shared workspace session events to session-owned queries. The workspace
 event stream is a synchronization hint; the list query and session snapshot remain the recovery
 sources. Its `recreateSessionInCache` operation cancels older reads and replaces the catalog entry
 and transcript with a fresh draft containing the first message. Callers pass that message's
@@ -133,7 +142,7 @@ member work. Collaboration identity and `@mention` delivery belong to Channels.
 draft session. Unsent composer text is a Workspace saved draft keyed `session:<id>`. First submission in
 `useSession.ts` adds the provider and context to the existing catalog entry and transitions the
 same ID to running, so its timestamp and directory appear before provider creation completes.
-Creation failure reconciles catalog and workspace state from the server.
+Creation failure reconciles the catalog and session activity from the server.
 Providers' `useModels.ts` composes the model catalog with the workspace default. `useWarmSessionSnapshots.ts`
 retains explicitly pinned snapshots without creating UI output or a second cache.
 
@@ -156,7 +165,11 @@ default does not change already-open panes; overlays and passive previews keep t
 
 The composer stacks what a session produced (artifacts newest first, plus todo progress and changed
 files) and what is waiting (queued messages) above the message being written. Sessions and Channels
-share Workspace's [`ComposerTray`](../workspace/components/outputs/ComposerTray.tsx).
+share [`ComposerTray`](components/outputs/ComposerTray.tsx). [`components/outputs/`](components/outputs/)
+holds that output presentation: artifact pills, the checklist popup, and page and screen previews.
+`PagePreview` is the sandboxed thumbnail that HTML artifacts and a Channel's preview share. They
+combine Files identity and previews with the current surface's pane focus and file-worker activity,
+while callers supply their artifacts, checklist, and additional controls.
 An active Session pane publishes only one selected artifact editor. Its initial choice is the
 session's designated artifact, or otherwise the most recently updated file. That choice stays put
 as other artifacts arrive or change; tray and transcript clicks replace it. If the selected file

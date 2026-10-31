@@ -14,8 +14,7 @@ import { sharedMap, sharedSet } from "@/shared/server/processState";
 import type { SessionState } from "@sessions/model";
 
 const SNAPSHOT_CACHE_MAX_ENTRIES = 10;
-const SNAPSHOT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-export type CachedSnapshotEntry = {
+type CachedSnapshotEntry = {
   snapshot: SessionState;
   capturedAt: number;
 };
@@ -88,9 +87,7 @@ export async function getCachedSnapshot(sessionId: string): Promise<SessionState
   const entry = snapshotCache.get(sessionId);
   if (!entry) return undefined;
 
-  if (
-    !isCachedSnapshotFresh(entry, await isHistoryCurrent(sessionId, entry.capturedAt), Date.now())
-  ) {
+  if (!(await isHistoryCurrent(sessionId, entry.capturedAt))) {
     snapshotCache.delete(sessionId);
     return undefined;
   }
@@ -114,14 +111,4 @@ export function evictCachedSnapshot(sessionId: string): void {
 /** Whether a session currently occupies a cache slot (fresh or not). */
 export function hasCachedSnapshot(sessionId: string): boolean {
   return snapshotCache.has(sessionId);
-}
-
-/** Whether a cached snapshot is still truthful enough to serve. */
-export function isCachedSnapshotFresh(
-  entry: CachedSnapshotEntry,
-  historyCurrent: boolean,
-  now: number,
-): boolean {
-  if (now - entry.capturedAt > SNAPSHOT_CACHE_TTL_MS) return false;
-  return historyCurrent;
 }

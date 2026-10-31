@@ -3,8 +3,10 @@ import { describe, expect, onTestFinished, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DirectoryEntry } from "../model";
-import { listDirectory } from "./index";
+import { closeConnection, openConnection } from "@workspace/server/connections";
+import { subscribeWorkspaceEvents } from "@workspace/server/events";
+import { machineFile, type DirectoryEntry, type FileChange } from "../model";
+import { listDirectory, watchFile, writeFile } from "./index";
 
 async function fixture(repository = false): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "toy-box-directory with spaces-"));
@@ -102,3 +104,52 @@ describe("directory listings", () => {
     await expect(listDirectory({ path: directory })).rejects.toThrow();
   });
 });
+
+describe("file watching", () => {
+  async function watchedDocument() {
+    const directory = await fixture();
+    const file = machineFile(join(directory, "document.md"));
+    await Bun.write(file.path, "Before");
+    const changes: FileChange[] = [];
+    onTestFinished(
+      subscribeWorkspaceEvents((event) => {
+        if (event.type === "file.changed" || event.type === "file.deleted") changes.push(event);
+      }),
+    );
+    return { file, changes };
+  }
+
+  test("reports the file's current state, then publishes its changes", async () => {
+    const { file, changes } = await watchedDocument();
+    const connection = openConnection();
+    onTestFinished(() => closeConnection(connection));
+
+    const { change } = await watchFile(connection, file);
+    expect(change).toEqual({
+      type: "file.changed",
+      file,
+      timestamp: (await Bun.file(file.path).stat()).mtimeMs,
+    });
+
+    const { timestamp } = await writeFile(file, "After");
+    await waitFor(() =>
+      changes.some((event) => "timestamp" in event && event.timestamp === timestamp),
+    );
+  });
+
+  test("stops publishing once the tab's connection closes", async () => {
+    const { file, changes } = await watchedDocument();
+    const connection = openConnection();
+    await watchFile(connection, file);
+    closeConnection(connection);
+
+    await writeFile(file, "After");
+    await Bun.sleep(100);
+    expect(changes).toEqual([]);
+  });
+});
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200 && !predicate(); attempt++) await Bun.sleep(10);
+  expect(predicate()).toBe(true);
+}

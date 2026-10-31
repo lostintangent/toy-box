@@ -4,7 +4,7 @@ import type { DiffStats } from "@/shared/diffStats";
 export type DiffHunk = {
   oldText: string;
   newText: string;
-  lines?: Array<{ type: "context" | "added" | "removed"; text: string }>;
+  lines: Array<{ type: "context" | "added" | "removed"; text: string }>;
   stats: DiffStats;
 };
 
@@ -24,7 +24,7 @@ type FileDraft = FileDiff & {
 type HunkDraft = {
   oldLines: string[];
   newLines: string[];
-  lines: NonNullable<DiffHunk["lines"]>;
+  lines: DiffHunk["lines"];
   stats: DiffStats;
 };
 

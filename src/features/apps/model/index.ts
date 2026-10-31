@@ -4,6 +4,7 @@ import { appStateDefinitionSchema } from "@apps/model/state";
 import { sessionFileSchema } from "@files/model";
 import { hexColorSchema, type HexColor } from "@/shared/utils";
 import { smallJsonSchema } from "@/shared/smallJson";
+import { createPane } from "@workspace/model/panes";
 
 export type { AppStateDefinition } from "@apps/model/state";
 
@@ -176,6 +177,27 @@ export type AppInstance = {
   createdAt: string;
   updatedAt: string;
 };
+
+declare module "@workspace/model/events" {
+  interface WorkspaceEvents {
+    apps:
+      | { type: "app.registered"; definition: AppDefinition }
+      | { type: "app.unregistered"; definitionId: string }
+      | { type: "app.upserted"; app: AppInstance }
+      | { type: "app.deleted"; appId: string }
+      | { type: "app.share.created"; share: AppShare }
+      | { type: "app.share.deleted"; shareId: string };
+  }
+}
+
+declare module "@workspace/model/panes" {
+  interface WorkspacePanes {
+    /** One saved app instance. */
+    app: { appId: string };
+  }
+}
+
+export const createAppPane = (appId: string) => createPane("app", appId, { appId });
 
 /** Current installed definitions, saved instances, and pending shares. */
 export type AppList = {

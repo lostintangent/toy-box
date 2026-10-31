@@ -1,6 +1,6 @@
 import { mutationOptions } from "@tanstack/react-query";
 import { deleteInboxEntry, dispatchInboxTask } from "./server/functions";
-import { applyWorkspaceEvent } from "@workspace/queries";
+import { applyWorkspaceEvent } from "@workspace/sync";
 import type { SessionLaunch } from "@sessions/model";
 
 export const inboxMutations = {

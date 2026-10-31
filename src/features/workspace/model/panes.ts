@@ -1,246 +1,27 @@
-import {
-  ownerSessionId,
-  sessionFile,
-  type WorkspaceFile,
-  type WorkspaceFileMode,
-  workspaceFileId,
-} from "@files/model";
-import { fileName } from "@files/model/paths";
-import type { Settings } from "@workspace/model/config/settings";
-import type { SessionArtifact, SessionCanvas } from "@sessions/model";
-import type { Preview } from "@/shared/preview";
-import { matchesSessionFeatureScope } from "@workspace/model/config/settings";
-
 export const MAX_WORKSPACE_PANES = 4;
 export const MAX_HYPER_PANES = 6;
 
-export const INBOX_PANE = {
-  kind: "inbox",
-  id: "inbox",
-} as const;
+/** The pane kinds features declare, keyed by kind, with the parameters each kind's panes carry.
+ *  A feature augments this from its model, and its `panes.tsx` declares how they're shown. */
+export interface WorkspacePanes {}
 
-type InboxWorkspacePane = typeof INBOX_PANE;
+/** Browser-local content identity shared by grid, pager, and Hyper hosts, of any kind or of one.
+ *  `id` is a pane's mounted identity, and `sessionId` names the session it belongs to, if any. */
+export type WorkspacePane<Kind extends keyof WorkspacePanes = keyof WorkspacePanes> = {
+  [K in Kind]: { kind: K; id: string; sessionId?: string } & WorkspacePanes[K];
+}[Kind];
 
-/** Browser-local content identity shared by grid, pager, and Hyper hosts. */
-export type WorkspacePane =
-  | InboxWorkspacePane
-  | AppWorkspacePane
-  | ChannelWorkspacePane
-  | ScreenWorkspacePane
-  | {
-      kind: "session";
-      id: string;
-      sessionId: string;
-      isLinkedOnly: boolean;
-    }
-  | EditorWorkspacePane
-  | {
-      kind: "canvas";
-      id: string;
-      sourceSessionId: string;
-      canvas: SessionCanvas;
-    };
-
-export type EditorWorkspacePane = {
-  kind: "editor";
-  id: string;
-  file: WorkspaceFile;
-  title: string;
-  mode?: WorkspaceFileMode;
-};
-
-export type AppWorkspacePane = {
-  kind: "app";
-  id: string;
-  appId: string;
-};
-
-export type ChannelWorkspacePane = {
-  kind: "channel";
-  id: string;
-  channelId: string;
-};
-
-export type ScreenWorkspacePane = {
-  kind: "screen";
-  id: string;
-  screenId: string;
-  sourceSessionId?: string;
-};
-
-export function createScreenPane(screenId: string, sourceSessionId?: string): ScreenWorkspacePane {
-  return { kind: "screen", id: `screen:${screenId}`, screenId, sourceSessionId };
+/** A pane's id is its kind and the key of its content, so the same content is always one pane. */
+export function createPane<Kind extends keyof WorkspacePanes>(
+  kind: Kind,
+  key: string,
+  params: WorkspacePanes[Kind] & { sessionId?: string },
+): WorkspacePane<Kind> {
+  return { kind, id: `${kind}:${key}`, ...params } as WorkspacePane<Kind>;
 }
 
 /** The browser-local pane graph, keyed by the pane that published each edge. */
 export type PanePublications = Readonly<Record<string, readonly WorkspacePane[]>>;
-
-// Session-backed pane ids are `type:sourceSessionId:naturalKey`, while the one
-// Inbox pane uses `inbox`. Editor pane identity includes its file; canvas identity
-// includes its revision so revision bumps remount the surface. These ids are
-// also publisher keys for the browser-local pane graph.
-
-export function createSessionPaneId(sessionId: string): string {
-  return `session:${sessionId}`;
-}
-
-export function createAppPane(appId: string): AppWorkspacePane {
-  return {
-    kind: "app",
-    id: `app:${appId}`,
-    appId,
-  };
-}
-
-export function createChannelPane(channelId: string): ChannelWorkspacePane {
-  return {
-    kind: "channel",
-    id: `channel:${channelId}`,
-    channelId,
-  };
-}
-
-export function createEditorPaneId(file: WorkspaceFile): string {
-  return `editor:${workspaceFileId(file)}`;
-}
-
-export function createCanvasPaneId(sourceSessionId: string, canvas: SessionCanvas): string {
-  return `canvas:${sourceSessionId}:${canvas.key}:${canvas.revision}`;
-}
-
-export function createSessionPane(
-  sessionId: string,
-  isLinkedOnly: boolean,
-): Extract<WorkspacePane, { kind: "session" }> {
-  return {
-    kind: "session",
-    id: createSessionPaneId(sessionId),
-    sessionId,
-    isLinkedOnly,
-  };
-}
-
-export function createLinkedSessionPane(
-  sessionId: string,
-): Extract<WorkspacePane, { kind: "session" }> {
-  return createSessionPane(sessionId, true);
-}
-
-export function createEditorPane(
-  file: WorkspaceFile,
-  mode?: WorkspaceFileMode,
-): EditorWorkspacePane {
-  return {
-    kind: "editor",
-    id: createEditorPaneId(file),
-    file,
-    title: fileName(file.path),
-    mode,
-  };
-}
-
-export function resolveArtifactSelection(
-  artifacts: readonly SessionArtifact[],
-  selectedPath?: string,
-  initialPath?: string,
-): SessionArtifact | undefined {
-  return (
-    artifacts.find(({ path }) => path === selectedPath) ??
-    artifacts.find(({ path }) => path === initialPath) ??
-    artifacts.reduce<SessionArtifact | undefined>(
-      (latest, artifact) => (!latest || artifact.updatedAt > latest.updatedAt ? artifact : latest),
-      undefined,
-    )
-  );
-}
-
-export function createLinkedCanvasPane(
-  sourceSessionId: string,
-  canvas: SessionCanvas,
-): Extract<WorkspacePane, { kind: "canvas" }> {
-  return {
-    kind: "canvas",
-    id: createCanvasPaneId(sourceSessionId, canvas),
-    sourceSessionId,
-    canvas,
-  };
-}
-
-export function isEditorPane(pane: WorkspacePane): pane is EditorWorkspacePane {
-  return pane.kind === "editor";
-}
-
-/** The session a pane belongs to — a session pane is its own source; canvas and
- *  editor panes carry the id of the session that produced them, while Inbox
- *  has no source session. */
-export function paneSourceSessionId(pane: WorkspacePane): string | undefined {
-  switch (pane.kind) {
-    case "inbox":
-    case "app":
-    case "channel":
-      return undefined;
-    case "session":
-      return pane.sessionId;
-    case "editor":
-      return ownerSessionId(pane.file);
-    case "canvas":
-      return pane.sourceSessionId;
-    case "screen":
-      return pane.sourceSessionId;
-  }
-}
-
-export function deriveWorkspaceRootPanes(
-  selectedSessionIds: string[],
-  openFiles: readonly WorkspaceFile[] = [],
-  openAppIds: readonly string[] = [],
-  openChannelIds: readonly string[] = [],
-  openScreenIds: readonly string[] = [],
-): WorkspacePane[] {
-  // Selected work surfaces remain primary; files only augment them.
-  const candidates: WorkspacePane[] = [
-    ...selectedSessionIds.map((sessionId) => createSessionPane(sessionId, false)),
-    ...openAppIds.map(createAppPane),
-    ...openChannelIds.map(createChannelPane),
-    ...openScreenIds.map((screenId) => createScreenPane(screenId)),
-    ...openFiles.map((file) => createEditorPane(file)),
-  ];
-  const paneIds = new Set<string>();
-  const roots = candidates
-    .filter((pane) => {
-      if (paneIds.has(pane.id)) return false;
-      paneIds.add(pane.id);
-      return true;
-    })
-    .slice(0, MAX_WORKSPACE_PANES);
-  return roots.length > 0 ? roots : [INBOX_PANE];
-}
-
-export function createLinkedPanes(
-  sourceSessionId: string,
-  linkedSessionIds: readonly string[],
-  canvases: readonly SessionCanvas[],
-  artifacts: readonly string[] = [],
-  openedFiles: readonly WorkspaceFile[] = [],
-  previousPanes: readonly WorkspacePane[] = [],
-  preview?: Preview,
-): WorkspacePane[] {
-  const previousModes = new Map(
-    previousPanes.filter(isEditorPane).map((pane) => [pane.id, pane.mode] as const),
-  );
-  const linkFile = (file: WorkspaceFile) => {
-    const pane = createEditorPane(file);
-    return { ...pane, mode: previousModes.get(pane.id) ?? pane.mode };
-  };
-
-  return [
-    ...linkedSessionIds.map(createLinkedSessionPane),
-    ...artifacts.map((path) => linkFile(sessionFile(sourceSessionId, path))),
-    ...openedFiles.map(linkFile),
-    ...(preview?.kind === "screen" ? [createScreenPane(preview.screenId, sourceSessionId)] : []),
-    ...canvases.map((canvas) => createLinkedCanvasPane(sourceSessionId, canvas)),
-  ];
-}
 
 type DeriveVisibleWorkspacePanesOptions = {
   rootPanes: WorkspacePane[];
@@ -263,15 +44,8 @@ export function deriveVisibleWorkspacePanes({
     const publisher = publishers.shift();
     if (!publisher) break;
 
-    const linkedPanes = panePublications[publisher.id] ?? [];
-    const prioritizedPanes = [
-      ...linkedPanes.filter((pane) => pane.kind === "editor"),
-      ...linkedPanes.filter((pane) => pane.kind === "screen"),
-      ...linkedPanes.filter((pane) => pane.kind === "canvas"),
-      ...linkedPanes.filter((pane) => pane.kind === "session"),
-    ];
-
-    for (const pane of prioritizedPanes) {
+    // Each publisher orders its own linked panes.
+    for (const pane of panePublications[publisher.id] ?? []) {
       if (seenPaneIds.has(pane.id)) continue;
       seenPaneIds.add(pane.id);
       visiblePanes.push(pane);
@@ -307,10 +81,6 @@ export function deriveReachablePaneIds(
   return deriveReachablePanes(rootPanes, panePublications).map((pane) => pane.id);
 }
 
-export function deriveOpenSessionIds(panes: WorkspacePane[]): string[] {
-  return panes.flatMap((pane) => (pane.kind === "session" ? [pane.sessionId] : []));
-}
-
 function deriveReachablePanes(
   rootPanes: WorkspacePane[],
   panePublications: PanePublications,
@@ -332,81 +102,4 @@ function deriveReachablePanes(
   }
 
   return reachablePanes;
-}
-
-type EditorAutoFocusResolution = {
-  focusPane: EditorWorkspacePane | undefined;
-  seenPaneIds: ReadonlySet<string>;
-};
-
-/**
- * Eligible artifacts are artifact-first: their artifact is the primary surface
- * and the transcript is secondary, so an eligible editor pane should take
- * focus when it appears (maximized on desktop, paged-to on mobile). Focus is
- * only claimed in single-session layouts, so an artifact never takes over a
- * multi-session workspace.
- *
- * Appearance is judged against `seenPaneIds`, the pane ids from the previous
- * resolution: a pane triggers focus at most once per appearance (so a user's
- * dismissal sticks), and departed ids are pruned (so closing and reopening a
- * source session can focus its artifact again). Tracking advances even when the
- * layout gate suppresses focus, so a later layout change never retroactively
- * focuses an old pane.
- */
-export function resolveEditorAutoFocus(
-  seenPaneIds: ReadonlySet<string>,
-  panes: WorkspacePane[],
-  autoFocusArtifacts: Settings["autoFocusArtifacts"],
-  automationSessionIds: readonly string[] = [],
-  forceFocusPaneIds?: ReadonlySet<string>,
-): EditorAutoFocusResolution {
-  return {
-    focusPane: isSingleSessionLayout(panes)
-      ? panes
-          .filter((pane) =>
-            shouldAutoFocusEditorPane(
-              pane,
-              autoFocusArtifacts,
-              automationSessionIds,
-              forceFocusPaneIds,
-            ),
-          )
-          .find((pane) => !seenPaneIds.has(pane.id))
-      : undefined,
-    seenPaneIds: new Set(panes.map((pane) => pane.id)),
-  };
-}
-
-function isSingleSessionLayout(panes: WorkspacePane[]): boolean {
-  return panes.filter((pane) => pane.kind === "session" && !pane.isLinkedOnly).length === 1;
-}
-
-function shouldAutoFocusEditorPane(
-  pane: WorkspacePane,
-  autoFocusArtifacts: Settings["autoFocusArtifacts"],
-  automationSessionIds: readonly string[],
-  forceFocusPaneIds?: ReadonlySet<string>,
-): pane is EditorWorkspacePane {
-  if (!isEditorPane(pane)) return false;
-  // Force-focus overrides the setting — e.g. an artifact-first draft's own file.
-  if (forceFocusPaneIds?.has(pane.id)) return true;
-  const owner = ownerSessionId(pane.file);
-  return (
-    owner !== undefined &&
-    matchesSessionFeatureScope(
-      autoFocusArtifacts,
-      automationSessionIds.includes(owner) ? "automation" : "session",
-    )
-  );
-}
-
-/** Explicit display choices override the owner's default without storing derived state. */
-export function resolveEditorPaneMode(
-  pane: EditorWorkspacePane,
-  automationSessionIds: readonly string[],
-): WorkspaceFileMode {
-  const owner = ownerSessionId(pane.file);
-  return (
-    pane.mode ?? (owner !== undefined && automationSessionIds.includes(owner) ? "read" : "edit")
-  );
 }

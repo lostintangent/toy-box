@@ -262,9 +262,9 @@ and publishes transitions, reusing metadata and roster reducers without retainin
 The same catalog projection supplies list snapshots and existing `channel.upserted` events for
 messages, reads, and metadata edits. One publisher forwards committed detail events and their catalog
 projections. Member upserts/deletions patch identity-only catalog members (ID, Channel ID, name,
-avatar) without refetching the list. The sidebar gets activity from workspace sessions; descriptive
+avatar) without refetching the list. The sidebar gets activity from Session activity; descriptive
 status belongs to the detail stream. Attention needs no additional workspace event or detail state.
-`useChannels()` composes the catalog and workspace activity into entries with a Channel, its agents
+`useChannels()` composes the catalog and Session activity into entries with a Channel, its agents
 and their `isRunning` flags, and a derived `status` (waiting for a reply, unread completion, or unread
 messages). The sidebar and Apps SDK share this hook and the same caches. Badge text and suppression
 of unread/completion badges for open panes stay in the sidebar.
@@ -296,7 +296,7 @@ list operation as browser RPC. `lead` is the profile every Channel's lead shares
 Channel's ID as its own, so clients draw leads of Channels they haven't opened without keeping a
 copy. It never appears in `members`. `working` names the
 leads and members whose sessions are running, the same fact presence uses, because native clients
-cannot read the workspace session state the browser's sidebar uses for closed Channels.
+cannot read the Session activity the browser's sidebar uses for closed Channels.
 
 An avatar is `{ mark, color }`, where agents author both and clients stroke the mark in whichever
 of black or white contrasts more with `color`. Toy Box's own profiles may add `ink`, a fixed mark
@@ -409,7 +409,7 @@ Completion and removed-task endings retain their content for fifteen minutes.
 
 `ChannelPane` takes a Channel ID and owns one cached `ChannelState` for its transcript, overview,
 and composer. It does not read the workspace catalog or derive agent presence from Session state.
-The sidebar uses the catalog and workspace activity independently; private Session previews and
+The sidebar uses the catalog and Session activity independently; private Session previews and
 Files remain explicit integrations with their own capabilities. `ChannelPaneContext` shares one
 roster, presence, and the composer actions inside the pane. The roster exists from the first
 render, starting from the intrinsic lead, so the composer, transcript, and overview never derive
@@ -469,7 +469,7 @@ presents one deleted identity everywhere.
   while it's read, so arrivals during reading are never marked. A flagged question is marked until a
   later user message acknowledges it. The activity row shows working agents; waiting
   shows in the overview, since a request already marks what the user needs to answer.
-- The composer docks Workspace's [`ComposerTray`](../workspace/components/outputs/ComposerTray.tsx)
+- The composer docks Sessions' [`ComposerTray`](../sessions/components/outputs/ComposerTray.tsx)
   for shared artifacts, newest first, plus the tasks and preview. URL previews
   retain their sandboxed hover iframe and open in a new tab. Screen previews
   show a passive live canvas and open/focus a Screen pane without opening a
@@ -527,7 +527,7 @@ presents one deleted identity everywhere.
   `resources.ts` resolves client URLs before publication or snapshot delivery.
   `tools.ts` owns agent-facing projections and the Session, lead, and member tool sets; `agent.ts` composes each agent's
   execution, and `startup.ts` clears finished working statuses and starts the wake interval.
-- `queries.ts`, `stream.ts`, `mutations.ts`, `queryCache.ts`, and `useChannel.ts` own client data:
+- `queries.ts`, `stream.ts`, `mutations.ts`, `cache.ts`, and `useChannel.ts` own client data:
   catalog and streamed detail queries, the SSE adapter, mutations, catalog event patches, and one
   open Channel's visibility and read lifecycle.
 - `components/pane/` holds the pane, composer, and shared pane context, with `transcript/` and

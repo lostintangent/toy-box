@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 import { defaultRehypePlugins, type Components, type ExtraProps } from "streamdown";
 import { sessionFile } from "@files/model";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
-import { createEditorPaneId } from "@workspace/model/panes";
+import { createEditorPane } from "@files/model/panes";
 import type { SessionArtifact } from "../../../model";
 import { useCurrentSession } from "../../CurrentSessionContext";
 
@@ -42,7 +42,7 @@ export function resolveTranscriptArtifactPath(
   const path = artifactPathFromHref(href);
   if (!path) return undefined;
 
-  const paneId = createEditorPaneId(sessionFile(sessionId, path));
+  const paneId = createEditorPane(sessionFile(sessionId, path)).id;
   return panes.some((pane) => pane.id === paneId) ||
     artifacts.some((artifact) => artifact.path === path)
     ? path
@@ -86,7 +86,7 @@ function TranscriptLink({ node: _node, href, children, ...linkProps }: Transcrip
       onClick={() =>
         onOpenArtifact && artifacts?.some(({ path }) => path === artifactPath)
           ? onOpenArtifact(artifactPath)
-          : focusedPaneAtom.set(createEditorPaneId(sessionFile(sessionId, artifactPath)))
+          : focusedPaneAtom.set(createEditorPane(sessionFile(sessionId, artifactPath)).id)
       }
     >
       {children}

@@ -17,8 +17,7 @@ const sendToInboxTool = defineTool("send_to_inbox", {
     "Do not send routine progress updates.",
   parameters: inboxResultSchema,
   isTerminal: true,
-  handler: async ({ message, artifact }, invocation) => {
-    const { sessionId } = invocation;
+  handler: async ({ message, artifact }, sessionId) => {
     if (artifact) {
       const path = resolveSessionArtifactPath(sessionId, artifact);
       if (!path)

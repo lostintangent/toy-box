@@ -1,6 +1,7 @@
-/** Install the current tables whose meaning is owned by Automations. */
-export async function initializeAutomationSchema(db: Bun.SQL): Promise<void> {
-  await db.unsafe(`
+/** The versions of the tables owned by Automations, in order. To change a table,
+ * append a version. */
+export default [
+  `
     CREATE TABLE IF NOT EXISTS automations (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -16,5 +17,5 @@ export async function initializeAutomationSchema(db: Bun.SQL): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_automations_next_run_at
       ON automations(next_run_at);
-  `);
-}
+  `,
+];

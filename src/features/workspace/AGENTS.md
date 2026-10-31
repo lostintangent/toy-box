@@ -2,9 +2,9 @@
 
 Workspace is Toy Box's application composition feature. It owns two sibling capabilities:
 
-- the shared projection and update plane that composes authoritative facts from Sessions, Channels,
-  Inbox, Automations, Workers, Files, and Apps without becoming another source of truth;
-  and
+- the shared projection and update plane: workspace's own shared facts, plus the update stream
+  and sync that carry every feature's events to that feature's caches without Workspace becoming
+  another source of truth; and
 - the browser-local shell that composes feature-owned panes into the desktop, mobile, and Hyper
   layouts.
 
@@ -13,24 +13,32 @@ cross-feature presentation requires it. Workspace is therefore a high-level feat
 features contribute facts and surfaces, while the main route assembles the product through
 Workspace.
 
-Feature components may consume narrow Workspace capabilities such as pane slots and output
-presentation; those reusable capabilities remain independent of their consuming features.
+Feature components may consume narrow Workspace capabilities such as the synced store, pane model,
+and surface; those reusable capabilities never import a feature.
 `src/shared` remains independent of feature modules.
 
 ## Shared projection
 
 `WorkspaceState` is the aggregate read model delivered during SSR and refreshed after reconnects.
-It includes settings, sparse session activity, Hyper membership, active workers, custom editors,
-and environment capabilities. Feature databases, registries, files, and session history remain
-authoritative; Workspace only assembles the shared coordination values.
-Sessions, Channels, Automations, Inbox, Apps, and Providers have independent Query catalogs
-preloaded by the main route. The session catalog supplies durable ownership for generic session
+It holds only the facts Workspace owns: settings, drafts, Hyper membership, and environment
+capabilities. Every other feature's shared state, including Sessions' activity, Workers' active
+workers, and Files' custom editors, lives in that feature's own Query cache.
+Sessions, Channels, Automations, Inbox, Apps, Providers, Workers, and Files have independent Query
+catalogs preloaded by the main route. The session catalog supplies durable ownership for generic session
 classification; feature catalogs supply the records needed by their own surfaces.
 
 The snapshot path reads those feature-owned facts once; the event path incrementally maintains the
-owning caches. Features publish accepted changes through `server/events.ts`, while
-the central pure reducer owns only composition invariants—for example, removing projected
-workers when an app disappears. It never performs a feature's persistence or lifecycle work.
+owning caches. Each feature declares the events it publishes by augmenting `WorkspaceEvents` in
+[`model/events.ts`](model/events.ts) from its own model, publishes them through
+`server/events.ts`, and default-exports a `WorkspaceCache` from its `cache.ts` that applies
+events to its caches and refreshes them after a gap. A cache that writes an event into a query's
+data then calls `replaceOverlappingRead` from [`src/shared/query.ts`](../../shared/query.ts), so a
+read already in flight can't overwrite it. A snapshot that every event reduces into, such as
+`WorkspaceState` or Sessions' activity, instead reads and applies through that module's
+`snapshotJournal`, which reduces the events applied during a read over the snapshot it returns. [`sync.ts`](sync.ts) discovers those
+caches by convention, Workspace's own included, so neither the event type nor the client fan-out lists features. Live, optimistic, and confirmed events all go through `applyWorkspaceEvent`, so no caller reaches into a feature's cache directly. Meanwhile,
+the central pure reducer owns only Workspace's facts, such as clearing a deleted session's draft and
+Hyper membership. It never performs a feature's persistence or lifecycle work.
 General invalidation hints such as `session.touched` remain reducer no-ops and instead prompt the
 owning feature cache to recover from its authoritative snapshot.
 Inbox owns its list query and handles `inbox.changed` and `inbox.entry.deleted` in its feature cache.
@@ -50,12 +58,10 @@ independently switch to Responses without writing the preference.
 Sidebar text, provider, and external-session filters are browser-local route state; they do not
 write workspace settings or alter open panes.
 
-[`model/state/reducer.ts`](model/state/reducer.ts) applies the same `WorkspaceEvent` transitions on
-the server and in each browser. The sparse `sessionStates` map retains only meaningful shared
-activity: active work or unread completion. Active work carries `since`, stamped from the `at` of
-the event that began the run; waiting and background keep it and a new run restarts it.
-Background sessions remain live but do not count as foreground work. Draft sessions live in
-the Sessions catalog; ordinary read-idle sessions have no workspace activity entry.
+[`model/state/reducer.ts`](model/state/reducer.ts) applies `WorkspaceEvent` transitions to each
+browser's workspace state. Whether a session is running, waiting, in the background, or
+unread is Sessions' activity, not workspace state; see
+[`../sessions/AGENTS.md`](../sessions/AGENTS.md).
 
 [`model/state/drafts.ts`](model/state/drafts.ts) defines saved drafts: each composer's unsent
 text, keyed by its owner (`session:<id>`, `channel:<id>`, or `inbox`). A `draft.changed` action
@@ -67,30 +73,39 @@ edits but not its own echoes, syncs a cleared draft at once, and flushes on unmo
 the `value` and `onValueChange` a composer draft takes; images stay local to each client.
 
 [`queries.ts`](queries.ts) is the canonical TanStack Query interface to that projection. It owns
-snapshot identity, optimistic workspace commands, and a per-`QueryClient` event journal that keeps
-an in-flight snapshot from overwriting newer events. [`hooks/state.ts`](hooks/state.ts) exposes
+snapshot identity and reads through a `snapshotJournal`, so an in-flight snapshot never overwrites
+newer events. [`cache.ts`](cache.ts) is Workspace's own `WorkspaceCache`: it reduces
+each event into the snapshot and refreshes provider and session catalogs when the settings they
+depend on change. [`sync.ts`](sync.ts) applies each event to every cache and refreshes them all
+after a gap, and [`mutations.ts`](mutations.ts) issues optimistic workspace commands and setting
+updates. [`hooks/state.ts`](hooks/state.ts) exposes
 narrow reactive selectors and the two client command hooks; it does not copy server state.
 
 [`hooks/useWorkspaceSync.ts`](hooks/useWorkspaceSync.ts) is the single browser sink for the
 at-most-once workspace SSE stream. The root route captures the process-scoped broadcast revision
 before its SSR loaders run. The stream's opening message checks that revision without another
 request: an unchanged initial connection reuses the hydrated queries, while a mismatch refreshes
-the aggregate snapshot and Session, Channel, Automation, Inbox, Apps, and Provider catalogs in the
-background. Reconnects always refresh, including after page visibility changes, so native history
+the aggregate snapshot and every feature's caches in the background. Reconnects always refresh, including after page visibility changes, so native history
 changed outside Toy Box is rediscovered. Subsequent events update their owning Query caches. The revision survives HMR,
 changes after a server restart, and requires no event buffer. Events announce accepted changes;
 they are synchronization hints, not durable truth or a replay log.
 
+Each stream is also the tab's **connection**. Its opening message carries a connection id, which
+[`sync.ts`](sync.ts) keeps as `workspaceConnection`. A feature attaches a server resource the tab
+holds, such as a Files watch, to that id through [`server/connections.ts`](server/connections.ts)
+and hands the tab a lease; the tab ends it early with the `releaseLease` RPC, and otherwise it ends
+when the stream does. Reconnecting yields a new id, and holders attach again.
+
 [`server/functions.ts`](server/functions.ts) validates remote ingress for hydration, shared
 workspace actions, and settings updates, then delegates to the plain operations in
-[`server/index.ts`](server/index.ts). That module assembles the cross-feature snapshot and owns
-Workspace-level orchestration. [`server/tools.ts`](server/tools.ts) exposes Workspace-owned settings
-updates to model sessions. [`server/state/`](server/state) owns only workspace-wide coordination:
-sparse shared session activity, Hyper membership, settings, and environment capabilities.
+[`server/state/`](server/state). That module assembles the cross-feature snapshot and owns only
+workspace-wide coordination: drafts, Hyper membership, settings, and environment
+capabilities. [`server/tools.ts`](server/tools.ts) exposes Workspace-owned settings
+updates to model sessions.
 [`server/events.ts`](server/events.ts) owns the process-local fan-out behind the shared
 [`routes/api/workspace.ts`](routes/api/workspace.ts) SSE route.
 Shared SQLite connection management and schema composition stay in [`../../server/`](../../server), while
-each feature owns its schema, records, and lifecycle. Workspace's own `server/state/schema.ts`
+each feature owns its schema, records, and lifecycle. Workspace's own `server/schema.ts`
 defines the durable settings table.
 
 Browser-local pane topology, focus, layout, and client identity are deliberately absent from the
@@ -98,33 +113,43 @@ server projection.
 
 ## Pane model
 
-`WorkspacePane` is the shared presentation value for seven kinds of content:
+`WorkspacePane` is the shared presentation value for content in a workspace surface. Each feature
+owns its pane kinds: its model augments the open `WorkspacePanes` interface in
+[`model/panes.ts`](model/panes.ts) with each kind's parameters and exports a constructor, and its
+`panes.tsx` declares how the kind is shown. [`components/panes/kinds.ts`](components/panes/kinds.ts)
+discovers those declarations. Today's kinds are:
 
-- Inbox is the stable fallback when no root pane is selected.
-- A session pane is sourced by its own session ID.
-- An editor pane presents a session artifact or machine file.
-- A canvas pane presents an SDK-provided URL associated with its source session.
-- A screen pane presents a native host capability by Screens-owned ID.
-  Each visible canvas owns its connection and renderer. Closing a pane
-  does not stop the source application.
-- An app pane presents one durable app instance and is not inherently session-backed.
-- A channel pane presents one durable shared bus. Its artifacts retain their Files-owned identity
-  when revealed as ordinary root editor panes rather than published as linked panes.
+- Inbox's single pane, the fallback when no root pane is open.
+- A Sessions transcript, and a canvas a session published.
+- A Files editor for a session artifact or machine file.
+- A Screens view of one display or window. Each visible screen owns its connection and renderer, so
+  closing a pane does not stop the source application.
+- An Apps instance, which is not inherently session-backed.
+- A Channels conversation. Its artifacts keep their Files identity when revealed as ordinary root
+  editor panes rather than published as linked panes.
 
 A session `.toy` artifact app remains an editor pane. Reusing the app compiler
 and mounted runtime does not add another pane kind or transfer ownership from its
 source file.
 
-Each pane has a stable ID that represents mounted identity. [`model/panes.ts`](model/panes.ts) owns
-identity, source relationships, reachability, ordering, and focus policy as pure functions. Root
-sessions, files, apps, channels, and screens are deduplicated and capped at four panes. Active session,
-Inbox, and app panes can publish linked panes through a browser-local graph owned by their workspace
-surface. That graph contains composition only; it never copies transcripts, Channel messages, file
-content, Inbox rows, or app state.
-Explicit focus can bring an overflow artifact or child into the capped layout by replacing an
-unrelated pane while retaining its publishers. Clearing focus restores the ordinary ordering.
-Sessions publish only their selected artifact editor, with the full catalog remaining in their tray;
-switching artifacts replaces that linked editor rather than filling the layout with every file.
+Each pane has a stable `id` that represents mounted identity, its kind plus the key of its content
+(`createPane`), and an optional `sessionId` naming the session it belongs to, which keeps overlays and follow-up generic. A kind declares its `View`, its
+pager dot's label and color, and optionally a `root`: the URL key and item schema that let users
+open it, and how an item becomes a pane and back. The workspace URL is just those roots, in the
+URL's order, deduplicated and capped at four panes; with none, Inbox is shown. Any pane can publish
+linked panes through a browser-local graph owned by its workspace surface, and each publisher orders
+its own. That graph contains composition only; it never copies transcripts, Channel messages, file
+content, Inbox rows, or app state. [`model/panes.ts`](model/panes.ts) derives visible and reachable
+panes from roots and publications as pure functions. Explicit focus can bring an overflow artifact
+or child into the capped layout by replacing an unrelated pane while retaining its publishers.
+Clearing focus restores the ordinary ordering. A surface's `reveal(pane)` focuses a pane it can
+already reach and otherwise opens it: the main workspace adds it as a root, replacing the roots when
+full, and Hyper opens its own apps and hands every other kind to the main workspace.
+
+Sessions publish their selected artifact editor first, then any screen preview, canvases, and child
+sessions, with the full artifact catalog remaining in their tray; switching artifacts replaces that
+linked editor rather than filling the layout with every file. Sessions also own artifact auto-focus,
+which each host applies to its surface.
 
 `SessionPane` has three interaction modes:
 
@@ -132,10 +157,11 @@ switching artifacts replaces that linked editor rather than filling the layout w
 - `overlay` is interactive but secondary, so it does not publish another layer.
 - `passive` stays live without accepting input or acknowledging the session as read.
 
-Pane `variant` is a separate host concern. `WorkspacePaneView` maps one pane value to its feature
-component and supplies host-owned action and status slots and the presentation variant through one
-pane-shell context. Descendants declare controls with `PaneActions` or `PaneStatus` without receiving
-DOM targets. This lets the grid and pager hosts
+Pane `variant` is a separate host concern. `WorkspacePaneView` looks up one pane's kind, renders its
+view, and supplies host-owned action and status slots and the presentation variant through one
+pane-shell context from [`src/shared/panes`](../../shared/panes/), the pane chrome kit that panes
+share the way sidebar sections share `src/shared/sidebar`. Descendants declare controls with
+`PaneActions` or `PaneStatus` without receiving DOM targets. This lets the grid and pager hosts
 compose identical content for the main, mobile, and Hyper surfaces while preserving each feature's
 lifecycle. `PaneViewMenu` reads the host variant from that context and supplies shared view chooser
 chrome; Sessions and Channels declare their own view options and own selection and filtering.
@@ -157,15 +183,10 @@ and owns maximize and restore behavior.
 compact host used by mobile and Hyper. It keeps inactive pages mounted so paging preserves scroll
 and local surface state, and portals the active pane's controls into its toolbar.
 
-`components/panes/hosts` owns collection geometry and pane visibility. `components/panes/shell`
-owns the single-pane feature adapter and the chrome slots supplied by those hosts. Neither owns the
-feature state rendered inside a pane.
-
-[`components/outputs/`](components/outputs/) groups `ComposerTray.tsx`, `ArtifactPill.tsx`,
-`ChecklistPopup.tsx`, and `PagePreview.tsx` for Session and Channel output presentation;
-`PagePreview` is the sandboxed thumbnail that HTML artifacts and a Channel's preview share. They combine Files identity and
-previews with the current surface's pane focus and file-worker activity. Callers supply their
-artifacts, checklist, and additional controls.
+`components/panes/hosts` owns collection geometry and pane visibility,
+`components/panes/WorkspacePaneView.tsx` adapts one pane to its kind's view inside the chrome slots
+the hosts supply, and `components/panes/kinds.ts` holds the discovered kinds. None of them owns the feature state rendered
+inside a pane.
 
 One sparse browser cookie retains non-default `WorkspaceLayout` values across reloads and SSR.
 `sidebarCollapsed` is the shared visibility fact: it produces the desktop rail or reveals the
@@ -215,17 +236,22 @@ Inbox Send does, then opens the running session's pane; "Run in Inbox" dispatche
 ## Ownership and extension
 
 - [`router.tsx`](router.tsx) constructs the TanStack Start router, while [`routes.ts`](routes.ts)
-  assembles Workspace and feature-owned route modules into the application route tree.
+  assembles the application route tree from Workspace's routes and every feature's `routes/`
+  folder, which it discovers and mounts under `/api`.
 - [`routes/__root.tsx`](routes/__root.tsx) owns the document shell, global presentation providers,
   and initial Workspace hydration. Its stylesheet is co-located in the same route boundary.
 - [`routes/index.tsx`](routes/index.tsx) is the main composition root. It derives root panes
-  from the URL and supplies shared state and commands to the responsive workspace shell.
+  from the URL, owns the root verbs (`selectRoot`, `openRoot`, `closeRoot`) that the sidebar,
+  palette, and dialogs call with panes, and supplies shared state and commands to the responsive
+  workspace shell.
 - [`hooks/layout/surface.tsx`](hooks/layout/surface.tsx) owns the independent Main and Hyper surface
-  stores. [`hooks/layout/panePublications.ts`](hooks/layout/panePublications.ts) owns publication
-  transitions and editor display mode.
-- [`components/panes/shell/WorkspacePaneView.tsx`](components/panes/shell/WorkspacePaneView.tsx) is
+  stores, `reveal`, and `useSurfacePanes`, which derives a surface's visible panes from its roots
+  and prunes publishers those roots no longer reach. [`hooks/layout/panePublications.ts`](hooks/layout/panePublications.ts) owns
+  publication transitions.
+- [`components/panes/WorkspacePaneView.tsx`](components/panes/WorkspacePaneView.tsx) is
   the single host-to-feature adapter. Feature components own content behavior; Workspace owns
-  placement, focus, and chrome.
+  placement and focus. The pane model, publications, and surface that features import never
+  import a feature.
 - [Sessions](../sessions/AGENTS.md), [Channels](../channels/AGENTS.md),
   [Inbox](../inbox/AGENTS.md), [Files](../files/AGENTS.md), and
   [Apps](../apps/AGENTS.md) own the data and behavior rendered in their panes. Channels owns
@@ -234,8 +260,9 @@ Inbox Send does, then opens the running session's pane; "Run in Inbox" dispatche
   owns only shared drawer visibility and size, while each responsive layout owns placement and
   transient presentation mechanics.
 
-To add a pane kind, define its stable identity and source relationship, render it once in
-`WorkspacePaneView`, and extend ordering or focus policy only when product behavior requires it. To
+To add a pane kind, declare its parameters in the owning feature's model and a constructor that
+names its content's key through `createPane`, which makes the id the kind plus that key, then add
+the kind to that feature's `panes.tsx`, with a `root` if users can open it from the URL. To
 add a workflow, compose existing panes and choose its host, focus surface, and session interaction
 mode. To add a workbench command, define it in `commands.ts` over route state; the palette,
 shortcuts, and any `CommandButton` that references its ID pick it up.
@@ -247,4 +274,4 @@ Preserve these invariants:
 - Passive previews may stream live work but must not acknowledge it as read.
 - Secondary session surfaces must not recursively publish linked panes.
 - Pane content publishes through its current surface and must not choose between Main and Hyper.
-- Every session-backed output retains its source session so overlays and follow-up stay generic.
+- Every session-backed pane carries its `sessionId` so overlays and follow-up stay generic.

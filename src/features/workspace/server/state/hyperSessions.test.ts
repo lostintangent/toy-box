@@ -1,7 +1,6 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import { applyWorkspaceAction } from ".";
-import { deleteSessionState } from "./sessions";
 import { addHyperSession, deleteHyperState, getHyperSessionIds } from "./hyperSessions";
 import type { WorkspaceEvent } from "@workspace/model/events";
 
@@ -17,10 +16,7 @@ function captureSessionEvents(sessionId: string): WorkspaceEvent[] {
 describe("hyper session state", () => {
   test("promotes Hyper membership idempotently", () => {
     const sessionId = `hyper-${crypto.randomUUID()}`;
-    onTestFinished(() => {
-      deleteSessionState(sessionId);
-      deleteHyperState(sessionId);
-    });
+    onTestFinished(() => deleteHyperState(sessionId));
     const events = captureSessionEvents(sessionId);
 
     addHyperSession(sessionId);

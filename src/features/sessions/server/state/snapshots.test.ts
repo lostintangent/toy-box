@@ -8,7 +8,6 @@ import {
   evictCachedSnapshot,
   getCachedSnapshot,
   hasCachedSnapshot,
-  isCachedSnapshotFresh,
   loadSessionSnapshot,
   refreshSessionSnapshot,
   retainSessionSnapshots,
@@ -19,18 +18,6 @@ function snapshot(sessionId: string): SessionState {
     messages: [{ role: "assistant", content: `final response for ${sessionId}` }],
   });
 }
-
-describe("cached snapshot freshness", () => {
-  const entry = { snapshot: snapshot("A"), capturedAt: 1_000_000 };
-
-  test("serves recent snapshots only while the provider confirms their history", () => {
-    expect(isCachedSnapshotFresh(entry, true, entry.capturedAt + 60_000)).toBe(true);
-    expect(isCachedSnapshotFresh(entry, false, entry.capturedAt + 60_000)).toBe(false);
-  });
-  test("expires retained history after the cache TTL", () => {
-    expect(isCachedSnapshotFresh(entry, true, entry.capturedAt + 25 * 60 * 60 * 1000)).toBe(false);
-  });
-});
 
 describe.serial("snapshot cache", () => {
   beforeEach(async () => {

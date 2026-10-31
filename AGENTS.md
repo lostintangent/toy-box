@@ -8,7 +8,7 @@ A public session ID ties together provider history, at most one live runtime, To
 
 Native provider activity is translated into canonical `SessionEvent`s. One pure reducer builds the same session state for the live server runtime, persisted-history replay, and browser clients, so a transcript agrees whether it is watched live, reconnected, or opened after completion. Active sessions take their truth from the in-memory runtime; idle sessions are reconstructed from durable provider history, with snapshots serving only as a cache.
 
-Automations, Inbox, Hyper, and Workers govern managed-session lifecycles while reusing that same runtime rather than defining alternate execution models. Files open as live, editable editor surfaces that can notify their owning session. High-frequency transcript activity travels through ordered, replayable per-session streams. Lower-frequency shared workspace changes use a separate at-most-once update stream and recover missed events from authoritative snapshots or query refetches.
+Automations, Inbox, Hyper, and Workers govern managed-session lifecycles while reusing that same runtime rather than defining alternate execution models. Files open as live, editable editor surfaces that can notify their owning session. Ordered state that a client reduces, such as a session transcript or a channel conversation, travels through a replayable stream per resource. Every other change is an at-most-once hint on one shared update stream per tab, including file changes, and missed hints are recovered from authoritative snapshots or query refetches. That stream is also the tab's connection: server resources a tab holds, such as file watches, attach to it and end with it.
 
 The app runtime supports two ownership models. Installed apps are durable, bookmarked workspace surfaces: a TSX definition supplies trusted owner-authored presentation, behavior, and default state, while each SQLite-backed instance supplies its own title, small durable state, and revision. Session artifact apps are ordinary `.toy` files rendered by editor panes with no manifest, registration, or durable app state. Both consume the same versioned portable wrapper over workspace state, sessions, and files and can publish ordinary session or editor panes without introducing another execution model.
 
@@ -32,6 +32,23 @@ flowchart LR
 ```
 
 Toy Box currently assumes one trusted, coordinating server process for one owner; it does not provide an authentication boundary or horizontal coordination. Provider history, SQLite metadata, worktrees, and artifact files survive restarts; active execution, replay buffers, workspace coordination, Hyper membership, and terminal PTYs do not.
+
+### Feature conventions
+
+A feature contributes to the app by putting the right file in the right place; composition roots discover it, so adding a capability registers nothing elsewhere. Each contribution is keyed by its feature's folder name.
+
+| To                                | A feature adds                                                 | Discovered by                                      |
+| --------------------------------- | -------------------------------------------------------------- | -------------------------------------------------- |
+| Own tables                        | `server/schema.ts`, default-exporting append-only SQL versions | `src/server/database.ts`                           |
+| Run at boot                       | `server/startup.ts`                                            | `src/server/plugins/startup.ts`                    |
+| Bundle agent skills               | `server/skills/**`                                             | `src/server/plugins/startup.ts`                    |
+| Serve `/socket?service=<feature>` | `server/websocket.ts`, default-exporting crossws hooks         | `src/server/socket.ts`                             |
+| Serve HTTP under `/api`           | `routes/`                                                      | `src/features/workspace/routes.ts`                 |
+| Publish workspace events          | a `WorkspaceEvents` augmentation in its model                  | TypeScript declaration merging                     |
+| Keep its client caches in sync    | a default `WorkspaceCache` export from `cache.ts`              | `src/features/workspace/sync.ts`                   |
+| Show content in workspace panes   | a `WorkspacePanes` augmentation in its model, and `panes.tsx`  | `src/features/workspace/components/panes/kinds.ts` |
+
+Features broadcast workspace events, and sync applies them to every workspace cache. A feature's cache stays private: anything that applies a workspace event on the client, whether live, optimistic, or confirmed, calls `applyWorkspaceEvent`. Discovery uses Vite's `import.meta.glob`. Bun can't expand it yet, so [`src/server/importMetaGlob.ts`](src/server/importMetaGlob.ts) expands the same default-import globs wherever Bun loads source outside Vite, including `bun test`. Product decisions stay explicit: which agent tools each session type receives, managed-session ownership, and where a feature appears in the shell's sidebar and commands.
 
 ### Subsystem guides
 

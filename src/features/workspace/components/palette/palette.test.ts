@@ -81,13 +81,13 @@ describe("reducePalette", () => {
 describe("triageSessions", () => {
   const session = (id: string) => ({ id });
   const ids = (sessions: readonly { id: string }[]) => sessions.map(({ id }) => id);
-  const none = { states: {}, pinnedIds: [], openIds: [] };
+  const none = { activities: {}, pinnedIds: [], openIds: [] };
 
   test("sessions waiting on you, or finished unseen, need you", () => {
     const sessions = [session("idle"), session("unread"), session("waiting")];
     const { needsYou, recent } = triageSessions(sessions, {
       ...none,
-      states: { waiting: { status: "waiting", since: 0 }, unread: { status: "unread" } },
+      activities: { waiting: { status: "waiting", since: 0 }, unread: { status: "unread" } },
     });
     expect(ids(needsYou)).toEqual(["unread", "waiting"]);
     expect(ids(recent)).toEqual(["idle"]);
@@ -96,7 +96,7 @@ describe("triageSessions", () => {
   test("an unread session that's already open doesn't need you", () => {
     const { needsYou } = triageSessions([session("unread")], {
       ...none,
-      states: { unread: { status: "unread" } },
+      activities: { unread: { status: "unread" } },
       openIds: ["unread"],
     });
     expect(needsYou).toEqual([]);
@@ -106,7 +106,7 @@ describe("triageSessions", () => {
     const sessions = [session("background"), session("running")];
     const { running } = triageSessions(sessions, {
       ...none,
-      states: {
+      activities: {
         running: { status: "running", since: 0 },
         background: { status: "background", since: 0 },
       },
@@ -125,7 +125,7 @@ describe("triageSessions", () => {
     const sessions = [session("a")];
     const { needsYou, pinned, recent } = triageSessions(sessions, {
       ...none,
-      states: { a: { status: "waiting", since: 0 } },
+      activities: { a: { status: "waiting", since: 0 } },
       pinnedIds: ["a"],
     });
     expect([needsYou, pinned, recent].map(ids)).toEqual([["a"], [], []]);

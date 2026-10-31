@@ -1,6 +1,6 @@
 import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 import { workspaceFileId, type WorkspaceFile } from "./model";
-import { listDirectory, readFile, searchFiles } from "./server/functions";
+import { listCustomEditors, listDirectory, readFile, searchFiles } from "./server/functions";
 
 // Artifact-first drafts briefly expose their file before the SDK workspace exists.
 const READ_RETRY_COUNT = 20;
@@ -13,6 +13,7 @@ export const fileQueries = {
   browseKey: (path: string | undefined, showDotfiles: boolean) =>
     [...fileQueries.all(), "browse", path ?? null, showDotfiles] as const,
   detailKey: (fileId: string) => [...fileQueries.all(), fileId] as const,
+  editorsKey: () => [...fileQueries.all(), "editors"] as const,
 
   browse: (path: string | undefined, showDotfiles: boolean) =>
     queryOptions({
@@ -37,6 +38,19 @@ export const fileQueries = {
       retryDelay: READ_RETRY_DELAY_MS,
       staleTime: Infinity,
       refetchOnMount: "always",
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    }),
+
+  /** Registered custom editor kinds, which decide how a file renders. */
+  editors: () =>
+    queryOptions({
+      queryKey: fileQueries.editorsKey(),
+      queryFn: listCustomEditors,
+      staleTime: Infinity,
+      // Loaded with the workspace route and kept current by workspace events, so a later file
+      // never suspends on them.
+      gcTime: Infinity,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
     }),

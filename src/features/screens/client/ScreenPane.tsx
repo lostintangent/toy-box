@@ -1,7 +1,7 @@
 import { Hand, Keyboard, MonitorPause, MonitorX } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { PaneMessage } from "@/shared/ui/pane-message";
-import { PaneActions } from "@workspace/components/panes/shell/PaneSlots";
+import { PaneActions } from "@/shared/panes/PaneSlots";
 import { useScreen } from "./useScreen";
 import { useScreenKeyboard } from "./useScreenKeyboard";
 import { useScreenPointer } from "./useScreenPointer";

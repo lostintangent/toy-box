@@ -2,9 +2,9 @@ import { useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { shallow } from "@tanstack/store";
 import type { SvgDocument } from "../../document";
-import { createAttributesHistoryEntry, snapshotAttribute } from "../../document/history";
+import { snapshotAttribute } from "../../document/history";
 import { resolveActiveTool, type EditorStore, type Gesture } from "../../store";
-import type { GestureSource } from "../gestures/gesture";
+import { viewportPoint, type GestureSource } from "../gestures/gesture";
 import { startMarqueeGesture } from "../gestures/marquee";
 import { startLineEndpointGesture, startTransformGesture } from "../gestures/transform";
 import { pasteSvgSelectionClipboard, serializeSvgSelectionClipboard } from "./clipboard";
@@ -17,6 +17,7 @@ import {
 import {
   applyScreenTransform,
   captureSelectionTransforms,
+  createTransformHistoryEntry,
   invertMatrix,
   matrixFromDom,
   translationMatrix,
@@ -130,11 +131,7 @@ export function useSelection({
 
   function startMarqueeSelection(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
-    const viewportBounds = event.currentTarget.getBoundingClientRect();
-    const start = {
-      x: event.clientX - viewportBounds.left,
-      y: event.clientY - viewportBounds.top,
-    };
+    const start = viewportPoint(event, event.currentTarget);
     const additiveSelection = event.shiftKey ? selection : [];
     if (!event.shiftKey) select([]);
     return startMarqueeGesture({
@@ -198,13 +195,7 @@ export function useSelection({
       suspendTextEdit();
       const translation = translationMatrix(delta.x, delta.y);
       for (const capture of captures) applyScreenTransform(capture, translation);
-      return createAttributesHistoryEntry(
-        captures.map((capture) => ({
-          element: capture.element,
-          before: { namespace: null, name: "transform", value: capture.beforeTransform },
-          after: snapshotAttribute(capture.element, "transform"),
-        })),
-      );
+      return createTransformHistoryEntry(captures);
     });
   }
 

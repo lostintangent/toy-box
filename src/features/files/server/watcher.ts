@@ -1,19 +1,22 @@
-// Filesystem observation shared by open editors and Session artifact discovery.
-// The artifact tree stays watched for the server lifetime; machine files are
-// watched only while they have subscribers.
+// Filesystem observation shared by open files and Session artifact discovery.
+// The artifact tree stays watched for the server lifetime; a machine file's
+// directory is watched only while some file in it is. Each change to a watched
+// file is published once, however many tabs watch it.
 import { mkdirSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { SESSION_STORAGE_PATH } from "@sessions/model/constants";
+import { broadcast } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
-import type { FileWatchEvent } from "../model";
+import { workspaceFileId, type FileChange, type WorkspaceFile } from "../model";
 
-type FileObserver = { change: (event: FileWatchEvent) => void; close: () => void };
-type ObservedFile = { observers: Set<FileObserver>; watcher?: FSWatcher };
+type WatchedFile = { file: WorkspaceFile; path: string; leases: number };
 type ArtifactObserver = (sessionId: string) => Promise<void>;
 
 export class FileWatcher {
-  #files = new Map<string, ObservedFile>();
+  /** Watched files by address, each held by as many leases as tabs watch it. */
+  #files = new Map<string, WatchedFile>();
+  #directories = new Map<string, FSWatcher>();
   #artifactObservers = new Set<ArtifactObserver>();
   #artifactWatcher?: FSWatcher;
   #pendingFiles = new Set<string>();
@@ -28,38 +31,25 @@ export class FileWatcher {
     return () => this.#artifactObservers.delete(onChange);
   }
 
-  observeFile(path: string, change: FileObserver["change"], close: () => void): () => void {
-    let file = this.#files.get(path);
-    if (!file) {
-      file = { observers: new Set() };
-      if (this.#artifactSession(path)) {
-        this.#watchArtifacts();
-      } else {
-        // Watching the parent also follows files replaced by atomic saves.
-        file.watcher = watch(dirname(path), { persistent: false }, (_event, name) => {
-          if (name && name !== basename(path)) return;
-          this.#pendingFiles.add(path);
-          this.#schedule();
-        });
-        const observers = file.observers;
-        file.watcher.on("error", () => {
-          for (const observer of observers) observer.close();
-        });
-      }
-      this.#files.set(path, file);
+  /** Publish changes to `file`, at its resolved `path`, until the returned release. */
+  watch(file: WorkspaceFile, path: string): () => void {
+    const id = workspaceFileId(file);
+    let watched = this.#files.get(id);
+    if (!watched) {
+      if (this.#artifactSession(path)) this.#watchArtifacts();
+      else this.#watchDirectory(dirname(path));
+      watched = { file, path, leases: 0 };
+      this.#files.set(id, watched);
     }
+    watched.leases++;
 
-    const observer = { change, close };
-    file.observers.add(observer);
-    // Register before reading the revision to close the read-then-watch gap.
-    this.#pendingFiles.add(path);
-    this.#schedule();
     return () => {
-      file.observers.delete(observer);
-      if (file.observers.size) return;
-      file.watcher?.close();
-      this.#files.delete(path);
-      this.#pendingFiles.delete(path);
+      if (--watched.leases > 0) return;
+      this.#files.delete(id);
+      const directory = dirname(path);
+      if ([...this.#files.values()].some((other) => dirname(other.path) === directory)) return;
+      this.#directories.get(directory)?.close();
+      this.#directories.delete(directory);
     };
   }
 
@@ -68,11 +58,8 @@ export class FileWatcher {
     this.#timer = undefined;
     this.#artifactWatcher?.close();
     this.#artifactWatcher = undefined;
-    for (const file of this.#files.values()) {
-      file.watcher?.close();
-      for (const observer of file.observers) observer.close();
-      file.observers.clear();
-    }
+    for (const watcher of this.#directories.values()) watcher.close();
+    this.#directories.clear();
     this.#files.clear();
     this.#artifactObservers.clear();
     this.#pendingFiles.clear();
@@ -91,19 +78,28 @@ export class FileWatcher {
         const sessionId = this.#artifactSession(path);
         if (!sessionId) return;
         this.#pendingSessions.add(sessionId);
-        // Directory rename/deletion also changes every subscribed descendant.
-        for (const file of this.#files.keys()) {
+        // Directory rename/deletion also changes every watched descendant.
+        for (const { path: file } of this.#files.values()) {
           if (file === path || file.startsWith(`${path}${sep}`)) this.#pendingFiles.add(file);
         }
         this.#schedule();
       },
     );
-    this.#artifactWatcher.on("error", (error) => {
-      console.error("Artifact observation failed:", error);
-      for (const file of this.#files.values()) {
-        if (!file.watcher) for (const observer of file.observers) observer.close();
-      }
+    this.#artifactWatcher.on("error", (error) =>
+      console.error("Artifact observation failed:", error),
+    );
+  }
+
+  #watchDirectory(directory: string): void {
+    if (this.#directories.has(directory)) return;
+    // Watching the parent also follows files replaced by atomic saves.
+    const watcher = watch(directory, { persistent: false }, (_event, name) => {
+      if (!name) return;
+      this.#pendingFiles.add(join(directory, name));
+      this.#schedule();
     });
+    watcher.on("error", (error) => console.error(`Unable to watch ${directory}:`, error));
+    this.#directories.set(directory, watcher);
   }
 
   #artifactSession(path: string): string | undefined {
@@ -117,12 +113,8 @@ export class FileWatcher {
     if (this.#timer) return;
     this.#timer = setTimeout(() => {
       this.#timer = undefined;
-      for (const path of this.#pendingFiles) {
-        const observers = this.#files.get(path)?.observers;
-        if (observers)
-          void readFileChange(path).then((event) => {
-            for (const observer of observers) observer.change(event);
-          });
+      for (const { file, path } of this.#files.values()) {
+        if (this.#pendingFiles.has(path)) void readFileChange(file, path).then(broadcast);
       }
       this.#pendingFiles.clear();
       for (const sessionId of this.#pendingSessions) {
@@ -136,11 +128,12 @@ export class FileWatcher {
   }
 }
 
-async function readFileChange(path: string): Promise<FileWatchEvent> {
+/** A file's current state on disk, as the event that publishes it. */
+export async function readFileChange(file: WorkspaceFile, path: string): Promise<FileChange> {
   try {
-    return { type: "modified", timestamp: (await Bun.file(path).stat()).mtimeMs };
+    return { type: "file.changed", file, timestamp: (await Bun.file(path).stat()).mtimeMs };
   } catch {
-    return { type: "deleted" };
+    return { type: "file.deleted", file };
   }
 }
 

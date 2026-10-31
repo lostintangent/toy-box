@@ -2,11 +2,9 @@ import { describe, expect, mock, onTestFinished, test } from "bun:test";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import { createTestDatabase } from "@/server/database";
 import { addHyperSession, deleteHyperState } from "./hyperSessions";
-import { deleteSessionState, getSessionState } from "./sessions";
 import { deleteSavedDraft } from "./drafts";
 import type { WorkspaceEvent } from "@workspace/model/events";
-import { sessionFile } from "@files/model";
-import { finishWorker, startWorker } from "@workers/server/registry";
+import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
 
 let currentDb: Bun.SQL | undefined;
 
@@ -18,11 +16,7 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-mock.module("@files/server/editors", () => ({ loadCustomEditors: async () => [] }));
-
-const { applyWorkspaceAction, changeSettings, setSessionStatus, unpinSession } = await import(".");
-const { getWorkspaceState } = await import("..");
-const { insertSession } = await import("@sessions/server/state/sessions");
+const { applyWorkspaceAction, getWorkspaceState, unpinSession, updateSettings } = await import(".");
 
 async function openWorkspaceTestDatabase(): Promise<void> {
   currentDb = await createTestDatabase();
@@ -32,22 +26,22 @@ async function openWorkspaceTestDatabase(): Promise<void> {
   });
 }
 
-function capture(sessionId: string): WorkspaceEvent[] {
-  const events: WorkspaceEvent[] = [];
-  const unsubscribe = subscribeWorkspaceEvents((event) => {
-    if ("sessionId" in event && event.sessionId === sessionId) events.push(event);
-  });
-  onTestFinished(unsubscribe);
-  return events;
-}
-
 function cleanup(sessionId: string): void {
-  deleteSessionState(sessionId);
   deleteSavedDraft(`session:${sessionId}`);
   deleteHyperState(sessionId);
 }
 
 describe("workspace state", () => {
+  test("persists settings as one complete document", async () => {
+    await openWorkspaceTestDatabase();
+    expect((await getWorkspaceState()).settings).toEqual(DEFAULT_SETTINGS);
+
+    const settings = await updateSettings({ accentColor: "#123abc", pinnedSessionIds: ["a"] });
+
+    const rows = await currentDb!<{ id: number; value: string }[]>`SELECT id, value FROM settings`;
+    expect(Array.from(rows)).toEqual([{ id: 1, value: JSON.stringify(settings) }]);
+  });
+
   test("merges precise settings updates before broadcasting their complete value", async () => {
     await openWorkspaceTestDatabase();
     const initial = {
@@ -56,7 +50,7 @@ describe("workspace state", () => {
       terminalShell: "/bin/zsh",
       pinnedSessionIds: ["session-a"],
     };
-    await changeSettings(initial);
+    await updateSettings(initial);
 
     const events: WorkspaceEvent[] = [];
     const unsubscribe = subscribeWorkspaceEvents((event) => {
@@ -68,8 +62,8 @@ describe("workspace state", () => {
       accentColor: "#123abc" as const,
     };
 
-    expect(await changeSettings({ accentColor: settings.accentColor })).toEqual(settings);
-    expect(await changeSettings({ accentColor: settings.accentColor })).toEqual(settings);
+    expect(await updateSettings({ accentColor: settings.accentColor })).toEqual(settings);
+    expect(await updateSettings({ accentColor: settings.accentColor })).toEqual(settings);
 
     expect((await getWorkspaceState()).settings).toEqual(settings);
     expect(events).toEqual([{ type: "settings.changed", settings }]);
@@ -79,8 +73,8 @@ describe("workspace state", () => {
     await openWorkspaceTestDatabase();
 
     await Promise.all([
-      changeSettings({ accentColor: "#123abc" }),
-      changeSettings({ terminalShell: "/bin/fish" }),
+      updateSettings({ accentColor: "#123abc" }),
+      updateSettings({ terminalShell: "/bin/fish" }),
     ]);
 
     expect((await getWorkspaceState()).settings).toMatchObject({
@@ -91,7 +85,7 @@ describe("workspace state", () => {
 
   test("deleting a session drops only its own pin", async () => {
     await openWorkspaceTestDatabase();
-    await changeSettings({ pinnedSessionIds: ["kept", "deleted"] });
+    await updateSettings({ pinnedSessionIds: ["kept", "deleted"] });
 
     const events: WorkspaceEvent[] = [];
     const unsubscribe = subscribeWorkspaceEvents((event) => {
@@ -107,7 +101,7 @@ describe("workspace state", () => {
     expect(events).toHaveLength(1);
   });
 
-  test("snapshot exposes a session's draft apart from its activity", async () => {
+  test("snapshot exposes a session's draft and Hyper membership", async () => {
     const sessionId = `workspace-snapshot-${crypto.randomUUID()}`;
     onTestFinished(() => cleanup(sessionId));
 
@@ -123,80 +117,6 @@ describe("workspace state", () => {
       text: "hello",
       origin: "client-a",
     });
-    expect(state.sessionStates[sessionId]).toBeUndefined();
     expect(state.hyperSessionIds).toContain(sessionId);
-  });
-
-  test("session creation belongs to the catalog, not workspace activity", async () => {
-    await openWorkspaceTestDatabase();
-    const id = crypto.randomUUID();
-    await insertSession({ id, artifactPath: "document.md", createdAt: new Date(42) });
-
-    expect(getSessionState(id)).toBeUndefined();
-    expect((await getWorkspaceState()).sessionStates[id]).toBeUndefined();
-  });
-
-  test("activity statuses broadcast only real transitions", () => {
-    const sessionId = `workspace-status-${crypto.randomUUID()}`;
-    onTestFinished(() => cleanup(sessionId));
-    const events = capture(sessionId);
-
-    setSessionStatus(sessionId, "running");
-    setSessionStatus(sessionId, "running");
-    setSessionStatus(sessionId, "waiting");
-    setSessionStatus(sessionId, "waiting");
-    setSessionStatus(sessionId, "background");
-    setSessionStatus(sessionId, "background");
-    setSessionStatus(sessionId, "unread");
-    setSessionStatus(sessionId, "unread");
-    applyWorkspaceAction({ type: "session.read", sessionId });
-    applyWorkspaceAction({ type: "session.read", sessionId });
-
-    expect(events.map((event) => event.type)).toEqual([
-      "session.running",
-      "session.waiting",
-      "session.background",
-      "session.unread",
-      "session.read",
-    ]);
-    expect(getSessionState(sessionId)).toBeUndefined();
-  });
-
-  test("snapshots and broadcasts worker links", async () => {
-    const worker = {
-      createdAt: new Date(0).toISOString(),
-      type: "file" as const,
-      sessionId: `artifact-worker-${crypto.randomUUID()}`,
-      ephemeral: true,
-      file: sessionFile(`artifact-source-${crypto.randomUUID()}`, "plan.md"),
-      name: "Respond to comment",
-      metadata: { threadId: "thread-a" },
-    };
-    onTestFinished(() => finishWorker(worker.sessionId));
-    const events: WorkspaceEvent[] = [];
-    const unsubscribe = subscribeWorkspaceEvents((event) => {
-      if (
-        (event.type === "worker.started" && event.worker.sessionId === worker.sessionId) ||
-        (event.type === "worker.finished" && event.sessionId === worker.sessionId)
-      ) {
-        events.push(event);
-      }
-    });
-    onTestFinished(unsubscribe);
-
-    startWorker(worker);
-    startWorker({ ...worker, metadata: { ignored: true } });
-    expect((await getWorkspaceState()).workers).toEqual([worker]);
-
-    finishWorker(worker.sessionId);
-    finishWorker(worker.sessionId);
-    expect((await getWorkspaceState()).workers).toEqual([]);
-    expect(events).toEqual([
-      { type: "worker.started", worker },
-      {
-        type: "worker.finished",
-        sessionId: worker.sessionId,
-      },
-    ]);
   });
 });

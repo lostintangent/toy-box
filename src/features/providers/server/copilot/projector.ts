@@ -2,16 +2,8 @@
 // SessionEvents. This module owns all SDK-specific projection policy for
 // live event streams; history replay adapts persisted logs onto this same
 // projection in provider.readHistory().
-//
-// The file reads top-down: policy tables (tool name aliases, argument-shape
-// adapters, turn-end reasons, per-tool projection policies),
-// then types and public entry points, then event projection, policy factories,
-// and the small field adapters needed at tool-argument boundaries.
 
-import type {
-  SessionEvent as SdkSessionEvent,
-  ToolExecutionCompleteData,
-} from "@github/copilot-sdk";
+import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import type { JSONType } from "zod";
 import type { SessionEvent, SessionQuestionBase, ToolCall } from "@sessions/model";
 import type { Attachment } from "@/shared/attachments/model";
@@ -26,7 +18,7 @@ type ToolCallProjectionPolicy = SharedToolCallProjectionPolicy | { kind: "deferr
 type ToolArguments = ToolCall["arguments"];
 
 // ============================================================================
-// Policy
+// Tool name aliases
 // ============================================================================
 
 // Normalize tool name aliases to canonical names so the UI only needs one name per tool.
@@ -37,13 +29,6 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
   apply_patch: "patch",
   web_fetch: "fetch",
   task: "agent",
-};
-
-// Tools whose raw arguments arrive in a non-record shape, keyed by RAW SDK
-// name (argument reading happens before alias normalization).
-const TOOL_ARGUMENT_ADAPTERS: Record<string, ((raw: unknown) => ToolArguments) | undefined> = {
-  // apply_patch sends the patch body as a bare string.
-  apply_patch: (raw): ToolArguments => (typeof raw === "string" ? { patch: raw } : {}),
 };
 
 // ============================================================================
@@ -91,9 +76,6 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         mimeType: event.data.mimeType,
       });
       return [];
-    // Empty-content deltas are dropped at the source: they carry nothing, and
-    // downstream consumers (reducer message fragmentation, stream buffering)
-    // should never have to guard against them.
     case "user.message":
       // Subagent prompts are not root user turns — they're already visible as
       // the agent tool call's arguments.
@@ -148,6 +130,9 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         },
       ];
     }
+    // Empty-content deltas are dropped at the source: they carry nothing, and
+    // downstream consumers (reducer message fragmentation, stream buffering)
+    // should never have to guard against them.
     case "assistant.message_delta": {
       // TODO: Route sub-agent deltas into their parent agent tool call once the
       // agent tool UI can render live child assistant output.
@@ -209,23 +194,13 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       return [{ type: "end", reason: "error", error: event.data.message }];
     case "session.start":
     case "session.resume":
-      return projectSessionStart(
+      return projectModel(
         event.data.selectedModel,
         event.data.reasoningEffort,
         event.data.contextTier,
       );
     case "session.model_change":
-      return [
-        {
-          type: "model_changed",
-          model: {
-            provider: "copilot",
-            name: event.data.newModel,
-            ...(event.data.reasoningEffort ? { reasoningEffort: event.data.reasoningEffort } : {}),
-            ...(event.data.contextTier != null ? { contextTier: event.data.contextTier } : {}),
-          },
-        },
-      ];
+      return projectModel(event.data.newModel, event.data.reasoningEffort, event.data.contextTier);
     case "session.title_changed":
       return [{ type: "session_title_changed", title: event.data.title }];
     case "session.handoff":
@@ -275,7 +250,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
     }
     case "tool.execution_start": {
       const rawToolName = event.data.toolName;
-      const toolName = normalizeToolName(rawToolName);
+      const toolName = TOOL_NAME_ALIASES[rawToolName] ?? rawToolName;
       const args = readToolArguments(rawToolName, event.data.arguments);
       const toolCallId = event.data.toolCallId;
       const parentToolCallId = resolveParentToolCallId(
@@ -324,7 +299,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         return [];
       }
       const policy = state.toolCallPolicies.get(toolCallId);
-      const result = readToolResultText(data);
+      const result = data.result?.content ?? data.error?.message;
       const questionEvents = projectDurableQuestionResolution(toolCallId, result, state);
 
       if (policy?.kind === "omitted") {
@@ -344,7 +319,10 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         ];
       }
 
-      const attachments = readToolResultImages(data);
+      // Images in the tool's native output; model-only images in binaryResultsForLlm stay out.
+      const attachments: Attachment[] = (data.result?.contents ?? []).flatMap((content) =>
+        content.type === "image" ? [{ base64: content.data, mimeType: content.mimeType }] : [],
+      );
       const toolEnd: SessionEvent = {
         type: "tool_end",
         toolCallId,
@@ -408,17 +386,37 @@ function resolveParentToolCallId(
 }
 
 // ============================================================================
-// Tool call policy resolution
+// Tool call policy
 // ============================================================================
 
-// Decide how a tool call projects from its CANONICAL name (post-
-// TOOL_NAME_ALIASES, so e.g. the SDK's "task" resolves the "agent" policy),
-// arguments, and projection state. Static policies live in TOOL_CALL_POLICIES;
-// dynamic policies use arguments/state to build translated events or to detect
-// tool calls completed by another lifecycle.
-function projectSessionStart(
+/** Decide how a tool call projects from its canonical name, so the SDK's
+ *  "task" resolves the "agent" policy. Sessions owns the shared policies;
+ *  Copilot adds native SQL todos and background agents, whose real
+ *  completion arrives as a subagent event. */
+function resolveCopilotToolPolicy(
+  toolName: string,
+  args: ToolArguments,
+  state: ProjectionState,
+): ToolCallProjectionPolicy | undefined {
+  if (toolName === "agent" && args?.mode === "background") return { kind: "deferred" };
+  if (toolName === "sql" && typeof args?.query === "string") {
+    const patches = parseTodoSql(args.query);
+    if (patches)
+      return {
+        kind: "translated",
+        projectOnStart: patches.length ? [{ type: "todos_patch", patches }] : [],
+      };
+  }
+  return resolveToolCallPolicy(toolName, args, state);
+}
+
+// ============================================================================
+// Projection helpers
+// ============================================================================
+
+function projectModel(
   model: string | undefined,
-  reasoningEffort: string | undefined,
+  reasoningEffort: string | null | undefined,
   contextTier: string | null | undefined,
 ): SessionEvent[] {
   return model
@@ -453,7 +451,7 @@ function projectDurableQuestionResolution(
 
   state.questionToolCall = undefined;
 
-  const answer = readDurableQuestionAnswer(result);
+  const answer = result?.match(/^User (?:selected|responded): ([\s\S]*)/)?.[1];
   if (!answer) return [];
 
   return [
@@ -465,29 +463,9 @@ function projectDurableQuestionResolution(
   ];
 }
 
-function readDurableQuestionAnswer(result: string | undefined): string | undefined {
-  if (!result) return undefined;
-
-  const selectedPrefix = "User selected: ";
-  if (result.startsWith(selectedPrefix)) {
-    return result.slice(selectedPrefix.length);
-  }
-
-  const respondedPrefix = "User responded: ";
-  if (result.startsWith(respondedPrefix)) {
-    return result.slice(respondedPrefix.length);
-  }
-
-  return undefined;
-}
-
 // ============================================================================
 // Field readers
 // ============================================================================
-
-function normalizeToolName(name: string): string {
-  return TOOL_NAME_ALIASES[name] ?? name;
-}
 
 function readCanvasInputTitle(input: JSONType | undefined): string | undefined {
   return input &&
@@ -498,39 +476,12 @@ function readCanvasInputTitle(input: JSONType | undefined): string | undefined {
     : undefined;
 }
 
+// Arguments are records, except that apply_patch sends its patch body as a bare string.
 function readToolArguments(rawToolName: string, rawArguments: unknown): ToolArguments {
   if (rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)) {
     return rawArguments as ToolArguments;
   }
-  return TOOL_ARGUMENT_ADAPTERS[rawToolName]?.(rawArguments) ?? {};
-}
-
-// Single source for tool result text so the fallback order can never drift.
-function readToolResultText(data: ToolExecutionCompleteData): string | undefined {
-  return data.result?.content ?? data.error?.message;
-}
-
-// Images in the tool's native output; model-only images in binaryResultsForLlm stay out.
-function readToolResultImages(data: ToolExecutionCompleteData): Attachment[] {
-  return (data.result?.contents ?? []).flatMap((content) =>
-    content.type === "image" ? [{ base64: content.data, mimeType: content.mimeType }] : [],
-  );
-}
-
-/** Native SQL todos and background agents have Copilot-specific completion rules. */
-function resolveCopilotToolPolicy(
-  toolName: string,
-  args: ToolArguments,
-  state: ProjectionState,
-): ToolCallProjectionPolicy | undefined {
-  if (toolName === "agent" && args?.mode === "background") return { kind: "deferred" };
-  if (toolName === "sql" && typeof args?.query === "string") {
-    const patches = parseTodoSql(args.query);
-    if (patches)
-      return {
-        kind: "translated",
-        projectOnStart: patches.length ? [{ type: "todos_patch", patches }] : [],
-      };
-  }
-  return resolveToolCallPolicy(toolName, args, state);
+  return rawToolName === "apply_patch" && typeof rawArguments === "string"
+    ? { patch: rawArguments }
+    : {};
 }

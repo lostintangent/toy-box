@@ -1,6 +1,6 @@
 import { BriefEditor as BriefFileEditor } from "@briefs/BriefEditor";
 import type { BriefAction } from "@briefs/actions";
-import { selectWorkspaceSessionActivity, useWorkspaceSelector } from "@workspace/hooks/state";
+import { selectSessionActivity, useSessionsActivity } from "@sessions/useSessionActivity";
 import { ownerSessionId } from "@files/model";
 import type { EditorProps } from "../index";
 import { briefWorkerRequest } from "./actions";
@@ -14,9 +14,9 @@ export function BriefEditor({
   spawnWorker,
 }: EditorProps) {
   const owner = ownerSessionId(file.source);
-  const ownerActive = useWorkspaceSelector((workspace) => {
+  const ownerActive = useSessionsActivity((activities) => {
     if (!owner) return false;
-    const { running, waiting } = selectWorkspaceSessionActivity(workspace, owner);
+    const { running, waiting } = selectSessionActivity(activities, owner);
     return running || waiting;
   });
 

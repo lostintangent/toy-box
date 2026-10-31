@@ -3,7 +3,7 @@ import type { Command } from "@/shared/commands/command";
 import type { SearchMatch } from "@/shared/commands/search";
 import type { ModelConfiguration } from "@providers/model";
 import type { SessionLocation } from "@sessions/model";
-import type { WorkspaceSessionState } from "@workspace/model/state/reducer";
+import type { SessionsActivity } from "@sessions/model/activity";
 
 // The palette is a stack of pages over one search field: the workspace at its root, and pages it
 // drills into (a list of one kind of thing, an item's actions, or an option for new work). Each
@@ -113,11 +113,11 @@ const TRIAGE_LIMIT = 5;
 export function triageSessions<S extends { id: string }>(
   sessions: readonly S[],
   {
-    states,
+    activities,
     pinnedIds,
     openIds,
   }: {
-    states: Readonly<Record<string, WorkspaceSessionState>>;
+    activities: Readonly<SessionsActivity>;
     pinnedIds: readonly string[];
     openIds: readonly string[];
   },
@@ -129,7 +129,7 @@ export function triageSessions<S extends { id: string }>(
     for (const { id } of taken) claimed.add(id);
     return taken;
   };
-  const status = (session: S) => states[session.id]?.status;
+  const status = (session: S) => activities[session.id]?.status;
 
   const needsYou = claim(
     sessions.filter(

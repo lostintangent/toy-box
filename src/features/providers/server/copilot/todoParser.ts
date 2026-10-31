@@ -8,31 +8,15 @@ import type { TodoItemPatch, TodoStatus } from "@sessions/model";
  *  statement is unrelated. An empty array intentionally hides read-only or
  *  dependency-only todo SQL without inventing state changes. */
 export function parseTodoSql(query: string): TodoItemPatch[] | undefined {
-  let touchesTodos = false;
-  const patches: TodoItemPatch[] = [];
-
-  for (const statement of splitTopLevel(query, ";")) {
-    const parsedStatement = parseTodoStatement(statement);
-    if (!parsedStatement) continue;
-
-    touchesTodos = true;
-    patches.push(...parsedStatement);
-  }
-
-  return touchesTodos ? patches : undefined;
-}
-
-function parseTodoStatement(statement: string): TodoItemPatch[] | undefined {
-  const trimmed = statement.trim();
-  if (!trimmed) return undefined;
-
-  return (
-    parseTodoInsert(trimmed) ??
-    parseTodoUpdate(trimmed) ??
-    parseTodoDelete(trimmed) ??
-    parseTodoSelect(trimmed) ??
-    parseTodoFallback(trimmed)
-  );
+  const statements = splitTopLevel(query, ";").flatMap((statement) => {
+    const patches =
+      parseTodoInsert(statement) ??
+      parseTodoUpdate(statement) ??
+      parseTodoDelete(statement) ??
+      parseTodoFallback(statement);
+    return patches ? [patches] : [];
+  });
+  return statements.length > 0 ? statements.flat() : undefined;
 }
 
 function parseTodoInsert(statement: string): TodoItemPatch[] | undefined {
@@ -54,11 +38,10 @@ function parseTodoInsert(statement: string): TodoItemPatch[] | undefined {
   const patches: TodoItemPatch[] = [];
   const rows = splitTopLevel(valuesInput.slice("values".length).trimStart(), ",");
   for (const row of rows) {
-    const rowInput = row.trim();
-    const tuple = readParenthesized(rowInput);
+    const tuple = readParenthesized(row);
     if (!tuple) continue;
 
-    const suffix = rowInput.slice(tuple.end).trimStart();
+    const suffix = row.slice(tuple.end).trimStart();
     if (suffix && !/^on\s+conflict\b/i.test(suffix)) continue;
 
     const values = splitTopLevel(tuple.value, ",");
@@ -89,18 +72,15 @@ function parseTodoUpdate(statement: string): TodoItemPatch[] | undefined {
   const match = statement.match(/^update\s+todos\s+set\b/i);
   if (!match) return undefined;
 
-  const rest = statement.slice(match[0].length).trimStart();
-  const whereIndex = findTopLevelKeyword(rest, "where");
-  const assignments = (whereIndex === -1 ? rest : rest.slice(0, whereIndex)).trim();
+  const [assignments, whereClause] = splitAtWhere(statement.slice(match[0].length));
   const parsedUpdate = parseTodoAssignments(assignments);
 
-  if (whereIndex === -1) {
+  if (whereClause === undefined) {
     return parsedUpdate.status !== undefined
       ? [{ type: "update_all", status: parsedUpdate.status }]
       : [];
   }
 
-  const whereClause = rest.slice(whereIndex + "where".length).trim();
   const ids = parseTodoIdsWhereClause(whereClause);
   if (ids.length === 0) return [];
 
@@ -120,16 +100,11 @@ function parseTodoDelete(statement: string): TodoItemPatch[] | undefined {
   const match = statement.match(/^delete\s+from\s+todos\b/i);
   if (!match) return undefined;
 
-  const rest = statement.slice(match[0].length).trimStart();
-  const whereIndex = findTopLevelKeyword(rest, "where");
-  if (whereIndex === -1) return [];
+  const [, whereClause] = splitAtWhere(statement.slice(match[0].length));
+  if (whereClause === undefined) return [];
 
-  const ids = parseTodoIdsWhereClause(rest.slice(whereIndex + "where".length).trim());
+  const ids = parseTodoIdsWhereClause(whereClause);
   return ids.map((id) => ({ type: "delete", id }));
-}
-
-function parseTodoSelect(statement: string): TodoItemPatch[] | undefined {
-  return /\bselect\b[\s\S]*\bfrom\s+todos\b/i.test(statement) ? [] : undefined;
 }
 
 function parseTodoFallback(statement: string): TodoItemPatch[] | undefined {
@@ -141,7 +116,7 @@ function parseTodoAssignments(assignments: string) {
   let status: TodoStatus | undefined;
 
   for (const assignment of splitTopLevel(assignments, ",")) {
-    const equalsIndex = findTopLevelChar(assignment, "=");
+    const equalsIndex = findTopLevel(assignment, "=");
     if (equalsIndex === -1) continue;
 
     const column = normalizeIdentifier(assignment.slice(0, equalsIndex));
@@ -163,7 +138,7 @@ function parseTodoAssignments(assignments: string) {
 }
 
 function parseTodoIdComparison(input: string): string | undefined {
-  const equalsIndex = findTopLevelChar(input, "=");
+  const equalsIndex = findTopLevel(input, "=");
   if (equalsIndex === -1) return undefined;
 
   const left = normalizeIdentifier(input.slice(0, equalsIndex));
@@ -240,150 +215,56 @@ function normalizeIdentifier(input: string): string | undefined {
 
 function readParenthesized(input: string): { value: string; end: number } | undefined {
   if (!input.startsWith("(")) return undefined;
-
-  let depth = 0;
-  let inString = false;
-  for (let i = 0; i < input.length; i++) {
-    const quote = consumeSqlQuote(input, i, inString);
-    if (quote) {
-      i = quote.nextIndex;
-      inString = quote.inString;
-      continue;
-    }
-
-    const char = input[i];
-    if (inString) continue;
-    if (char === "(") depth += 1;
-    if (char === ")") {
-      depth -= 1;
-      if (depth === 0) {
-        return { value: input.slice(1, i), end: i + 1 };
-      }
-    }
-  }
-
-  return undefined;
+  const end = findTopLevel(input, ")");
+  return end === -1 ? undefined : { value: input.slice(1, end), end: end + 1 };
 }
 
 function splitTopLevel(input: string, delimiter: ";" | ","): string[] {
   const parts: string[] = [];
-  let inString = false;
-  let depth = 0;
   let start = 0;
-
-  for (let i = 0; i < input.length; i++) {
-    const quote = consumeSqlQuote(input, i, inString);
-    if (quote) {
-      i = quote.nextIndex;
-      inString = quote.inString;
-      continue;
-    }
-
-    const char = input[i];
-    if (inString) continue;
-    if (char === "(") {
-      depth += 1;
-      continue;
-    }
-    if (char === ")") {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
-
-    if (depth === 0 && char === delimiter) {
-      const part = input.slice(start, i).trim();
-      if (part) parts.push(part);
-      start = i + 1;
-    }
+  for (const i of topLevelIndices(input)) {
+    if (input[i] !== delimiter) continue;
+    parts.push(input.slice(start, i));
+    start = i + 1;
   }
-
-  const tail = input.slice(start).trim();
-  if (tail) parts.push(tail);
-  return parts;
+  parts.push(input.slice(start));
+  return parts.map((part) => part.trim()).filter(Boolean);
 }
 
-function findTopLevelChar(input: string, target: string): number {
-  let inString = false;
-  let depth = 0;
-
-  for (let i = 0; i < input.length; i++) {
-    const quote = consumeSqlQuote(input, i, inString);
-    if (quote) {
-      i = quote.nextIndex;
-      inString = quote.inString;
-      continue;
+/** Split a statement tail at its top-level WHERE keyword. */
+function splitAtWhere(input: string): [head: string, where?: string] {
+  for (const i of topLevelIndices(input)) {
+    if ((i === 0 || /\s/.test(input[i - 1])) && /^where(?:\s|$)/i.test(input.slice(i, i + 6))) {
+      return [input.slice(0, i).trim(), input.slice(i + "where".length).trim()];
     }
-
-    const char = input[i];
-    if (inString) continue;
-    if (char === "(") {
-      depth += 1;
-      continue;
-    }
-    if (char === ")") {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
-
-    if (depth === 0 && char === target) return i;
   }
+  return [input.trim()];
+}
 
+function findTopLevel(input: string, char: string): number {
+  for (const i of topLevelIndices(input)) {
+    if (input[i] === char) return i;
+  }
   return -1;
 }
 
-function findTopLevelKeyword(input: string, keyword: string): number {
-  const lowerInput = input.toLowerCase();
-  const lowerKeyword = keyword.toLowerCase();
+/** Yield indices outside SQL strings and nested parentheses. A top-level
+ *  group's own parentheses are yielded, so callers can find where it ends. */
+function* topLevelIndices(input: string): Generator<number> {
   let inString = false;
   let depth = 0;
-
-  for (let i = 0; i <= input.length - lowerKeyword.length; i++) {
-    const quote = consumeSqlQuote(input, i, inString);
-    if (quote) {
-      i = quote.nextIndex;
-      inString = quote.inString;
-      continue;
-    }
-
+  for (let i = 0; i < input.length; i++) {
     const char = input[i];
+    if (char === "'") {
+      if (inString && input[i + 1] === "'") i += 1;
+      else if (!inString || !isBackslashEscaped(input, i)) inString = !inString;
+      continue;
+    }
     if (inString) continue;
-    if (char === "(") {
-      depth += 1;
-      continue;
-    }
-    if (char === ")") {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
-
-    if (depth !== 0 || !lowerInput.startsWith(lowerKeyword, i)) continue;
-
-    const before = input[i - 1];
-    const after = input[i + lowerKeyword.length];
-    const beforeIsBoundary = before === undefined || /\s/.test(before);
-    const afterIsBoundary = after === undefined || /\s/.test(after);
-    if (beforeIsBoundary && afterIsBoundary) return i;
+    if (char === ")") depth = Math.max(0, depth - 1);
+    if (depth === 0) yield i;
+    if (char === "(") depth += 1;
   }
-
-  return -1;
-}
-
-function consumeSqlQuote(
-  input: string,
-  index: number,
-  inString: boolean,
-): { nextIndex: number; inString: boolean } | undefined {
-  if (input[index] !== "'") return undefined;
-
-  if (inString && input[index + 1] === "'") {
-    return { nextIndex: index + 1, inString };
-  }
-
-  if (inString && isBackslashEscaped(input, index)) {
-    return { nextIndex: index, inString };
-  }
-
-  return { nextIndex: index, inString: !inString };
 }
 
 function isBackslashEscaped(input: string, index: number): boolean {

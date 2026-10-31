@@ -1,6 +1,7 @@
-/** Install the current tables whose meaning is owned by Workers. */
-export async function initializeWorkerSchema(db: Bun.SQL): Promise<void> {
-  await db.unsafe(`
+/** The versions of the tables owned by Workers, in order. To change a table,
+ * append a version. */
+export default [
+  `
     CREATE TABLE IF NOT EXISTS workers (
       session_id        TEXT PRIMARY KEY,
       created_at        INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),
@@ -32,5 +33,5 @@ export async function initializeWorkerSchema(db: Bun.SQL): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_workers_type_created
       ON workers(worker_type, created_at DESC, session_id);
-  `);
-}
+  `,
+];

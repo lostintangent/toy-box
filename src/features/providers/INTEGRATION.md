@@ -25,7 +25,7 @@ and the conversation-rewind limitation.
 | Generated images                | Native image generation projects as an `image_generation` tool call whose result attachments come from native output and history.          |
 | System messages                 | Preserve domain semantics in both live activity and historical replay.                                                                     |
 | Queue and cancellation          | Sessions owns the queue. Provider sees only a next turn or immediate steering.                                                             |
-| Steering and interruption       | Provider targets the active native turn. Browser disconnect only removes observation.                                                      |
+| Steering and interruption       | Steers target the active turn. Abort stops it, unrun input, and subagents. Native owns launched processes. Disconnect only unsubscribes.   |
 | Events and history              | Both paths project into SessionEvent. The runtime consumes provider end events to drain queued work before publishing completion.          |
 | Live tool output                | Providers append running tools' output as it arrives; the result replaces it. Native histories keep only the result.                       |
 | Context usage                   | Providers report the root conversation's context occupancy while running. Native histories omit it.                                        |
@@ -50,7 +50,7 @@ Run the full checks and dogfood both observing clients across active and histori
 
 Copilot uses `@github/copilot-sdk`; Codex uses bidirectional `codex app-server` JSON-RPC.
 Both resolve the installed CLI from PATH and reuse its existing authentication. The
-Codex protocol snapshot and native smoke tests use CLI 0.165.0; Copilot tests retain
+Codex protocol snapshot and native smoke tests use CLI 0.166.0; Copilot tests retain
 the existing SDK fixtures and also execute against the installed CLI.
 
 Public session UUIDs are allocated before a provider is chosen. Copilot and Claude reuse that UUID;

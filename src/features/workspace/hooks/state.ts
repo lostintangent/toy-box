@@ -1,9 +1,6 @@
 import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import {
-  dispatchWorkspaceAction,
-  updateWorkspaceSetting,
-  workspaceQueries,
-} from "@workspace/queries";
+import { workspaceQueries } from "@workspace/queries";
+import { dispatchWorkspaceAction, updateWorkspaceSetting } from "@workspace/mutations";
 import type { WorkspaceState } from "@workspace/model/state/reducer";
 import type { Settings } from "../model/config/settings";
 import type { WorkspaceAction } from "../model/state/actions";
@@ -12,28 +9,6 @@ type WorkspaceSelector<T> = (workspace: WorkspaceState) => T;
 
 export function useWorkspaceSelector<T>(select: WorkspaceSelector<T>): T {
   return useSuspenseQuery({ ...workspaceQueries.state(), select }).data;
-}
-
-export function useWorkspaceSessionRunning(sessionId: string) {
-  return useWorkspaceSelector(
-    (workspace) => workspace.sessionStates[sessionId]?.status === "running",
-  );
-}
-
-export function selectWorkspaceSessionActivity(workspace: WorkspaceState, sessionId: string) {
-  const state = workspace.sessionStates[sessionId];
-  return {
-    running: state?.status === "running",
-    waiting: state?.status === "waiting",
-    background: state?.status === "background",
-    unread: state?.status === "unread",
-    since: state && "since" in state ? state.since : undefined,
-    hasDraft: Boolean(workspace.drafts[`session:${sessionId}`]?.text.trim()),
-  };
-}
-
-export function useWorkspaceSessionActivity(sessionId: string) {
-  return useWorkspaceSelector((workspace) => selectWorkspaceSessionActivity(workspace, sessionId));
 }
 
 export function useDispatchWorkspaceAction() {

@@ -9,6 +9,7 @@ import {
   listSessions as listProviderSessions,
   listSkills as listProviderSkills,
 } from "@sessions/server/providers";
+import * as sessionActivity from "@sessions/server/state/activity";
 import * as sessionRegistry from "@sessions/server/state/registry";
 import {
   applySessionWorktree as applyWorktree,
@@ -56,6 +57,19 @@ const withSessionId = createMiddleware({ type: "function" }).validator(
 export const getSessionsState = createServerFn({ method: "GET" }).handler(() =>
   readSessionCatalog(() => Promise.all([listProviderSessions(), getAllSessionWorktrees()])),
 );
+
+/** Fetch every non-idle session's current activity. */
+export const getSessionsActivity = createServerFn({ method: "GET" }).handler(() =>
+  sessionActivity.getSessionsActivity(),
+);
+
+/** Mark a session's unread results as seen on every client. */
+export const markSessionRead = createServerFn({ method: "POST" })
+  .middleware([withSessionId])
+  .handler(({ data }): boolean => {
+    sessionActivity.markSessionRead(data.sessionId);
+    return true;
+  });
 
 /** Mint a short-lived OpenAI Realtime client secret for voice input. */
 export const createVoiceToken = createServerFn({ method: "POST" }).handler(

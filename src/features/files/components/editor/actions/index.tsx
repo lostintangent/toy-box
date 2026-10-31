@@ -1,9 +1,6 @@
 import { Loader2 } from "lucide-react";
-import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
-import {
-  PANE_OVERLAY_BUTTON_CLASS,
-  PANE_OVERLAY_ICON_CLASS,
-} from "@workspace/components/panes/shell/paneControls";
+import type { PaneVariant } from "@/shared/panes/PaneSlots";
+import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "@/shared/panes/paneControls";
 import type { WorkspaceFileMode } from "../../../model";
 import { EditorModeMenu } from "./EditorModeMenu";
 

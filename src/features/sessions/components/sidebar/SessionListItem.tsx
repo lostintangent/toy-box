@@ -7,7 +7,7 @@ import { Badge } from "@/shared/ui/badge";
 import { cn } from "@/shared/utils";
 import { RelativeTime } from "@/shared/ui/relative-time";
 import { CommandMenuItem } from "@/shared/commands/CommandMenuItem";
-import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
+import { useSessionActivity } from "../../useSessionActivity";
 import { SidebarSessionItem } from "./SidebarSessionItem";
 import type { Session } from "../../model";
 import { getSessionLabel } from "../../model/label";
@@ -38,7 +38,7 @@ export function SessionListItem({
   const [isExpanded, setIsExpanded] = useState(false);
   const childListId = useId();
   const isDraft = !session.provider;
-  const activity = useWorkspaceSessionActivity(session.id);
+  const activity = useSessionActivity(session.id);
   const sessionLabel = getSessionLabel(session);
   const isTitleLoading = !isDraft && !session.title && activity.running;
 

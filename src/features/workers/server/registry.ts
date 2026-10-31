@@ -3,7 +3,7 @@
 
 import { sharedMap } from "@/shared/server/processState";
 import { broadcast } from "@workspace/server/events";
-import { workerParentSessionId, workerReferencesSession, type Worker } from "../model";
+import { workerReferencesSession, type Worker } from "../model";
 
 const workers = sharedMap<Worker>("workers");
 
@@ -15,7 +15,7 @@ export function hasWorker(sessionId: string): boolean {
   return workers.has(sessionId);
 }
 
-export function getWorker(sessionId: string): Worker | undefined {
+export function getRegisteredWorker(sessionId: string): Worker | undefined {
   return workers.get(sessionId);
 }
 
@@ -31,26 +31,8 @@ export function finishWorker(sessionId: string): void {
   broadcast({ type: "worker.finished", sessionId });
 }
 
-export function finishWorkersForSession(sessionId: string): string[] {
-  return finishWorkers((worker) => workerReferencesSession(worker, sessionId));
-}
-
-/** Finish work owned by a session without treating that session's own Worker as its child. */
-export function finishWorkersOwnedBySession(sessionId: string): string[] {
-  return finishWorkers((worker) => workerParentSessionId(worker) === sessionId);
-}
-
-export function finishWorkersForApp(appId: string): string[] {
-  return finishWorkers((worker) => worker.type === "app" && worker.appId === appId);
-}
-
-function finishWorkers(matches: (worker: Worker) => boolean): string[] {
-  const finished: string[] = [];
-  for (const [workerSessionId, worker] of workers) {
-    if (!matches(worker)) continue;
-    workers.delete(workerSessionId);
-    broadcast({ type: "worker.finished", sessionId: workerSessionId });
-    finished.push(workerSessionId);
+export function finishWorkersForSession(sessionId: string): void {
+  for (const worker of workers.values()) {
+    if (workerReferencesSession(worker, sessionId)) finishWorker(worker.sessionId);
   }
-  return finished;
 }

@@ -6,8 +6,11 @@
 // snapshots, worktrees, and provider persistence.
 
 import { homedir } from "node:os";
-import type { SessionConnection } from "@providers/server/provider";
-import { SessionConnectionUnavailableError } from "@providers/server/provider";
+import {
+  SessionConnectionUnavailableError,
+  SessionNotFoundError,
+  type SessionConnection,
+} from "@providers/server/provider";
 import { ensureSessionFiles, writeSessionArtifact, deleteSessionFiles } from "../artifacts";
 import {
   createSession as createProviderSession,
@@ -18,6 +21,7 @@ import {
 import { getSessionConfiguration } from "@/server/sessionConfiguration";
 import { broadcast } from "@workspace/server/events";
 import { deleteSessionWorkspaceState, unpinSession } from "@workspace/server/state";
+import { deleteSessionActivity } from "./activity";
 import { createSessionWorktree, deleteSessionWorktree } from "./worktrees";
 import { deleteSessionRecord, readSession, insertSession } from "./sessions";
 import {
@@ -167,13 +171,16 @@ export async function createSession(
 
 // ── Provider connections ───────────────────────────────────────────────────────
 
+/** Read the cached session after any in-flight disconnect for it has settled. */
+async function readCachedSession(sessionId: string): Promise<CachedSession | undefined> {
+  const disconnecting = cachedSessions.get(sessionId)?.disconnecting;
+  if (disconnecting) await disconnecting.catch(() => {});
+  return cachedSessions.get(sessionId);
+}
+
 /** Acquire the provider session owned by one execution, refreshing configuration when required. */
 export async function acquireSession(sessionId: string): Promise<SessionConnection> {
-  let cached = cachedSessions.get(sessionId);
-  if (cached?.disconnecting) {
-    await cached.disconnecting.catch(() => {});
-    cached = cachedSessions.get(sessionId);
-  }
+  const cached = await readCachedSession(sessionId);
   if (cached && cached.configurationKey === undefined) {
     cancelSessionRelease(cached);
     cached.executionLease = true;
@@ -265,11 +272,7 @@ async function runSessionOperation<T>(
   sessionId: string,
   operation: (session: SessionConnection) => Promise<T>,
 ): Promise<T> {
-  let cached = cachedSessions.get(sessionId);
-  if (cached?.disconnecting) {
-    await cached.disconnecting.catch(() => {});
-    cached = cachedSessions.get(sessionId);
-  }
+  const cached = await readCachedSession(sessionId);
   const session = cached?.session ?? (await acquireConfiguredSession(sessionId));
   const acquired = cachedSessions.get(sessionId);
   if (acquired?.session === session) cancelSessionRelease(acquired);
@@ -293,8 +296,9 @@ function evictCachedSession(sessionId: string): void {
  *  the session, so the next access resumes fresh instead of reusing a stale
  *  instance. Returns whether the error was a stale-session error. */
 export function evictCachedSessionIfStale(sessionId: string, error: unknown): boolean {
-  if (!(error instanceof SessionConnectionUnavailableError) && !isSessionNotFoundError(error))
-    return false;
+  const stale =
+    error instanceof SessionConnectionUnavailableError || error instanceof SessionNotFoundError;
+  if (!stale) return false;
 
   evictCachedSession(sessionId);
   return true;
@@ -354,6 +358,7 @@ async function removeDeletedSessionState(
   await deleteSessionRecord(sessionId);
   await detachManagedSession(sessionId);
   await unpinSession(sessionId);
+  deleteSessionActivity(sessionId);
   deleteSessionWorkspaceState(sessionId);
   await evictDeletedSessionSnapshot(sessionId);
   if (publish) broadcast({ type: "session.deleted", sessionId });
@@ -425,16 +430,4 @@ function disconnectCachedSession(sessionId: string, cached: CachedSession): Prom
   );
   cached.disconnecting = disconnecting;
   return disconnecting;
-}
-
-export function isSessionNotFoundError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const message = error.message.toLowerCase();
-  return (
-    message.includes("session not found") ||
-    message.includes("unknown session") ||
-    message.includes("session file not found") ||
-    message.includes("thread not found") ||
-    message.includes("no rollout found")
-  );
 }

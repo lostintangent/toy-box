@@ -1,13 +1,9 @@
 import { agentHandleFromName, type Channel } from "@channels/model";
-import { appLifecycleTools, artifactAppTools, createAppStateTools } from "@apps/server/tools";
-import { automationTools } from "@automations/server/tools";
-import { modelTools } from "@sessions/server/tools";
 import type { Worker } from "@workers/model";
 import { getStateDatabase } from "@/server/database";
 import { channelAgentFromWorker, type ChannelAgentContext } from "@channels/model/worker";
 import { ChannelDatabase } from "./database";
 import { channelLeadTools, channelMemberTools } from "./tools";
-import { screenTools } from "@screens/server/tools";
 
 export async function getChannelAgentConfiguration(worker: Extract<Worker, { type: "channel" }>) {
   const channel = await new ChannelDatabase(await getStateDatabase()).getChannel(worker.channelId);
@@ -15,15 +11,11 @@ export async function getChannelAgentConfiguration(worker: Extract<Worker, { typ
   const agent = channelAgentFromWorker(worker);
   const model = agent.isLead ? channel.model : agent.model;
   return {
-    tools: [
-      ...screenTools,
-      ...artifactAppTools,
-      ...appLifecycleTools,
-      ...automationTools,
-      ...createAppStateTools(),
-      ...modelTools,
-      ...(agent.isLead ? channelLeadTools : channelMemberTools),
-    ],
+    // Every wake depends on these, so they never wait behind tool search.
+    tools: (agent.isLead ? channelLeadTools : channelMemberTools).map((tool) => ({
+      ...tool,
+      alwaysLoad: true,
+    })),
     directory: channel.directory,
     additionalInstructions: buildChannelAgentInstructions(agent, channel),
     disableMemory: true as const,

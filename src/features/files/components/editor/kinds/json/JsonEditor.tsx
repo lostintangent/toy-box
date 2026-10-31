@@ -18,8 +18,8 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { cn } from "@/shared/utils";
-import { PaneActions, usePaneActionsAvailable } from "@workspace/components/panes/shell/PaneSlots";
-import { PANE_OVERLAY_BUTTON_CLASS } from "@workspace/components/panes/shell/paneControls";
+import { PaneActions, usePaneActionsAvailable } from "@/shared/panes/PaneSlots";
+import { PANE_OVERLAY_BUTTON_CLASS } from "@/shared/panes/paneControls";
 import type { EditorProps } from "../index";
 import { AgentPrompt } from "./agent/AgentPrompt";
 import { activePointersOf } from "./agent/bridge";

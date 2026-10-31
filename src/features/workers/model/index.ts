@@ -52,9 +52,13 @@ export type Worker = WorkerOwner & {
   metadata?: z.infer<typeof smallJsonSchema>;
 };
 
-export type WorkerEvent =
-  | { type: "worker.started"; worker: Worker }
-  | { type: "worker.finished"; sessionId: string };
+declare module "@workspace/model/events" {
+  interface WorkspaceEvents {
+    workers:
+      | { type: "worker.started"; worker: Worker }
+      | { type: "worker.finished"; sessionId: string };
+  }
+}
 
 export function workerParentSessionId(worker: Worker): string | undefined {
   switch (worker.type) {

@@ -3,7 +3,7 @@ import { screenClientMessageSchema, type ScreenServerMessage } from "../model/pr
 import { screenRuntime } from "./runtime";
 
 /** Each socket views the screen named in its URL, for as long as it stays open. */
-export const screenWebSocket = {
+export default {
   open(peer) {
     screenRuntime.attach(screenIdOf(peer), peer);
   },

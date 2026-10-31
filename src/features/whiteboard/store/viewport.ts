@@ -15,15 +15,14 @@ export const DEFAULT_VIEWPORT: Viewport = {
 };
 
 export function fitViewport(
-  bounds: Rect | null,
+  bounds: Rect,
   viewportWidth: number,
   viewportHeight: number,
   maximumZoom = MAX_ZOOM,
 ): ViewportPosition {
-  if (!bounds || viewportWidth <= 0 || viewportHeight <= 0) {
+  if (bounds.width <= 0 || bounds.height <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
     return { zoom: 1, panX: 0, panY: 0 };
   }
-  if (bounds.width <= 0 || bounds.height <= 0) return { zoom: 1, panX: 0, panY: 0 };
 
   const zoom = Math.max(
     MIN_ZOOM,
@@ -43,13 +42,12 @@ export function fitViewport(
   };
 }
 
+/** Positions a fitted viewport; a manual viewport keeps whatever position it has. */
 export function resolveViewport(
-  mode: Viewport["mode"],
-  page: Rect | null,
+  mode: Exclude<Viewport["mode"], { type: "manual" }>,
+  page: Rect,
   size: Size,
 ): ViewportPosition {
-  if (mode.type === "manual") return { zoom: 1, panX: 0, panY: 0 };
-  if (!page) return { zoom: 1, panX: 0, panY: 0 };
   const bounds = mode.type === "fit-page" ? page : mode.bounds;
   return fitViewport(bounds, size.width, size.height, mode.type === "fit-page" ? 1 : undefined);
 }

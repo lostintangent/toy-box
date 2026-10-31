@@ -2,34 +2,16 @@ import type { CopilotSession, SessionConfig as SdkSessionConfig } from "@github/
 import type { ModelConfiguration } from "@providers/model";
 
 type SdkSetModelOptions = NonNullable<Parameters<CopilotSession["setModel"]>[1]>;
-type SdkSessionModelOptions = Pick<SdkSessionConfig, "model" | "reasoningEffort" | "contextTier">;
 
-/** The SDK's public option unions are narrower than live metadata, so keep
- *  open-string casts in these boundary helpers. */
-function toSdkReasoningEffort(reasoningEffort?: string): SdkSessionConfig["reasoningEffort"] {
-  return reasoningEffort as SdkSessionConfig["reasoningEffort"];
-}
-
-function toSdkContextTier(contextTier?: string): SdkSessionConfig["contextTier"] {
-  return contextTier as SdkSessionConfig["contextTier"];
-}
-
+// The SDK's public option unions are narrower than live metadata, so these
+// open strings are cast at the boundary.
 export function toSdkSetModelOptions(configuration?: ModelConfiguration): SdkSetModelOptions {
   return {
     ...(configuration?.reasoningEffort
-      ? { reasoningEffort: toSdkReasoningEffort(configuration.reasoningEffort) }
+      ? { reasoningEffort: configuration.reasoningEffort as SdkSessionConfig["reasoningEffort"] }
       : {}),
     ...(configuration?.contextTier
-      ? { contextTier: toSdkContextTier(configuration.contextTier) }
+      ? { contextTier: configuration.contextTier as SdkSessionConfig["contextTier"] }
       : {}),
-  };
-}
-
-export function toSdkSessionModelOptions(
-  configuration?: ModelConfiguration,
-): SdkSessionModelOptions {
-  return {
-    model: configuration?.name,
-    ...toSdkSetModelOptions(configuration),
   };
 }

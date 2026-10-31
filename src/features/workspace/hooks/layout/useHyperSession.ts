@@ -3,9 +3,14 @@ import {
   defaultViewportOverlayPosition,
   type OverlayPosition,
 } from "@workspace/components/overlayWindow";
+import { createAppPane } from "@apps/model";
+import { createSessionPane } from "@sessions/model/panes";
 import { focusWorkspaceSurfacePane } from "@workspace/hooks/layout/surface";
-import { createAppPane, MAX_WORKSPACE_PANES } from "@workspace/model/panes";
+import type { WorkspacePane } from "@workspace/model/panes";
 import { useDispatchWorkspaceAction } from "../state";
+
+/** The deck keeps its most recently opened apps beside its session. */
+const MAX_HYPER_APPS = 3;
 
 /** Per-browser state for the floating hyper-session surface. */
 export type HyperSessionState = {
@@ -14,6 +19,11 @@ export type HyperSessionState = {
   open: boolean;
   appIds: string[];
 };
+
+/** The deck's root panes: its session, then the apps opened in it. */
+export function deriveHyperRootPanes({ sessionId, appIds }: HyperSessionState): WorkspacePane[] {
+  return [createSessionPane(sessionId), ...appIds.map(createAppPane)];
+}
 
 function createHyperSessionState(sessionId: string): HyperSessionState {
   return {
@@ -24,21 +34,24 @@ function createHyperSessionState(sessionId: string): HyperSessionState {
   };
 }
 
-// The hyper deck is a per-browser surface. Its open/position state is seeded once
+// The hyper deck is a per-browser surface. Its open/position layout is seeded once
 // from SSR, while shared membership remains authoritative for its existence.
 export function useHyperSession({
-  initialState,
   hyperSessionId,
+  initialLayout,
   createSession,
-  openSessionInWorkspace,
+  openRoot,
 }: {
-  initialState: HyperSessionState | null;
   hyperSessionId: string | undefined;
+  initialLayout: Pick<HyperSessionState, "open" | "position">;
   createSession: (options?: { hyper?: true }) => string;
-  openSessionInWorkspace: (sessionId: string) => void;
+  /** Opens a promoted session beside the main workspace's other panes. */
+  openRoot: (pane: WorkspacePane) => void;
 }) {
   const dispatchWorkspaceAction = useDispatchWorkspaceAction();
-  const [surface, setSurface] = useState(initialState);
+  const [surface, setSurface] = useState<HyperSessionState | null>(() =>
+    hyperSessionId ? { sessionId: hyperSessionId, appIds: [], ...initialLayout } : null,
+  );
   const state = surface?.sessionId === hyperSessionId ? surface : null;
 
   function getOrCreateSessionId() {
@@ -64,7 +77,7 @@ export function useHyperSession({
         open: true,
         appIds: next.appIds.includes(appId)
           ? next.appIds
-          : [...next.appIds, appId].slice(-(MAX_WORKSPACE_PANES - 1)),
+          : [...next.appIds, appId].slice(-MAX_HYPER_APPS),
       };
     });
     focusWorkspaceSurfacePane("hyper", createAppPane(appId).id);
@@ -91,7 +104,7 @@ export function useHyperSession({
 
   function promote(sessionId: string) {
     dispatchWorkspaceAction({ type: "session.hyper.promoted", sessionId });
-    openSessionInWorkspace(sessionId);
+    openRoot(createSessionPane(sessionId));
   }
 
   return {

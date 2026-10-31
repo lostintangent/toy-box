@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
+import { mutationOptions, useMutation, useSuspenseQuery } from "@tanstack/react-query";
 import { AppWindow, Download, MessageCirclePlus, Pencil, Plus, Trash2 } from "lucide-react";
 import { appMutations } from "@apps/mutations";
 import type { AppDefinition, AppInstance } from "@apps/model";
@@ -18,7 +18,6 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { APP_ICONS } from "./runtime/icons";
 import { AppColorMenu } from "./AppColorMenu";
-import { CreateAppDialog } from "./CreateAppDialog";
 import { InstallAppDialog } from "./InstallAppDialog";
 
 export function AppsPanel({
@@ -117,16 +116,16 @@ export function AppsPanel({
       </SidebarPanel>
 
       {createDefinition && (
-        <CreateAppDialog
+        <NameDialog
           key={createDefinition.id}
-          definitionId={createDefinition.id}
-          definitionTitle={createDefinition.title}
+          name=""
+          suggestedName={createDefinition.title}
+          title={`Save a ${createDefinition.title} app`}
+          description="This creates a durable instance with its own state."
+          submitLabel="Save app"
+          mutation={createAndOpenApp(createDefinition.id, (appId) => onAppOpen(appId, false))}
           onOpenChange={(open) => {
             if (!open) setCreateDefinitionId(null);
-          }}
-          onCreated={(app) => {
-            setCreateDefinitionId(null);
-            onAppOpen(app.id, false);
           }}
         />
       )}
@@ -167,6 +166,17 @@ export function AppsPanel({
       )}
     </>
   );
+}
+
+function createAndOpenApp(definitionId: string, open: (appId: string) => void) {
+  const create = appMutations.create(definitionId);
+  return mutationOptions({
+    ...create,
+    onSuccess: async (app, ...context) => {
+      await create.onSuccess?.(app, ...context);
+      open(app.id);
+    },
+  });
 }
 
 function AppListItem({

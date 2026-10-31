@@ -8,15 +8,8 @@ import {
   pointsToPathData,
   updateSvgShape,
 } from "../../document/nodes";
-import {
-  toDocumentPoint,
-  type EditorStore,
-  type Fill,
-  type HistoryEntry,
-  type Point,
-  type Tool,
-} from "../../store";
-import type { GestureController } from "./gesture";
+import type { EditorStore, Fill, HistoryEntry, Point, ShapeTool, Tool } from "../../store";
+import { pointerCoordinates, type GestureController } from "./gesture";
 
 const MIN_DRAWING_GESTURE_PX = 5;
 
@@ -85,7 +78,7 @@ function startEraserGesture(
 function startShapeGesture(
   document: SvgDocument,
   store: EditorStore,
-  shape: "rectangle" | "ellipse" | "line" | "arrow",
+  shape: ShapeTool,
   start: { document: Point; viewport: Point },
   style: { color: string; width: number; fill?: Fill },
 ) {
@@ -119,23 +112,5 @@ function drawingGesture(
       if (outcome === "commit" && isComplete()) store.actions.commit(entry);
       else applyHistoryEntry(entry, "undo");
     },
-  };
-}
-
-function pointerCoordinates(
-  store: EditorStore,
-  event: ReactPointerEvent<HTMLDivElement>,
-): {
-  viewport: Point;
-  document: Point;
-} {
-  const viewportBounds = event.currentTarget.getBoundingClientRect();
-  const viewportPoint = {
-    x: event.clientX - viewportBounds.left,
-    y: event.clientY - viewportBounds.top,
-  };
-  return {
-    viewport: viewportPoint,
-    document: toDocumentPoint(store.state.viewport, viewportPoint),
   };
 }

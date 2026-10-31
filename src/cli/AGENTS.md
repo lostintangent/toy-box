@@ -30,17 +30,20 @@ those compressed assets; the server's executable code and SSR bundles are separa
 
 ## Process startup
 
-`src/cli/index.ts` is the entry point when the binary runs. It reads the HTTP host and port, then turns off Bun's HTTP idle timeout so long-lived streams are not dropped. The Copilot SDK sometimes re-invokes this same binary as a subprocess with a file path as the first argument, so the launcher treats that argument as a working directory only when it is actually a directory. It imports the built Nitro server and, for an interactive run, opens the browser unless the user opted out. Nitro owns application startup and shutdown, including the terminal runtime, bundled skills, scheduler, and worker cleanup; that policy lives under `src/server` rather than in the launcher.
+`src/cli/index.ts` is the entry point when the binary runs. It reads the HTTP host and port, then turns off Bun's HTTP idle timeout so long-lived streams are not dropped. The Copilot SDK sometimes re-invokes this same binary as a subprocess with a file path as the first argument, so the launcher treats that argument as a working directory only when it is actually a directory. It imports the built Nitro server and, for an interactive run, opens the browser unless the user opted out. Nitro owns application startup and shutdown rather than the launcher: `src/server/plugins/startup.ts` installs bundled skills and runs each feature's `server/startup.ts`, such as the terminal runtime, scheduler, and worker cleanup, and calls the cleanup each one returns when the server closes.
 
 ## Socket gateway
 
-`src/server/socket.ts` dispatches `/socket?service=terminal` and
-`/socket?service=screens` to feature-owned handlers on independent physical
+`src/server/socket.ts` dispatches `/socket?service=<feature>` to the crossws hooks
+that feature's `server/websocket.ts` default-exports, discovered by convention and
+loaded on first connection. Terminal and Screens use it, on independent physical
 connections. The gateway validates Origin; features own their protocols and
 lifetimes. In production, Nitro serves it. In development, Nitro's in-process runner
 upgrades through crossws's Node adapter, which refuses to run on Bun, so
 `src/server/socketDevelopment.ts` serves it from a Bun listener in Vite's process,
-where RPCs and sockets share the feature runtimes. That listener uses `Bun.serve`
+where RPCs and sockets share the feature runtimes. Bun loads the gateway there outside
+Vite, so the listener first registers `src/server/importMetaGlob.ts` to expand its
+feature glob, the same plugin `bun test` preloads. That listener uses `Bun.serve`
 rather than srvx, whose default SIGINT handler would close only the listener and keep
 Vite running.
 

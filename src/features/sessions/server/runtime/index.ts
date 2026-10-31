@@ -2,7 +2,7 @@
 // create, recreate, or deliver; connected callers use one composite that subscribes while
 // optionally doing either. Every mutation acquires the same live runtime.
 
-import { listSessionArtifacts, writeSessionArtifact } from "../artifacts";
+import { listSessionArtifacts } from "../artifacts";
 import type { SessionQuestionAnswer, StreamSessionRequest } from "@sessions/model/protocol";
 import type {
   SessionCompletion,
@@ -20,7 +20,6 @@ import type { SessionStreamSubscription } from "./eventBus";
 
 export { getSessionDirectory } from "../providers";
 export { deleteSession, deleteSessionIfExists, releaseIdleSession } from "../state/registry";
-export { isSessionNotFoundError } from "../state/registry";
 
 type PendingSessionCompletion = {
   promise: Promise<SessionCompletion>;
@@ -149,16 +148,6 @@ export async function rewindSession(sessionId: string, timestamp: string): Promi
   // SessionStream, so notify other browser clients through the shared plane.
   broadcast({ type: "session.touched", sessionId });
   return snapshot;
-}
-
-export async function createSessionArtifact(
-  sessionId: string,
-  path: string,
-  content: string,
-): Promise<void> {
-  const stream = SessionStream.get(sessionId);
-  if (!stream) throw new Error("Cannot create a session artifact without a running session.");
-  await writeSessionArtifact(sessionId, path, content);
 }
 
 /** Filesystem observation refreshes artifact membership for active sessions. */

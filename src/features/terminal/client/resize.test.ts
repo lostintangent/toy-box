@@ -90,7 +90,7 @@ function createHarness(size: { width: number; height: number } = { width: 800, h
 
   resize.install(container, xterm, fitAddon);
   onTestFinished(() => {
-    resize.dispose();
+    resize.uninstall();
     if (resizeObserverDescriptor) {
       Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
     } else {

@@ -5,6 +5,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { cancelWorkerInputSchema, spawnWorkerInputSchema } from "../model";
 import * as workers from "./admission";
+import { getWorkers } from "./registry";
+
+/** The pending workers every client shows on their owners. */
+export const listActiveWorkers = createServerFn({ method: "GET" }).handler(() => getWorkers());
 
 /** Spawn a background worker owned by a file or app. */
 export const spawnWorker = createServerFn({ method: "POST" })

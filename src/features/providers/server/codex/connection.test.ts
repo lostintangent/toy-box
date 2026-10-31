@@ -63,6 +63,7 @@ function setup(tools: SessionConfiguration["tools"] = []) {
     turns: [{ ...turn, items: [userItem, assistantItem] }],
   } as Thread;
   const childThreads = new Map<string, Thread>();
+  let subagents: Pick<Thread, "id" | "status">[] = [];
   const rpc = new CodexTransport((line) => {
     const request = JSON.parse(line) as {
       id: number;
@@ -84,6 +85,7 @@ function setup(tools: SessionConfiguration["tools"] = []) {
     if (request.method === "thread/read") result = { thread: requestedThread };
     if (request.method === "thread/turns/list")
       result = { data: requestedThread.turns, nextCursor: null };
+    if (request.method === "thread/list") result = { data: subagents, nextCursor: null };
     queueMicrotask(() => {
       if (request.method === "turn/start") beforeStartResponse?.();
       rpc.receive(JSON.stringify({ id: request.id, result }) + "\n");
@@ -146,6 +148,9 @@ function setup(tools: SessionConfiguration["tools"] = []) {
     },
     setChildThread: (value: Thread) => {
       childThreads.set(value.id, value);
+    },
+    setSubagents: (value: typeof subagents) => {
+      subagents = value;
     },
   };
 }
@@ -641,8 +646,8 @@ test("native tools validate arguments, retain public identity, and terminate aft
   const terminal = defineTool("finish_test", {
     parameters: z.object({ value: z.string() }),
     isTerminal: true,
-    handler: (args, invocation) => {
-      invoked.push({ args, sessionId: invocation.sessionId });
+    handler: (args, sessionId) => {
+      invoked.push({ args, sessionId });
       return "Accepted";
     },
   });
@@ -686,12 +691,11 @@ test.each(["abort", "completion", "disconnect"] as const)(
   "%s cancels the session's pending native tools",
   async (end) => {
     const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
     const held = defineTool("held", {
-      handler: async (_args, { signal }) => {
+      handler: async () => {
         entered.resolve();
-        await new Promise<void>((resolve) =>
-          signal!.addEventListener("abort", () => resolve(), { once: true }),
-        );
+        await release.promise;
         return "Finished after cancellation";
       },
     });
@@ -702,9 +706,33 @@ test.each(["abort", "completion", "disconnect"] as const)(
     if (end === "completion") notify("turn/completed", { turn: { ...turn, status: "completed" } });
     else if (end === "abort") await connection.abort();
     else await connection.disconnect();
+    release.resolve();
     expect(await response).toMatchObject({ result: { success: false } });
   },
 );
+
+test("Stop interrupts the session tree's running turns, including every loaded subagent", async () => {
+  const { connection, notify, setSubagents, written } = setup();
+  setSubagents([
+    { id: "busy", status: { type: "active", activeFlags: [] } },
+    { id: "idle", status: { type: "idle" } },
+    { id: "unloaded", status: { type: "notLoaded" } },
+  ]);
+  notify("turn/started", { turn });
+  await connection.abort();
+  expect(written.map(({ method, params }) => ({ method, params }))).toEqual([
+    { method: "turn/interrupt", params: { threadId: "native", turnId: turn.id } },
+    {
+      method: "thread/list",
+      params: expect.objectContaining({
+        ancestorThreadId: "native",
+        sourceKinds: ["subAgentThreadSpawn"],
+      }),
+    },
+    { method: "turn/interrupt", params: { threadId: "busy", turnId: "" } },
+    { method: "turn/interrupt", params: { threadId: "idle", turnId: "" } },
+  ]);
+});
 
 test("native tools return text and images and reject calls outside the Toy Box namespace", async () => {
   const preview = defineTool("preview", {

@@ -14,6 +14,7 @@ import { Input } from "@/shared/ui/input";
 
 export function NameDialog<TData, TContext>({
   name,
+  suggestedName = name,
   title,
   description,
   submitLabel = "Save",
@@ -21,6 +22,8 @@ export function NameDialog<TData, TContext>({
   onOpenChange,
 }: {
   name: string;
+  /** Prefills the input with a name that can be saved as is, unlike the current `name`. */
+  suggestedName?: string;
   title: string;
   description: string;
   submitLabel?: string;
@@ -28,7 +31,7 @@ export function NameDialog<TData, TContext>({
   onOpenChange: (open: boolean) => void;
 }) {
   const inputId = useId();
-  const [nextName, setNextName] = useState(name);
+  const [nextName, setNextName] = useState(suggestedName);
   const mutation = useMutation(mutationOptions);
   const trimmedName = nextName.trim();
   const canSubmit =

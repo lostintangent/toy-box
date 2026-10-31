@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, X } from "lucide-react";
+import { Fragment, type ReactNode } from "react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, X, type LucideIcon } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/utils";
 
@@ -8,66 +8,31 @@ export type TerminalShellProps = {
   children?: ReactNode;
 };
 
-const QUICK_KEYS = {
-  left: "\x1b[D",
-  up: "\x1b[A",
-  down: "\x1b[B",
-  right: "\x1b[C",
-  tab: "\t",
-  esc: "\x1b",
-  ctrlC: "\x03",
-};
+type QuickKey = { label: string; data: string; icon?: LucideIcon };
 
-type QuickKeyButtonProps = {
-  onQuickKey: (data: string) => void;
-  keyData: string;
-  variant?: "ghost" | "outline";
-  size?: "icon-xs" | "xs";
-  className?: string;
-  label: string;
-  children: ReactNode;
-};
-
-function QuickKeyButton({
-  onQuickKey,
-  keyData,
-  variant = "ghost",
-  size = "icon-xs",
-  className,
-  label,
-  children,
-}: QuickKeyButtonProps) {
-  return (
-    <Button
-      type="button"
-      variant={variant}
-      size={size}
-      className={cn("h-6 rounded-none hover:bg-muted/60", size === "icon-xs" && "w-6", className)}
-      onClick={() => onQuickKey(keyData)}
-      aria-label={label}
-      title={label}
-    >
-      {children}
-    </Button>
-  );
-}
+/** Keys a phone keyboard lacks, in visual groups. A key without an icon shows its label. */
+const QUICK_KEYS: QuickKey[][] = [
+  [
+    { label: "Left arrow", data: "\x1b[D", icon: ArrowLeft },
+    { label: "Up arrow", data: "\x1b[A", icon: ArrowUp },
+    { label: "Down arrow", data: "\x1b[B", icon: ArrowDown },
+    { label: "Right arrow", data: "\x1b[C", icon: ArrowRight },
+  ],
+  [
+    { label: "Tab", data: "\t" },
+    { label: "Esc", data: "\x1b" },
+  ],
+  [{ label: "Ctrl+C", data: "\x03" }],
+];
 
 // Keep the xterm-backed client runtime out of the initial application bundle.
-function closeTerminal() {
-  void import("../client/terminalManager").then(({ terminalManager }) => {
-    terminalManager.close();
-  });
-}
-
-function sendTerminalInput(data: string) {
-  void import("../client/terminalManager").then(({ terminalManager }) => {
-    terminalManager.sendInput(data);
-  });
+function loadTerminalManager() {
+  return import("../client/terminalManager").then(({ terminalManager }) => terminalManager);
 }
 
 export function TerminalShell({ onClose, children }: TerminalShellProps) {
   function handleClose() {
-    closeTerminal();
+    void loadTerminalManager().then((terminalManager) => terminalManager.close());
     onClose?.();
   }
 
@@ -80,66 +45,36 @@ export function TerminalShell({ onClose, children }: TerminalShellProps) {
           Back to Sessions
         </Button>
         <div className="flex items-center gap-1.5">
-          <div className="flex items-center rounded-md border border-border bg-muted/40 shadow-xs overflow-hidden">
-            <QuickKeyButton
-              onQuickKey={sendTerminalInput}
-              keyData={QUICK_KEYS.left}
-              label="Left arrow"
+          {QUICK_KEYS.map((group) => (
+            <div
+              key={group[0]!.label}
+              className="flex items-center rounded-md border border-border bg-muted/40 shadow-xs overflow-hidden"
             >
-              <ArrowLeft className="h-3 w-3" />
-            </QuickKeyButton>
-            <div className="h-4 w-px bg-border/70" />
-            <QuickKeyButton onQuickKey={sendTerminalInput} keyData={QUICK_KEYS.up} label="Up arrow">
-              <ArrowUp className="h-3 w-3" />
-            </QuickKeyButton>
-            <div className="h-4 w-px bg-border/70" />
-            <QuickKeyButton
-              onQuickKey={sendTerminalInput}
-              keyData={QUICK_KEYS.down}
-              label="Down arrow"
-            >
-              <ArrowDown className="h-3 w-3" />
-            </QuickKeyButton>
-            <div className="h-4 w-px bg-border/70" />
-            <QuickKeyButton
-              onQuickKey={sendTerminalInput}
-              keyData={QUICK_KEYS.right}
-              label="Right arrow"
-            >
-              <ArrowRight className="h-3 w-3" />
-            </QuickKeyButton>
-          </div>
-          <div className="flex items-center rounded-md border border-border bg-muted/40 shadow-xs overflow-hidden">
-            <QuickKeyButton
-              onQuickKey={sendTerminalInput}
-              keyData={QUICK_KEYS.tab}
-              size="xs"
-              className="px-2 text-2xs font-semibold tracking-wide"
-              label="Tab"
-            >
-              Tab
-            </QuickKeyButton>
-            <div className="h-4 w-px bg-border/70" />
-            <QuickKeyButton
-              onQuickKey={sendTerminalInput}
-              keyData={QUICK_KEYS.esc}
-              size="xs"
-              className="px-2 text-2xs font-semibold tracking-wide"
-              label="Esc"
-            >
-              Esc
-            </QuickKeyButton>
-          </div>
-          <QuickKeyButton
-            onQuickKey={sendTerminalInput}
-            keyData={QUICK_KEYS.ctrlC}
-            variant="outline"
-            size="xs"
-            className="px-2 text-2xs font-semibold tracking-wide shadow-xs bg-muted/40 rounded-md"
-            label="Ctrl+C"
-          >
-            Cmd+C
-          </QuickKeyButton>
+              {group.map(({ label, data, icon: Icon }, index) => (
+                <Fragment key={label}>
+                  {index > 0 && <div className="h-4 w-px bg-border/70" />}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size={Icon ? "icon-xs" : "xs"}
+                    className={cn(
+                      "h-6 rounded-none hover:bg-muted/60",
+                      Icon ? "w-6" : "px-2 text-2xs font-semibold tracking-wide",
+                    )}
+                    onClick={() =>
+                      void loadTerminalManager().then((terminalManager) =>
+                        terminalManager.sendInput(data),
+                      )
+                    }
+                    aria-label={label}
+                    title={label}
+                  >
+                    {Icon ? <Icon className="h-3 w-3" /> : label}
+                  </Button>
+                </Fragment>
+              ))}
+            </div>
+          ))}
         </div>
       </div>
 

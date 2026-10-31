@@ -1,17 +1,10 @@
-import type { SkillSource } from "@github/copilot-sdk";
+import type { CopilotClient } from "@github/copilot-sdk";
 import type { SessionSkill } from "@sessions/model";
 
-type SdkSkillMetadata = {
-  name: string;
-  description: string;
-  source: SkillSource;
-  userInvocable: boolean;
-  enabled: boolean;
-  path?: string;
-};
+type SdkSkill = Awaited<ReturnType<CopilotClient["rpc"]["skills"]["discover"]>>["skills"][number];
 
 /** Normalize enabled, user-invocable SDK skills into Toy Box's two scope types. */
-export function toSessionSkills(skills: readonly SdkSkillMetadata[]): SessionSkill[] {
+export function toSessionSkills(skills: readonly SdkSkill[]): SessionSkill[] {
   return skills
     .filter((skill) => skill.userInvocable && skill.enabled)
     .map<SessionSkill>((skill) => ({

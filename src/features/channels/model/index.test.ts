@@ -8,6 +8,7 @@ import {
   channelRoutineInputSchema,
   channelSystemMessageContentSchema,
   channelUnreadAfter,
+  createChannelInputSchema,
   editChannelInputSchema,
   markChannelReadInputSchema,
   postChannelMessageInputSchema,
@@ -200,6 +201,18 @@ test("channel previews accept validated URL or screen targets", () => {
 test("lead edits allow clearing optional fields and require a change", () => {
   expect(updateChannelInputSchema.safeParse({ purpose: null, directory: null }).success).toBe(true);
   expect(updateChannelInputSchema.safeParse({}).success).toBe(false);
+});
+
+test("working directories must be absolute on create and update", () => {
+  const model = { provider: "copilot", name: "gpt-5.5" };
+  const createWith = (directory: string) =>
+    createChannelInputSchema.safeParse({ name: "Build", directory, model }).success;
+  const updateWith = (directory: string) =>
+    updateChannelInputSchema.safeParse({ directory }).success;
+
+  expect(createWith("project")).toBe(false);
+  expect(updateWith("project")).toBe(false);
+  expect(createWith("/Users/me/project")).toBe(true);
 });
 
 test("user messages require content or attachments and exclude agent-controlled fields", () => {

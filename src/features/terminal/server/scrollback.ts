@@ -1,234 +1,42 @@
-import {
-  ALT_BUFFER_MODES,
-  ANSI_CSI,
-  ANSI_DIGIT_NINE,
-  ANSI_DIGIT_ZERO,
-  ANSI_ERASE_IN_DISPLAY,
-  ANSI_ESCAPE,
-  ANSI_FINAL_MAX,
-  ANSI_FINAL_MIN,
-  ANSI_FULL_RESET,
-  ANSI_PRIVATE_MARKER,
-  ANSI_RESET_MODE,
-  ANSI_SEMICOLON,
-  ANSI_SET_MODE,
-  CLEAR_SCROLLBACK_PARAM,
-} from "./ansi";
+// ANSI control bytes used by the replay parser.
+const ANSI_ESCAPE = 0x1b;
+const ANSI_CSI = 0x5b; // [
+const ANSI_PRIVATE_MARKER = 0x3f; // ?
+const ANSI_SEMICOLON = 0x3b; // ;
+const ANSI_DIGIT_ZERO = 0x30; // 0
+const ANSI_DIGIT_NINE = 0x39; // 9
+const ANSI_FINAL_MIN = 0x40;
+const ANSI_FINAL_MAX = 0x7e;
+const ANSI_SET_MODE = 0x68; // h
+const ANSI_RESET_MODE = 0x6c; // l
+const ANSI_ERASE_IN_DISPLAY = 0x4a; // J
+const ANSI_FULL_RESET = 0x63; // c
+const CLEAR_SCROLLBACK_PARAM = 3;
 
-const DEFAULT_SCROLLBACK_MAX_BYTES = 4 * 1024 * 1024;
-const DEFAULT_COALESCE_THRESHOLD_BYTES = 2048;
-const DEFAULT_REPLAY_BATCH_BYTES = 64 * 1024;
+/** Private DEC modes that switch to the alternate screen. */
+const ALT_BUFFER_MODES = new Set([47, 1047, 1049]);
+
+const MAX_HISTORY_BYTES = 4 * 1024 * 1024;
+const PAGE_BYTES = 64 * 1024;
 const MAX_ESCAPE_SEQUENCE_BYTES = 64;
 const textEncoder = new TextEncoder();
 
-export interface ScrollbackBufferOptions {
-  maxNormalBytes?: number;
-  coalesceThresholdBytes?: number;
-  replayBatchBytes?: number;
-}
-
-function normalizePositiveInt(value: number | undefined, fallback: number) {
-  if (value === undefined || !Number.isFinite(value)) return fallback;
-  return Math.max(1, Math.floor(value));
-}
-
-function normalizeNonNegativeInt(value: number | undefined, fallback: number) {
-  if (value === undefined || !Number.isFinite(value)) return fallback;
-  return Math.max(0, Math.floor(value));
-}
-
-class ByteBoundedChunkBuffer {
-  private slots: Array<Uint8Array | undefined> = [];
-  private head = 0;
-  private count = 0;
-  private totalBytes = 0;
-
-  private readonly maxBytes: number;
-  private readonly coalesceThresholdBytes: number;
-  private readonly replayBatchBytes: number;
-
-  constructor({
-    maxBytes = DEFAULT_SCROLLBACK_MAX_BYTES,
-    coalesceThresholdBytes = DEFAULT_COALESCE_THRESHOLD_BYTES,
-    replayBatchBytes = DEFAULT_REPLAY_BATCH_BYTES,
-  }: {
-    maxBytes?: number;
-    coalesceThresholdBytes?: number;
-    replayBatchBytes?: number;
-  } = {}) {
-    this.maxBytes = normalizePositiveInt(maxBytes, DEFAULT_SCROLLBACK_MAX_BYTES);
-    this.coalesceThresholdBytes = normalizeNonNegativeInt(
-      coalesceThresholdBytes,
-      DEFAULT_COALESCE_THRESHOLD_BYTES,
-    );
-    this.replayBatchBytes = normalizePositiveInt(replayBatchBytes, DEFAULT_REPLAY_BATCH_BYTES);
-  }
-
-  add(chunk: Uint8Array) {
-    if (chunk.byteLength === 0) return;
-
-    if (!this.tryCoalesceWithTail(chunk)) {
-      this.pushBack(chunk);
-    }
-    this.trimOversizedTailChunk();
-    this.evictToFitBudget();
-  }
-
-  replay(send: (chunk: Uint8Array) => void) {
-    if (this.count === 0) return;
-
-    const pending: Uint8Array[] = [];
-    let pendingBytes = 0;
-
-    const flush = () => {
-      if (pendingBytes === 0) return;
-      if (pending.length === 1) {
-        send(pending[0]!);
-      } else {
-        const merged = new Uint8Array(pendingBytes);
-        let offset = 0;
-        for (const chunk of pending) {
-          merged.set(chunk, offset);
-          offset += chunk.byteLength;
-        }
-        send(merged);
-      }
-      pending.length = 0;
-      pendingBytes = 0;
-    };
-
-    for (let offset = 0; offset < this.count; offset++) {
-      const chunk = this.at(offset);
-      if (!chunk || chunk.byteLength === 0) continue;
-
-      if (pendingBytes === 0 && chunk.byteLength >= this.replayBatchBytes) {
-        send(chunk);
-        continue;
-      }
-
-      if (pendingBytes + chunk.byteLength > this.replayBatchBytes) {
-        flush();
-      }
-
-      pending.push(chunk);
-      pendingBytes += chunk.byteLength;
-    }
-
-    flush();
-  }
-
-  clear() {
-    this.slots = [];
-    this.head = 0;
-    this.count = 0;
-    this.totalBytes = 0;
-  }
-
-  private tryCoalesceWithTail(nextChunk: Uint8Array) {
-    if (this.coalesceThresholdBytes === 0 || this.count === 0) {
-      return false;
-    }
-
-    const tail = this.at(this.count - 1);
-    if (!tail) return false;
-
-    if (
-      tail.byteLength >= this.coalesceThresholdBytes ||
-      nextChunk.byteLength >= this.coalesceThresholdBytes
-    ) {
-      return false;
-    }
-
-    const mergedSize = tail.byteLength + nextChunk.byteLength;
-    if (mergedSize > this.coalesceThresholdBytes) {
-      return false;
-    }
-
-    const merged = new Uint8Array(mergedSize);
-    merged.set(tail, 0);
-    merged.set(nextChunk, tail.byteLength);
-    this.replaceTail(merged);
-    return true;
-  }
-
-  private evictToFitBudget() {
-    while (this.totalBytes > this.maxBytes && this.count > 0) {
-      this.popFront();
-    }
-  }
-
-  private trimOversizedTailChunk() {
-    if (this.count === 0) return;
-
-    const tail = this.at(this.count - 1);
-    if (!tail || tail.byteLength <= this.maxBytes) return;
-
-    const trimmed = tail.subarray(tail.byteLength - this.maxBytes);
-    this.replaceTail(trimmed);
-  }
-
-  private ensureCapacity(required: number) {
-    if (this.slots.length >= required) return;
-
-    const nextCapacity = Math.max(required, this.slots.length * 2, 8);
-    const nextSlots = new Array<Uint8Array | undefined>(nextCapacity);
-    for (let offset = 0; offset < this.count; offset++) {
-      nextSlots[offset] = this.at(offset);
-    }
-
-    this.slots = nextSlots;
-    this.head = 0;
-  }
-
-  private pushBack(chunk: Uint8Array) {
-    this.ensureCapacity(this.count + 1);
-    const index = (this.head + this.count) % this.slots.length;
-    this.slots[index] = chunk;
-    this.count++;
-    this.totalBytes += chunk.byteLength;
-  }
-
-  private popFront() {
-    if (this.count === 0) return;
-
-    const chunk = this.slots[this.head];
-    this.slots[this.head] = undefined;
-    this.head = (this.head + 1) % this.slots.length;
-    this.count--;
-    this.totalBytes -= chunk?.byteLength ?? 0;
-
-    if (this.count === 0) {
-      this.head = 0;
-    }
-  }
-
-  private replaceTail(nextChunk: Uint8Array) {
-    const tailIndex = (this.head + this.count - 1) % this.slots.length;
-    const prevChunk = this.slots[tailIndex];
-    this.slots[tailIndex] = nextChunk;
-    this.totalBytes += nextChunk.byteLength - (prevChunk?.byteLength ?? 0);
-  }
-
-  private at(offset: number) {
-    if (offset < 0 || offset >= this.count || this.slots.length === 0) {
-      return undefined;
-    }
-    return this.slots[(this.head + offset) % this.slots.length];
-  }
-}
-
 export class ScrollbackBuffer {
-  private normalBuffer: ByteBoundedChunkBuffer;
+  // Normal-screen history, copied into fixed-size pages. Eviction drops the oldest
+  // whole page, and replay sends one page per write.
+  private pages: Uint8Array[] = [];
+  private lastPageBytes = 0;
   private activeMode: "normal" | "alternate" = "normal";
   private pendingEscapeSequence = new Uint8Array(0);
   private privateModeStates = new Map<number, boolean>();
 
-  constructor(options: ScrollbackBufferOptions = {}) {
-    this.normalBuffer = new ByteBoundedChunkBuffer({
-      maxBytes: options.maxNormalBytes,
-      coalesceThresholdBytes: options.coalesceThresholdBytes,
-      replayBatchBytes: options.replayBatchBytes,
-    });
+  private readonly maxBytes: number;
+  private readonly pageBytes: number;
+
+  /** Keeps at least `maxBytes` of the newest history, and less than a page more. */
+  constructor({ maxBytes = MAX_HISTORY_BYTES, pageBytes = PAGE_BYTES } = {}) {
+    this.maxBytes = maxBytes;
+    this.pageBytes = pageBytes;
   }
 
   add(data: Uint8Array) {
@@ -266,7 +74,7 @@ export class ScrollbackBuffer {
 
         case "clear-scrollback":
           if (this.activeMode === "normal") {
-            this.normalBuffer.clear();
+            this.pages = [];
           }
           cursor = escapeIndex + parsed.length;
           continue;
@@ -274,7 +82,7 @@ export class ScrollbackBuffer {
         case "reset":
           this.activeMode = "normal";
           this.privateModeStates.clear();
-          this.normalBuffer.clear();
+          this.pages = [];
           cursor = escapeIndex + parsed.length;
           continue;
 
@@ -296,15 +104,20 @@ export class ScrollbackBuffer {
     }
   }
 
+  /**
+   * Sends what a new socket needs to show the terminal as it is: the private-mode state
+   * and, on the normal screen, its history. A full-screen app redraws itself instead.
+   */
   replay(send: (chunk: Uint8Array) => void) {
-    if (this.activeMode !== "normal") return;
-    this.replayModeState(send);
-    this.normalBuffer.replay(send);
-  }
-
-  replayModeState(send: (chunk: Uint8Array) => void) {
-    const { setModes, resetModes } = this.collectPrivateModeState(this.activeMode === "alternate");
+    const alternate = this.activeMode === "alternate";
+    const { setModes, resetModes } = this.collectPrivateModeState(alternate);
     this.sendPrivateModeReplay(send, setModes, resetModes);
+    if (alternate) return;
+
+    const last = this.pages.length - 1;
+    this.pages.forEach((page, index) =>
+      send(index === last ? page.subarray(0, this.lastPageBytes) : page),
+    );
   }
 
   isAlternateMode() {
@@ -325,8 +138,25 @@ export class ScrollbackBuffer {
 
   private appendToNormalBufferIfVisible(chunk: Uint8Array) {
     if (this.activeMode !== "normal") return;
-    if (chunk.byteLength === 0) return;
-    this.normalBuffer.add(chunk);
+
+    for (let offset = 0; offset < chunk.byteLength;) {
+      let page = this.pages.at(-1);
+      if (!page || this.lastPageBytes === this.pageBytes) {
+        page = new Uint8Array(this.pageBytes);
+        this.pages.push(page);
+        this.lastPageBytes = 0;
+      }
+
+      const bytes = chunk.subarray(offset, offset + this.pageBytes - this.lastPageBytes);
+      page.set(bytes, this.lastPageBytes);
+      this.lastPageBytes += bytes.byteLength;
+      offset += bytes.byteLength;
+    }
+
+    // Drop the oldest page while the rest still hold the whole budget.
+    while ((this.pages.length - 2) * this.pageBytes + this.lastPageBytes >= this.maxBytes) {
+      this.pages.shift();
+    }
   }
 
   private parseEscapeCommand(

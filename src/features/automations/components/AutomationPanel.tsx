@@ -5,7 +5,7 @@ import { AutomationDialog } from "./AutomationDialog";
 import { Button } from "@/shared/ui/button";
 import { SidebarPanel } from "@/shared/sidebar/SidebarPanel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
+import { useSessionsActivity } from "@sessions/useSessionActivity";
 import { automationQueries } from "../queries";
 import { AutomationListItem } from "./AutomationListItem";
 
@@ -26,12 +26,12 @@ export function AutomationPanel({
 }: AutomationPanelProps) {
   const { data: automations } = useSuspenseQuery(automationQueries.list());
   const [editAutomationId, setEditAutomationId] = useState<string>();
-  const activity = useWorkspaceSelector(({ sessionStates }) => ({
-    waiting: automations.some(({ id }) => sessionStates[id]?.status === "waiting"),
+  const activity = useSessionsActivity((activities) => ({
+    waiting: automations.some(({ id }) => activities[id]?.status === "waiting"),
     unread: automations.some(
-      ({ id }) => sessionStates[id]?.status === "unread" && !openSessionIds.includes(id),
+      ({ id }) => activities[id]?.status === "unread" && !openSessionIds.includes(id),
     ),
-    running: automations.some(({ id }) => sessionStates[id]?.status === "running"),
+    running: automations.some(({ id }) => activities[id]?.status === "running"),
   }));
   if (automations.length === 0) return null;
 

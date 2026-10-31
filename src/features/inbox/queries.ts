@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { SessionsState } from "@sessions/model";
-import type { WorkspaceState } from "@workspace/model/state/reducer";
+import type { SessionsActivity } from "@sessions/model/activity";
+import type { Worker } from "@workers/model";
 import type { InboxEntry } from "./model";
 import { listInboxEntries } from "./server/functions";
 
@@ -17,20 +18,29 @@ export const inboxQueries = {
     }),
 };
 
-/** Result storage and shared activity remain separate; presentation combines them. */
-export function sortInboxEntries(entries: InboxEntry[], workspace: WorkspaceState): InboxEntry[] {
+/** Result storage, shared activity, and admitted work remain separate; presentation combines them. */
+export function sortInboxEntries(
+  entries: InboxEntry[],
+  activities: SessionsActivity,
+  workers: readonly Worker[],
+): InboxEntry[] {
+  const isRunning = (id: string) => isInboxTaskRunning(activities, workers, id);
   return [...entries].sort(
     (left, right) =>
-      Number(isInboxTaskRunning(workspace, right.id)) -
-        Number(isInboxTaskRunning(workspace, left.id)) ||
+      Number(isRunning(right.id)) - Number(isRunning(left.id)) ||
       right.createdAt.localeCompare(left.createdAt),
   );
 }
 
-export function isInboxTaskRunning(workspace: WorkspaceState, sessionId: string): boolean {
+/** A task runs once its session does, and from the moment its Worker is admitted. */
+export function isInboxTaskRunning(
+  activities: SessionsActivity,
+  workers: readonly Worker[],
+  sessionId: string,
+): boolean {
   return (
-    workspace.sessionStates[sessionId]?.status === "running" ||
-    workspace.workers.some((worker) => worker.sessionId === sessionId)
+    activities[sessionId]?.status === "running" ||
+    workers.some((worker) => worker.sessionId === sessionId)
   );
 }
 

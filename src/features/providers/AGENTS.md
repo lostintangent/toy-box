@@ -6,20 +6,23 @@ the workspace consumes the same provider-owned catalog and configuration.
 
 - `model/` defines `ModelInfo`, the validated `ModelConfiguration`, model options, and the pure
   normalization, identity, and display helpers shared by every consumer.
-- `queries.ts` and `server/functions.ts` expose one catalog of provider installation metadata and
-  enabled models to the browser. The workspace
-  route preloads the query during SSR and hydrates it through the existing Query integration.
+- `queries.ts` and `server/functions.ts` expose one catalog of provider statuses and enabled
+  models to the browser. A provider is unavailable when its CLI is missing, signed out when its
+  runtime has no credentials, and otherwise ready. The workspace route preloads the query during
+  SSR and hydrates it through the existing Query integration.
   Provider setting changes, successful CLI update checks, and workspace reconnects invalidate that query.
 - `useModels.ts` exposes the catalog and its availability, composing Workspace's default-model
   preference through its settings hooks. `useHasModels` subscribes only to catalog availability.
 - `useProviders.ts` combines catalog metadata with Workspace's `disabledProviders` preference.
-  Settings lists every registered provider; the sidebar filter lists installed, enabled providers.
+  An installed provider is enabled unless the owner turns it off; signing out doesn't change that.
+  Settings lists every registered provider; the sidebar filter lists enabled providers.
   Its `setEnabled` operation is used by Settings. Claude starts disabled. Sidebar filters are local
   UI state and never change provider enablement.
 - `components/ModelPicker.tsx` owns the controlled model and configuration pickers.
 - `components/ProviderSettings.tsx` owns enablement, CLI updates, and subscriptions in Settings. Version reads
   share one query for all installed providers while Settings is open, outside catalog loading. Disabled
-  providers still show their version but cannot be updated. Each enabled provider reads its account's
+  providers still show their version but cannot be updated. A signed-out provider is muted and shows
+  no plan; its update check also rechecks sign-in. Each enabled, ready provider reads its account's
   subscription through its own query, at most once a minute, so a slow or failed read affects only
   its own row. The plan's name sits beside the version; one Usage toggle reveals every limit.
   `server/cli.ts` owns installation checks through `Bun.which(providerId)` and the shared `--version`
@@ -28,16 +31,19 @@ the workspace consumes the same provider-owned catalog and configuration.
 - `server/provider.ts` defines `SessionProvider`, `SessionConnection`, and the configuration
   supplied by Sessions. Connections expose the provider reference used by `Session.provider`;
   history and resume receive the relevant identity fields from the same `Session` type.
-  `readSubscription` maps the signed-in account's native plan and limits to a
-  `ProviderSubscription`; an account using an API key has none.
+  `isSignedIn` translates the runtime's native credential check. `readSubscription` maps the
+  signed-in account's native plan and limits to a `ProviderSubscription`; an account using an API
+  key has none.
   Native SDK and protocol types stay inside their implementations.
 - `server/index.ts` registers the providers, aggregates their available catalogs,
   isolates discovery failures, and stops their shared processes on server shutdown.
   Its `getModelChoices` composes that catalog with the normalized workspace default, optionally
   scoped to one provider. A scoped default is null when the workspace default uses another provider.
-  Model discovery shares one process-wide promise per provider until shutdown or a successful CLI
-  update check; failed discovery is evicted so the next request can retry. Updates evict only that
-  provider's models and broadcast `providers.changed` to refresh client catalogs and versions.
+  Discovery checks sign-in before reading models and shares one process-wide promise per provider
+  until shutdown or a successful CLI update check; failed discovery is evicted so the next request
+  can retry, and its provider stays ready. A signed-out provider contributes no models but keeps its
+  sessions. Disabled providers are never started to check. Updates evict only that provider's
+  discovery and broadcast `providers.changed` to refresh client catalogs and versions.
   Running native processes retain their version until restarted. Restart the server and reload
   the page after installing or removing a provider. Enabled providers are selected outside
   the cache, so toggling one never rediscovers the others. Session catalogs are read independently
@@ -91,7 +97,14 @@ check the list whenever a provider is upgraded:
   from a transcript's first 64 KB, so a large first message hides it (seen with SDK 0.3.302).
   `readDirectory` reads the first transcript entry that records one instead. Remove once the SDK
   finds it itself.
-- Copilot computer use (`server/copilot/computerUse.ts`): headless SDK servers load no built-in
-  plugins, so sessions cannot request computer use (seen through CLI 1.0.105-1). Respect the
-  user's opt-in by registering that runtime version's bundled stdio server. Remove when the SDK
-  exposes activation or headless honors the setting.
+- Copilot computer use (`server/copilot/client.ts`): headless SDK servers load no bundled
+  plugins (seen through CLI 1.0.105), so the client registers the running CLI version's cached
+  computer-use plugin at start and the CLI applies the user's opt-in. Remove when headless servers
+  load bundled plugins.
+- Claude abort (`server/claude/connection.ts`): `Query.interrupt()` is typed without the
+  `cancelQueued` option its runtime sends as `cancel_queued` (seen through SDK 0.3.314), so Stop
+  expects a type error to cancel queued steers. Typecheck fails once the SDK types the option.
+- Codex abort (`server/codex/connection.ts`): `turn/interrupt` stops only one thread's turn and
+  subagent turns aren't tracked (seen with CLI 0.166.0). Stop interrupts each loaded subagent with
+  an empty `turnId`, the app-server's startup interrupt. Replace it with `thread/interrupt` once
+  openai/codex#40953 ships.

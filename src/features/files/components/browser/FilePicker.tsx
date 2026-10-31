@@ -2,11 +2,9 @@ import { useState } from "react";
 import { File } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/utils";
-import { machineFile, type WorkspaceFile } from "../../model";
+import type { MachineFile } from "../../model";
 import { fileName, getPathDirname } from "../../model/paths";
 import { FileBrowserDialog } from "./FileBrowserDialog";
-
-type MachineFile = Extract<WorkspaceFile, { kind: "machine" }>;
 
 type FilePickerProps = {
   value?: MachineFile | null;
@@ -42,7 +40,7 @@ export function FilePicker({ value, onValueChange, extensions, className }: File
         title="Select a file"
         initialPath={value ? getPathDirname(value.path) : undefined}
         extensions={extensions}
-        onOpenFile={(path) => onValueChange(machineFile(path))}
+        onOpenFile={onValueChange}
       />
     </>
   );

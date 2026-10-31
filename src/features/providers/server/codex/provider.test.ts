@@ -187,7 +187,11 @@ test("resumed threads apply the current workspace, model, and session skills", a
     const result =
       request.method === "skills/list"
         ? { data: [] }
-        : { thread, model: "model", reasoningEffort: "low" };
+        : {
+            thread,
+            model: request.params.model ?? "model",
+            reasoningEffort: request.params.config?.model_reasoning_effort ?? "low",
+          };
     queueMicrotask(() => rpc.receive(JSON.stringify({ id: request.id, result }) + "\n"));
   });
   spyOn(transport, "startCodexClient").mockResolvedValue(rpc);
@@ -206,6 +210,7 @@ test("resumed threads apply the current workspace, model, and session skills", a
         parameters: z.object({ value: z.string() }),
         handler: ({ value }) => value,
       }),
+      defineTool("finish", { alwaysLoad: true, handler: () => "Done" }),
     ],
     instructions: "Session instructions",
     skillDirectories: [root],
@@ -246,6 +251,7 @@ test("resumed threads apply the current workspace, model, and session skills", a
           deferLoading: true,
           inputSchema: { properties: { value: { type: "string" } } },
         },
+        { type: "function", name: "finish", deferLoading: false },
       ],
     },
   ]);

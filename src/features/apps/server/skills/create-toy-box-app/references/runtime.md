@@ -380,7 +380,7 @@ operation must await pending writes. The hook uses `shared` mode to notify a
 session file's owning agent after edits. The app must honor `read` mode in its
 controls because modes are presentation policy, not a security boundary.
 
-One mounted hook owns one stable file identity and one live watch connection.
+One mounted hook owns one stable file identity and keeps that file watched while it's mounted.
 When a picker changes the file, key a child file-surface component by the
 file's identity so React remounts the complete lifecycle. Mount the hook for
 active files, not for bulk file listings.

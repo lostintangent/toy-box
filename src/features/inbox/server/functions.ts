@@ -4,7 +4,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { sessionLaunchSchema } from "@sessions/model/protocol";
 import { inboxEntryIdInputSchema } from "../model";
-import { dispatchInboxTask as dispatchInboxTaskOnServer } from "./dispatcher";
 import * as lifecycle from "./index";
 
 export const listInboxEntries = createServerFn({ method: "GET" }).handler(() =>
@@ -13,7 +12,7 @@ export const listInboxEntries = createServerFn({ method: "GET" }).handler(() =>
 
 export const dispatchInboxTask = createServerFn({ method: "POST" })
   .validator(zodValidator(sessionLaunchSchema))
-  .handler(({ data }) => dispatchInboxTaskOnServer(data));
+  .handler(({ data }) => lifecycle.dispatchInboxTask(data));
 
 export const deleteInboxEntry = createServerFn({ method: "POST" })
   .validator(zodValidator(inboxEntryIdInputSchema))

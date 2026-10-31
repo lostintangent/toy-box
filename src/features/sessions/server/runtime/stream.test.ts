@@ -1,4 +1,4 @@
-import type { SessionConnection } from "@providers/server/provider";
+import { SessionNotFoundError, type SessionConnection } from "@providers/server/provider";
 import { describe, expect, mock, onTestFinished, test } from "bun:test";
 import {
   createSession,
@@ -15,18 +15,14 @@ import { SessionStream } from "./sessionStream";
 import { deleteSessionFiles, writeSessionArtifact } from "../artifacts";
 import * as realSessionRegistry from "@sessions/server/state/registry";
 import * as realSnapshotCache from "@sessions/server/state/snapshots";
-import * as realWorkspaceState from "@workspace/server/state";
-import {
-  deleteSessionState,
-  getSessionState as getWorkspaceSessionState,
-} from "@workspace/server/state/sessions";
+import * as realSessionActivity from "@sessions/server/state/activity";
 import * as realBroadcast from "@workspace/server/events";
 import type { SessionEvent, SessionMessage, SessionState } from "@sessions/model";
 import { createInitialSessionState } from "@sessions/model/reducer";
 
 const realSessionRegistryExports = { ...realSessionRegistry };
 const realSnapshotCacheExports = { ...realSnapshotCache };
-const realWorkspaceStateExports = { ...realWorkspaceState };
+const realSessionActivityExports = { ...realSessionActivity };
 const realBroadcastExports = { ...realBroadcast };
 
 function userMessage(
@@ -54,7 +50,7 @@ function cleanUpStreamAfterTest(sessionId: string): void {
   onTestFinished(() => {
     SessionStream.get(sessionId)?.finish();
     realSnapshotCacheExports.evictCachedSnapshot(sessionId);
-    deleteSessionState(sessionId);
+    realSessionActivity.deleteSessionActivity(sessionId);
   });
 }
 
@@ -120,24 +116,24 @@ type StreamRuntimeModuleMocks = {
   sessionRegistry?: Partial<typeof realSessionRegistry>;
   snapshotCache?: Partial<typeof realSnapshotCache>;
   broadcast?: Partial<typeof realBroadcast>;
-  workspace?: Partial<typeof realWorkspaceState>;
+  activity?: Partial<typeof realSessionActivity>;
 };
 
 /** Mock the runtime modules SessionStream imports so tests can drive streams with
- *  provider connections. Callers override the sessionRegistry and snapshotCache
- *  behavior they need; the defaults fail loudly if an unexpected path is
+ *  provider connections. Callers override the sessionRegistry, snapshotCache,
+ *  and activity behavior they need; the defaults fail loudly if an unexpected path is
  *  taken, and the default snapshot cache is always empty. */
 function mockStreamRuntimeModules({
   sessionRegistry: sessionRegistryOverrides = {},
   snapshotCache: snapshotCacheOverrides = {},
   broadcast: broadcastOverrides = {},
-  workspace: workspaceOverrides = {},
+  activity: activityOverrides = {},
 }: StreamRuntimeModuleMocks = {}) {
   // mock.restore() does not undo module replacements.
   onTestFinished(() => {
     mock.module("@sessions/server/state/registry", () => realSessionRegistryExports);
     mock.module("@sessions/server/state/snapshots", () => realSnapshotCacheExports);
-    mock.module("@workspace/server/state", () => realWorkspaceStateExports);
+    mock.module("@sessions/server/state/activity", () => realSessionActivityExports);
     mock.module("@workspace/server/events", () => realBroadcastExports);
   });
   mock.module("@sessions/server/state/registry", () => ({
@@ -169,10 +165,10 @@ function mockStreamRuntimeModules({
     loadSessionSnapshot: async () => createInitialSessionState(),
     ...snapshotCacheOverrides,
   }));
-  mock.module("@workspace/server/state", () => ({
-    ...realWorkspaceStateExports,
-    setSessionStatus: () => {},
-    ...workspaceOverrides,
+  mock.module("@sessions/server/state/activity", () => ({
+    ...realSessionActivityExports,
+    setSessionActivity: () => {},
+    ...activityOverrides,
   }));
   mock.module("@workspace/server/events", () => ({
     ...realBroadcastExports,
@@ -231,12 +227,12 @@ describe("SessionStream lifecycle", () => {
     const cacheSnapshot = mock((_sessionId: string, snapshot: SessionState) => {
       transitions.push(`cache:${snapshot.status}`);
     });
-    const setSessionStatus = mock((_sessionId: string, status: string) => {
+    const setSessionActivity = mock((_sessionId: string, status: string) => {
       transitions.push(`status:${status}`);
     });
     mockStreamRuntimeModules({
       snapshotCache: { cacheSnapshot },
-      workspace: { setSessionStatus },
+      activity: { setSessionActivity },
     });
 
     const stream = SessionStream.getOrCreate(sessionId, makeFakeSession());
@@ -308,8 +304,8 @@ describe("SessionStream lifecycle", () => {
     const sessionId = "session-disconnected-unread";
     cleanUpStreamAfterTest(sessionId);
 
-    const setSessionStatus = mock((_sessionId: string, _status: string) => {});
-    mockStreamRuntimeModules({ workspace: { setSessionStatus } });
+    const setSessionActivity = mock((_sessionId: string, _status: string) => {});
+    mockStreamRuntimeModules({ activity: { setSessionActivity } });
 
     const stream = SessionStream.getOrCreate(sessionId, makeFakeSession());
     const events = stream.subscribe();
@@ -318,9 +314,9 @@ describe("SessionStream lifecycle", () => {
     await events.return();
     stream.finish();
 
-    expect(setSessionStatus).toHaveBeenCalledTimes(2);
-    expect(setSessionStatus).toHaveBeenNthCalledWith(1, sessionId, "running");
-    expect(setSessionStatus).toHaveBeenNthCalledWith(2, sessionId, "unread");
+    expect(setSessionActivity).toHaveBeenCalledTimes(2);
+    expect(setSessionActivity).toHaveBeenNthCalledWith(1, sessionId, "running");
+    expect(setSessionActivity).toHaveBeenNthCalledWith(2, sessionId, "unread");
   });
 
   test("active subscribers acknowledge completion while passive subscribers do not", async () => {
@@ -329,8 +325,8 @@ describe("SessionStream lifecycle", () => {
     cleanUpStreamAfterTest(activeSessionId);
     cleanUpStreamAfterTest(passiveSessionId);
 
-    const setSessionStatus = mock((_sessionId: string, _status: string) => {});
-    mockStreamRuntimeModules({ workspace: { setSessionStatus } });
+    const setSessionActivity = mock((_sessionId: string, _status: string) => {});
+    mockStreamRuntimeModules({ activity: { setSessionActivity } });
 
     const activeStream = SessionStream.getOrCreate(activeSessionId, makeFakeSession());
     const activeEvents = activeStream.subscribe();
@@ -344,7 +340,7 @@ describe("SessionStream lifecycle", () => {
     passiveStream.finish();
     await passiveEvents.return();
 
-    expect(setSessionStatus.mock.calls).toEqual([
+    expect(setSessionActivity.mock.calls).toEqual([
       [activeSessionId, "running"],
       [activeSessionId, "idle"],
       [passiveSessionId, "running"],
@@ -355,8 +351,8 @@ describe("SessionStream lifecycle", () => {
   test("remove publishes a terminal event without global lifecycle updates", async () => {
     cleanUpStreamAfterTest("session-remove-semantics");
 
-    const setSessionStatus = mock((_sessionId: string, _status: string) => {});
-    mockStreamRuntimeModules({ workspace: { setSessionStatus } });
+    const setSessionActivity = mock((_sessionId: string, _status: string) => {});
+    mockStreamRuntimeModules({ activity: { setSessionActivity } });
 
     const abort = mock(async () => {});
     const fakeSession = makeFakeSession({ abort });
@@ -365,7 +361,7 @@ describe("SessionStream lifecycle", () => {
     const events = stream.subscribe();
     await stream.deliver(userMessage("go"));
     await stream.deliver(userMessage("queued"));
-    setSessionStatus.mockClear();
+    setSessionActivity.mockClear();
 
     await SessionStream.remove("session-remove-semantics");
 
@@ -376,7 +372,7 @@ describe("SessionStream lifecycle", () => {
     expect(SessionStream.isRunning("session-remove-semantics")).toBe(false);
     expect(abort).toHaveBeenCalledTimes(1);
     // Deleted sessions leave the list, so no idle/unread global broadcast events are emitted.
-    expect(setSessionStatus).toHaveBeenCalledTimes(0);
+    expect(setSessionActivity).toHaveBeenCalledTimes(0);
   });
 
   test("finished streams reject late delivery and queue cancellation", async () => {
@@ -458,12 +454,12 @@ describe("SessionStream question answers", () => {
         allowFreeform: true,
       },
     });
-    expect(getWorkspaceSessionState(sessionId)?.status).toBe("waiting");
+    expect(realSessionActivity.getSessionActivity(sessionId)?.status).toBe("waiting");
 
     emit({ type: "status", status: "reasoning" });
-    expect(getWorkspaceSessionState(sessionId)?.status).toBe("waiting");
+    expect(realSessionActivity.getSessionActivity(sessionId)?.status).toBe("waiting");
     emit({ type: "status", status: "background" });
-    expect(getWorkspaceSessionState(sessionId)?.status).toBe("waiting");
+    expect(realSessionActivity.getSessionActivity(sessionId)?.status).toBe("waiting");
 
     expect(
       await stream.answerQuestion({
@@ -485,10 +481,10 @@ describe("SessionStream question answers", () => {
       }),
     ).toBe(false);
     expect(answerQuestion).toHaveBeenCalledTimes(2);
-    expect(getWorkspaceSessionState(sessionId)?.status).toBe("waiting");
+    expect(realSessionActivity.getSessionActivity(sessionId)?.status).toBe("waiting");
 
     emit({ type: "question_resolved", toolCallId: "question-1", answer: "SQLite" });
-    expect(getWorkspaceSessionState(sessionId)?.status).toBe("running");
+    expect(realSessionActivity.getSessionActivity(sessionId)?.status).toBe("running");
     expect(
       await stream.answerQuestion({
         requestId: "request-1",
@@ -508,8 +504,8 @@ describe("SessionStream abort", () => {
     const abortProvider = mock(async () => {});
     const statuses: string[] = [];
     mockStreamRuntimeModules({
-      workspace: {
-        setSessionStatus: (_sessionId: string, status: string) => statuses.push(status),
+      activity: {
+        setSessionActivity: (_sessionId: string, status: string) => statuses.push(status),
       },
     });
 
@@ -592,11 +588,11 @@ describe("SessionStream queued messages", () => {
       expect(SessionStream.isRunning(sessionId)).toBe(true);
 
       emit({ type: "status", status: "thinking" });
-      expect(getWorkspaceSessionState(sessionId)?.status).toBe("running");
+      expect(realSessionActivity.getSessionActivity(sessionId)?.status).toBe("running");
       emit({ type: "user_message", content: "Next", clientId: "next" });
       emit({ type: "status", status: "background" });
       emit({ type: "status", status: "background" });
-      expect(getWorkspaceSessionState(sessionId)?.status).toBe("background");
+      expect(realSessionActivity.getSessionActivity(sessionId)?.status).toBe("background");
       expect(stream.getSessionState().queuedMessages).toEqual([]);
       expect((await stream.waitForCompletion(0)).status).toBe("timed_out");
       expect(SessionStream.isRunning(sessionId)).toBe(true);
@@ -1523,13 +1519,13 @@ describe("createSession", () => {
         return { session: fakeSession };
       },
     );
-    const setSessionStatus = mock((_sessionId: string, status: string) => {
+    const setSessionActivity = mock((_sessionId: string, status: string) => {
       calls.push(status);
     });
 
     mockStreamRuntimeModules({
       sessionRegistry: { createSession: createSessionMock },
-      workspace: { setSessionStatus },
+      activity: { setSessionActivity },
     });
 
     const receipt = await createSession(
@@ -1726,7 +1722,7 @@ describe("deliverSessionMessage", () => {
     cleanUpStreamAfterTest("session-snapshot-stale");
 
     const staleSend = mock(async () => {
-      throw new Error("Session not found: session-snapshot-stale");
+      throw new SessionNotFoundError("session-snapshot-stale");
     });
     const freshSend = mock(async (_message: SessionMessage) => {});
     const staleSession = makeFakeSession({ send: staleSend });
@@ -1739,7 +1735,7 @@ describe("deliverSessionMessage", () => {
       sessionRegistry: {
         acquireSession: async () => (resumeCount++ === 0 ? staleSession : freshSession),
         evictCachedSessionIfStale: (_sessionId: string, error: unknown) =>
-          error instanceof Error && error.message.toLowerCase().includes("session not found"),
+          error instanceof SessionNotFoundError,
       },
       snapshotCache: {
         loadSessionSnapshot: async () =>

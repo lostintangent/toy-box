@@ -36,7 +36,7 @@ Start with the cheapest options and move up only for a reason: it already works 
 - Reuse what step 2 found, and say what you're reusing. Each new noun or verb (a type, field, event, module, agent tool, or UI component) needs a reason no existing one can carry it. Name new ones in the codebase's existing vocabulary.
 - Keep one authority per fact, and derive whatever can be derived. A cache or stored copy is a second authority to keep in sync: when the source can't serve a view cheaply, first consider narrowing the view, and present a cache to the user as a decision, with its cost.
 - Design for the requirements and failure modes that exist. Leave out speculative generality and handling for failures that can't happen.
-- Settle the hard-to-reverse parts now: the data model, schemas and wire formats, public contracts, and agent-facing tools and instructions. Choose them on their merits rather than to avoid a migration: change them in place and migrate existing local data by hand, never with compatibility or migration code.
+- Settle the hard-to-reverse parts now: the data model, schemas and wire formats, public contracts, and agent-facing tools and instructions. Choose them on their merits rather than to avoid a migration. Change unreleased shapes in place and migrate local data by hand. To change a released table, append a version to its feature's schema (see `src/server/database.ts`). Never add compatibility code that reads old shapes.
 - Say how the change reaches every client observing the state, and what the default path costs while the feature isn't in use.
 - Test the shape by adding the next instance of the pattern on paper: it should touch only its own declaration.
 

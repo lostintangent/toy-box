@@ -3,7 +3,7 @@ import type { SessionMessage, SessionSystemMessage } from "@sessions/model";
 import { systemMessagePrompt } from "@sessions/model/systemMessages";
 import { decodeInput, encodeInput } from "./messages";
 import { codexHistoryEvents, createCodexProjector, itemTimestamp } from "./projector";
-import type { Thread, ThreadItem, UserInput } from "./protocol";
+import type { Thread, ThreadItem, Turn, UserInput } from "./protocol";
 
 const timestamp = "2026-09-14T00:00:00.000Z";
 const userItem = (content: UserInput[]): Extract<ThreadItem, { type: "userMessage" }> => ({
@@ -32,7 +32,7 @@ test("native display spans preserve Unicode system messages through replay", () 
     },
   ]);
   const item = userItem(JSON.parse(JSON.stringify(input)));
-  const turn = { id: "turn", startedAt: 1000, items: [item] };
+  const turn = { id: "turn", startedAt: 1000, items: [item] } as Turn;
   const expected = {
     type: "system_message" as const,
     content,
@@ -40,12 +40,15 @@ test("native display spans preserve Unicode system messages through replay", () 
     timestamp: itemTimestamp(turn, 0),
   };
   const project = createCodexProjector("public", "native");
-  project({ method: "turn/started", params: { turn } });
-  expect(project({ method: "item/started", params: { item, turnId: turn.id } })).toEqual([
-    expected,
-  ]);
+  project({ method: "turn/started", params: { threadId: "native", turn } });
   expect(
-    codexHistoryEvents({ turns: [turn] } as Thread).flatMap(
+    project({
+      method: "item/started",
+      params: { item, threadId: "native", turnId: turn.id, startedAtMs: 0 },
+    }),
+  ).toEqual([expected]);
+  expect(
+    codexHistoryEvents({ id: "native", turns: [turn] } as Thread).flatMap(
       createCodexProjector("public", "native"),
     ),
   ).toEqual([expected, { type: "end", reason: "idle" }]);

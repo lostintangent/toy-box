@@ -1,8 +1,8 @@
 # Terminal
 
-The terminal runtime lets a shell survive refreshes and short disconnects without losing the PTY or corrupting its visible scrollback. The shared [socket gateway](../../cli/AGENTS.md#socket-gateway) dispatches `/socket?service=terminal` to Terminal's hooks; the PTY manager owns process, reconnect, and replay policy.
+The terminal runtime lets a shell survive refreshes and short disconnects without losing the PTY or corrupting its visible scrollback. The shared [socket gateway](../../cli/AGENTS.md#socket-gateway) dispatches `/socket?service=terminal` to Terminal's hooks, and `server/runtime.ts` owns process, reconnect, and replay policy.
 
-`model/protocol.ts` defines the validated client control plane shared by both sides. `client/` owns the browser WebSocket, xterm instance, buffering, and resize lifetime; `server/` owns the PTY, replay policy, and WebSocket handler; and `components/` mounts that capability into React. Workspace owns only whether the terminal is visible and where its shell is placed. Nitro's route adapter, shutdown hook, and the Vite development proxy remain in their application composition roots.
+`model/protocol.ts` defines the validated client control plane shared by both sides. `client/` owns the browser WebSocket and the input it holds while reconnecting, the xterm instance, and resize lifetime; `server/` owns the PTY, replay policy, WebSocket handler, and the `startup.ts` that closes live PTYs with the server; and `components/` mounts that capability into React. Workspace owns only whether the terminal is visible and where its shell is placed. Nitro's route adapter and the Vite development proxy remain in their application composition roots.
 
 The xterm-backed component and client runtime stay behind dynamic imports so opening Toy Box does not load the terminal bundle until the terminal is used.
 
@@ -33,9 +33,9 @@ Binary client messages are written directly to PTY stdin. PTY output is stored f
 
 ## PTY lifecycle
 
-Creation binds the configured shell, working directory, environment, dimensions, scrollback buffer, and socket to one `clientId`. Input, output, and resize mark the PTY active.
+Creation binds the configured shell, working directory, environment, dimensions, scrollback buffer, and socket to one `clientId`.
 
-A socket disconnect is not an explicit close. The server keeps the PTY for a 30-second orphan window so a refresh can reconnect. A client `close`, an expired orphan window, 30 minutes of inactivity, or process exit releases it. The manager also caps concurrent PTYs to protect the single-user server process.
+A socket disconnect is not an explicit close. The server keeps the PTY for a 30-second orphan window so a refresh can reconnect. A client `close`, an expired orphan window, or process exit releases it. A shell that is attached but quiet stays alive, since Bun's socket pings close a vanished client's socket and start its orphan window. The runtime also caps concurrent PTYs to protect the single-user server process.
 
 The terminal identity and reconnect contract deliberately differ from agent sessions: a terminal belongs to one tab-scoped client ID, accepts one current socket, and replays terminal display state rather than domain events.
 

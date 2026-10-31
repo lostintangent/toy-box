@@ -1,8 +1,9 @@
 import { SMALL_JSON_MAX_BYTES } from "@/shared/smallJson";
 
-/** Install the current tables whose meaning is owned by Apps. */
-export async function initializeAppSchema(db: Bun.SQL): Promise<void> {
-  await db.unsafe(`
+/** The versions of the tables owned by Apps, in order. To change a table,
+ * append a version. */
+export default [
+  `
     CREATE TABLE IF NOT EXISTS apps (
       id            TEXT PRIMARY KEY,
       definition_id TEXT NOT NULL,
@@ -35,5 +36,5 @@ export async function initializeAppSchema(db: Bun.SQL): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_app_shares_target_app_id
       ON app_shares(target_app_id, created_at);
-  `);
-}
+  `,
+];

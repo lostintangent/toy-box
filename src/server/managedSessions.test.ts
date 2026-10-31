@@ -3,8 +3,7 @@ import { describe, expect, mock, onTestFinished, test } from "bun:test";
 import { createTestDatabase } from "@/server/database";
 import type { Session } from "@sessions/model";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
-import { SettingsDatabase } from "@workspace/server/state/settings";
-import { applySessionState, deleteSessionState } from "@workspace/server/state/sessions";
+import { deleteSessionActivity, setSessionActivity } from "@sessions/server/state/activity";
 import { deleteSavedDraft, saveDraft } from "@workspace/server/state/drafts";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import type { WorkspaceEvent } from "@workspace/model/events";
@@ -24,6 +23,7 @@ const { ChannelDatabase } = await import("@channels/server/database");
 const { registerWorkerSession, unregisterWorkerSession, WorkerDatabase } =
   await import("@workers/server/database");
 const { addHyperSession, deleteHyperState } = await import("@workspace/server/state/hyperSessions");
+const { saveSettings } = await import("@workspace/server/state/settings");
 const { detachManagedSession, readSessionCatalog, resolveSessionType } =
   await import("./managedSessions");
 
@@ -106,7 +106,7 @@ describe("session type resolution", () => {
     addHyperSession(sessionId);
     onTestFinished(() => deleteHyperState(sessionId));
 
-    expect(resolveSessionType(sessionId)).rejects.toThrow(
+    await expect(resolveSessionType(sessionId)).rejects.toThrow(
       `Session ${sessionId} has conflicting types: worker, hyper`,
     );
   });
@@ -151,7 +151,7 @@ describe("Session catalog projection", () => {
       sessionId: "old-channel-member",
       ephemeral: false,
     });
-    await new SettingsDatabase(currentDb!).set({
+    await saveSettings({
       ...DEFAULT_SETTINGS,
       pinnedSessionIds: ["old-pin", "new-pin"],
     });
@@ -182,11 +182,11 @@ describe("Session catalog projection", () => {
     await openSessionTypeTestDatabase();
     const protectedIds = ["old-running", "old-waiting", "old-unread", "old-unsent"];
     for (const [index, status] of (["running", "waiting", "unread"] as const).entries()) {
-      applySessionState({ type: `session.${status}`, sessionId: protectedIds[index]!, at: 1 });
+      setSessionActivity(protectedIds[index]!, status);
     }
     saveDraft("session:old-unsent", "Unsent work", "test");
     onTestFinished(() => {
-      protectedIds.forEach((id) => deleteSessionState(id));
+      protectedIds.forEach((id) => deleteSessionActivity(id));
       deleteSavedDraft("session:old-unsent");
     });
     const sessions = [
@@ -326,4 +326,31 @@ test("shared teardown publishes one Inbox deletion even when callers detach conc
 
   expect(await new WorkerDatabase(currentDb!).get(sessionId)).toBeNull();
   expect(events).toEqual([{ type: "inbox.entry.deleted", entryId: sessionId }]);
+});
+
+test("detaching a deleted session ends pending work registered for or under it", async () => {
+  await openSessionTypeTestDatabase();
+  const { finishWorker, getRegisteredWorker, startWorker } =
+    await import("@workers/server/registry");
+  const sessionId = crypto.randomUUID();
+  const createdAt = new Date(0).toISOString();
+  const own = { type: "inbox" as const, sessionId, createdAt, ephemeral: false };
+  const child = {
+    type: "session" as const,
+    parentSessionId: sessionId,
+    sessionId: crypto.randomUUID(),
+    createdAt,
+    ephemeral: true,
+  };
+  const unrelated = { ...child, parentSessionId: "other", sessionId: crypto.randomUUID() };
+  for (const worker of [own, child, unrelated]) {
+    startWorker(worker);
+    onTestFinished(() => finishWorker(worker.sessionId));
+  }
+
+  await detachManagedSession(sessionId);
+
+  expect(getRegisteredWorker(own.sessionId)).toBeUndefined();
+  expect(getRegisteredWorker(child.sessionId)).toBeUndefined();
+  expect(getRegisteredWorker(unrelated.sessionId)).toEqual(unrelated);
 });

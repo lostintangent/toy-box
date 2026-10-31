@@ -3,19 +3,18 @@ import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-quer
 import { useLayoutEffect, useState } from "react";
 import { updateApp } from "@apps/server/functions";
 import { appQueries } from "@apps/queries";
-import { applyAppListEvent } from "@apps/queryCache";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
+import { applyWorkspaceEvent } from "@workspace/sync";
 import type { Worker } from "@workers/model";
+import { workerQueries } from "@workers/queries";
 import type { AppDefinition, AppInstance } from "@apps/model";
-import type { AppWorkspacePane } from "@workspace/model/panes";
-import type { PaneVariant } from "@workspace/components/panes/shell/WorkspacePaneView";
-import { PaneStatus } from "@workspace/components/panes/shell/PaneSlots";
+import type { WorkspacePane } from "@workspace/model/panes";
+import { PaneStatus, type PaneVariant } from "@/shared/panes/PaneSlots";
 import { WorkersMenu } from "@workers/components/WorkersMenu";
 import { AppStateStore } from "../host/state";
 import { PaneMessage } from "@/shared/ui/pane-message";
 import { AppErrorBoundary, AppHost, appErrorMessage } from "../host/AppHost";
 
-export function AppPane({ pane, variant }: { pane: AppWorkspacePane; variant: PaneVariant }) {
+export function AppPane({ pane, variant }: { pane: WorkspacePane<"app">; variant: PaneVariant }) {
   const {
     data: { app, definition },
   } = useSuspenseQuery({
@@ -28,12 +27,14 @@ export function AppPane({ pane, variant }: { pane: AppWorkspacePane; variant: Pa
       };
     },
   });
-  const appWorkers = useWorkspaceSelector((workspace) =>
-    workspace.workers.filter(
-      (worker): worker is Extract<Worker, { type: "app" }> =>
-        worker.type === "app" && worker.appId === pane.appId,
-    ),
-  );
+  const { data: appWorkers } = useSuspenseQuery({
+    ...workerQueries.active(),
+    select: (workers) =>
+      workers.filter(
+        (worker): worker is Extract<Worker, { type: "app" }> =>
+          worker.type === "app" && worker.appId === pane.appId,
+      ),
+  });
 
   if (!app) {
     return (
@@ -80,7 +81,7 @@ function MountedApp({
   appWorkers,
   variant,
 }: {
-  pane: AppWorkspacePane;
+  pane: WorkspacePane<"app">;
   app: AppInstance;
   definition: AppDefinition;
   appWorkers: Extract<Worker, { type: "app" }>[];
@@ -93,7 +94,7 @@ function MountedApp({
         const result = await updateApp({
           data: { appId: pane.appId, ...update },
         });
-        applyAppListEvent(queryClient, { type: "app.upserted", app: result.app });
+        applyWorkspaceEvent(queryClient, { type: "app.upserted", app: result.app });
         return result;
       }),
   );

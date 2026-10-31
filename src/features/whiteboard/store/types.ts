@@ -32,10 +32,9 @@ export type Tool =
   | "text"
 
   // Shapes
-  | "rectangle"
-  | "ellipse"
-  | "line"
-  | "arrow";
+  | ShapeTool;
+
+export type ShapeTool = "rectangle" | "ellipse" | "line" | "arrow";
 
 export type Fill = {
   color: string;

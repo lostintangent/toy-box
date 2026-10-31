@@ -1,24 +1,27 @@
 import { AutomationDialog } from "@automations/components/AutomationDialog";
 import { ChannelDialog } from "@channels/components/ChannelDialog";
+import { createChannelPane } from "@channels/model";
 import { FileBrowserDialog } from "@files/components/browser/FileBrowserDialog";
+import { createEditorPane } from "@files/model/panes";
 import { ScreenBrowserDialog } from "@screens/client/ScreenBrowserDialog";
+import { createScreenPane } from "@screens/model";
+import { createSessionPane } from "@sessions/model/panes";
 import { sessionMutations } from "@sessions/mutations";
 import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
 import { NameDialog } from "@/shared/sidebar/NameDialog";
+import type { WorkspacePane } from "../model/panes";
 import { closeWorkspaceDialog, useWorkspaceDialog } from "../hooks/dialogs";
 import { SettingsDialog } from "./sidebar/SettingsDialog";
 
-/** Renders whichever workspace dialog a command opened. */
+/** Renders whichever workspace dialog a command opened, opening what it chooses as a root pane. */
 export function WorkspaceDialogs({
-  onOpenFile,
-  onOpenScreen,
-  onChannelOpen,
-  onSessionDelete,
+  selectRoot,
+  openRoot,
+  closeRoot,
 }: {
-  onOpenFile: (path: string) => void;
-  onOpenScreen: (screenId: string) => Promise<void>;
-  onChannelOpen: (channelId: string) => void;
-  onSessionDelete: (sessionId: string) => void;
+  selectRoot: (pane: WorkspacePane) => void;
+  openRoot: (pane: WorkspacePane) => Promise<void>;
+  closeRoot: (pane: WorkspacePane) => void;
 }) {
   const dialog = useWorkspaceDialog();
 
@@ -30,17 +33,20 @@ export function WorkspaceDialogs({
         onOpenChange={closeOnDismiss}
         initialPath={dialog?.kind === "files" ? dialog.directory : undefined}
         title="Open a file"
-        onOpenFile={onOpenFile}
+        onOpenFile={(file) => void openRoot(createEditorPane(file))}
       />
       <ScreenBrowserDialog
         open={dialog?.kind === "screens"}
         onOpenChange={closeOnDismiss}
-        onOpenScreen={onOpenScreen}
+        onOpenScreen={(screenId) => openRoot(createScreenPane(screenId))}
       />
 
       {dialog?.kind === "automation" && <AutomationDialog onOpenChange={closeOnDismiss} />}
       {dialog?.kind === "channel" && (
-        <ChannelDialog onOpenChange={closeOnDismiss} onCreated={onChannelOpen} />
+        <ChannelDialog
+          onOpenChange={closeOnDismiss}
+          onCreated={(channelId) => selectRoot(createChannelPane(channelId))}
+        />
       )}
       {dialog?.kind === "rename-session" && (
         <NameDialog
@@ -58,7 +64,7 @@ export function WorkspaceDialogs({
           title="Delete session?"
           description="This will permanently delete this session, its child sessions, and all their messages. This action cannot be undone."
           mutation={sessionMutations.deleteSession(dialog.sessionId)}
-          onSubmit={() => onSessionDelete(dialog.sessionId)}
+          onSubmit={() => closeRoot(createSessionPane(dialog.sessionId))}
           onOpenChange={closeOnDismiss}
         />
       )}

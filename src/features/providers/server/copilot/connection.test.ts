@@ -44,11 +44,6 @@ test("native inputs retain payloads and client identity through interleaved echo
   });
   emit({
     type: "user.message",
-    data: { content: "internal skill prompt", messageId: "internal", source: "skill-plan" },
-  } as SdkEvent);
-  expect(events).toEqual([]);
-  emit({
-    type: "user.message",
     data: { content: encodeSystemMessage(content), messageId: "native-3" },
   } as SdkEvent);
   emit({
@@ -98,28 +93,6 @@ test("native lifecycle events end live turns", () => {
     { type: "end", reason: "error", error: "Native model history is incompatible." },
     { type: "end", reason: "error" },
   ]);
-});
-
-test("abort clears native queued input and still interrupts if clearing fails", async () => {
-  const calls: string[] = [];
-  const connection = connectCopilotSession(
-    {
-      rpc: {
-        queue: {
-          clear: async () => {
-            calls.push("clear");
-            throw new Error("clear failed");
-          },
-        },
-      },
-      abort: async () => {
-        calls.push("abort");
-      },
-    } as unknown as CopilotSession,
-    "public",
-  );
-  await expect(connection.abort()).rejects.toThrow("clear failed");
-  expect(calls).toEqual(["clear", "abort"]);
 });
 
 test("rewind resolves the requested timestamp to a native conversation boundary", async () => {

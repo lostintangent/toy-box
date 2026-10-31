@@ -19,7 +19,7 @@ import { appDefinitionRegistry } from "./definitions";
 const listAppDefinitionsTool = defineTool("list_app_definitions", {
   description: "Lists installed Toy Box app definitions, including state schemas and defaults.",
   parameters: z.object({}).strict(),
-  handler: async () => JSON.stringify(await appDefinitionRegistry.list()),
+  handler: () => appDefinitionRegistry.list(),
 });
 
 const listAppsTool = defineTool("list_apps", {
@@ -29,17 +29,15 @@ const listAppsTool = defineTool("list_apps", {
   handler: async () => {
     const database = await getStateDatabase({ createIfMissing: false });
     const apps = database ? await new AppDatabase(database).list() : [];
-    return JSON.stringify(
-      apps.map(({ id, definitionId, title, color, revision, createdAt, updatedAt }) => ({
-        id,
-        definitionId,
-        title,
-        color,
-        revision,
-        createdAt,
-        updatedAt,
-      })),
-    );
+    return apps.map(({ id, definitionId, title, color, revision, createdAt, updatedAt }) => ({
+      id,
+      definitionId,
+      title,
+      color,
+      revision,
+      createdAt,
+      updatedAt,
+    }));
   },
 });
 
@@ -47,9 +45,7 @@ const getAppTool = defineTool("get_app", {
   description:
     "Gets an app's complete state, revision, JSON Schema, and direct preview URL. Pass its revision as update_app.expectedRevision.",
   parameters: appIdInputSchema,
-  handler: async ({ appId }) => {
-    return JSON.stringify(await getApp(appId));
-  },
+  handler: ({ appId }) => getApp(appId),
 });
 
 const registerAppTool = defineTool("register_app", {
@@ -60,16 +56,16 @@ const registerAppTool = defineTool("register_app", {
     try {
       const apps = await import("@apps/server");
       const definition = await apps.registerApp(input);
-      return JSON.stringify({
+      return {
         registered: definition.id,
         revision: definition.revision,
         note: "Definition active. Create a saved instance with create_app only if needed.",
-      });
+      };
     } catch (error) {
-      return JSON.stringify({
+      return {
         registered: false,
         error: error instanceof Error ? error.message : String(error),
-      });
+      };
     }
   },
 });
@@ -84,18 +80,18 @@ const validateArtifactAppTool = defineTool("validate_artifact_app", {
       ),
     })
     .strict(),
-  handler: async ({ path }, invocation) => {
+  handler: async ({ path }, sessionId) => {
     try {
       const apps = await import("@apps/server");
-      const file = sessionFile(invocation.sessionId, path);
+      const file = sessionFile(sessionId, path);
       await apps.getArtifactAppBundle(file);
-      return JSON.stringify({ valid: true, path, previewUrl: createWorkspaceFileUrl(file) });
+      return { valid: true, path, previewUrl: createWorkspaceFileUrl(file) };
     } catch (error) {
-      return JSON.stringify({
+      return {
         valid: false,
         path,
         error: error instanceof Error ? error.message : String(error),
-      });
+      };
     }
   },
 });
@@ -107,13 +103,13 @@ const createAppTool = defineTool("create_app", {
   handler: async (input) => {
     const apps = await import("@apps/server");
     const app = await apps.createApp(input);
-    return JSON.stringify({
+    return {
       appId: app.id,
       definitionId: app.definitionId,
       title: app.title,
       saved: true,
       previewUrl: createWorkspaceAppUrl(app.id),
-    });
+    };
   },
 });
 
@@ -124,14 +120,14 @@ const installAppTool = defineTool("install_app", {
   handler: async (input) => {
     const apps = await import("@apps/server");
     const { definition, app } = await apps.installApp(input);
-    return JSON.stringify({
+    return {
       installed: definition.id,
       revision: definition.revision,
       appId: app.id,
       title: app.title,
       saved: true,
       previewUrl: createWorkspaceAppUrl(app.id),
-    });
+    };
   },
 });
 
@@ -141,7 +137,7 @@ const uninstallAppTool = defineTool("uninstall_app", {
   handler: async (input) => {
     const apps = await import("@apps/server");
     await apps.uninstallApp(input);
-    return JSON.stringify({ uninstalled: input.id });
+    return { uninstalled: input.id };
   },
 });
 
@@ -151,8 +147,7 @@ const updateAppTool = defineTool("update_app", {
   parameters: updateAppInputSchema,
   handler: async (input) => {
     const apps = await import("@apps/server");
-    const result = await apps.updateApp(input);
-    return JSON.stringify(result);
+    return apps.updateApp(input);
   },
 });
 
@@ -162,7 +157,7 @@ const deleteAppTool = defineTool("delete_app", {
   handler: async ({ appId }) => {
     const apps = await import("@apps/server");
     await apps.deleteApp(appId);
-    return JSON.stringify({ deleted: appId });
+    return { deleted: appId };
   },
 });
 
@@ -176,7 +171,7 @@ export function createAppStateTools(appId?: string): Tool<any>[] {
       description:
         "Gets the owning app's state, revision, JSON Schema, and direct preview URL. Pass its revision as update_app.expectedRevision.",
       parameters: z.object({}).strict(),
-      handler: async () => JSON.stringify(await getApp(appId)),
+      handler: () => getApp(appId),
     }),
     defineTool("update_app", {
       description:
@@ -184,7 +179,7 @@ export function createAppStateTools(appId?: string): Tool<any>[] {
       parameters: appWorkerUpdateInputSchema,
       handler: async (input) => {
         const apps = await import("@apps/server");
-        return JSON.stringify(await apps.updateApp({ appId, ...input }));
+        return apps.updateApp({ appId, ...input });
       },
     }),
   ];

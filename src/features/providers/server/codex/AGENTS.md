@@ -15,8 +15,8 @@ here. No additional OpenAI npm SDK or Toy Box login is required.
 - `connection.ts` owns one native thread attachment, model selection, turn identity,
   steering, interruption, question batches, tool invocation, and ordered delivery.
   Browser subscriptions never own this connection or stop its execution.
-- `provider.ts` registers the supplied tools once as deferred native functions in the
-  `toy_box` namespace. Codex retains their definitions on resume; the connection
+- `provider.ts` registers the supplied tools once as native functions in the `toy_box`
+  namespace, deferring all but `alwaysLoad` tools. Codex retains their definitions on resume; the connection
   handles `item/tool/call` over the same stdio transport. One turn-owned abort
   controller cancels its handlers when interrupted, completed, or disconnected.
 - `projector.ts` exposes one native event-to-SessionEvents function for live notifications
@@ -36,8 +36,10 @@ here. No additional OpenAI npm SDK or Toy Box login is required.
   live and during history replay. Retrying `error` notifications are not transcript
   failures; the final `turn/completed` outcome is authoritative.
 - `protocol/index.ts` is the checked-in Apache-2.0 upstream protocol generated against CLI
-  0.165.0. Run `bun src/features/providers/server/codex/protocol/generate.ts` after a deliberate protocol
-  upgrade and verify changed methods against the installed CLI.
+  0.166.0. Run `bun src/features/providers/server/codex/protocol/generate.ts` after a deliberate protocol
+  upgrade and verify changed methods against the installed CLI. The generator formats its own output.
+  Adding a request, server request, or notification takes only its wire method name; upstream's unions
+  supply its types, so the transport delivers typed notifications and requests.
 
 ## Native constraints
 
@@ -72,6 +74,11 @@ Codex runs host tool calls in parallel, each as its own request. Successful term
 reject subsequent host calls in their turn. Interruption waits until Codex records the
 successful dynamic tool result, then targets that native turn. This ordering is essential to
 preserve the result in durable history.
+
+Stop interrupts the session tree's running turns. Native `thread/list` supplies the loaded
+subagents at any depth, so the connection tracks none. Each one is interrupted with an empty
+turn ID until `thread/interrupt` exists. An interrupted command keeps running as a background
+terminal, like any other process the agent launched.
 
 Verify real CLI create/resume, deferred tool discovery and invocation, questions, terminal results,
 subagents, rename, and deletion alongside protocol tests and the shared reducer/queue fixtures.

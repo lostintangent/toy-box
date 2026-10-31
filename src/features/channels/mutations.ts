@@ -8,7 +8,8 @@ import type {
 } from "@channels/model";
 import { channelQueries, type ChannelQueryData } from "@channels/queries";
 import { reduceChannelState } from "@channels/model/reducer";
-import { applyChannelListEvent, invalidateChannelListQuery } from "@channels/queryCache";
+import { invalidateChannelListQuery } from "@channels/cache";
+import { applyWorkspaceEvent } from "@workspace/sync";
 import {
   createChannel,
   createChannelMember,
@@ -45,7 +46,7 @@ export const channelMutations = {
     mutationOptions({
       mutationFn: () => deleteChannel({ data: { channelId } }),
       onSuccess: (_deleted, _variables, _result, { client }) => {
-        applyChannelListEvent(client, { type: "channel.deleted", channelId });
+        applyWorkspaceEvent(client, { type: "channel.deleted", channelId });
       },
     }),
   removeMember: (agentId: string) =>

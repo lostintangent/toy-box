@@ -34,12 +34,12 @@ const superviseWorkerMock = mock(
     };
   },
 );
-const cancelWorkerMock = mock(async (_sessionId: string) => false);
+const abortWorkerMock = mock(async (_sessionId: string) => false);
 
 mock.module("@workers/server/supervisor", () => ({
   ...realRuntimeWorkersModule,
   superviseWorker: superviseWorkerMock,
-  cancelWorker: cancelWorkerMock,
+  abortWorker: abortWorkerMock,
 }));
 mock.module("@files/server/paths", () => ({
   ...realFilePathsModule,
@@ -56,7 +56,7 @@ mock.module("@/server/database", () => ({
   },
 }));
 
-const { spawnWorkerFromRequest, spawnSessionWorker, spawnWorker, buildWorkerPrompt, cancelWorker } =
+const { spawnWorkerFromRequest, spawnWorker, buildWorkerPrompt, cancelWorker } =
   await import("./admission");
 const { finishWorker, hasWorker, getWorkers } = await import("./registry");
 const { subscribeWorkspaceEvents } = await import("@workspace/server/events");
@@ -79,8 +79,8 @@ beforeEach(() => {
       waitForCompletion: () => completion,
     };
   });
-  cancelWorkerMock.mockClear();
-  cancelWorkerMock.mockImplementation(async () => false);
+  abortWorkerMock.mockClear();
+  abortWorkerMock.mockImplementation(async () => false);
 });
 
 const file = sessionFile("toy-box-parent", "report.csv");
@@ -114,7 +114,11 @@ describe("workers", () => {
           : owner === "app"
             ? spawnWorkerFromRequest({ type: "app", appId: app.id, message: input.message })
             : owner === "session"
-              ? spawnSessionWorker({ parentSessionId: "parent", message: input.message })
+              ? spawnWorker({
+                  owner: { type: "session", parentSessionId: "parent" },
+                  retention: "durable",
+                  message: input.message,
+                })
               : spawnWorker({
                   owner: { type: "inbox" },
                   retention: "durable",
@@ -197,38 +201,6 @@ describe("workers", () => {
     await expect(eventWait).resolves.toEqual([{ status: "completed" }]);
     await waitFor(() => expect(hasWorker(sessionId)).toBe(false));
     expect(events.at(-1)).toEqual({ type: "worker.finished", sessionId });
-  });
-
-  test("admits a session-owned worker through the same completion lifecycle", async () => {
-    const completion = Promise.withResolvers<SessionCompletion>();
-    completions.push(completion.promise);
-
-    const worker = await spawnSessionWorker({
-      parentSessionId: "toy-box-parent",
-      name: "Reviewer",
-      ephemeral: true,
-      message: { content: "Review the change." },
-      location: { directory: "/repo", useWorktree: true },
-    });
-    onTestFinished(() => finishWorker(worker.sessionId));
-
-    expect(superviseWorkerMock).toHaveBeenCalledWith({
-      worker: {
-        createdAt: expect.any(String),
-        type: "session",
-        sessionId: worker.sessionId,
-        parentSessionId: "toy-box-parent",
-        name: "Reviewer",
-        ephemeral: true,
-      },
-      message: { content: "Review the change." },
-      location: { directory: "/repo", useWorktree: true },
-      retention: "ephemeral",
-    });
-
-    const wait = waitForSessions([worker.sessionId]);
-    completion.resolve({ status: "completed", response: "Looks good." });
-    await expect(wait).resolves.toEqual([{ status: "completed", response: "Looks good." }]);
   });
 
   test("shares an admitted worker's session completion with every waiter", async () => {
@@ -421,7 +393,7 @@ describe("workers", () => {
     ).resolves.toBe(true);
     expect(hasWorker(firstWorker.sessionId)).toBe(false);
     expect(hasWorker(secondWorker.sessionId)).toBe(true);
-    expect(cancelWorkerMock).toHaveBeenCalledWith(firstWorker.sessionId);
+    expect(abortWorkerMock).toHaveBeenCalledWith(firstWorker.sessionId);
 
     first.resolve({ status: "completed" });
     second.resolve({ status: "completed" });
@@ -442,7 +414,7 @@ describe("workers", () => {
       }),
     ).resolves.toBe(false);
     expect(hasWorker(worker.sessionId)).toBe(true);
-    expect(cancelWorkerMock).not.toHaveBeenCalled();
+    expect(abortWorkerMock).not.toHaveBeenCalled();
 
     completion.resolve({ status: "completed" });
   });

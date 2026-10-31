@@ -1,7 +1,18 @@
 import { z } from "zod";
+import { createPane } from "@workspace/model/panes";
 
 /** A display or window the host can share. */
 export type Screen = { id: string; title: string };
+
+declare module "@workspace/model/panes" {
+  interface WorkspacePanes {
+    /** A live view of one screen, which a session may have published as its preview. */
+    screen: { screenId: string };
+  }
+}
+
+export const createScreenPane = (screenId: string, sessionId?: string) =>
+  createPane("screen", screenId, { screenId, sessionId });
 
 /** Everything the host can share: every display, and its on-screen windows. */
 export type ScreenList = {

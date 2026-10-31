@@ -304,3 +304,18 @@ export type SessionUpdate = Pick<Session, "id"> &
     parentSessionId?: string;
     sessionType?: SessionType;
   };
+
+declare module "@workspace/model/events" {
+  interface WorkspaceEvents {
+    sessions:
+      | { type: "session.upserted"; session: SessionUpdate }
+      | { type: "session.deleted"; sessionId: string }
+      | { type: "session.touched"; sessionId: string }
+      | {
+          type: "session.running" | "session.waiting" | "session.background";
+          sessionId: string;
+          at: number;
+        }
+      | { type: "session.idle" | "session.unread" | "session.read"; sessionId: string };
+  }
+}

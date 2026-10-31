@@ -73,11 +73,11 @@ describe("SVG editor state", () => {
     editor.actions.resizeViewport({ width: 800, height: 600 });
     const before = editor.state.viewport;
 
-    editor.actions.zoomIn();
+    editor.actions.zoomAt("in");
 
     expect(editor.state.viewport.mode).toEqual({ type: "manual" });
     expect(editor.state.viewport.zoom).toBeGreaterThan(before.zoom);
-    editor.actions.zoomOut();
+    editor.actions.zoomAt("out");
     expect(editor.state.viewport.zoom).toBeCloseTo(before.zoom);
   });
 

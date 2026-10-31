@@ -52,8 +52,8 @@ windows only: desktop widgets, the menu bar and overlays sit on other window lay
 Displays are always listed; the tool and the screen browser share
 `filterScreenWindows` over title and app name. The sidebar's Browse menu opens the
 screen browser, `ScreenBrowserDialog`, in both layouts. It searches locally and
-shows each screen as a JPEG thumbnail, 960 pixels at most. Picking one uses the
-route's ordinary `onOpenScreen` path.
+shows each screen as a JPEG thumbnail, 960 pixels at most. Picking one opens it
+through the workspace's ordinary `openRoot` verb.
 Agents have only `list_screens`. They present a display or window with
 `set_session_preview`, clear it with `null`, or use the channel preview as lead.
 Automation belongs to provider computer-use tools or playwright-cli, not Screens.

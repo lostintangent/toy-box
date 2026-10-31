@@ -1,6 +1,7 @@
-/** Install the current tables whose meaning is owned by Channels. */
-export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
-  await db.unsafe(`
+/** The versions of the tables owned by Channels, in order. To change a table,
+ * append a version. */
+export default [
+  `
     CREATE TABLE IF NOT EXISTS channels (
       id              TEXT PRIMARY KEY,
       name            TEXT NOT NULL,
@@ -93,5 +94,5 @@ export async function initializeChannelSchema(db: Bun.SQL): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_channel_routines_next_at
       ON channel_routines(next_at);
-  `);
-}
+  `,
+];

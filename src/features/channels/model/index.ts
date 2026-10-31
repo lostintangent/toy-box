@@ -7,6 +7,7 @@ import {
   type AttachmentReference,
 } from "@/shared/attachments/model";
 import { cronSchema } from "@/shared/cron";
+import { createPane } from "@workspace/model/panes";
 import { previewSchema, type Preview } from "@/shared/preview";
 import type { ChannelAgentPresence } from "./presence";
 import { hasChanges } from "./changes";
@@ -24,10 +25,14 @@ import {
 export * from "./agent";
 export * from "./tasks";
 
-const durableIdSchema = z.string().trim().min(1).max(255);
+export const durableIdSchema = z.string().trim().min(1).max(255);
 const channelNameSchema = z.string().trim().min(1).max(100);
 const channelPurposeSchema = z.string().trim().min(1).max(12_000);
-const channelDirectorySchema = z.string().trim().min(1).max(4_096);
+export const channelPathSchema = z.string().trim().min(1).max(4_096);
+const channelDirectorySchema = channelPathSchema.startsWith(
+  "/",
+  "Use an absolute working directory.",
+);
 const channelMessageTextSchema = z.string().trim().max(12_000);
 export const channelMessageContentSchema = channelMessageTextSchema.min(1);
 export const channelReactionKindSchema = z.enum(["done", "agree", "celebrate", "love", "laugh"]);
@@ -75,6 +80,26 @@ export type ChannelList = {
   channels: Channel[];
   members: Pick<ChannelMember, "id" | "channelId" | "name" | "avatar">[];
 };
+
+declare module "@workspace/model/events" {
+  interface WorkspaceEvents {
+    channels:
+      | { type: "channel.upserted"; channel: Channel }
+      | { type: "channel.deleted"; channelId: string }
+      | { type: "channel.member.upserted"; member: ChannelList["members"][number] }
+      | { type: "channel.member.deleted"; channelId: string; agentId: string };
+  }
+}
+
+declare module "@workspace/model/panes" {
+  interface WorkspacePanes {
+    /** One channel's shared conversation. */
+    channel: { channelId: string };
+  }
+}
+
+export const createChannelPane = (channelId: string) =>
+  createPane("channel", channelId, { channelId });
 
 /** The catalog identifies teammates; their live details belong to the open Channel. */
 export function channelMemberIdentity({
@@ -262,7 +287,7 @@ export const channelSystemMessageContentSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("channel_directory_changed"),
       actor: channelMessageActorSchema,
-      directory: channelDirectorySchema.nullable(),
+      directory: channelPathSchema.nullable(),
     })
     .strict(),
   z

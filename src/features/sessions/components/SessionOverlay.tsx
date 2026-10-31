@@ -2,18 +2,15 @@ import { useState } from "react";
 import { MessageCircle, X } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
-import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
+import { useSessionActivity } from "../useSessionActivity";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { cn } from "@/shared/utils";
 import {
   CONTAINER_OVERLAY_BOUNDS,
   SESSION_OVERLAY_BASE_CLASS,
 } from "@workspace/components/overlayWindow";
-import {
-  PANE_OVERLAY_BUTTON_CLASS,
-  PANE_OVERLAY_ICON_CLASS,
-} from "@workspace/components/panes/shell/paneControls";
-import { PaneStatus } from "@workspace/components/panes/shell/PaneSlots";
+import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "@/shared/panes/paneControls";
+import { PaneStatus } from "@/shared/panes/PaneSlots";
 import { SessionPane } from "./SessionPane";
 
 export function SessionOverlay({
@@ -24,7 +21,7 @@ export function SessionOverlay({
   isVisible?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const { running, waiting } = useWorkspaceSessionActivity(sessionId);
+  const { running, waiting } = useSessionActivity(sessionId);
   const trigger = (
     <button
       type="button"

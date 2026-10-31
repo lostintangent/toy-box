@@ -1,3 +1,8 @@
+## 📅 v0.3.5 (10/30/26)
+
+- Installed-but-unautheticated providers will correctly show as disabled
+- Improved CLI upgrade experience, by allowing your existing SQLite databases to be migrated as the schema changes
+
 ## 📅 v0.3.4 (10/28/26)
 
 - The file browser now shows gitignored files/folders as muted

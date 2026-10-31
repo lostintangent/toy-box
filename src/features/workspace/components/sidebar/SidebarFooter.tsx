@@ -3,7 +3,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { inboxQueries } from "@inbox/queries";
 import { Separator } from "@/shared/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
+import { useSessionsActivity } from "@sessions/useSessionActivity";
 import { executeCommand } from "@/shared/commands/command";
 import { useCommand } from "@/shared/commands/CommandProvider";
 import { BrowseMenu, HyperMenu, TerminalToggle } from "./SidebarActions";
@@ -16,8 +16,8 @@ export function SidebarFooter({
 }) {
   const appTitle = import.meta.env.VITE_APP_TITLE;
   const { data: inboxEntries } = useSuspenseQuery(inboxQueries.list());
-  const hasUnreadInbox = useWorkspaceSelector((workspace) =>
-    inboxEntries.some((entry) => workspace.sessionStates[entry.id]?.status === "unread"),
+  const hasUnreadInbox = useSessionsActivity((activities) =>
+    inboxEntries.some((entry) => activities[entry.id]?.status === "unread"),
   );
   const openInbox = useCommand("workspace.openInbox");
   const showInboxUnreadIndicator = !openInbox?.checked && hasUnreadInbox;

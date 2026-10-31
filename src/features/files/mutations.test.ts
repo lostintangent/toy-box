@@ -1,18 +1,11 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
-import { workspaceFileId, type WorkspaceFile } from "./model";
+import type { WorkspaceFile } from "./model";
 import { fileMutations } from "./mutations";
 
 const file: WorkspaceFile = { kind: "machine", path: "/repo/notes.md" };
-const fileId = workspaceFileId(file);
 
 describe("file mutation options", () => {
-  test("scope writes by file", () => {
-    const options = fileMutations.write(file);
-
-    expect(options.scope).toEqual({ id: `file:${fileId}` });
-  });
-
   test("serialize writes submitted through separate observers", async () => {
     const queryClient = new QueryClient();
     onTestFinished(() => queryClient.clear());

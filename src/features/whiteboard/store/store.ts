@@ -1,5 +1,5 @@
 import { createStore } from "@tanstack/store";
-import type { SvgDocument } from "../document";
+import { topLevelElements, type SvgDocument } from "../document";
 import { recordHistoryEntry, redoHistory, undoHistory } from "../document/history";
 import { styleElements } from "../document/style";
 import type {
@@ -43,9 +43,7 @@ export type EditorActions = {
 
   resizeViewport: (size: Size) => void;
   fitContent: () => void;
-  zoomIn: () => void;
-  zoomOut: () => void;
-  zoomAt: (direction: "in" | "out", viewportPoint: Point) => void;
+  zoomAt: (direction: "in" | "out", viewportPoint?: Point) => void;
   panBy: (viewportDelta: Point) => void;
   transformViewport: (scale: number, from: Point, to: Point) => void;
 
@@ -103,6 +101,19 @@ export function createEditorStore(document: SvgDocument, readOnly: boolean) {
         return true;
       }
 
+      function setManualViewport(
+        position: (viewport: Viewport) => Pick<Viewport, "zoom" | "panX" | "panY">,
+      ): void {
+        setState((current) => ({
+          ...current,
+          viewport: positionViewport(
+            current.viewport,
+            { type: "manual" },
+            position(current.viewport),
+          ),
+        }));
+      }
+
       return {
         setReadOnly(nextReadOnly) {
           setState((current) =>
@@ -155,7 +166,7 @@ export function createEditorStore(document: SvgDocument, readOnly: boolean) {
           setState((current) => (current.gesture ? { ...current, gesture: null } : current));
         },
         select(selection) {
-          const nextSelection = topLevelSelection(selection);
+          const nextSelection = topLevelElements(selection);
           setState((current) => {
             const nextTool = nextSelection.length > 0 ? "select" : current.activeTool;
             return sameElements(current.selection, nextSelection) && current.activeTool === nextTool
@@ -223,55 +234,14 @@ export function createEditorStore(document: SvgDocument, readOnly: boolean) {
             ),
           }));
         },
-        zoomIn() {
-          setState((current) => ({
-            ...current,
-            viewport: positionViewport(
-              current.viewport,
-              { type: "manual" },
-              zoomViewport(current.viewport, "in"),
-            ),
-          }));
-        },
-        zoomOut() {
-          setState((current) => ({
-            ...current,
-            viewport: positionViewport(
-              current.viewport,
-              { type: "manual" },
-              zoomViewport(current.viewport, "out"),
-            ),
-          }));
-        },
         zoomAt(direction, viewportPoint) {
-          setState((current) => ({
-            ...current,
-            viewport: positionViewport(
-              current.viewport,
-              { type: "manual" },
-              zoomViewport(current.viewport, direction, viewportPoint),
-            ),
-          }));
+          setManualViewport((viewport) => zoomViewport(viewport, direction, viewportPoint));
         },
         panBy(viewportDelta) {
-          setState((current) => ({
-            ...current,
-            viewport: positionViewport(
-              current.viewport,
-              { type: "manual" },
-              panViewport(current.viewport, viewportDelta),
-            ),
-          }));
+          setManualViewport((viewport) => panViewport(viewport, viewportDelta));
         },
         transformViewport(scale, from, to) {
-          setState((current) => ({
-            ...current,
-            viewport: positionViewport(
-              current.viewport,
-              { type: "manual" },
-              transformViewport(current.viewport, scale, from, to),
-            ),
-          }));
+          setManualViewport((viewport) => transformViewport(viewport, scale, from, to));
         },
         undo() {
           return traverseHistory("undo");
@@ -317,7 +287,7 @@ function applyStyleChange(
   }
 }
 
-function resizeViewport(viewport: Viewport, page: Rect | null, size: Size): Viewport {
+function resizeViewport(viewport: Viewport, page: Rect, size: Size): Viewport {
   if (viewport.mode.type === "manual") return { ...viewport, size };
   const position = resolveViewport(viewport.mode, page, size);
   return { ...viewport, ...position, size };
@@ -336,18 +306,4 @@ function sameElements(
   right: readonly SVGGraphicsElement[],
 ): boolean {
   return left.length === right.length && left.every((element, index) => element === right[index]);
-}
-
-/** Prevents a selected group and its descendant from receiving the same transform twice. */
-function topLevelSelection(elements: readonly SVGGraphicsElement[]): SVGGraphicsElement[] {
-  const unique = [...new Set(elements)];
-  const selected = new Set<Element>(unique);
-  return unique.filter((element) => {
-    let parent = element.parentElement;
-    while (parent) {
-      if (selected.has(parent)) return false;
-      parent = parent.parentElement;
-    }
-    return true;
-  });
 }

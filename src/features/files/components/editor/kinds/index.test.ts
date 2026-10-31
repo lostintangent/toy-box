@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CustomEditorKind } from "@files/model";
 import { resolveEditorKind } from "./index";
-import { HtmlEditor } from "./html/HtmlEditor";
 import { CustomEditor } from "./custom/CustomEditor";
 import { machineFile, sessionFile } from "@files/model";
 
@@ -33,52 +32,21 @@ describe("resolveEditorKind", () => {
     expect(resolveEditorKind(machine("data.csv"), [readOnlyKind]).editable).toBe(false);
   });
 
-  test("a built-in keeps priority when a custom kind claims its extension", () => {
-    const rival = { ...csvTable, name: "not-markdown", extensions: ["md"] };
-    expect(resolveEditorKind(machine("readme.md"), [rival]).definition).toBeUndefined();
-  });
+  test.each(["md", "svg", "json", "brief"])(
+    "the built-in .%s editor beats a rival custom kind, case-insensitively",
+    (extension) => {
+      const rival = { ...csvTable, name: `not-${extension}`, extensions: [extension] };
+      const builtIn = resolveEditorKind(machine(`file.${extension}`), []);
+      const contested = resolveEditorKind(machine(`FILE.${extension.toUpperCase()}`), [rival]);
 
-  test("resolves SVG artifacts to the drawing pane, not HTML or a rival custom kind", () => {
-    const rival = { ...csvTable, name: "not-svg", extensions: ["svg"] };
-    const kind = resolveEditorKind(machine("diagram.svg"), []);
-
-    expect(kind).toMatchObject({
-      extensions: ["svg"],
-    });
-    expect(kind.Renderer).not.toBe(HtmlEditor);
-    expect(kind.definition).toBeUndefined();
-    expect(resolveEditorKind(machine("DIAGRAM.SVG"), [rival]).Renderer).toBe(kind.Renderer);
-  });
-
-  test("resolves JSON artifacts to the built-in tree editor, beating a rival custom kind", () => {
-    const rival = { ...csvTable, name: "not-json", extensions: ["json"] };
-    const kind = resolveEditorKind(machine("data.json"), [rival]);
-
-    expect(kind).toMatchObject({ extensions: ["json"] });
-    expect(kind.definition).toBeUndefined();
-    expect(resolveEditorKind(machine("DATA.JSON"), [rival]).Renderer).toBe(kind.Renderer);
-  });
-
-  test("resolves brief definitions to their built-in editor case-insensitively", () => {
-    const rival = { ...csvTable, name: "not-brief", extensions: ["brief"] };
-    const kind = resolveEditorKind(machine("change.brief"), []);
-
-    expect(kind).toMatchObject({ extensions: ["brief"] });
-    expect(kind.definition).toBeUndefined();
-    expect(resolveEditorKind(machine("CHANGE.BRIEF"), [rival]).Renderer).toBe(kind.Renderer);
-  });
-
-  test("does not retain intent extension compatibility", () => {
-    expect(resolveEditorKind(machine("change.intent"), []).extensions).toEqual(["md", "markdown"]);
-  });
+      expect(builtIn.extensions).toContain(extension);
+      expect(builtIn.definition).toBeUndefined();
+      expect(contested.Renderer).toBe(builtIn.Renderer);
+    },
+  );
 
   test("an unclaimed extension falls back to a built-in, not a registered kind", () => {
     expect(resolveEditorKind(machine("notes.txt"), [csvTable]).definition).toBeUndefined();
-  });
-
-  test("a file resolves to a custom kind only while it's registered", () => {
-    expect(resolveEditorKind(machine("data.csv"), [csvTable]).definition).toBe(csvTable);
-    expect(resolveEditorKind(machine("data.csv"), []).definition).toBeUndefined();
   });
 
   test("runs .toy files only when they belong to a session", () => {

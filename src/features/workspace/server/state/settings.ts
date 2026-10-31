@@ -1,54 +1,27 @@
-import {
-  areSettingsEqual,
-  DEFAULT_SETTINGS,
-  normalizeSettings,
-} from "@workspace/model/config/settings";
+import { DEFAULT_SETTINGS, normalizeSettings } from "@workspace/model/config/settings";
 import type { Settings } from "@workspace/model/config/settings";
 import { getStateDatabase } from "@/server/database";
 
+// Settings are one document in a singleton row.
 const SETTINGS_ROW_ID = 1;
 
-type SettingsRow = {
-  value: string;
-};
-
-/** Durable repository for the workspace's singleton settings document. */
-export class SettingsDatabase {
-  constructor(private readonly db: Bun.SQL) {}
-
-  async get(): Promise<Settings> {
-    const row = await this.#getRow();
-    return row ? deserializeSettings(row.value) : DEFAULT_SETTINGS;
-  }
-
-  async set(settings: Settings): Promise<boolean> {
-    const current = await this.#getRow();
-    if (current && areSettingsEqual(deserializeSettings(current.value), settings)) return false;
-
-    const value = JSON.stringify(settings);
-    await this.db`
-      INSERT INTO settings (id, value)
-      VALUES (${SETTINGS_ROW_ID}, ${value})
-      ON CONFLICT(id) DO UPDATE SET value = excluded.value
-    `;
-    return true;
-  }
-
-  async #getRow(): Promise<SettingsRow | undefined> {
-    const [row] = await this.db<SettingsRow[]>`
-      SELECT value FROM settings WHERE id = ${SETTINGS_ROW_ID}
-    `;
-    return row;
-  }
-}
-
 export async function getSettings(): Promise<Settings> {
-  const database = await getStateDatabase({ createIfMissing: false });
-  return database ? new SettingsDatabase(database).get() : DEFAULT_SETTINGS;
+  const db = await getStateDatabase({ createIfMissing: false });
+  if (!db) return DEFAULT_SETTINGS;
+
+  const [row] = await db<{ value: string }[]>`
+    SELECT value FROM settings WHERE id = ${SETTINGS_ROW_ID}
+  `;
+  return row ? deserializeSettings(row.value) : DEFAULT_SETTINGS;
 }
 
-export async function persistSettings(settings: Settings): Promise<boolean> {
-  return new SettingsDatabase(await getStateDatabase()).set(settings);
+export async function saveSettings(settings: Settings): Promise<void> {
+  const db = await getStateDatabase();
+  await db`
+    INSERT INTO settings (id, value)
+    VALUES (${SETTINGS_ROW_ID}, ${JSON.stringify(settings)})
+    ON CONFLICT(id) DO UPDATE SET value = excluded.value
+  `;
 }
 
 function deserializeSettings(value: string): Settings {

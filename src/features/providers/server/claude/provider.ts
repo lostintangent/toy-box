@@ -2,7 +2,7 @@ import { deleteSession, getSessionInfo, listSessions } from "@anthropic-ai/claud
 import type { SDKControlGetUsageResponse } from "@anthropic-ai/claude-agent-sdk";
 import { homedir } from "node:os";
 import type { ProviderSubscription } from "@providers/model";
-import type { SessionProvider } from "@providers/server/provider";
+import { SessionNotFoundError, type SessionProvider } from "@providers/server/provider";
 import { ClaudeConnection } from "./connection";
 import { claudeSkillPlugins, closeClaudeQuery, startClaudeQuery, stopClaude } from "./client";
 import { readClaudeHistory, readTranscriptDirectory } from "./history";
@@ -12,6 +12,11 @@ import { toModelInfo } from "./models";
 export const claudeProvider: SessionProvider = {
   id: "claude",
   name: "Claude Agent",
+  async isSignedIn() {
+    // The SDK's accountInfo only implies sign-in; the CLI reports it directly.
+    const status = await Bun.$`claude auth status`.cwd(homedir()).nothrow().quiet().json();
+    return status.loggedIn === true;
+  },
   async listModels() {
     const native = startClaudeQuery({ persistSession: false, cwd: homedir() });
     try {
@@ -89,7 +94,10 @@ export const claudeProvider: SessionProvider = {
     const info = await getSessionInfo(nativeId);
     return info !== undefined && info.lastModified < capturedAt;
   },
-  delete: deleteSession,
+  async delete(nativeId) {
+    if (!(await getSessionInfo(nativeId))) throw new SessionNotFoundError(nativeId);
+    await deleteSession(nativeId);
+  },
   stop: stopClaude,
 };
 

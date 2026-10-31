@@ -3,12 +3,12 @@
 // and presentation policy without entering the Session kernel.
 
 import type { SessionOwnership, SessionsState, SessionType } from "@sessions/model";
+import { getSessionsActivity } from "@sessions/server/state/activity";
 import { broadcast } from "@workspace/server/events";
 import { getStateDatabase } from "@/server/database";
 import { getHyperSessionIds, hasHyperSession } from "@workspace/server/state/hyperSessions";
 import { draftSessionId, type DraftKey } from "@workspace/model/state/drafts";
 import { getSavedDrafts } from "@workspace/server/state/drafts";
-import { getSessionStates } from "@workspace/server/state/sessions";
 import { getSettings } from "@workspace/server/state/settings";
 
 const RECENT_SESSION_LIMIT = 250;
@@ -37,7 +37,7 @@ export async function readSessionCatalog(
     )
     .slice(0, RECENT_SESSION_LIMIT);
   for (const { id } of recentSessions) retainedSessionIds.add(id);
-  for (const id of Object.keys(getSessionStates())) retainedSessionIds.add(id);
+  for (const id of Object.keys(getSessionsActivity())) retainedSessionIds.add(id);
   // Unsent drafts keep their sessions in the catalog, like live and unread work.
   for (const [key, draft] of Object.entries(getSavedDrafts())) {
     const sessionId = draftSessionId(key as DraftKey);
@@ -53,16 +53,15 @@ export async function readSessionCatalog(
 /** Resolve the role claimed for a Session by application features. */
 export async function resolveSessionType(sessionId: string): Promise<SessionType> {
   const database = await getStateDatabase({ createIfMissing: false });
-  const [claims] = database
-    ? await database<{ automation: number; worker: number }[]>`
-        SELECT
-          EXISTS(SELECT 1 FROM automations WHERE id = ${sessionId}) AS automation,
-          EXISTS(SELECT 1 FROM workers WHERE session_id = ${sessionId}) AS worker
-      `
+  const types: SessionType[] = database
+    ? (
+        await database<{ type: SessionType }[]>`
+          SELECT 'automation' AS type FROM automations WHERE id = ${sessionId}
+          UNION ALL
+          SELECT 'worker' AS type FROM workers WHERE session_id = ${sessionId}
+        `
+      ).map(({ type }) => type)
     : [];
-  const types: SessionType[] = [];
-  if (claims?.automation) types.push("automation");
-  if (claims?.worker) types.push("worker");
   if (hasHyperSession(sessionId)) types.push("hyper");
   if (types.length > 1) {
     throw new Error(`Session ${sessionId} has conflicting types: ${types.join(", ")}`);
@@ -88,6 +87,9 @@ export async function detachManagedSession(sessionId: string): Promise<void> {
       broadcast({ type: "inbox.entry.deleted", entryId: sessionId });
     }
   }
+  // Pending work registered for or under the session ends with it.
+  const { finishWorkersForSession } = await import("@workers/server/registry");
+  finishWorkersForSession(sessionId);
 }
 
 async function readSessionOwnership(): Promise<SessionsState["ownership"]> {

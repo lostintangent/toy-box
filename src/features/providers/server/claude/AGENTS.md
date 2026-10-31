@@ -33,13 +33,19 @@ native replay carries its clientId.
 Model and reasoning effort change together through the session-scoped `applyFlagSettings` API.
 Native messages omit effort, so live model changes carry the last one applied.
 
+Stop interrupts with `cancelQueued`, so steers the turn has not reached are cancelled instead of
+running as their own turn. The SDK's `interrupt()` type omits that option, a listed native
+workaround. An interrupt also ends the running command and background agents, while background
+shells the agent launched keep running.
+
 Native permissions follow Toy Box's trusted-owner policy. Connections pin
 `permissionMode: "default"` so `canUseTool` applies it; otherwise the owner's native default or
 auto mode would. `AskUserQuestion` goes to the shared question UI when the session's role allows
 it; each native question is its own tool call and is answered individually.
 
-Enable `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` and `CLAUDE_CODE_BG_TASKS_REPORT_RUNNING`: native
-`session_state_changed: idle` follows background work and its notifications.
+Enable `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS`: native `session_state_changed: idle` follows
+background agents and their notifications by default. It does not wait for the main thread's
+background shells, and one that finishes later wakes the session.
 `CLAUDE_CODE_ENABLE_TODO_TOOLS` keeps native checklists available on newer models.
 
 Flag settings turn on `autoCompactEnabled` whatever the owner's Claude setting, so long

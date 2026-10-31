@@ -1,9 +1,8 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { MutationObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { SessionsState, SessionState } from "@sessions/model";
+import type { SessionActivity, SessionsActivity } from "@sessions/model/activity";
 import { createEmptySessionsState, sessionQueries } from "@sessions/queries";
-import { workspaceQueries } from "@workspace/queries";
-import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model/state/reducer";
 import { createInitialSessionState } from "@sessions/model/reducer";
 import type { Automation, AutomationOptions } from "./model";
 import { automationMutations } from "./mutations";
@@ -60,7 +59,7 @@ describe("automation client behavior", () => {
       mutationFn: async () => false,
     }).mutate();
 
-    expect(readWorkspace(queryClient)).toEqual(createEmptyWorkspaceState());
+    expect(readActivity(queryClient)).toEqual({});
     expect(readSessions(queryClient).sessions).toEqual([]);
     expect(readSessions(queryClient).ownership).toEqual({});
     expect(queryClient.getQueryData<Automation[]>(automationQueries.listKey())).toEqual([]);
@@ -85,7 +84,7 @@ describe("automation client behavior", () => {
 
     const result = runMutation.mutate("requested-run");
     await dispatched.promise;
-    expect(readWorkspace(queryClient).sessionStates).toEqual({});
+    expect(readActivity(queryClient)).toEqual({});
     expect(readSessions(queryClient).sessions[0]?.provider).toBeUndefined();
     const optimistic = readSessionSnapshot(queryClient)!;
     expect(optimistic.model).toEqual(automation.model);
@@ -164,7 +163,7 @@ describe("automation client behavior", () => {
 
       expect(readSessionSnapshot(queryClient)).toEqual(snapshot);
       expect(readSessions(queryClient)).toEqual(sessions);
-      expect(readWorkspace(queryClient).sessionStates).toEqual({});
+      expect(readActivity(queryClient)).toEqual({});
     },
   );
 
@@ -193,18 +192,12 @@ describe("automation client behavior", () => {
   );
 });
 
-function createQueryClient(
-  seed?: Automation,
-  sessionState?: WorkspaceState["sessionStates"][string],
-): QueryClient {
+function createQueryClient(seed?: Automation, activity?: SessionActivity): QueryClient {
   const queryClient = new QueryClient();
-  const workspace: WorkspaceState = seed
-    ? {
-        ...createEmptyWorkspaceState(),
-        sessionStates: sessionState ? { [seed.id]: sessionState } : {},
-      }
-    : createEmptyWorkspaceState();
-  queryClient.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), workspace);
+  queryClient.setQueryData<SessionsActivity>(
+    sessionQueries.activityKey(),
+    seed && activity ? { [seed.id]: activity } : {},
+  );
   queryClient.setQueryData(automationQueries.listKey(), seed ? [seed] : []);
   queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), {
     ...createEmptySessionsState(),
@@ -225,8 +218,8 @@ function createQueryClient(
   return queryClient;
 }
 
-function readWorkspace(queryClient: QueryClient): WorkspaceState {
-  return queryClient.getQueryData<WorkspaceState>(workspaceQueries.stateKey())!;
+function readActivity(queryClient: QueryClient): SessionsActivity {
+  return queryClient.getQueryData<SessionsActivity>(sessionQueries.activityKey())!;
 }
 
 function readSessions(queryClient: QueryClient): SessionsState {

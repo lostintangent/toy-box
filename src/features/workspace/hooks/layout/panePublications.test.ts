@@ -2,10 +2,10 @@ import { describe, expect, onTestFinished, test } from "bun:test";
 import { useSelector } from "@tanstack/react-store";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
-import { INBOX_PANE, createEditorPane } from "@workspace/model/panes";
 import { sessionFile } from "@files/model";
+import { createEditorPane } from "@files/model/panes";
 import { workspaceSurfaces } from "./surface";
-import { createPanePublicationsStore, updateEditorPaneMode } from "./panePublications";
+import { createPanePublicationsStore } from "./panePublications";
 
 describe("pane publication store", () => {
   test("preserves one publisher's selection when another publisher changes", () => {
@@ -73,23 +73,5 @@ describe("pane publication store", () => {
 
     expect(workspaceSurfaces.main.panePublications.get()[publisherPaneId]).toEqual([pane]);
     expect(workspaceSurfaces.hyper.panePublications.get()[publisherPaneId]).toBeUndefined();
-  });
-});
-
-describe("published pane layout", () => {
-  test("updates an artifact published by a pane other than its source session", () => {
-    const artifactPane = createEditorPane(sessionFile("inbox-1", "result.md"), "edit");
-    const current = { [INBOX_PANE.id]: [artifactPane] };
-
-    expect(updateEditorPaneMode(current, artifactPane, "shared")).toEqual({
-      [INBOX_PANE.id]: [{ ...artifactPane, mode: "shared" }],
-    });
-  });
-
-  test("preserves identity when the requested mode is already active", () => {
-    const artifactPane = createEditorPane(sessionFile("inbox-1", "result.md"), "edit");
-    const current = { [INBOX_PANE.id]: [artifactPane] };
-
-    expect(updateEditorPaneMode(current, artifactPane, "edit")).toBe(current);
   });
 });

@@ -31,7 +31,9 @@ import { useModels } from "@providers/useModels";
 import { resolveSessionLocation } from "@sessions/components/location/locationDisplay";
 import { sessionMutations } from "@sessions/mutations";
 import type { Session } from "@sessions/model";
+import { createSessionPane } from "@sessions/model/panes";
 import { getRecentDirectories } from "@sessions/model/recentDirectories";
+import { useSessionsActivity } from "@sessions/useSessionActivity";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
 import {
   addToWorkspace,
@@ -87,8 +89,8 @@ export function usePaletteView(
   const prompt = page.query.trim();
 
   const providedCommands = useCommands();
-  const workspace = useWorkspaceSelector(({ sessionStates, settings }) => ({
-    sessionStates,
+  const activities = useSessionsActivity((activities) => activities);
+  const workspace = useWorkspaceSelector(({ settings }) => ({
     pinnedIds: settings.pinnedSessionIds,
     disabledProviders: settings.disabledProviders,
     useWorktree: settings.useWorktree,
@@ -149,7 +151,7 @@ export function usePaletteView(
     );
   const toSessionItem = (session: Session) =>
     sessionItem(session, {
-      state: workspace.sessionStates[session.id],
+      activity: activities[session.id],
       isOpen: openIds.has(session.id),
       pin: { isPinned: pinnedIds.has(session.id), toggle: () => togglePin(session.id) },
       navigation,
@@ -233,7 +235,8 @@ export function usePaletteView(
     location: { directory, useWorktree },
   };
   // The session starts headlessly, as from the Inbox, and its pane then attaches to the running turn.
-  const launchSession = async () => (await startSession(sessionLaunch)).sessionId;
+  const launchSession = async () =>
+    createSessionPane((await startSession(sessionLaunch)).sessionId);
 
   // A query that names nothing can still start work, with the query as its prompt.
   const launches: PaletteItem[] =
@@ -247,10 +250,10 @@ export function usePaletteView(
             icon: MessageCirclePlus,
             verb: "Start",
             actions: [
-              ...addToWorkspace(canAdd, async () => navigation.addSession(await launchSession())),
+              ...addToWorkspace(canAdd, async () => navigation.openRoot(await launchSession())),
               ...launchOptions,
             ],
-            run: async () => navigation.openSession(await launchSession()),
+            run: async () => navigation.selectRoot(await launchSession()),
           },
           {
             id: "palette.launch.inbox",
@@ -295,7 +298,7 @@ export function usePaletteView(
       }
 
       const triage = triageSessions(sessions, {
-        states: workspace.sessionStates,
+        activities,
         pinnedIds: workspace.pinnedIds,
         openIds: openSessionIds,
       });

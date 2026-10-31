@@ -6,7 +6,7 @@ import { RelativeTime } from "@/shared/ui/relative-time";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/shared/ui/dropdown-menu";
 import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
 import { SidebarSessionItem } from "@sessions/components/sidebar/SidebarSessionItem";
-import { useWorkspaceSessionActivity } from "@workspace/hooks/state";
+import { useSessionActivity } from "@sessions/useSessionActivity";
 import { automationMutations } from "../mutations";
 import type { Automation } from "../model";
 
@@ -25,7 +25,7 @@ export function AutomationListItem({
 }: AutomationListItemProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const runMutation = useMutation(automationMutations.run(automation));
-  const activity = useWorkspaceSessionActivity(automation.id);
+  const activity = useSessionActivity(automation.id);
   const isRunning = activity.running || runMutation.isPending;
   const hasUnreadActivity = activity.unread;
   const canOpenSession = Boolean(automation.lastRunAt) || isRunning || hasUnreadActivity;

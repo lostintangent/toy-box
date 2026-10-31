@@ -8,7 +8,7 @@ import {
 } from "./model";
 import { listChannels } from "@channels/server/functions";
 import { ChannelStreamError, streamChannel } from "./stream";
-import { removeChannelFromList } from "./queryCache";
+import { removeChannelFromList } from "./cache";
 
 /** Browser arrival is distinct from cached content and from later live updates. */
 export type ChannelQueryData = ChannelState & {

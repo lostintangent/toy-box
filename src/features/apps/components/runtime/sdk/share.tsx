@@ -6,6 +6,7 @@ import { useSelector } from "@tanstack/react-store";
 import { Button } from "@/shared/ui/button";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { appMutations } from "@apps/mutations";
+import { createAppPane } from "@apps/model";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,7 +38,7 @@ export function AppSharePicker({
     shareMutation.mutate(targetAppId, {
       onSuccess: () => {
         setOpen(false);
-        surface.openApp(targetAppId);
+        surface.reveal(createAppPane(targetAppId));
       },
     });
   }
