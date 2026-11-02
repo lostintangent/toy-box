@@ -30,11 +30,11 @@ The sender builds Apple's headers and payload at `/{environment}/3/device/{token
 The relay adds only its credential and pinned topic, returning Apple's response unchanged.
 Relay failures are 404 or Cloudflare's 5xx, never token-pruning reasons. Transport errors stay failures, not deliveries.
 Alerts carry display-ready channel names and request/completion text, the requester's Reply handle,
-and registration-qualified channel threads. Their text and Live Activity content pass through the
-relay and Apple without application-level encryption, as approved by the user. The relay streams
-the body without parsing or logging it, and observability is disabled. Only the relay operator
-supplies Apple signing credentials. The phone service checks registration and requests a widget
-reload, without fetching notification content.
+a request's suggested replies, and registration-qualified channel threads. Their text and Live
+Activity content pass through the relay and Apple without application-level encryption, as
+approved by the user. The relay streams the body without parsing or logging it, and observability
+is disabled. Only the relay operator supplies Apple signing credentials. The phone service checks
+registration and requests a widget reload, without fetching notification content.
 
 `publishBadge(topics, countFactory)` uses the same serial queue and stays lazy without eligible alert subscribers.
 Channels supplies its existing catalog's waiting-channel count. The runtime retains the badge source

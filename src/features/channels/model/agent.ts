@@ -11,7 +11,7 @@ export const agentRoleSchema = z
   .min(1)
   .max(8_000)
   .describe(
-    "The member's role in the channel, including any necessary persona or behavioral details.",
+    "What the member is accountable for, the quality bar, and judgment specific to that work, in about 150 words. Assignments carry task context. Leave out shared rules, paths, commands, and product specs.",
   );
 
 const agentAvatarMarkSchema = z

@@ -57,6 +57,11 @@ function ChannelContent({
   const lead = state?.lead ?? channelLead(channelId);
   const members = state?.members ?? [];
   const agents = [lead, ...members];
+  const send = (message: Parameters<typeof postMessage>[0]) => {
+    transcriptRef.current?.followNextPost();
+    postMessage(message);
+  };
+
   return (
     <ChannelPaneProvider
       value={{
@@ -66,6 +71,7 @@ function ChannelContent({
         agent: (id) => channelAgentIdentity(agents, id),
         presence: state?.presence ?? {},
         reply: (agent) => composerRef.current?.reply(agent),
+        answer: (content) => send({ content }),
         mention: () => composerRef.current?.mention(),
       }}
     >
@@ -100,10 +106,7 @@ function ChannelContent({
             channelId={channelId}
             state={state}
             handleRef={composerRef}
-            onSubmit={(message) => {
-              transcriptRef.current?.followNextPost();
-              postMessage(message);
-            }}
+            onSubmit={send}
             onShowRequest={() => transcriptRef.current?.showRequest()}
           />
         </div>

@@ -44,7 +44,7 @@ function AgentMessage({
   entry: AgentRunEntry;
   agent: ChannelAgentIdentity;
 }) {
-  const { reply } = useChannelPane();
+  const { reply, answer } = useChannelPane();
   const textRef = useRef<HTMLDivElement>(null);
   const { collapsed, clamped, toggle } = useShowMore(textRef, message.content, collapsible);
   const attachments = message.attachments ?? [];
@@ -112,6 +112,15 @@ function AgentMessage({
             )}
             <CopyControl content={message.content} />
           </div>
+        </div>
+      )}
+      {request === "pending" && message.replies && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {message.replies.map((label) => (
+            <Button key={label} variant="outline" size="sm" onClick={() => answer(label)}>
+              {label}
+            </Button>
+          ))}
         </div>
       )}
       {attachments.length > 0 && (

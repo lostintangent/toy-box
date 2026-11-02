@@ -67,6 +67,7 @@ for (const kind of ["request", "completion"] as const)
             sender: { type: "agent", agentId: channel.id },
             content: "@lead Which **door**?",
             request: true,
+            replies: ["Left", "Right"],
           }
         : {
             id: "completion",
@@ -94,7 +95,7 @@ for (const kind of ["request", "completion"] as const)
       channelID: channel.id,
       sequence,
       registrationID,
-      ...(kind === "request" ? { handle: "lead" } : {}),
+      ...(kind === "request" ? { handle: "lead", replies: ["Left", "Right"] } : {}),
     });
   });
 

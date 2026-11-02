@@ -21,3 +21,5 @@ toy-box
 
 # Codex scratch output
 .codex-tmp/
+
+.swp

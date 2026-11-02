@@ -1,4 +1,4 @@
-import { compareChannelAgents, isChannelSystemMessage, unassignChannelTasks } from ".";
+import { compareChannelAgents, isChannelSystemMessage, unlinkChannelTasks } from ".";
 import type {
   Channel,
   ChannelArtifact,
@@ -69,6 +69,11 @@ export function reduceChannelState(previous: ChannelState, event: ChannelStateEv
       case "routine_deleted":
         state.routines = state.routines.filter(({ id }) => id !== content.routine.id);
         break;
+      case "artifact_removed": {
+        const id = workspaceFileId(content.artifact.file);
+        state.artifacts = state.artifacts.filter((artifact) => artifact.id !== id);
+        break;
+      }
     }
   }
   if (state.channel.requestSequence !== previous.channel.requestSequence) {
@@ -111,7 +116,19 @@ export function reduceChannel(channel: Channel, event: ChannelEvent<unknown>): C
         case "preview_changed":
           return { ...next, preview: content.preview ?? undefined };
         case "member_left":
-          return { ...next, tasks: unassignChannelTasks(channel.tasks, content.member.id) };
+          return {
+            ...next,
+            tasks: unlinkChannelTasks(channel.tasks, "ownerId", content.member.id),
+          };
+        case "artifact_removed":
+          return {
+            ...next,
+            tasks: unlinkChannelTasks(
+              channel.tasks,
+              "artifactId",
+              workspaceFileId(content.artifact.file),
+            ),
+          };
         case "tasks_completed":
           return { ...next, completedSequence: message.sequence };
         default:

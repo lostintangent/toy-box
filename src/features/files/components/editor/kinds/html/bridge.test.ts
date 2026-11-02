@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  HTML_BASE_ATTRIBUTE,
-  HTML_BRIDGE_ATTRIBUTE,
-  injectBaseHref,
-  injectHtmlBridge,
-} from "./bridge";
+import { HTML_BASE_ATTRIBUTE, injectBaseHref } from "@/shared/embeddedHtml";
+import { HTML_BRIDGE_ATTRIBUTE, injectHtmlBridge } from "./bridge";
 
 describe("HTML artifact documents", () => {
   test("points a document's relative embeds at the artifact directory via <base>", () => {

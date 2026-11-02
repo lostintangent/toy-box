@@ -7,8 +7,8 @@ import {
   channelTasksComplete,
   reconcileChannelTaskTiming,
   channelSystemMessageContentSchema,
+  channelRepliesSchema,
   CHANNEL_LEAD_PROFILE,
-  unassignChannelTasks,
   type Channel,
   type ChannelEvent as ClientChannelEvent,
   type ChannelChanges,
@@ -16,6 +16,7 @@ import {
   type ChannelMemberChanges,
   type ChannelAgentStatus,
   type ChannelArtifact,
+  type ChannelCatalogEntry,
   type ChannelList,
   channelMemberIdentity,
   type ChannelMember,
@@ -65,7 +66,7 @@ export class ChannelInputError extends Error {}
 export type ChannelChange = {
   channelId: string;
   events: readonly ChannelEvent[];
-  channel?: Channel;
+  channel?: ChannelCatalogEntry;
 };
 
 /** Durable Channels, ordered messages, agent read positions, and shared file references. */
@@ -79,7 +80,7 @@ export class ChannelDatabase {
     ]);
     const channelIds = new Set(rows.map(({ id }) => id));
     return {
-      channels: rows.map(channelFromRow),
+      channels: rows.map(catalogEntryFromRow),
       members: workers.flatMap((worker) =>
         !channelIds.has(worker.channelId) || isChannelLead(worker)
           ? []
@@ -91,13 +92,13 @@ export class ChannelDatabase {
   async createChannel(
     input: CreateChannelInput,
     lead: Extract<Worker, { type: "channel" }>,
-  ): Promise<Channel> {
+  ): Promise<ChannelCatalogEntry> {
     const id = lead.sessionId;
     return inStateTransaction(this.db, async (db) => {
       await db`
         INSERT INTO channels ${db({
           id,
-          ...channelColumns({ ...input, tasks: [] }),
+          ...channelColumns(input),
           updated_at: lead.createdAt,
         })}
       `;
@@ -106,9 +107,9 @@ export class ChannelDatabase {
     });
   }
 
-  async getChannel(channelId: string): Promise<Channel | null> {
+  async getChannel(channelId: string): Promise<ChannelCatalogEntry | null> {
     const [row] = await readChannelRows(this.db, channelId);
-    return row ? channelFromRow(row) : null;
+    return row ? catalogEntryFromRow(row) : null;
   }
 
   async editChannel({ channelId, ...changes }: EditChannelInput) {
@@ -140,7 +141,7 @@ export class ChannelDatabase {
         RETURNING *
       `;
       if (!row) return null;
-      const channel = channelFromRow(row);
+      const channel = catalogEntryFromRow(row);
       return {
         channelId,
         channel,
@@ -283,7 +284,7 @@ export class ChannelDatabase {
     });
   }
 
-  async deleteMember(agentId: string) {
+  async deleteMember(agentId: string, actor: ChannelMessageActor) {
     return inStateTransaction(this.db, async (db) => {
       const workers = new WorkerDatabase(db);
       const worker = await workers.get(agentId, "channel");
@@ -291,15 +292,9 @@ export class ChannelDatabase {
       const member = channelMemberFromWorker(worker);
       if (!(await workers.delete(agentId))) return null;
       const channel = await requireChannel(db, member.channelId);
-      const { tasks } = channel;
-      const unassigned = unassignChannelTasks(tasks, agentId);
-      if (!Bun.deepEquals(unassigned, tasks)) {
-        await db`
-          UPDATE channels SET tasks = ${JSON.stringify(unassigned)} WHERE id = ${member.channelId}
-        `;
-      }
       const change = await appendSystemMessage(db, member.channelId, {
         type: "member_left",
+        actor,
         member,
       });
       return { ...(await recordChannelChange(db, channel, [change])), member };
@@ -354,6 +349,7 @@ export class ChannelDatabase {
     channelId,
     attachments,
     request,
+    replies,
     ...message
   }: Omit<ChannelConversationMessage, "sequence" | "timestamp" | "reactions" | "request"> & {
     channelId: string;
@@ -371,6 +367,7 @@ export class ChannelDatabase {
         ...message,
         ...position,
         ...(request ? { request: true as const } : {}),
+        ...(replies ? { replies } : {}),
         ...(attachments?.length ? { attachments } : {}),
       }));
       return {
@@ -440,7 +437,7 @@ export class ChannelDatabase {
     channelId: string;
     file: ChannelArtifact["file"];
     title: string;
-    actor: Extract<ChannelSystemMessageContent, { type: "artifact_shared" }>["actor"];
+    actor: ChannelMessageActor;
   }) {
     return inStateTransaction(this.db, async (db) => {
       const [row] = await db<ChannelArtifactRow[]>`
@@ -469,6 +466,28 @@ export class ChannelDatabase {
         artifact: { file: artifact.file, title: artifact.title },
       });
       return { ...(await recordChannelChange(db, channel, [change])), artifact };
+    });
+  }
+
+  /** Unshares an artifact, or returns null when it's already gone. The message's reducer unlinks
+   *  task references to it, and the file stays on disk. */
+  async removeArtifact(channelId: string, artifactId: string, actor: ChannelMessageActor) {
+    return inStateTransaction(this.db, async (db) => {
+      const artifact = (await listArtifacts(db, channelId)).find(({ id }) => id === artifactId);
+      if (!artifact) return null;
+      const channel = await requireChannel(db, channelId);
+      const { file } = artifact;
+      await db`
+        DELETE FROM channel_artifacts
+        WHERE channel_id = ${channelId} AND kind = ${file.kind} AND path = ${file.path}
+          AND session_id IS ${file.kind === "session" ? file.sessionId : null}
+      `;
+      const change = await appendSystemMessage(db, channelId, {
+        type: "artifact_removed",
+        actor,
+        artifact: { file, title: artifact.title },
+      });
+      return recordChannelChange(db, channel, [change]);
     });
   }
 
@@ -595,7 +614,6 @@ export class ChannelDatabase {
           });
         const tasks = claim(channel.tasks);
         if (Bun.deepEquals(tasks, channel.tasks)) continue;
-        await db`UPDATE channels SET tasks = ${JSON.stringify(tasks)} WHERE id = ${channel.id}`;
         taskChanges.push(
           await recordChannelChange(db, channel, [
             {
@@ -628,7 +646,8 @@ async function advanceRevision(db: Bun.SQL, channelId: string): Promise<number> 
   return channel.revision;
 }
 
-/** Fold this transaction's events into metadata and persist their attention cursors. */
+/** Fold this transaction's events into metadata and persist what they derive: attention cursors
+ *  and tasks, which only change through events. */
 async function recordChannelChange<Event extends ChannelEvent>(
   db: Bun.SQL,
   previous: Channel,
@@ -637,16 +656,22 @@ async function recordChannelChange<Event extends ChannelEvent>(
   const channel = events.reduce(reduceChannel, previous);
   if (
     channel.requestSequence !== previous.requestSequence ||
-    channel.completedSequence !== previous.completedSequence
+    channel.completedSequence !== previous.completedSequence ||
+    !Bun.deepEquals(channel.tasks, previous.tasks)
   ) {
     await db`
       UPDATE channels
       SET request_sequence = ${channel.requestSequence},
-        completed_sequence = ${channel.completedSequence}
+        completed_sequence = ${channel.completedSequence},
+        tasks = ${JSON.stringify(channel.tasks)}
       WHERE id = ${channel.id}
     `;
   }
-  return { channelId: channel.id, events, channel };
+  const [row] = await db<Pick<ChannelRow, "revision">[]>`
+    SELECT revision FROM channels WHERE id = ${channel.id}
+  `;
+  if (!row) throw new Error("Channel not found.");
+  return { channelId: channel.id, events, channel: { ...channel, revision: row.revision } };
 }
 
 async function updateChannelFields(
@@ -712,14 +737,13 @@ async function updateChannelFields(
 }
 
 function channelColumns(
-  channel: Pick<Channel, "name" | "purpose" | "directory" | "model" | "tasks" | "preview">,
+  channel: Pick<Channel, "name" | "purpose" | "directory" | "model" | "preview">,
 ) {
   return {
     name: channel.name,
     purpose: channel.purpose ?? null,
     directory: channel.directory ?? null,
     model: JSON.stringify(channel.model),
-    tasks: JSON.stringify(channel.tasks),
     preview: channel.preview ? JSON.stringify(channel.preview) : null,
   };
 }
@@ -774,6 +798,7 @@ function messageColumns(message: ChannelMessage) {
       typeof message.content === "string" ? message.content : JSON.stringify(message.content),
     attachments: message.attachments?.length ? JSON.stringify(message.attachments) : null,
     request: message.request ? 1 : 0,
+    replies: message.replies ? JSON.stringify(message.replies) : null,
   };
 }
 
@@ -906,6 +931,7 @@ type ChannelMessageRow = {
   content: string;
   request: number;
   attachments: string | null;
+  replies: string | null;
   timestamp: string;
 };
 
@@ -927,6 +953,10 @@ async function readChannelRows(db: Bun.SQL, channelId?: string) {
     ${where}
     ORDER BY updated_at DESC, id
   `;
+}
+
+function catalogEntryFromRow(row: ChannelRow): ChannelCatalogEntry {
+  return { ...channelFromRow(row), revision: row.revision };
 }
 
 function channelFromRow(row: ChannelRow): Channel {
@@ -964,10 +994,10 @@ async function requireChannelMemberWorker(
   return worker;
 }
 
-async function requireChannel(db: Bun.SQL, channelId: string): Promise<Channel> {
+async function requireChannel(db: Bun.SQL, channelId: string): Promise<ChannelCatalogEntry> {
   const [row] = await readChannelRows(db, channelId);
   if (!row) throw new Error("Channel not found.");
-  return channelFromRow(row);
+  return catalogEntryFromRow(row);
 }
 
 async function requireLeadChannel(db: Bun.SQL, leadId: string): Promise<Channel> {
@@ -1022,6 +1052,7 @@ function messageFromRow(row: ChannelMessageRow, reactions: ChannelReaction[]): C
   const attachments = row.attachments
     ? channelAttachmentSchema.array().parse(JSON.parse(row.attachments))
     : undefined;
+  const replies = row.replies ? channelRepliesSchema.parse(JSON.parse(row.replies)) : undefined;
   const sender: Exclude<ChannelMessageSender, { type: "system" }> =
     row.sender_type === "user"
       ? { type: "user" }
@@ -1031,6 +1062,7 @@ function messageFromRow(row: ChannelMessageRow, reactions: ChannelReaction[]): C
     sender,
     content: row.content,
     ...(row.request ? { request: true as const } : {}),
+    ...(replies ? { replies } : {}),
     ...(attachments?.length ? { attachments } : {}),
     ...(reactions.length ? { reactions } : {}),
   };

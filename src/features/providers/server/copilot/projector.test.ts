@@ -697,6 +697,7 @@ describe("projector", () => {
             timestamp: "2026-01-01T00:00:00.000Z",
             data: {
               content: "What is in this image?",
+              delivery: "steering",
               attachments: [
                 { type: "file", displayName: "legacy.png", path: "/tmp/legacy.png" },
                 { type: "blob", data: "aW1hZ2U=", mimeType: "image/png", displayName: "image.png" },
@@ -760,46 +761,30 @@ describe("projector", () => {
       ]);
     });
 
-    test("drops agent-scoped user messages", () => {
-      expect(
-        createSdkEventProjector("toy-box-session")(
-          sdkEvent({
-            type: "user.message",
-            agentId: "call-agent-1",
-            data: { content: "Agent prompt" },
-          }),
-        ),
-      ).toEqual([]);
-    });
+    test("drops agent-scoped, system-source, and skill-source user messages", () => {
+      const project = createSdkEventProjector("toy-box-session");
+      const events = [
+        sdkEvent({
+          type: "user.message",
+          agentId: "call-agent-1",
+          data: { content: "Agent prompt" },
+        }),
+        sdkEvent({
+          type: "user.message",
+          data: {
+            content: "",
+            transformedContent: "<system_reminder>Model-only context</system_reminder>",
+            source: "system",
+            delivery: "steering",
+          },
+        }),
+        sdkEvent({
+          type: "user.message",
+          data: { content: "Plan instructions", source: "skill-plan" },
+        }),
+      ];
 
-    test("drops user messages from the system source", () => {
-      expect(
-        createSdkEventProjector("toy-box-session")(
-          sdkEvent({
-            type: "user.message",
-            data: {
-              content: "",
-              transformedContent: "<system_reminder>Model-only context</system_reminder>",
-              source: "system",
-              delivery: "steering",
-            },
-          }),
-        ),
-      ).toEqual([]);
-    });
-
-    test("drops user messages from skill sources without parsing their content", () => {
-      expect(
-        createSdkEventProjector("toy-box-session")(
-          sdkEvent({
-            type: "user.message",
-            data: {
-              content: "Plan instructions",
-              source: "skill-plan",
-            },
-          }),
-        ),
-      ).toEqual([]);
+      expect(events.flatMap((event) => project(event))).toEqual([]);
     });
 
     test("projects invoked skills as completed calls containing the skill path", () => {
@@ -849,20 +834,6 @@ describe("projector", () => {
           }),
         ),
       ).toEqual([]);
-    });
-
-    test("does not expose SDK delivery bookkeeping on canonical user messages", () => {
-      const project = createSdkEventProjector("toy-box-session");
-      const deliveries = (["idle", "steering", "queued"] as const).map(
-        (delivery) =>
-          project(sdkEvent({ type: "user.message", data: { content: delivery, delivery } }))[0],
-      );
-
-      expect(deliveries).toEqual([
-        { type: "user_message", content: "idle", attachments: undefined, timestamp: undefined },
-        { type: "user_message", content: "steering", attachments: undefined, timestamp: undefined },
-        { type: "user_message", content: "queued", attachments: undefined, timestamp: undefined },
-      ]);
     });
 
     test("decodes system messages at the SDK boundary", () => {

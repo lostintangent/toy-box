@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createChannelResponse, listChannelsResponse } from "@channels/server/api";
+import { createChannelResponse, getChannelsResponse } from "@channels/server/api";
 
 export const Route = createFileRoute("/api/v1/channels/")({
   server: {
     handlers: {
-      GET: () => listChannelsResponse(),
+      GET: ({ request }) => getChannelsResponse(request),
       POST: ({ request }) => createChannelResponse(request),
     },
   },

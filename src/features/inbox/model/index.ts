@@ -16,7 +16,7 @@ const safePathSegmentSchema = z
     "Must be one safe path segment",
   );
 
-export const inboxEntryIdSchema = safePathSegmentSchema.describe("The Inbox entry ID");
+const inboxEntryIdSchema = safePathSegmentSchema.describe("The Inbox entry ID");
 
 const inboxArtifactPathSchema = z
   .string()

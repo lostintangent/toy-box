@@ -1,12 +1,7 @@
 import { useEffect, useRef } from "react";
-import { HTML_SANDBOX_PERMISSIONS } from "@/shared/embeddedHtml";
+import { HTML_SANDBOX_PERMISSIONS, injectBaseHref } from "@/shared/embeddedHtml";
 import type { EditorProps } from "../index";
-import {
-  injectBaseHref,
-  injectHtmlBridge,
-  HTML_CHANGE_MESSAGE_TYPE,
-  HTML_EDITABLE_MESSAGE_TYPE,
-} from "./bridge";
+import { injectHtmlBridge, HTML_CHANGE_MESSAGE_TYPE, HTML_EDITABLE_MESSAGE_TYPE } from "./bridge";
 
 type HtmlChangeMessage = {
   type: typeof HTML_CHANGE_MESSAGE_TYPE;

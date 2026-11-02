@@ -64,7 +64,8 @@ export function deriveVisibleWorkspacePanes({
     if (focusedPane) {
       for (let index = visiblePanes.length - 1; index >= 0; index--) {
         const pane = visiblePanes[index]!;
-        if (deriveReachablePaneIds([pane], panePublications).includes(focusedPaneId)) continue;
+        if (deriveReachablePanes([pane], panePublications).some(({ id }) => id === focusedPaneId))
+          continue;
         visiblePanes[index] = focusedPane;
         break;
       }
@@ -74,14 +75,7 @@ export function deriveVisibleWorkspacePanes({
   return visiblePanes;
 }
 
-export function deriveReachablePaneIds(
-  rootPanes: WorkspacePane[],
-  panePublications: PanePublications,
-): string[] {
-  return deriveReachablePanes(rootPanes, panePublications).map((pane) => pane.id);
-}
-
-function deriveReachablePanes(
+export function deriveReachablePanes(
   rootPanes: WorkspacePane[],
   panePublications: PanePublications,
 ): WorkspacePane[] {

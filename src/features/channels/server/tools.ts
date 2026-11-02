@@ -7,21 +7,26 @@ import {
   channelIdentitySchema,
   channelMessageContentSchema,
   channelPathSchema,
+  channelRepliesSchema,
   channelReactionKindSchema,
   createChannelMemberInputSchema,
   createChannelInputSchema,
   editChannelTasksInputSchema,
   durableIdSchema,
   isChannelSystemMessage,
+  channelArtifactIdentitySchema,
   channelRoutineIdentitySchema,
   selfUpdateChannelMemberInputSchema,
   setChannelAgentStatusInputSchema,
   setChannelRoutineInputSchema,
   updateChannelInputSchema,
+  updateChannelMemberInputSchema,
+  removeChannelMemberInputSchema,
   type Channel,
   type ChannelAgent,
   type ChannelAgentIdentity,
   type ChannelArtifact,
+  type ChannelMember,
   type ChannelTask,
 } from "@channels/model";
 import { workspaceFileId } from "@files/model";
@@ -65,7 +70,7 @@ const createChannelTool = defineTool("create_channel", {
 
 export const createChannelMembersTool = defineTool("create_channel_members", {
   description:
-    "Creates one or more members in a channel with unique names, optional roles, and optional models. A role defines the member's responsibility in the channel plus any necessary persona or behavioral details. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
+    "Creates one or more members in a channel with unique names, optional roles, and optional models. A role states what the member is accountable for, the quality bar, and judgment specific to that work. Leave shared rules, paths, commands, and product behavior to the purpose, repository instructions, or spec, and task context to assignments. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
   parameters: channelIdentitySchema.extend({ members: channelMemberCreationsSchema }),
   handler: async ({ channelId, members }) => {
     const { createChannelMembers } = await import("@channels/server");
@@ -75,7 +80,7 @@ export const createChannelMembersTool = defineTool("create_channel_members", {
 
 const createCurrentChannelMembersTool = defineTool("create_channel_members", {
   description:
-    "Creates one or more members in this channel with unique names, optional roles, and optional models. A role defines the member's responsibility in the channel plus any necessary persona or behavioral details. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
+    "Creates one or more members in this channel with unique names, optional roles, and optional models. A role states what the member is accountable for, the quality bar, and judgment specific to that work. Leave shared rules, paths, commands, and product behavior to the purpose, repository instructions, or spec, and task context to assignments. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
   parameters: z.object({ members: channelMemberCreationsSchema }).strict(),
   handler: async ({ members }, sessionId) => {
     const { createChannelMembersFromLead } = await import("@channels/server");
@@ -139,7 +144,7 @@ const waitForChannelAgentsTool = defineTool("wait_for_channel_agents", {
 
 const readChannelForAgentTool = defineTool("read_channel", {
   description:
-    "Reads this agent's next 100 unread messages, unfinished assigned tasks (all unfinished tasks for the lead), and working or waiting agents. Advances its read position. With no read cursor, always returns full context. Set detail:'full' for the channel purpose, directory, preview, complete tasks, roster with roles, artifacts, and routines. Repeat while hasMore is true. File attachments are absolute paths. Inline uploads are attached images.",
+    "Reads this agent's next 100 unread messages, unfinished assigned tasks (all unfinished tasks for the lead), and working or waiting agents. Advances its read position. With no read cursor, always returns full context. Set detail:'full' for the channel purpose, directory, preview, complete tasks, roster with roles and models, artifacts, and routines. Repeat while hasMore is true. File attachments are absolute paths. Inline uploads are attached images.",
   parameters: z.object({ detail: z.enum(["compact", "full"]).optional() }),
   handler: async ({ detail }, sessionId) => {
     const { readChannelForAgent } = await import("@channels/server");
@@ -156,14 +161,23 @@ const sendChannelMessageParameters = z.object({
   attachments: z.array(channelPathSchema).optional(),
 });
 
-const sendLeadMessageParameters = sendChannelMessageParameters.extend({
-  request: z
-    .boolean()
-    .optional()
-    .describe(
-      "Flags this message as needing the user's decision, context, or action until the user next posts.",
-    ),
-});
+const sendLeadMessageParameters = sendChannelMessageParameters
+  .extend({
+    request: z
+      .boolean()
+      .optional()
+      .describe(
+        "Flags this message as needing the user's decision, context, or action until the user next posts.",
+      ),
+    replies: channelRepliesSchema
+      .optional()
+      .describe(
+        "Two to four short answers the user can post with one click, such as Yes and Not yet, with your recommendation first. Requires request.",
+      ),
+  })
+  .refine(({ request, replies }) => !replies || request, {
+    message: "Suggested replies belong to a request.",
+  });
 
 const sendChannelMessageTool = defineTool("send_channel_message", {
   description:
@@ -175,6 +189,7 @@ const sendChannelMessageTool = defineTool("send_channel_message", {
       content: args.content,
       attachmentPaths: args.attachments,
       request: args.request,
+      replies: args.replies,
     });
     return { sequence: message.sequence };
   },
@@ -303,16 +318,49 @@ const deleteRoutineTool = defineTool("delete_routine", {
   },
 });
 
+const removeArtifactTool = defineTool("remove_channel_artifact", {
+  description:
+    "Removes one of this channel's shared artifacts and posts a system message. The file stays on disk, and tasks linked to it are unlinked.",
+  parameters: channelArtifactIdentitySchema.omit({ channelId: true }),
+  handler: async ({ artifactId }, sessionId) => {
+    const { removeChannelArtifact } = await import("@channels/server");
+    // A lead's session ID is its Channel's ID.
+    if (
+      !(await removeChannelArtifact(sessionId, artifactId, { type: "agent", agentId: sessionId }))
+    ) {
+      throw new Error("Artifact not found in this channel.");
+    }
+    return "Removed.";
+  },
+});
+
 const updateMemberTool = defineTool("update_member", {
   description: "Updates this channel agent's role, avatar, or both.",
   parameters: selfUpdateChannelMemberInputSchema,
   handler: async (args, sessionId) => {
     const { updateChannelMember } = await import("@channels/server");
-    const { id: agentId, ...member } = await updateChannelMember({
-      agentId: sessionId,
-      ...args,
-    });
-    return { agentId, ...member };
+    return memberForTool(await updateChannelMember({ agentId: sessionId, ...args }));
+  },
+});
+
+const updateChannelMemberTool = defineTool("update_channel_member", {
+  description:
+    "Updates a member's name, role, or model from its next turn. A started member keeps its provider. Use list_models to resolve supported model options.",
+  parameters: updateChannelMemberInputSchema,
+  handler: async (input, sessionId) => {
+    const { updateChannelMemberFromLead } = await import("@channels/server");
+    return memberForTool(await updateChannelMemberFromLead(sessionId, input));
+  },
+});
+
+const removeChannelMemberTool = defineTool("remove_channel_member", {
+  description:
+    "Removes a member from this channel and posts a system message. Its session ends, and the tasks it owned lose their owner.",
+  parameters: removeChannelMemberInputSchema,
+  handler: async ({ agentId }, sessionId) => {
+    const { removeChannelMemberFromLead } = await import("@channels/server");
+    await removeChannelMemberFromLead(sessionId, agentId);
+    return "Removed.";
   },
 });
 
@@ -351,25 +399,19 @@ function toChannelReadToolResult(
           }
         : message.sender;
     if (isChannelSystemMessage(message)) {
-      const content = message.content;
-      const { id: _id, ...rest } = message;
+      const { id: _id, content, ...rest } = message;
+      if ("member" in content) {
+        const { member, ...change } = content;
+        const agent = compactForAgentId ? agentIdentityForTool(member) : { agentId: member.id };
+        return { ...rest, sender, content: { ...change, ...agent } };
+      }
       return {
         ...rest,
         sender,
         content:
-          content.type === "member_joined" || content.type === "member_left"
-            ? {
-                type: content.type,
-                ...(compactForAgentId
-                  ? agentIdentityForTool(content.member)
-                  : { agentId: content.member.id }),
-              }
-            : content.type === "artifact_shared"
-              ? {
-                  ...content,
-                  artifact: artifactForTool(content.artifact),
-                }
-              : content,
+          "artifact" in content
+            ? { ...content, artifact: artifactForTool(content.artifact) }
+            : content,
       };
     }
     const { id: _id, attachments, ...rest } = message;
@@ -409,7 +451,10 @@ function toChannelReadToolResult(
             : {
                 channel: channelContextForTool(result.channel),
                 lead: agentForTool(result.lead),
-                members: result.members.map(agentForTool),
+                members: result.members.map((member) => ({
+                  ...agentForTool(member),
+                  model: member.model,
+                })),
                 artifacts: result.artifacts.map(artifactForTool),
                 routines: result.routines.map(({ id, ...routine }) => ({
                   routineId: id,
@@ -504,6 +549,10 @@ function createdChannelMembers(members: { id: string; name: string }[]) {
   };
 }
 
+function memberForTool({ id: agentId, ...member }: ChannelMember) {
+  return { agentId, ...member };
+}
+
 const commonChannelAgentTools = [
   readChannelForAgentTool,
   setChannelStatusTool,
@@ -516,10 +565,13 @@ export const channelLeadTools = [
   ...commonChannelAgentTools,
   sendLeadMessageTool,
   createCurrentChannelMembersTool,
+  updateChannelMemberTool,
+  removeChannelMemberTool,
   updateChannelTool,
   editChannelTasksTool,
   setRoutineTool,
   deleteRoutineTool,
+  removeArtifactTool,
 ];
 export const channelMemberTools = [
   ...commonChannelAgentTools,

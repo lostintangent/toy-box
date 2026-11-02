@@ -1,6 +1,5 @@
 // Filesystem behavior behind the validated public operations.
 
-import { $ } from "bun";
 import { open, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
@@ -152,7 +151,7 @@ async function gitIgnoredNames(directory: string, names: string[]): Promise<Set<
   if (names.length === 0) return new Set();
 
   const input = Buffer.from(`${names.join("\0")}\0`);
-  const result = await $`LC_ALL=C git check-ignore --stdin -z < ${input}`
+  const result = await Bun.$`LC_ALL=C git check-ignore --stdin -z < ${input}`
     .cwd(directory)
     .quiet()
     .nothrow();

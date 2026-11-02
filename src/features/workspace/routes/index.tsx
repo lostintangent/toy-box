@@ -68,7 +68,7 @@ export const Route = createFileRoute("/")({
       context.queryClient.ensureQueryData(workerQueries.active()),
       context.queryClient.ensureQueryData(fileQueries.editors()),
     ]);
-    return loadWorkspaceLayout();
+    return readWorkspaceLayout(await readCookieHeader());
   },
   component: WorkspacePage,
 });
@@ -79,11 +79,6 @@ const readCookieHeader = createIsomorphicFn()
     const { getRequestHeader } = await import("@tanstack/react-start/server");
     return getRequestHeader("cookie") ?? getRequestHeader("Cookie");
   });
-
-async function loadWorkspaceLayout() {
-  const cookieHeader = await readCookieHeader();
-  return readWorkspaceLayout(cookieHeader);
-}
 
 function WorkspacePage() {
   const navigate = useNavigate();
@@ -108,6 +103,11 @@ function WorkspacePage() {
     });
   }
 
+  // A full workspace admits only the panes it already shows.
+  function hasRoomFor(pane: WorkspacePane) {
+    return openPanes.length < MAX_WORKSPACE_PANES || openPanes.some(({ id }) => id === pane.id);
+  }
+
   // Selecting a root replaces the workspace; a modifier toggles it beside the other roots.
   function selectRoot(pane: WorkspacePane, toggleInWorkspace = false) {
     if (!toggleInWorkspace || isMobileLayout) {
@@ -118,16 +118,13 @@ function WorkspacePage() {
       closeRoot(pane);
       return;
     }
-    if (openPanes.length >= MAX_WORKSPACE_PANES && !openPanes.some(({ id }) => id === pane.id))
-      return;
+    if (!hasRoomFor(pane)) return;
     void updateRoots((roots) => [...roots, pane]);
   }
 
   /** Opens a root beside the others, or in their place when the workspace is full. */
   async function openRoot(pane: WorkspacePane) {
-    const isFull =
-      openPanes.length >= MAX_WORKSPACE_PANES && !openPanes.some(({ id }) => id === pane.id);
-    await updateRoots((roots) => (isFull ? [pane] : [...roots, pane]));
+    await updateRoots((roots) => (hasRoomFor(pane) ? [...roots, pane] : [pane]));
     // The mobile pager has to be paged to it.
     if (isMobileLayout) focusWorkspaceSurfacePane("main", pane.id);
   }

@@ -18,6 +18,7 @@ import {
   editChannel,
   markChannelRead,
   postChannelMessage,
+  removeChannelArtifact,
   removeChannelMember,
   runChannelRoutine,
   updateChannelMember,
@@ -60,6 +61,11 @@ export const channelMutations = {
   deleteRoutine: (channelId: string) =>
     mutationOptions({
       mutationFn: (routineId: string) => deleteChannelRoutine({ data: { channelId, routineId } }),
+    }),
+  removeArtifact: (channelId: string) =>
+    mutationOptions({
+      mutationFn: (artifactId: string) =>
+        removeChannelArtifact({ data: { channelId, artifactId } }),
     }),
   markRead: () =>
     mutationOptions({

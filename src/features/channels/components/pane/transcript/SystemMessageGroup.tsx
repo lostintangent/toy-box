@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   CalendarClock,
+  FileMinus,
   FileUp,
   Folder,
   MonitorPlay,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 import type {
   ChannelAgentIdentity,
+  ChannelMessageActor,
   ChannelRoutine,
   ChannelSystemMessage,
   ChannelSystemMessageContent,
@@ -34,7 +36,7 @@ type PresentationContext = {
   revealFile: (file: WorkspaceFile) => void;
 };
 
-/** One system message, or a run of membership changes or one agent's artifact shares, merged. */
+/** One system message, or a merged run of joins or of one actor's removals or artifact changes. */
 export function SystemMessageGroup({ messages }: { messages: readonly ChannelSystemMessage[] }) {
   const { agent } = useChannelPane();
   const revealFile = useRevealFile();
@@ -147,45 +149,19 @@ const SYSTEM_MESSAGES: {
   },
   member_joined: {
     icon: <UserPlus className="size-3.5 shrink-0" />,
-    present: (contents) => membershipContent(contents, "joined"),
+    present: membershipContent,
   },
   member_left: {
     icon: <UserMinus className="size-3.5 shrink-0" />,
-    present: (contents) => membershipContent(contents, "left"),
+    present: membershipContent,
   },
   artifact_shared: {
     icon: <FileUp className="size-3.5 shrink-0" />,
-    present: (contents, { agent, revealFile }) => {
-      const [{ actor }] = contents;
-      const actorName = actor.type === "user" ? "You" : agent(actor.agentId).name;
-      const artifacts = contents.map(({ artifact }) => artifact);
-      return {
-        content: (
-          <>
-            {actorName} shared{" "}
-            {artifacts.map((artifact, index) => (
-              // eslint-disable-next-line react/no-array-index-key -- The same file can be shared twice in a run.
-              <span key={index}>
-                {index > 0 &&
-                  (index === artifacts.length - 1
-                    ? artifacts.length > 2
-                      ? ", and "
-                      : " and "
-                    : ", ")}
-                <button
-                  type="button"
-                  title={artifact.file.path}
-                  className="font-medium text-foreground underline decoration-current/40 underline-offset-2 hover:decoration-current focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => revealFile(artifact.file)}
-                >
-                  {artifact.title}
-                </button>
-              </span>
-            ))}
-          </>
-        ),
-      };
-    },
+    present: (contents, context) => artifactContent(contents, "shared", context),
+  },
+  artifact_removed: {
+    icon: <FileMinus className="size-3.5 shrink-0" />,
+    present: (contents, context) => artifactContent(contents, "removed", context),
   },
   routine_scheduled: {
     icon: <CalendarClock className="size-3.5 shrink-0" />,
@@ -200,6 +176,37 @@ const SYSTEM_MESSAGES: {
     present: ([{ routine }]) => routineContent("Routine deleted", routine),
   },
 };
+
+function artifactContent(
+  contents: Contents<"artifact_shared" | "artifact_removed">,
+  verb: "shared" | "removed",
+  { agent, revealFile }: PresentationContext,
+) {
+  const [{ actor }] = contents;
+  const artifacts = contents.map(({ artifact }) => artifact);
+  return {
+    content: (
+      <>
+        {actorName(actor, agent)} {verb}{" "}
+        {artifacts.map((artifact, index) => (
+          // eslint-disable-next-line react/no-array-index-key -- The same file can be shared twice in a run.
+          <span key={index}>
+            {index > 0 &&
+              (index === artifacts.length - 1 ? (artifacts.length > 2 ? ", and " : " and ") : ", ")}
+            <button
+              type="button"
+              title={artifact.file.path}
+              className="font-medium text-foreground underline decoration-current/40 underline-offset-2 hover:decoration-current focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => revealFile(artifact.file)}
+            >
+              {artifact.title}
+            </button>
+          </span>
+        ))}
+      </>
+    ),
+  };
+}
 
 const MAX_VALUE_LENGTH = 120;
 
@@ -229,17 +236,24 @@ function Value({
   );
 }
 
+function actorName(actor: ChannelMessageActor, agent: PresentationContext["agent"]): string {
+  return actor.type === "user" ? "You" : agent(actor.agentId).name;
+}
+
 function membershipContent(
   contents: Contents<"member_joined" | "member_left">,
-  action: "joined" | "left",
+  { agent }: PresentationContext,
 ) {
+  const [first] = contents;
   const names = contents.map(({ member }) => member.name);
   const others = names.length - 1;
+  const members =
+    others === 0 ? names[0] : `${names[0]} and ${others} ${others === 1 ? "other" : "others"}`;
   return {
     content:
-      others === 0
-        ? `${names[0]} ${action} the channel`
-        : `${names[0]} and ${others} ${others === 1 ? "other" : "others"} ${action} the channel`,
+      first.type === "member_joined"
+        ? `${members} joined the channel`
+        : `${actorName(first.actor, agent)} removed ${members}`,
     tooltip: others > 0 ? names.join(", ") : undefined,
   };
 }

@@ -17,38 +17,61 @@ test("labels every status for assistive tech", () => {
   }
 });
 
-test("starts done parents collapsed without hiding their supporting actions", () => {
+test("parents start expanded only while a subtask is in progress", () => {
   const html = render([
     {
       id: "done",
       title: "Research",
       status: "done",
       detail: <button type="button">Open report</button>,
-      children: [{ id: "hidden", title: "Read the docs", status: "done" }],
+      children: [{ id: "read", title: "Read the docs", status: "done" }],
     },
     {
-      id: "open",
+      id: "pending",
+      title: "Plan",
+      status: "pending",
+      children: [{ id: "outline", title: "Draft the outline", status: "pending" }],
+    },
+    {
+      id: "blocked",
+      title: "Ship",
+      status: "blocked",
+      children: [{ id: "sign", title: "Sign the build", status: "blocked" }],
+    },
+    {
+      id: "started",
       title: "Build",
       status: "in_progress",
+      children: [{ id: "parser", title: "Write the parser", status: "pending" }],
+    },
+    {
+      id: "running",
+      title: "Review",
+      status: "pending",
       children: [
-        { id: "shown", title: "Write the parser", status: "pending" },
         {
-          id: "finished",
-          title: "Design",
+          id: "audit",
+          title: "Audit",
           status: "done",
-          children: [{ id: "nested", title: "Review", status: "done" }],
+          children: [{ id: "cache", title: "Check the cache", status: "in_progress" }],
         },
       ],
     },
   ]);
+  const text = html.replace(/<[^>]+>/g, "");
 
-  expect(html).toContain('aria-expanded="false"');
-  expect(html).toContain('aria-expanded="true"');
-  expect(html).not.toContain("Read the docs");
-  expect(html).toContain("Write the parser");
+  for (const title of [
+    "Read the docs",
+    "Draft the outline",
+    "Sign the build",
+    "Write the parser",
+  ]) {
+    expect(text).not.toContain(title);
+  }
+  expect(text).toContain("Audit");
+  expect(text).toContain("Check the cache");
   expect(html).toContain("Open report");
   expect(html).toContain('aria-label="Subtasks of Research"');
-  expect(html).toContain('aria-label="1 of 2 subtasks complete"');
 });
 
 test("filtering preserves ancestry and progress without unrelated work", () => {

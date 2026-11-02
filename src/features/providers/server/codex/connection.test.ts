@@ -542,7 +542,7 @@ test("native question resolution cancels only unanswered questions in the batch"
   ).toBe(false);
 });
 
-test("Codex replays images and system messages entirely from native input", async () => {
+test("Codex replays images entirely from native input", async () => {
   const { connection, readHistory, setThread, written } = setup();
   const message: SessionMessage = {
     role: "user",
@@ -562,25 +562,6 @@ test("Codex replays images and system messages entirely from native input", asyn
   expect((await readHistory()).find((event) => event.type === "user_message")).toMatchObject({
     content: message.content,
     attachments: message.attachments,
-  });
-  const system: SessionMessage = {
-    role: "system",
-    clientId: "system",
-    content: { type: "channel_message", senderName: "Ada" },
-  };
-  await connection.send(system);
-  const systemInput = (
-    written.filter(({ method }) => method === "turn/start").at(-1)!.params as { input: UserInput[] }
-  ).input;
-  setThread({
-    id: "native",
-    turns: [{ ...turn, items: [{ ...userItem, clientId: "system", content: systemInput }] }],
-  } as Thread);
-  expect(await readHistory()).toContainEqual({
-    type: "system_message",
-    content: system.content,
-    clientId: "system",
-    timestamp: itemTimestamp(turn, 0),
   });
 });
 

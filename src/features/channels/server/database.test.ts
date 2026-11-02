@@ -44,13 +44,14 @@ describe("channel attention", () => {
       return events.find((event) => event.type === "message")!.message;
     };
     /** Sends a lead message flagged as a user request, returning the question. */
-    const ask = async (content: string) => {
+    const ask = async (content: string, replies?: string[]) => {
       const { events } = await channels.appendMessage({
         id: crypto.randomUUID(),
         channelId: channel.id,
         sender: { type: "agent", agentId: channel.id },
         content,
         request: true,
+        replies,
       });
       return events[0]!.message;
     };
@@ -74,10 +75,28 @@ describe("channel attention", () => {
 
   test("a request persists on the lead message without an extra transcript entry", async () => {
     const { channels, channel, ask } = await setup();
-    const question = await ask("Choose a name.");
-    expect(question).toMatchObject({ sequence: 1, content: "Choose a name.", request: true });
+    const question = await ask("Choose a name.", ["Ada", "Grace"]);
+    expect(question).toMatchObject({
+      sequence: 1,
+      content: "Choose a name.",
+      request: true,
+      replies: ["Ada", "Grace"],
+    });
     expect(await channels.listMessagesAfter(channel.id)).toEqual([question]);
     expect((await channels.getChannel(channel.id))?.requestSequence).toBe(1);
+  });
+
+  test("suggested replies persist only on a request", async () => {
+    const { channels, channel } = await setup();
+    await expect(
+      channels.appendMessage({
+        id: crypto.randomUUID(),
+        channelId: channel.id,
+        sender: { type: "agent", agentId: channel.id },
+        content: "Ship it?",
+        replies: ["Yes", "Not yet"],
+      }),
+    ).rejects.toThrow("CHECK constraint failed");
   });
 
   test("catalog attention includes messages outside the loaded window", async () => {
@@ -409,6 +428,8 @@ describe("channel database", () => {
       content: "The direction is approved.",
     });
     const channelBeforeReactions = await channels.getChannel(channel.id);
+    // Reactions advance the revision that orders stream events, so only the metadata is compared.
+    const { revision: _beforeRevision, ...metadataBefore } = channelBeforeReactions!;
 
     await Promise.all([
       channels.setMessageReaction({
@@ -454,7 +475,8 @@ describe("channel database", () => {
     expect((await channels.listMessagesAfter(channel.id))[0]?.reactions).toEqual([
       { agentId: designerId, reaction: "done" },
     ]);
-    expect(await channels.getChannel(channel.id)).toEqual(channelBeforeReactions);
+    const { revision: _afterRevision, ...metadataAfter } = (await channels.getChannel(channel.id))!;
+    expect(metadataAfter).toEqual(metadataBefore);
   });
 
   test("tracks independent, monotonic human and Agent read positions", async () => {
@@ -661,7 +683,7 @@ describe("channel database", () => {
       }),
     ).rejects.toThrow("Only the channel lead");
 
-    await channels.deleteMember(member.id);
+    await channels.deleteMember(member.id, { type: "user" });
     expect((await channels.getChannel(channel.id))?.tasks).toEqual([
       {
         id: "build",
@@ -779,6 +801,39 @@ describe("channel database", () => {
     expect((await channels.getSnapshot(channel.id, 100))?.messages).toHaveLength(3);
   });
 
+  test("removing an artifact unlinks its tasks and posts one transcript message", async () => {
+    const channels = await openChannels();
+    const channel = await createStoredChannel(channels, { name: "Unshare", ...CHANNEL_DEFAULTS });
+    const plan = machineFile("/workspace/plan.md");
+    const design = sessionFile("designer-session", "design.md");
+    for (const [file, title] of [
+      [plan, "Plan"],
+      [design, "Design"],
+    ] as const)
+      await channels.shareArtifact({ channelId: channel.id, file, title, actor: { type: "user" } });
+    const planId = workspaceFileId(plan);
+    const designId = workspaceFileId(design);
+    await channels.updateChannel(channel.id, {
+      tasks: [
+        { id: "draft", title: "Draft", status: "done", artifactId: planId },
+        { id: "review", title: "Review", status: "pending", artifactId: designId },
+      ],
+    });
+
+    const removal = await channels.removeArtifact(channel.id, planId, { type: "user" });
+    expect(removal?.events.map(({ type }) => type)).toEqual(["message"]);
+    const [draft, review] = (await channels.getChannel(channel.id))?.tasks ?? [];
+    expect(draft).not.toHaveProperty("artifactId");
+    expect(review).toMatchObject({ artifactId: designId });
+    expect((await channels.listArtifacts(channel.id)).map(({ id }) => id)).toEqual([designId]);
+    expect((await channels.listMessagesAfter(channel.id)).at(-1)?.content).toEqual({
+      type: "artifact_removed",
+      actor: { type: "user" },
+      artifact: { file: plan, title: "Plan" },
+    });
+    expect(await channels.removeArtifact(channel.id, planId, { type: "user" })).toBeNull();
+  });
+
   test("deleting a member retains sender attribution in prior messages", async () => {
     const channels = await openChannels();
     const channel = await createStoredChannel(channels, {
@@ -798,7 +853,7 @@ describe("channel database", () => {
       content: "The contract is coherent.",
     });
 
-    expect(await channels.deleteMember(member.id)).toMatchObject({
+    expect(await channels.deleteMember(member.id, { type: "user" })).toMatchObject({
       member: { id: member.id, name: "Reviewer" },
     });
     const messages = await channels.listMessagesAfter(channel.id);
@@ -806,7 +861,11 @@ describe("channel database", () => {
       type: "agent",
       agentId: member.id,
     });
-    expect(messages.at(-1)?.content).toEqual({ type: "member_left", member });
+    expect(messages.at(-1)?.content).toEqual({
+      type: "member_left",
+      actor: { type: "user" },
+      member,
+    });
   });
 });
 

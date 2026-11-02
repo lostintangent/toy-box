@@ -211,22 +211,21 @@ export function usePaletteView(
       : []),
   ];
 
-  const launchOptions: PaletteItem[] = [
-    {
-      id: "palette.launch.model",
-      title: "Change model…",
-      detail: modelName,
-      icon: Cpu,
-      page: { kind: "model" },
-    },
-    {
-      id: "palette.launch.directory",
-      title: "Change directory…",
-      detail: directoryName,
-      icon: Folder,
-      page: { kind: "directory" },
-    },
-  ];
+  const changeModel: PaletteItem = {
+    id: "palette.launch.model",
+    title: "Change model…",
+    detail: modelName,
+    icon: Cpu,
+    page: { kind: "model" },
+  };
+  const changeDirectory: PaletteItem = {
+    id: "palette.launch.directory",
+    title: "Change directory…",
+    detail: directoryName,
+    icon: Folder,
+    page: { kind: "directory" },
+  };
+  const launchOptions = [changeModel, changeDirectory];
   const launchDetail = [modelName, directoryName, directory && useWorktree && "worktree"]
     .filter(Boolean)
     .join(" · ");
@@ -332,7 +331,6 @@ export function usePaletteView(
 
     case "files": {
       const files = directory ? filePaths.map((path) => fileItem(directory, path, navigation)) : [];
-      const changeDirectory = launchOptions[1]!;
       return {
         sections: [
           {

@@ -1,5 +1,5 @@
 import {
-  CHANNEL_LEAD_PROFILE,
+  channelArtifactIdentitySchema,
   channelIdentitySchema,
   channelRoutineIdentitySchema,
   createChannelInputSchema,
@@ -12,7 +12,6 @@ import {
 } from "@channels/model";
 import { getModelChoices } from "@providers/server";
 import { createSseResponse } from "@/shared/server/sse";
-import { getSessionActivity } from "@sessions/server/state/activity";
 import {
   createChannel,
   createChannelMember,
@@ -22,52 +21,40 @@ import {
   getChannelHistory,
   getChannelMemberProvider,
   isChannelMember,
-  listChannels,
   markChannelRead,
   postChannelMessage,
+  removeChannelArtifact,
   removeChannelMember,
   runChannelRoutine,
   updateChannelMember,
 } from ".";
-import { streamChannel } from "./stream";
+import {
+  getChannelCatalog,
+  streamChannel,
+  streamChannelCatalog,
+  type ChannelCatalogEvent,
+} from "./stream";
 import { ChannelInputError } from "./database";
 
-/** HTTP ingress over the public Channel capabilities. */
-export async function listChannelsResponse(): Promise<Response> {
-  const list = await listChannels();
-  // Native catalogs cannot read Sessions' activity, so name who is working as presence would.
-  const working = [...list.channels, ...list.members]
-    .map(({ id }) => id)
-    .filter((agentId) => getSessionActivity(agentId)?.status === "running");
-  return Response.json(
-    { version: 1, ...list, lead: CHANNEL_LEAD_PROFILE, working },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+/** One URL serves the catalog as JSON, or as a stream that opens with the same JSON when asked. */
+export async function getChannelsResponse(request: Request): Promise<Response> {
+  const wantsStream = request.headers.get("accept")?.includes("text/event-stream") ?? false;
+  const response = wantsStream
+    ? createSseResponse<ChannelCatalogEvent>(request, (send) => streamChannelCatalog(send))
+    : Response.json(await getChannelCatalog(), { headers: { "Cache-Control": "no-store" } });
+  response.headers.set("Vary", "Accept");
+  return response;
 }
 
 export function getChannelResponse(channelId: string, request: Request): Response {
   if (!channelIdentitySchema.safeParse({ channelId }).success) return invalidRequest();
   return createSseResponse(request, (send, close) =>
-    streamChannel(
-      channelId,
-      (event) =>
-        send(
-          event,
-          event.type === "snapshot"
-            ? event.state.revision
-            : "revision" in event
-              ? event.revision
-              : undefined,
-        ),
-      close,
-      readAfterRevision(request),
-    ),
+    streamChannel(channelId, send, close, readAfterRevision(request)),
   );
 }
 
 function readAfterRevision(request: Request): number | undefined {
-  const value =
-    request.headers.get("last-event-id") ?? new URL(request.url).searchParams.get("after");
+  const value = new URL(request.url).searchParams.get("after");
   if (value === null || value.trim() === "") return undefined;
   const revision = Number(value);
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : undefined;
@@ -87,7 +74,7 @@ export async function getChannelHistoryResponse(
   const page = await getChannelHistory(channelId, before);
   return page
     ? Response.json({ version: 1, ...page }, { headers: { "Cache-Control": "no-store" } })
-    : missingChannel();
+    : notFound("Channel");
 }
 
 export async function postChannelMessageResponse(
@@ -106,9 +93,7 @@ export async function postChannelMessageResponse(
     ) {
       return Response.json({ error: "Message ID already exists." }, { status: 409 });
     }
-    if (error instanceof Error && error.message === "Channel not found.") return missingChannel();
-    console.error(`Failed to post to Channel ${channelId}:`, error);
-    return Response.json({ error: "Unable to post Channel message." }, { status: 500 });
+    return rejected(error, "post Channel message");
   }
 }
 
@@ -120,11 +105,10 @@ export async function markChannelReadResponse(
   if (!input) return invalidRequest();
   try {
     const channel = await markChannelRead(input.channelId, input.sequence);
-    if (!channel) return missingChannel();
+    if (!channel) return notFound("Channel");
     return Response.json({ version: 1, seenThrough: channel.seenThrough });
   } catch (error) {
-    console.error(`Failed to mark Channel ${channelId} read:`, error);
-    return Response.json({ error: "Unable to mark Channel read." }, { status: 500 });
+    return rejected(error, "mark Channel read");
   }
 }
 
@@ -151,7 +135,7 @@ export async function editChannelResponse(channelId: string, request: Request): 
 export async function deleteChannelResponse(channelId: string): Promise<Response> {
   if (!channelIdentitySchema.safeParse({ channelId }).success) return invalidRequest();
   try {
-    return (await deleteChannel(channelId)) ? noContent() : missingChannel();
+    return (await deleteChannel(channelId)) ? noContent() : notFound("Channel");
   } catch (error) {
     return rejected(error, `delete Channel ${channelId}`);
   }
@@ -178,7 +162,7 @@ export async function updateChannelMemberResponse(
   const input = await readInput(request, updateChannelMemberInputSchema, { agentId });
   if (!input || !channelIdentitySchema.safeParse({ channelId }).success) return invalidRequest();
   try {
-    if (!(await isChannelMember(channelId, agentId))) return missingMember();
+    if (!(await isChannelMember(channelId, agentId))) return notFound("Channel member");
     return Response.json({ version: 1, member: await updateChannelMember(input) });
   } catch (error) {
     return rejected(error, `update member ${agentId}`);
@@ -195,8 +179,8 @@ export async function removeChannelMemberResponse(
   )
     return invalidRequest();
   try {
-    if (!(await isChannelMember(channelId, agentId))) return missingMember();
-    await removeChannelMember(agentId);
+    if (!(await isChannelMember(channelId, agentId))) return notFound("Channel member");
+    await removeChannelMember(agentId, { type: "user" });
     return noContent();
   } catch (error) {
     return rejected(error, `remove member ${agentId}`);
@@ -210,7 +194,7 @@ export async function runChannelRoutineResponse(
   if (!channelRoutineIdentitySchema.safeParse({ channelId, routineId }).success)
     return invalidRequest();
   try {
-    return (await runChannelRoutine(channelId, routineId)) ? noContent() : missingRoutine();
+    return (await runChannelRoutine(channelId, routineId)) ? noContent() : notFound("Routine");
   } catch (error) {
     return rejected(error, `run routine ${routineId}`);
   }
@@ -223,9 +207,24 @@ export async function deleteChannelRoutineResponse(
   if (!channelRoutineIdentitySchema.safeParse({ channelId, routineId }).success)
     return invalidRequest();
   try {
-    return (await deleteChannelRoutine(channelId, routineId)) ? noContent() : missingRoutine();
+    return (await deleteChannelRoutine(channelId, routineId)) ? noContent() : notFound("Routine");
   } catch (error) {
     return rejected(error, `delete routine ${routineId}`);
+  }
+}
+
+export async function removeChannelArtifactResponse(
+  channelId: string,
+  artifactId: string,
+): Promise<Response> {
+  if (!channelArtifactIdentitySchema.safeParse({ channelId, artifactId }).success)
+    return invalidRequest();
+  try {
+    return (await removeChannelArtifact(channelId, artifactId, { type: "user" }))
+      ? noContent()
+      : notFound("Artifact");
+  } catch (error) {
+    return rejected(error, `remove artifact ${artifactId}`);
   }
 }
 
@@ -259,7 +258,7 @@ export async function listChannelMemberModelsResponse(
     return invalidRequest();
   try {
     const provider = await getChannelMemberProvider(channelId, agentId);
-    if (provider === undefined) return missingMember();
+    if (provider === undefined) return notFound("Channel member");
     return Response.json(
       { version: 1, provider, ...(await getModelChoices(provider ?? undefined)) },
       { headers: { "Cache-Control": "no-store" } },
@@ -270,9 +269,9 @@ export async function listChannelMemberModelsResponse(
 }
 
 function rejected(error: unknown, action: string): Response {
-  if (error instanceof Error && error.message === "Channel not found.") return missingChannel();
+  if (error instanceof Error && error.message === "Channel not found.") return notFound("Channel");
   if (error instanceof Error && error.message === "Channel member not found.")
-    return missingMember();
+    return notFound("Channel member");
   if (error instanceof ChannelInputError)
     return Response.json({ error: error.message }, { status: 422 });
   console.error(`Failed to ${action}:`, error);
@@ -287,14 +286,6 @@ function invalidRequest(): Response {
   return Response.json({ error: "Invalid Channel request." }, { status: 400 });
 }
 
-function missingChannel(): Response {
-  return Response.json({ error: "Channel not found." }, { status: 404 });
-}
-
-function missingMember(): Response {
-  return Response.json({ error: "Channel member not found." }, { status: 404 });
-}
-
-function missingRoutine(): Response {
-  return Response.json({ error: "Routine not found." }, { status: 404 });
+function notFound(noun: string): Response {
+  return Response.json({ error: `${noun} not found.` }, { status: 404 });
 }

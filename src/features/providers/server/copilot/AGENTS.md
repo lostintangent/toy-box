@@ -13,7 +13,7 @@ Reasoning-only assistant messages with neither text nor tool requests are not tr
 boundaries; they can arrive between another message's streamed text and completion.
 Subagent reasoning streams beneath its agent call and resets at each child turn; the reply's
 durable `reasoningText` replaces that ephemeral preview, so history converges with live state.
-`attachments.ts`, `modelConfiguration.ts`, and `models.ts`
+`attachments.ts` and `models.ts`
 keep native data shapes outside the Sessions model. Shared Toy Box tool effects live
 in Sessions' `toolProjection.ts`; Copilot-specific completion rules stay here.
 System messages use Sessions' shared display codec in the native `displayPrompt` field and send

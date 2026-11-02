@@ -10,10 +10,9 @@ export function fileChangeDetails(result: FileEditOutput | FileWriteOutput): str
       ...hunk.lines,
     ].join("\n"),
   );
-  if (created && !hunks.length && "content" in result) {
+  if (created && !hunks.length && "content" in result && result.content) {
     const lines = result.content.replace(/\n$/, "").split("\n");
-    if (result.content)
-      hunks.push(`@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join("\n")}`);
+    hunks.push(`@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join("\n")}`);
   }
   return [
     `--- ${created ? "/dev/null" : result.filePath}`,

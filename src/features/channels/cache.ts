@@ -40,19 +40,6 @@ export async function loadChannelHistory(
   }
 }
 
-/** A detail stream leaves its terminal value in place; Workspace also retires its query. */
-export function removeChannelFromList(queryClient: QueryClient, channelId: string): void {
-  queryClient.setQueryData<ChannelList>(channelQueries.listKey(), (list) =>
-    list
-      ? {
-          channels: list.channels.filter(({ id }) => id !== channelId),
-          members: list.members.filter((member) => member.channelId !== channelId),
-        }
-      : list,
-  );
-  replaceOverlappingRead(queryClient, channelQueries.listKey());
-}
-
 export default {
   applyEvent(queryClient, event) {
     switch (event.type) {
@@ -75,8 +62,15 @@ export default {
           queryKey: channelQueries.detail(event.channelId).queryKey,
           exact: true,
         });
-        removeChannelFromList(queryClient, event.channelId);
-        return;
+        queryClient.setQueryData<ChannelList>(channelQueries.listKey(), (list) =>
+          list
+            ? {
+                channels: list.channels.filter(({ id }) => id !== event.channelId),
+                members: list.members.filter((member) => member.channelId !== event.channelId),
+              }
+            : list,
+        );
+        break;
       case "channel.member.upserted":
         queryClient.setQueryData<ChannelList>(
           channelQueries.listKey(),

@@ -1,13 +1,11 @@
-export interface RelativeTimeProps {
+interface RelativeTimeProps {
   date: Date | string;
   className?: string;
 }
 
-/**
- * Format a date as a relative time string (e.g., "2 hours ago", "yesterday").
- */
 const relativeTimeFormatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
+/** Formats a date as a relative time string (e.g., "2 hours ago", "yesterday"). */
 function formatRelativeTime(date: Date): string {
   const now = new Date();
   const diffMs = date.getTime() - now.getTime();

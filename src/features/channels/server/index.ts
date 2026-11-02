@@ -5,6 +5,7 @@ import type {
   ChannelList,
   ChannelMember,
   ChannelMessage,
+  ChannelMessageActor,
   ChannelMessageSender,
   ChannelReaction,
   ChannelRoutine,
@@ -17,6 +18,7 @@ import type {
   SetChannelRoutineInput,
   ChannelMemberChanges,
   UpdateChannelInput,
+  UpdateChannelMemberInput,
 } from "@channels/model";
 import {
   channelLead,
@@ -114,6 +116,14 @@ export async function updateChannelMember(
   return change.member;
 }
 
+export async function updateChannelMemberFromLead(
+  sessionId: string,
+  input: UpdateChannelMemberInput,
+) {
+  await requireLeadMember(sessionId, input.agentId);
+  return updateChannelMember(input);
+}
+
 export async function updateChannelFromLead(sessionId: string, input: UpdateChannelInput) {
   const database = new ChannelDatabase(await getStateDatabase());
   const change = await database.updateChannel(sessionId, input);
@@ -181,10 +191,17 @@ export async function deleteChannel(channelId: string): Promise<boolean> {
   return true;
 }
 
-export async function removeChannelMember(agentId: string): Promise<void> {
-  const member = await new ChannelDatabase(await getStateDatabase()).getMember(agentId);
-  if (!member) return;
+/** Records the removal before tearing down the Session, whose detach would record the user. */
+export async function removeChannelMember(agentId: string, actor: ChannelMessageActor) {
+  const change = await new ChannelDatabase(await getStateDatabase()).deleteMember(agentId, actor);
+  if (!change) return;
+  publishChannelChange(change);
   await deleteWorker(agentId);
+}
+
+export async function removeChannelMemberFromLead(sessionId: string, agentId: string) {
+  await requireLeadMember(sessionId, agentId);
+  await removeChannelMember(agentId, { type: "agent", agentId: sessionId });
 }
 
 /** The intrinsic lead is never a member. */
@@ -307,6 +324,7 @@ export async function sendChannelMessageFromAgent(
     content: string;
     attachmentPaths?: readonly string[];
     request?: boolean;
+    replies?: string[];
   },
 ): Promise<StoredChannelMessage> {
   const agent = await requireChannelAgent(new ChannelDatabase(await getStateDatabase()), sessionId);
@@ -320,6 +338,7 @@ export async function sendChannelMessageFromAgent(
     content: input.content,
     attachments: await resolveAttachmentPaths(sessionId, input.attachmentPaths),
     request: input.request,
+    replies: input.replies,
   });
 }
 
@@ -389,6 +408,22 @@ export async function deleteChannelRoutine(channelId: string, routineId: string)
   const change = await new ChannelDatabase(await getStateDatabase()).deleteRoutine(
     channelId,
     routineId,
+  );
+  if (!change) return false;
+  publishChannelChange(change);
+  return true;
+}
+
+/** Returns false when the artifact was already gone. Its file stays on disk. */
+export async function removeChannelArtifact(
+  channelId: string,
+  artifactId: string,
+  actor: ChannelMessageActor,
+): Promise<boolean> {
+  const change = await new ChannelDatabase(await getStateDatabase()).removeArtifact(
+    channelId,
+    artifactId,
+    actor,
   );
   if (!change) return false;
   publishChannelChange(change);
@@ -545,7 +580,7 @@ async function shareChannelArtifact(
 
 export async function detachChannelAgentSession(sessionId: string): Promise<void> {
   const database = new ChannelDatabase(await getStateDatabase());
-  const change = await database.deleteMember(sessionId);
+  const change = await database.deleteMember(sessionId, { type: "user" });
   if (!change) return;
   publishChannelChange(change);
 }
@@ -554,6 +589,13 @@ async function requireChannelAgent(database: ChannelDatabase, sessionId: string)
   const agent = await database.getAgent(sessionId);
   if (!agent) throw new Error("This agent session does not belong to a channel.");
   return agent;
+}
+
+/** A lead's session ID is its Channel's ID. */
+async function requireLeadMember(sessionId: string, agentId: string) {
+  if (!(await isChannelMember(sessionId, agentId))) {
+    throw new Error("Member not found in this channel.");
+  }
 }
 
 /** Publish the committed detail events and their catalog projections together. */

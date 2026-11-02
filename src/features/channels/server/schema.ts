@@ -95,4 +95,8 @@ export default [
     CREATE INDEX IF NOT EXISTS idx_channel_routines_next_at
       ON channel_routines(next_at);
   `,
+  `
+    ALTER TABLE channel_messages
+      ADD COLUMN replies TEXT CHECK (replies IS NULL OR (request = 1 AND json_valid(replies)));
+  `,
 ];

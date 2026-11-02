@@ -2,7 +2,7 @@ import { ScrollArea } from "@base-ui/react/scroll-area";
 import { forwardRef, type ComponentPropsWithoutRef, type ForwardedRef } from "react";
 import { cn } from "@/shared/utils";
 
-export type ScrollableFadeAxis = "horizontal" | "vertical";
+type ScrollableFadeAxis = "horizontal" | "vertical";
 
 const fadeClassName =
   "scroll-fade-8 [--scroll-fade-reveal:2rem] [animation-timing-function:linear]";

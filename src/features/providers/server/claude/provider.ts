@@ -1,5 +1,5 @@
 import { deleteSession, getSessionInfo, listSessions } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKControlGetUsageResponse } from "@anthropic-ai/claude-agent-sdk";
+import type { Options, Query, SDKControlGetUsageResponse } from "@anthropic-ai/claude-agent-sdk";
 import { homedir } from "node:os";
 import type { ProviderSubscription } from "@providers/model";
 import { SessionNotFoundError, type SessionProvider } from "@providers/server/provider";
@@ -18,43 +18,33 @@ export const claudeProvider: SessionProvider = {
     return status.loggedIn === true;
   },
   async listModels() {
-    const native = startClaudeQuery({ persistSession: false, cwd: homedir() });
-    try {
-      return (await native.supportedModels())
+    return probeClaude(async (native) =>
+      (await native.supportedModels())
         .filter((model) => model.value !== "default")
-        .map(toModelInfo);
-    } finally {
-      await closeClaudeQuery(native);
-    }
+        .map(toModelInfo),
+    );
   },
   async readSubscription() {
-    const native = startClaudeQuery({ persistSession: false, cwd: homedir() });
-    try {
-      return toSubscription(
-        await native.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
-          skipBehaviors: true,
-        }),
-      );
-    } finally {
-      await closeClaudeQuery(native);
-    }
+    return toSubscription(
+      await probeClaude((native) =>
+        native.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
+      ),
+    );
   },
   async listSkills(directory, skillDirectories) {
-    const native = startClaudeQuery({
-      persistSession: false,
-      cwd: directory ?? homedir(),
-      skills: "all",
-      plugins: claudeSkillPlugins(directory, skillDirectories),
-    });
-    try {
-      return (await native.reloadSkills()).skills.map((skill) => ({
-        name: skill.name,
-        description: skill.description,
-        type: "global" as const,
-      }));
-    } finally {
-      await closeClaudeQuery(native);
-    }
+    return probeClaude(
+      async (native) =>
+        (await native.reloadSkills()).skills.map((skill) => ({
+          name: skill.name,
+          description: skill.description,
+          type: "global" as const,
+        })),
+      {
+        cwd: directory ?? homedir(),
+        skills: "all",
+        plugins: claudeSkillPlugins(directory, skillDirectories),
+      },
+    );
   },
   async listSessions() {
     return (await listSessions()).map((session) => ({
@@ -101,7 +91,20 @@ export const claudeProvider: SessionProvider = {
   stop: stopClaude,
 };
 
-/** Claude plans meter a 5-hour window and weekly windows, some per model. */
+/** Read from a throwaway Claude query, closing it once the read settles. */
+async function probeClaude<T>(read: (native: Query) => Promise<T>, options: Options = {}) {
+  const native = startClaudeQuery({ persistSession: false, cwd: homedir(), ...options });
+  try {
+    return await read(native);
+  } finally {
+    await closeClaudeQuery(native);
+  }
+}
+
+/**
+ * Claude plans meter a 5-hour window and weekly windows, some per model. A window
+ * without a reset time isn't metered for this plan, so it's omitted.
+ */
 export function toSubscription({
   subscription_type: plan,
   rate_limits: windows,
@@ -111,15 +114,9 @@ export function toSubscription({
     name: string,
     window: { utilization: number | null; resets_at: string | null } | null | undefined,
   ) =>
-    window?.utilization == null
+    window?.utilization == null || !window.resets_at
       ? []
-      : [
-          {
-            name,
-            usedPercent: window.utilization,
-            ...(window.resets_at ? { resetsAt: Date.parse(window.resets_at) } : {}),
-          },
-        ];
+      : [{ name, usedPercent: window.utilization, resetsAt: Date.parse(window.resets_at) }];
   return {
     plan,
     limits: [

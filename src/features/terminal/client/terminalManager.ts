@@ -30,7 +30,7 @@ export type TerminalHandlers = {
 class TerminalManager {
   #xterm: XTerm | null = null;
   #fitAddon: FitAddon | null = null;
-  #attachment: (TerminalHandlers & { container: HTMLDivElement }) | null = null;
+  #attachment: TerminalHandlers | null = null;
 
   /** Whether the terminal has shown output since it last reset or lost its socket. */
   #isReady = false;
@@ -56,7 +56,7 @@ class TerminalManager {
   });
 
   attach(container: HTMLDivElement, handlers: TerminalHandlers) {
-    const attachment = { ...handlers, container };
+    const attachment = { ...handlers };
     this.#attachment = attachment;
     this.#attachContainer(container);
 

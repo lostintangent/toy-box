@@ -1,8 +1,14 @@
 import { expect, test } from "bun:test";
 import { channelLeadTools, channelMemberTools, channelTools } from "./tools";
 
-test("only leads receive nonterminal task and routine tools", () => {
-  for (const name of ["edit_channel_tasks", "set_routine", "delete_routine"]) {
+test("only leads receive nonterminal task, routine, and member tools", () => {
+  for (const name of [
+    "edit_channel_tasks",
+    "set_routine",
+    "delete_routine",
+    "update_channel_member",
+    "remove_channel_member",
+  ]) {
     const tool = channelLeadTools.find((tool) => tool.name === name);
     expect(tool).toBeDefined();
     expect(tool?.isTerminal).not.toBe(true);
@@ -17,6 +23,19 @@ test("only the lead's messages can request input", () => {
 
   expect(sendLead?.parameters?.parse(flagged)).toEqual(flagged);
   expect(sendMember?.parameters?.parse(flagged)).toEqual({ content: "Which color?" });
+});
+
+test("suggested replies parse only with a lead request", () => {
+  const sendLead = channelLeadTools.find(({ name }) => name === "send_channel_message");
+  const parameters = sendLead?.parameters;
+  const replies = ["Yes", "Not yet"];
+
+  expect(parameters?.parse({ content: "Ship it?", request: true, replies })).toEqual({
+    content: "Ship it?",
+    request: true,
+    replies,
+  });
+  expect(parameters?.safeParse({ content: "Ship it?", replies }).success).toBe(false);
 });
 
 test.each(["lead", "member"] as const)(

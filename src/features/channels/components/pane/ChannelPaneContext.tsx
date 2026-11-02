@@ -18,6 +18,8 @@ type ChannelPane = {
   presence: Record<string, ChannelAgentPresence>;
   /** Addresses the draft to an agent by mentioning it first. */
   reply: (agent: ChannelAgent) => void;
+  /** Posts a suggested reply to the pending request as the user's next message. */
+  answer: (content: string) => void;
   /** Begins a mention, so the picker can address or add an agent. */
   mention: () => void;
 };

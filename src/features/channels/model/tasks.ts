@@ -11,12 +11,17 @@ export const channelTaskSchema = z
     ),
     title: z.string().trim().min(1).max(240).describe("A concise outcome or next step."),
     status: z.enum(["pending", "in_progress", "blocked", "done"]),
-    startedAt: z.iso.datetime().optional().describe("Server-owned start time; do not set it."),
+    startedAt: z.iso
+      .datetime()
+      .optional()
+      .describe(
+        "Server-owned start time, set when work begins and cleared when the task is pending or done. Do not set it.",
+      ),
     checkInAt: z.iso
       .datetime()
       .optional()
       .describe(
-        "Optional UTC check-in time, independent of startedAt. Only the lead sets it; when due, an in-progress task's owner is privately prompted and the check-in is cleared.",
+        "Optional UTC check-in time that keeps in-progress work on track, independent of startedAt and checked once a minute. Only the lead sets it. When due, the owner is privately prompted to report whether the work is converging, and the check-in is cleared.",
       ),
     ownerId: z
       .string()
@@ -35,7 +40,7 @@ export const channelTaskSchema = z
     diff: diffStatsSchema
       .optional()
       .describe(
-        "Measured lines directly attributed to this task. Exclude subtask counts; parent totals are computed automatically.",
+        "Measured lines directly attributed to this task, omitting uncertain counts and unrelated work. Exclude subtask counts; parent totals are computed automatically. These are reported-work totals, not net repository diffs.",
       ),
     get children() {
       return z.array(channelTaskSchema).max(50).optional().describe("Optional subtasks.");
@@ -158,7 +163,7 @@ export const editChannelTasksInputSchema = z
             })
             .strict()
             .describe(
-              "Move the existing subtree intact. Its new parent must be outside that subtree.",
+              "Move the existing subtree intact, keeping its IDs, artifacts, and diffs. Its new parent must be outside that subtree. When a group is full, first move a task to the root to make room for a milestone, then move tasks into it in the same batch.",
             ),
         ]),
       )
@@ -227,15 +232,20 @@ function changeTask(
   return next;
 }
 
-export function unassignChannelTasks(
+/** Clears the `link` that names `id` at every depth, such as an agent's ownership or an artifact's link. */
+export function unlinkChannelTasks(
   tasks: readonly ChannelTask[],
-  agentId: string,
+  link: "ownerId" | "artifactId",
+  id: string,
 ): ChannelTask[] {
-  return tasks.map(({ ownerId, children, ...task }) => ({
-    ...task,
-    ...(ownerId && ownerId !== agentId ? { ownerId } : {}),
-    ...(children ? { children: unassignChannelTasks(children, agentId) } : {}),
-  }));
+  return tasks.map((task) => {
+    const { [link]: linked, children, ...rest } = task;
+    return {
+      ...rest,
+      ...(linked && linked !== id ? { [link]: linked } : {}),
+      ...(children ? { children: unlinkChannelTasks(children, link, id) } : {}),
+    };
+  });
 }
 
 /** A task list is complete when it has tasks and every task and subtask is done. */

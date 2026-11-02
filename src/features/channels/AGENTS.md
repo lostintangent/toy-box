@@ -21,8 +21,11 @@ accountable for the purpose and for the quality of every member's outcome.
 
 1. **Create.** The Channel and its lead commit together, and the lead starts immediately. With a
    purpose, it frames the work and posts a kickoff. Without one, it asks the user what to work on.
-2. **Staff.** As work becomes actionable, the lead creates members with focused roles. Each one
-   onboards by reading the Channel and establishing its role and avatar.
+2. **Staff.** As work becomes actionable, the lead creates members with focused roles. A role says
+   what the member is accountable for, its bar, and judgment specific to that work. Shared rules,
+   paths, commands, and product behavior stay in the purpose, repository instructions, or spec, and
+   the lead reviews every role when the purpose changes. Each member onboards by reading the Channel
+   and establishing its role and avatar.
 3. **Coordinate.** One audience policy routes every message, and mentions wake exactly the agents
    they name. A woken agent runs one private turn: it reads the Channel, acts publicly, and
    finishes, optionally leaving a waiting status.
@@ -78,14 +81,18 @@ Channel        name, purpose, directory, lead model, tasks, preview, user read p
   directory, preview, membership, and artifact changes. Agent senders retain only their stable Worker ID, so deleting
   a member preserves prior content while the UI presents a deleted identity.
   `tasks_completed` records the task list becoming complete. The lead flags an ordinary message with
-  `request: true`; `requestSequence` points to that question until a user replies.
+  `request: true`; `requestSequence` points to that question until a user replies. A request may also
+  carry `replies`, two to four labels of up to 80 characters that become one-tap answers.
 - `ChannelReaction` is one Agent's durable acknowledgement or sentiment on a user or Agent message.
   It does not wake anyone or advance message sequence.
 - `ChannelArtifact` indexes a shared `WorkspaceFile` by its `id` (the file's identity), with its
   title and when it was first shared; sharing it again changes only the title. Every artifact
   carries its `id`, so tasks, apps, and native clients never derive it. Files owns the address and
   editor. Channels owns only the shared index and the `artifact_shared` transcript event, whose own
-  timestamp records the share.
+  timestamp records the share. Removing one, through the lead's `remove_channel_artifact` once a
+  newer one supersedes it or the user's overview or `DELETE`, unshares it, leaves the file on disk,
+  and records its actor in an `artifact_removed` message whose reducer unlinks task references, as
+  `member_left` does.
 - `ChannelRoutine` is scheduled, recurring work that serves the purpose: a short title, a prompt, and
   a local-time cron schedule with one fixed minute, so it runs at most hourly. Adding, changing, and
   deleting one each append a typed system message that shows its title. Only the lead adds or changes
@@ -121,7 +128,9 @@ projections for persistence and runtime configuration; private read positions st
   planning or restructuring, preserving retained IDs and outcomes.
 - Create, edit, start, finish, and remove Channel members through their owned Workers.
 - Let ordinary Sessions create and staff Channels, then read, post, share, and wait for the lead or
-  members on the user's behalf. Let the lead create peers within its own Channel.
+  members on the user's behalf. Let the lead create peers within its own Channel, then edit their
+  name, role, or model with `update_channel_member` and remove them with `remove_channel_member`, as
+  the user can.
 
 Selecting an unknown mention creates a member in that Channel and immediately starts its private
 Worker Session for onboarding. The member reads context and establishes missing profile details, then
@@ -172,20 +181,26 @@ Sessions owns directory fallback and applying configuration between executions. 
 inspect the same model catalog as the client before creating peers. Member profile and Channel
 directory changes apply between executions without mutating provider history. The lead receives its
 fixed identity and responsibilities from the Channel rather than editable Worker metadata. Among
-Channel agents, it alone creates members and updates the directory, public purpose, tasks, and
-preview.
+Channel agents, it alone creates, edits, and removes members and updates the directory, public
+purpose, tasks, and preview.
+
+Channel tools are always loaded, so each tool's description and schema own its purpose and
+mechanics. The instructions own the collaboration protocol: how the lead frames, staffs, delegates,
+reviews, and closes work, how members participate, and when each tool fits that flow. Keep tool
+mechanics out of the instructions so the two cannot drift.
 
 A directory is optional. Channels records a provided directory without creating it. When the work
 needs one and none was provided, the lead can create and assign it through `update_channel`.
 
 The collaboration protocol asks an agent to read current context at turn start, use the smallest
-useful public action, set status only for substantive work, reread before a result or handoff, mention
-members whose wait it fulfills, and finish every turn explicitly. Agent `read_channel` defaults to
+useful public action, set status only for substantive work, reread before a result or handoff, say in
+it what changed, how it was verified, and what was not, mention members whose wait it fulfills, and
+finish every turn explicitly. Agent `read_channel` defaults to
 unread messages, `unfinishedTasks` assigned to the caller (all unfinished tasks for the lead), and
 working or waiting agents. Task ancestors retain assignment context; idle message authors remain
 identified by name and mention. With a zero read cursor it always returns full context, even when
 compact is requested. `detail: "full"` also includes Channel metadata, the complete task tree,
-roster roles, artifacts, and routines for reorientation, planning, and final review. Never replace
+roster roles and models, artifacts, and routines for reorientation, planning, and final review. Never replace
 the task tree from `unfinishedTasks`. Both views use the same forward read cursor and attachments;
 passive Session reads retain their full context and backward paging. Public messages, reactions,
 statuses, artifacts, and attachments are the only peer communication contract. Private transcripts
@@ -195,15 +210,16 @@ model's 12,000-character limit.
 
 The built-in lead role establishes the purpose with the user when needed, scales planning to the
 work, keeps a lightweight task list with reviewable outcomes, creates each member only when their
-work is actionable, drives quality through review and iteration, and keeps the public progress
-surfaces current.
+work is actionable, drives quality through review and iteration, keeps the public progress
+surfaces current, and tracks each open ask of the user as a blocked task until it is resolved.
 Each sibling list is capped at 50 tasks; use ID-based moves to regroup growing lists into milestones without discarding
 useful outcomes or copying child counts into a parent's direct diff.
 Routines serve the purpose, so setting one never rewrites the purpose or adds tasks.
 Delegation never transfers accountability for the purpose or the quality of a member's outcome.
 During working communication, the lead flags what it needs from the user by setting
 `request` on `send_channel_message`; the same transaction appends that flagged message and updates
-the pending cursor. Only the lead's version of the tool accepts the flag. Completion
+the pending cursor. Only the lead's version of the tool accepts the flag, and it accepts `replies`
+only alongside a request. Completion
 needs no separate operation:
 when a lead's task edit or replacement takes the list from incomplete to complete, meaning it has
 tasks and every task and subtask is done, the same transaction appends `tasks_completed`. Completion
@@ -230,7 +246,9 @@ streaming, completion, and worktrees. Workspace owns pane placement and cross-fe
 Channels spawns the lead and members through Workers with durable retention. Its admission callback
 commits the Channel and lead together, or a member and its membership message together, before
 execution begins, and returns the committed Channel or member through the Worker receipt. Removing a
-member transactionally changes the Worker record and appends its typed system message.
+member transactionally deletes its Worker record and appends a `member_left` message whose actor is
+the user or the removing lead, then tears down its Session, as Channel deletion does. Deleting a
+member's Session elsewhere, such as from the Sessions list, records the user.
 Removing a member also clears that member from task ownership. Profile and status changes update
 Worker metadata and advance the Channel revision. Deleting a Channel removes its rows and Worker
 ownership together, publishes one deletion, then tears down every captured agent Session. Those
@@ -253,8 +271,9 @@ owners and shared artifact references in that transaction. Tasks stay in the Cha
 granular commands publish the same full-tree `tasks` event as replacement. Outcome-only updates
 stay quiet and unchanged edits allocate no revision. The list query returns metadata and members
 for the sidebar. The fixed lead identity is derived from the Channel ID.
-Commits persist the reducer's request and completion cursors alongside their messages; reads select
-those cursors directly. The snapshot retains request content by that sequence, while transcript
+Commits persist the reducer's tasks and its request and completion cursors alongside their events,
+so a `tasks` event or an unlinking message is the only way tasks change. Reads select them
+directly. The snapshot retains request content by that sequence, while transcript
 presentation separately distinguishes each historical request's acknowledgement.
 A visible pane observes a `ChannelState` through one streamed Query: the first connection supplies
 the snapshot, and later connections resume the cached revision. The server commits canonical rows
@@ -290,13 +309,23 @@ and message targets only while its state matches that presence.
 
 ### Shared client protocol
 
-`GET /api/v1/channels` exposes the existing catalog as
-`{ version: 1, channels, members, lead, working }` for client channel selection, using the same
-list operation as browser RPC. `lead` is the profile every Channel's lead shares, with the
-Channel's ID as its own, so clients draw leads of Channels they haven't opened without keeping a
-copy. It never appears in `members`. `working` names the
-leads and members whose sessions are running, the same fact presence uses, because native clients
-cannot read the Session activity the browser's sidebar uses for closed Channels.
+`GET /api/v1/channels` serves the catalog `{ version: 1, channels, members, lead, working }` for
+client channel selection, using the same list operation as browser RPC. Each entry carries its
+`revision`, the Channel's detail revision. The request chooses the
+representation: JSON by default with `Cache-Control: no-store`, or an SSE stream when it sends
+`Accept: text/event-stream`. Both set `Vary: Accept`. The stream opens with a `snapshot` event whose
+`catalog` equals the JSON body, then forwards `channel.*` events verbatim. It drops an upsert whose
+revision is not newer than the last one sent for that Channel, and any upsert for a deleted Channel,
+and it sends `working` only when the set changes. `lead` is the profile every Channel's lead shares,
+with the Channel's ID as its own, so clients draw leads of Channels they haven't opened without
+keeping a copy. It never appears in `members`. `working` is sorted and names the leads and members
+whose sessions are running, the same fact presence uses, because native clients cannot read the
+Session activity the browser's sidebar uses for closed Channels.
+
+The catalog stream has no cursor, so a reconnect opens a fresh snapshot that replaces
+the client's catalog. Native clients hold one catalog stream while active instead of polling the JSON
+body. Give long-lived streams their own URLSession: an open stream holds one of the per-host
+connections, which would otherwise make one-shot requests wait behind it.
 
 An avatar is `{ mark, color }`, where agents author both and clients stroke the mark in whichever
 of black or white contrasts more with `color`. Toy Box's own profiles may add `ink`, a fixed mark
@@ -315,7 +344,7 @@ agent tool projection.
 The stream establishes state and follows changes:
 
 - No cursor: send `{ type: "snapshot", state }` with one complete `ChannelState`.
-- `after` or `Last-Event-ID` (including zero): replay contiguous durable events, then send current
+- `after` (including zero): replay contiguous durable events, then send current
   `{ type: "resumed", presence }`, including explicit idle agents. An unavailable
   replay becomes a replacement snapshot; clients discard older loaded history and can page it again.
 - Live durable events forward directly. The observer keeps only the roster needed to project
@@ -369,9 +398,10 @@ editor, mention completion, and routine actions:
   purpose, or lead model (`{ version: 1, channel }`), and `DELETE` removes it (204).
 - `POST …/members` creates a member from `{ name, role?, model? }` and starts its onboarding (201
   `{ version: 1, member }`). `PATCH …/members/:agentId` changes its name, role, or model (null
-  inherits the workspace default), and `DELETE` removes it (204). Both reach only members of the
-  routed Channel; the intrinsic lead is never one. Once a member's session exists, its provider is
-  fixed: an explicit model from another provider returns 422. Clearing the override with
+  inherits the workspace default), and `DELETE` removes it (204) with a `member_left` message whose
+  actor is the user. Both reach only members of the routed Channel; the intrinsic lead is never one.
+  Once a member's session exists, its provider is fixed: an explicit model from another provider
+  returns 422. Clearing the override with
   `model: null` remains allowed: Sessions follows a compatible workspace default or retains the
   existing provider's model and history when that default belongs to another provider.
 - `GET …/members/:agentId/models` returns `{ version: 1, provider, models, defaultModel }` scoped
@@ -380,15 +410,19 @@ editor, mention completion, and routine actions:
   default is available; it describes a model choice, not permission to clear an override.
 - `POST …/routines/:routineId/run` wakes the lead with that routine now, and `DELETE
   …/routines/:routineId` removes it (204, or 404 when it is already gone).
+- `DELETE …/artifacts/:artifactId` removes a shared artifact from the Channel and leaves its file on
+  disk (204, or 404 when it is not shared). Clients percent-encode the id, since it contains `/` and
+  `:`, for example `machine%3A%2Ftmp%2Fnotes.md`. The message records the user as its actor.
 - `GET /api/v1/models` returns `{ version: 1, models, defaultModel }`, the provider catalog and
   normalized workspace default that the browser's model pickers offer. Providers owns this route,
   its response, and the projection reused by the member-scoped endpoint.
 
 Bodies cannot name the identities in their route. Malformed bodies return 400, missing Channels,
-members, and routines return 404, and domain rejections such as a taken mention return 422 with
-the same message the browser shows. Unexpected management failures are logged server-side and
-return 500 with a generic `{ error }`, never an internal exception message. A failure can follow
-a committed change, so clients refresh authoritative state rather than automatically retrying writes.
+members, routines, and artifacts return 404, and domain rejections such as a taken mention return
+422 with the same message the browser shows. Unexpected management failures are logged server-side
+and return 500 with a generic `{ error }`, never an internal exception message. A failure can
+follow a committed change, so clients refresh authoritative state rather than automatically
+retrying writes.
 
 ## Native push delivery
 
@@ -401,7 +435,8 @@ channel. Reading does not close a request. No separate catalog cache or schedule
 Delivery belongs to [Push](../push/AGENTS.md). Channel payloads live in `model/push.ts`, with four
 ChannelKit wire fixtures in `model/__fixtures__/push-*.apns`.
 After the unread check, alert text uses the current channel name, the Mac's 400-grapheme plain-text
-request policy and attachment fallbacks, completion task-count wording, and the requester's handle.
+request policy and attachment fallbacks, completion task-count wording, the requester's handle, and a
+request's suggested replies. Replies are non-body data, so long labels can shorten the alert body.
 Deletion publishes an end through the normal 100ms debounce and dismisses at its push timestamp.
 Completion and removed-task endings retain their content for fifteen minutes.
 
@@ -475,7 +510,9 @@ presents one deleted identity everywhere.
   show a passive live canvas and open/focus a Screen pane without opening a
   private agent Session. Tray, overview and historical preview messages share
   Workspace's preview presentation. Opening never takes input control.
-  While the Channel reports a pending request, it asks for a reply.
+  While the Channel reports a pending request, it asks for a reply. The request's `replies` appear
+  as buttons under the question; tapping one posts its label as the user's message directly, with no
+  draft. The buttons leave with the request once the user replies.
   An "Input needed" button beside the composer's audience stays visible
   until the user replies. Hover previews `state.request`; clicking loads
   any older pages needed and scrolls to the question. Scrolling never changes the composer height.
@@ -483,13 +520,14 @@ presents one deleted identity everywhere.
   Both presentations use the shared vertical scroll fade.
   It shows the purpose, directory, and preview, then the team with its presence, the shared
   artifacts newest first by when each was shared, the tasks, and any routines by title with their
-  next run, each expanding to its prompt and offering Run routine and Delete routine. A waiting agent
-  shows when its follow-up checks back. Team members, Task list, Artifacts, and Routines each
-  collapse independently through their heading, with all four expanded by default. Counts and task
-  diff totals remain visible while collapsed. The Task list's count badge independently toggles
-  an in-progress-only view, retaining and initially expanding every ancestor of an active task.
-  A blue dot and pressed state mark the active filter. Filtering changes visibility only: count badges
-  still describe their complete sibling lists, and diff totals remain unfiltered.
+  next run, each expanding to its prompt and offering Run routine and Delete routine. Each artifact
+  row offers Remove from channel. A waiting agent shows when its follow-up checks back. Team
+  members, Task list, Artifacts, and Routines each collapse independently through their heading,
+  with all four expanded by default. Counts and task diff totals remain visible while collapsed.
+  The Task list's count badge independently toggles an in-progress-only view, retaining and
+  initially expanding every ancestor of an active task. A blue dot and pressed state mark the
+  active filter. Filtering changes visibility only: count badges still describe their complete
+  sibling lists, and diff totals remain unfiltered.
   No matches reads "No tasks in progress."
   The Team members count badge similarly toggles working agents only, using live presence and retaining
   lead-first, alphabetical order. Its count still describes the complete team, and no matches reads
@@ -497,7 +535,10 @@ presents one deleted identity everywhere.
   Both filters start off and leave section disclosure independent.
 - Both checklists share a task projection with stable identity and compact diff totals (exact counts
   on hover and for assistive technology). The shared checklist owns filter visibility and muted
-  italic empty-message styling; hosts supply the message. Task running time has a leading clock icon,
+  italic empty-message styling; hosts supply the message. It also owns disclosure: a parent starts
+  expanded only while a subtask at any depth is in progress, whatever its own status, so done,
+  blocked, and unstarted groups start collapsed. The rule reapplies when running work starts or stops
+  beneath a parent. Task running time has a leading clock icon,
   both in muted text. Naturally sized counts and owners float beside the first title line, without reserved
   columns. Pending rows omit diff counts; reported zeros use the same
   added/removed colors as other counts. Counts and avatars keep their normal colors on done rows.

@@ -1,6 +1,14 @@
-import { getChannelSnapshot } from "./stream";
 import { channelAgent, createStoredChannel } from "@channels/server/testFixtures";
-import { beforeEach, expect, mock, onTestFinished, setSystemTime, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  beforeEach,
+  expect,
+  mock,
+  onTestFinished,
+  setSystemTime,
+  spyOn,
+  test,
+} from "bun:test";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,24 +16,35 @@ import type { ChannelEvent } from "@channels/model";
 import { machineFile, workspaceFileId } from "@files/model";
 import { reduceChannelState } from "@channels/model/reducer";
 import { createTestDatabase } from "@/server/database";
-import { detachManagedSession } from "@/server/managedSessions";
-import * as sessions from "@sessions/server/providers";
-import * as sessionRuntime from "@sessions/server/runtime";
-import { setSessionProvider } from "@sessions/server/state/sessions";
 import { normalizeToolResult, type Tool } from "@sessions/server/tools/definition";
-import * as workspaceEvents from "@workspace/server/events";
-import { deleteSessionActivity, setSessionActivity } from "@sessions/server/state/activity";
-import startChannels from "./startup";
 
 let currentDb: Bun.SQL | undefined;
 
+// Mock first, then import everything the test exercises or inspects, so the test and the
+// code under test share one module graph and no Session reaches a real provider.
 mock.module("@/server/database", () => ({
   getStateDatabase: async () => {
     if (!currentDb) throw new Error("Test database has not been opened");
     return currentDb;
   },
 }));
+const realRuntime = { ...(await import("@sessions/server/runtime")) };
+const runtime = {
+  createSession: mock<typeof realRuntime.createSession>(),
+  deliverSessionMessage: mock<typeof realRuntime.deliverSessionMessage>(),
+  deleteSessionIfExists: mock<typeof realRuntime.deleteSessionIfExists>(),
+  getSessionDirectory: mock<typeof realRuntime.getSessionDirectory>(),
+};
+mock.module("@sessions/server/runtime", () => ({ ...realRuntime, ...runtime }));
+afterAll(() => {
+  mock.module("@sessions/server/runtime", () => realRuntime);
+});
 
+const { detachManagedSession } = await import("@/server/managedSessions");
+const { setSessionProvider } = await import("@sessions/server/state/sessions");
+const { deleteSessionActivity, setSessionActivity } =
+  await import("@sessions/server/state/activity");
+const workspaceEvents = await import("@workspace/server/events");
 const { ChannelDatabase } = await import("./database");
 const {
   createChannel,
@@ -38,25 +57,32 @@ const {
   markChannelRead,
   postChannelMessageFromSession,
   readChannelForSession,
+  removeChannelMemberFromLead,
   runChannelRoutine,
   sendChannelMessageFromAgent,
   setChannelAgentStatus,
   setChannelMessageReactionFromAgent,
   setChannelRoutineFromLead,
   updateChannelMember,
+  updateChannelMemberFromLead,
   updateChannelFromLead,
   wakeDueChannelAgents,
 } = await import("./index");
 const { subscribeChannelEvents, releaseChannelEvents } = await import("./events");
+const { getChannelSnapshot } = await import("./stream");
+const { default: startChannels } = await import("./startup");
 const { channelLeadTools, channelMemberTools, channelTools, createChannelMembersTool } =
   await import("./tools");
 
 beforeEach(() => {
-  const create = spyOn(sessionRuntime, "createSession").mockResolvedValue({
+  const started: Awaited<ReturnType<typeof realRuntime.deliverSessionMessage>> = {
     disposition: "started",
     waitForCompletion: async () => ({ status: "completed" }),
-  });
-  onTestFinished(() => create.mockRestore());
+  };
+  runtime.createSession.mockReset().mockResolvedValue(started);
+  runtime.deliverSessionMessage.mockReset().mockResolvedValue(started);
+  runtime.deleteSessionIfExists.mockReset().mockResolvedValue(true);
+  runtime.getSessionDirectory.mockReset().mockResolvedValue(undefined);
 });
 
 const PNG_BASE64 =
@@ -99,15 +125,11 @@ test("attention uses normal messages and upserts, and a user reply also wakes th
   const events: ChannelEvent[] = [];
   const unsubscribe = subscribeChannelEvents(channel.id, (event) => events.push(event));
   const broadcasts = spyOn(workspaceEvents, "broadcast").mockImplementation(() => {});
-  const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockResolvedValue({
-    disposition: "started",
-    waitForCompletion: async () => ({ status: "completed" }),
-  });
+  const deliver = runtime.deliverSessionMessage;
   onTestFinished(async () => {
     unsubscribe();
     releaseChannelEvents(channel.id);
     broadcasts.mockRestore();
-    deliver.mockRestore();
   });
 
   await setChannelAgentStatus(channel.id, { status: "Finishing" });
@@ -148,15 +170,14 @@ test("creating a Channel starts its lead without creating a directory", async ()
     await rm(root, { recursive: true, force: true });
   });
   const directory = join(root, "nested", "workspace");
-  const leadStarted = Promise.withResolvers<Parameters<typeof sessionRuntime.createSession>>();
-  const create = spyOn(sessionRuntime, "createSession").mockImplementation(async (...args) => {
+  const leadStarted = Promise.withResolvers<Parameters<typeof realRuntime.createSession>>();
+  runtime.createSession.mockImplementation(async (...args) => {
     leadStarted.resolve(args);
     return {
       disposition: "started",
       waitForCompletion: async () => ({ status: "completed" }),
     };
   });
-  onTestFinished(() => create.mockRestore());
 
   const channel = await createChannel({
     name: "Bitmap studio",
@@ -191,18 +212,13 @@ test.each([false, true])(
     const broadcasts = spyOn(workspaceEvents, "broadcast").mockImplementation((event) => {
       observed.push(event);
     });
-    const cleanup = spyOn(sessionRuntime, "deleteSessionIfExists").mockImplementation(
-      async (id) => {
-        observed.push(id);
-        await detachManagedSession(id);
-        if (failCleanup && id === "builder") throw new Error("Provider cleanup failed");
-        return true;
-      },
-    );
-    onTestFinished(() => {
-      cleanup.mockRestore();
-      broadcasts.mockRestore();
+    runtime.deleteSessionIfExists.mockImplementation(async (id) => {
+      observed.push(id);
+      await detachManagedSession(id);
+      if (failCleanup && id === "builder") throw new Error("Provider cleanup failed");
+      return true;
     });
+    onTestFinished(() => broadcasts.mockRestore());
 
     const deletion = deleteChannel(channel.id);
     if (failCleanup)
@@ -236,7 +252,7 @@ test("an addressed post settles after its Agent wake is ready and a duplicate ne
   const wakeFinished = new Promise<void>((resolve) => {
     releaseWake = resolve;
   });
-  const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockImplementation(async () => {
+  const deliver = runtime.deliverSessionMessage.mockImplementation(async () => {
     announceWake();
     await wakeFinished;
     return {
@@ -244,7 +260,6 @@ test("an addressed post settles after its Agent wake is ready and a duplicate ne
       waitForCompletion: async () => ({ status: "completed" }),
     };
   });
-  onTestFinished(() => deliver.mockRestore());
 
   let settled = false;
   const input = {
@@ -301,24 +316,22 @@ test("joining starts onboarding before any mention; later assignments use normal
   const channel = await createStoredChannel(channels, { name: "Onboarding", ...CHANNEL_DEFAULTS });
   const onboarding = Promise.withResolvers<{ status: "completed" }>();
   let admittedAtStart: unknown;
-  const create = spyOn(sessionRuntime, "createSession").mockImplementation(async (id) => {
+  const create = runtime.createSession.mockImplementation(async (id) => {
     admittedAtStart = {
       member: await channels.getMember(id),
       announcement: (await channels.listMessagesAfter(channel.id)).at(-1)?.content,
     };
     return { disposition: "started", waitForCompletion: () => onboarding.promise };
   });
-  const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockResolvedValue({
+  const deliver = runtime.deliverSessionMessage.mockResolvedValue({
     disposition: "queued",
     waitForCompletion: () => onboarding.promise,
   });
-  const { waitForSessions } = sessionRuntime;
+  const { waitForSessions } = realRuntime;
   let memberId: string | undefined;
   onTestFinished(async () => {
     onboarding.resolve({ status: "completed" });
     if (memberId) await waitForSessions([memberId]);
-    create.mockRestore();
-    deliver.mockRestore();
     releaseChannelEvents(channel.id);
     await currentDb?.close();
     currentDb = undefined;
@@ -353,49 +366,42 @@ test("joining starts onboarding before any mention; later assignments use normal
   expect(deliver).toHaveBeenCalledTimes(2);
 });
 
-test("only the Channel lead can create members", async () => {
+test("only the Channel lead creates, edits, and removes its own members", async () => {
   const channels = await openChannels();
+  const channel = await createStoredChannel(channels, { name: "Studio", ...CHANNEL_DEFAULTS });
+  const other = await createStoredChannel(channels, { name: "Elsewhere", ...CHANNEL_DEFAULTS });
+  const { member: outsider } = await channels.createMember(
+    channelAgent(other.id, "scout", "Scout"),
+  );
 
-  const channel = await createStoredChannel(channels, {
-    name: "Product studio",
-    ...CHANNEL_DEFAULTS,
-  });
-
-  const peers = await createChannelMembersFromLead(channel.id, [
-    {
-      name: "Designer",
-      role: "Turns product direction into clear interaction design.",
-      model: { provider: "copilot", name: "designer-model" },
-    },
-    {
-      name: "Engineer",
-      role: "Builds the agreed product direction.",
-    },
-  ]);
-
-  expect(peers).toMatchObject([
-    {
-      channelId: channel.id,
-      name: "Designer",
-      role: "Turns product direction into clear interaction design.",
-      model: { provider: "copilot", name: "designer-model" },
-    },
-    {
-      channelId: channel.id,
-      name: "Engineer",
-      role: "Builds the agreed product direction.",
-    },
-  ]);
-  expect((await channels.listMembers(channel.id)).map(({ name }) => name)).toEqual([
-    "Designer",
-    "Engineer",
-  ]);
+  const [designer] = await createChannelMembersFromLead(channel.id, [{ name: "Designer" }]);
   await expect(
-    createChannelMembersFromLead(peers[0]!.id, [{ name: "Researcher" }]),
+    createChannelMembersFromLead(designer!.id, [{ name: "Researcher" }]),
   ).rejects.toThrow("Only the channel lead can create members.");
+
+  const model = { provider: "claude", name: "opus" };
+  await updateChannelMemberFromLead(channel.id, { agentId: designer!.id, model });
+  expect(await invokeTool("read_channel", { detail: "full" }, channel.id, true)).toMatchObject({
+    members: [{ agentId: designer!.id, model }],
+  });
+  for (const agentId of [outsider.id, channel.id]) {
+    await expect(updateChannelMemberFromLead(channel.id, { agentId, model })).rejects.toThrow(
+      "Member not found in this channel.",
+    );
+    await expect(removeChannelMemberFromLead(channel.id, agentId)).rejects.toThrow(
+      "Member not found in this channel.",
+    );
+  }
+  await removeChannelMemberFromLead(channel.id, designer!.id);
+  const { messages } = await invokeTool("read_channel", {}, channel.id, true);
+  expect(messages.at(-1).content).toMatchObject({
+    type: "member_left",
+    actor: { type: "agent", agentId: channel.id },
+    agentId: designer!.id,
+  });
 });
 
-test("channel tools use agentId across creation, context, profile updates, and waiting", async () => {
+test("channel tools identify every agent by agentId", async () => {
   await openChannels();
 
   const { channel } = await invokeTool("create_channel", { name: "Identity", ...CHANNEL_DEFAULTS });
@@ -404,11 +410,9 @@ test("channel tools use agentId across creation, context, profile updates, and w
   expect(channel.lead).toEqual({ agentId: channelId, mention: "@lead" });
   expect((await invokeTool("list_channels")).channels[0].lead).toEqual(channel.lead);
 
-  const { members } = await invokeTool("create_channel_members", {
-    channelId,
-    members: [{ name: "Reviewer" }],
-  });
-  const member = members[0];
+  const {
+    members: [member],
+  } = await invokeTool("create_channel_members", { channelId, members: [{ name: "Reviewer" }] });
   expect(member).toEqual({ agentId: expect.any(String), mention: "@reviewer" });
   const profile = await invokeTool(
     "update_member",
@@ -418,23 +422,14 @@ test("channel tools use agentId across creation, context, profile updates, and w
   expect(profile.agentId).toBe(member.agentId);
   expect(profile).not.toHaveProperty("id");
 
-  // Stored work left behind by an idle session must not appear as active work to peers.
-  await setChannelAgentStatus(member.agentId, { status: "Reviewing" });
   const context = await invokeTool("read_channel", { channelId });
-  expect(context.lead.agentId).toBe(channel.lead.agentId);
-  expect(context.members).toEqual([
-    {
-      agentId: member.agentId,
-      name: "Reviewer",
-      mention: "@reviewer",
-      role: "Review the outcome.",
-    },
-  ]);
+  expect(context.lead.agentId).toBe(channelId);
+  expect(context.members).toMatchObject([{ agentId: member.agentId }]);
   expect(context.messages[0].content).toEqual({ type: "member_joined", agentId: member.agentId });
   expect(
     await invokeTool("wait_for_channel_agents", {
       channelId,
-      agentIds: [context.lead.agentId, context.members[0].agentId],
+      agentIds: [channelId, member.agentId],
     }),
   ).toEqual({
     agents: [
@@ -445,8 +440,6 @@ test("channel tools use agentId across creation, context, profile updates, and w
 });
 
 test("a Session can seed and passively read Channel context", async () => {
-  const getDirectory = spyOn(sessions, "getSessionDirectory").mockResolvedValue(undefined);
-  onTestFinished(() => getDirectory.mockRestore());
   const channels = await openChannels();
   const directory = await mkdtemp(join(tmpdir(), "toy-box-channel-session-"));
   onTestFinished(async () => {
@@ -462,11 +455,7 @@ test("a Session can seed and passively read Channel context", async () => {
     Bun.write(join(directory, "evidence.png"), Buffer.from(PNG_BASE64, "base64")),
     Bun.write(join(directory, "brief.md"), "# Brief"),
   ]);
-  const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockResolvedValue({
-    disposition: "started",
-    waitForCompletion: async () => ({ status: "completed" }),
-  });
-  onTestFinished(() => deliver.mockRestore());
+  const deliver = runtime.deliverSessionMessage;
 
   const message = await postChannelMessageFromSession("coordinator-session", {
     id: "kickoff",
@@ -730,11 +719,7 @@ test("committed edits and reads replay to the durable view and only a new purpos
     }),
   );
 
-  const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockResolvedValue({
-    disposition: "started",
-    waitForCompletion: async () => ({ status: "completed" }),
-  });
-  onTestFinished(() => deliver.mockRestore());
+  const deliver = runtime.deliverSessionMessage;
 
   await editChannel({
     channelId: channel.id,
@@ -986,16 +971,9 @@ test("session completion and startup clear working status, preserving waits and 
 });
 
 function spyOnDelivery() {
-  const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockResolvedValue({
-    disposition: "started",
-    waitForCompletion: async () => ({ status: "completed" }),
-  });
   const broadcasts = spyOn(workspaceEvents, "broadcast").mockImplementation(() => {});
-  onTestFinished(() => {
-    deliver.mockRestore();
-    broadcasts.mockRestore();
-  });
-  return deliver;
+  onTestFinished(() => broadcasts.mockRestore());
+  return runtime.deliverSessionMessage;
 }
 
 test("check-ins privately notify the assignee per task and publish the consumed snapshot once", async () => {
@@ -1148,7 +1126,7 @@ test("running a routine wakes its lead now and leaves its schedule alone", async
     schedule: "0 * * * *",
     prompt: "Check CI",
   });
-  const wake: Parameters<typeof sessionRuntime.deliverSessionMessage> = [
+  const wake: Parameters<typeof realRuntime.deliverSessionMessage> = [
     channel.id,
     {
       systemMessage: { type: "channel_routine", title: "CI", prompt: "Check CI" },

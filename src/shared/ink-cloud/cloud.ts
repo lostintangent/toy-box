@@ -33,7 +33,7 @@ export interface Ink {
 export type Reaction = "part" | "stir";
 
 /** The lightness of the surface beneath the cloud; ink over dark needs a stronger wash. */
-export type Surface = "light" | "dark";
+type Surface = "light" | "dark";
 
 /** A mote of another ink that crosses the cloud every `interval` seconds or so. */
 export interface Traveler {

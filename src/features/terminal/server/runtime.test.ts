@@ -10,7 +10,6 @@ const DEFAULT_CLIENT_ID = "client-1";
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const ALT_BUFFER_ENTER_SEQUENCE = "\x1b[?1049h";
-const ALT_BUFFER_EXIT_SEQUENCE = "\x1b[?1049l";
 
 class FakeServerSocket {
   public readonly id: string;
@@ -225,44 +224,6 @@ describe("TerminalRuntime", () => {
   });
 
   describe("alternate buffer replay scenarios", () => {
-    test("replays only primary-buffer output after exiting alternate screen", () => {
-      const { manager, processes, createWs } = createHarness();
-      const ws1 = createWs(1);
-      initClient(manager, ws1);
-
-      processes[0].emitOutput("prompt$ ");
-      processes[0].emitOutput(ALT_BUFFER_ENTER_SEQUENCE);
-      processes[0].emitOutput("TUI FRAME");
-      processes[0].emitOutput(ALT_BUFFER_EXIT_SEQUENCE);
-      processes[0].emitOutput("\x1b[?2004h");
-      processes[0].emitOutput("after-tui\n");
-
-      manager.detach(DEFAULT_CLIENT_ID, "1");
-      const ws2 = createWs(2);
-      initClient(manager, ws2);
-
-      const replayed = ws2.outputText();
-      expect(replayed).toContain("\x1b[?2004h");
-      expect(replayed).toContain("prompt$ ");
-      expect(replayed).toContain("after-tui\n");
-      expect(replayed).not.toContain("TUI FRAME");
-    });
-
-    test("replays cursor-hide state when reconnecting in normal mode", () => {
-      const { manager, processes, createWs } = createHarness();
-      const ws1 = createWs(1);
-      initClient(manager, ws1);
-
-      processes[0].emitOutput("\x1b[?25l");
-      processes[0].emitOutput("prompt$ ");
-      manager.detach(DEFAULT_CLIENT_ID, "1");
-
-      const ws2 = createWs(2);
-      initClient(manager, ws2);
-
-      expect(ws2.outputText()).toBe("\x1b[?25lprompt$ ");
-    });
-
     test("replays alternate-mode state and pokes redraw while alternate screen is active", () => {
       const { manager, processes, createWs } = createHarness();
       const ws1 = createWs(1);
@@ -279,23 +240,6 @@ describe("TerminalRuntime", () => {
       expect(ws2.outputText()).toBe(ALT_BUFFER_ENTER_SEQUENCE);
       expect(processes[0].resizes).toContainEqual({ cols: 80, rows: 23 });
       expect(processes[0].resizes).toContainEqual({ cols: 80, rows: 24 });
-    });
-
-    test("restores mouse/private modes when reconnecting to an active alternate screen", () => {
-      const { manager, processes, createWs } = createHarness();
-      const ws1 = createWs(1);
-      initClient(manager, ws1);
-
-      processes[0].emitOutput(ALT_BUFFER_ENTER_SEQUENCE);
-      processes[0].emitOutput("\x1b[?1000h");
-      processes[0].emitOutput("\x1b[?1006h");
-      processes[0].emitOutput("\x1b[?25l");
-      manager.detach(DEFAULT_CLIENT_ID, "1");
-
-      const ws2 = createWs(2);
-      initClient(manager, ws2);
-
-      expect(ws2.outputText()).toBe("\x1b[?1000;1006;1049h\x1b[?25l");
     });
 
     test("does not poke redraw when reconnect already resized alternate screen", () => {

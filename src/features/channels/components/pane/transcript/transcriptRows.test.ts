@@ -108,25 +108,32 @@ describe("transcript rows", () => {
     expect(rowIds(rowsOf(messages))).toEqual([["1"], ["2"]]);
   });
 
-  test("membership changes merge while a question remains an ordinary agent message", () => {
+  test("joins merge, as do one actor's removals, while a question remains an agent message", () => {
     const messages = [
       event(1, { type: "member_joined", member }),
       event(2, { type: "member_joined", member: { ...member, id: "engine", name: "Engine" } }),
-      { ...agentPost(3, "lead", at(26, 9, 1)), request: true as const },
+      event(3, { type: "member_left", actor: { type: "user" }, member }),
+      event(4, { type: "member_left", actor: { type: "user" }, member }),
+      event(5, { type: "member_left", actor: { type: "agent", agentId: "lead" }, member }),
+      { ...agentPost(6, "lead", at(26, 9, 1)), request: true as const },
     ];
-    expect(rowIds(rowsOf(messages))).toEqual([["1", "2"], ["3"]]);
+    expect(rowIds(rowsOf(messages))).toEqual([["1", "2"], ["3", "4"], ["5"], ["6"]]);
   });
 
-  test("only consecutive artifact shares from the same agent merge", () => {
+  test("only consecutive artifact shares or removals by the same actor merge", () => {
     const artifact = { file: { kind: "machine" as const, path: "/plan.md" }, title: "Plan" };
-    const messages = ["engine", "engine", "files", undefined, undefined].map((agentId, index) =>
-      event(index + 1, {
-        type: "artifact_shared",
-        actor: agentId ? { type: "agent", agentId } : { type: "user" },
-        artifact,
-      }),
-    );
-    expect(rowIds(rowsOf(messages))).toEqual([["1", "2"], ["3"], ["4"], ["5"]]);
+    const actor = (agentId?: string) =>
+      agentId ? { type: "agent" as const, agentId } : { type: "user" as const };
+    const messages = [
+      event(1, { type: "artifact_shared", actor: actor("engine"), artifact }),
+      event(2, { type: "artifact_shared", actor: actor("engine"), artifact }),
+      event(3, { type: "artifact_removed", actor: actor("engine"), artifact }),
+      event(4, { type: "artifact_removed", actor: actor("engine"), artifact }),
+      event(5, { type: "artifact_removed", actor: actor("files"), artifact }),
+      event(6, { type: "artifact_removed", actor: actor(), artifact }),
+      event(7, { type: "artifact_removed", actor: actor(), artifact }),
+    ];
+    expect(rowIds(rowsOf(messages))).toEqual([["1", "2"], ["3", "4"], ["5"], ["6", "7"]]);
   });
 });
 

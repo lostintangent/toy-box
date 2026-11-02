@@ -16,9 +16,8 @@ import {
 } from "@providers/server/provider";
 import { normalizeToolResult } from "@sessions/server/tools/definition";
 import { startCopilotClient, stopCopilotClient } from "./client";
-import { connectCopilotSession } from "./connection";
+import { connectCopilotSession, toSdkSetModelOptions } from "./connection";
 import { toModelInfo } from "./models";
-import { toSdkSetModelOptions } from "./modelConfiguration";
 import { toSessionSkills } from "./skills";
 import { createSdkEventProjector } from "./projector";
 

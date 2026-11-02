@@ -48,49 +48,31 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   plain: "text",
 };
 
-const BUNDLED_LANGS = [
-  "typescript",
-  "tsx",
-  "javascript",
-  "jsx",
-  "json",
-  "markdown",
-  "css",
-  "html",
-  "python",
-  "rust",
-  "go",
-  "yaml",
-  "bash",
-  "sql",
-  "graphql",
-  "vue",
-  "svelte",
-];
+const BUNDLED_LANGS = {
+  typescript: () => import("@shikijs/langs/typescript"),
+  tsx: () => import("@shikijs/langs/tsx"),
+  javascript: () => import("@shikijs/langs/javascript"),
+  jsx: () => import("@shikijs/langs/jsx"),
+  json: () => import("@shikijs/langs/json"),
+  markdown: () => import("@shikijs/langs/markdown"),
+  css: () => import("@shikijs/langs/css"),
+  html: () => import("@shikijs/langs/html"),
+  python: () => import("@shikijs/langs/python"),
+  rust: () => import("@shikijs/langs/rust"),
+  go: () => import("@shikijs/langs/go"),
+  yaml: () => import("@shikijs/langs/yaml"),
+  bash: () => import("@shikijs/langs/bash"),
+  sql: () => import("@shikijs/langs/sql"),
+  graphql: () => import("@shikijs/langs/graphql"),
+  vue: () => import("@shikijs/langs/vue"),
+  svelte: () => import("@shikijs/langs/svelte"),
+};
 
 async function getHighlighter(): Promise<HighlighterCore> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighterCore({
       themes: [import("@shikijs/themes/github-light"), import("@shikijs/themes/github-dark")],
-      langs: [
-        import("@shikijs/langs/typescript"),
-        import("@shikijs/langs/tsx"),
-        import("@shikijs/langs/javascript"),
-        import("@shikijs/langs/jsx"),
-        import("@shikijs/langs/json"),
-        import("@shikijs/langs/markdown"),
-        import("@shikijs/langs/css"),
-        import("@shikijs/langs/html"),
-        import("@shikijs/langs/python"),
-        import("@shikijs/langs/rust"),
-        import("@shikijs/langs/go"),
-        import("@shikijs/langs/yaml"),
-        import("@shikijs/langs/bash"),
-        import("@shikijs/langs/sql"),
-        import("@shikijs/langs/graphql"),
-        import("@shikijs/langs/vue"),
-        import("@shikijs/langs/svelte"),
-      ],
+      langs: Object.values(BUNDLED_LANGS).map((load) => load()),
       engine: createJavaScriptRegexEngine(),
     });
   }
@@ -114,12 +96,12 @@ function getCurrentShikiTheme(): HighlightTheme {
 export async function highlightCode(
   code: string,
   language: string,
-  theme: HighlightTheme = getCurrentShikiTheme(),
 ): Promise<HighlightedLine[] | null> {
+  const theme = getCurrentShikiTheme();
   try {
     const highlighter = await getHighlighter();
     const normalizedLanguage = LANGUAGE_ALIASES[language.toLowerCase()] ?? language.toLowerCase();
-    const effectiveLanguage = BUNDLED_LANGS.includes(normalizedLanguage)
+    const effectiveLanguage = Object.hasOwn(BUNDLED_LANGS, normalizedLanguage)
       ? normalizedLanguage
       : "text";
     const result = highlighter.codeToTokens(code, {

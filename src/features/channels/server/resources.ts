@@ -27,7 +27,7 @@ export function resolveMessageResources(
 export function resolveMessageResources(message: StoredChannelMessage): ChannelMessage;
 export function resolveMessageResources(message: StoredChannelMessage): ChannelMessage {
   if (isChannelSystemMessage(message)) {
-    if (message.content.type !== "artifact_shared") return message;
+    if (!("artifact" in message.content)) return message;
     return {
       ...message,
       content: {

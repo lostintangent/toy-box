@@ -1,17 +1,5 @@
 import { SessionNotFoundError, type SessionConnection } from "@providers/server/provider";
-import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import {
-  createSession,
-  deliverSessionMessage,
-  getSessionRuntimeStatus,
-  getSessionSnapshot,
-  registerPendingSessionCompletion,
-  rejectPendingSessionCompletion,
-  rewindSession,
-  streamSession,
-  waitForSessions,
-} from "./index";
-import { SessionStream } from "./sessionStream";
+import { afterAll, describe, expect, mock, onTestFinished, test } from "bun:test";
 import { deleteSessionFiles, writeSessionArtifact } from "../artifacts";
 import * as realSessionRegistry from "@sessions/server/state/registry";
 import * as realSnapshotCache from "@sessions/server/state/snapshots";
@@ -90,7 +78,7 @@ function makeFakeSession(overrides: Partial<SessionConnection> = {}): SessionCon
   };
 }
 
-function createStreamWithAssistantResponse(sessionId: string, response: string): SessionStream {
+function createStreamWithAssistantResponse(sessionId: string, response: string) {
   return SessionStream.getOrCreate(sessionId, makeFakeSession(), {
     messages: [{ role: "assistant", content: response }],
   });
@@ -119,6 +107,8 @@ type StreamRuntimeModuleMocks = {
   activity?: Partial<typeof realSessionActivity>;
 };
 
+let streamRuntimeModuleMocks: StreamRuntimeModuleMocks | undefined;
+
 /** Mock the runtime modules SessionStream imports so tests can drive streams with
  *  provider connections. Callers override the sessionRegistry, snapshotCache,
  *  and activity behavior they need; the defaults fail loudly if an unexpected path is
@@ -129,53 +119,80 @@ function mockStreamRuntimeModules({
   broadcast: broadcastOverrides = {},
   activity: activityOverrides = {},
 }: StreamRuntimeModuleMocks = {}) {
-  // mock.restore() does not undo module replacements.
   onTestFinished(() => {
-    mock.module("@sessions/server/state/registry", () => realSessionRegistryExports);
-    mock.module("@sessions/server/state/snapshots", () => realSnapshotCacheExports);
-    mock.module("@sessions/server/state/activity", () => realSessionActivityExports);
-    mock.module("@workspace/server/events", () => realBroadcastExports);
+    streamRuntimeModuleMocks = undefined;
   });
-  mock.module("@sessions/server/state/registry", () => ({
-    ...realSessionRegistryExports,
-    createSession: async () => {
-      throw new Error("createSession mock was not provided");
+  streamRuntimeModuleMocks = {
+    sessionRegistry: {
+      createSession: async () => {
+        throw new Error("createSession mock was not provided");
+      },
+      acquireSession: async () => {
+        throw new Error("acquireSession mock was not provided");
+      },
+      withSession: async () => {
+        throw new Error("withSession mock was not provided");
+      },
+      deleteSession: async () => {
+        throw new Error("deleteSession mock was not provided");
+      },
+      deleteSessionIfExists: async () => {
+        throw new Error("deleteSessionIfExists mock was not provided");
+      },
+      evictCachedSessionIfStale: () => false,
+      releaseSession: () => {},
+      ...sessionRegistryOverrides,
     },
-    acquireSession: async () => {
-      throw new Error("acquireSession mock was not provided");
+    snapshotCache: {
+      getCachedSnapshot: async () => undefined,
+      cacheSnapshot: () => {},
+      evictCachedSnapshot: () => {},
+      loadSessionSnapshot: async () => createInitialSessionState(),
+      ...snapshotCacheOverrides,
     },
-    withSession: async () => {
-      throw new Error("withSession mock was not provided");
-    },
-    deleteSession: async () => {
-      throw new Error("deleteSession mock was not provided");
-    },
-    deleteSessionIfExists: async () => {
-      throw new Error("deleteSessionIfExists mock was not provided");
-    },
-    evictCachedSessionIfStale: () => false,
-    releaseSession: () => {},
-    ...sessionRegistryOverrides,
-  }));
-  mock.module("@sessions/server/state/snapshots", () => ({
-    ...realSnapshotCacheExports,
-    getCachedSnapshot: async () => undefined,
-    cacheSnapshot: () => {},
-    evictCachedSnapshot: () => {},
-    loadSessionSnapshot: async () => createInitialSessionState(),
-    ...snapshotCacheOverrides,
-  }));
-  mock.module("@sessions/server/state/activity", () => ({
-    ...realSessionActivityExports,
-    setSessionActivity: () => {},
-    ...activityOverrides,
-  }));
-  mock.module("@workspace/server/events", () => ({
-    ...realBroadcastExports,
-    broadcast: () => {},
-    ...broadcastOverrides,
-  }));
+    activity: { setSessionActivity: () => {}, ...activityOverrides },
+    broadcast: { broadcast: () => {}, ...broadcastOverrides },
+  };
 }
+
+// Mock each module once, before the runtime loads it, so the runtime and this test share one
+// module graph. Every export runs the current test's mock or the real implementation.
+function forwardModule(id: string, key: keyof StreamRuntimeModuleMocks, real: object) {
+  mock.module(id, () =>
+    Object.fromEntries(
+      Object.entries(real).map(([name, implementation]) => [
+        name,
+        (...args: unknown[]) => {
+          const mocks: Record<string, unknown> | undefined = streamRuntimeModuleMocks?.[key];
+          return ((mocks?.[name] ?? implementation) as (...args: unknown[]) => unknown)(...args);
+        },
+      ]),
+    ),
+  );
+}
+forwardModule("@sessions/server/state/registry", "sessionRegistry", realSessionRegistryExports);
+forwardModule("@sessions/server/state/snapshots", "snapshotCache", realSnapshotCacheExports);
+forwardModule("@sessions/server/state/activity", "activity", realSessionActivityExports);
+forwardModule("@workspace/server/events", "broadcast", realBroadcastExports);
+afterAll(() => {
+  mock.module("@sessions/server/state/registry", () => realSessionRegistryExports);
+  mock.module("@sessions/server/state/snapshots", () => realSnapshotCacheExports);
+  mock.module("@sessions/server/state/activity", () => realSessionActivityExports);
+  mock.module("@workspace/server/events", () => realBroadcastExports);
+});
+
+const {
+  createSession,
+  deliverSessionMessage,
+  getSessionRuntimeStatus,
+  getSessionSnapshot,
+  registerPendingSessionCompletion,
+  rejectPendingSessionCompletion,
+  rewindSession,
+  streamSession,
+  waitForSessions,
+} = await import("./index");
+const { SessionStream } = await import("./sessionStream");
 
 describe("SessionStream lifecycle", () => {
   test("title events update workspace metadata without entering the session stream", async () => {

@@ -58,9 +58,9 @@ type RowContext = {
 
 /**
  * The transcript's rows. A user message stands alone, one agent's consecutive messages form a run,
- * and membership changes merge, as do one agent's artifact shares. Rows never span a day or the
- * start of unread messages, so dividers always fall between rows. Rows form from the messages the
- * view shows, so runs and dividers follow what the reader sees.
+ * and joins merge, as do one actor's member removals or artifact changes. Rows never span a day or
+ * the start of unread messages, so dividers always fall between rows. Rows form from the messages
+ * the view shows, so runs and dividers follow what the reader sees.
  */
 export function transcriptRows(
   messages: readonly ChannelMessage[],
@@ -212,11 +212,12 @@ function isForUser(message: ChannelConversationMessage, addressee: string | unde
   return addressee === undefined || message.request === true;
 }
 
-/** Membership changes merge, as do one agent's artifact shares; other system messages stand alone. */
+/** Joins merge, as do one actor's member removals or artifact changes; others stand alone. */
 function systemMessageGroup({ content }: ChannelSystemMessage): string | undefined {
-  if (content.type === "member_joined" || content.type === "member_left") return content.type;
-  if (content.type === "artifact_shared" && content.actor.type === "agent") {
-    return `${content.type}:${content.actor.agentId}`;
+  if (content.type === "member_joined") return content.type;
+  if (content.type === "member_left" || "artifact" in content) {
+    const { actor } = content;
+    return `${content.type}:${actor.type === "agent" ? actor.agentId : actor.type}`;
   }
   return undefined;
 }

@@ -8,7 +8,6 @@ import {
 } from "./model";
 import { listChannels } from "@channels/server/functions";
 import { ChannelStreamError, streamChannel } from "./stream";
-import { removeChannelFromList } from "./cache";
 
 /** Browser arrival is distinct from cached content and from later live updates. */
 export type ChannelQueryData = ChannelState & {
@@ -33,13 +32,12 @@ export const channelQueries = {
       queryFn: streamedQuery<ChannelObservationEvent, ChannelQueryData | null>({
         initialValue: null,
         refetchMode: "append",
-        streamFn: async function* ({ client, queryKey, signal }) {
-          const cached = client.getQueryData<ChannelQueryData | null>(queryKey);
-          for await (const event of streamChannel(channelId, signal, cached?.revision)) {
-            if (event.type === "deleted") removeChannelFromList(client, channelId);
-            yield event;
-          }
-        },
+        streamFn: ({ client, queryKey, signal }) =>
+          streamChannel(
+            channelId,
+            signal,
+            client.getQueryData<ChannelQueryData | null>(queryKey)?.revision,
+          ),
         reducer: (previous, event) => {
           if (event.type === "deleted") return null;
           const state = reduceChannelState(previous!, event);

@@ -34,8 +34,9 @@ function getMediaQueryStore(query: string): MediaQueryStore {
   return store;
 }
 
-/** Subscribes to one media query with an explicit server-rendered fallback. */
-export function useMediaQuery(query: string, serverFallback = false): boolean {
+/** Subscribes to one media query, sharing one list and listener among every caller of the same
+ *  query. The server render assumes it doesn't match. */
+export function useMediaQuery(query: string): boolean {
   const store = getMediaQueryStore(query);
-  return useSyncExternalStore(store.subscribe, store.getSnapshot, () => serverFallback);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, () => false);
 }

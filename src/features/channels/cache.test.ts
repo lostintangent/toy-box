@@ -1,6 +1,6 @@
 import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
-import { channelLead, type Channel, type ChannelList } from "@channels/model";
+import { channelLead, type ChannelCatalogEntry, type ChannelList } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import { channelQueries, type ChannelQueryData } from "@channels/queries";
 import { workspaceQueries } from "@workspace/queries";
@@ -8,7 +8,7 @@ import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model
 import cache, { loadChannelHistory } from "./cache";
 import type { ChannelConversationMessage, ChannelState } from "./model";
 
-const channel: Channel = {
+const channel: ChannelCatalogEntry = {
   id: "channel",
   name: "Planning",
   purpose: "Prepare the release plan.",
@@ -19,6 +19,7 @@ const channel: Channel = {
   completedSequence: null,
   requestSequence: null,
   updatedAt: "2026-09-05T12:00:00.000Z",
+  revision: 101,
 };
 
 const message: ChannelConversationMessage = {

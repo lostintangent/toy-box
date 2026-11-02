@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import {
   ChevronRight,
   Clock3,
+  FileMinus,
   MoreHorizontal,
   Pencil,
   Play,
@@ -65,6 +66,8 @@ export function ChannelOverviewContent({
   onPreviewOpen: () => void;
 }) {
   const { lead, members, agents, presence } = useChannelPane();
+  // Removing an artifact unshares it from the channel; the file stays.
+  const { mutate: removeArtifact } = useMutation(channelMutations.removeArtifact(channel.id));
   const [inProgressOnly, setInProgressOnly] = useState(false);
   const [workingOnly, setWorkingOnly] = useState(false);
   const showLead = !workingOnly || presence[lead.id]?.state === "working";
@@ -174,18 +177,27 @@ export function ChannelOverviewContent({
 
         <OverviewSection title="Artifacts" count={artifacts.length}>
           {artifacts.length > 0 ? (
-            <div role="list" aria-label={`Artifacts in #${channel.name}`} className="flex flex-col">
+            <div role="list" aria-label={`Artifacts in #${channel.name}`} className="space-y-2">
               {channelArtifactsNewestFirst(artifacts).map((artifact) => (
-                <ArtifactPill
-                  key={artifact.id}
-                  file={artifact.file}
-                  label={artifact.title}
-                  detail={
-                    <RelativeTime className="text-muted-foreground" date={artifact.sharedAt} />
-                  }
-                  className="w-full text-foreground"
-                  onClick={() => onArtifactOpen(artifact)}
-                />
+                <div key={artifact.id} role="listitem" className="flex items-center gap-2">
+                  <ArtifactPill
+                    file={artifact.file}
+                    label={artifact.title}
+                    detail={
+                      <RelativeTime className="text-muted-foreground" date={artifact.sharedAt} />
+                    }
+                    className="min-w-0 flex-1 text-foreground"
+                    onClick={() => onArtifactOpen(artifact)}
+                  />
+                  <RowMenu name={artifact.title}>
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => removeArtifact(artifact.id)}
+                    >
+                      <FileMinus /> Remove from channel
+                    </DropdownMenuItem>
+                  </RowMenu>
+                </div>
               ))}
             </div>
           ) : (

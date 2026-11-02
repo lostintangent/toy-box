@@ -33,12 +33,11 @@ test("Channel events provide live delivery or a complete revision replay", () =>
   expect(replayChannelEvents(channelId, 0, 3)).toBeUndefined();
 });
 
-test("the shared replay ring orders and deduplicates publications without hiding gaps", () => {
+test("the shared replay ring orders publications without hiding gaps", () => {
   const channelId = crypto.randomUUID();
   onTestFinished(() => releaseChannelEvents(channelId));
   const first = update(1);
   const second = update(2);
-  publishChannelEvent(channelId, second);
   publishChannelEvent(channelId, second);
   expect(replayChannelEvents(channelId, 0, 2)).toBeUndefined();
   publishChannelEvent(channelId, first);

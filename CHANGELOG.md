@@ -1,7 +1,10 @@
-## 📅 v0.3.5 (10/30/26)
+## 📅 v0.3.5 (11/01/26)
 
+- Channel lead's can now include a set of pre-defined replies when they request your attention
+- Artifacts can now be removed from a channel (either by you or the lead)
+- Channel leads can now edit and remove channel members
+- Parent tasks in a channel are now auto-collapsed by default unless they have in-progress children
 - Installed-but-unautheticated providers will correctly show as disabled
-- Improved CLI upgrade experience, by allowing your existing SQLite databases to be migrated as the schema changes
 
 ## 📅 v0.3.4 (10/28/26)
 

@@ -5,8 +5,8 @@ import { DoneIndicator } from "@/shared/ui/done-indicator";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { cn } from "@/shared/utils";
 
-export type ChecklistStatus = "pending" | "in_progress" | "blocked" | "done";
-export type ChecklistFilter = "none" | "inProgress";
+type ChecklistStatus = "pending" | "in_progress" | "blocked" | "done";
+type ChecklistFilter = "none" | "inProgress";
 
 export type ChecklistItem = {
   id: string;
@@ -17,7 +17,7 @@ export type ChecklistItem = {
   children?: readonly ChecklistItem[];
 };
 
-/** Work items and their progress. Inherits its font size; done parents start collapsed. */
+/** Work items and their progress. Inherits its font size; parents open around running work. */
 export function Checklist({
   items,
   className,
@@ -39,21 +39,33 @@ export function Checklist({
   return (
     <ul className={cn("space-y-2", className)}>
       {visibleItems.map((item) => (
-        // Reset disclosure when status or the visibility filter changes.
-        <ChecklistRow key={`${item.id}:${item.status}:${filter}`} item={item} filter={filter} />
+        // Reapply the disclosure rule when running work starts or stops beneath, or the filter changes.
+        <ChecklistRow
+          key={`${item.id}:${hasRunningSubtask(item)}:${filter}`}
+          item={item}
+          filter={filter}
+        />
       ))}
     </ul>
   );
 }
 
 function hasInProgress(item: ChecklistItem): boolean {
-  return item.status === "in_progress" || (item.children ?? []).some(hasInProgress);
+  return item.status === "in_progress" || hasRunningSubtask(item);
+}
+
+/**
+ * The disclosure rule: a parent starts expanded only while a subtask at any depth is in progress,
+ * whatever the parent's own status. Done, blocked, and unstarted groups start collapsed.
+ */
+function hasRunningSubtask(item: ChecklistItem): boolean {
+  return (item.children ?? []).some(hasInProgress);
 }
 
 function ChecklistRow({ item, filter }: { item: ChecklistItem; filter: ChecklistFilter }) {
   const children = item.children ?? [];
-  const hasChildren = filter === "inProgress" ? children.some(hasInProgress) : children.length > 0;
-  const [expanded, setExpanded] = useState(filter === "inProgress" || item.status !== "done");
+  const hasChildren = filter === "inProgress" ? hasRunningSubtask(item) : children.length > 0;
+  const [expanded, setExpanded] = useState(() => hasRunningSubtask(item));
   const completedCount = children.filter(({ status }) => status === "done").length;
   const lastSpace = item.title.lastIndexOf(" ");
   const titleClassName = cn("wrap-anywhere", item.status === "done" && "text-muted-foreground");

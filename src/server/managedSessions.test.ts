@@ -283,7 +283,7 @@ function catalogSession(id: string, updatedAt: number): Session {
   };
 }
 
-test("detaching a Channel Agent removes its Worker and records its departure", async () => {
+test("detaching a Channel Agent removes its Worker and records the user's removal", async () => {
   await openSessionTypeTestDatabase();
   const channels = new ChannelDatabase(currentDb!);
   const channel = await createStoredChannel(channels, {
@@ -306,7 +306,7 @@ test("detaching a Channel Agent removes its Worker and records its departure", a
   expect(await channels.getMember(member.id)).toBeNull();
   expect((await channels.listMessagesAfter(channel.id)).map(({ content }) => content)).toEqual([
     { type: "member_joined", member },
-    { type: "member_left", member },
+    { type: "member_left", actor: { type: "user" }, member },
   ]);
 });
 

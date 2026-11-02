@@ -8,6 +8,7 @@ import {
   markChannelReadInputSchema,
   postChannelMessageInputSchema,
   removeChannelMemberInputSchema,
+  channelArtifactIdentitySchema,
   channelRoutineIdentitySchema,
   updateChannelMemberInputSchema,
 } from "@channels/model";
@@ -38,12 +39,18 @@ export const deleteChannel = createServerFn({ method: "POST" })
 
 export const removeChannelMember = createServerFn({ method: "POST" })
   .validator(removeChannelMemberInputSchema)
-  .handler(({ data }): Promise<void> => channels.removeChannelMember(data.agentId));
+  .handler(({ data }) => channels.removeChannelMember(data.agentId, { type: "user" }));
 
 export const deleteChannelRoutine = createServerFn({ method: "POST" })
   .validator(channelRoutineIdentitySchema)
   .handler(({ data }): Promise<boolean> =>
     channels.deleteChannelRoutine(data.channelId, data.routineId),
+  );
+
+export const removeChannelArtifact = createServerFn({ method: "POST" })
+  .validator(channelArtifactIdentitySchema)
+  .handler(({ data }): Promise<boolean> =>
+    channels.removeChannelArtifact(data.channelId, data.artifactId, { type: "user" }),
   );
 
 export const runChannelRoutine = createServerFn({ method: "POST" })

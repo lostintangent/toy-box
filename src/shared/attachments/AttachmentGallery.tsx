@@ -9,7 +9,7 @@ import { Dialog, DialogClose, DialogContent, DialogTitle, DialogTrigger } from "
 import { cn } from "@/shared/utils";
 import type { Attachment, AttachmentReference } from "./model";
 
-const attachmentPillClassName =
+export const attachmentPillClassName =
   "inline-flex h-7 max-w-48 shrink-0 items-center gap-1.5 rounded-md border bg-background px-1 text-xs text-muted-foreground";
 const VIDEO_FILE = /\.(mov|mp4|webm)$/i;
 

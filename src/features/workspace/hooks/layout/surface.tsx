@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { createAtom, createStoreContext, useSelector } from "@tanstack/react-store";
 import { createPanePublicationsStore } from "@workspace/hooks/layout/panePublications";
 import {
-  deriveReachablePaneIds,
+  deriveReachablePanes,
   deriveVisibleWorkspacePanes,
   MAX_HYPER_PANES,
   MAX_WORKSPACE_PANES,
@@ -55,7 +55,7 @@ export function useSurfacePanes(
   const publications = useSelector(panePublications);
   const focusedPaneId = useSelector(focusedPaneAtom);
 
-  const reachablePaneIds = deriveReachablePaneIds(rootPanes, publications);
+  const reachablePaneIds = deriveReachablePanes(rootPanes, publications).map(({ id }) => id);
   useEffect(() => {
     panePublications.actions.prunePanePublishers(new Set(reachablePaneIds));
   }, [panePublications, reachablePaneIds]);

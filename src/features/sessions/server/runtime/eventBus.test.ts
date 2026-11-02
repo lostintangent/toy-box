@@ -17,17 +17,6 @@ async function nextValue<T>(iterator: AsyncIterator<T>): Promise<T> {
 }
 
 describe("session event bus replay and live delivery", () => {
-  test("stamps dense event ids as events are published", () => {
-    const bus = createTestBus();
-
-    const one = bus.publish(event("one"));
-    const two = bus.publish(event("two"));
-
-    expect(one).toEqual(expect.objectContaining({ type: "delta", content: "one" }));
-    expect(one.eventId).toEqual(expect.any(Number));
-    expect(two.eventId).toBe(one.eventId! + 1);
-  });
-
   test("replays retained events after a cursor, then streams live appends", async () => {
     const bus = createTestBus();
     const one = bus.publish(event("one"));

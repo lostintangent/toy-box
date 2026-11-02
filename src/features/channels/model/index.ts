@@ -35,6 +35,7 @@ const channelDirectorySchema = channelPathSchema.startsWith(
 );
 const channelMessageTextSchema = z.string().trim().max(12_000);
 export const channelMessageContentSchema = channelMessageTextSchema.min(1);
+export const channelRepliesSchema = z.array(z.string().trim().min(1).max(80)).min(2).max(4);
 export const channelReactionKindSchema = z.enum(["done", "agree", "celebrate", "love", "laugh"]);
 
 const channelReactionSchema = z
@@ -76,15 +77,26 @@ export function channelStatus(channel: Channel): "waiting" | "finished" | "unrea
   return null;
 }
 
+/** A Channel as the catalog publishes it; its revision orders that Channel's catalog changes. */
+export type ChannelCatalogEntry = Channel & { revision: number };
+
 export type ChannelList = {
-  channels: Channel[];
+  channels: ChannelCatalogEntry[];
   members: Pick<ChannelMember, "id" | "channelId" | "name" | "avatar">[];
+};
+
+/** The catalog as JSON, which its event stream opens with. */
+export type ChannelCatalog = ChannelList & {
+  version: 1;
+  lead: typeof CHANNEL_LEAD_PROFILE;
+  /** Lead and member IDs whose Sessions are running. */
+  working: string[];
 };
 
 declare module "@workspace/model/events" {
   interface WorkspaceEvents {
     channels:
-      | { type: "channel.upserted"; channel: Channel }
+      | { type: "channel.upserted"; channel: ChannelCatalogEntry }
       | { type: "channel.deleted"; channelId: string }
       | { type: "channel.member.upserted"; member: ChannelList["members"][number] }
       | { type: "channel.member.deleted"; channelId: string; agentId: string };
@@ -120,13 +132,17 @@ const channelStatusTargetSchema = z
       .int()
       .positive()
       .optional()
-      .describe("The message sequence requesting review of a referenced resource."),
+      .describe(
+        "The message sequence requesting review of a referenced file, artifact, attachment, or URL. Set it only while reviewing.",
+      ),
     workingOn: z
       .number()
       .int()
       .positive()
       .optional()
-      .describe("The message sequence requesting other substantive work."),
+      .describe(
+        "The message sequence requesting other substantive work. Omit both targets when no channel message prompted the work.",
+      ),
   })
   .strict()
   .refine(({ lookingAt, workingOn }) => lookingAt === undefined || workingOn === undefined, {
@@ -265,10 +281,20 @@ export const channelRoutineIdentitySchema = z
   .object({ channelId: durableIdSchema, routineId: durableIdSchema })
   .strict();
 
+export const channelArtifactIdentitySchema = z
+  .object({ channelId: durableIdSchema, artifactId: z.string().min(1) })
+  .strict();
+
 export const channelSystemMessageContentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tasks_completed") }).strict(),
   z.object({ type: z.literal("member_joined"), member: channelMemberSchema }).strict(),
-  z.object({ type: z.literal("member_left"), member: channelMemberSchema }).strict(),
+  z
+    .object({
+      type: z.literal("member_left"),
+      actor: channelMessageActorSchema,
+      member: channelMemberSchema,
+    })
+    .strict(),
   z
     .object({
       type: z.literal("channel_renamed"),
@@ -299,9 +325,9 @@ export const channelSystemMessageContentSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
-      type: z.literal("artifact_shared"),
+      type: z.enum(["artifact_shared", "artifact_removed"]),
       actor: channelMessageActorSchema,
-      // The message's own timestamp records when it was shared.
+      // The message's own timestamp records when the file was shared or removed.
       artifact: channelArtifactSchema.omit({ sharedAt: true }),
     })
     .strict(),
@@ -325,6 +351,8 @@ export type ChannelConversationMessage<A = ChannelAttachment> = ChannelMessageBa
   content: string;
   /** The lead asks for the user's response; a later user message acknowledges it. */
   request?: true;
+  /** Suggested answers to a request, which the user can post with one click. */
+  replies?: string[];
   attachments?: A[];
   reactions?: ChannelReaction[];
 };
@@ -335,6 +363,7 @@ export type ChannelSystemMessage = ChannelMessageBase & {
   attachments?: never;
   reactions?: never;
   request?: never;
+  replies?: never;
 };
 
 export type ChannelMessage<A = ChannelAttachment> =

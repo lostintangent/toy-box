@@ -4,6 +4,7 @@ import {
   type ChannelMessage,
   type ChannelObservationEvent,
 } from "@channels/model";
+import { machineFile, workspaceFileId } from "@files/model";
 import * as providers from "@providers/server";
 import * as sessionRuntime from "@sessions/server/runtime";
 import { setSessionProvider } from "@sessions/server/state/sessions";
@@ -20,10 +21,11 @@ import {
   editChannelResponse,
   getChannelHistoryResponse,
   getChannelResponse,
+  getChannelsResponse,
   listChannelMemberModelsResponse,
-  listChannelsResponse,
   markChannelReadResponse,
   postChannelMessageResponse,
+  removeChannelArtifactResponse,
   removeChannelMemberResponse,
   runChannelRoutineResponse,
   updateChannelMemberResponse,
@@ -31,7 +33,12 @@ import {
 import { ChannelDatabase } from "./database";
 import { resolveEventResources } from "./resources";
 import { publishChannelEvent, releaseChannelEvents } from "./events";
-import { getChannelSnapshot, streamChannel } from "./stream";
+import {
+  getChannelSnapshot,
+  streamChannel,
+  streamChannelCatalog,
+  type ChannelCatalogEvent,
+} from "./stream";
 import { channelAgent, createStoredChannel } from "./testFixtures";
 
 async function openChannel() {
@@ -196,10 +203,12 @@ test("cached reconnects replay before presence; an expired cursor replaces histo
   expect(reads).not.toHaveBeenCalled();
   current.stop();
   releaseChannelEvents(channel.id);
+  // The snapshot carries the revision at its top level, so its Channel is the bare metadata.
+  const { revision: _revision, ...metadata } = changed.channel!;
   const expired = observe(channel.id, 0);
   expect(await expired.next()).toMatchObject({
     type: "snapshot",
-    state: { channel: changed.channel },
+    state: { channel: metadata },
   });
   expect(reads).toHaveBeenCalledTimes(1);
 });
@@ -342,8 +351,8 @@ test("the HTTP stream snapshots, resumes by cursor, and ends for missing Channel
   expect((await reader.read()).done).toBe(true);
   const resumed = await getChannelResponse(
     channel.id,
-    new Request("http://localhost/channel?after=999", {
-      headers: { Accept: "text/event-stream", "Last-Event-ID": String(expected.revision) },
+    new Request(`http://localhost/channel?after=${expected.revision}`, {
+      headers: { Accept: "text/event-stream" },
     }),
   );
   const resumedReader = resumed.body!.getReader();
@@ -476,14 +485,131 @@ test("the HTTP catalog names working agents the way Channel presence does", asyn
   setSessionActivity(channel.id, "running");
   setSessionActivity(busy.id, "running");
 
-  const response = await listChannelsResponse();
+  const response = await getChannelsResponse(new Request("http://localhost/api/v1/channels"));
   expect(response.headers.get("Cache-Control")).toBe("no-store");
+  expect(response.headers.get("Vary")).toBe("Accept");
   const catalog = await response.json();
   expect(catalog.version).toBe(1);
   expect(catalog.working.sort()).toEqual([busy.id, channel.id].sort());
   // Every Channel's lead shares one profile, so clients draw it without a copy of their own.
   expect(catalog.lead).toEqual(CHANNEL_LEAD_PROFILE);
   expect(catalog.members.map(({ id }: { id: string }) => id)).not.toContain(channel.id);
+});
+
+test("the catalog stream opens with the JSON catalog, then forwards Channel changes and working agents", async () => {
+  const { channel, channels } = await openChannel();
+  const { member: busy } = await channels.createMember(channelAgent(channel.id, "busy", "Busy"));
+  onTestFinished(() => deleteSessionActivity(busy.id));
+  const url = "http://localhost/api/v1/channels";
+  const json = await (await getChannelsResponse(new Request(url))).json();
+  const abort = new AbortController();
+  onTestFinished(() => abort.abort());
+  const response = await getChannelsResponse(
+    new Request(url, { headers: { Accept: "text/event-stream" }, signal: abort.signal }),
+  );
+  expect(response.headers.get("content-type")).toStartWith("text/event-stream");
+  expect(response.headers.get("Vary")).toBe("Accept");
+  const reader = response.body!.getReader();
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({ type: "snapshot", catalog: json });
+
+  setSessionActivity(busy.id, "running");
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({
+    type: "working",
+    working: [busy.id],
+  });
+
+  // The older upsert arrives last, so its lower revision must be dropped rather than replace the newer one.
+  const current = (await channels.getChannel(channel.id))!;
+  const newer = { ...current, name: "Newer", revision: current.revision + 2 };
+  broadcast({ type: "channel.upserted", channel: newer });
+  broadcast({
+    type: "channel.upserted",
+    channel: { ...current, name: "Older", revision: current.revision + 1 },
+  });
+  broadcast({ type: "channel.deleted", channelId: "unrelated" });
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({
+    type: "channel.upserted",
+    channel: newer,
+  });
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({
+    type: "channel.deleted",
+    channelId: "unrelated",
+  });
+
+  // A deleted Channel is tombstoned, so a late upsert cannot resurrect it or re-add its agents.
+  broadcast({ type: "channel.deleted", channelId: channel.id });
+  broadcast({ type: "channel.upserted", channel: { ...newer, revision: newer.revision + 1 } });
+  broadcast({ type: "channel.deleted", channelId: "unrelated" });
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({
+    type: "channel.deleted",
+    channelId: channel.id,
+  });
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({ type: "working", working: [] });
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({
+    type: "channel.deleted",
+    channelId: "unrelated",
+  });
+});
+
+test("Channel changes made while the catalog snapshot is read arrive once, after the snapshot", async () => {
+  const { channel, channels } = await openChannel();
+  const current = (await channels.getChannel(channel.id))!;
+  const listChannels = channels.listChannels.bind(channels);
+  const read = spyOn(ChannelDatabase.prototype, "listChannels").mockImplementation(async () => {
+    const list = await listChannels();
+    // The first repeats the snapshot's revision, so it is a duplicate; the second is newer and must be kept.
+    broadcast({ type: "channel.upserted", channel: current });
+    broadcast({
+      type: "channel.upserted",
+      channel: { ...current, name: "During", revision: current.revision + 1 },
+    });
+    return list;
+  });
+  onTestFinished(() => read.mockRestore());
+  const events: ChannelCatalogEvent[] = [];
+  const stop = await streamChannelCatalog((event) => events.push(event));
+  onTestFinished(stop);
+  expect(events.map(({ type }) => type)).toEqual(["snapshot", "channel.upserted"]);
+  expect(events[1]).toEqual({
+    type: "channel.upserted",
+    channel: { ...current, name: "During", revision: current.revision + 1 },
+  });
+});
+
+test("the catalog stream forwards member joins and leaves and follows who is working", async () => {
+  const { channel, channels } = await openChannel();
+  const abort = new AbortController();
+  onTestFinished(() => abort.abort());
+  const response = await getChannelsResponse(
+    new Request("http://localhost/api/v1/channels", {
+      headers: { Accept: "text/event-stream" },
+      signal: abort.signal,
+    }),
+  );
+  const reader = response.body!.getReader();
+  await nextEvent<ChannelCatalogEvent>(reader);
+
+  const { member } = await channels.createMember(channelAgent(channel.id, "joiner", "Joiner"));
+  onTestFinished(() => deleteSessionActivity(member.id));
+  broadcast({ type: "channel.member.upserted", member });
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({
+    type: "channel.member.upserted",
+    member,
+  });
+
+  setSessionActivity(member.id, "running");
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({
+    type: "working",
+    working: [member.id],
+  });
+
+  broadcast({ type: "channel.member.deleted", channelId: channel.id, agentId: member.id });
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({
+    type: "channel.member.deleted",
+    channelId: channel.id,
+    agentId: member.id,
+  });
+  expect(await nextEvent<ChannelCatalogEvent>(reader)).toEqual({ type: "working", working: [] });
 });
 
 test("HTTP edits rename a Channel and reject empty, overriding and unknown edits", async () => {
@@ -566,6 +692,10 @@ test("HTTP member commands reach only members of the routed Channel", async () =
   expect((await removeChannelMemberResponse(other.id, member.id)).status).toBe(404);
 
   expect((await removeChannelMemberResponse(channel.id, member.id)).status).toBe(204);
+  expect((await channels.listMessagesAfter(channel.id)).at(-1)?.content).toMatchObject({
+    type: "member_left",
+    actor: { type: "user" },
+  });
   expect((await removeChannelMemberResponse(channel.id, member.id)).status).toBe(404);
 });
 
@@ -626,6 +756,21 @@ test("HTTP routine commands delete routines and report missing ones", async () =
   expect((await runChannelRoutineResponse(channel.id, routine.id)).status).toBe(404);
 });
 
+test("HTTP artifact removal unshares a file and reports missing ones", async () => {
+  const { channel, channels } = await openChannel();
+  const file = machineFile("/workspace/plan.md");
+  await channels.shareArtifact({
+    channelId: channel.id,
+    file,
+    title: "Plan",
+    actor: { type: "user" },
+  });
+  const artifactId = workspaceFileId(file);
+  expect((await removeChannelArtifactResponse(channel.id, artifactId)).status).toBe(204);
+  expect(await channels.listArtifacts(channel.id)).toEqual([]);
+  expect((await removeChannelArtifactResponse(channel.id, artifactId)).status).toBe(404);
+});
+
 function post(body: unknown): Request {
   return new Request("http://localhost/channel/messages", {
     method: "POST",
@@ -634,9 +779,9 @@ function post(body: unknown): Request {
   });
 }
 
-async function nextEvent(
+async function nextEvent<T = ChannelObservationEvent>(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-): Promise<ChannelObservationEvent> {
+): Promise<T> {
   const decoder = new TextDecoder();
   while (true) {
     const { value, done } = await reader.read();

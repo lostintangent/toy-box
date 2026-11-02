@@ -24,7 +24,7 @@ export function Terminal({ onClose }: TerminalProps) {
 
     return terminalManager.attach(container, {
       onReady: setIsPtyReady,
-      onClose: () => handleClose(),
+      onClose: handleClose,
     });
   }, []);
 

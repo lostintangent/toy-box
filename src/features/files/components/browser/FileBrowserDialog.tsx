@@ -4,7 +4,6 @@ import {
   useState,
   type Dispatch,
   type FormEvent,
-  type ReactNode,
   type SetStateAction,
 } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -19,7 +18,7 @@ import {
   Plus,
 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
-import { BrowserRow as Row } from "@/shared/ui/browser-row";
+import { BrowserRow as Row } from "./browser-row";
 import { Input } from "@/shared/ui/input";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
@@ -214,10 +213,10 @@ function FileBrowser({
           {isPending ? (
             <FileBrowserLoading />
           ) : errorMessage ? (
-            <Centered>
+            <div className="flex flex-col items-center justify-center gap-2 py-12">
               <AlertCircle className="h-5 w-5 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">{errorMessage}</span>
-            </Centered>
+            </div>
           ) : listing ? (
             <>
               {listing.parentPath && (
@@ -489,8 +488,4 @@ function acceptsExtension(path: string, extensions?: readonly string[]): boolean
   if (!extensions?.length) return true;
   const normalizedPath = path.toLowerCase();
   return extensions.some((extension) => normalizedPath.endsWith(extension.toLowerCase()));
-}
-
-function Centered({ children }: { children: ReactNode }) {
-  return <div className="flex flex-col items-center justify-center gap-2 py-12">{children}</div>;
 }

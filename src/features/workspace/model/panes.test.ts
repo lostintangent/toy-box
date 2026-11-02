@@ -6,11 +6,7 @@ import { INBOX_PANE } from "@inbox/model";
 import { createScreenPane } from "@screens/model";
 import type { SessionCanvas } from "@sessions/model";
 import { createCanvasPane, createSessionPane } from "@sessions/model/panes";
-import {
-  deriveReachablePaneIds,
-  deriveVisibleWorkspacePanes,
-  type WorkspacePane,
-} from "@workspace/model/panes";
+import { deriveVisibleWorkspacePanes, type WorkspacePane } from "@workspace/model/panes";
 
 function derivePanes(
   rootPanes: WorkspacePane[],
@@ -59,10 +55,6 @@ describe("workspace pane graph", () => {
     const panePublications = { [INBOX_PANE.id]: [artifactPane] };
 
     expect(derivePanes([INBOX_PANE], panePublications)).toEqual([INBOX_PANE, artifactPane]);
-    expect(deriveReachablePaneIds([INBOX_PANE], panePublications)).toEqual([
-      INBOX_PANE.id,
-      artifactPane.id,
-    ]);
   });
 
   test("keeps selected session panes first and appends canvases within the four-pane workspace cap", () => {

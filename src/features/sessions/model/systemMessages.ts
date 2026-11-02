@@ -70,7 +70,7 @@ export function systemMessagePrompt(message: SessionSystemMessage): string {
     case "channel_follow_up":
       return `Your follow-up is due. You were waiting for ${message.waitingFor}. Call \`read_channel\` and check whether you can continue.`;
     case "channel_task_check_in":
-      return `The check-in scheduled for ${message.checkInAt} on task ${JSON.stringify(message.taskId)} (${JSON.stringify(message.title)}) is due and has been cleared. Call \`read_channel\`. If the task is still assigned to you and in progress, post a concise progress update with blockers and the next step for the lead. This is a checkpoint, not a cancellation or instruction to stop work.`;
+      return `The check-in scheduled for ${message.checkInAt} on task ${JSON.stringify(message.taskId)} (${JSON.stringify(message.title)}) is due and has been cleared. Call \`read_channel\`. If the task is still assigned to you and in progress, step back and judge whether your approach is converging. Post a concise update for the lead with that judgment, blockers and the next step. This is a checkpoint, not a cancellation or instruction to stop work.`;
   }
 }
 

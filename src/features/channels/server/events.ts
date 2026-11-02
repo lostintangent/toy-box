@@ -17,7 +17,10 @@ export function publishChannelEvent(channelId: string, event: ChannelEvent): voi
   for (const listener of [...events.listeners]) listener(event);
 }
 
-/** Return ordered, deduplicated changes, or undefined when a snapshot is required. */
+/**
+ * Return ordered changes, or undefined when a snapshot is required. Each publication carries a
+ * fresh revision, so a complete range has no duplicates and the length check only needs to catch gaps.
+ */
 export function replayChannelEvents(
   channelId: string,
   afterRevision: number,
@@ -27,10 +30,7 @@ export function replayChannelEvents(
   if (afterRevision > throughRevision) return undefined;
   const replay = getChannelEvents(channelId)
     .history.filter(({ revision }) => revision > afterRevision && revision <= throughRevision)
-    .sort((left, right) => left.revision - right.revision)
-    .filter(
-      (event, index, events) => index === 0 || event.revision !== events[index - 1]!.revision,
-    );
+    .sort((left, right) => left.revision - right.revision);
   return replay.length === throughRevision - afterRevision ? replay : undefined;
 }
 

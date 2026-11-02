@@ -70,6 +70,7 @@ export function channelNotification(
       channelID: channel.id,
       sequence: message.sequence,
       ...(kind === "request" && requester ? { handle: agentHandleFromName(requester.name) } : {}),
+      ...(kind === "request" && message.replies ? { replies: message.replies } : {}),
     },
   };
 }

@@ -1,9 +1,12 @@
-import type { CopilotSession, SessionEvent as SdkEvent } from "@github/copilot-sdk";
+import type {
+  CopilotSession,
+  SessionConfig as SdkSessionConfig,
+  SessionEvent as SdkEvent,
+} from "@github/copilot-sdk";
 import type { ModelConfiguration } from "@providers/model";
 import type { SessionConnection } from "@providers/server/provider";
 import { encodeSystemMessage, systemMessagePrompt } from "@sessions/model/systemMessages";
 import { toSdkAttachments } from "./attachments";
-import { toSdkSetModelOptions } from "./modelConfiguration";
 import { createSdkEventProjector } from "./projector";
 
 /** Native SDK event and RPC details never cross the Sessions contract. */
@@ -88,5 +91,20 @@ export function connectCopilotSession(
       });
       if (eventsRemoved === undefined) throw new Error("Session rewind failed.");
     },
+  };
+}
+
+type SdkSetModelOptions = NonNullable<Parameters<CopilotSession["setModel"]>[1]>;
+
+// The SDK's public option unions are narrower than live metadata, so these
+// open strings are cast at the boundary.
+export function toSdkSetModelOptions(configuration?: ModelConfiguration): SdkSetModelOptions {
+  return {
+    ...(configuration?.reasoningEffort
+      ? { reasoningEffort: configuration.reasoningEffort as SdkSessionConfig["reasoningEffort"] }
+      : {}),
+    ...(configuration?.contextTier
+      ? { contextTier: configuration.contextTier as SdkSessionConfig["contextTier"] }
+      : {}),
   };
 }

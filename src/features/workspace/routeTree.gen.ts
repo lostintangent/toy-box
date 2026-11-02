@@ -20,6 +20,7 @@ import { Route as ApiV1PushRegistrationIDRouteImport } from './../push/routes/v1
 import { Route as ApiV1ChannelsChannelIdDotmembersRouteImport } from './../channels/routes/v1/channels/$channelId.members'
 import { Route as ApiV1ChannelsChannelIdDotmessagesRouteImport } from './../channels/routes/v1/channels/$channelId.messages'
 import { Route as ApiV1ChannelsChannelIdDotreadRouteImport } from './../channels/routes/v1/channels/$channelId.read'
+import { Route as ApiV1ChannelsChannelIdDotartifactsDotartifactIdRouteImport } from './../channels/routes/v1/channels/$channelId.artifacts.$artifactId'
 import { Route as ApiV1ChannelsChannelIdDotmembersDotagentIdRouteImport } from './../channels/routes/v1/channels/$channelId.members.$agentId'
 import { Route as ApiV1ChannelsChannelIdDotroutinesDotroutineIdRouteImport } from './../channels/routes/v1/channels/$channelId.routines.$routineId'
 import { Route as ApiV1PushRegistrationIDDottopicsDottopicRouteImport } from './../push/routes/v1/push/$registrationID.topics.$topic'
@@ -84,6 +85,12 @@ const ApiV1ChannelsChannelIdDotreadRoute =
     path: '/read',
     getParentRoute: () => ApiV1ChannelsChannelIdRoute,
   } as any)
+const ApiV1ChannelsChannelIdDotartifactsDotartifactIdRoute =
+  ApiV1ChannelsChannelIdDotartifactsDotartifactIdRouteImport.update({
+    id: '/artifacts/$artifactId',
+    path: '/artifacts/$artifactId',
+    getParentRoute: () => ApiV1ChannelsChannelIdRoute,
+  } as any)
 const ApiV1ChannelsChannelIdDotmembersDotagentIdRoute =
   ApiV1ChannelsChannelIdDotmembersDotagentIdRouteImport.update({
     id: '/$agentId',
@@ -127,6 +134,7 @@ export interface FileRoutesByFullPath {
   '/api/v1/channels/$channelId/members': typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   '/api/v1/channels/$channelId/messages': typeof ApiV1ChannelsChannelIdDotmessagesRoute
   '/api/v1/channels/$channelId/read': typeof ApiV1ChannelsChannelIdDotreadRoute
+  '/api/v1/channels/$channelId/artifacts/$artifactId': typeof ApiV1ChannelsChannelIdDotartifactsDotartifactIdRoute
   '/api/v1/channels/$channelId/members/$agentId': typeof ApiV1ChannelsChannelIdDotmembersDotagentIdRouteWithChildren
   '/api/v1/channels/$channelId/routines/$routineId': typeof ApiV1ChannelsChannelIdDotroutinesDotroutineIdRouteWithChildren
   '/api/v1/push/$registrationID/topics/$topic': typeof ApiV1PushRegistrationIDDottopicsDottopicRoute
@@ -145,6 +153,7 @@ export interface FileRoutesByTo {
   '/api/v1/channels/$channelId/members': typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   '/api/v1/channels/$channelId/messages': typeof ApiV1ChannelsChannelIdDotmessagesRoute
   '/api/v1/channels/$channelId/read': typeof ApiV1ChannelsChannelIdDotreadRoute
+  '/api/v1/channels/$channelId/artifacts/$artifactId': typeof ApiV1ChannelsChannelIdDotartifactsDotartifactIdRoute
   '/api/v1/channels/$channelId/members/$agentId': typeof ApiV1ChannelsChannelIdDotmembersDotagentIdRouteWithChildren
   '/api/v1/channels/$channelId/routines/$routineId': typeof ApiV1ChannelsChannelIdDotroutinesDotroutineIdRouteWithChildren
   '/api/v1/push/$registrationID/topics/$topic': typeof ApiV1PushRegistrationIDDottopicsDottopicRoute
@@ -164,6 +173,7 @@ export interface FileRoutesById {
   '/api/v1/channels/$channelId/members': typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   '/api/v1/channels/$channelId/messages': typeof ApiV1ChannelsChannelIdDotmessagesRoute
   '/api/v1/channels/$channelId/read': typeof ApiV1ChannelsChannelIdDotreadRoute
+  '/api/v1/channels/$channelId/artifacts/$artifactId': typeof ApiV1ChannelsChannelIdDotartifactsDotartifactIdRoute
   '/api/v1/channels/$channelId/members/$agentId': typeof ApiV1ChannelsChannelIdDotmembersDotagentIdRouteWithChildren
   '/api/v1/channels/$channelId/routines/$routineId': typeof ApiV1ChannelsChannelIdDotroutinesDotroutineIdRouteWithChildren
   '/api/v1/push/$registrationID/topics/$topic': typeof ApiV1PushRegistrationIDDottopicsDottopicRoute
@@ -184,6 +194,7 @@ export interface FileRouteTypes {
     | '/api/v1/channels/$channelId/members'
     | '/api/v1/channels/$channelId/messages'
     | '/api/v1/channels/$channelId/read'
+    | '/api/v1/channels/$channelId/artifacts/$artifactId'
     | '/api/v1/channels/$channelId/members/$agentId'
     | '/api/v1/channels/$channelId/routines/$routineId'
     | '/api/v1/push/$registrationID/topics/$topic'
@@ -202,6 +213,7 @@ export interface FileRouteTypes {
     | '/api/v1/channels/$channelId/members'
     | '/api/v1/channels/$channelId/messages'
     | '/api/v1/channels/$channelId/read'
+    | '/api/v1/channels/$channelId/artifacts/$artifactId'
     | '/api/v1/channels/$channelId/members/$agentId'
     | '/api/v1/channels/$channelId/routines/$routineId'
     | '/api/v1/push/$registrationID/topics/$topic'
@@ -220,6 +232,7 @@ export interface FileRouteTypes {
     | '/api/v1/channels/$channelId/members'
     | '/api/v1/channels/$channelId/messages'
     | '/api/v1/channels/$channelId/read'
+    | '/api/v1/channels/$channelId/artifacts/$artifactId'
     | '/api/v1/channels/$channelId/members/$agentId'
     | '/api/v1/channels/$channelId/routines/$routineId'
     | '/api/v1/push/$registrationID/topics/$topic'
@@ -317,6 +330,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1ChannelsChannelIdDotreadRouteImport
       parentRoute: typeof ApiV1ChannelsChannelIdRoute
     }
+    '/api/v1/channels/$channelId/artifacts/$artifactId': {
+      id: '/api/v1/channels/$channelId/artifacts/$artifactId'
+      path: '/artifacts/$artifactId'
+      fullPath: '/api/v1/channels/$channelId/artifacts/$artifactId'
+      preLoaderRoute: typeof ApiV1ChannelsChannelIdDotartifactsDotartifactIdRouteImport
+      parentRoute: typeof ApiV1ChannelsChannelIdRoute
+    }
     '/api/v1/channels/$channelId/members/$agentId': {
       id: '/api/v1/channels/$channelId/members/$agentId'
       path: '/$agentId'
@@ -404,6 +424,7 @@ interface ApiV1ChannelsChannelIdRouteChildren {
   ApiV1ChannelsChannelIdDotmembersRoute: typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   ApiV1ChannelsChannelIdDotmessagesRoute: typeof ApiV1ChannelsChannelIdDotmessagesRoute
   ApiV1ChannelsChannelIdDotreadRoute: typeof ApiV1ChannelsChannelIdDotreadRoute
+  ApiV1ChannelsChannelIdDotartifactsDotartifactIdRoute: typeof ApiV1ChannelsChannelIdDotartifactsDotartifactIdRoute
   ApiV1ChannelsChannelIdDotroutinesDotroutineIdRoute: typeof ApiV1ChannelsChannelIdDotroutinesDotroutineIdRouteWithChildren
 }
 
@@ -414,6 +435,8 @@ const ApiV1ChannelsChannelIdRouteChildren: ApiV1ChannelsChannelIdRouteChildren =
     ApiV1ChannelsChannelIdDotmessagesRoute:
       ApiV1ChannelsChannelIdDotmessagesRoute,
     ApiV1ChannelsChannelIdDotreadRoute: ApiV1ChannelsChannelIdDotreadRoute,
+    ApiV1ChannelsChannelIdDotartifactsDotartifactIdRoute:
+      ApiV1ChannelsChannelIdDotartifactsDotartifactIdRoute,
     ApiV1ChannelsChannelIdDotroutinesDotroutineIdRoute:
       ApiV1ChannelsChannelIdDotroutinesDotroutineIdRouteWithChildren,
   }

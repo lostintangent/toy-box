@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { machineFile } from "@files/model";
+import { machineFile, sessionFile } from "@files/model";
 import {
   channelLead,
   channelHasUnreadCompletion,
@@ -7,6 +7,7 @@ import {
   type ChannelMessage,
   type ChannelSystemMessageContent,
   type ChannelState,
+  type ChannelTask,
 } from ".";
 import { mergeChannelMessages, reduceChannelState } from "./reducer";
 
@@ -263,7 +264,10 @@ test("member departure removes its presence and recursively releases task owners
       ],
     },
   ];
-  const departed = reduceChannelState(previous, system(102, { type: "member_left", member }));
+  const departed = reduceChannelState(
+    previous,
+    system(102, { type: "member_left", actor: { type: "user" }, member }),
+  );
   expect(departed.members).toEqual([]);
   expect(departed.presence).toEqual({ channel: { state: "idle" } });
   expect(departed.channel.tasks).toEqual([
@@ -420,6 +424,44 @@ test("routine messages add, change in place, and delete routines", () => {
   expect(added.routines).toEqual([standup, review]);
   expect(changed.routines).toEqual([edited, review]);
   expect(removed.routines).toEqual([edited]);
+});
+
+test("removing an artifact drops only its shared entry and unlinks tasks that point at it", () => {
+  const [planId, designId] = ["machine:/workspace/plan.md", "session:designer-session:design.md"];
+  const plan = { id: planId, file: machineFile("/workspace/plan.md"), title: "Plan" };
+  const design = {
+    id: designId,
+    file: sessionFile("designer-session", "design.md"),
+    title: "Design",
+  };
+  const notes: ChannelTask = { id: "notes", title: "Notes", status: "done" };
+  const tasks: ChannelTask[] = [
+    { id: "draft", title: "Draft", status: "done", artifactId: planId },
+    {
+      id: "review",
+      title: "Review",
+      status: "pending",
+      artifactId: designId,
+      children: [{ ...notes, artifactId: planId }],
+    },
+  ];
+  const sharedAt = "2026-10-03T20:00:00.000Z";
+  const removed = reduceChannelState(
+    {
+      ...snapshot(),
+      channel: { ...snapshot().channel, tasks },
+      artifacts: [
+        { ...plan, sharedAt },
+        { ...design, sharedAt },
+      ],
+    },
+    system(102, { type: "artifact_removed", actor: { type: "user" }, artifact: plan }),
+  );
+  expect(removed.artifacts).toEqual([{ ...design, sharedAt }]);
+  expect(removed.channel.tasks).toEqual([
+    { id: "draft", title: "Draft", status: "done" },
+    { ...tasks[1], children: [notes] },
+  ]);
 });
 
 test("history merges by identity and sequence without replacing current values", () => {

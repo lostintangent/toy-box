@@ -1,4 +1,6 @@
 import {
+  CHANNEL_LEAD_PROFILE,
+  type ChannelCatalog,
   type ChannelState,
   type ChannelEvent,
   type ChannelObservationEvent,
@@ -6,6 +8,7 @@ import {
 import { channelAgentPresence } from "@channels/model/presence";
 import { reduceChannelRoster } from "@channels/model/reducer";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
+import type { WorkspaceEvent, WorkspaceEvents } from "@workspace/model/events";
 import { getSessionActivity } from "@sessions/server/state/activity";
 import { getStateDatabase } from "@/server/database";
 import { resolveArtifactResources, resolveMessageResources } from "./resources";
@@ -161,4 +164,96 @@ function currentPresence({ lead, members }: Roster): ChannelState["presence"] {
       channelAgentPresence(agent, getSessionActivity(agent.id)?.status === "running"),
     ]),
   );
+}
+
+export type ChannelCatalogEvent =
+  | { type: "snapshot"; catalog: ChannelCatalog }
+  | { type: "working"; working: string[] }
+  | WorkspaceEvents["channels"];
+
+/** The catalog as JSON; the catalog stream opens with the same value. */
+export async function getChannelCatalog(): Promise<ChannelCatalog> {
+  const list = await new ChannelDatabase(await getStateDatabase()).listChannels();
+  return {
+    version: 1,
+    ...list,
+    lead: CHANNEL_LEAD_PROFILE,
+    working: runningAgentIds([...list.channels, ...list.members].map(({ id }) => id)),
+  };
+}
+
+/** Opens with the catalog, then forwards Channel changes and reports who is working. Events that
+ *  arrive while the snapshot is read are held and applied after it, so none are lost. */
+export async function streamChannelCatalog(
+  send: (event: ChannelCatalogEvent) => void,
+): Promise<VoidFunction> {
+  const held: WorkspaceEvent[] = [];
+  let ready = false;
+  const unsubscribe = subscribeWorkspaceEvents((event) => {
+    if (ready) apply(event);
+    else held.push(event);
+  });
+
+  let catalog: ChannelCatalog;
+  try {
+    catalog = await getChannelCatalog();
+  } catch (error) {
+    unsubscribe();
+    throw error;
+  }
+
+  // The latest revision sent for each Channel orders its upserts, so a late older one is dropped.
+  const revisions = new Map(catalog.channels.map(({ id, revision }) => [id, revision] as const));
+  const agents = new Map([
+    ...catalog.channels.map(({ id }) => [id, id] as const),
+    ...catalog.members.map(({ id, channelId }) => [id, channelId] as const),
+  ]);
+  let working = catalog.working;
+
+  function apply(event: WorkspaceEvent) {
+    switch (event.type) {
+      case "channel.upserted":
+        if (event.channel.revision <= (revisions.get(event.channel.id) ?? -1)) return;
+        revisions.set(event.channel.id, event.channel.revision);
+        agents.set(event.channel.id, event.channel.id);
+        return forward(event);
+      case "channel.deleted":
+        // Tombstoned, so an older upsert that arrives later cannot resurrect the Channel.
+        revisions.set(event.channelId, Number.POSITIVE_INFINITY);
+        for (const [agentId, channelId] of agents) {
+          if (channelId === event.channelId) agents.delete(agentId);
+        }
+        return forward(event);
+      case "channel.member.upserted":
+        agents.set(event.member.id, event.member.channelId);
+        return forward(event);
+      case "channel.member.deleted":
+        agents.delete(event.agentId);
+        return forward(event);
+      default:
+        if (event.type.startsWith("session.")) publishWorking();
+    }
+  }
+
+  function forward(event: WorkspaceEvents["channels"]) {
+    send(event);
+    publishWorking();
+  }
+
+  function publishWorking() {
+    const next = runningAgentIds(agents.keys());
+    if (Bun.deepEquals(next, working)) return;
+    working = next;
+    send({ type: "working", working });
+  }
+
+  send({ type: "snapshot", catalog });
+  ready = true;
+  for (const event of held) apply(event);
+  return unsubscribe;
+}
+
+/** Sorted, so the same set always compares equal. */
+function runningAgentIds(agentIds: Iterable<string>): string[] {
+  return [...agentIds].filter((id) => getSessionActivity(id)?.status === "running").sort();
 }

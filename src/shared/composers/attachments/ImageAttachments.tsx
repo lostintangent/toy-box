@@ -1,11 +1,8 @@
 import { Loader2, Plus } from "lucide-react";
-import { AttachmentGallery } from "@/shared/attachments/AttachmentGallery";
+import { AttachmentGallery, attachmentPillClassName } from "@/shared/attachments/AttachmentGallery";
 import type { Attachment } from "@/shared/attachments/model";
 import { InputGroupAddon } from "@/shared/ui/input-group";
 import { cn } from "@/shared/utils";
-
-const attachmentPillClassName =
-  "inline-flex h-7 max-w-48 shrink-0 items-center gap-1.5 rounded-md border bg-background px-1 text-xs text-muted-foreground";
 
 /** The composer's context row: this message's images, shown only while it has any. */
 export function ImageAttachments({

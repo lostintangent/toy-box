@@ -1,7 +1,5 @@
 import { HTML_BASE_ATTRIBUTE } from "@/shared/embeddedHtml";
 
-export { HTML_BASE_ATTRIBUTE, injectBaseHref } from "@/shared/embeddedHtml";
-
 // An HTML file has content that is a rendered document. `injectHtmlBridge` adds the
 // script that relays edits from its sandboxed iframe back to the pane and toggles editability.
 // The serve route (`/api/serve`) returns the raw bytes these documents reference (sibling

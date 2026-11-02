@@ -49,7 +49,12 @@ test.each([undefined, 0])(
             arrival: { id: 1, unreadAfter: null },
           },
     );
-    const acknowledged = { ...snapshot.channel, latestSequence: 102, seenThrough: 102 };
+    const acknowledged = {
+      ...snapshot.channel,
+      latestSequence: 102,
+      seenThrough: 102,
+      revision: 102,
+    };
     stream.client.setQueryData(channelQueries.listKey(), { channels: [acknowledged], members: [] });
     const connection = await stream.nextConnection();
     expect(connection.url).toBe(
@@ -96,20 +101,12 @@ test("replayed reads establish arrival only at the resumption and retain paging 
   expect(stream.view()!.arrival).toEqual(arrived);
 });
 
-test("deletion before bootstrap completes observation and removes the catalog entry", async () => {
+test("deletion before bootstrap completes observation", async () => {
   const stream = openStream();
-  stream.client.setQueryData(channelQueries.listKey(), {
-    channels: [snapshot.channel],
-    members: [{ channelId: snapshot.channel.id, id: "reviewer", name: "Reviewer" }],
-  });
   const connection = await stream.nextConnection();
   connection.send({ type: "deleted", channelId: snapshot.channel.id });
   await stream.finished;
   expect(stream.view()).toBeNull();
-  expect(stream.client.getQueryData<ChannelList>(channelQueries.listKey())).toEqual({
-    channels: [],
-    members: [],
-  });
 });
 
 test("unexpected EOF reconnects from the last applied revision", async () => {

@@ -248,6 +248,7 @@ describe("Session-owned configuration lifetime", () => {
         "list_models",
         "list_channels",
         "create_channel_members",
+        "list_screens",
       ]),
     );
     expect(standard).not.toContain("create_session");
@@ -264,6 +265,7 @@ describe("Session-owned configuration lifetime", () => {
         "list_models",
         "list_channels",
         "create_channel_members",
+        "list_screens",
       ]),
     );
     expect(hyper).not.toContain("update_session_title");
@@ -274,6 +276,7 @@ describe("Session-owned configuration lifetime", () => {
     );
     expect(automation).not.toContain("create_channel_members");
     expect(automation).not.toContain("open_file");
+    expect(automation).not.toContain("list_screens");
 
     const inboxId = `${sessionId}-inbox`;
     await new WorkerDatabase(db).create({
