@@ -63,7 +63,7 @@ jobs:
         run: bun check
 
       - name: Test
-        run: bun test
+        run: bun run test
 
       - name: Build CLI
         run: bun run build:cli

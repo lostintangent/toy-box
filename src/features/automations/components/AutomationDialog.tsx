@@ -91,7 +91,7 @@ export function AutomationDialog({
                   id={id}
                   value={form.prompt}
                   onChange={(event) => updateForm({ prompt: event.target.value })}
-                  className="min-h-24"
+                  className="min-h-24 max-h-48 overflow-y-auto"
                   placeholder="Summarize the repo status and open risks."
                 />
               )}

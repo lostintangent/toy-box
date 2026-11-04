@@ -26,7 +26,7 @@ jobs:
         run: bun check
 
       - name: Test
-        run: bun test
+        run: bun run test
 
       - name: Build
         run: bun run build

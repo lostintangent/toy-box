@@ -1,4 +1,4 @@
-import { expect, onTestFinished, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
@@ -8,14 +8,16 @@ import { writeAppTypeLibrary } from "./index";
 
 const projectRoot = resolve(Bun.fileURLToPath(new URL("../../../", import.meta.url)));
 
+// A cold TypeScript program over the packaged types, so it gets more time when it shares the CPU
+// with other test workers.
 test("packaged types can check an app without the source checkout", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "toy-box-app-types-test-")));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
-  await writeAppTypeLibrary(projectRoot, root);
-  const source = join(root, "app.tsx");
-  await Bun.write(
-    source,
-    `
+  try {
+    await writeAppTypeLibrary(projectRoot, root);
+    const source = join(root, "app.tsx");
+    await Bun.write(
+      source,
+      `
     import { useChannel, useFile } from "./src/features/apps/sdk";
     import type { FromSchema } from "json-schema-to-ts";
     import { z } from "zod";
@@ -28,21 +30,27 @@ test("packaged types can check an app without the source checkout", async () => 
       return <Article layout="position">{channel.state?.channel.name}{file.content}{z.number().parse(state.count)}</Article>;
     }
   `,
-  );
-  const options = { ...readCompilerOptions(root), types: [] };
-  const host = ts.createCompilerHost(options);
-  host.getCurrentDirectory = () => root;
-  host.getDefaultLibLocation = () => join(root, "node_modules/app-typescript/lib");
-  const program = ts.createProgram([source], options, host);
-  const diagnostics = ts.getPreEmitDiagnostics(program, program.getSourceFile(source)!);
-  expect(
-    diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")),
-  ).toEqual([]);
-  expect(
-    program
-      .getSourceFiles()
-      .map(({ fileName }) => fileName)
-      .filter((file) => !file.startsWith(`${root}${sep}`)),
-  ).toEqual([]);
-  expect([...new Bun.Glob("node_modules/**/*.{js,mjs,cjs}").scanSync({ cwd: root })]).toEqual([]);
-});
+    );
+    const options = { ...readCompilerOptions(root), types: [] };
+    const host = ts.createCompilerHost(options);
+    host.getCurrentDirectory = () => root;
+    host.getDefaultLibLocation = () => join(root, "node_modules/app-typescript/lib");
+    const program = ts.createProgram([source], options, host);
+    const diagnostics = ts.getPreEmitDiagnostics(program, program.getSourceFile(source)!);
+    expect(
+      diagnostics.map((diagnostic) =>
+        ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
+      ),
+    ).toEqual([]);
+    expect(
+      program
+        .getSourceFiles()
+        .map(({ fileName }) => fileName)
+        .filter((file) => !file.startsWith(`${root}${sep}`)),
+    ).toEqual([]);
+    expect([...new Bun.Glob("node_modules/**/*.{js,mjs,cjs}").scanSync({ cwd: root })]).toEqual([]);
+  } finally {
+    // Inside the test's own time limit: deleting the copied library can outlast a hook's under load.
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
