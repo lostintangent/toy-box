@@ -12,7 +12,7 @@ import { CommandProvider } from "@/shared/commands/CommandProvider";
 import type { SidebarProps } from "@workspace/components/sidebar/Sidebar";
 import { WorkspaceDialogs } from "@workspace/components/WorkspaceDialogs";
 import { CommandPalette } from "@workspace/components/palette/CommandPalette";
-import { createWorkspaceCommands, type SessionCreationOptions } from "@workspace/commands";
+import { workspaceCommands, type SessionCreationOptions } from "@workspace/commands";
 import {
   WorkspaceLayout,
   type WorkspaceLayoutProps,
@@ -319,7 +319,7 @@ function WorkspacePage() {
     if (hasWorkspaceRoot) void updateRoots(() => []);
   }
 
-  const commands = createWorkspaceCommands({
+  const commands = workspaceCommands({
     togglePalette: () => setIsPaletteOpen((open) => !open),
     sidebar: isMobileLayout ? undefined : { isOpen: !isSidebarCollapsed, toggle: toggleSidebar },
     terminal: { isOpen: isTerminalOpen, toggle: toggleTerminal },
@@ -451,8 +451,8 @@ function WorkspacePage() {
           openSessionIds={openSessionIds}
           navigation={{ selectRoot, openRoot }}
         />
+        <WorkspaceDialogs selectRoot={selectRoot} />
       </WorkspaceSurfaceProvider>
-      <WorkspaceDialogs selectRoot={selectRoot} openRoot={openRoot} closeRoot={closeRoot} />
     </CommandProvider>
   );
 }

@@ -204,8 +204,8 @@ is the reusable follow-up surface for session-backed output shown without its so
 ## Commands and palette
 
 [`src/shared/commands`](../../shared/commands/) is the generic command mechanism: the `Command`
-value, `CommandProvider`, search and usage ranking, and the `CommandButton` and `CommandMenuItem`
-adapters. Every button, menu item, shortcut, and palette row runs through `executeCommand`, so a
+value, `CommandProvider`, search and usage ranking, and the `CommandButton`, `CommandMenuItem`, and
+`CommandMenuItems` adapters. Every button, menu item, shortcut, and palette row runs through `executeCommand`, so a
 disabled command never runs and failures surface one way.
 
 A command is defined beside the state it acts on, and its ID names the capability (`files.browse`),
@@ -213,12 +213,18 @@ not the module that defines it. [`commands.ts`](commands.ts) defines the workben
 creating work and showing its surfaces. The main route owns that state, so it provides them through
 `CommandProvider`, which binds their shortcuts and supplies them through context to its descendants:
 the sidebar, palette, and dialogs reference them by ID during render, so the sidebar's header, rail,
-and footer render their command buttons in the server's HTML. Commands scoped to the focused pane,
-such as "This session", will need a focus-aware registry rather than more providers. Features build
-commands for their own items, such as
-[`../sessions/commands.ts`](../sessions/commands.ts) for a session's actions. Commands that open a
-shared dialog call `openWorkspaceDialog`, hosted by
-[`components/WorkspaceDialogs.tsx`](components/WorkspaceDialogs.tsx).
+and footer render their command buttons in the server's HTML. Each feature defines its items'
+commands once in its `commands.ts`, such as [`../sessions/commands.ts`](../sessions/commands.ts),
+[`../channels/commands.ts`](../channels/commands.ts), [`../apps/commands.ts`](../apps/commands.ts),
+and [`../automations/commands.ts`](../automations/commands.ts), and its sidebar menu, its palette
+row, and any other menu for the item render that same list.
+Commands that open a shared dialog call `openWorkspaceDialog`, hosted by
+[`components/WorkspaceDialogs.tsx`](components/WorkspaceDialogs.tsx) inside the main surface, so
+what a dialog opens is revealed there. To rename or delete its item, a feature calls
+`openRenameDialog` or `openDeleteDialog` with its own copy and mutation options, so its cache
+effects run and the host needs no branch per feature. Each opening gets a new dialog, which starts
+fresh. A delete closes no pane itself: the route closes any root whose session, Channel, or app
+left its list, in every tab.
 
 [`components/palette/`](components/palette/) is the Mod+K palette, a composition over sessions,
 channels, apps, automations, files, and the provided commands. The sidebar's Hyper menu also runs
@@ -227,7 +233,15 @@ stack of pages (root, group, an item's actions, and the model, directory, and fi
 with its own query and selection, plus the launch options chosen for new work: a model and a
 `SessionLocation`, whose worktree defaults to the workspace's setting. `usePaletteView` builds each page's sections from feature queries
 and provided commands, and `CommandPalette` owns the dialog, keyboard, running, and the desktop
-peek. Search reads only what a row shows, its title and detail. Matches rank by where the query
+peek. The root leads with "This …", headed by the noun of the row's group: the actions of the
+current pane's row, or else of the row of the session it belongs to. A child session isn't listed,
+so its row is built for the section alone, without Pin, as the sidebar shows it. A row's ID is the
+ID of the pane it opens, so a pane needs nothing more to get the section once its row has actions.
+The current pane is read once as the palette opens, from the pane hosts' `data-pane-id`: the pane
+holding focus, else the maximized one, the phone's page, or the only one. The section skips the
+default selection, so Enter on opening runs what it would without it, never an action on what's
+open.
+Search reads only what a row shows, its title and detail. Matches rank by where the query
 occurs, then by frequent use; commands and places rank above
 content at a comparable match because their titles lead with a verb. A query that names nothing can
 start work with it: "New session" starts headlessly through `sessionMutations.startSession()`, as
@@ -242,7 +256,7 @@ Inbox Send does, then opens the running session's pane; "Run in Inbox" dispatche
   and initial Workspace hydration. Its stylesheet is co-located in the same route boundary.
 - [`routes/index.tsx`](routes/index.tsx) is the main composition root. It derives root panes
   from the URL, owns the root verbs (`selectRoot`, `openRoot`, `closeRoot`) that the sidebar,
-  palette, and dialogs call with panes, and supplies shared state and commands to the responsive
+  palette, and dialogs call with panes, closes roots whose content left its catalog, and supplies shared state and commands to the responsive
   workspace shell.
 - [`hooks/layout/surface.tsx`](hooks/layout/surface.tsx) owns the independent Main and Hyper surface
   stores, `reveal`, and `useSurfacePanes`, which derives a surface's visible panes from its roots

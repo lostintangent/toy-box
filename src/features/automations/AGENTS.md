@@ -43,11 +43,12 @@ matches and refetches the catalog after reconnects or missed updates.
 `automationMutations` owns CRUD and run requests. Create/update responses invalidate rather than
 reapply potentially stale definitions over scheduler events. Creation also refreshes Sessions'
 ownership projection; deletion removes both the definition and its managed session from client
-caches. Components consume these options directly and retain only local interaction state.
+caches. `commands.ts` defines what can be done to one automation (Run, Edit, and Delete), so its
+sidebar menu and its command palette row offer the same actions.
 
 The mounted automation dialog owns one schedule draft. Daily, interval, and cron are editing modes; inactive tab inputs are remembered, and only the selected mode determines the saved cron.
 
-A user-triggered run displays as running immediately through the mutation's pending state, without opening its pane. The mutation calls Sessions' `recreateSessionInCache` with the cached prompt and model. Only the automation ID and client message ID accompany the request; the server uses the saved definition and carries that message ID into delivery. Sessions owns replacing the old transcript and reconciling the canonical message. Settled requests call Sessions' `invalidateSessionQueries` to reconcile success, overlap, or failure. Automation list items combine the pending request with Session activity for presentation; the server announces running when the live stream exists.
+A run from its sidebar menu displays as running immediately through the mutation's pending state, without opening its pane. The mutation calls Sessions' `recreateSessionInCache` with the cached prompt and model. Only the automation ID and client message ID accompany the request; the server uses the saved definition and carries that message ID into delivery. Sessions owns replacing the old transcript and reconciling the canonical message. Settled requests call Sessions' `invalidateSessionQueries` to reconcile success, overlap, or failure. Automation list items combine the pending request with Session activity for presentation. Run fires the request without waiting on it, so the palette closes immediately. A run started there shows as running in the sidebar once the server announces the live stream. Run is disabled while the automation runs.
 
 Automation events synchronize definition and schedule metadata through the shared workspace
 transport. Sessions consumes the same events to maintain ownership, without copying definitions.

@@ -2,15 +2,14 @@ import { useRef, useState, type ReactNode } from "react";
 import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 import { Hash, MoreHorizontal, PanelRightClose, Pin, PinOff } from "lucide-react";
+import { channelCommands } from "@channels/commands";
 import { AgentEditor } from "@channels/components/agents/AgentEditor";
-import { ChannelDialog } from "@channels/components/ChannelDialog";
-import { ChannelMenuItems } from "@channels/components/ChannelMenuItems";
-import { DeleteChannelDialog } from "@channels/components/DeleteChannelDialog";
 import type { Channel, ChannelArtifact, ChannelMember, ChannelRoutine } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
-import { FileBrowserDialog } from "@files/components/browser/FileBrowserDialog";
+import { openWorkspaceDialog } from "@workspace/hooks/dialogs";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { useRevealFile } from "@files/useRevealFile";
+import { CommandMenuItems } from "@/shared/commands/CommandMenuItem";
 import { PaneActions, type PaneVariant } from "@/shared/panes/PaneSlots";
 import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "@/shared/panes/paneControls";
 import { Button } from "@/shared/ui/button";
@@ -25,9 +24,7 @@ const OVERVIEW_WIDTH = 320;
 /** Closed, open over the transcript as a sheet, or pinned beside it, which the layout remembers. */
 type OverviewPresentation = "closed" | "sheet" | "pinned";
 
-type OverviewDialog =
-  | { type: "edit_channel" | "delete_channel" | "browse_directory" }
-  | { type: "edit_member" | "remove_member"; member: ChannelMember };
+type OverviewDialog = { type: "edit_member" | "remove_member"; member: ChannelMember };
 
 /** The Channel's current purpose, progress, shared work, and roster. */
 export function ChannelOverview({
@@ -92,7 +89,19 @@ export function ChannelOverview({
     if (!open) setDialog(undefined);
   }
 
-  const browseDirectory = () => openDialog({ type: "browse_directory" });
+  // The Channel's commands open workspace dialogs, which a sheet left open would sit over.
+  const commands = channelCommands(channel).map((action) => ({
+    ...action,
+    run: () => {
+      closeSheet();
+      return action.run();
+    },
+  }));
+
+  function browseDirectory() {
+    closeSheet();
+    openWorkspaceDialog({ kind: "files", directory: channel.directory });
+  }
 
   const channelMenu = (
     <DropdownMenu>
@@ -110,11 +119,7 @@ export function ChannelOverview({
         <MoreHorizontal />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <ChannelMenuItems
-          onEdit={() => openDialog({ type: "edit_channel" })}
-          onBrowse={channel.directory ? browseDirectory : undefined}
-          onDelete={() => openDialog({ type: "delete_channel" })}
-        />
+        <CommandMenuItems commands={commands} />
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -195,23 +200,8 @@ export function ChannelOverview({
         </AnimatePresence>
       )}
 
-      {dialog?.type === "edit_channel" && (
-        <ChannelDialog key={channel.id} channel={channel} onOpenChange={onDialogOpenChange} />
-      )}
       {dialog?.type === "edit_member" && (
         <AgentEditor agent={dialog.member} onClose={() => setDialog(undefined)} />
-      )}
-      {dialog?.type === "delete_channel" && (
-        <DeleteChannelDialog channel={channel} onOpenChange={onDialogOpenChange} />
-      )}
-      {dialog?.type === "browse_directory" && (
-        <FileBrowserDialog
-          open
-          onOpenChange={onDialogOpenChange}
-          title="Open a file"
-          initialPath={channel.directory}
-          onOpenFile={revealFile}
-        />
       )}
       {dialog?.type === "remove_member" && (
         <DestructiveConfirmationDialog

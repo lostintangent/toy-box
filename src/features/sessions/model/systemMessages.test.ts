@@ -22,6 +22,20 @@ describe("Session system messages", () => {
     );
   });
 
+  test("a lead message names the sender's channel and never merges with another", () => {
+    const message = {
+      type: "channel_lead_message",
+      channelId: "apple",
+      channelName: "Toy Box (Apple)",
+      content: "Which build has the fix?\n\n- iOS\n- macOS",
+    } as const;
+    expect(decodeSystemMessage(encodeSystemMessage(message))).toEqual(message);
+    expect(systemMessageLabel(message)).toBe("Message from the lead of Toy Box (Apple)");
+    expect(systemMessagePrompt(message)).toContain(JSON.stringify(message.channelId));
+    expect(systemMessagePrompt(message)).toContain(JSON.stringify(message.content));
+    expect(systemMessageCoalesceKey(message)).toBeUndefined();
+  });
+
   test("round-trips structured display content separately from the model prompt", () => {
     const message = {
       type: "file_edited",

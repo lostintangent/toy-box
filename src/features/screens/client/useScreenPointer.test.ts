@@ -47,16 +47,19 @@ describe("local zoom", () => {
     ).toEqual({ scale: 2, x: 200, y: 0 });
   });
 
-  test("zoom stays between fitted and the frame's own pixels", () => {
+  test("zoom stays between fitted and the largest frame's pixels, whatever size frames are", () => {
     const center = { from: { x: 0, y: 0 }, to: { x: 0, y: 0 } };
     const pane = { width: 400, height: 800 };
-    const frame = { width: 1600, height: 1000 };
-    expect(zoomBy(UNZOOMED, { ...center, factor: 0.1 }, pane, frame)).toEqual(UNZOOMED);
-    expect(zoomBy(UNZOOMED, { ...center, factor: 10 }, pane, frame)).toEqual({
-      scale: 4,
-      x: 0,
-      y: 0,
-    });
+    const zoomed = { scale: 9.6, x: 0, y: 0 };
+    expect(
+      zoomBy(UNZOOMED, { ...center, factor: 0.1 }, pane, { width: 1600, height: 1000 }),
+    ).toEqual(UNZOOMED);
+    expect(
+      zoomBy(UNZOOMED, { ...center, factor: 20 }, pane, { width: 1600, height: 1000 }),
+    ).toEqual(zoomed);
+    expect(zoomBy(UNZOOMED, { ...center, factor: 20 }, pane, { width: 400, height: 250 })).toEqual(
+      zoomed,
+    );
   });
 
   test("a step that doesn't scale keeps the zoom's scale and pans", () => {

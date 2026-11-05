@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { channelAgentIdentity, DELETED_AGENT_NAME, withoutLeadingMentions } from "./agent";
+import {
+  channelAgentIdentity,
+  DELETED_AGENT_NAME,
+  resolveChannelAgentId,
+  withoutLeadingMentions,
+} from "./agent";
 
 const agents = [{ name: "Lead" }, { name: "Interface" }, { name: "Engine" }];
 
@@ -41,5 +46,24 @@ describe("agent identity", () => {
       name: DELETED_AGENT_NAME,
       deleted: true,
     });
+  });
+});
+
+describe("agent references", () => {
+  const team = [
+    { id: "lead-id", name: "Lead" },
+    { id: "designer-id", name: "Product Designer" },
+  ];
+
+  test("resolves an agent ID or mention to the agent's ID", () => {
+    for (const reference of ["designer-id", "@product-designer", "Product-Designer"]) {
+      expect(resolveChannelAgentId(team, reference)).toBe("designer-id");
+    }
+    expect(resolveChannelAgentId(team, "@lead")).toBe("lead-id");
+  });
+
+  test("resolves nothing for an agent outside the team", () => {
+    expect(resolveChannelAgentId(team, "@critic")).toBeUndefined();
+    expect(resolveChannelAgentId(team.slice(1), "@lead")).toBeUndefined();
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePageVisibility } from "@/shared/hooks/usePageVisibility";
 import { socketUrl } from "@/shared/socket";
-import type { ScreenFrame, ScreenInput, ScreenStatus } from "../model";
+import type { FrameSize, ScreenFrame, ScreenInput, ScreenStatus } from "../model";
 import {
   decodeScreenPacket,
   type ScreenClientMessage,
@@ -80,6 +80,8 @@ type ScreenConnection = ReturnType<typeof connectScreen>;
 /** A lost connection retries after 250 ms, doubling up to 4 s until the server answers. */
 const FIRST_RETRY_MS = 250;
 const LAST_RETRY_MS = 4000;
+/** Frames refit once the canvas holds still this long, since panes animate into place. */
+const RESIZE_SETTLE_MS = 150;
 
 /**
  * One viewer's socket to a screen. Frames are drawn in order and acknowledged once drawn,
@@ -96,6 +98,11 @@ function connectScreen(
   let socket: WebSocket | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let retryDelay = FIRST_RETRY_MS;
+  let size: FrameSize | undefined;
+  let settling: ReturnType<typeof setTimeout> | undefined;
+  const resizing = new ResizeObserver(resize);
+  // Zoom is the canvas's transform, which no ResizeObserver sees.
+  const zooming = new MutationObserver(resize);
   /** The newest pointer move, sent on the next animation frame. */
   let move: ScreenInput | undefined;
 
@@ -113,6 +120,9 @@ function connectScreen(
     const current = (socket = new WebSocket(url));
     current.binaryType = "arraybuffer";
     let drawing = Promise.resolve();
+    // The server forgets a closed socket's size, so each new one sends it again.
+    size = undefined;
+    current.onopen = resize;
 
     current.onmessage = ({ data }) => {
       if (current !== socket) return;
@@ -171,7 +181,24 @@ function connectScreen(
     move = undefined;
   }
 
+  /** Fits frames to the canvas as shown: its own zoom counts, an ancestor's animation doesn't. */
+  function resize() {
+    clearTimeout(settling);
+    settling = setTimeout(() => {
+      const scale = new DOMMatrixReadOnly(canvas.style.transform).a * devicePixelRatio;
+      const width = Math.round(canvas.clientWidth * scale);
+      const height = Math.round(canvas.clientHeight * scale);
+      // A canvas with no area, like a pane yet to grow in, isn't shown.
+      if (!width || !height || socket?.readyState !== WebSocket.OPEN) return;
+      if (width === size?.width && height === size.height) return;
+      size = { width, height };
+      send({ type: "resize", size });
+    }, RESIZE_SETTLE_MS);
+  }
+
   open();
+  resizing.observe(canvas);
+  zooming.observe(canvas, { attributeFilter: ["style"] });
   return {
     takeControl() {
       send({ type: "take-control" });
@@ -195,6 +222,9 @@ function connectScreen(
     },
     close() {
       clearTimeout(retry);
+      clearTimeout(settling);
+      resizing.disconnect();
+      zooming.disconnect();
       const current = socket;
       socket = undefined;
       current?.close();

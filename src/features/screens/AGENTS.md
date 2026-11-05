@@ -53,7 +53,9 @@ Displays are always listed; the tool and the screen browser share
 `filterScreenWindows` over title and app name. The sidebar's Browse menu opens the
 screen browser, `ScreenBrowserDialog`, in both layouts. It searches locally and
 shows each screen as a JPEG thumbnail, 960 pixels at most. Picking one opens it
-through the workspace's ordinary `openRoot` verb.
+through the workspace's `reveal(pane)` verb, which focuses it if it's already open.
+Native apps list screens with `GET /api/v1/screens` and fetch a thumbnail's JPEG bytes
+from `GET /api/v1/screens/{id}/thumbnail`.
 Agents have only `list_screens`. They present a display or window with
 `set_session_preview`, clear it with `null`, or use the channel preview as lead.
 Automation belongs to provider computer-use tools or playwright-cli, not Screens.
@@ -61,9 +63,9 @@ Previews retain only IDs; frames, thumbnails and input never enter history or SQ
 
 IDs are `display:<displayID>` and `window:<windowID>:<pid>:<process-start>`.
 Kernel process-start time prevents a saved ID from following a reused process.
-A viewer's socket names its screen in its URL. A screen that ends or can't open
-sends its viewers an ended state with the reason, then closes them; viewers
-reconnect after any other close, including a server restart.
+A viewer's socket names its screen in its URL, and may give its size. A screen
+that ends or can't open sends its viewers an ended state with the reason, then
+closes them; viewers reconnect after any other close, including a server restart.
 There is no share, Stop or session ownership.
 
 ## Human control
@@ -74,7 +76,8 @@ Window input fails if its app loses focus. Input maps through the latest frame
 to the current window bounds, including during resize. Blur, disconnect, capture
 suspension and explicit release release held input, as does the helper exiting.
 This is trusted-owner host access, not an application sandbox or auth boundary.
-The shared socket gateway enforces same-origin access.
+The shared socket gateway refuses cross-origin browser pages and admits native
+clients, which send no Origin.
 
 `useScreen` owns each visible canvas's connection and renderer. Its status is
 connecting until a frame is drawn, then live, paused or ended; the pane shows the
@@ -99,7 +102,7 @@ The server ends the helper by closing its stdin, so it answers what it was sent 
 releases held input before exiting; its open pipes would otherwise keep the server
 running. It ignores a terminal's Ctrl+C, which reaches the server's whole process
 group, and its stdin also closes whenever the server process ends.
-The helper runs commands (start, stop, focus, input and release) one at a time, in
+The helper runs commands (start, resize, stop, focus, input, release) one at a time, in
 the order sent. Lists and thumbnails touch no capture or held input, so they run
 alongside, and a screen picked from the browser never waits behind its thumbnails.
 A stream that stops before it finishes starting fails its start, so one broken
@@ -120,11 +123,22 @@ pixels, mostly under the card's own rounding.
 
 Packets contain two 32-bit big-endian lengths, JSON metadata, then JPEG bytes. The
 runtime forwards frame packets to viewers unchanged.
-All screens use 30 fps, JPEG quality 0.7 and maximum 3840x2400 pixels, never exceeding
-the native backing scale. Full-frame updates cost more bandwidth; regions keep
-small changes cheap and slow viewers skip to the newest image. Bounds follow
-window resize. Identical pixels send nothing. Changed regions align outward to
-16-pixel blocks and apply to the latest full frame, never another region.
+All screens use 30 fps and JPEG quality 0.7. Frames fit the largest size a capture's
+viewers have given, in device pixels with zoom included, up to 3840x2400 and never past
+the native backing scale. Viewers without a size count only while no viewer has one, so
+a capture starts at full size and a browser joining a phone's screen doesn't refit it
+before giving its size. Native viewers give their size in the socket URL and send
+`resize` when it changes. The browser opens without one, then sends its canvas's size
+150 ms after it stops changing, since panes animate into place. It measures the
+canvas's own box and transform, so an ancestor's animation doesn't shrink frames and a
+pinch sharpens them. A canvas with no area sends nothing. Local zoom stops where the
+largest frame would be one pixel per CSS pixel. The helper replies to a resize once
+macOS applies it, since stopping a stream mid-update can crash macOS's capture service.
+A refused resize is only logged, and frames keep their previous size. Full-frame
+updates cost more bandwidth; regions keep small changes cheap and slow viewers skip to
+the newest image. Bounds follow window resize. Identical pixels send nothing. Changed
+regions align outward to 16-pixel blocks and apply to the latest full frame, never
+another region.
 Unchanged rows use `memcmp`; changed rows extend the bounds already found using
 16-pixel comparisons, rather than locating individual changed pixels.
 On continuous frames, small ScreenCaptureKit dirty bounds narrow the unchanged

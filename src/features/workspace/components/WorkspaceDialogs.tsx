@@ -5,25 +5,19 @@ import { FileBrowserDialog } from "@files/components/browser/FileBrowserDialog";
 import { createEditorPane } from "@files/model/panes";
 import { ScreenBrowserDialog } from "@screens/client/ScreenBrowserDialog";
 import { createScreenPane } from "@screens/model";
-import { createSessionPane } from "@sessions/model/panes";
-import { sessionMutations } from "@sessions/mutations";
-import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
-import { NameDialog } from "@/shared/sidebar/NameDialog";
 import type { WorkspacePane } from "../model/panes";
 import { closeWorkspaceDialog, useWorkspaceDialog } from "../hooks/dialogs";
+import { useWorkspaceSurface } from "../hooks/layout/surface";
 import { SettingsDialog } from "./sidebar/SettingsDialog";
 
-/** Renders whichever workspace dialog a command opened, opening what it chooses as a root pane. */
-export function WorkspaceDialogs({
-  selectRoot,
-  openRoot,
-  closeRoot,
-}: {
-  selectRoot: (pane: WorkspacePane) => void;
-  openRoot: (pane: WorkspacePane) => Promise<void>;
-  closeRoot: (pane: WorkspacePane) => void;
-}) {
+/**
+ * Renders whichever workspace dialog a command opened. What it opens is revealed in the main
+ * surface, and a new Channel replaces the workspace. Deleting needs no pane closed: the route
+ * closes any root whose subject left its list.
+ */
+export function WorkspaceDialogs({ selectRoot }: { selectRoot: (pane: WorkspacePane) => void }) {
   const dialog = useWorkspaceDialog();
+  const { reveal } = useWorkspaceSurface();
 
   return (
     <>
@@ -33,41 +27,30 @@ export function WorkspaceDialogs({
         onOpenChange={closeOnDismiss}
         initialPath={dialog?.kind === "files" ? dialog.directory : undefined}
         title="Open a file"
-        onOpenFile={(file) => void openRoot(createEditorPane(file))}
+        onOpenFile={(file) => reveal(createEditorPane(file))}
       />
       <ScreenBrowserDialog
         open={dialog?.kind === "screens"}
         onOpenChange={closeOnDismiss}
-        onOpenScreen={(screenId) => openRoot(createScreenPane(screenId))}
+        onOpenScreen={(screenId) => reveal(createScreenPane(screenId))}
       />
 
-      {dialog?.kind === "automation" && <AutomationDialog onOpenChange={closeOnDismiss} />}
+      {dialog?.kind === "automation" && (
+        <AutomationDialog
+          key={dialog.automation?.id}
+          automation={dialog.automation}
+          onOpenChange={closeOnDismiss}
+        />
+      )}
       {dialog?.kind === "channel" && (
         <ChannelDialog
+          key={dialog.channel?.id}
+          channel={dialog.channel}
           onOpenChange={closeOnDismiss}
           onCreated={(channelId) => selectRoot(createChannelPane(channelId))}
         />
       )}
-      {dialog?.kind === "rename-session" && (
-        <NameDialog
-          key={dialog.sessionId}
-          name={dialog.name}
-          title="Rename session"
-          description="Change how this session appears in the session list."
-          mutation={sessionMutations.renameSession(dialog.sessionId)}
-          onOpenChange={closeOnDismiss}
-        />
-      )}
-      {dialog?.kind === "delete-session" && (
-        <DestructiveConfirmationDialog
-          key={dialog.sessionId}
-          title="Delete session?"
-          description="This will permanently delete this session, its child sessions, and all their messages. This action cannot be undone."
-          mutation={sessionMutations.deleteSession(dialog.sessionId)}
-          onSubmit={() => closeRoot(createSessionPane(dialog.sessionId))}
-          onOpenChange={closeOnDismiss}
-        />
-      )}
+      {dialog?.kind === "subject" && <dialog.Dialog onOpenChange={closeOnDismiss} />}
     </>
   );
 }

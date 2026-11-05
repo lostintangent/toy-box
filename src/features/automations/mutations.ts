@@ -40,11 +40,11 @@ export const automationMutations = {
       },
     }),
 
-  run: (automation: Automation) =>
+  run: () =>
     mutationOptions({
-      mutationFn: (clientId: string) =>
+      mutationFn: ({ automation, clientId }: { automation: Automation; clientId: string }) =>
         runAutomation({ data: { automationId: automation.id, clientId } }),
-      onMutate: (clientId, { client }) => {
+      onMutate: ({ automation, clientId }, { client }) => {
         const status = client.getQueryData<SessionsActivity>(sessionQueries.activityKey())?.[
           automation.id
         ]?.status;
@@ -57,7 +57,7 @@ export const automationMutations = {
           { title: automation.title, sessionType: "automation" },
         );
       },
-      onSettled: (_result, _error, _variables, _onMutateResult, { client }) =>
+      onSettled: (_result, _error, { automation }, _onMutateResult, { client }) =>
         invalidateSessionQueries(client, automation.id),
     }),
 };

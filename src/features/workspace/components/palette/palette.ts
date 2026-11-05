@@ -39,7 +39,12 @@ export type PaletteItem = Omit<Command, "run" | "actions"> & {
 };
 
 export type PaletteMatch = SearchMatch<PaletteItem>;
-export type PaletteSection = { heading?: string; matches: readonly PaletteMatch[] };
+export type PaletteSection = {
+  heading?: string;
+  matches: readonly PaletteMatch[];
+  /** Selected only by moving to it, so Enter on opening can't act on what's open ("This …"). */
+  skipsDefault?: boolean;
+};
 
 /**
  * How new work starts here (and where files are found), unless chosen: with the default model, in
@@ -175,17 +180,32 @@ export const listItems = (items: readonly PaletteItem[]): PaletteMatch[] =>
 
 /**
  * The page's selected item: the one chosen, while it's listed and enabled; else, before anything's
- * typed, the current choice (so a picker opens on it); else the first.
+ * typed, the current choice (so a picker opens on it); else the first outside `skipsDefault`.
  */
 export function resolveSelection(
   sections: readonly PaletteSection[],
   { selected, query }: Pick<PalettePage, "selected" | "query">,
 ): PaletteItem | undefined {
-  const items = sections.flatMap(({ matches }) => matches.map(({ item }) => item));
-  const enabled = items.filter((item) => !item.disabled);
+  const enabled = (listed: readonly PaletteSection[]) =>
+    listed.flatMap(({ matches }) => matches.flatMap(({ item }) => (item.disabled ? [] : [item])));
+  const items = enabled(sections);
   return (
-    enabled.find(({ id }) => id === selected) ??
-    (query ? undefined : enabled.find(({ choose, checked }) => choose && checked)) ??
-    enabled[0]
+    items.find(({ id }) => id === selected) ??
+    (query ? undefined : items.find(({ choose, checked }) => choose && checked)) ??
+    enabled(sections.filter(({ skipsDefault }) => !skipsDefault))[0]
   );
+}
+
+/**
+ * The pane the palette's "This …" acts on, as it opens: the one holding focus (`heldId`), which must
+ * be one of `panes`, not, say, a Hyper window's; else the surface's focused pane (the grid's
+ * maximized one, or the pager's page), the phone pager's first page, or the grid's only pane.
+ */
+export function resolveCurrentPane<Pane extends { id: string }>(
+  panes: readonly Pane[],
+  { heldId, focusedId, isMobile }: { heldId?: string; focusedId: string | null; isMobile: boolean },
+): Pane | undefined {
+  const find = (id: string | null) => panes.find((pane) => pane.id === id);
+  if (heldId !== undefined) return find(heldId);
+  return find(focusedId) ?? (isMobile || panes.length === 1 ? panes[0] : undefined);
 }

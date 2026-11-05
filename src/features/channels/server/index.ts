@@ -23,6 +23,7 @@ import type {
 import {
   channelLead,
   channelMemberIdentity,
+  resolveChannelAgentId,
   resolveChannelAudience,
   isChannelSystemMessage,
 } from "@channels/model";
@@ -120,8 +121,10 @@ export async function updateChannelMemberFromLead(
   sessionId: string,
   input: UpdateChannelMemberInput,
 ) {
-  await requireLeadMember(sessionId, input.agentId);
-  return updateChannelMember(input);
+  return updateChannelMember({
+    ...input,
+    agentId: await resolveLeadMember(sessionId, input.agentId),
+  });
 }
 
 export async function updateChannelFromLead(sessionId: string, input: UpdateChannelInput) {
@@ -200,8 +203,8 @@ export async function removeChannelMember(agentId: string, actor: ChannelMessage
 }
 
 export async function removeChannelMemberFromLead(sessionId: string, agentId: string) {
-  await requireLeadMember(sessionId, agentId);
-  await removeChannelMember(agentId, { type: "agent", agentId: sessionId });
+  const memberId = await resolveLeadMember(sessionId, agentId);
+  await removeChannelMember(memberId, { type: "agent", agentId: sessionId });
 }
 
 /** The intrinsic lead is never a member. */
@@ -260,15 +263,15 @@ export async function readChannelForSession(channelId: string, beforeSequence?: 
 
 export async function waitForChannelAgents(
   channelId: string,
-  agentIds: readonly string[],
+  references: readonly string[],
   timeoutMs?: number,
 ) {
-  const agentIdsInChannel = new Set(
-    await new ChannelDatabase(await getStateDatabase()).listAgentIds(channelId),
-  );
-  if (agentIds.some((agentId) => !agentIdsInChannel.has(agentId))) {
-    throw new Error("One or more agent IDs do not belong to this channel.");
-  }
+  const agents = await new ChannelDatabase(await getStateDatabase()).listAgents(channelId);
+  const agentIds = references.map((reference) => {
+    const agentId = resolveChannelAgentId(agents, reference);
+    if (!agentId) throw new Error("One or more agents do not belong to this channel.");
+    return agentId;
+  });
   const completions = await waitForSessions(agentIds, timeoutMs);
   return completions.map(({ status }, index) => ({ agentId: agentIds[index]!, status }));
 }
@@ -456,6 +459,30 @@ export async function wakeDueChannelAgents(now = new Date()): Promise<void> {
   }
 }
 
+/** Privately wakes another Channel's lead with a message that names the sender's Channel. */
+export async function messageChannelLeadFromLead(
+  sessionId: string,
+  { channelId, content }: { channelId: string; content: string },
+): Promise<void> {
+  const database = new ChannelDatabase(await getStateDatabase());
+  const agent = await requireChannelAgent(database, sessionId);
+  if (!agent.isLead) throw new Error("Only a channel lead can message another channel's lead.");
+  if (channelId === agent.channelId)
+    throw new Error("Message another channel's lead, not your own.");
+  // Delivery accepts any Session, so the target must be a Channel and therefore its lead.
+  const [sender, target] = await Promise.all([
+    database.getChannel(agent.channelId),
+    database.getChannel(channelId),
+  ]);
+  if (!sender || !target) throw new Error("Channel not found.");
+  await wakeChannelAgent(channelId, {
+    type: "channel_lead_message",
+    channelId: sender.id,
+    channelName: sender.name,
+    content,
+  });
+}
+
 /** Runs a routine now without changing its schedule. Returns false when it's already gone. */
 export async function runChannelRoutine(channelId: string, routineId: string): Promise<boolean> {
   const routines = await new ChannelDatabase(await getStateDatabase()).listRoutines(channelId);
@@ -591,11 +618,12 @@ async function requireChannelAgent(database: ChannelDatabase, sessionId: string)
   return agent;
 }
 
-/** A lead's session ID is its Channel's ID. */
-async function requireLeadMember(sessionId: string, agentId: string) {
-  if (!(await isChannelMember(sessionId, agentId))) {
-    throw new Error("Member not found in this channel.");
-  }
+/** A lead's session ID is its Channel's ID, and the intrinsic lead is never a member. */
+async function resolveLeadMember(sessionId: string, reference: string): Promise<string> {
+  const members = await new ChannelDatabase(await getStateDatabase()).listMembers(sessionId);
+  const memberId = resolveChannelAgentId(members, reference);
+  if (!memberId) throw new Error("Member not found in this channel.");
+  return memberId;
 }
 
 /** Publish the committed detail events and their catalog projections together. */

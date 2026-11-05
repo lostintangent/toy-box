@@ -1,9 +1,13 @@
 import { z } from "zod";
-import { screenInputSchema, type ScreenStatus } from "./index";
+import { frameSizeSchema, screenInputSchema, type ScreenStatus } from "./index";
 
-/** What a viewer sends over its socket. The socket's URL names the screen it views. */
+/**
+ * What a viewer sends over its socket. The socket's URL names the screen it views and may
+ * give the viewer's size (`width` and `height`), which `resize` changes.
+ */
 export const screenClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ack"), sequence: z.number().int().positive() }).strict(),
+  z.object({ type: z.literal("resize"), size: frameSizeSchema }).strict(),
   z.object({ type: z.literal("take-control") }).strict(),
   z.object({ type: z.literal("release-control") }).strict(),
   z

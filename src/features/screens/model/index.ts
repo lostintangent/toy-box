@@ -37,6 +37,17 @@ export function filterScreenWindows(windows: ScreenList["windows"], query = "") 
 export type ScreenStatus = "live" | "paused" | "ended";
 
 /**
+ * A frame's size in device pixels. Each viewer gives the size it shows its screen at, zoom
+ * included, and a capture fits its frames to the largest.
+ */
+const side = z.number().int().positive();
+export const frameSizeSchema = z.object({ width: side, height: side }).strict();
+export type FrameSize = z.infer<typeof frameSizeSchema>;
+
+/** The largest frame a capture sends, and its size while no viewer has given one. */
+export const MAX_FRAME_SIZE: FrameSize = { width: 3840, height: 2400 };
+
+/**
  * One image update. A full frame replaces the image; a region frame carries only what
  * changed since the latest full frame, positioned within it. Width, height and radius are
  * always the full frame's.

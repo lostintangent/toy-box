@@ -1,5 +1,5 @@
 import { useEffectEvent, useLayoutEffect, useRef, type RefObject } from "react";
-import type { ScreenInput } from "../model";
+import { MAX_FRAME_SIZE, type ScreenInput } from "../model";
 import type { useScreen } from "./useScreen";
 
 type Point = { x: number; y: number };
@@ -294,12 +294,13 @@ export function measurePinch(points: readonly Point[]): Pinch | undefined {
 }
 
 /**
- * Takes a step from the `start` zoom. The scale stays between fitted and the frame's own
- * pixels, and panning stops at the frame's edges.
+ * Takes a step from the `start` zoom. The scale stays between fitted and the largest frame's
+ * own pixels, and panning stops at the frame's edges.
  */
 export function zoomBy(start: Zoom, { factor, from, to }: ZoomStep, pane: Size, frame: Size): Zoom {
   const fit = Math.min(pane.width / frame.width, pane.height / frame.height);
-  const scale = Math.max(1, Math.min(start.scale * factor, 1 / fit));
+  const most = Math.min(MAX_FRAME_SIZE.width / frame.width, MAX_FRAME_SIZE.height / frame.height);
+  const scale = Math.max(1, Math.min(start.scale * factor, most / fit));
   const ratio = scale / start.scale;
   const clamp = (value: number, limit: number) => Math.max(-limit, Math.min(limit, value)) || 0;
   return {

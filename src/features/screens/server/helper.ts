@@ -1,7 +1,7 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { ScreenFrame, ScreenInput, ScreenList, ScreenStatus } from "../model";
+import type { FrameSize, ScreenFrame, ScreenInput, ScreenList, ScreenStatus } from "../model";
 import { ScreenPacketReader } from "../model/protocol";
 import {
   buildScreenNative,
@@ -9,8 +9,8 @@ import {
   SCREEN_NATIVE_DIRECTORY,
 } from "../native/build";
 
-/** Captures run at 30 fps as JPEG, no larger than 3840x2400 or the display's backing scale. */
-export const SCREEN_CAPTURE = { width: 3840, height: 2400, fps: 30, quality: 0.7 } as const;
+/** Captures run at 30 fps as JPEG, sized to their viewers. */
+export const SCREEN_CAPTURE = { fps: 30, quality: 0.7 } as const;
 
 /** Thumbnails are JPEG images, no larger than 960 pixels on either side. */
 const SCREEN_THUMBNAIL = { size: 960, quality: 0.7 } as const;
@@ -29,8 +29,10 @@ export type ScreenHelper = {
   list(): Promise<ScreenList>;
   /** A thumbnail of a screen as it is now, as a base64 JPEG. */
   thumbnail(screenId: string): Promise<string>;
-  /** Starts capturing a screen, and resolves its title. */
-  start(screenId: string): Promise<string>;
+  /** Starts capturing a screen to fit `size`, and resolves its title. */
+  start(screenId: string, size: FrameSize): Promise<string>;
+  /** Fits a capture to a new size, once macOS applies it. */
+  resize(screenId: string, size: FrameSize): Promise<void>;
   /** Stops a screen's capture, if it has one. */
   stop(screenId: string): Promise<void>;
   /** Raises a window and its app to receive input. A display needs nothing. */
@@ -147,7 +149,9 @@ export const startScreenHelper: StartScreenHelper = async (onEvent, onFailure, o
   return {
     list: () => request<ScreenList>("list"),
     thumbnail: (screenId) => request<string>("thumbnail", { screenId, ...SCREEN_THUMBNAIL }),
-    start: (screenId) => request<string>("start", { screenId, capture: SCREEN_CAPTURE }),
+    start: (screenId, size) =>
+      request<string>("start", { screenId, capture: { ...SCREEN_CAPTURE, ...size } }),
+    resize: (screenId, size) => request("resize", { screenId, ...size }),
     stop: (screenId) => request("stop", { screenId }),
     focus: (screenId) => request("focus", { screenId }),
     input: (screenId, actions) => request("input", { screenId, actions }),

@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { mutationOptions, useMutation, useSuspenseQuery } from "@tanstack/react-query";
-import { AppWindow, Download, MessageCirclePlus, Pencil, Plus, Trash2 } from "lucide-react";
+import { AppWindow, Download, MessageCirclePlus, Plus, Trash2 } from "lucide-react";
+import { appCommands } from "@apps/commands";
 import { appMutations } from "@apps/mutations";
 import type { AppDefinition, AppInstance } from "@apps/model";
 import { appQueries } from "@apps/queries";
+import { CommandMenuItems } from "@/shared/commands/CommandMenuItem";
 import { Button } from "@/shared/ui/button";
 import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
 import { NameDialog } from "@/shared/sidebar/NameDialog";
@@ -192,73 +194,41 @@ function AppListItem({
   onOpen: (toggleInWorkspace: boolean) => void;
   onOpenInHyper: () => void;
 }) {
-  const [dialog, setDialog] = useState<"rename" | "delete" | null>(null);
   const colorMutation = useMutation(appMutations.update(app));
 
   return (
-    <>
-      <SidebarListItem
-        title={app.title}
-        icon={
-          <span
-            className="flex size-7 shrink-0 items-center justify-center rounded-md text-white ring-1 ring-black/10"
-            style={{ backgroundColor: app.color }}
-          >
-            {definition ? (
-              <DefinitionIcon definition={definition} />
-            ) : (
-              <AppWindow className="size-4" />
-            )}
-          </span>
-        }
-        menuItems={
-          <>
-            <DropdownMenuItem onClick={onOpenInHyper}>
-              <MessageCirclePlus />
-              Open in Hyper
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setDialog("rename")}>
-              <Pencil />
-              Rename app
-            </DropdownMenuItem>
-            <AppColorMenu
-              color={app.color}
-              disabled={colorMutation.isPending}
-              onColorChange={(color) => colorMutation.mutate({ color })}
-            />
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={() => setDialog("delete")}>
-              <Trash2 />
-              Delete app
-            </DropdownMenuItem>
-          </>
-        }
-        isActive={active}
-        onClick={(event) => onOpen(event.metaKey || event.ctrlKey)}
-      />
-      {dialog === "rename" && (
-        <NameDialog
-          name={app.title}
-          title="Rename app"
-          description="Change how this saved app appears in the Apps list."
-          mutation={appMutations.rename(app)}
-          onOpenChange={(open) => {
-            if (!open) setDialog(null);
-          }}
-        />
-      )}
-      {dialog === "delete" && (
-        <DestructiveConfirmationDialog
-          title={`Delete ${app.title}?`}
-          description="This removes the saved app and its state. Sessions it created remain in Toy Box."
-          mutation={appMutations.delete(app.id)}
-          onOpenChange={(open) => {
-            if (!open) setDialog(null);
-          }}
-        />
-      )}
-    </>
+    <SidebarListItem
+      title={app.title}
+      icon={
+        <span
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-white ring-1 ring-black/10"
+          style={{ backgroundColor: app.color }}
+        >
+          {definition ? (
+            <DefinitionIcon definition={definition} />
+          ) : (
+            <AppWindow className="size-4" />
+          )}
+        </span>
+      }
+      menuItems={
+        <>
+          <DropdownMenuItem onClick={onOpenInHyper}>
+            <MessageCirclePlus />
+            Open in Hyper
+          </DropdownMenuItem>
+          <AppColorMenu
+            color={app.color}
+            disabled={colorMutation.isPending}
+            onColorChange={(color) => colorMutation.mutate({ color })}
+          />
+          <DropdownMenuSeparator />
+          <CommandMenuItems commands={appCommands(app)} />
+        </>
+      }
+      isActive={active}
+      onClick={(event) => onOpen(event.metaKey || event.ctrlKey)}
+    />
   );
 }
 

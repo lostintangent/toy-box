@@ -113,7 +113,7 @@ function PaletteContent({
   const { isMobile } = useViewport();
   const { stack } = state;
   const top = stack.at(-1)!;
-  const view = usePaletteView(state, data, { canAdd: !isMobile });
+  const view = usePaletteView(state, data, { isMobile });
   const items = view.sections.flatMap(({ matches }) => matches.map(({ item }) => item));
   const selected = resolveSelection(view.sections, top);
   const selectedIndex = selected ? items.indexOf(selected) : -1;

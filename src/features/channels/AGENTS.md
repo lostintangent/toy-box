@@ -112,11 +112,12 @@ projections for persistence and runtime configuration; private read positions st
 
 - Create a Channel and its lead together, then immediately start the lead. With a purpose, the lead
   frames the current work and begins. Without one, the lead asks the user what they want to work on.
-- Edit a Channel's name, purpose, and lead model; list, read, and delete Channels. The sidebar and
-  overview offer the same channel menu and open the same create/edit form. Only the lead can change
-  the Channel's working directory through its `update_channel` tool; the form shows it read-only.
-  Existing private Sessions keep their provider and history. Model and directory changes take effect
-  at each agent's next execution, not during active work.
+- Edit a Channel's name, purpose, and lead model; list, read, and delete Channels. The sidebar,
+  overview, and command palette offer the same channel commands, from `commands.ts`, and open the
+  same create/edit form. Only the lead can change the Channel's working directory through its
+  `update_channel` tool; the form shows it read-only. Existing private Sessions keep their provider
+  and history. Model and directory changes take effect at each agent's next execution, not during
+  active work.
 - Let only the lead among Channel agents rename the Channel, revise its purpose, or change its
   working directory. Name, purpose, and directory changes create a durable system message;
   preview changes also create a system message, like sharing an artifact. Ordinary task updates
@@ -130,14 +131,15 @@ projections for persistence and runtime configuration; private read positions st
 - Let ordinary Sessions create and staff Channels, then read, post, share, and wait for the lead or
   members on the user's behalf. Let the lead create peers within its own Channel, then edit their
   name, role, or model with `update_channel_member` and remove them with `remove_channel_member`, as
-  the user can.
+  the user can. The lead lists Channels with the same `list_channels` to find related work, and
+  privately messages another Channel's lead with `message_channel_lead`.
 
 Selecting an unknown mention creates a member in that Channel and immediately starts its private
 Worker Session for onboarding. The member reads context and establishes missing profile details, then
 works on any assignment already received or finishes quietly. Idle membership is not a waiting status.
 Mentioning a current member delivers instructions through the ordinary Session mailbox. Removing the member deletes that Session and Worker.
 Members never exist outside their Channel and cannot be invited from a global pool. The intrinsic
-lead exists for the Channel's lifetime and is addressed as `@lead`.
+lead exists for the Channel's lifetime, is addressed as `@lead`, and its agent ID is the Channel ID.
 
 ### Messages
 
@@ -184,6 +186,13 @@ fixed identity and responsibilities from the Channel rather than editable Worker
 Channel agents, it alone creates, edits, and removes members and updates the directory, public
 purpose, tasks, and preview.
 
+A lead coordinates with another Channel through that Channel's lead, never its transcript.
+`message_channel_lead` delivers a `channel_lead_message` naming the sender's Channel to the target
+lead's Session, which replies the same way. The exchange stays in the two leads' Sessions, and the
+target must be an existing Channel because delivery accepts any Session. Like a routine run, the
+wake clears the receiving lead's `waiting` status, so its roster shows it working. That is the
+exchange's only trace in either Channel.
+
 Channel tools are always loaded, so each tool's description and schema own its purpose and
 mechanics. The instructions own the collaboration protocol: how the lead frames, staffs, delegates,
 reviews, and closes work, how members participate, and when each tool fits that flow. Keep tool
@@ -198,10 +207,12 @@ it what changed, how it was verified, and what was not, mention members whose wa
 finish every turn explicitly. Agent `read_channel` defaults to
 unread messages, `unfinishedTasks` assigned to the caller (all unfinished tasks for the lead), and
 working or waiting agents. Task ancestors retain assignment context; idle message authors remain
-identified by name and mention. With a zero read cursor it always returns full context, even when
-compact is requested. `detail: "full"` also includes Channel metadata, the complete task tree,
-roster roles and models, artifacts, and routines for reorientation, planning, and final review. Never replace
-the task tree from `unfinishedTasks`. Both views use the same forward read cursor and attachments;
+identified by name and mention. With a zero read cursor it always returns full context, whatever
+detail is requested. `detail: "full"` also includes Channel metadata, the complete task tree,
+roster roles and models, artifacts, and routines for reorientation, planning, and final review.
+`detail: "tasks"` swaps unfinished tasks and agents for just the complete task tree, so a lead can
+review or replace it without loading the roster. Never replace the task tree from `unfinishedTasks`.
+Every view uses the same forward read cursor and attachments;
 passive Session reads retain their full context and backward paging. Public messages, reactions,
 statuses, artifacts, and attachments are the only peer communication contract. Private transcripts
 and tool logs never enter the Channel. Model-facing message tools cap posts at 3,000 characters so
@@ -301,6 +312,9 @@ Agent reads move forward from private `seenThrough` and advance it. Passive Sess
 backward without changing read state. Agent-facing projections use `agentId` for both the lead and
 members, matching message senders, reactions, and waiting. These projections expose exact mentions,
 roles, and effective statuses, never separate private Session IDs or another member's read position.
+Tool inputs that name an agent, such as task owners, member edits and removals, and waits, accept
+its `agentId` or its mention. `resolveChannelAgentId` maps either to the ID, which is all that is
+stored, published, or served.
 Artifact shares and reads expose
 `artifactId` alongside the path and title, so the lead can attach the same file identity to a task.
 Task-edit receipts return only the targeted IDs.
@@ -557,7 +571,7 @@ presents one deleted identity everywhere.
 - `model/` is the isomorphic domain. `index.ts` owns the types, input schemas, audience policy, and
   public exports. `tasks.ts` owns task identity, outcome schemas, derived diff totals, tree edits,
   ownership release, and completion. `agent.ts` owns agent names, roles, avatars, the lead profile, mention
-  handles, and the deleted identity an ID resolves to once its agent is removed. `worker.ts` projects Worker metadata into the lead, members, and roster. `reducer.ts`
+  handles, resolving a tool's agent reference, and the deleted identity an ID resolves to once its agent is removed. `worker.ts` projects Worker metadata into the lead, members, and roster. `reducer.ts`
   reduces the complete public snapshot and owns the metadata and roster transitions shared with
   the server. `presence.ts` and `reactions.ts`
   derive how agents and reactions display.
@@ -570,11 +584,11 @@ presents one deleted identity everywhere.
   execution, and `startup.ts` clears finished working statuses and starts the wake interval.
 - `queries.ts`, `stream.ts`, `mutations.ts`, `cache.ts`, and `useChannel.ts` own client data:
   catalog and streamed detail queries, the SSE adapter, mutations, catalog event patches, and one
-  open Channel's visibility and read lifecycle.
+  open Channel's visibility and read lifecycle. `commands.ts` defines a Channel's commands.
 - `components/pane/` holds the pane, composer, and shared pane context, with `transcript/` and
   `overview/` beneath it. `components/agents/` holds avatars, mention Markdown, the mention
   source and menu, the member editor, and working agents. `components/sidebar/` holds the Channels panel and its
-  attention priority. The top level holds the create/edit dialog and channel menu.
+  attention priority. `components/`'s top level holds the create/edit dialog.
 - Outside this folder, [Workers](../workers/AGENTS.md) owns agent identity and lifetime.
   [`sessionConfiguration.ts`](../../server/sessionConfiguration.ts) grants ordinary Sessions the
   Channel tools and resolves agent configuration, and

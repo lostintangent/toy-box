@@ -9,8 +9,8 @@ The xterm-backed component and client runtime stay behind dynamic imports so ope
 ## Protocol
 
 One WebSocket multiplexes a JSON control plane with a binary data plane. Lifecycle commands stay explicit while stdin and stdout avoid a protocol envelope on the hot path.
-The shared `/socket` gateway requires a matching HTTP(S) Origin header before
-dispatching to Terminal. Non-browser terminal clients must supply that header.
+The shared `/socket` gateway refuses browser pages from another origin before
+dispatching to Terminal. Native clients send no Origin and are admitted.
 
 Every browser tab creates a stable `clientId` in session storage. That ID owns zero or one PTY. Connecting with the same ID resumes the existing PTY; the newest socket replaces any older connection without temporarily orphaning the process.
 

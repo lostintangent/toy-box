@@ -24,6 +24,7 @@ The feature is organized by responsibility:
 - `queries.ts`, `cache.ts`, and `mutations.ts` own the browser's Apps catalog,
   compiled-bundle reads, cache transitions, and saved-app operations. The catalog is
   one snapshot of definitions, saved instances, and pending shares, preloaded during SSR.
+- `commands.ts` defines a saved app's commands, shared by the Apps sidebar and the palette.
 - `components/` owns the Apps sidebar and workspace pane. Its private `host/`
   modules adapt Toy Box capabilities to a mounted app; `runtime/` implements the
   authored SDK in the browser.

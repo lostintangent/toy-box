@@ -1,14 +1,17 @@
 import { expect, test } from "bun:test";
-import type { ScreenFrame, ScreenStatus } from "../model";
+import type { FrameSize, ScreenFrame, ScreenStatus } from "../model";
 import type { ScreenServerMessage } from "../model/protocol";
 import type { CaptureEvent, ScreenHelper } from "./helper";
 import { ScreenRuntime } from "./runtime";
 
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+const PANE: FrameSize = { width: 800, height: 600 };
 
 /** A runtime over a scripted helper, with viewers that record what they receive. */
 function setup() {
   const calls: string[] = [];
+  /** The size each start and resize gave the helper. */
+  const sizes: string[] = [];
   const unavailable = new Set<string>();
   let launches = 0;
   let opening = Promise.resolve();
@@ -22,11 +25,15 @@ function setup() {
   const helper: ScreenHelper = {
     list: async () => ({ displays: [], windows: [] }),
     thumbnail: async () => "",
-    async start(screenId) {
+    async start(screenId, { width, height }) {
       calls.push("start");
+      sizes.push(`start ${width}x${height}`);
       await opening;
       if (unavailable.has(screenId)) throw new Error("Screen is unavailable.");
       return "Test window";
+    },
+    async resize(_, { width, height }) {
+      sizes.push(`resize ${width}x${height}`);
     },
     stop: record("stop"),
     focus: record("focus"),
@@ -44,6 +51,7 @@ function setup() {
     runtime,
     unavailable,
     calls,
+    sizes,
     launches: () => launches,
     holdOpening(until: Promise<void>) {
       opening = until;
@@ -57,23 +65,27 @@ function setup() {
       frames.set(packet, frame);
       emit({ type: "frame", screenId: "window", ...frame }, packet);
     },
-    async view(viewerId = "viewer", screenId = "window") {
+    async view(viewerId = "viewer", screenId = "window", size?: FrameSize) {
       const viewer = {
         frames: [] as ScreenFrame[],
         states: [] as Extract<ScreenServerMessage, { type: "state" }>[],
         closed: false,
         hasControl: () => viewer.states.at(-1)?.hasControl ?? false,
       };
-      runtime.attach(screenId, {
-        id: viewerId,
-        send(data) {
-          if (typeof data === "string") viewer.states.push(JSON.parse(data));
-          else viewer.frames.push(frames.get(data)!);
+      runtime.attach(
+        screenId,
+        {
+          id: viewerId,
+          send(data) {
+            if (typeof data === "string") viewer.states.push(JSON.parse(data));
+            else viewer.frames.push(frames.get(data)!);
+          },
+          close() {
+            viewer.closed = true;
+          },
         },
-        close() {
-          viewer.closed = true;
-        },
-      });
+        size,
+      );
       await settle();
       return viewer;
     },
@@ -140,6 +152,40 @@ test("a screen that ends tells its viewers why, and a later viewer resolves its 
   expect(later.states.at(-1)?.status).toBe("ended");
   expect(later.closed).toBe(true);
   expect(f.calls.filter((method) => method === "start")).toHaveLength(2);
+});
+
+test("a capture fits its largest viewer in each dimension, up to the frame cap", async () => {
+  const f = setup();
+  await f.view("pane", "window", PANE);
+  await f.view("phone", "window", { width: 1200, height: 2600 });
+  f.runtime.resize("window", "pane", { width: 9000, height: 900 });
+  await settle();
+  f.runtime.detach("window", "phone");
+  await settle();
+  expect(f.sizes).toEqual([
+    "start 800x600",
+    "resize 1200x2400",
+    "resize 3840x2400",
+    "resize 3840x900",
+  ]);
+});
+
+test("a viewer that joins while its screen opens resizes it after the start", async () => {
+  const f = setup();
+  f.holdOpening(new Promise(() => {}));
+  await f.view("pane", "window", PANE);
+  await f.view("larger", "window", { width: 1600, height: 1000 });
+  expect(f.sizes).toEqual(["start 800x600", "resize 1600x1000"]);
+});
+
+test("viewers without a size count only while no viewer has one", async () => {
+  const f = setup();
+  await f.view("browser");
+  await f.view("phone", "window", PANE);
+  await f.view("another browser");
+  f.runtime.detach("window", "phone");
+  await settle();
+  expect(f.sizes).toEqual(["start 3840x2400", "resize 800x600", "resize 3840x2400"]);
 });
 
 test("slow viewers skip superseded frames without holding back others", async () => {

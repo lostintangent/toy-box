@@ -21,17 +21,12 @@ import { SessionLocationPicker } from "@sessions/components/location/SessionLoca
 import { getRecentDirectories } from "@sessions/model/recentDirectories";
 import { sessionQueries } from "@sessions/queries";
 
-type ChannelDialogProps =
-  | {
-      channel?: never;
-      onOpenChange: (open: boolean) => void;
-      onCreated: (channelId: string) => void;
-    }
-  | {
-      channel: Channel;
-      onOpenChange: (open: boolean) => void;
-      onCreated?: never;
-    };
+type ChannelDialogProps = {
+  /** The Channel to edit, or none to create one. */
+  channel?: Channel;
+  onOpenChange: (open: boolean) => void;
+  onCreated?: (channelId: string) => void;
+};
 
 export function ChannelDialog({ channel, onOpenChange, onCreated }: ChannelDialogProps) {
   const [initialChannel] = useState(channel);

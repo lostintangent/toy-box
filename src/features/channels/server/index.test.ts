@@ -55,6 +55,7 @@ const {
   editChannelTasksFromLead,
   finishChannelAgentTurn,
   markChannelRead,
+  messageChannelLeadFromLead,
   postChannelMessageFromSession,
   readChannelForSession,
   removeChannelMemberFromLead,
@@ -206,7 +207,7 @@ test.each([false, true])(
     const channel = await createStoredChannel(channels, { name: "Delete", ...CHANNEL_DEFAULTS });
     await channels.createMember(channelAgent(channel.id, "builder", "Builder"));
     await channels.createMember(channelAgent(channel.id, "reviewer", "Reviewer"));
-    const agentIds = await channels.listAgentIds(channel.id);
+    const agentIds = (await channels.listAgents(channel.id)).map(({ id }) => id);
     const observed: unknown[] = [];
     onTestFinished(subscribeChannelEvents(channel.id, (event) => observed.push(event)));
     const broadcasts = spyOn(workspaceEvents, "broadcast").mockImplementation((event) => {
@@ -226,7 +227,7 @@ test.each([false, true])(
     else expect(await deletion).toBe(true);
     expect(await deleteChannel(channel.id)).toBe(false);
     expect(await channels.getChannel(channel.id)).toBeNull();
-    expect(await channels.listAgentIds(channel.id)).toEqual([]);
+    expect(await channels.listAgents(channel.id)).toEqual([]);
     expect(observed[0]).toEqual({ type: "channel.deleted", channelId: channel.id });
     expect(observed.slice(1)).toEqual(expect.arrayContaining(agentIds));
     expect(observed).toHaveLength(agentIds.length + 1);
@@ -366,7 +367,7 @@ test("joining starts onboarding before any mention; later assignments use normal
   expect(deliver).toHaveBeenCalledTimes(2);
 });
 
-test("only the Channel lead creates, edits, and removes its own members", async () => {
+test("only the Channel lead creates, edits, and removes its own members, by ID or mention", async () => {
   const channels = await openChannels();
   const channel = await createStoredChannel(channels, { name: "Studio", ...CHANNEL_DEFAULTS });
   const other = await createStoredChannel(channels, { name: "Elsewhere", ...CHANNEL_DEFAULTS });
@@ -380,11 +381,11 @@ test("only the Channel lead creates, edits, and removes its own members", async 
   ).rejects.toThrow("Only the channel lead can create members.");
 
   const model = { provider: "claude", name: "opus" };
-  await updateChannelMemberFromLead(channel.id, { agentId: designer!.id, model });
+  await updateChannelMemberFromLead(channel.id, { agentId: "@designer", model });
   expect(await invokeTool("read_channel", { detail: "full" }, channel.id, true)).toMatchObject({
     members: [{ agentId: designer!.id, model }],
   });
-  for (const agentId of [outsider.id, channel.id]) {
+  for (const agentId of [outsider.id, "@scout", channel.id, "@lead"]) {
     await expect(updateChannelMemberFromLead(channel.id, { agentId, model })).rejects.toThrow(
       "Member not found in this channel.",
     );
@@ -392,7 +393,7 @@ test("only the Channel lead creates, edits, and removes its own members", async 
       "Member not found in this channel.",
     );
   }
-  await removeChannelMemberFromLead(channel.id, designer!.id);
+  await removeChannelMemberFromLead(channel.id, "@designer");
   const { messages } = await invokeTool("read_channel", {}, channel.id, true);
   expect(messages.at(-1).content).toMatchObject({
     type: "member_left",
@@ -407,8 +408,7 @@ test("channel tools identify every agent by agentId", async () => {
   const { channel } = await invokeTool("create_channel", { name: "Identity", ...CHANNEL_DEFAULTS });
   const channelId = channel.channelId;
   onTestFinished(() => releaseChannelEvents(channelId));
-  expect(channel.lead).toEqual({ agentId: channelId, mention: "@lead" });
-  expect((await invokeTool("list_channels")).channels[0].lead).toEqual(channel.lead);
+  expect((await invokeTool("list_channels", {}, channelId, true)).channels).toEqual([channel]);
 
   const {
     members: [member],
@@ -429,7 +429,7 @@ test("channel tools identify every agent by agentId", async () => {
   expect(
     await invokeTool("wait_for_channel_agents", {
       channelId,
-      agentIds: [channelId, member.agentId],
+      agentIds: ["@lead", member.agentId],
     }),
   ).toEqual({
     agents: [
@@ -523,10 +523,10 @@ test("a Session can seed and passively read Channel context", async () => {
   });
 });
 
-test("agents receive full context until their read cursor advances, even requesting compact", async () => {
+test("agents receive full context until their read cursor advances, whatever detail they request", async () => {
   const channels = await openChannels();
   const channel = await createStoredChannel(channels, { name: "Orientation", ...CHANNEL_DEFAULTS });
-  for (const input of [{}, { detail: "compact" }]) {
+  for (const input of [{}, { detail: "compact" }, { detail: "tasks" }]) {
     const result = await invokeTool("read_channel", input, channel.id, true);
     expect(result.channel.name).toBe(channel.name);
     expect(result.messages).toEqual([]);
@@ -657,6 +657,11 @@ test("compact reads scope tasks and live statuses without losing idle authors or
   );
   expect(Buffer.byteLength(JSON.stringify(compact))).toBeLessThan(20_000);
   expect(full.channel.tasks).toEqual(canonicalTasks);
+  expect(await invokeTool("read_channel", { detail: "tasks" }, builder.id, true)).toEqual({
+    tasks: canonicalTasks,
+    messages: [],
+    hasMore: false,
+  });
 });
 
 test("compact and full reads share paging and preserve inline images and file attachments", async () => {
@@ -1115,6 +1120,41 @@ test("a due routine privately wakes its lead without adding to the transcript", 
     ],
   ]);
   expect((await channels.getChannel(channel.id))?.latestSequence).toBe(latestSequence);
+});
+
+test("a lead privately wakes another channel's lead and only a channel's lead", async () => {
+  const channels = await openChannels();
+  const sender = await createStoredChannel(channels, { name: "Core", ...CHANNEL_DEFAULTS });
+  const target = await createStoredChannel(channels, { name: "Apple", ...CHANNEL_DEFAULTS });
+  const deliver = spyOnDelivery();
+
+  for (const [channelId, error] of [
+    ["user-session", "Channel not found."],
+    [sender.id, "Message another channel's lead, not your own."],
+  ]) {
+    await expect(
+      messageChannelLeadFromLead(sender.id, { channelId: channelId!, content: "Ping" }),
+    ).rejects.toThrow(error);
+  }
+  expect(deliver).not.toHaveBeenCalled();
+
+  await messageChannelLeadFromLead(sender.id, { channelId: target.id, content: "Which build?" });
+  expect(deliver.mock.calls).toEqual([
+    [
+      target.id,
+      {
+        systemMessage: {
+          type: "channel_lead_message",
+          channelId: sender.id,
+          channelName: "Core",
+          content: "Which build?",
+        },
+        immediate: true,
+      },
+    ],
+  ]);
+  expect((await channels.getChannel(sender.id))?.latestSequence).toBe(sender.latestSequence);
+  expect((await channels.getChannel(target.id))?.latestSequence).toBe(target.latestSequence);
 });
 
 test("running a routine wakes its lead now and leaves its schedule alone", async () => {

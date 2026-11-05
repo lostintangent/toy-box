@@ -15,7 +15,7 @@ type PaneKind<Kind extends keyof WorkspacePanes, Pane = WorkspacePane<Kind>> = {
     isVisible: boolean;
     onFocusPane?: (paneId: string) => void;
   }>;
-  /** The pager dot's label and color. */
+  /** What the pane is called by its pager dot, and the dot's color. */
   label: (pane: Pane) => string;
   color: string;
   /** How a pane the user opens lives in the workspace URL: as one `schema` item under `key`. */

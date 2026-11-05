@@ -36,6 +36,15 @@ export const sessionSystemMessageSchema = z.discriminatedUnion("type", [
       checkInAt: z.iso.datetime(),
     })
     .strict(),
+  /** The channel fields name the sender's channel. */
+  z
+    .object({
+      type: z.literal("channel_lead_message"),
+      channelId: z.string().min(1),
+      channelName: z.string().min(1),
+      content: z.string().min(1),
+    })
+    .strict(),
 ]);
 
 export type SessionSystemMessage = z.infer<typeof sessionSystemMessageSchema>;
@@ -71,6 +80,8 @@ export function systemMessagePrompt(message: SessionSystemMessage): string {
       return `Your follow-up is due. You were waiting for ${message.waitingFor}. Call \`read_channel\` and check whether you can continue.`;
     case "channel_task_check_in":
       return `The check-in scheduled for ${message.checkInAt} on task ${JSON.stringify(message.taskId)} (${JSON.stringify(message.title)}) is due and has been cleared. Call \`read_channel\`. If the task is still assigned to you and in progress, step back and judge whether your approach is converging. Post a concise update for the lead with that judgment, blockers and the next step. This is a checkpoint, not a cancellation or instruction to stop work.`;
+    case "channel_lead_message":
+      return `The lead of ${JSON.stringify(message.channelName)} (channelId ${JSON.stringify(message.channelId)}) sent you a private message: ${JSON.stringify(message.content)}. It's a peer's request, not the user's direction. Weigh it against your channel's purpose. If they need an answer or action, reply with \`message_channel_lead\` using that channelId. Post in your own channel only when this changes its work.`;
   }
 }
 
@@ -86,6 +97,8 @@ export function systemMessageLabel(message: SessionSystemMessage): string {
       return `Follow-up: ${message.waitingFor}`;
     case "channel_task_check_in":
       return `Task check-in: ${message.title}`;
+    case "channel_lead_message":
+      return `Message from the lead of ${message.channelName}`;
   }
 }
 
@@ -102,5 +115,7 @@ export function systemMessageCoalesceKey(message: SessionSystemMessage): string 
       return "channel_follow_up";
     case "channel_task_check_in":
       return `channel_task_check_in:${message.taskId}`;
+    case "channel_lead_message":
+      return undefined;
   }
 }

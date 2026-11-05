@@ -75,14 +75,14 @@ describe("automation client behavior", () => {
       lastSeenEventId: 100,
     });
     const runMutation = new MutationObserver(queryClient, {
-      ...automationMutations.run(automation),
+      ...automationMutations.run(),
       mutationFn: () => {
         dispatched.resolve();
         return request.promise;
       },
     });
 
-    const result = runMutation.mutate("requested-run");
+    const result = runMutation.mutate({ automation, clientId: "requested-run" });
     await dispatched.promise;
     expect(readActivity(queryClient)).toEqual({});
     expect(readSessions(queryClient).sessions[0]?.provider).toBeUndefined();
@@ -152,12 +152,12 @@ describe("automation client behavior", () => {
       });
 
       const result = new MutationObserver(queryClient, {
-        ...automationMutations.run(automation),
+        ...automationMutations.run(),
         mutationFn: async () => {
           if (outcome === "failed") throw new Error("Could not start");
           return { sessionId: automation.id, started: outcome === "started" };
         },
-      }).mutate("requested-run");
+      }).mutate({ automation, clientId: "requested-run" });
       if (outcome === "failed") await expect(result).rejects.toThrow("Could not start");
       else await result;
 
@@ -179,13 +179,13 @@ describe("automation client behavior", () => {
       } satisfies SessionState;
       queryClient.setQueryData(sessionQueries.detail(automation.id).queryKey, snapshot);
       await new MutationObserver(queryClient, {
-        ...automationMutations.run(automation),
+        ...automationMutations.run(),
         mutationFn: async () => {
           expect(readSessionSnapshot(queryClient)).toEqual(snapshot);
           expect(readSessions(queryClient)).toEqual(sessions);
           return { sessionId: automation.id, started: false };
         },
-      }).mutate("requested-run");
+      }).mutate({ automation, clientId: "requested-run" });
 
       expect(readSessionSnapshot(queryClient)).toEqual(snapshot);
     },

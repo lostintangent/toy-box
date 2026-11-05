@@ -119,6 +119,7 @@ export function WorkspacePager({
           return (
             <div
               key={pane.id}
+              data-pane-id={pane.id}
               className={cn("absolute inset-0", !isActive && "invisible pointer-events-none")}
             >
               <WorkspacePaneView

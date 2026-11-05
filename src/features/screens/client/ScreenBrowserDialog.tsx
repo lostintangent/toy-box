@@ -17,12 +17,11 @@ export function ScreenBrowserDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onOpenScreen: (screenId: string) => Promise<void>;
+  onOpenScreen: (screenId: string) => void;
 }) {
   function openScreen(screenId: string) {
-    void onOpenScreen(screenId)
-      .then(() => onOpenChange(false))
-      .catch((error) => console.error("Unable to open screen:", error));
+    onOpenScreen(screenId);
+    onOpenChange(false);
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

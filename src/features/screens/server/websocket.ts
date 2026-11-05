@@ -1,11 +1,14 @@
 import type { Hooks, Peer } from "crossws";
+import { frameSizeSchema } from "../model";
 import { screenClientMessageSchema, type ScreenServerMessage } from "../model/protocol";
 import { screenRuntime } from "./runtime";
 
 /** Each socket views the screen named in its URL, for as long as it stays open. */
 export default {
   open(peer) {
-    screenRuntime.attach(screenIdOf(peer), peer);
+    const params = new URL(peer.request.url).searchParams;
+    const size = { width: Number(params.get("width")), height: Number(params.get("height")) };
+    screenRuntime.attach(screenIdOf(peer), peer, frameSizeSchema.safeParse(size).data);
   },
   async message(peer, message) {
     const screenId = screenIdOf(peer);
@@ -14,6 +17,8 @@ export default {
       switch (command.type) {
         case "ack":
           return screenRuntime.acknowledge(screenId, peer.id, command.sequence);
+        case "resize":
+          return screenRuntime.resize(screenId, peer.id, command.size);
         case "take-control":
           return await screenRuntime.takeControl(screenId, peer.id);
         case "release-control":

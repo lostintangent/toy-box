@@ -308,7 +308,7 @@ function WorkspaceGridCell({
   const [statusSlot, setStatusSlot] = useState<HTMLDivElement | null>(null);
 
   return (
-    <div className={cn("size-full", CARD_INSET_CLASS)}>
+    <div data-pane-id={pane.id} className={cn("size-full", CARD_INSET_CLASS)}>
       <div
         className={cn(
           CARD_CLASS,

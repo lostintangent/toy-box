@@ -124,6 +124,18 @@ export function agentHandleFromName(name: string): string {
   return normalized === "everyone" ? "everyone-agent" : normalized || "teammate";
 }
 
+/** Tools name an agent by its ID or its mention, and both resolve to the ID that is stored. */
+export function resolveChannelAgentId(
+  agents: readonly Pick<ChannelAgent, "id" | "name">[],
+  reference: string,
+): string | undefined {
+  const handle = reference.replace(/^@/, "").toLowerCase();
+  return (
+    agents.find(({ id }) => id === reference) ??
+    agents.find(({ name }) => agentHandleFromName(name) === handle)
+  )?.id;
+}
+
 export function extractAgentMentionHandles(content: string): {
   handles: string[];
   mentionAll: boolean;

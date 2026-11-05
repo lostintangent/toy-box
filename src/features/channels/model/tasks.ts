@@ -29,7 +29,9 @@ export const channelTaskSchema = z
       .min(1)
       .max(255)
       .optional()
-      .describe("The channel lead ID or current member ID responsible for the task."),
+      .describe(
+        "The channel lead or a current member responsible for the task, by agent ID or @mention.",
+      ),
     artifactId: z
       .string()
       .min(1)

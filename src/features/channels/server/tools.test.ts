@@ -8,6 +8,7 @@ test("only leads receive nonterminal task, routine, and member tools", () => {
     "delete_routine",
     "update_channel_member",
     "remove_channel_member",
+    "message_channel_lead",
   ]) {
     const tool = channelLeadTools.find((tool) => tool.name === name);
     expect(tool).toBeDefined();

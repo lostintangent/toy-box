@@ -1,3 +1,12 @@
+## 📅 v0.3.6 (11/05/26)
+
+- Channel leads can now communicate with each other via private messages
+- The server now exposes screens to external clients, which enables the iOS/macOS apps to consume them.
+- The command palette has been improved in the following ways:
+  - There's a new `This ...` section at the top which provides common actions for the currently selected pane
+  - When navigating channels, apps, or automations, you can now access their actions and/or add them to the workspace.
+- When you browse for a file or a screen, a selection will open an existing pane if applicable
+
 ## 📅 v0.3.5 (11/01/26)
 
 - Channel lead's can now include a set of pre-defined replies when they request your attention

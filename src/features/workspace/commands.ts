@@ -27,7 +27,7 @@ type Toggle = { isOpen: boolean; toggle: () => void };
  * The workbench's commands: creating work and showing its surfaces. The route that owns their state
  * provides them, so the sidebar's actions, the shortcuts and the palette all run the same ones.
  */
-export function createWorkspaceCommands({
+export function workspaceCommands({
   togglePalette,
   sidebar,
   terminal,

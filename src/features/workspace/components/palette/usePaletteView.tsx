@@ -14,10 +14,12 @@ import {
   MessageSquare,
   type LucideIcon,
 } from "lucide-react";
+import { getAlternateAction } from "@/shared/commands/command";
 import { useCommands } from "@/shared/commands/CommandProvider";
 import { matchSearchable, searchCommands } from "@/shared/commands/search";
 import { readCommandUsage, usageWeight } from "@/shared/commands/usage";
 import { appQueries } from "@apps/queries";
+import { automationMutations } from "@automations/mutations";
 import { automationQueries } from "@automations/queries";
 import { channelQueries } from "@channels/queries";
 import { fileQueries } from "@files/queries";
@@ -33,7 +35,9 @@ import { sessionMutations } from "@sessions/mutations";
 import type { Session } from "@sessions/model";
 import { createSessionPane } from "@sessions/model/panes";
 import { getRecentDirectories } from "@sessions/model/recentDirectories";
+import { selectSessionChildren, sessionQueries } from "@sessions/queries";
 import { useSessionsActivity } from "@sessions/useSessionActivity";
+import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
 import {
   addToWorkspace,
@@ -48,6 +52,7 @@ import {
 } from "./items";
 import {
   listItems,
+  resolveCurrentPane,
   sectionByGroup,
   triageSessions,
   type PaletteItem,
@@ -83,7 +88,7 @@ const FILE_SEARCH_DEBOUNCE_MS = 150;
 export function usePaletteView(
   { stack, launch }: PaletteState,
   { sessions: listedSessions, openSessionIds, navigation }: PaletteData,
-  { canAdd }: { canAdd: boolean },
+  { isMobile }: { isMobile: boolean },
 ): PaletteView {
   const page = stack.at(-1)!;
   const prompt = page.query.trim();
@@ -103,13 +108,26 @@ export function usePaletteView(
   });
   const { data: appList } = useQuery(appQueries.list());
   const { data: automations = [] } = useQuery(automationQueries.list());
+  const { data: childrenByParent = {} } = useQuery({
+    ...sessionQueries.state(),
+    select: selectSessionChildren,
+  });
   const { mutateAsync: startSession } = useMutation(sessionMutations.startSession());
   const { mutateAsync: dispatchInboxTask } = useMutation(inboxMutations.dispatchTask());
-  // Ranking holds still while the palette is open, rather than shifting as commands run.
-  const [{ usage, openedAt }] = useState(() => ({
+  const { mutate: runAutomation } = useMutation(automationMutations.run());
+  const { panes, focusedPaneAtom } = useWorkspaceSurface();
+  // Ranking and the current pane hold still while the palette is open, rather than shifting as
+  // commands run. This runs before the palette takes focus, so it still sees the pane that held it.
+  const [{ usage, openedAt, currentPane }] = useState(() => ({
     usage: readCommandUsage(),
     openedAt: Date.now(),
+    currentPane: resolveCurrentPane(panes, {
+      heldId: document.activeElement?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId,
+      focusedId: focusedPaneAtom.get(),
+      isMobile,
+    }),
   }));
+  const canAdd = !isMobile;
 
   const isEnabled = (provider?: string) =>
     !provider || !workspace.disabledProviders.includes(provider);
@@ -158,11 +176,17 @@ export function usePaletteView(
       canAdd,
     });
 
-  const groups: Record<string, { icon: LucideIcon; items: readonly PaletteItem[] }> = {
-    Sessions: { icon: MessageSquare, items: sessions.map(toSessionItem) },
-    Channels: { icon: Hash, items: channels.map((channel) => channelItem(channel, navigation)) },
+  // Each group names what one of its rows is, which heads "This …" when the current pane has one.
+  const groups: Record<string, { icon: LucideIcon; noun: string; items: PaletteItem[] }> = {
+    Sessions: { icon: MessageSquare, noun: "session", items: sessions.map(toSessionItem) },
+    Channels: {
+      icon: Hash,
+      noun: "channel",
+      items: channels.map((channel) => channelItem(channel, { navigation, canAdd })),
+    },
     Apps: {
       icon: AppWindow,
+      noun: "app",
       items: (appList?.apps ?? []).map((app) =>
         appItem(
           app,
@@ -173,11 +197,37 @@ export function usePaletteView(
     },
     Automations: {
       icon: Clock3,
+      noun: "automation",
       items: automations
         .filter((automation) => isEnabled(automation.model.provider))
-        .map((automation) => automationItem(automation, navigation)),
+        .map((automation) =>
+          automationItem(automation, {
+            navigation,
+            canAdd,
+            run: runAutomation,
+            isRunning: activities[automation.id]?.status === "running",
+          }),
+        ),
     },
   };
+
+  // "This …" is what can be done in place to the current pane, or to the session it belongs to.
+  // A child session isn't listed, but its pane offers what its sidebar row does: all but Pin.
+  const rows = Object.values(groups).flatMap(({ items }) => items);
+  const subject =
+    currentPane?.sessionId === undefined ? currentPane : createSessionPane(currentPane.sessionId);
+  const child = Object.values(childrenByParent)
+    .flat()
+    .find(({ id }) => id === currentPane?.sessionId);
+  const subjectRow =
+    subject &&
+    (rows.find(({ id }) => id === subject.id) ??
+      (child && sessionItem(child, { isOpen: true, navigation, canAdd })));
+  const currentActions: PaletteItem[] = subjectRow
+    ? (subjectRow.actions ?? [])
+        .filter((action) => action !== getAlternateAction(subjectRow))
+        .map((action) => ({ ...action, group: `This ${groups[subjectRow.group!].noun}` }))
+    : [];
 
   // The palette's own command would only close it.
   const commands = providedCommands.filter(({ id }) => id !== "workspace.search");
@@ -281,11 +331,7 @@ export function usePaletteView(
   switch (page.kind) {
     case "root": {
       if (prompt) {
-        const matches = search([
-          ...Object.values(groups).flatMap(({ items }) => items),
-          ...commands,
-          ...destinations,
-        ]);
+        const matches = search([...rows, ...currentActions, ...commands, ...destinations]);
         return {
           sections: [
             ...sectionByGroup(matches, SEARCH_GROUP_LIMIT),
@@ -303,6 +349,11 @@ export function usePaletteView(
       });
       return {
         sections: [
+          {
+            heading: currentActions[0]?.group,
+            matches: listItems(currentActions),
+            skipsDefault: true,
+          },
           { heading: "Needs you", matches: listItems(triage.needsYou.map(toSessionItem)) },
           { heading: "Running", matches: listItems(triage.running.map(toSessionItem)) },
           { heading: "Pinned", matches: listItems(triage.pinned.map(toSessionItem)) },

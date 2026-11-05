@@ -1,17 +1,16 @@
-import { Fragment, useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { ChevronRight, Pin } from "lucide-react";
 import { useReducedMotionConfig } from "motion/react";
 import { Typewriter } from "motion-plus/react";
-import { DropdownMenuSeparator } from "@/shared/ui/dropdown-menu";
 import { Badge } from "@/shared/ui/badge";
 import { cn } from "@/shared/utils";
 import { RelativeTime } from "@/shared/ui/relative-time";
-import { CommandMenuItem } from "@/shared/commands/CommandMenuItem";
+import { CommandMenuItems } from "@/shared/commands/CommandMenuItem";
 import { useSessionActivity } from "../../useSessionActivity";
 import { SidebarSessionItem } from "./SidebarSessionItem";
 import type { Session } from "../../model";
 import { getSessionLabel } from "../../model/label";
-import { createSessionActions } from "../../commands";
+import { sessionCommands } from "../../commands";
 import { SessionMetadataBadges } from "../location/SessionMetadataBadges";
 
 type SessionListItemProps = {
@@ -100,15 +99,14 @@ export function SessionListItem({
             />
           )
         }
-        menuItems={createSessionActions(
-          session,
-          onPinToggle && { isPinned, toggle: () => onPinToggle(session.id) },
-        ).map((action) => (
-          <Fragment key={action.id}>
-            {action.destructive && <DropdownMenuSeparator />}
-            <CommandMenuItem command={action} />
-          </Fragment>
-        ))}
+        menuItems={
+          <CommandMenuItems
+            commands={sessionCommands(
+              session,
+              onPinToggle && { isPinned, toggle: () => onPinToggle(session.id) },
+            )}
+          />
+        }
         isActive={isActive}
         previewDisabled={isDraft}
         onClick={handleClick}

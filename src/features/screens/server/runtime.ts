@@ -1,5 +1,6 @@
 import { getProcessValue } from "@/shared/server/processState";
-import type { ScreenInput, ScreenList, ScreenStatus } from "../model";
+import { MAX_FRAME_SIZE } from "../model";
+import type { FrameSize, ScreenInput, ScreenList, ScreenStatus } from "../model";
 import type { ScreenServerMessage } from "../model/protocol";
 import {
   startScreenHelper,
@@ -18,7 +19,7 @@ export type ScreenPeer = {
   close(): void;
 };
 
-type Viewer = { peer: ScreenPeer; inFlight: number[]; lastSent: number };
+type Viewer = { peer: ScreenPeer; size?: FrameSize; inFlight: number[]; lastSent: number };
 
 /** A frame's packet as the helper wrote it, forwarded to viewers unchanged. */
 type Frame = { sequence: number; packet: Uint8Array };
@@ -60,10 +61,12 @@ export class ScreenRuntime {
   }
 
   /** Sends a screen to a viewer until it detaches. Its first viewer opens the capture. */
-  attach(screenId: string, peer: ScreenPeer): void {
-    const capture = this.#captures.get(screenId) ?? this.#open(screenId);
-    const viewer: Viewer = { peer, inFlight: [], lastSent: 0 };
+  attach(screenId: string, peer: ScreenPeer, size?: FrameSize): void {
+    const existing = this.#captures.get(screenId);
+    const capture = existing ?? this.#open(screenId);
+    const viewer: Viewer = { peer, size, inFlight: [], lastSent: 0 };
     capture.viewers.set(peer.id, viewer);
+    if (existing && size) this.#fit(capture);
     capture.opened.then(
       () => {
         if (capture.viewers.get(peer.id) !== viewer) return;
@@ -80,6 +83,16 @@ export class ScreenRuntime {
     if (!capture?.viewers.delete(viewerId)) return;
     this.releaseControl(screenId, viewerId).catch(logError);
     if (!capture.viewers.size) this.#end(capture, "Screen capture released.");
+    else this.#fit(capture);
+  }
+
+  /** A viewer's size changed, so its capture fits its viewers again. */
+  resize(screenId: string, viewerId: string, size: FrameSize): void {
+    const capture = this.#captures.get(screenId);
+    const viewer = capture?.viewers.get(viewerId);
+    if (!capture || !viewer) return;
+    viewer.size = size;
+    this.#fit(capture);
   }
 
   /** A viewer drew a frame, so it can receive newer ones. */
@@ -159,7 +172,7 @@ export class ScreenRuntime {
       status: "live",
       viewers: new Map(),
       opened: this.#native()
-        .then((helper) => helper.start(screenId))
+        .then((helper) => helper.start(screenId, captureSize(capture)))
         .then((title) => {
           capture.title = title;
         }),
@@ -167,6 +180,16 @@ export class ScreenRuntime {
     this.#captures.set(screenId, capture);
     capture.opened.catch((error: Error) => this.#end(capture, error.message));
     return capture;
+  }
+
+  /** Fits a capture to its viewers. The helper runs commands in order, so the latest fit wins. */
+  #fit(capture: Capture): void {
+    this.#native()
+      .then((helper) => {
+        if (this.#captures.get(capture.screenId) !== capture) return;
+        return helper.resize(capture.screenId, captureSize(capture));
+      })
+      .catch(logError);
   }
 
   /** Ends a capture: its viewers learn why and close, and the helper stops it. */
@@ -247,6 +270,14 @@ export class ScreenRuntime {
     for (const capture of this.#captures.values())
       for (const viewer of capture.viewers.values()) this.#sendState(capture, viewer);
   }
+}
+
+/** Frames fit the largest size viewers have given, in each dimension, or the cap while none has. */
+function captureSize({ viewers }: Capture): FrameSize {
+  const sizes = [...viewers.values()].flatMap((viewer) => viewer.size ?? []);
+  const largest = (side: keyof FrameSize) =>
+    Math.min(MAX_FRAME_SIZE[side], Math.max(...sizes.map((size) => size[side])));
+  return sizes.length ? { width: largest("width"), height: largest("height") } : MAX_FRAME_SIZE;
 }
 
 function logError(error: unknown) {

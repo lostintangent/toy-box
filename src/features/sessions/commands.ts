@@ -1,13 +1,14 @@
 import { FolderOpen, Pencil, Pin, PinOff, Trash2 } from "lucide-react";
 import type { Command } from "@/shared/commands/command";
-import { openWorkspaceDialog } from "@workspace/hooks/dialogs";
+import { openDeleteDialog, openRenameDialog, openWorkspaceDialog } from "@workspace/hooks/dialogs";
 import type { Session } from "./model";
+import { sessionMutations } from "./mutations";
 
 /**
  * What can be done to a session wherever it's listed (its sidebar menu, or its row in the command
  * palette). Pinning is offered only where the caller can pin it, e.g. not to a child session.
  */
-export function createSessionActions(
+export function sessionCommands(
   session: Session,
   pin?: { isPinned: boolean; toggle: () => void },
 ): Command[] {
@@ -32,10 +33,11 @@ export function createSessionActions(
       icon: Pencil,
       disabled: isDraft,
       run: () =>
-        openWorkspaceDialog({
-          kind: "rename-session",
-          sessionId: session.id,
+        openRenameDialog({
           name: session.title ?? "",
+          title: "Rename session",
+          description: "Change how this session appears in the session list.",
+          mutation: sessionMutations.renameSession(session.id),
         }),
     },
     ...(directory
@@ -53,7 +55,13 @@ export function createSessionActions(
       title: "Delete session",
       icon: Trash2,
       destructive: true,
-      run: () => openWorkspaceDialog({ kind: "delete-session", sessionId: session.id }),
+      run: () =>
+        openDeleteDialog({
+          title: "Delete session?",
+          description:
+            "This will permanently delete this session, its child sessions, and all their messages. This action cannot be undone.",
+          mutation: sessionMutations.deleteSession(session.id),
+        }),
     },
   ];
 }

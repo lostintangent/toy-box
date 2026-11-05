@@ -144,7 +144,6 @@ export function Sidebar({
             onExpandedChange={(expanded) => onPanelExpanded("channels", expanded)}
             openChannelIds={openChannelIds}
             onChannelOpen={(channelId, toggle) => selectRoot(createChannelPane(channelId), toggle)}
-            onBrowseDirectory={(directory) => openWorkspaceDialog({ kind: "files", directory })}
             onCreate={() => openWorkspaceDialog({ kind: "channel" })}
           />
 

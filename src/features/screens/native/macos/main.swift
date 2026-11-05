@@ -90,7 +90,7 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var stream: SCStream!
     private let configuration = SCStreamConfiguration()
     private let pointPixelScale: Double
-    private let maximumSize: CGSize
+    private var maximumSize: CGSize
     private var configuredSize: CGSize
     private var sequence = 0
     private var geometry: FrameGeometry?
@@ -146,6 +146,18 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         let scale = min(1, min(maximumSize.width / width, maximumSize.height / height))
         configuration.width = max(1, Int(width * scale))
         configuration.height = max(1, Int(height * scale))
+    }
+
+    /// Fits frames within a viewer's new size. It returns once macOS applies the change, since
+    /// stopping a stream mid-update can crash its capture service.
+    func resize(to size: CGSize) async throws {
+        let changed = queue.sync {
+            let previous = (configuration.width, configuration.height)
+            maximumSize = size
+            fit(configuredSize)
+            return (configuration.width, configuration.height) != previous
+        }
+        if changed { try await stream.updateConfiguration(configuration) }
     }
 
     func start() async throws {
@@ -451,6 +463,9 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                 for action in actions {
                     try sendInput(action, capture: capture, geometry: geometry, bounds: bounds)
                 }
+            case "resize":
+                let size = CGSize(width: params["width"] as! Int, height: params["height"] as! Int)
+                try await getCapture(params).resize(to: size)
             case "releaseInput":
                 try releaseInput()
             case "stop":

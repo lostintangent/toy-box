@@ -9,6 +9,7 @@ import {
   channelSystemMessageContentSchema,
   channelRepliesSchema,
   CHANNEL_LEAD_PROFILE,
+  resolveChannelAgentId,
   type Channel,
   type ChannelEvent as ClientChannelEvent,
   type ChannelChanges,
@@ -270,16 +271,22 @@ export class ChannelDatabase {
   async updateChannel(leadId: string, input: UpdateChannelInput) {
     return inStateTransaction(this.db, async (db) => {
       const channel = await requireLeadChannel(db, leadId);
-      if (input.tasks) await assertTaskReferences(db, channel.id, input.tasks);
-      return updateChannelFields(db, channel, input, { type: "agent", agentId: leadId });
+      const tasks = input.tasks && (await resolveTaskReferences(db, channel.id, input.tasks));
+      return updateChannelFields(db, channel, tasks ? { ...input, tasks } : input, {
+        type: "agent",
+        agentId: leadId,
+      });
     });
   }
 
   async editTasks(leadId: string, { operations }: EditChannelTasksInput) {
     return inStateTransaction(this.db, async (db) => {
       const channel = await requireLeadChannel(db, leadId);
-      const tasks = applyChannelTaskEdits(channel.tasks, operations);
-      await assertTaskReferences(db, channel.id, tasks);
+      const tasks = await resolveTaskReferences(
+        db,
+        channel.id,
+        applyChannelTaskEdits(channel.tasks, operations),
+      );
       return updateChannelFields(db, channel, { tasks }, { type: "agent", agentId: leadId });
     });
   }
@@ -301,10 +308,10 @@ export class ChannelDatabase {
     });
   }
 
-  async listAgentIds(channelId: string): Promise<string[]> {
-    return (await new WorkerDatabase(this.db).list({ type: "channel", channelId }))
-      .map(({ sessionId }) => sessionId)
-      .sort();
+  async listAgents(channelId: string) {
+    return (await new WorkerDatabase(this.db).list({ type: "channel", channelId })).map(
+      channelAgentFromWorker,
+    );
   }
 
   async listMessagesAfter(
@@ -1078,27 +1085,32 @@ function reactionsByMessage(rows: ChannelReactionRow[]): Map<number, ChannelReac
   return reactions;
 }
 
-async function assertTaskReferences(
+/** Owners may be named by mention, so they resolve to the IDs that are stored. */
+async function resolveTaskReferences(
   db: Bun.SQL,
   channelId: string,
   tasks: readonly ChannelTask[],
-): Promise<void> {
-  const [agents, artifacts] = await Promise.all([
+): Promise<ChannelTask[]> {
+  const [workers, artifacts] = await Promise.all([
     new WorkerDatabase(db).list({ type: "channel", channelId }),
     listArtifacts(db, channelId),
   ]);
-  const agentIds = new Set(agents.map(({ sessionId }) => sessionId));
+  const agents = workers.map(channelAgentFromWorker);
   const artifactIds = new Set(artifacts.map(({ id }) => id));
-  const visit = (tasks: readonly ChannelTask[]) => {
-    for (const task of tasks) {
-      if (task.ownerId && !agentIds.has(task.ownerId)) {
+  const resolve = (tasks: readonly ChannelTask[]): ChannelTask[] =>
+    tasks.map((task) => {
+      const ownerId = task.ownerId && resolveChannelAgentId(agents, task.ownerId);
+      if (task.ownerId && !ownerId) {
         throw new Error("Task owners must be the channel lead or a current member.");
       }
       if (task.artifactId && !artifactIds.has(task.artifactId)) {
         throw new Error(`Task "${task.id}" must reference an artifact shared in this channel.`);
       }
-      if (task.children) visit(task.children);
-    }
-  };
-  visit(tasks);
+      return {
+        ...task,
+        ...(ownerId ? { ownerId } : {}),
+        ...(task.children ? { children: resolve(task.children) } : {}),
+      };
+    });
+  return resolve(tasks);
 }

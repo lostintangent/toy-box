@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   initialPaletteState,
   reducePalette,
+  resolveCurrentPane,
   resolveSelection,
   sectionByGroup,
   triageSessions,
@@ -182,5 +183,38 @@ describe("sections", () => {
     ];
     expect(resolveSelection(sections, { query: "" })?.id).toBe("opus");
     expect(resolveSelection(sections, { query: "o" })?.id).toBe("auto");
+  });
+
+  test("resolveSelection starts below a section that skips the default, until it is moved to", () => {
+    const sections = [{ matches: [match("pin")], skipsDefault: true }, { matches: [match("a")] }];
+    expect(resolveSelection(sections, { query: "" })?.id).toBe("a");
+    expect(resolveSelection(sections, { selected: "pin", query: "" })?.id).toBe("pin");
+  });
+});
+
+describe("resolveCurrentPane", () => {
+  const panes = [{ id: "session:a" }, { id: "session:b" }];
+  const current = (options: Partial<Parameters<typeof resolveCurrentPane>[1]>, among = panes) =>
+    resolveCurrentPane(among, { focusedId: null, isMobile: false, ...options })?.id;
+
+  test("the pane holding focus is current, over the one put forward", () => {
+    expect(current({ heldId: "session:b", focusedId: "session:a" })).toBe("session:b");
+  });
+
+  test("focus held by a pane the surface doesn't show, like a Hyper window's, means none", () => {
+    expect(current({ heldId: "session:h", focusedId: "session:a" })).toBeUndefined();
+  });
+
+  test("without focus in a pane, the one put forward is current", () => {
+    expect(current({ focusedId: "session:b" })).toBe("session:b");
+  });
+
+  test("without either, a grid has a current pane only when it shows one alone", () => {
+    expect(current({})).toBeUndefined();
+    expect(current({}, [{ id: "session:a" }])).toBe("session:a");
+  });
+
+  test("a phone's pager shows its first page until another is focused", () => {
+    expect(current({ isMobile: true })).toBe("session:a");
   });
 });

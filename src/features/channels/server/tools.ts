@@ -39,6 +39,7 @@ const conciseChannelMessageSchema = channelMessageContentSchema.max(
   3_000,
   "Channel messages must be at most 3,000 characters. Put durable long-form work in a shared artifact and send a concise summary. Do not split a document across messages.",
 );
+const agentReferenceSchema = durableIdSchema.describe("An agent ID or @mention.");
 const channelMemberCreationSchema = createChannelMemberInputSchema.omit({ channelId: true });
 const channelMemberCreationsSchema = z.array(channelMemberCreationSchema).min(1);
 const shareChannelArtifactInputSchema = z
@@ -125,7 +126,9 @@ const waitForChannelAgentsTool = defineTool("wait_for_channel_agents", {
     agentIds: z
       .array(durableIdSchema)
       .min(1)
-      .describe("The lead ID or one or more member IDs to wait for"),
+      .describe(
+        "The lead or one or more members to wait for, each by agent ID or @mention. The lead's agent ID is the channel ID.",
+      ),
     timeoutMs: z
       .number()
       .int()
@@ -142,17 +145,18 @@ const waitForChannelAgentsTool = defineTool("wait_for_channel_agents", {
   },
 });
 
+const channelReadDetailSchema = z.enum(["compact", "tasks", "full"]);
+type ChannelReadDetail = z.output<typeof channelReadDetailSchema>;
+type ChannelRead = Awaited<ReturnType<typeof import(".").readChannelForSession>>;
+
 const readChannelForAgentTool = defineTool("read_channel", {
   description:
-    "Reads this agent's next 100 unread messages, unfinished assigned tasks (all unfinished tasks for the lead), and working or waiting agents. Advances its read position. With no read cursor, always returns full context. Set detail:'full' for the channel purpose, directory, preview, complete tasks, roster with roles and models, artifacts, and routines. Repeat while hasMore is true. File attachments are absolute paths. Inline uploads are attached images.",
-  parameters: z.object({ detail: z.enum(["compact", "full"]).optional() }),
-  handler: async ({ detail }, sessionId) => {
+    "Reads this agent's next 100 unread messages, unfinished assigned tasks (all unfinished tasks for the lead), and working or waiting agents. Advances its read position. With no read cursor, always returns full context. Set detail:'full' for the channel purpose, directory, preview, complete tasks, roster with roles and models, artifacts, and routines. Set detail:'tasks' for the complete task tree instead of unfinished tasks and agents. Repeat while hasMore is true. File attachments are absolute paths. Inline uploads are attached images.",
+  parameters: z.object({ detail: channelReadDetailSchema.optional() }),
+  handler: async ({ detail = "compact" }, sessionId) => {
     const { readChannelForAgent } = await import("@channels/server");
     const result = await readChannelForAgent(sessionId);
-    return toChannelReadToolResult(
-      result,
-      detail === "full" || result.isInitialRead ? undefined : sessionId,
-    );
+    return toChannelReadToolResult(result, result.isInitialRead ? "full" : detail, sessionId);
   },
 });
 
@@ -226,7 +230,7 @@ const setChannelStatusTool = defineTool("set_agent_status", {
 
 const updateChannelTool = defineTool("update_channel", {
   description:
-    "Updates this channel's name, purpose, working directory, tasks, or preview. Only the lead can update it. Use an existing absolute directory, which applies to all agents at their next execution. Supply tasks only for initial planning or intentional whole-list replacement after read_channel with detail:'full'; never replace the tree from unfinishedTasks. Use edit_channel_tasks for progress updates. Set preview to {kind:'url',url} or {kind:'screen',screenId} from list_screens. A screen reference opens an existing host display or window; it does not launch an app. Preserve root-relative preview URLs. Share file artifacts instead of using them as previews. Set purpose, directory, or preview to null to clear it.",
+    "Updates this channel's name, purpose, working directory, tasks, or preview. Only the lead can update it. Use an existing absolute directory, which applies to all agents at their next execution. Supply tasks only for initial planning or intentional whole-list replacement after read_channel with detail:'tasks' or 'full'; never replace the tree from unfinishedTasks. Use edit_channel_tasks for progress updates. Set preview to {kind:'url',url} or {kind:'screen',screenId} from list_screens. A screen reference opens an existing host display or window; it does not launch an app. Preserve root-relative preview URLs. Share file artifacts instead of using them as previews. Set purpose, directory, or preview to null to clear it.",
   parameters: updateChannelInputSchema,
   handler: async (args, sessionId) => {
     const { updateChannelFromLead } = await import("@channels/server");
@@ -334,6 +338,17 @@ const removeArtifactTool = defineTool("remove_channel_artifact", {
   },
 });
 
+const messageChannelLeadTool = defineTool("message_channel_lead", {
+  description:
+    "Privately messages another channel's lead, found with list_channels, and wakes it. Use it to ask for information or to coordinate overlapping work, not to hand off this channel's work. The exchange stays in the two leads' sessions, so post in your own channel when it changes this channel's work. Replies arrive as private messages naming the sender's channel.",
+  parameters: channelIdentitySchema.extend({ content: conciseChannelMessageSchema }),
+  handler: async (input, sessionId) => {
+    const { messageChannelLeadFromLead } = await import("@channels/server");
+    await messageChannelLeadFromLead(sessionId, input);
+    return "Sent.";
+  },
+});
+
 const updateMemberTool = defineTool("update_member", {
   description: "Updates this channel agent's role, avatar, or both.",
   parameters: selfUpdateChannelMemberInputSchema,
@@ -346,7 +361,7 @@ const updateMemberTool = defineTool("update_member", {
 const updateChannelMemberTool = defineTool("update_channel_member", {
   description:
     "Updates a member's name, role, or model from its next turn. A started member keeps its provider. Use list_models to resolve supported model options.",
-  parameters: updateChannelMemberInputSchema,
+  parameters: updateChannelMemberInputSchema.safeExtend({ agentId: agentReferenceSchema }),
   handler: async (input, sessionId) => {
     const { updateChannelMemberFromLead } = await import("@channels/server");
     return memberForTool(await updateChannelMemberFromLead(sessionId, input));
@@ -356,7 +371,7 @@ const updateChannelMemberTool = defineTool("update_channel_member", {
 const removeChannelMemberTool = defineTool("remove_channel_member", {
   description:
     "Removes a member from this channel and posts a system message. Its session ends, and the tasks it owned lose their owner.",
-  parameters: removeChannelMemberInputSchema,
+  parameters: removeChannelMemberInputSchema.extend({ agentId: agentReferenceSchema }),
   handler: async ({ agentId }, sessionId) => {
     const { removeChannelMemberFromLead } = await import("@channels/server");
     await removeChannelMemberFromLead(sessionId, agentId);
@@ -385,14 +400,16 @@ const shareChannelArtifactFromAgentTool = defineTool("share_channel_artifact", {
 });
 
 function toChannelReadToolResult(
-  result: Awaited<ReturnType<typeof import(".").readChannelForSession>>,
-  compactForAgentId?: string,
+  result: ChannelRead,
+  detail: ChannelReadDetail = "full",
+  agentId?: string,
 ) {
   const agents = [result.lead, ...result.members];
+  const identifyAgents = detail !== "full";
   const images: Attachment[] = [];
   const messages = result.messages.map((message) => {
     const sender =
-      compactForAgentId && message.sender.type === "agent"
+      identifyAgents && message.sender.type === "agent"
         ? {
             type: "agent" as const,
             ...agentIdentityForTool(channelAgentIdentity(agents, message.sender.agentId)),
@@ -402,7 +419,7 @@ function toChannelReadToolResult(
       const { id: _id, content, ...rest } = message;
       if ("member" in content) {
         const { member, ...change } = content;
-        const agent = compactForAgentId ? agentIdentityForTool(member) : { agentId: member.id };
+        const agent = identifyAgents ? agentIdentityForTool(member) : { agentId: member.id };
         return { ...rest, sender, content: { ...change, ...agent } };
       }
       return {
@@ -436,31 +453,7 @@ function toChannelReadToolResult(
       {
         type: "text",
         text: JSON.stringify({
-          ...(compactForAgentId
-            ? {
-                unfinishedTasks: unfinishedTasksForTool(
-                  result.channel.tasks,
-                  compactForAgentId === result.lead.id ? undefined : compactForAgentId,
-                  Date.now(),
-                ),
-                agents: agents
-                  .map(agentForTool)
-                  .filter((agent) => agent.status)
-                  .map(({ role: _role, ...agent }) => agent),
-              }
-            : {
-                channel: channelContextForTool(result.channel),
-                lead: agentForTool(result.lead),
-                members: result.members.map((member) => ({
-                  ...agentForTool(member),
-                  model: member.model,
-                })),
-                artifacts: result.artifacts.map(artifactForTool),
-                routines: result.routines.map(({ id, ...routine }) => ({
-                  routineId: id,
-                  ...routine,
-                })),
-              }),
+          ...channelReadContextForTool(result, detail, agentId),
           messages,
           hasMore: result.hasMore,
         }),
@@ -472,6 +465,43 @@ function toChannelReadToolResult(
       })),
     ],
   } satisfies ToolResult;
+}
+
+function channelReadContextForTool(
+  result: ChannelRead,
+  detail: ChannelReadDetail,
+  agentId?: string,
+) {
+  switch (detail) {
+    case "compact":
+      return {
+        unfinishedTasks: unfinishedTasksForTool(
+          result.channel.tasks,
+          agentId === result.lead.id ? undefined : agentId,
+          Date.now(),
+        ),
+        agents: [result.lead, ...result.members]
+          .map(agentForTool)
+          .filter((agent) => agent.status)
+          .map(({ role: _role, ...agent }) => agent),
+      };
+    case "tasks":
+      return { tasks: result.channel.tasks };
+    case "full":
+      return {
+        channel: channelContextForTool(result.channel),
+        lead: agentForTool(result.lead),
+        members: result.members.map((member) => ({
+          ...agentForTool(member),
+          model: member.model,
+        })),
+        artifacts: result.artifacts.map(artifactForTool),
+        routines: result.routines.map(({ id, ...routine }) => ({
+          routineId: id,
+          ...routine,
+        })),
+      };
+  }
 }
 
 function channelContextForTool({ name, purpose, directory, tasks, preview }: Channel) {
@@ -536,7 +566,6 @@ function channelForTool({ id: channelId, name, purpose, directory, model }: Chan
     ...(purpose ? { purpose } : {}),
     directory,
     model,
-    lead: { agentId: channelId, mention: "@lead" },
   };
 }
 
@@ -572,6 +601,8 @@ export const channelLeadTools = [
   setRoutineTool,
   deleteRoutineTool,
   removeArtifactTool,
+  listChannelsTool,
+  messageChannelLeadTool,
 ];
 export const channelMemberTools = [
   ...commonChannelAgentTools,

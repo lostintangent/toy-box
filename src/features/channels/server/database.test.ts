@@ -310,6 +310,24 @@ describe("channel task edits", () => {
       expect(await channels.getSnapshot(channel.id, 100)).toEqual(before);
     }
   });
+
+  test("task owners named by mention are stored by agent ID", async () => {
+    const { channels, channel } = await setup();
+    const { member } = await channels.createMember(
+      channelAgent(channel.id, "designer-id", "Designer"),
+    );
+    await channels.editTasks(channel.id, {
+      operations: [
+        { type: "add", task: { id: "t2", title: "Mock", status: "pending", ownerId: "@designer" } },
+        { type: "add", parentId: "t2", task: { id: "t3", title: "Check", status: "pending" } },
+        { type: "update", taskId: "t3", patch: { ownerId: "@lead" } },
+      ],
+    });
+    expect((await channels.getChannel(channel.id))?.tasks.at(-1)).toMatchObject({
+      ownerId: member.id,
+      children: [{ ownerId: channel.id }],
+    });
+  });
 });
 
 describe("channel database", () => {

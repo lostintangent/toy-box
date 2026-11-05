@@ -1,5 +1,10 @@
+import { Fragment } from "react";
 import { formatForDisplay } from "@tanstack/react-hotkeys";
-import { DropdownMenuItem, DropdownMenuShortcut } from "@/shared/ui/dropdown-menu";
+import {
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+} from "@/shared/ui/dropdown-menu";
 import type { Command } from "./command";
 import { runCommandFromClick } from "./CommandButton";
 import { useCommand } from "./CommandProvider";
@@ -32,4 +37,14 @@ export function CommandMenuItem({
       )}
     </DropdownMenuItem>
   );
+}
+
+/** A subject's actions as menu items, with each destructive one set apart. */
+export function CommandMenuItems({ commands }: { commands: readonly Command[] }) {
+  return commands.map((command) => (
+    <Fragment key={command.id}>
+      {command.destructive && <DropdownMenuSeparator />}
+      <CommandMenuItem command={command} />
+    </Fragment>
+  ));
 }
