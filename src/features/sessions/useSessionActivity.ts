@@ -10,6 +10,7 @@ export function useSessionsActivity<T>(select: (activities: SessionsActivity) =>
 export function selectSessionActivity(activities: SessionsActivity, sessionId: string) {
   const activity = activities[sessionId];
   return {
+    status: activity?.status,
     running: activity?.status === "running",
     waiting: activity?.status === "waiting",
     background: activity?.status === "background",

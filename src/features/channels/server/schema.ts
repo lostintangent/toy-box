@@ -99,4 +99,8 @@ export default [
     ALTER TABLE channel_messages
       ADD COLUMN replies TEXT CHECK (replies IS NULL OR (request = 1 AND json_valid(replies)));
   `,
+  `
+    ALTER TABLE channels
+      ADD COLUMN bookmarks TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(bookmarks));
+  `,
 ];

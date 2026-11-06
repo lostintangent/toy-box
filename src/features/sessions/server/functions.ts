@@ -2,7 +2,6 @@
 
 import { createMiddleware, createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
-import { zodValidator } from "@tanstack/zod-adapter";
 import type { RealtimeToken } from "@tanstack/ai";
 import type { ServerRequest } from "nitro/types";
 import {
@@ -49,9 +48,7 @@ import { resolveSessionContext as resolveGitContext } from "./git";
 
 const REALTIME_MODEL = "gpt-realtime";
 
-const withSessionId = createMiddleware({ type: "function" }).validator(
-  zodValidator(sessionInputSchema),
-);
+const withSessionId = createMiddleware({ type: "function" }).validator(sessionInputSchema);
 
 /** Fetch durable session list metadata in a single round-trip. */
 export const getSessionsState = createServerFn({ method: "GET" }).handler(() =>
@@ -89,13 +86,13 @@ export const createVoiceToken = createServerFn({ method: "POST" }).handler(
 
 /** List user-invocable skills for a CWD, or host-level skills when it is omitted. */
 export const listSkills = createServerFn({ method: "POST" })
-  .validator(zodValidator(listSkillsInputSchema))
+  .validator(listSkillsInputSchema)
   .handler(async ({ data }): Promise<SessionSkill[]> => {
     return listProviderSkills(data.cwd, data.sessionType, data.provider);
   });
 
 export const resolveSessionContext = createServerFn({ method: "POST" })
-  .validator(zodValidator(resolveSessionContextInputSchema))
+  .validator(resolveSessionContextInputSchema)
   .handler(({ data }) => resolveGitContext(data.directory));
 
 /** A session's reduced transcript snapshot, served from the cheapest source
@@ -108,14 +105,14 @@ export const querySession = createServerFn({ method: "POST" })
 
 /** Wait for the announced, live, or latest persisted execution of one session. */
 export const waitForSession = createServerFn({ method: "POST" })
-  .validator(zodValidator(waitForSessionInputSchema))
+  .validator(waitForSessionInputSchema)
   .handler(async ({ data }): Promise<SessionCompletion> => {
     const [completion] = await waitForSessions([data.sessionId], data.timeoutMs);
     return completion!;
   });
 
 export const streamSession = createServerFn({ method: "POST" })
-  .validator(zodValidator(streamSessionRequestSchema))
+  .validator(streamSessionRequestSchema)
   .handler(async function* ({ data }) {
     const request = getRequest() as ServerRequest;
     request.runtime?.bun?.server.timeout(request, 0);
@@ -138,7 +135,7 @@ export const streamSession = createServerFn({ method: "POST" })
  *  running → idle/unread), the same way automation and agent-spawned sessions
  *  surface. Resolves once the turn has opened, not when it completes. */
 export const startSession = createServerFn({ method: "POST" })
-  .validator(zodValidator(sessionLaunchSchema))
+  .validator(sessionLaunchSchema)
   .handler(async ({ data }): Promise<{ sessionId: string }> => {
     const sessionId = crypto.randomUUID();
     await createRuntimeSession(sessionId, data.message, {
@@ -150,14 +147,14 @@ export const startSession = createServerFn({ method: "POST" })
 
 /** Reserve a provider-independent draft and its optional initial artifact. */
 export const createSession = createServerFn({ method: "POST" })
-  .validator(zodValidator(createSessionInputSchema))
+  .validator(createSessionInputSchema)
   .handler(({ data: { sessionId, ...options } }) =>
     sessionRegistry.createSessionRecord(sessionId, options),
   );
 
 /** Deliver a follow-up message, optionally requesting immediate delivery. */
 export const deliverMessage = createServerFn({ method: "POST" })
-  .validator(zodValidator(deliverMessageInputSchema))
+  .validator(deliverMessageInputSchema)
   .handler(async ({ data }): Promise<{ disposition: "started" | "queued" }> => {
     const receipt = await deliverSessionMessage(data.sessionId, data.message);
     return { disposition: receipt.disposition };
@@ -166,24 +163,24 @@ export const deliverMessage = createServerFn({ method: "POST" })
 /** Deliver a system message. Active Sessions queue equivalent messages together;
  *  idle historical Sessions resume and process them. */
 export const sendSystemMessage = createServerFn({ method: "POST" })
-  .validator(zodValidator(sendSystemMessageInputSchema))
+  .validator(sendSystemMessageInputSchema)
   .handler(async ({ data }): Promise<void> => {
     await deliverSessionMessage(data.sessionId, { systemMessage: data.message });
   });
 
 export const cancelQueuedMessage = createServerFn({ method: "POST" })
-  .validator(zodValidator(queuedMessageInputSchema))
+  .validator(queuedMessageInputSchema)
   .handler(({ data }): boolean => cancelRuntimeQueuedMessage(data.sessionId, data.clientId));
 
 /** Steer a queued message into the active SDK turn and await acceptance. */
 export const steerQueuedMessage = createServerFn({ method: "POST" })
-  .validator(zodValidator(queuedMessageInputSchema))
+  .validator(queuedMessageInputSchema)
   .handler(({ data }): Promise<boolean> =>
     steerRuntimeQueuedMessage(data.sessionId, data.clientId),
   );
 
 export const answerSessionQuestion = createServerFn({ method: "POST" })
-  .validator(zodValidator(answerSessionQuestionInputSchema))
+  .validator(answerSessionQuestionInputSchema)
   .handler(({ data: { sessionId, ...answer } }): Promise<boolean> =>
     answerRuntimeSessionQuestion(sessionId, answer),
   );
@@ -199,7 +196,7 @@ export const abortSession = createServerFn({ method: "POST" })
 
 /** Rewind an idle local session to immediately before one root user message. */
 export const rewindSession = createServerFn({ method: "POST" })
-  .validator(zodValidator(rewindSessionInputSchema))
+  .validator(rewindSessionInputSchema)
   .handler(({ data }): Promise<SessionState> =>
     rewindRuntimeSession(data.sessionId, data.timestamp),
   );
@@ -213,7 +210,7 @@ export const deleteSession = createServerFn({ method: "POST" })
 
 /** Rename a session using the SDK's persisted friendly-name metadata. */
 export const renameSession = createServerFn({ method: "POST" })
-  .validator(zodValidator(renameSessionInputSchema))
+  .validator(renameSessionInputSchema)
   .handler(async ({ data }): Promise<boolean> => {
     await sessionRegistry.renameSession(data.sessionId, data.name);
     return true;

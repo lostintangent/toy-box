@@ -19,7 +19,7 @@ export function DoneIndicator({
       strokeLinejoin="round"
       aria-hidden={!props["aria-label"]}
       {...props}
-      className={cn("text-emerald-600 dark:text-emerald-400", className)}
+      className={cn("text-done", className)}
     >
       <circle cx={12} cy={12} r={9} fill="currentColor" fillOpacity={0.15} stroke="none" />
       <path d="m7.5 12 3 3 6-6" />

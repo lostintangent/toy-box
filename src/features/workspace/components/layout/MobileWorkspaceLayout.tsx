@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { TerminalShell } from "@terminal/components/TerminalShell";
 import { Sidebar, type SidebarProps } from "@workspace/components/sidebar/Sidebar";
+import { sidebarPanelsSchema } from "@workspace/model/config/layoutPrefs";
 import {
   WorkspacePager,
   type WorkspacePagerProps,
@@ -29,13 +30,9 @@ export function MobileWorkspaceLayout({
   workspace,
   terminal,
 }: MobileWorkspaceLayoutProps) {
-  const sidebarPanels: SidebarProps["panels"] = sidebar.panels.channels
-    ? { channels: true }
-    : sidebar.panels.apps
-      ? { apps: true }
-      : sidebar.panels.automations
-        ? { automations: true }
-        : {};
+  // A phone's sidebar expands one panel at a time: the first expanded, in sidebar order.
+  const expanded = sidebarPanelsSchema.keyof().options.find((panel) => sidebar.panels[panel]);
+  const sidebarPanels: SidebarProps["panels"] = expanded ? { [expanded]: true } : {};
 
   return (
     <div className="relative h-full overflow-clip md:hidden">

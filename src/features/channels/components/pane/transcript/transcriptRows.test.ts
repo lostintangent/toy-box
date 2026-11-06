@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ChannelConversationMessage, ChannelMessage } from "@channels/model";
 import {
-  pendingRequestRow,
+  messageRowIndex,
   transcriptDayLabel,
   transcriptRows,
   type AgentRunEntry,
@@ -226,8 +226,8 @@ describe("agent run entries", () => {
 });
 
 describe("your messages view", () => {
-  const yours = (messages: ChannelMessage[], unreadAfter?: number) =>
-    transcriptRows(messages, { lead, members, unreadAfter, view: "yours" });
+  const yours = (messages: ChannelMessage[], unreadAfter?: number, bookmarks?: number[]) =>
+    transcriptRows(messages, { lead, members, bookmarks, unreadAfter, view: "yours" });
 
   test("shows the user's messages and agent messages for them", () => {
     const messages = [
@@ -239,6 +239,11 @@ describe("your messages view", () => {
       event(6, { type: "member_joined", member }),
     ];
     expect(rowIds(yours(messages))).toEqual([["1"], ["2"]]);
+  });
+
+  test("a bookmarked message stays, even between agents", () => {
+    const messages = [userPost(1), agentPost(2, "engine", undefined, "Stairs built.")];
+    expect(rowIds(yours(messages, undefined, [2]))).toEqual([["1"], ["2"]]);
   });
 
   test("a request stays, even when it also addresses agents", () => {
@@ -272,20 +277,22 @@ describe("your messages view", () => {
   });
 });
 
-describe("pending request row", () => {
+describe("message rows", () => {
   const rows = rowsOf([
     userPost(1),
     agentPost(2, "lead"),
-    { ...agentPost(3, "lead"), request: true },
+    agentPost(3, "lead"),
+    event(4, { type: "member_joined", member }),
   ]);
 
-  test("locates the canonical pending question within an agent run", () => {
-    expect(pendingRequestRow(rows, 3)).toEqual({ sequence: 3, index: 1 });
+  test("locate a user's message and an agent's message within its run", () => {
+    expect(messageRowIndex(rows, 1)).toBe(0);
+    expect(messageRowIndex(rows, 3)).toBe(1);
   });
 
-  test("has no placement after acknowledgement or outside loaded history", () => {
-    expect(pendingRequestRow(rows, null)).toBeUndefined();
-    expect(pendingRequestRow(rows, 9)).toBeUndefined();
+  test("exclude system messages and those outside loaded history", () => {
+    expect(messageRowIndex(rows, 4)).toBe(-1);
+    expect(messageRowIndex(rows, 9)).toBe(-1);
   });
 });
 

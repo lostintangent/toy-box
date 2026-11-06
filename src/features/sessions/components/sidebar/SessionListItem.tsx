@@ -51,7 +51,7 @@ export function SessionListItem({
     <>
       <SidebarSessionItem
         sessionId={session.id}
-        activity={activity}
+        status={activity.status}
         title={sessionLabel}
         titleContent={<SessionListItemTitle title={sessionLabel} loading={isTitleLoading} />}
         titleControl={

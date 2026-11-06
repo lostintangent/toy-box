@@ -13,8 +13,9 @@ import {
 const RUN_WINDOW_MS = 10 * 60 * 1000;
 
 /**
- * Which messages the transcript shows: all of them, or only the user's own messages and the
- * agent messages for them, which leaves out coordination between agents and system changes.
+ * Which messages the transcript shows: all of them, or only the user's own messages, the agent
+ * messages for them, and those they bookmarked, which leaves out coordination between agents and
+ * system changes.
  */
 export type TranscriptView = "all" | "yours";
 
@@ -53,6 +54,7 @@ export type ChannelRequestState = "pending" | "acknowledged";
 type RowContext = {
   lead: ChannelAgent;
   members: readonly ChannelAgent[];
+  bookmarks: readonly number[];
   latestUserSequence: number;
 };
 
@@ -67,11 +69,13 @@ export function transcriptRows(
   {
     lead,
     members,
+    bookmarks = [],
     unreadAfter,
     view = "all",
   }: {
     lead: ChannelAgent;
     members: readonly ChannelAgent[];
+    bookmarks?: readonly number[];
     /** Where unread messages began on arrival; null or undefined marks none. */
     unreadAfter?: number | null;
     view?: TranscriptView;
@@ -80,6 +84,7 @@ export function transcriptRows(
   const context: RowContext = {
     lead,
     members,
+    bookmarks,
     latestUserSequence: messages.reduce(
       (latest, { sender, sequence }) =>
         sender.type === "user" ? Math.max(latest, sequence) : latest,
@@ -100,17 +105,13 @@ export function transcriptRows(
   return rows;
 }
 
-/** The latest pending request whose message is loaded, which a reply answers, and its row. */
-export function pendingRequestRow(
-  rows: readonly TranscriptRow[],
-  sequence: number | null,
-): { sequence: number; index: number } | undefined {
-  if (sequence === null) return undefined;
-  const index = rows.findIndex(
-    (row) =>
-      row.type === "agent" && row.entries.some(({ message }) => message.sequence === sequence),
+/** The index of the row showing a user's or agent's message, or -1 when it isn't shown. */
+export function messageRowIndex(rows: readonly TranscriptRow[], sequence: number): number {
+  return rows.findIndex((row) =>
+    row.type === "user"
+      ? row.message.sequence === sequence
+      : row.type === "agent" && row.entries.some(({ message }) => message.sequence === sequence),
   );
-  return index < 0 ? undefined : { sequence, index };
 }
 
 /** "Today", "Yesterday", or the full day, adding the year only when it isn't the current one. */
@@ -167,11 +168,16 @@ function extendRow(row: TranscriptRow, message: ChannelMessage, context: RowCont
   return true;
 }
 
-/** Your messages are the user's own and those for them; system changes stay in the full view. */
+/** Your messages are the user's own, those for them, and those they bookmarked; system changes
+ *  stay in the full view. */
 function isInView(message: ChannelMessage, view: TranscriptView, context: RowContext): boolean {
   if (view === "all") return true;
   if (isChannelSystemMessage(message)) return false;
-  return message.sender.type === "user" || isForUser(message, addresseeOf(message, context));
+  return (
+    message.sender.type === "user" ||
+    context.bookmarks.includes(message.sequence) ||
+    isForUser(message, addresseeOf(message, context))
+  );
 }
 
 function agentRunEntry(

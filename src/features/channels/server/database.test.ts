@@ -3,7 +3,7 @@ import { describe, expect, onTestFinished, setSystemTime, test } from "bun:test"
 import type { ChannelTask } from "@channels/model";
 import { machineFile, sessionFile, workspaceFileId } from "@files/model";
 import { createTestDatabase } from "@/server/database";
-import { ChannelDatabase } from "./database";
+import { ChannelDatabase, ChannelInputError } from "./database";
 
 const CHANNEL_DEFAULTS = {
   purpose: "Coordinate the work to a useful result.",
@@ -495,6 +495,60 @@ describe("channel database", () => {
     ]);
     const { revision: _afterRevision, ...metadataAfter } = (await channels.getChannel(channel.id))!;
     expect(metadataAfter).toEqual(metadataBefore);
+  });
+
+  describe("bookmarks", () => {
+    async function setup() {
+      const channels = await openChannels();
+      const channel = await createStoredChannel(channels, { name: "Notes", ...CHANNEL_DEFAULTS });
+      const post = (sender: { type: "user" } | { type: "agent"; agentId: string }) =>
+        channels.appendMessage({
+          id: crypto.randomUUID(),
+          channelId: channel.id,
+          sender,
+          content: "Noted.",
+        });
+      await post({ type: "agent", agentId: channel.id });
+      await channels.updateChannel(channel.id, { name: "Renamed" });
+      await post({ type: "user" });
+      const bookmark = (sequence: number, bookmarked = true, channelId = channel.id) =>
+        channels.bookmarkMessage({ channelId, sequence, bookmarked });
+      return { channels, channel: (await channels.getChannel(channel.id))!, bookmark };
+    }
+
+    test("persist in order on the snapshot without changing Channel metadata", async () => {
+      const { channels, channel, bookmark } = await setup();
+      expect(await bookmark(3)).toEqual({
+        channelId: channel.id,
+        events: [{ type: "bookmarks", bookmarks: [3], revision: channel.revision + 1 }],
+      });
+      expect((await bookmark(1))?.events).toEqual([
+        { type: "bookmarks", bookmarks: [1, 3], revision: channel.revision + 2 },
+      ]);
+      expect((await bookmark(3, false))?.events).toMatchObject([{ bookmarks: [1] }]);
+
+      expect((await channels.getSnapshot(channel.id, 10))?.bookmarks).toEqual([1]);
+      const { revision, ...metadata } = (await channels.getChannel(channel.id))!;
+      const { revision: _before, ...metadataBefore } = channel;
+      expect(metadata).toEqual(metadataBefore);
+      expect(revision).toBe(channel.revision + 3);
+    });
+
+    test("repeating either state changes nothing", async () => {
+      const { channels, channel, bookmark } = await setup();
+      await bookmark(1);
+      expect(await bookmark(1)).toBeNull();
+      expect(await bookmark(3, false)).toBeNull();
+      expect(await bookmark(9, false)).toBeNull();
+      expect((await channels.getChannel(channel.id))?.revision).toBe(channel.revision + 1);
+    });
+
+    test("only a user's or agent's message in the Channel can be bookmarked", async () => {
+      const { bookmark } = await setup();
+      await expect(bookmark(2)).rejects.toThrow(ChannelInputError);
+      await expect(bookmark(9)).rejects.toThrow(ChannelInputError);
+      await expect(bookmark(1, true, "missing")).rejects.toThrow("Channel not found.");
+    });
   });
 
   test("tracks independent, monotonic human and Agent read positions", async () => {

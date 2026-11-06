@@ -140,8 +140,11 @@ code {
   --diff-modified-old-bg: --alpha(var(--diff-removed) / 10%);
   --diff-modified-new-bg: --alpha(var(--diff-added) / 10%);
 
-  /* Unread-activity indicator (session + automation list dots). blue-500 / blue-400. */
+  /* Unread-activity indicator (session, automation, and channel unread marks). blue-500 / blue-400. */
   --unread: light-dark(oklch(0.623 0.214 259.815), oklch(0.707 0.165 254.624));
+
+  /* Finished-work indicator (the done check). emerald-600 / emerald-400. */
+  --done: light-dark(oklch(0.596 0.145 163.225), oklch(0.765 0.177 163.223));
 
   /* Agents' ink, alongside the user's --accent. cyan-500, the avatar tint. */
   --agent-accent: oklch(0.715 0.143 215.221);

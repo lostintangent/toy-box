@@ -1,3 +1,10 @@
+## 📅 v0.3.7 (11/06/26)
+
+- Channels now support bookmarking messages, so you can keep track of ones you want to revisit.
+- The command palette has a new `Ready for you` section that surfaces the sessions, channels, and automations that are waiting on you (e.g. pending question, unread, finished task list)
+- Channels and automations in the command palette now show the same live status as the sidebar (e.g. waiting, running, finished)
+- Automations whose provider is disabled are now hidden from the sidebar, instead of closing immediately when opened
+
 ## 📅 v0.3.6 (11/05/26)
 
 - Channel leads can now communicate with each other via private messages

@@ -28,6 +28,7 @@ import {
   type ChannelSystemMessageContent,
   type ChannelTask,
   type ChannelRoutine,
+  type BookmarkChannelMessageInput,
   type CreateChannelInput,
   type EditChannelInput,
   type EditChannelTasksInput,
@@ -55,6 +56,7 @@ import { z } from "zod";
 import { attachmentSchema } from "@/shared/attachments/model";
 
 const channelAttachmentSchema = z.union([attachmentSchema, z.string().min(1).max(4_096)]);
+const channelBookmarksSchema = z.array(z.number().int().positive());
 export type StoredAttachment = z.output<typeof channelAttachmentSchema>;
 export type StoredChannelMessage = ClientChannelMessage<StoredAttachment>;
 type ChannelMessage = StoredChannelMessage;
@@ -165,6 +167,7 @@ export class ChannelDatabase {
       const channel = channelFromRow(row);
       return {
         channel,
+        bookmarks: channelBookmarksSchema.parse(JSON.parse(row.bookmarks)),
         request:
           channel.requestSequence === null
             ? null
@@ -433,6 +436,35 @@ export class ChannelDatabase {
           },
         ],
       };
+    });
+  }
+
+  /** Bookmarks only the user's messages and agents' messages, and changes nothing else. */
+  async bookmarkMessage({ channelId, sequence, bookmarked }: BookmarkChannelMessageInput) {
+    return inStateTransaction(this.db, async (db) => {
+      const [row] = await db<Pick<ChannelRow, "bookmarks">[]>`
+        SELECT bookmarks FROM channels WHERE id = ${channelId}
+      `;
+      if (!row) throw new Error("Channel not found.");
+      const current = channelBookmarksSchema.parse(JSON.parse(row.bookmarks));
+      if (current.includes(sequence) === bookmarked) return null;
+      if (bookmarked) {
+        const [message] = await db`
+          SELECT 1 FROM channel_messages
+          WHERE channel_id = ${channelId} AND sequence = ${sequence} AND sender_type <> 'system'
+        `;
+        if (!message)
+          throw new ChannelInputError("Bookmark a user or agent message in this Channel.");
+      }
+      const bookmarks = bookmarked
+        ? [...current, sequence].sort((left, right) => left - right)
+        : current.filter((bookmark) => bookmark !== sequence);
+      const [{ revision }] = await db<Pick<ChannelRow, "revision">[]>`
+        UPDATE channels SET bookmarks = ${JSON.stringify(bookmarks)}, revision = revision + 1
+        WHERE id = ${channelId}
+        RETURNING revision
+      `;
+      return { channelId, events: [{ type: "bookmarks" as const, bookmarks, revision }] };
     });
   }
 
@@ -927,6 +959,7 @@ type ChannelRow = {
   request_sequence: number | null;
   completed_sequence: number | null;
   updated_at: string;
+  bookmarks: string;
 };
 
 type ChannelMessageRow = {

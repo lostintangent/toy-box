@@ -7,22 +7,18 @@ import {
   type SidebarListItemProps,
 } from "@/shared/sidebar/SidebarListItem";
 import type { SidebarStatus } from "@/shared/sidebar/SidebarStatus";
+import { isLiveActivity, sessionAttention, type SessionActivityStatus } from "../../model/activity";
 import { SessionPreview, useSessionPreview } from "../SessionPreview";
 
 type SidebarSessionItemProps = Omit<SidebarListItemProps, "status"> & {
   sessionId: string;
-  activity: {
-    running: boolean;
-    waiting: boolean;
-    background: boolean;
-    unread: boolean;
-  };
+  status?: SessionActivityStatus;
   previewDisabled?: boolean;
 };
 
 export function SidebarSessionItem({
   sessionId,
-  activity,
+  status,
   previewDisabled = false,
   title,
   titleContent,
@@ -46,8 +42,8 @@ export function SidebarSessionItem({
   const hasDraft = useWorkspaceSelector((workspace) =>
     Boolean(workspace.drafts[`session:${sessionId}`]?.text.trim()),
   );
-  const justFinished = useJustFinished(activity.running || activity.waiting || activity.background);
-  const status = getSessionListItemStatus(title, activity, hasDraft, isActive, justFinished);
+  const justFinished = useJustFinished(isLiveActivity(status));
+  const sidebarStatus = getSessionListItemStatus(title, status, hasDraft, isActive, justFinished);
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
     preview.close();
@@ -70,7 +66,7 @@ export function SidebarSessionItem({
       isHighlighted={preview.open}
       className={className}
       action={
-        <SidebarListItemAction title={title} status={status} menuDisabled={menuDisabled}>
+        <SidebarListItemAction title={title} status={sidebarStatus} menuDisabled={menuDisabled}>
           {menuItems}
         </SidebarListItemAction>
       }
@@ -122,29 +118,30 @@ function useJustFinished(live: boolean): boolean {
 
 function getSessionListItemStatus(
   title: string,
-  { running, waiting, background, unread }: SidebarSessionItemProps["activity"],
+  status: SessionActivityStatus | undefined,
   hasDraft: boolean,
   isActive: boolean,
   justFinished: boolean,
 ): SidebarStatus | undefined {
-  if (waiting) {
+  const attention = sessionAttention(status, isActive);
+  if (attention === "waiting") {
     return {
       kind: "waiting",
       ariaLabel: `${title} is waiting for input`,
       tooltip: "Session is waiting for input",
     };
   }
-  if (running) {
+  if (status === "running") {
     return { kind: "running", ariaLabel: `${title} is running`, tooltip: "Session is running" };
   }
-  if (background) {
+  if (status === "background") {
     return {
       kind: "background",
       ariaLabel: `${title} has background tasks running`,
       tooltip: "Background tasks running",
     };
   }
-  if (unread && !isActive) {
+  if (attention === "unread") {
     return justFinished
       ? { kind: "finished", ariaLabel: `${title} finished`, tooltip: "Session finished" }
       : {

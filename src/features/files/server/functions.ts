@@ -1,7 +1,6 @@
 // Validated workspace-file operations consumed by Query and matching external ingress.
 
 import { createServerFn } from "@tanstack/react-start";
-import { zodValidator } from "@tanstack/zod-adapter";
 import {
   createFileInputSchema,
   listDirectoryInputSchema,
@@ -14,27 +13,27 @@ import { loadCustomEditors } from "./editors";
 import * as files from "./index";
 
 export const readFile = createServerFn({ method: "GET" })
-  .validator(zodValidator(workspaceFileInputSchema))
+  .validator(workspaceFileInputSchema)
   .handler(({ data }) => files.readFile(data.file));
 
 export const writeFile = createServerFn({ method: "POST" })
-  .validator(zodValidator(writeFileInputSchema))
+  .validator(writeFileInputSchema)
   .handler(({ data }) => files.writeFile(data.file, data.content));
 
 export const watchFile = createServerFn({ method: "POST" })
-  .validator(zodValidator(watchFileInputSchema))
+  .validator(watchFileInputSchema)
   .handler(({ data }) => files.watchFile(data.connection, data.file));
 
 export const createFile = createServerFn({ method: "POST" })
-  .validator(zodValidator(createFileInputSchema))
+  .validator(createFileInputSchema)
   .handler(({ data }) => files.createFile(data));
 
 export const listDirectory = createServerFn({ method: "GET" })
-  .validator(zodValidator(listDirectoryInputSchema))
+  .validator(listDirectoryInputSchema)
   .handler(({ data }) => files.listDirectory(data));
 
 export const searchFiles = createServerFn({ method: "GET" })
-  .validator(zodValidator(searchFilesInputSchema))
+  .validator(searchFilesInputSchema)
   .handler(({ data }) => files.searchFiles(data));
 
 export const listCustomEditors = createServerFn({ method: "GET" }).handler(() =>

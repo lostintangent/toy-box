@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelAgent, ChannelArtifact, ChannelMember } from "./index";
+import type { Channel, ChannelAgent, ChannelArtifact, ChannelMember } from "./index";
 import {
   agentHandleFromName,
+  channelAttention,
   channelArtifactsNewestFirst,
   channelAudienceLabel,
   channelLead,
@@ -77,6 +78,41 @@ describe("channel unread position", () => {
   test("a fully read channel has no unread position", () => {
     expect(channelUnreadAfter({ seenThrough: 7, latestSequence: 7 })).toBeNull();
   });
+});
+
+describe("channel attention", () => {
+  const channel: Channel = {
+    id: "channel",
+    name: "Planning",
+    model: { provider: "copilot", name: "default" },
+    tasks: [],
+    latestSequence: 2,
+    seenThrough: 1,
+    requestSequence: null,
+    completedSequence: null,
+    updatedAt: new Date(0).toISOString(),
+  };
+
+  test.each([
+    { request: true, done: true, read: false, open: false, expected: "waiting" },
+    { request: true, done: true, read: false, open: true, expected: "waiting" },
+    { request: false, done: true, read: false, open: false, expected: "finished" },
+    { request: false, done: true, read: false, open: true, expected: undefined },
+    { request: false, done: false, read: false, open: false, expected: "unread" },
+    { request: false, done: false, read: false, open: true, expected: undefined },
+    { request: false, done: false, read: true, open: false, expected: undefined },
+  ])(
+    "request=$request done=$done read=$read open=$open asks for $expected",
+    ({ request, done, read, open, expected }) => {
+      const current = {
+        ...channel,
+        requestSequence: request ? 2 : null,
+        completedSequence: done ? 2 : null,
+        seenThrough: read ? channel.latestSequence : channel.seenThrough,
+      };
+      expect(channelAttention(current, open)).toBe(expected);
+    },
+  );
 });
 
 test("artifacts sort newest first without mutating input or reordering equal timestamps", () => {

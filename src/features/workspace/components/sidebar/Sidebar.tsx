@@ -15,7 +15,6 @@ import { ActionSpacer, CollapseToggle, SettingsButton } from "./SidebarActions";
 import { SessionList } from "@sessions/components/sidebar/SessionList";
 import { ChannelsPanel } from "@channels/components/sidebar/ChannelsPanel";
 import type { SidebarPanels } from "@workspace/model/config/layoutPrefs";
-import { openWorkspaceDialog } from "@workspace/hooks/dialogs";
 
 /**
  * Crossfade one of the sidebar's two layouts. Whichever layout is leaving clears
@@ -144,7 +143,6 @@ export function Sidebar({
             onExpandedChange={(expanded) => onPanelExpanded("channels", expanded)}
             openChannelIds={openChannelIds}
             onChannelOpen={(channelId, toggle) => selectRoot(createChannelPane(channelId), toggle)}
-            onCreate={() => openWorkspaceDialog({ kind: "channel" })}
           />
 
           <AppsPanel
@@ -160,7 +158,6 @@ export function Sidebar({
             onExpandedChange={(expanded) => onPanelExpanded("automations", expanded)}
             openSessionIds={openSessionIds}
             onSessionOpen={(sessionId) => selectRoot(createSessionPane(sessionId))}
-            onCreate={() => openWorkspaceDialog({ kind: "automation" })}
           />
         </div>
 

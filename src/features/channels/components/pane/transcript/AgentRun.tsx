@@ -7,10 +7,12 @@ import { CopyControl } from "@/shared/messages/CopyControl";
 import { AttachmentGallery } from "@/shared/attachments/AttachmentGallery";
 import { Button } from "@/shared/ui/button";
 import { ClockTime } from "@/shared/ui/clock-time";
+import { Separator } from "@/shared/ui/separator";
 import { ShowMore, useShowMore } from "@/shared/ui/show-more";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { RunningIndicator, waitingOutlineClassName } from "@/shared/ui/running-indicator";
 import { cn } from "@/shared/utils";
+import { BookmarkToggle } from "../ChannelBookmarks";
 import { useChannelPane } from "../ChannelPaneContext";
 import { ChannelReactions } from "./ChannelReactions";
 import type { AgentRunEntry, ChannelRequestState } from "./transcriptRows";
@@ -44,16 +46,16 @@ function AgentMessage({
   entry: AgentRunEntry;
   agent: ChannelAgentIdentity;
 }) {
-  const { reply, answer } = useChannelPane();
+  const { reply, answer, bookmarks } = useChannelPane();
   const textRef = useRef<HTMLDivElement>(null);
   const { collapsed, clamped, toggle } = useShowMore(textRef, message.content, collapsible);
   const attachments = message.attachments ?? [];
+  const bookmarked = bookmarks.includes(message.sequence);
+  // The toolbar shows on hover, or at rest with only the filled toggle while bookmarked.
+  const onHover = bookmarked ? "hidden group-focus-within/entry:flex group-hover/entry:flex" : "";
 
   return (
-    <div
-      className="group/entry"
-      data-request-sequence={request === "pending" ? message.sequence : undefined}
-    >
+    <div className="group/entry" data-sequence={message.sequence}>
       {showHeader && (
         <div className="mb-1 flex h-4.5 min-w-0 items-center gap-2 text-xs">
           {startsRun && (
@@ -91,7 +93,12 @@ function AgentMessage({
               <ShowMore {...toggle} className={cn(clamped && "absolute bottom-2 left-3.5 mt-0")} />
             )}
           </div>
-          <div className="pointer-events-none absolute -top-3 right-2 flex items-center gap-0.5 rounded-md border bg-background p-0.5 opacity-0 shadow-sm transition-opacity group-focus-within/entry:pointer-events-auto group-focus-within/entry:opacity-100 group-hover/entry:pointer-events-auto group-hover/entry:opacity-100">
+          <div
+            className={cn(
+              "pointer-events-none absolute -top-3 right-2 flex items-center gap-0.5 rounded-md border bg-background p-0.5 opacity-0 shadow-sm transition-opacity group-focus-within/entry:pointer-events-auto group-focus-within/entry:opacity-100 group-hover/entry:pointer-events-auto group-hover/entry:opacity-100",
+              bookmarked && "pointer-events-auto opacity-100",
+            )}
+          >
             {!agent.deleted && (
               <Tooltip>
                 <TooltipTrigger
@@ -99,7 +106,7 @@ function AgentMessage({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      className="text-muted-foreground hover:text-foreground"
+                      className={cn("text-muted-foreground hover:text-foreground", onHover)}
                       aria-label={`Reply to ${agent.name}`}
                       onClick={() => reply(agent)}
                     >
@@ -110,7 +117,9 @@ function AgentMessage({
                 <TooltipContent sideOffset={4}>Reply</TooltipContent>
               </Tooltip>
             )}
-            <CopyControl content={message.content} />
+            <CopyControl content={message.content} className={onHover} />
+            <Separator orientation="vertical" className={cn("mx-0.5 h-4!", onHover)} />
+            <BookmarkToggle sequence={message.sequence} />
           </div>
         </div>
       )}

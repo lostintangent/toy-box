@@ -14,6 +14,7 @@ import type {
   EditChannelInput,
   EditChannelTasksInput,
   PostChannelMessageInput,
+  BookmarkChannelMessageInput,
   SetChannelAgentStatusInput,
   SetChannelRoutineInput,
   ChannelMemberChanges,
@@ -229,6 +230,11 @@ export async function markChannelRead(
   const change = await database.markUserSeen(channelId, sequence);
   if (change) publishChannelChange(change);
   return change?.channel ?? database.getChannel(channelId);
+}
+
+export async function bookmarkChannelMessage(input: BookmarkChannelMessageInput): Promise<void> {
+  const change = await new ChannelDatabase(await getStateDatabase()).bookmarkMessage(input);
+  if (change) publishChannelChange(change);
 }
 
 export async function postChannelMessage(input: PostChannelMessageInput): Promise<ChannelMessage> {

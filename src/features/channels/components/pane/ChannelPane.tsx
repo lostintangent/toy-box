@@ -1,7 +1,9 @@
 import { useRef, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { CatchBoundary } from "@tanstack/react-router";
 import { AlertCircle, MessagesSquare, UserRound } from "lucide-react";
 import { channelAgentIdentity, channelLead } from "@channels/model";
+import { channelMutations } from "@channels/mutations";
 import { useChannel } from "@channels/useChannel";
 import type { PaneVariant } from "@/shared/panes/PaneSlots";
 import { PaneViewMenu } from "@/shared/panes/PaneViewMenu";
@@ -53,6 +55,7 @@ function ChannelContent({
   const transcriptRef = useRef<ChannelTranscriptHandle>(null);
   const composerRef = useRef<ChannelComposerHandle>(null);
   const [view, setView] = useState<TranscriptView>("all");
+  const { mutate: bookmark } = useMutation(channelMutations.bookmark());
   // The lead is intrinsic, so the composer can address it before the first snapshot arrives.
   const lead = state?.lead ?? channelLead(channelId);
   const members = state?.members ?? [];
@@ -70,6 +73,8 @@ function ChannelContent({
         agents,
         agent: (id) => channelAgentIdentity(agents, id),
         presence: state?.presence ?? {},
+        bookmarks: state?.bookmarks ?? [],
+        bookmark: (sequence, bookmarked) => bookmark({ channelId, sequence, bookmarked }),
         reply: (agent) => composerRef.current?.reply(agent),
         answer: (content) => send({ content }),
         mention: () => composerRef.current?.mention(),
@@ -94,7 +99,6 @@ function ChannelContent({
               view={view}
               unreadAfter={unreadAfter}
               handleRef={transcriptRef}
-              requestSequence={state.channel.requestSequence}
               onLoadPrevious={loadPrevious}
             />
           ) : (
@@ -107,7 +111,8 @@ function ChannelContent({
             state={state}
             handleRef={composerRef}
             onSubmit={send}
-            onShowRequest={() => transcriptRef.current?.showRequest()}
+            onShowMessage={(sequence) => transcriptRef.current?.showMessage(sequence)}
+            onLoadPrevious={loadPrevious}
           />
         </div>
       </div>

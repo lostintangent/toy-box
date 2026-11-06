@@ -1,28 +1,14 @@
-import type { Channel, channelStatus } from "@channels/model";
+import type { Channel, channelAttention } from "@channels/model";
 
-/** Requests remain visible while a Channel is open; other attention is acknowledged by viewing it. */
+/** How the sidebar labels what a Channel asks of you. */
 export function channelSidebarStatus(
-  channel: Channel,
-  status: ReturnType<typeof channelStatus>,
-  isOpen: boolean,
+  { name }: Channel,
+  kind: NonNullable<ReturnType<typeof channelAttention>>,
 ) {
-  if (status === "waiting")
-    return {
-      kind: "waiting" as const,
-      ariaLabel: `${channel.name} needs your attention`,
-      tooltip: "Waiting for your response",
-    };
-  if (isOpen) return;
-  if (status === "finished")
-    return {
-      kind: "finished" as const,
-      ariaLabel: `${channel.name} completed its tasks`,
-      tooltip: "All tasks completed",
-    };
-  if (status === "unread")
-    return {
-      kind: "unread" as const,
-      ariaLabel: `${channel.name} has unread messages`,
-      tooltip: "Channel has unread messages",
-    };
+  const [ariaLabel, tooltip] = {
+    waiting: [`${name} needs your attention`, "Waiting for your response"],
+    finished: [`${name} completed its tasks`, "All tasks completed"],
+    unread: [`${name} has unread messages`, "Channel has unread messages"],
+  }[kind];
+  return { kind, ariaLabel, tooltip };
 }

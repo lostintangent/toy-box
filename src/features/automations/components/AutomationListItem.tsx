@@ -29,7 +29,7 @@ export function AutomationListItem({
   return (
     <SidebarSessionItem
       sessionId={automation.id}
-      activity={{ ...activity, running: isRunning }}
+      status={isRunning && !activity.waiting ? "running" : activity.status}
       title={automation.title}
       time={
         isRunning ? (

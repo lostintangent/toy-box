@@ -26,7 +26,8 @@ function clampTerminalSize(value: number): number {
   return Math.min(TERMINAL_MAX_SIZE, Math.max(TERMINAL_MIN_SIZE, value));
 }
 
-const sidebarPanelsSchema = z.object({
+/** The sidebar's collapsible panels in their sidebar order, each present only while expanded. */
+export const sidebarPanelsSchema = z.object({
   channels: z.literal(true).optional(),
   apps: z.literal(true).optional(),
   automations: z.literal(true).optional(),
@@ -73,19 +74,12 @@ export function readWorkspaceLayout(cookieHeader?: string | null): WorkspaceLayo
 }
 
 export function serializeWorkspaceLayout(layout: WorkspaceLayout): string {
-  const panels = {
-    ...(layout.panels.channels ? { channels: true } : {}),
-    ...(layout.panels.apps ? { apps: true } : {}),
-    ...(layout.panels.automations ? { automations: true } : {}),
-  };
-  const hasExpandedPanel = panels.channels || panels.apps || panels.automations;
-
   const stored = {
     ...(layout.sidebarWidth !== DEFAULT_SIDEBAR_WIDTH ? { sidebarWidth: layout.sidebarWidth } : {}),
     ...(layout.terminalSize !== DEFAULT_TERMINAL_SIZE ? { terminalSize: layout.terminalSize } : {}),
     ...(layout.sidebarCollapsed ? { sidebarCollapsed: true } : {}),
     ...(layout.terminalOpen ? { terminalOpen: true } : {}),
-    ...(hasExpandedPanel ? { panels } : {}),
+    ...(Object.values(layout.panels).some(Boolean) ? { panels: layout.panels } : {}),
     ...(layout.hyperOpen ? { hyperOpen: true } : {}),
     ...(layout.hyperPosition.x !== DEFAULT_HYPER_POSITION.x ||
     layout.hyperPosition.y !== DEFAULT_HYPER_POSITION.y

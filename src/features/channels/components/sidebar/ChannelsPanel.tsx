@@ -2,13 +2,13 @@ import type { CSSProperties } from "react";
 import { Hash, Plus } from "lucide-react";
 import { WorkingAgents } from "@channels/components/agents/WorkingAgents";
 import { channelCommands } from "@channels/commands";
+import { channelAttention } from "@channels/model";
 import { useChannels } from "@channels/useChannels";
+import { CommandButton } from "@/shared/commands/CommandButton";
 import { CommandMenuItems } from "@/shared/commands/CommandMenuItem";
 import { SidebarListItem } from "@/shared/sidebar/SidebarListItem";
 import { SidebarPanel } from "@/shared/sidebar/SidebarPanel";
-import { Button } from "@/shared/ui/button";
 import { RelativeTime } from "@/shared/ui/relative-time";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { SessionMetadataBadges } from "@sessions/components/location/SessionMetadataBadges";
 import { channelSidebarStatus } from "./status";
 
@@ -20,25 +20,19 @@ export function ChannelsPanel({
   onExpandedChange,
   openChannelIds,
   onChannelOpen,
-  onCreate,
 }: {
   isExpanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   openChannelIds: string[];
   onChannelOpen: (channelId: string, toggleInWorkspace: boolean) => void;
-  onCreate: () => void;
 }) {
   const channels = useChannels();
   if (channels.length === 0) return null;
 
-  const rows = channels.map((entry) => ({
-    ...entry,
-    status: channelSidebarStatus(
-      entry.channel,
-      entry.status,
-      openChannelIds.includes(entry.channel.id),
-    ),
-  }));
+  const rows = channels.map((entry) => {
+    const attention = channelAttention(entry.channel, openChannelIds.includes(entry.channel.id));
+    return { ...entry, status: attention && channelSidebarStatus(entry.channel, attention) };
+  });
 
   return (
     <SidebarPanel
@@ -52,22 +46,9 @@ export function ChannelsPanel({
         running: channels.some(({ agents }) => agents.some(({ isRunning }) => isRunning)),
       }}
       action={
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-6 w-6"
-                aria-label="Create channel"
-                onClick={onCreate}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            }
-          />
-          <TooltipContent sideOffset={6}>Create channel</TooltipContent>
-        </Tooltip>
+        <CommandButton command="channel.create" size="icon" variant="ghost" className="h-6 w-6">
+          <Plus className="h-4 w-4" />
+        </CommandButton>
       }
     >
       {rows.map(({ channel, agents, status }) => {

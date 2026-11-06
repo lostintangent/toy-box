@@ -31,6 +31,7 @@
   --color-diff-modified-old-bg: var(--diff-modified-old-bg);
   --color-diff-modified-new-bg: var(--diff-modified-new-bg);
   --color-unread: var(--unread);
+  --color-done: var(--done);
 
   /* Micro label size — below text-xs (12px); badges, counts, eyebrow headings. */
   --text-2xs: 0.6875rem;

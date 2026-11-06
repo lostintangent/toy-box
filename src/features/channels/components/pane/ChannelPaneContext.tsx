@@ -7,7 +7,8 @@ import type {
 } from "@channels/model";
 import type { ChannelAgentPresence } from "@channels/model/presence";
 
-/** The open Channel's agents, and the drafts its transcript and overview start in the composer. */
+/** The open Channel's agents, the user's bookmarks, and the drafts its transcript and overview start
+ *  in the composer. */
 type ChannelPane = {
   lead: ChannelLead;
   members: readonly ChannelMember[];
@@ -16,6 +17,9 @@ type ChannelPane = {
   /** The agent with this ID, or a deleted identity once it has left. */
   agent: (id: string) => ChannelAgentIdentity;
   presence: Record<string, ChannelAgentPresence>;
+  /** The sequences of the messages the user bookmarked, oldest first. */
+  bookmarks: readonly number[];
+  bookmark: (sequence: number, bookmarked: boolean) => void;
   /** Addresses the draft to an agent by mentioning it first. */
   reply: (agent: ChannelAgent) => void;
   /** Posts a suggested reply to the pending request as the user's next message. */

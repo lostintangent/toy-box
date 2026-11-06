@@ -1,9 +1,10 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { Button } from "@/shared/ui/button";
+import { CommandButton } from "@/shared/commands/CommandButton";
 import { SidebarPanel } from "@/shared/sidebar/SidebarPanel";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import { sessionAttention } from "@sessions/model/activity";
 import { useSessionsActivity } from "@sessions/useSessionActivity";
+import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { automationQueries } from "../queries";
 import { AutomationListItem } from "./AutomationListItem";
 
@@ -12,7 +13,6 @@ type AutomationPanelProps = {
   onExpandedChange: (expanded: boolean) => void;
   openSessionIds: string[];
   onSessionOpen: (sessionId: string) => void;
-  onCreate: () => void;
 };
 
 export function AutomationPanel({
@@ -20,16 +20,25 @@ export function AutomationPanel({
   onExpandedChange,
   openSessionIds,
   onSessionOpen,
-  onCreate,
 }: AutomationPanelProps) {
-  const { data: automations } = useSuspenseQuery(automationQueries.list());
-  const activity = useSessionsActivity((activities) => ({
-    waiting: automations.some(({ id }) => activities[id]?.status === "waiting"),
-    unread: automations.some(
-      ({ id }) => activities[id]?.status === "unread" && !openSessionIds.includes(id),
-    ),
-    running: automations.some(({ id }) => activities[id]?.status === "running"),
-  }));
+  const disabledProviders = useWorkspaceSelector(
+    (workspace) => workspace.settings.disabledProviders,
+  );
+  const { data: automations } = useSuspenseQuery({
+    ...automationQueries.list(),
+    select: (list) =>
+      list.filter((automation) => !disabledProviders.includes(automation.model.provider)),
+  });
+  const activity = useSessionsActivity((activities) => {
+    const attention = automations.map(({ id }) =>
+      sessionAttention(activities[id]?.status, openSessionIds.includes(id)),
+    );
+    return {
+      waiting: attention.includes("waiting"),
+      unread: attention.includes("unread"),
+      running: automations.some(({ id }) => activities[id]?.status === "running"),
+    };
+  });
   if (automations.length === 0) return null;
 
   return (
@@ -39,22 +48,9 @@ export function AutomationPanel({
       onExpandedChange={onExpandedChange}
       activity={activity}
       action={
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-6 w-6"
-                aria-label="Create automation"
-                onClick={onCreate}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            }
-          />
-          <TooltipContent sideOffset={6}>Create automation</TooltipContent>
-        </Tooltip>
+        <CommandButton command="automation.create" size="icon" variant="ghost" className="h-6 w-6">
+          <Plus className="h-4 w-4" />
+        </CommandButton>
       }
     >
       {automations.map((automation) => {

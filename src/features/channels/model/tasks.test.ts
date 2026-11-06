@@ -12,7 +12,7 @@ import {
 
 const task = (id: string): ChannelTask => ({ id, title: id, status: "pending" });
 
-test("task timing follows stable IDs through rewrites and blocking, not supplied timestamps", () => {
+test("task timing follows stable IDs through rewrites, not supplied timestamps", () => {
   const start = "2026-10-23T15:00:00.000Z";
   const later = "2026-10-23T15:20:00.000Z";
   const running = { ...task("t1"), status: "in_progress" as const, startedAt: later };
@@ -21,20 +21,19 @@ test("task timing follows stable IDs through rewrites and blocking, not supplied
   expect(started).toEqual([{ ...running, startedAt: start }]);
   const rewritten = reconcileChannelTaskTiming(
     started,
-    [{ ...task("group"), children: [{ ...running, title: "Revised", status: "blocked" }] }],
+    [{ ...task("group"), children: [{ ...running, title: "Revised" }] }],
     later,
   );
-  expect(rewritten[0]!.children).toEqual([
-    { ...running, title: "Revised", status: "blocked", startedAt: start },
-  ]);
+  expect(rewritten[0]!.children).toEqual([{ ...running, title: "Revised", startedAt: start }]);
   expect(reconcileChannelTaskTiming(rewritten, [running], later)).toEqual(started);
   expect(before).toEqual([task("t1")]);
 });
 
 test.each([
   ["pending", "2026-10-23T15:10:00.000Z"],
+  ["blocked", "2026-10-23T15:10:00.000Z"],
   ["done", undefined],
-] as const)("a %s reset clears age and completion cancels its check-in", (status, checkInAt) => {
+] as const)("moving to %s clears age and completion cancels its check-in", (status, checkInAt) => {
   const running = {
     ...task("t1"),
     status: "in_progress" as const,

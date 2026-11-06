@@ -236,11 +236,15 @@ and provided commands, and `CommandPalette` owns the dialog, keyboard, running, 
 peek. The root leads with "This …", headed by the noun of the row's group: the actions of the
 current pane's row, or else of the row of the session it belongs to. A child session isn't listed,
 so its row is built for the section alone, without Pin, as the sidebar shows it. A row's ID is the
-ID of the pane it opens, so a pane needs nothing more to get the section once its row has actions.
+ID of the pane it opens, so a pane needs nothing more to get the section once its row has actions,
+and a row is open while its pane is among the surface's panes.
 The current pane is read once as the palette opens, from the pane hosts' `data-pane-id`: the pane
 holding focus, else the maximized one, the phone's page, or the only one. The section skips the
 default selection, so Enter on opening runs what it would without it, never an action on what's
-open.
+open. "Ready for you" follows, five in all: what waits on you, then what finished unseen, as each
+feature's attention rule (`sessionAttention`, `channelAttention`) says, with sessions, then channels
+and automations, in each tier. A channel's unread messages alone don't count. Running, pinned, and
+recent sessions come after it, including any the section's cap left out.
 Search reads only what a row shows, its title and detail. Matches rank by where the query
 occurs, then by frequent use; commands and places rank above
 content at a comparable match because their titles lead with a verb. A query that names nothing can

@@ -58,10 +58,11 @@ than consulting feature catalogs. Hyper membership remains process-local Workspa
 Managed sessions remain addressable for linked children, previews, and activity.
 
 `model/activity.ts` owns session activity: whether a session is running, waiting on a blocking
-question, working in the background, or finished with unread results. Its pure reducer is shared
-by the server store and every browser, and a session without an entry is idle. Live activity
-carries `since`, stamped from the `at` of the event that began the run; waiting and background keep
-it and a new run restarts it. Background sessions remain live but do not count as foreground work.
+question, working in the background, or finished with unread results, which `sessionAttention`
+reports until it's opened. Its pure reducer is shared by the server store and every browser, and a
+session without an entry is idle. Live activity carries `since`, stamped from the `at` of the event
+that began the run; waiting and background keep it and a new run restarts it. Background sessions
+remain live but do not count as foreground work.
 The runtime writes activity through `server/state/activity.ts`, which broadcasts each accepted
 transition as a `session.*` workspace event. Browsers read it through `sessionQueries.activity()`
 and `useSessionActivity.ts`, and `sessionMutations.markRead` clears unread before the server confirms.
@@ -165,7 +166,9 @@ default does not change already-open panes; overlays and passive previews keep t
 
 The composer stacks what a session produced (artifacts newest first, plus todo progress and changed
 files) and what is waiting (queued messages) above the message being written. Sessions and Channels
-share [`ComposerTray`](components/outputs/ComposerTray.tsx). [`components/outputs/`](components/outputs/)
+share [`ComposerTray`](components/outputs/ComposerTray.tsx). Its artifacts collapse into "+N" by
+the room their row leaves beside the owner's leading output (such as a Channel's bookmarks), the
+checklist, and extra output. [`components/outputs/`](components/outputs/)
 holds that output presentation: artifact pills, the checklist popup, and page and screen previews.
 `PagePreview` is the sandboxed thumbnail that HTML artifacts and a Channel's preview share. They
 combine Files identity and previews with the current surface's pane focus and file-worker activity,

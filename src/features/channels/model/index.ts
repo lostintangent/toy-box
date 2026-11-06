@@ -77,6 +77,13 @@ export function channelStatus(channel: Channel): "waiting" | "finished" | "unrea
   return null;
 }
 
+/** What a Channel asks of you: a request stays while it's open, and completion and unread
+ *  messages clear once it is. */
+export function channelAttention(channel: Channel, isOpen: boolean) {
+  const status = channelStatus(channel);
+  return status === "waiting" || (status && !isOpen) ? status : undefined;
+}
+
 /** A Channel as the catalog publishes it; its revision orders that Channel's catalog changes. */
 export type ChannelCatalogEntry = Channel & { revision: number };
 
@@ -386,6 +393,8 @@ export type ChannelState = {
   messages: ChannelMessage[];
   /** The newest unanswered public request, including one outside the message window. */
   request: ChannelConversationMessage | null;
+  /** The sequences of messages the user bookmarked, in order; private to the user. */
+  bookmarks: number[];
   /** Oldest first. */
   artifacts: ChannelArtifact[];
   /** Oldest first. */
@@ -407,6 +416,7 @@ export type ChannelEvent<A = ChannelAttachment> = (
   | { type: "tasks"; tasks: ChannelTask[] }
   | { type: "model"; model: ModelConfiguration; updatedAt: string }
   | { type: "read"; seenThrough: number }
+  | { type: "bookmarks"; bookmarks: number[] }
   | { type: "member"; member: ChannelMember }
   | { type: "status"; agentId: string; status?: ChannelAgent["status"] }
 ) & { revision: number };
@@ -496,6 +506,15 @@ export const markChannelReadInputSchema = z
   })
   .strict();
 
+export const bookmarkChannelMessageInputSchema = z
+  .object({
+    channelId: durableIdSchema,
+    sequence: z.number().int().positive(),
+    bookmarked: z.boolean(),
+  })
+  .strict();
+
+export type BookmarkChannelMessageInput = z.output<typeof bookmarkChannelMessageInputSchema>;
 export type CreateChannelInput = z.output<typeof createChannelInputSchema>;
 export type EditChannelInput = z.output<typeof editChannelInputSchema>;
 export type PostChannelMessageInput = z.output<typeof postChannelMessageInputSchema>;

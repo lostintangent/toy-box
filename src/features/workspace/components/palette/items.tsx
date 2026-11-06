@@ -20,7 +20,7 @@ import { createAppPane, type AppDefinition, type AppInstance } from "@apps/model
 import { automationCommands } from "@automations/commands";
 import type { Automation } from "@automations/model";
 import { channelCommands } from "@channels/commands";
-import { channelHasUnread, createChannelPane, type Channel } from "@channels/model";
+import { channelAttention, createChannelPane, type Channel } from "@channels/model";
 import { machineFile } from "@files/model";
 import { createEditorPane } from "@files/model/panes";
 import { getPathBasename, getPathDirname, toRelativePath } from "@files/model/paths";
@@ -34,7 +34,7 @@ import { getSessionLabel } from "@sessions/model/label";
 import { createSessionPane } from "@sessions/model/panes";
 import type { RecentDirectory } from "@sessions/model/recentDirectories";
 import type { WorkspacePane } from "@workspace/model/panes";
-import type { SessionActivity } from "@sessions/model/activity";
+import { sessionAttention, type SessionActivity } from "@sessions/model/activity";
 import type { PaletteItem } from "./palette";
 
 // How each kind of thing in the workspace reads as a palette row: what it's called, what
@@ -93,7 +93,9 @@ export function sessionItem(
         : Shapes
       : MessageSquare,
     accessory: (
-      <SessionAccessory activity={activity} isOpen={isOpen} updatedAt={session.updatedAt} />
+      <SessionAccessory activity={activity} isOpen={isOpen}>
+        <RelativeTime date={session.updatedAt} />
+      </SessionAccessory>
     ),
     preview: () => <SessionPreviewPane sessionId={session.id} />,
     actions: [
@@ -105,17 +107,18 @@ export function sessionItem(
   };
 }
 
-/** What a session is doing, or else when it was last active. */
+/** What a session is doing, or else what its row shows at rest. */
 function SessionAccessory({
   activity,
   isOpen,
-  updatedAt,
+  children,
 }: {
   activity?: SessionActivity;
   isOpen: boolean;
-  updatedAt: Date;
+  children: ReactNode;
 }) {
-  if (activity?.status === "waiting") return <Status kind="waiting">Waiting for you</Status>;
+  const attention = sessionAttention(activity?.status, isOpen);
+  if (attention === "waiting") return <Status kind="waiting">Waiting for you</Status>;
   if (activity?.status === "running") {
     return (
       <Status kind="running">
@@ -125,12 +128,7 @@ function SessionAccessory({
   }
   if (activity?.status === "background") return <Status kind="background">Background tasks</Status>;
 
-  const updated = <RelativeTime date={updatedAt} />;
-  return activity?.status === "unread" && !isOpen ? (
-    <Status kind="unread">{updated}</Status>
-  ) : (
-    updated
-  );
+  return attention === "unread" ? <Status kind="unread">{children}</Status> : children;
 }
 
 function Status({ kind, children }: { kind: SidebarStatus["kind"]; children: ReactNode }) {
@@ -146,15 +144,25 @@ function Status({ kind, children }: { kind: SidebarStatus["kind"]; children: Rea
 
 export function channelItem(
   channel: Channel,
-  { navigation, canAdd }: { navigation: PaletteNavigation; canAdd: boolean },
+  {
+    isOpen,
+    navigation,
+    canAdd,
+  }: { isOpen: boolean; navigation: PaletteNavigation; canAdd: boolean },
 ): PaletteItem {
   const pane = createChannelPane(channel.id);
+  const attention = channelAttention(channel, isOpen);
+  const updated = <RelativeTime date={channel.updatedAt} />;
   return {
     id: pane.id,
     title: channel.name,
     group: "Channels",
     icon: Hash,
-    accessory: channelHasUnread(channel) ? <SidebarStatusMark kind="unread" /> : undefined,
+    accessory: attention ? (
+      <Status kind={attention}>{attention === "waiting" ? "Waiting for you" : updated}</Status>
+    ) : (
+      updated
+    ),
     actions: [
       ...addToWorkspace(canAdd, () => navigation.openRoot(pane)),
       ...channelCommands(channel),
@@ -185,11 +193,18 @@ export function appItem(
 export function automationItem(
   automation: Automation,
   {
+    activity,
+    isOpen,
     navigation,
     canAdd,
     run,
-    isRunning,
-  }: { navigation: PaletteNavigation; canAdd: boolean } & Parameters<typeof automationCommands>[1],
+  }: {
+    activity?: SessionActivity;
+    isOpen: boolean;
+    navigation: PaletteNavigation;
+    canAdd: boolean;
+    run: Parameters<typeof automationCommands>[1]["run"];
+  },
 ): PaletteItem {
   const pane = createSessionPane(automation.id);
   return {
@@ -199,13 +214,15 @@ export function automationItem(
     detail: automation.cwd ? resolveSessionLocation({ cwd: automation.cwd })?.label : undefined,
     icon: Clock3,
     accessory: (
-      <span>
-        Runs <RelativeTime date={automation.nextRunAt} />
-      </span>
+      <SessionAccessory activity={activity} isOpen={isOpen}>
+        <span>
+          Runs <RelativeTime date={automation.nextRunAt} />
+        </span>
+      </SessionAccessory>
     ),
     actions: [
       ...addToWorkspace(canAdd, () => navigation.openRoot(pane)),
-      ...automationCommands(automation, { run, isRunning }),
+      ...automationCommands(automation, { run, isRunning: activity?.status === "running" }),
     ],
     verb: "Open",
     run: () => navigation.selectRoot(pane),

@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { Channel, ChannelList, ChannelMessage } from "@channels/model";
 import {
+  bookmarkChannelMessageInputSchema,
   channelIdentitySchema,
   createChannelMemberInputSchema,
   createChannelInputSchema,
@@ -64,6 +65,10 @@ export const markChannelRead = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<void> => {
     await channels.markChannelRead(data.channelId, data.sequence);
   });
+
+export const bookmarkChannelMessage = createServerFn({ method: "POST" })
+  .validator(bookmarkChannelMessageInputSchema)
+  .handler(({ data }): Promise<void> => channels.bookmarkChannelMessage(data));
 
 export const postChannelMessage = createServerFn({ method: "POST" })
   .validator(postChannelMessageInputSchema)

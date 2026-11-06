@@ -15,6 +15,7 @@ import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
 import * as database from "@/server/database";
 import { detachManagedSession } from "@/server/managedSessions";
 import {
+  bookmarkChannelMessageResponse,
   createChannelResponse,
   deleteChannelResponse,
   deleteChannelRoutineResponse,
@@ -444,6 +445,26 @@ test("the HTTP read command returns its cursor for changes and no-ops", async ()
   const unchanged = await markChannelReadResponse(channel.id, post({ sequence: 1 }));
   expect(await unchanged.json()).toEqual({ version: 1, seenThrough: 1 });
   expect((await markChannelReadResponse("missing", post({ sequence: 0 }))).status).toBe(404);
+});
+
+test("the HTTP bookmark commands answer 204 for repeats and reject what can't be bookmarked", async () => {
+  const { channel, channels } = await openChannel();
+  await channels.appendMessage({
+    id: "note",
+    channelId: channel.id,
+    sender: { type: "user" },
+    content: "Keep this.",
+  });
+  await channels.updateChannel(channel.id, { name: "Renamed" });
+  const bookmark = (sequence: string, bookmarked: boolean, channelId = channel.id) =>
+    bookmarkChannelMessageResponse(channelId, sequence, bookmarked).then(({ status }) => status);
+
+  expect([await bookmark("1", true), await bookmark("1", true)]).toEqual([204, 204]);
+  expect(await bookmark("1", false)).toBe(204);
+  expect(await bookmark("2", true)).toBe(422);
+  expect(await bookmark("1", true, "missing")).toBe(404);
+  for (const sequence of ["0", "-1", "1.5", "bad"])
+    expect(await bookmark(sequence, true)).toBe(400);
 });
 
 test("HTTP rejects malformed bodies, channel overrides, unsupported content types and missing Channels", async () => {

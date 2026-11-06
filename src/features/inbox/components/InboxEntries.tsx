@@ -1,22 +1,15 @@
 import { useId, useState } from "react";
 import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
-import {
-  Circle,
-  FileText,
-  Inbox as InboxIcon,
-  Info,
-  Loader2,
-  Trash2,
-  TriangleAlert,
-} from "lucide-react";
+import { FileText, Inbox as InboxIcon, Info, Loader2, Trash2, TriangleAlert } from "lucide-react";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { Button } from "@/shared/ui/button";
 import { Markdown } from "@/shared/ui/markdown";
-import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
+import { SidebarStatusMark } from "@/shared/sidebar/SidebarStatus";
 import { cn } from "@/shared/utils";
 import type { Session } from "@sessions/model";
+import { sessionAttention } from "@sessions/model/activity";
 import { sessionMutations } from "@sessions/mutations";
 import { useSessionActivity, useSessionsActivity } from "@sessions/useSessionActivity";
 import { workerQueries } from "@workers/queries";
@@ -83,11 +76,12 @@ function InboxEntryRow({
 }) {
   const deleteMutation = useMutation(inboxMutations.deleteEntry(entry.id));
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const { unread } = useSessionActivity(entry.id);
+  const { unread, waiting, status } = useSessionActivity(entry.id);
   const { data: workers } = useSuspenseQuery(workerQueries.active());
   const running = useSessionsActivity((activities) =>
     isInboxTaskRunning(activities, workers, entry.id),
   );
+  const mark = running && !waiting ? "running" : sessionAttention(status, false);
   const { mutate: markRead } = useMutation(sessionMutations.markRead(entry.id));
   const pending = entry.kind === "pending";
   const preview = useSessionPreview(!pending || !session);
@@ -167,8 +161,7 @@ function InboxEntryRow({
         )}
         <InboxEntryAction
           label={label}
-          running={running}
-          unread={unread}
+          status={mark}
           deleting={deleteMutation.isPending}
           onDelete={() => {
             if (entry.kind === "error" || (entry.kind === "result" && entry.artifact))
@@ -189,33 +182,31 @@ function InboxEntryRow({
   );
 }
 
+const STATUS_LABELS = {
+  running: "is running",
+  waiting: "is waiting for input",
+  unread: "has unread activity",
+};
+
 function InboxEntryAction({
   label,
-  running,
-  unread,
+  status,
   deleting,
   onDelete,
 }: {
   label?: string;
-  running: boolean;
-  unread: boolean;
+  status?: keyof typeof STATUS_LABELS;
   deleting: boolean;
   onDelete: () => void;
 }) {
-  const hasStatus = running || unread;
-  const statusLabel = label || "Inbox entry";
   return (
     <div className="relative mr-2 h-8 w-8 shrink-0">
-      {hasStatus && (
+      {status && (
         <div
           className="absolute inset-0 flex items-center justify-center transition-opacity group-hover/inbox:opacity-0 group-focus-within/inbox:opacity-0"
-          aria-label={running ? `${statusLabel} is running` : `${statusLabel} has unread activity`}
+          aria-label={`${label || "Inbox entry"} ${STATUS_LABELS[status]}`}
         >
-          {running ? (
-            <RunningIndicator className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <Circle className="h-2.5 w-2.5 fill-unread text-unread" />
-          )}
+          <SidebarStatusMark kind={status} />
         </div>
       )}
       <Button
@@ -226,7 +217,7 @@ function InboxEntryAction({
         aria-label={label ? `Delete inbox entry: ${label}` : "Delete inbox entry"}
         className={cn(
           "absolute inset-0 h-8 w-8",
-          hasStatus &&
+          status &&
             "pointer-events-none opacity-0 transition-opacity group-hover/inbox:pointer-events-auto group-hover/inbox:opacity-100 group-focus-within/inbox:pointer-events-auto group-focus-within/inbox:opacity-100",
         )}
         onClick={onDelete}

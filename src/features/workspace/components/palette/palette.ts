@@ -110,10 +110,19 @@ function withTop(state: PaletteState, page: PalettePage): PaletteState {
 
 const TRIAGE_LIMIT = 5;
 
+/** What's ready for you, at most TRIAGE_LIMIT of every kind together: what waits on you, then
+ *  whatever else asks for you, each tier keeping the order it's given, so kinds needn't compare
+ *  times. */
+export function rankReadyForYou<C extends { attention?: string }>(candidates: readonly C[]) {
+  const waiting = candidates.filter(({ attention }) => attention === "waiting");
+  const rest = candidates.filter(({ attention }) => attention && attention !== "waiting");
+  return [...waiting, ...rest].slice(0, TRIAGE_LIMIT);
+}
+
 /**
  * The sessions worth reaching for before searching, each in the first section that claims it:
- * those that need you (waiting on you, or finished unseen), those running, those pinned, and the
- * most recent of the rest that aren't already open. `sessions` are newest first.
+ * those running, those pinned, and the most recent of the rest that aren't already open.
+ * `sessions` are newest first, and exclude those already ready for you.
  */
 export function triageSessions<S extends { id: string }>(
   sessions: readonly S[],
@@ -136,13 +145,6 @@ export function triageSessions<S extends { id: string }>(
   };
   const status = (session: S) => activities[session.id]?.status;
 
-  const needsYou = claim(
-    sessions.filter(
-      (session) =>
-        status(session) === "waiting" || (status(session) === "unread" && !open.has(session.id)),
-    ),
-    TRIAGE_LIMIT,
-  );
   const running = claim(
     sessions.filter((session) => status(session) === "running" || status(session) === "background"),
     TRIAGE_LIMIT,
@@ -154,7 +156,7 @@ export function triageSessions<S extends { id: string }>(
     TRIAGE_LIMIT,
   );
 
-  return { needsYou, running, pinned, recent };
+  return { running, pinned, recent };
 }
 
 /**

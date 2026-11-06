@@ -15,7 +15,7 @@ export const channelTaskSchema = z
       .datetime()
       .optional()
       .describe(
-        "Server-owned start time, set when work begins and cleared when the task is pending or done. Do not set it.",
+        "Server-owned start time, set when the task enters in_progress and cleared when it leaves. Do not set it.",
       ),
     checkInAt: z.iso
       .datetime()
@@ -68,11 +68,8 @@ export function reconcileChannelTaskTiming(
   remember(previous);
   const visit = (tasks: readonly ChannelTask[]): ChannelTask[] =>
     tasks.map(({ startedAt: _startedAt, checkInAt, children, ...task }) => {
-      const before = byId.get(task.id);
       const startedAt =
-        task.status === "pending" || task.status === "done"
-          ? undefined
-          : (before?.startedAt ?? (task.status === "in_progress" ? now : undefined));
+        task.status === "in_progress" ? (byId.get(task.id)?.startedAt ?? now) : undefined;
       return {
         ...task,
         ...(startedAt ? { startedAt } : {}),

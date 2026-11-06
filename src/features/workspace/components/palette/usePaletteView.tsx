@@ -19,8 +19,10 @@ import { useCommands } from "@/shared/commands/CommandProvider";
 import { matchSearchable, searchCommands } from "@/shared/commands/search";
 import { readCommandUsage, usageWeight } from "@/shared/commands/usage";
 import { appQueries } from "@apps/queries";
+import type { Automation } from "@automations/model";
 import { automationMutations } from "@automations/mutations";
 import { automationQueries } from "@automations/queries";
+import { channelAttention, createChannelPane, type Channel } from "@channels/model";
 import { channelQueries } from "@channels/queries";
 import { fileQueries } from "@files/queries";
 import { inboxMutations } from "@inbox/mutations";
@@ -33,12 +35,14 @@ import { useModels } from "@providers/useModels";
 import { resolveSessionLocation } from "@sessions/components/location/locationDisplay";
 import { sessionMutations } from "@sessions/mutations";
 import type { Session } from "@sessions/model";
+import { sessionAttention } from "@sessions/model/activity";
 import { createSessionPane } from "@sessions/model/panes";
 import { getRecentDirectories } from "@sessions/model/recentDirectories";
 import { selectSessionChildren, sessionQueries } from "@sessions/queries";
 import { useSessionsActivity } from "@sessions/useSessionActivity";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
+import type { WorkspacePane } from "@workspace/model/panes";
 import {
   addToWorkspace,
   appItem,
@@ -52,6 +56,7 @@ import {
 } from "./items";
 import {
   listItems,
+  rankReadyForYou,
   resolveCurrentPane,
   sectionByGroup,
   triageSessions,
@@ -64,7 +69,6 @@ import {
 export type PaletteData = {
   /** The listed (top-level) sessions. */
   sessions: readonly Session[];
-  openSessionIds: readonly string[];
   navigation: PaletteNavigation;
 };
 
@@ -87,7 +91,7 @@ const FILE_SEARCH_DEBOUNCE_MS = 150;
 
 export function usePaletteView(
   { stack, launch }: PaletteState,
-  { sessions: listedSessions, openSessionIds, navigation }: PaletteData,
+  { sessions: listedSessions, navigation }: PaletteData,
   { isMobile }: { isMobile: boolean },
 ): PaletteView {
   const page = stack.at(-1)!;
@@ -134,6 +138,9 @@ export function usePaletteView(
   const sessions = listedSessions
     .filter((session) => isEnabled(session.provider?.id))
     .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
+  const enabledAutomations = automations.filter((automation) =>
+    isEnabled(automation.model.provider),
+  );
   const recentDirectories = getRecentDirectories(sessions);
 
   const model = launch.model ?? defaultModel ?? undefined;
@@ -158,7 +165,9 @@ export function usePaletteView(
     placeholderData: (previous, query) => (query?.queryKey[2] === directory ? previous : undefined),
   });
 
-  const openIds = new Set(openSessionIds);
+  // A row is keyed by the pane it opens, so it's open while that pane is.
+  const openPaneIds = new Set(panes.map(({ id }) => id));
+  const isOpen = (pane: WorkspacePane) => openPaneIds.has(pane.id);
   const pinnedIds = new Set(workspace.pinnedIds);
   const togglePin = (sessionId: string) =>
     updateSetting(
@@ -170,20 +179,26 @@ export function usePaletteView(
   const toSessionItem = (session: Session) =>
     sessionItem(session, {
       activity: activities[session.id],
-      isOpen: openIds.has(session.id),
+      isOpen: isOpen(createSessionPane(session.id)),
       pin: { isPinned: pinnedIds.has(session.id), toggle: () => togglePin(session.id) },
       navigation,
       canAdd,
+    });
+  const toChannelItem = (channel: Channel) =>
+    channelItem(channel, { isOpen: isOpen(createChannelPane(channel.id)), navigation, canAdd });
+  const toAutomationItem = (automation: Automation) =>
+    automationItem(automation, {
+      activity: activities[automation.id],
+      isOpen: isOpen(createSessionPane(automation.id)),
+      navigation,
+      canAdd,
+      run: runAutomation,
     });
 
   // Each group names what one of its rows is, which heads "This …" when the current pane has one.
   const groups: Record<string, { icon: LucideIcon; noun: string; items: PaletteItem[] }> = {
     Sessions: { icon: MessageSquare, noun: "session", items: sessions.map(toSessionItem) },
-    Channels: {
-      icon: Hash,
-      noun: "channel",
-      items: channels.map((channel) => channelItem(channel, { navigation, canAdd })),
-    },
+    Channels: { icon: Hash, noun: "channel", items: channels.map(toChannelItem) },
     Apps: {
       icon: AppWindow,
       noun: "app",
@@ -198,16 +213,7 @@ export function usePaletteView(
     Automations: {
       icon: Clock3,
       noun: "automation",
-      items: automations
-        .filter((automation) => isEnabled(automation.model.provider))
-        .map((automation) =>
-          automationItem(automation, {
-            navigation,
-            canAdd,
-            run: runAutomation,
-            isRunning: activities[automation.id]?.status === "running",
-          }),
-        ),
+      items: enabledAutomations.map(toAutomationItem),
     },
   };
 
@@ -342,11 +348,37 @@ export function usePaletteView(
         };
       }
 
-      const triage = triageSessions(sessions, {
-        activities,
-        pinnedIds: workspace.pinnedIds,
-        openIds: openSessionIds,
-      });
+      // Within each tier, sessions lead, then channels, then automations.
+      const sessionAttentionOf = ({ id }: { id: string }) =>
+        sessionAttention(activities[id]?.status, isOpen(createSessionPane(id)));
+      const readyForYou = rankReadyForYou([
+        ...sessions.map((session) => ({
+          attention: sessionAttentionOf(session),
+          item: () => toSessionItem(session),
+        })),
+        ...channels.map((channel) => {
+          const attention = channelAttention(channel, isOpen(createChannelPane(channel.id)));
+          // A channel's unread messages alone don't make it ready for you.
+          return {
+            attention: attention === "unread" ? undefined : attention,
+            item: () => toChannelItem(channel),
+          };
+        }),
+        ...enabledAutomations.map((automation) => ({
+          attention: sessionAttentionOf(automation),
+          item: () => toAutomationItem(automation),
+        })),
+      ]).map(({ item }) => item());
+      // Sessions past the cap fall through to the sections below.
+      const listedIds = new Set(readyForYou.map(({ id }) => id));
+      const triage = triageSessions(
+        sessions.filter(({ id }) => !listedIds.has(createSessionPane(id).id)),
+        {
+          activities,
+          pinnedIds: workspace.pinnedIds,
+          openIds: panes.flatMap((pane) => (pane.kind === "session" ? [pane.sessionId] : [])),
+        },
+      );
       return {
         sections: [
           {
@@ -354,7 +386,7 @@ export function usePaletteView(
             matches: listItems(currentActions),
             skipsDefault: true,
           },
-          { heading: "Needs you", matches: listItems(triage.needsYou.map(toSessionItem)) },
+          { heading: "Ready for you", matches: listItems(readyForYou) },
           { heading: "Running", matches: listItems(triage.running.map(toSessionItem)) },
           { heading: "Pinned", matches: listItems(triage.pinned.map(toSessionItem)) },
           { heading: "Recent", matches: listItems(triage.recent.map(toSessionItem)) },

@@ -57,8 +57,8 @@ Channel        name, purpose, directory, lead model, tasks, preview, user read p
   and descendant diffs, never storing aggregates. Unreported work differs from a measured zero;
   totals summarize reported work, not necessarily the net repository diff.
 - Task timing belongs to the committed tree: server-owned `startedAt` begins on entry to
-  `in_progress`, survives edits, moves, replacements by ID, and blocking, and clears on done or
-  reset to pending. Clients derive age from this
+  `in_progress`, survives edits, moves, and replacements by ID while the task stays in progress,
+  and clears when it leaves, so resuming starts a fresh timer. Clients derive age from this
   timestamp; compact agent reads expose derived `elapsedMinutes` instead of the timestamp.
   The lead may independently set an optional UTC `checkInAt`. The existing minute wake check
   atomically clears due check-ins on assigned, in-progress tasks, then privately asks each owner
@@ -85,6 +85,9 @@ Channel        name, purpose, directory, lead model, tasks, preview, user read p
   carry `replies`, two to four labels of up to 80 characters that become one-tap answers.
 - `ChannelReaction` is one Agent's durable acknowledgement or sentiment on a user or Agent message.
   It does not wake anyone or advance message sequence.
+- A bookmark is the user's private mark on a user or Agent message, stored only as its sequence.
+  The list lives on the Channel row but stays off `Channel`, so the catalog, sidebar, push, and
+  agent tools never see it.
 - `ChannelArtifact` indexes a shared `WorkspaceFile` by its `id` (the file's identity), with its
   title and when it was first shared; sharing it again changes only the title. Every artifact
   carries its `id`, so tasks, apps, and native clients never derive it. Files owns the address and
@@ -98,8 +101,9 @@ Channel        name, purpose, directory, lead model, tasks, preview, user read p
   deleting one each append a typed system message that shows its title. Only the lead adds or changes
   routines. The user can run one immediately or delete it.
 - `ChannelState` is the canonical reduced detail: Channel metadata, lead, members, messages,
-  pending request, artifacts, routines, presence, and revision. A snapshot is a state value at one
-  instant, not a separate type. Earlier messages page by sequence; revision is the durable replay cursor.
+  pending request, bookmarks in sequence order, artifacts, routines, presence, and revision. A
+  snapshot is a state value at one instant, not a separate type. Earlier messages page by sequence;
+  revision is the durable replay cursor.
 
 There is no separate Agent or membership database. Workers persists ownership, name, and opaque
 metadata. Channels validates that metadata as role, model, avatar, `seenThrough`, and status, then
@@ -149,6 +153,8 @@ lead exists for the Channel's lifetime, is addressed as `@lead`, and its agent I
   wake exactly those agents, while `@everyone` wakes the lead and all members except the sender.
   The composer resolves the same policy for its draft, so it shows exactly who a message will wake.
 - Set or clear one reaction per Agent without advancing transcript state.
+- Bookmark or unbookmark a user or Agent message idempotently, without changing Channel metadata,
+  attention, or delivery.
 - Register durable artifacts once and surface later file edits automatically. Attach screenshots,
   other images, and recordings to messages; generated images are attached by their saved paths.
 
@@ -268,7 +274,8 @@ changes update Channel metadata and append a separate typed system message for e
 in one transaction, advancing sequence and revision for each; a user purpose change also wakes the lead
 to read the new direction. Preview changes append `preview_changed`; tasks and lead-model changes
 have their own revisioned events without a transcript entry. Human read-position advances also
-have a revisioned event carrying only the committed cursor.
+have a revisioned event carrying only the committed cursor, and a bookmark change one `bookmarks`
+event that replaces the list, as `tasks` does.
 Private Agent read-position changes update only Worker metadata. Message, reaction, and artifact tables continue
 to reference the stable Agent ID without a foreign key so authored history survives member removal.
 Routines keep a server-private `next_at`. A 60-second interval from `server/startup.ts` claims due
@@ -296,8 +303,9 @@ avatar) without refetching the list. The sidebar gets activity from Session acti
 status belongs to the detail stream. Attention needs no additional workspace event or detail state.
 `useChannels()` composes the catalog and Session activity into entries with a Channel, its agents
 and their `isRunning` flags, and a derived `status` (waiting for a reply, unread completion, or unread
-messages). The sidebar and Apps SDK share this hook and the same caches. Badge text and suppression
-of unread/completion badges for open panes stay in the sidebar.
+messages). The sidebar and Apps SDK share this hook and the same caches. `channelAttention(channel,
+isOpen)` owns which marks an open channel hides: a request stays while it's open, and completion and
+unread messages clear. The sidebar and palette both read it. Badge text stays in the sidebar.
 The route loads the catalog before subscribing to workspace events. Live events patch that cache;
 an event overlapping a refetch triggers TanStack's native replacement refetch. Reconnects refresh
 the complete catalog. Create/edit responses invalidate it rather than replay potentially older
@@ -395,13 +403,16 @@ replace an overlapping stale list read. This browser metadata does not change th
 `GET /api/v1/channels/:channelId/messages?before=<sequence>` returns up to 100 older messages with
 `{ version: 1, revision, messages }` from one transaction. The browser uses this same public endpoint.
 It retries pages older than its cached revision, merges without advancing the stream cursor, and
-continues through the target sequence when revealing a pending request.
+continues through the target sequence when revealing a message, such as the pending request or a
+bookmark.
 
 `POST /api/v1/channels/:channelId/messages` accepts `{ id, content, attachments? }`, uses the normal
 user-message schema and delivery policy, and returns HTTP 201 with `{ version: 1, message }`.
 Duplicate IDs return 409 without repeating delivery. `POST …/read` accepts `{ sequence }`, uses
 the same monotonic read operation as the browser, and returns `{ version: 1, seenThrough }`.
-Reading acknowledges completion but never answers a request. HTTP and RPC are thin entry points
+Reading acknowledges completion but never answers a request. `PUT` and `DELETE
+…/bookmarks/:sequence` bookmark and unbookmark a message idempotently and return 204; bookmarking a
+system or missing message returns 422. HTTP and RPC are thin entry points
 to these capabilities under Toy Box's existing trusted-owner server assumption.
 
 Native clients manage Channels through the same operations as the browser's channel menu, member
@@ -505,11 +516,12 @@ presents one deleted identity everywhere.
   receives its kind's typed contents. Its shared row renders the resulting content and tooltip;
   grouping and the durable message model stay separate.
   A pane-local view, chosen beside the overview's trigger and hidden with it while pinned, shows
-  all messages or only the user's own and the agent messages that never collapse. Rows form from
+  all messages or only the user's own, the agent messages that never collapse, and those the user
+  bookmarked, so revealing a bookmark never changes the view. Rows form from
   the shown messages, so runs and dividers follow what the reader sees; changing the view lands
   the transcript afresh, and read state stays Channel-wide.
   `useTranscriptViewport` owns the virtualizer and where the reader looks: landing on the first
-  unread row or the end, following the reader's own post, revealing the pending request, and
+  unread row or the end, following the reader's own post, revealing a message on demand, and
   paging history. Paging continues while the first row, or an empty view, is in view, so a sparse
   view fetches pages it may show nothing of instead of asking the server to filter.
   TanStack Virtual's mutable instance stays inside that hook, which the compiler
@@ -519,7 +531,7 @@ presents one deleted identity everywhere.
   later user message acknowledges it. The activity row shows working agents; waiting
   shows in the overview, since a request already marks what the user needs to answer.
 - The composer docks Sessions' [`ComposerTray`](../sessions/components/outputs/ComposerTray.tsx)
-  for shared artifacts, newest first, plus the tasks and preview. URL previews
+  for bookmarks and shared artifacts, newest first, plus the tasks and preview. URL previews
   retain their sandboxed hover iframe and open in a new tab. Screen previews
   show a passive live canvas and open/focus a Screen pane without opening a
   private agent Session. Tray, overview and historical preview messages share
@@ -530,6 +542,12 @@ presents one deleted identity everywhere.
   An "Input needed" button beside the composer's audience stays visible
   until the user replies. Hover previews `state.request`; clicking loads
   any older pages needed and scrolls to the question. Scrolling never changes the composer height.
+- A user message's actions and an agent message's hover toolbar each carry a bookmark toggle,
+  divided from copy. It ends the agent toolbar, so it stays put on hover, and it stays filled blue
+  at rest while bookmarked. While any exist, a pill with their count and the same blue icon leads
+  the tray. Its list shows each with a one-line preview that scrolls under a fade, time, and remove
+  action; opening it loads history through the oldest, so placeholders fill in, and selecting one
+  scrolls to its message the same way.
 - The overview opens as a sheet or pins beside the transcript, which the workspace layout remembers.
   Both presentations use the shared vertical scroll fade.
   It shows the purpose, directory, and preview, then the team with its presence, the shared

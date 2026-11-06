@@ -1,7 +1,7 @@
-// The composer tray is the input's top band. Its first row holds what the owner produced: artifacts
-// newest first, a checklist, and the owner's extra output. Once any output exists, empty artifact
-// and checklist slots preserve that row's shape. Owners stack anything else, such as queued
-// messages, below it, and the tray hides when nothing renders.
+// The composer tray is the input's top band. Its first row holds what the owner produced or marked:
+// the owner's leading output, artifacts newest first, a checklist, and the owner's extra output.
+// Once any output exists, empty artifact and checklist slots preserve that row's shape. Owners
+// stack anything else, such as queued messages, below it, and the tray hides when nothing renders.
 
 import { useState, type ReactNode } from "react";
 import { defaultFilter } from "cmdk";
@@ -27,8 +27,13 @@ import {
 import { ChecklistPopup } from "./ChecklistPopup";
 import { PagePreview } from "./PagePreview";
 
-// The newest artifact joins the row once the composer has room; two more follow when wide.
-const INLINE_ARTIFACT_CLASS_NAMES = ["@max-md:hidden", "@max-2xl:hidden", "@max-2xl:hidden"];
+// Artifacts get only the room the rest of the row leaves, and their pills query that room: the
+// newest joins once it fits beside a count, and two more follow when wide.
+const INLINE_ARTIFACT_CLASS_NAMES = [
+  "@max-3xs/artifacts:hidden",
+  "@max-2xl/artifacts:hidden",
+  "@max-2xl/artifacts:hidden",
+];
 
 /** A file its owner presents as output. */
 type ComposerArtifact = {
@@ -45,6 +50,7 @@ export function ComposerTray({
   checklist,
   checklistLabel,
   checklistHeaderDetail,
+  leadingOutput,
   extraOutput,
   onOpenArtifact,
   children,
@@ -56,6 +62,8 @@ export function ComposerTray({
   checklist: readonly ChecklistItem[];
   checklistLabel: string;
   checklistHeaderDetail?: ReactNode;
+  /** The owner's own output before its artifacts, such as a channel's bookmarks. */
+  leadingOutput?: ReactNode;
   /** The owner's own output after the checklist, such as changed files or a preview. */
   extraOutput?: ReactNode;
   /** Opens an artifact that its owner doesn't publish. By default, focusing its editor pane brings
@@ -64,7 +72,8 @@ export function ComposerTray({
   children?: ReactNode;
 }) {
   const { focusedPaneAtom } = useWorkspaceSurface();
-  const hasOutputs = artifacts.length > 0 || checklist.length > 0 || Boolean(extraOutput);
+  const hasOutputs =
+    Boolean(leadingOutput) || artifacts.length > 0 || checklist.length > 0 || Boolean(extraOutput);
 
   const openArtifact = ({ file }: ComposerArtifact) =>
     onOpenArtifact ? onOpenArtifact(file) : focusedPaneAtom.set(createEditorPane(file).id);
@@ -74,7 +83,8 @@ export function ComposerTray({
     <div className="order-first self-stretch rounded-t-[inherit] border-b bg-secondary-background p-1 empty:hidden">
       {hasOutputs && (
         <div className="flex items-center gap-1.5 p-0.5 not-last:mb-1 not-last:border-b not-last:pb-1.5">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {leadingOutput}
+          <div className="@container/artifacts flex min-w-0 flex-1 items-center gap-1.5">
             {artifacts.slice(0, INLINE_ARTIFACT_CLASS_NAMES.length).map((artifact, index) => (
               <ArtifactPeek
                 key={workspaceFileId(artifact.file)}
@@ -123,13 +133,13 @@ function ArtifactPeek({
     : /\.html?$/i.test(file.path)
       ? "html"
       : undefined;
-  // Inline pills share the tray's row, so each caps its width.
+  // Inline pills share the tray's row, so each caps its width and gives way when the row is tight.
   const pill = (
     <ArtifactPill
       file={file}
       label={label}
       onClick={onOpen}
-      className={cn("max-w-56", className)}
+      className={cn("max-w-56 min-w-0 shrink", className)}
     />
   );
   if (!preview) return pill;
@@ -158,7 +168,7 @@ function ArtifactPeek({
 }
 
 /** Every artifact, filterable: "+N" beside the inline pills, or the only pill when narrow. Its
- *  label and visibility follow the same container breakpoints as the inline pills. */
+ *  label and visibility switch at the inline pills' breakpoints on the artifacts' room. */
 function ArtifactList({
   artifacts,
   onOpen,
@@ -175,16 +185,20 @@ function ArtifactList({
         aria-label="All artifacts"
         className={cn(
           outputPillClassName,
-          count === 1 ? "@md:hidden" : count <= INLINE_ARTIFACT_CLASS_NAMES.length && "@2xl:hidden",
+          count === 1
+            ? "@3xs/artifacts:hidden"
+            : count <= INLINE_ARTIFACT_CLASS_NAMES.length && "@2xl/artifacts:hidden",
         )}
         render={<button type="button" />}
       >
-        <Files className="size-3.5 shrink-0 @md:hidden" />
-        <span className="@md:hidden">
+        <Files className="size-3.5 shrink-0 @3xs/artifacts:hidden" />
+        <span className="@3xs/artifacts:hidden">
           {count} {count === 1 ? "artifact" : "artifacts"}
         </span>
-        <span className="@max-md:hidden @2xl:hidden">+{count - 1}</span>
-        <span className="@max-2xl:hidden">+{count - INLINE_ARTIFACT_CLASS_NAMES.length}</span>
+        <span className="@max-3xs/artifacts:hidden @2xl/artifacts:hidden">+{count - 1}</span>
+        <span className="@max-2xl/artifacts:hidden">
+          +{count - INLINE_ARTIFACT_CLASS_NAMES.length}
+        </span>
       </PopoverTrigger>
       <PopoverContent side="top" align="start" className="w-72 p-0">
         <Command filter={filterByKeywords}>

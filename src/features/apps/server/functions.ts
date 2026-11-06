@@ -1,7 +1,6 @@
 // Client-safe RPC declarations for app definitions and saved instances.
 
 import { createServerFn } from "@tanstack/react-start";
-import { zodValidator } from "@tanstack/zod-adapter";
 import {
   artifactAppBundleInputSchema,
   appDefinitionBundleInputSchema,
@@ -19,37 +18,37 @@ import { appDefinitionRegistry } from "./definitions";
 export const listApps = createServerFn({ method: "GET" }).handler(() => apps.listApps());
 
 export const createApp = createServerFn({ method: "POST" })
-  .validator(zodValidator(createAppInputSchema))
+  .validator(createAppInputSchema)
   .handler(({ data }) => apps.createApp(data));
 
 export const updateApp = createServerFn({ method: "POST" })
-  .validator(zodValidator(updateAppInputSchema))
+  .validator(updateAppInputSchema)
   .handler(({ data }) => apps.updateApp(data));
 
 export const deleteApp = createServerFn({ method: "POST" })
-  .validator(zodValidator(appIdInputSchema))
+  .validator(appIdInputSchema)
   .handler(({ data }) => apps.deleteApp(data.appId));
 
 export const shareWithApp = createServerFn({ method: "POST" })
-  .validator(zodValidator(shareWithAppInputSchema))
+  .validator(shareWithAppInputSchema)
   .handler(({ data }) => apps.shareWithApp(data));
 
 export const consumeAppShare = createServerFn({ method: "POST" })
-  .validator(zodValidator(consumeAppShareInputSchema))
+  .validator(consumeAppShareInputSchema)
   .handler(({ data }) => apps.consumeAppShare(data));
 
 export const installApp = createServerFn({ method: "POST" })
-  .validator(zodValidator(installAppInputSchema))
+  .validator(installAppInputSchema)
   .handler(({ data }) => apps.installApp(data));
 
 export const uninstallApp = createServerFn({ method: "POST" })
-  .validator(zodValidator(appDefinitionInputSchema))
+  .validator(appDefinitionInputSchema)
   .handler(({ data }) => apps.uninstallApp(data));
 
 export const getAppDefinitionBundle = createServerFn({ method: "GET" })
-  .validator(zodValidator(appDefinitionBundleInputSchema))
+  .validator(appDefinitionBundleInputSchema)
   .handler(({ data }) => appDefinitionRegistry.getBundle(data.definitionId, data.revision));
 
 export const getArtifactAppBundle = createServerFn({ method: "GET" })
-  .validator(zodValidator(artifactAppBundleInputSchema))
+  .validator(artifactAppBundleInputSchema)
   .handler(({ data }) => apps.getArtifactAppBundle(data.file));

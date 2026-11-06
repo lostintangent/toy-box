@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { isLiveActivity, reduceSessionsActivity, type SessionsActivity } from "./activity";
+import {
+  isLiveActivity,
+  reduceSessionsActivity,
+  sessionAttention,
+  type SessionsActivity,
+} from "./activity";
 
 const sessionId = "session-a";
 
@@ -85,5 +90,19 @@ describe("session activity", () => {
       running,
     );
     expect(reduceSessionsActivity(running, { type: "inbox.changed" })).toBe(running);
+  });
+});
+
+describe("sessionAttention", () => {
+  test.each([
+    ["waiting", false, "waiting"],
+    ["waiting", true, "waiting"],
+    ["unread", false, "unread"],
+    ["unread", true, undefined],
+    ["running", false, undefined],
+    ["background", false, undefined],
+    [undefined, false, undefined],
+  ] as const)("%s, open %p, asks for %p", (status, isOpen, attention) => {
+    expect(sessionAttention(status, isOpen)).toBe(attention);
   });
 });

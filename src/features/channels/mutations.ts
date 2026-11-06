@@ -1,5 +1,6 @@
 import { mutationOptions } from "@tanstack/react-query";
 import type {
+  BookmarkChannelMessageInput,
   CreateChannelMemberInput,
   CreateChannelInput,
   EditChannelInput,
@@ -11,6 +12,7 @@ import { reduceChannelState } from "@channels/model/reducer";
 import { invalidateChannelListQuery } from "@channels/cache";
 import { applyWorkspaceEvent } from "@workspace/sync";
 import {
+  bookmarkChannelMessage,
   createChannel,
   createChannelMember,
   deleteChannel,
@@ -71,6 +73,10 @@ export const channelMutations = {
     mutationOptions({
       mutationFn: (input: { channelId: string; sequence: number }) =>
         markChannelRead({ data: input }),
+    }),
+  bookmark: () =>
+    mutationOptions({
+      mutationFn: (input: BookmarkChannelMessageInput) => bookmarkChannelMessage({ data: input }),
     }),
   post: () =>
     mutationOptions({

@@ -25,6 +25,7 @@ import { Composer, ComposerSendButton } from "@/shared/composers/Composer";
 import { useComposerDraft } from "@/shared/composers/useComposerDraft";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
+import { ChannelBookmarks } from "./ChannelBookmarks";
 import { useChannelPane } from "./ChannelPaneContext";
 import { useChannelTaskItems, TaskDiff } from "./channelTaskItems";
 import { WorkspacePreview } from "@sessions/components/outputs/WorkspacePreview";
@@ -42,20 +43,23 @@ export function ChannelComposer({
   state,
   handleRef,
   onSubmit,
-  onShowRequest,
+  onShowMessage,
+  onLoadPrevious,
 }: {
   channelId: string;
   state?: ChannelState;
   handleRef: RefObject<ChannelComposerHandle | null>;
   onSubmit: (message: Pick<PostChannelMessageInput, "content" | "attachments">) => void;
-  onShowRequest: () => void;
+  /** Shows a message in the transcript, loading older history through it first when needed. */
+  onShowMessage: (sequence: number) => void;
+  onLoadPrevious: (throughSequence: number) => void;
 }) {
   const openArtifact = useRevealFile();
   const channel = state?.channel;
   const diff = channelTasksDiff(channel?.tasks ?? []);
   const request = state?.request;
   const needsReply = channel ? channelHasPendingRequest(channel) : false;
-  const { lead, members, agents } = useChannelPane();
+  const { lead, members, agents, bookmarks } = useChannelPane();
   const artifacts = channelArtifactsNewestFirst(state?.artifacts ?? []).map(
     ({ file, title, sharedAt }) => ({ file, label: title, time: Date.parse(sharedAt) }),
   );
@@ -105,6 +109,16 @@ export function ChannelComposer({
           artifactTimeLabel="Shared"
           checklistLabel="Tasks"
           checklistHeaderDetail={diff && <TaskDiff diff={diff} />}
+          leadingOutput={
+            state &&
+            bookmarks.length > 0 && (
+              <ChannelBookmarks
+                messages={state.messages}
+                onShow={onShowMessage}
+                onLoad={onLoadPrevious}
+              />
+            )
+          }
           extraOutput={channel?.preview && <WorkspacePreview preview={channel.preview} />}
           onOpenArtifact={openArtifact}
         />
@@ -122,7 +136,9 @@ export function ChannelComposer({
       controls={
         <>
           <ChannelAudience audience={audience} agentCount={agents.length} />
-          {request && <InputNeeded request={request.content} onShow={onShowRequest} />}
+          {request && (
+            <InputNeeded request={request.content} onShow={() => onShowMessage(request.sequence)} />
+          )}
         </>
       }
       actions={<ComposerSendButton draft={draft} label="Send message" />}

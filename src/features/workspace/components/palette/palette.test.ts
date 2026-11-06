@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   initialPaletteState,
+  rankReadyForYou,
   reducePalette,
   resolveCurrentPane,
   resolveSelection,
@@ -84,25 +85,6 @@ describe("triageSessions", () => {
   const ids = (sessions: readonly { id: string }[]) => sessions.map(({ id }) => id);
   const none = { activities: {}, pinnedIds: [], openIds: [] };
 
-  test("sessions waiting on you, or finished unseen, need you", () => {
-    const sessions = [session("idle"), session("unread"), session("waiting")];
-    const { needsYou, recent } = triageSessions(sessions, {
-      ...none,
-      activities: { waiting: { status: "waiting", since: 0 }, unread: { status: "unread" } },
-    });
-    expect(ids(needsYou)).toEqual(["unread", "waiting"]);
-    expect(ids(recent)).toEqual(["idle"]);
-  });
-
-  test("an unread session that's already open doesn't need you", () => {
-    const { needsYou } = triageSessions([session("unread")], {
-      ...none,
-      activities: { unread: { status: "unread" } },
-      openIds: ["unread"],
-    });
-    expect(needsYou).toEqual([]);
-  });
-
   test("running and background sessions are running", () => {
     const sessions = [session("background"), session("running")];
     const { running } = triageSessions(sessions, {
@@ -120,16 +102,6 @@ describe("triageSessions", () => {
     const { pinned, recent } = triageSessions(sessions, { ...none, pinnedIds: ["c", "gone", "a"] });
     expect(ids(pinned)).toEqual(["c", "a"]);
     expect(ids(recent)).toEqual(["b"]);
-  });
-
-  test("each session appears only in the first section that claims it", () => {
-    const sessions = [session("a")];
-    const { needsYou, pinned, recent } = triageSessions(sessions, {
-      ...none,
-      activities: { a: { status: "waiting", since: 0 } },
-      pinnedIds: ["a"],
-    });
-    expect([needsYou, pinned, recent].map(ids)).toEqual([["a"], [], []]);
   });
 
   test("recent sessions exclude open ones and are capped", () => {
@@ -216,5 +188,35 @@ describe("resolveCurrentPane", () => {
 
   test("a phone's pager shows its first page until another is focused", () => {
     expect(current({ isMobile: true })).toBe("session:a");
+  });
+});
+
+describe("rankReadyForYou", () => {
+  const ids = (candidates: readonly { id: string }[]) => candidates.map(({ id }) => id);
+
+  test("what waits on you outranks whatever else asks for you, whatever its kind", () => {
+    const ranked = rankReadyForYou([
+      { id: "session:unread", attention: "unread" },
+      { id: "session:idle", attention: undefined },
+      { id: "channel:finished", attention: "finished" },
+      { id: "channel:waiting", attention: "waiting" },
+      { id: "automation:unread", attention: "unread" },
+    ]);
+    expect(ids(ranked)).toEqual([
+      "channel:waiting",
+      "session:unread",
+      "channel:finished",
+      "automation:unread",
+    ]);
+  });
+
+  test("the cap holds across kinds", () => {
+    const waiting = (id: string) => ({ id, attention: "waiting" });
+    const ranked = rankReadyForYou([
+      ...["s1", "s2", "s3", "s4"].map(waiting),
+      ...["c1", "c2"].map(waiting),
+      { id: "a1", attention: "unread" },
+    ]);
+    expect(ids(ranked)).toEqual(["s1", "s2", "s3", "s4", "c1"]);
   });
 });

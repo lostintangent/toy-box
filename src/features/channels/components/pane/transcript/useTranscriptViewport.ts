@@ -8,13 +8,13 @@ import {
 } from "react";
 import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import type { ChannelConversationMessage } from "@channels/model";
-import { pendingRequestRow, type TranscriptRow } from "./transcriptRows";
+import { messageRowIndex, type TranscriptRow } from "./transcriptRows";
 
 /**
  * The transcript's virtualized viewport, and where the reader looks within it. It lands once,
  * hidden until positioned: on the first unread row when there is one, otherwise at the end.
  * Afterward it follows the end while the reader is there and after the reader's own post, reveals
- * the pending request on demand, loading older history first when needed, and loads older history
+ * a message on demand, loading older history first when needed, and loads older history
  * as the first row comes into view. A view that shows only some messages keeps loading until the
  * first row leaves view or history ends, even when that means fetching pages it shows nothing of.
  *
@@ -24,14 +24,12 @@ import { pendingRequestRow, type TranscriptRow } from "./transcriptRows";
 export function useTranscriptViewport({
   rows,
   unreadAfter,
-  requestSequence,
   oldestSequence,
   loadPrevious,
 }: {
   rows: readonly TranscriptRow[];
   /** Arrival read position; null means read, undefined awaits the connection's initial state. */
   unreadAfter: number | null | undefined;
-  requestSequence: number | null;
   oldestSequence: number | undefined;
   loadPrevious: (throughSequence?: number) => Promise<void>;
 }) {
@@ -58,7 +56,7 @@ export function useTranscriptViewport({
     useScrollendEvent: true,
   });
   const followNextPostRef = useRef(false);
-  const requestToShowRef = useRef<number | null>(null);
+  const messageToShowRef = useRef<number | null>(null);
   const jumpedToUnreadRef = useRef(false);
   const [isReady, setIsReady] = useState(rows.length === 0);
   const rowCount = rows.length;
@@ -67,7 +65,6 @@ export function useTranscriptViewport({
   // An empty view still has its first row ahead of it, in older history.
   const showsFirstRow = rowCount === 0 || firstVirtualIndex === 0;
   const firstUnreadIndex = rows.findIndex((row) => row.divider?.unread);
-  const request = pendingRequestRow(rows, requestSequence);
 
   // Landing starts at the end, positioned directly so no programmatic-scroll reconciliation can
   // outlive initialization.
@@ -102,12 +99,15 @@ export function useTranscriptViewport({
     virtualizer.scrollToEnd({ behavior: "smooth" });
   }, [rowCount, virtualizer]);
 
+  // A message to show from older history appears once its page loads.
   useLayoutEffect(() => {
-    if (request && request.sequence === requestToShowRef.current && scrollRef.current) {
-      requestToShowRef.current = null;
-      scrollToRequest(scrollRef.current, virtualizer, request);
+    const sequence = messageToShowRef.current;
+    const index = sequence === null ? -1 : messageRowIndex(rows, sequence);
+    if (index >= 0 && scrollRef.current) {
+      messageToShowRef.current = null;
+      scrollToMessage(scrollRef.current, virtualizer, sequence!, index);
     }
-  }, [request, virtualizer]);
+  }, [rows, virtualizer]);
 
   useEffect(() => {
     if (isReady && showsFirstRow && oldestSequence !== undefined && oldestSequence > 1) {
@@ -128,12 +128,14 @@ export function useTranscriptViewport({
     followNextPost: () => {
       followNextPostRef.current = true;
     },
-    /** Reveals the pending request, loading older history through it first when needed. */
-    showRequest: () => {
-      if (request && scrollRef.current) scrollToRequest(scrollRef.current, virtualizer, request);
-      else if (requestSequence !== null) {
-        requestToShowRef.current = requestSequence;
-        void loadPrevious(requestSequence);
+    /** Reveals a user's or agent's message, loading older history through it first when needed. */
+    showMessage: (sequence: number) => {
+      const index = messageRowIndex(rows, sequence);
+      if (index >= 0 && scrollRef.current) {
+        scrollToMessage(scrollRef.current, virtualizer, sequence, index);
+      } else {
+        messageToShowRef.current = sequence;
+        void loadPrevious(sequence);
       }
     },
   };
@@ -153,19 +155,20 @@ function estimatedRowHeight(row: TranscriptRow): number {
   }
 }
 
-/** Reveal the question within its agent run, bringing a virtualized row into view first. */
-function scrollToRequest(
+/** Reveal a message within its row, bringing a virtualized row into view first. */
+function scrollToMessage(
   root: HTMLElement,
   virtualizer: Virtualizer<HTMLDivElement, Element>,
-  request: { sequence: number; index: number },
+  sequence: number,
+  index: number,
 ) {
-  const element = root.querySelector(`[data-request-sequence="${request.sequence}"]`);
+  const element = root.querySelector(`[data-sequence="${sequence}"]`);
   if (element) {
     const top =
       root.scrollTop + element.getBoundingClientRect().top - root.getBoundingClientRect().top;
-    // Keep the question header below the transcript's top fade.
+    // Keep the message's header below the transcript's top fade.
     virtualizer.scrollToOffset(top - 32, { behavior: "smooth" });
   } else {
-    virtualizer.scrollToIndex(request.index, { align: "start", behavior: "smooth" });
+    virtualizer.scrollToIndex(index, { align: "start", behavior: "smooth" });
   }
 }

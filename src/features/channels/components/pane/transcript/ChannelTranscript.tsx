@@ -18,14 +18,16 @@ import {
 } from "./transcriptRows";
 import { useTranscriptViewport } from "./useTranscriptViewport";
 
-export type ChannelTranscriptHandle = { followNextPost: () => void; showRequest: () => void };
+export type ChannelTranscriptHandle = {
+  followNextPost: () => void;
+  showMessage: (sequence: number) => void;
+};
 
 export function ChannelTranscript({
   messages,
   view,
   unreadAfter,
   handleRef,
-  requestSequence,
   onLoadPrevious,
 }: {
   messages: ChannelMessage[];
@@ -33,11 +35,10 @@ export function ChannelTranscript({
   /** Arrival read position; null means read, undefined awaits the connection's initial state. */
   unreadAfter: number | null | undefined;
   handleRef: RefObject<ChannelTranscriptHandle | null>;
-  requestSequence: number | null;
   onLoadPrevious: (throughSequence?: number) => Promise<void>;
 }) {
-  const { lead, members } = useChannelPane();
-  const rows = transcriptRows(messages, { lead, members, unreadAfter, view });
+  const { lead, members, bookmarks } = useChannelPane();
+  const rows = transcriptRows(messages, { lead, members, bookmarks, unreadAfter, view });
   const {
     scrollRef,
     containerRef,
@@ -47,15 +48,14 @@ export function ChannelTranscript({
     isAtEnd,
     scrollToEnd,
     followNextPost,
-    showRequest,
+    showMessage,
   } = useTranscriptViewport({
     rows,
     unreadAfter,
-    requestSequence,
     oldestSequence: messages[0]?.sequence,
     loadPrevious: onLoadPrevious,
   });
-  useImperativeHandle(handleRef, () => ({ followNextPost, showRequest }));
+  useImperativeHandle(handleRef, () => ({ followNextPost, showMessage }));
 
   return (
     <div className="relative h-full bg-panel">

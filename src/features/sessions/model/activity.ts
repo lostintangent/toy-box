@@ -52,6 +52,13 @@ export function reduceSessionsActivity(
   }
 }
 
+/** What a session asks of you: a wait always, and a finished run until it's opened. */
+export function sessionAttention(status: SessionActivityStatus | undefined, isOpen: boolean) {
+  if (status === "waiting") return "waiting";
+  if (status === "unread" && !isOpen) return "unread";
+  return undefined;
+}
+
 /** Whether a session is executing, including while it waits for input or runs in the background. */
 export function isLiveActivity(status: SessionActivityStatus | undefined): boolean {
   return status === "running" || status === "waiting" || status === "background";

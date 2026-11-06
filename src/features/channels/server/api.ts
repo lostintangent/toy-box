@@ -1,4 +1,5 @@
 import {
+  bookmarkChannelMessageInputSchema,
   channelArtifactIdentitySchema,
   channelIdentitySchema,
   channelRoutineIdentitySchema,
@@ -13,6 +14,7 @@ import {
 import { getModelChoices } from "@providers/server";
 import { createSseResponse } from "@/shared/server/sse";
 import {
+  bookmarkChannelMessage,
   createChannel,
   createChannelMember,
   deleteChannel,
@@ -109,6 +111,26 @@ export async function markChannelReadResponse(
     return Response.json({ version: 1, seenThrough: channel.seenThrough });
   } catch (error) {
     return rejected(error, "mark Channel read");
+  }
+}
+
+/** Bookmarking is idempotent, so either verb succeeds when the message is already in that state. */
+export async function bookmarkChannelMessageResponse(
+  channelId: string,
+  sequence: string,
+  bookmarked: boolean,
+): Promise<Response> {
+  const input = bookmarkChannelMessageInputSchema.safeParse({
+    channelId,
+    sequence: Number(sequence),
+    bookmarked,
+  });
+  if (!input.success) return invalidRequest();
+  try {
+    await bookmarkChannelMessage(input.data);
+    return noContent();
+  } catch (error) {
+    return rejected(error, `${bookmarked ? "bookmark" : "unbookmark"} message ${sequence}`);
   }
 }
 

@@ -47,7 +47,9 @@ export function reduceChannelState(previous: ChannelState, event: ChannelStateEv
     channel: reduceChannel(previous.channel, event),
     revision: event.revision,
   };
-  if (event.type === "reaction") {
+  if (event.type === "bookmarks") {
+    state.bookmarks = event.bookmarks;
+  } else if (event.type === "reaction") {
     state.messages = state.messages.map((message) => reduceChannelReaction(message, event));
     if (state.request) state.request = reduceChannelReaction(state.request, event);
   } else if (event.type === "message") {

@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { zodValidator } from "@tanstack/zod-adapter";
 import { z } from "zod";
 import {
   getProviderCatalog as readProviderCatalog,
@@ -25,10 +24,10 @@ export const getProviderVersions = createServerFn({ method: "GET" }).handler(
 );
 
 export const updateProvider = createServerFn({ method: "POST" })
-  .validator(zodValidator(z.string()))
+  .validator(z.string())
   .handler(({ data }) => runProviderUpdate(data));
 
 export const getProviderSubscription = createServerFn({ method: "GET" })
-  .validator(zodValidator(z.string()))
+  .validator(z.string())
   // Query data cannot be undefined, so an account without a subscription reads as null.
   .handler(async ({ data }) => (await getSessionProvider(data).readSubscription()) ?? null);

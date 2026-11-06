@@ -448,7 +448,6 @@ function WorkspacePage() {
           open={isPaletteOpen}
           onOpenChange={setIsPaletteOpen}
           sessions={listedSessions}
-          openSessionIds={openSessionIds}
           navigation={{ selectRoot, openRoot }}
         />
         <WorkspaceDialogs selectRoot={selectRoot} />

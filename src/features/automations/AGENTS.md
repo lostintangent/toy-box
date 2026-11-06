@@ -44,7 +44,8 @@ matches and refetches the catalog after reconnects or missed updates.
 reapply potentially stale definitions over scheduler events. Creation also refreshes Sessions'
 ownership projection; deletion removes both the definition and its managed session from client
 caches. `commands.ts` defines what can be done to one automation (Run, Edit, and Delete), so its
-sidebar menu and its command palette row offer the same actions.
+sidebar menu and its command palette row offer the same actions. Both surfaces list only
+automations whose provider isn't disabled, the same rule that hides sessions.
 
 The mounted automation dialog owns one schedule draft. Daily, interval, and cron are editing modes; inactive tab inputs are remembered, and only the selected mode determines the saved cron.
 

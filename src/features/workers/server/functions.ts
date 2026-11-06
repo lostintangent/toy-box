@@ -2,7 +2,6 @@
 // the server graph, so admission remains a plain static import.
 
 import { createServerFn } from "@tanstack/react-start";
-import { zodValidator } from "@tanstack/zod-adapter";
 import { cancelWorkerInputSchema, spawnWorkerInputSchema } from "../model";
 import * as workers from "./admission";
 import { getWorkers } from "./registry";
@@ -12,10 +11,10 @@ export const listActiveWorkers = createServerFn({ method: "GET" }).handler(() =>
 
 /** Spawn a background worker owned by a file or app. */
 export const spawnWorker = createServerFn({ method: "POST" })
-  .validator(zodValidator(spawnWorkerInputSchema))
+  .validator(spawnWorkerInputSchema)
   .handler(({ data }): Promise<{ sessionId: string }> => workers.spawnWorkerFromRequest(data));
 
 /** Cancel a queued or running worker through its exact owner. */
 export const cancelWorker = createServerFn({ method: "POST" })
-  .validator(zodValidator(cancelWorkerInputSchema))
+  .validator(cancelWorkerInputSchema)
   .handler(({ data }): Promise<boolean> => workers.cancelWorker(data));
