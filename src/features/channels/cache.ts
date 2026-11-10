@@ -1,8 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { ChannelList } from "@channels/model";
 import { channelQueries, type ChannelQueryData } from "@channels/queries";
 import type { WorkspaceCache } from "@workspace/sync";
-import { replaceOverlappingRead } from "@/shared/query";
 import { mergeChannelMessages } from "./model/reducer";
 
 /** Page backward through a target message, retrying only pages overtaken by the stream. */
@@ -41,68 +39,22 @@ export async function loadChannelHistory(
 }
 
 export default {
+  preload: (queryClient) => queryClient.ensureQueryData(channelQueries.list),
   applyEvent(queryClient, event) {
     switch (event.type) {
-      case "channel.upserted":
-        queryClient.setQueryData<ChannelList>(channelQueries.listKey(), (list) => {
-          if (!list) return list;
-          const next = list.channels.filter(({ id }) => id !== event.channel.id);
-          next.push(event.channel);
-          return {
-            ...list,
-            channels: next.sort(
-              (left, right) =>
-                right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id),
-            ),
-          };
-        });
-        break;
       case "channel.deleted":
         queryClient.removeQueries({
           queryKey: channelQueries.detail(event.channelId).queryKey,
           exact: true,
         });
-        queryClient.setQueryData<ChannelList>(channelQueries.listKey(), (list) =>
-          list
-            ? {
-                channels: list.channels.filter(({ id }) => id !== event.channelId),
-                members: list.members.filter((member) => member.channelId !== event.channelId),
-              }
-            : list,
-        );
-        break;
+        channelQueries.list.apply(queryClient, event);
+        return;
+      case "channel.upserted":
       case "channel.member.upserted":
-        queryClient.setQueryData<ChannelList>(
-          channelQueries.listKey(),
-          (list) =>
-            list && {
-              ...list,
-              members: list.members.some(({ id }) => id === event.member.id)
-                ? list.members.map((member) =>
-                    member.id === event.member.id ? event.member : member,
-                  )
-                : [event.member, ...list.members],
-            },
-        );
-        break;
       case "channel.member.deleted":
-        queryClient.setQueryData<ChannelList>(
-          channelQueries.listKey(),
-          (list) =>
-            list && {
-              ...list,
-              members: list.members.filter(({ id }) => id !== event.agentId),
-            },
-        );
-        break;
-      default:
+        channelQueries.list.apply(queryClient, event);
         return;
     }
-    replaceOverlappingRead(queryClient, channelQueries.listKey());
   },
-  refresh: invalidateChannelListQuery,
+  refresh: channelQueries.list.refresh,
 } satisfies WorkspaceCache;
-
-export function invalidateChannelListQuery(queryClient: QueryClient): Promise<void> {
-  return queryClient.invalidateQueries({ queryKey: channelQueries.listKey(), exact: true });
-}

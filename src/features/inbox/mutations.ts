@@ -14,7 +14,6 @@ export const inboxMutations = {
       mutationFn: () => deleteInboxEntry({ data: { entryId } }),
       onSuccess: (_deleted, _variables, _context, { client }) => {
         applyWorkspaceEvent(client, { type: "session.deleted", sessionId: entryId });
-        applyWorkspaceEvent(client, { type: "inbox.entry.deleted", entryId });
       },
     }),
 };

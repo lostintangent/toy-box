@@ -2,6 +2,7 @@ import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@/shared/utils";
 import { RESIZE_HANDLE_RULE } from "@/shared/ui/resizable";
 import { CARD_CLASS, CARD_INSET_CLASS } from "@workspace/components/layout/card";
+import { useLayoutPref } from "@workspace/hooks/layout/layoutPrefs";
 import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
@@ -33,19 +34,6 @@ export function resolveSidebarDrag(width: number): SidebarDrag {
 }
 
 /**
- * A collapsible sidebar's whole state: the width it holds when expanded and
- * whether it is showing that width or its rail. A sidebar either has all of
- * this or none of it, so it cannot be collapsed without a way back.
- */
-export type SidebarCollapseControl = {
-  /** The width the sidebar returns to, frame included. It is kept while collapsed. */
-  expandedWidth: number;
-  collapsed: boolean;
-  onExpandedWidthChange: (width: number) => void;
-  onCollapsedChange: (collapsed: boolean) => void;
-};
-
-/**
  * The sidebar's width, and everything that sets it: the drag, the keyboard
  * nudge, and the collapse to the rail. `Sidebar` is its only host, which is what
  * lets it hand the sidebar a drag through CSS rather than props.
@@ -57,18 +45,14 @@ export type SidebarCollapseControl = {
  * the handle's appearance is shared, through `RESIZE_HANDLE_RULE` and
  * `--resize-accent-y`.
  *
- * The drag lives here rather than with the layout that owns the persisted
- * width, so following the pointer only re-renders this wrapper: the sidebar
- * arrives as an element and learns the drag through `--sidebar-width` rather
- * than props, so it is never reconciled mid-drag.
+ * The width it returns to, frame included, is a layout preference kept while
+ * collapsed. Only this wrapper reads it, so a drag or a new width re-renders
+ * only this wrapper: the sidebar arrives as an element and learns the drag
+ * through `--sidebar-width` rather than props, so it is never reconciled.
  */
-export function SidebarResizer({
-  expandedWidth,
-  collapsed,
-  onExpandedWidthChange,
-  onCollapsedChange,
-  children,
-}: SidebarCollapseControl & { children: ReactNode }) {
+export function SidebarResizer({ children }: { children: ReactNode }) {
+  const [expandedWidth, onExpandedWidthChange] = useLayoutPref("sidebarWidth");
+  const [collapsed, onCollapsedChange] = useLayoutPref("sidebarCollapsed");
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const isDragging = dragWidth !== null;
   const currentWidth = collapsed ? SIDEBAR_COLLAPSED_WIDTH : (dragWidth ?? expandedWidth);

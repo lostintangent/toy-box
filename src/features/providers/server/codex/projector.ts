@@ -1,11 +1,6 @@
 // Live notifications and history-derived inputs share one event projector.
 // Native item IDs own deduplication; deltas preview authoritative completions.
 import type { SessionEvent, ToolCall } from "@sessions/model";
-import {
-  resolveToolCallPolicy,
-  type ToolCallProjectionPolicy,
-  type ToolCompletion,
-} from "@sessions/server/toolProjection";
 import type { Thread, ThreadItem, Turn } from "./protocol";
 import type { RpcNotification } from "./protocol/transport";
 import { decodeInput } from "./messages";
@@ -23,9 +18,9 @@ export function codexModel(name: string, reasoningEffort: string | null) {
 }
 
 /** Project one root thread, nesting its subagent threads inside their agent cards. */
-export function createCodexProjector(sessionId: string, threadId: string) {
+export function createCodexProjector(threadId: string) {
   const turnsWithInput = new Set<string>();
-  const items = new Map<string, "completed" | { policy?: ToolCallProjectionPolicy }>();
+  const items = new Map<string, "started" | "completed">();
   const subagents = new Map<
     string,
     { toolCallId: string; project: (event: RpcNotification) => SessionEvent[] }
@@ -163,11 +158,7 @@ export function createCodexProjector(sessionId: string, threadId: string) {
     if (previous === "completed" || (previous && !complete)) return [];
     const index = itemIndex;
     if (!previous) itemIndex++;
-    const tool = itemTool(item);
-    const policy = previous
-      ? previous.policy
-      : tool && resolveToolCallPolicy(tool.name, tool.arguments, { sessionId });
-    items.set(item.id, complete ? "completed" : { policy });
+    items.set(item.id, complete ? "completed" : "started");
     if (item.type === "userMessage") {
       if (previous) return [];
       const event = decodeInput(
@@ -191,36 +182,24 @@ export function createCodexProjector(sessionId: string, threadId: string) {
       if (complete) events.push({ type: "status", status: "thinking" });
       return events;
     }
-    if (!tool || policy?.kind === "omitted") return [];
+    const tool = itemTool(item);
+    if (!tool) return [];
     const subagentThread = subagentThreadId(item);
     if (!previous) {
       if (subagentThread)
         subagents.set(subagentThread, {
           toolCallId: item.id,
-          project: createCodexProjector(sessionId, subagentThread),
+          project: createCodexProjector(subagentThread),
         });
-      if (policy?.kind === "translated") events.push(...(policy.projectOnStart ?? []));
-      else
-        events.push({
-          type: "tool_start",
-          toolCallId: item.id,
-          toolName: tool.name,
-          arguments: tool.arguments,
-        });
+      events.push({
+        type: "tool_start",
+        toolCallId: item.id,
+        toolName: tool.name,
+        arguments: tool.arguments,
+      });
     }
-    if (complete && !subagentThread) {
-      const result = toolResult(item);
-      if (policy?.kind === "translated") events.push(...(policy.projectOnComplete?.(result) ?? []));
-      else
-        events.push({
-          type: "tool_end",
-          toolCallId: item.id,
-          success: result.success,
-          result: result.result,
-          details: result.details,
-          ...(result.attachments ? { attachments: result.attachments } : {}),
-        });
-    }
+    if (complete && !subagentThread)
+      events.push({ type: "tool_end", toolCallId: item.id, ...toolResult(item) });
     return events;
   }
 }
@@ -320,7 +299,12 @@ function recordArguments(value: unknown): ToolCall["arguments"] {
     : {};
 }
 
-function toolResult(item: ThreadItem): ToolCompletion {
+function toolResult(
+  item: ThreadItem,
+): Pick<
+  Extract<SessionEvent, { type: "tool_end" }>,
+  "success" | "result" | "details" | "attachments"
+> {
   switch (item.type) {
     case "commandExecution":
       return {

@@ -19,7 +19,6 @@ import { sessionFile } from "@files/model";
 import { createEditorPane } from "@files/model/panes";
 import { createLinkedPanes, createSessionPane, resolveArtifactSelection } from "../model/panes";
 import { useModels } from "@providers/useModels";
-import { EditDiffsProvider, useEditDiffs } from "./transcript/editDiffs";
 import { SessionComposer } from "./composer/SessionComposer";
 import { CurrentSessionProvider, type SessionPaneMode } from "./CurrentSessionContext";
 import { PaneActions, type PaneVariant } from "@/shared/panes/PaneSlots";
@@ -73,7 +72,7 @@ export function SessionPane({
   );
   // Subscribe only to this session's durable metadata and worktree.
   const { data: sessionRecord, isLoading: isSessionRecordLoading } = useQuery({
-    ...sessionQueries.state(),
+    ...sessionQueries.state,
     enabled: !isPassive,
     select: (state) => {
       const session = state.sessions.find((session) => session.id === sessionId);
@@ -108,6 +107,8 @@ export function SessionPane({
   // draft's first turn; directory also scopes skill discovery.
   const {
     messages,
+    messageOffset,
+    diff,
     queuedMessages,
     isStreaming,
     status,
@@ -123,6 +124,7 @@ export function SessionPane({
     hasLoadedSessionState,
     error,
     sendMessage,
+    loadPrevious,
     setModel: setSessionModel,
     stop,
   } = useSession(sessionId, {
@@ -242,13 +244,11 @@ export function SessionPane({
     message: Pick<UserMessage, "content" | "attachments">,
     options?: { immediate?: true },
   ) {
-    void sendMessage(message, options);
-
     // Force scroll to bottom after submitting a message
     scrollToBottomRef.current?.();
+    return sendMessage(message, options);
   }
 
-  const editDiffs = useEditDiffs(messages, effectiveDirectory);
   const isSessionNotFound = !isDraft && error?.message?.includes("Session not found");
 
   // The most recent spoken turn, handed to the voice composer so a call opens
@@ -279,7 +279,7 @@ export function SessionPane({
                 // Logical padding overrides the picker's padding-inline in the desktop deck.
                 <SessionLocationPicker {...locationPickerProps} className="md:pe-0" />
               )}
-              <SessionMetadataBadges messageCount={messages.length} />
+              <SessionMetadataBadges messageCount={(messageOffset ?? 0) + messages.length} />
             </div>
           )}
           <PaneViewMenu view={view} views={TRANSCRIPT_VIEWS} onViewChange={setView} />
@@ -306,17 +306,17 @@ export function SessionPane({
               onOpenArtifact: mode === "active" ? handleOpenArtifact : undefined,
             }}
           >
-            <EditDiffsProvider value={editDiffs.byToolCallId}>
-              <SessionMessageList
-                messages={messages}
-                view={view}
-                isStreaming={isStreaming}
-                isWaiting={waiting}
-                status={status}
-                reasoningContent={reasoningContent}
-                scrollToBottomRef={scrollToBottomRef}
-              />
-            </EditDiffsProvider>
+            <SessionMessageList
+              messages={messages}
+              messageOffset={messageOffset}
+              onLoadPrevious={() => void loadPrevious()}
+              view={view}
+              isStreaming={isStreaming}
+              isWaiting={waiting}
+              status={status}
+              reasoningContent={reasoningContent}
+              scrollToBottomRef={scrollToBottomRef}
+            />
           </CurrentSessionProvider>
         )}
       </div>
@@ -339,7 +339,7 @@ export function SessionPane({
             onModelChange={handleModelChange}
             locationPicker={isCompact ? undefined : locationPickerProps}
             todos={todos}
-            sessionDiff={editDiffs}
+            diff={diff}
             artifacts={mode === "active" ? artifacts : []}
             onOpenArtifact={mode === "active" ? handleOpenArtifact : undefined}
             preview={preview}

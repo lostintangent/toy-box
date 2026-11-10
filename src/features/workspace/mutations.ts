@@ -1,20 +1,23 @@
 import type { QueryClient } from "@tanstack/react-query";
 import {
-  dispatchWorkspaceAction as requestWorkspaceAction,
+  updateDraft as requestDraftUpdate,
   updateSettings as requestSettingsUpdate,
 } from "./server/functions";
-import { areSettingsEqual, type Settings } from "./model/config/settings";
-import type { WorkspaceAction } from "./model/state/actions";
-import type { WorkspaceState } from "./model/state/reducer";
-import { workspaceJournal, workspaceQueries } from "./queries";
+import { areSettingsEqual, CATALOG_SETTINGS, type Settings } from "./model/config/settings";
+import type { DraftKey } from "./model/state/drafts";
+import { workspaceQueries } from "./queries";
 import { applyWorkspaceEvent } from "./sync";
 
-export function dispatchWorkspaceAction(queryClient: QueryClient, action: WorkspaceAction): void {
-  applyWorkspaceEvent(queryClient, action);
+export function updateDraft(
+  queryClient: QueryClient,
+  update: { key: DraftKey; text: string; origin: string },
+): void {
+  const { key, text, origin } = update;
+  const draft = { text, origin, updatedAt: Date.now() };
+  applyWorkspaceEvent(queryClient, { type: "draft.changed", key, draft });
 
-  // The server echo is idempotent. A rejected command repairs the optimistic
-  // transition from a fresh authoritative snapshot.
-  void requestWorkspaceAction({ data: action }).catch(() => workspaceJournal.repair(queryClient));
+  // The server's stamped echo replaces this draft, and a rejection repairs from a fresh snapshot.
+  void requestDraftUpdate({ data: update }).catch(() => workspaceQueries.state.repair(queryClient));
 }
 
 export function updateWorkspaceSetting<Key extends keyof Settings>(
@@ -22,19 +25,19 @@ export function updateWorkspaceSetting<Key extends keyof Settings>(
   key: Key,
   value: Settings[Key],
 ): void {
-  const workspace = queryClient.getQueryData<WorkspaceState>(workspaceQueries.stateKey());
+  const workspace = queryClient.getQueryData(workspaceQueries.state.queryKey);
   if (!workspace) return;
 
   const settings = { ...workspace.settings, [key]: value };
   if (areSettingsEqual(workspace.settings, settings)) return;
   // Catalog membership depends on persisted providers and pins. Publish those
   // preferences after saving so their refetch sees the accepted selection.
-  const changesCatalog = key === "disabledProviders" || key === "pinnedSessionIds";
+  const changesCatalog = CATALOG_SETTINGS.includes(key);
   if (!changesCatalog) applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
 
   void requestSettingsUpdate({ data: { [key]: value } })
     .then((settings) => {
       if (changesCatalog) applyWorkspaceEvent(queryClient, { type: "settings.changed", settings });
     })
-    .catch(() => workspaceJournal.repair(queryClient));
+    .catch(() => workspaceQueries.state.repair(queryClient));
 }

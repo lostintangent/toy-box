@@ -1,18 +1,9 @@
-import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import { createTestDatabase } from "@/server/database";
+import { describe, expect, test } from "bun:test";
+import { openTestDatabase } from "@/server/testFixtures";
 import { SMALL_JSON_MAX_BYTES } from "@/shared/smallJson";
 
-let currentDb: Bun.SQL | undefined;
-
-mock.module("@/server/database", () => ({
-  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
-    if (!currentDb && options?.createIfMissing === false) return null;
-    if (!currentDb) throw new Error("Test database has not been opened");
-    return currentDb;
-  },
-}));
-
-const {
+import {
+  createWorker,
   getEphemeralWorkerSessionIds,
   getPersistedWorker,
   getWorkerSessionIdsForApp,
@@ -20,22 +11,12 @@ const {
   registerWorkerSession,
   unregisterWorkerSession,
   WorkerDatabase,
-  createWorker,
-} = await import("./database");
-
-const { getWorker, listWorkers, updateWorker, initializeWorkerMetadata } = await import("./index");
-
-async function openWorkersTestDatabase(): Promise<void> {
-  currentDb = await createTestDatabase();
-  onTestFinished(async () => {
-    await currentDb?.close();
-    currentDb = undefined;
-  });
-}
+} from "./database";
+import { getWorker, initializeWorkerMetadata, listWorkers, updateWorker } from "./index";
 
 describe("worker ownership", () => {
   test("public owner reads select one channel without exposing another's Workers", async () => {
-    await openWorkersTestDatabase();
+    await openTestDatabase();
     for (const channelId of ["a", "b"]) {
       await registerWorkerSession({
         type: "channel",
@@ -53,7 +34,7 @@ describe("worker ownership", () => {
   });
 
   test("public detail updates preserve omitted fields and replace or clear opaque metadata", async () => {
-    await openWorkersTestDatabase();
+    await openTestDatabase();
     const worker = {
       type: "inbox" as const,
       sessionId: "result",
@@ -80,8 +61,7 @@ describe("worker ownership", () => {
   });
 
   test("initializes only absent metadata for the matching owner", async () => {
-    await openWorkersTestDatabase();
-    const store = new WorkerDatabase(currentDb!);
+    const store = new WorkerDatabase(await openTestDatabase());
     const worker = {
       type: "inbox" as const,
       sessionId: "initialize",
@@ -108,8 +88,7 @@ describe("worker ownership", () => {
   });
 
   test("bounds construction and metadata updates before changing the stored record", async () => {
-    await openWorkersTestDatabase();
-    const store = new WorkerDatabase(currentDb!);
+    const store = new WorkerDatabase(await openTestDatabase());
     const maximum = "é".repeat((SMALL_JSON_MAX_BYTES - 2) / 2);
     const oversized = `${maximum}é`;
     const worker = {
@@ -135,7 +114,7 @@ describe("worker ownership", () => {
   });
 
   test("rejects malformed JSON at the SQLite boundary", async () => {
-    await openWorkersTestDatabase();
+    const db = await openTestDatabase();
     await registerWorkerSession({
       type: "inbox",
       sessionId: "valid-json",
@@ -145,14 +124,14 @@ describe("worker ownership", () => {
     });
     await expect(
       (async () => {
-        await currentDb!`UPDATE workers SET metadata = ${"{invalid"} WHERE session_id = 'valid-json'`;
+        await db`UPDATE workers SET metadata = ${"{invalid"} WHERE session_id = 'valid-json'`;
       })(),
     ).rejects.toThrow();
     expect((await getPersistedWorker("valid-json"))?.metadata).toEqual({ message: "Keep this" });
   });
 
   test("lists worker session ids for a specific parent", async () => {
-    await openWorkersTestDatabase();
+    await openTestDatabase();
 
     await registerWorkerSession({
       createdAt: new Date(0).toISOString(),
@@ -183,7 +162,7 @@ describe("worker ownership", () => {
   });
 
   test("round-trips owner details, names, and metadata", async () => {
-    await openWorkersTestDatabase();
+    await openTestDatabase();
 
     await registerWorkerSession({
       createdAt: new Date(0).toISOString(),
@@ -225,7 +204,7 @@ describe("worker ownership", () => {
   });
 
   test("selects ephemeral workers independently of their owner", async () => {
-    await openWorkersTestDatabase();
+    await openTestDatabase();
 
     await registerWorkerSession({
       createdAt: new Date(0).toISOString(),
@@ -256,7 +235,7 @@ describe("worker ownership", () => {
   });
 
   test("unregisters workers and treats missing records as a no-op", async () => {
-    await openWorkersTestDatabase();
+    await openTestDatabase();
 
     await registerWorkerSession({
       createdAt: new Date(0).toISOString(),
@@ -269,12 +248,5 @@ describe("worker ownership", () => {
     await unregisterWorkerSession("toy-box-worker");
 
     expect(await getPersistedWorker("toy-box-worker")).toBeNull();
-  });
-
-  test("read paths no-op when the server-state database does not exist", async () => {
-    expect(await getWorkerSessionIdsForParent("toy-box-parent")).toEqual([]);
-    expect(await getWorkerSessionIdsForApp("app-a")).toEqual([]);
-    expect(await getEphemeralWorkerSessionIds()).toEqual([]);
-    expect(await getPersistedWorker("missing-worker")).toBeNull();
   });
 });

@@ -27,21 +27,20 @@ export function promptCompletionSources({
   sessionId,
   directory,
   provider,
-  hyperSessionIds,
+  hyperSessionId,
 }: {
   sessionId?: string;
   directory?: string;
   provider?: string;
-  hyperSessionIds: readonly string[];
+  hyperSessionId: string | null;
 }): CompletionSource<PromptCompletionItem>[] {
-  const sessionType = sessionId && hyperSessionIds.includes(sessionId) ? "hyper" : "standard";
   return [
     {
       id: "skill",
       trigger: /^\/([^\s/]*)/,
       empty: "No matching skills.",
       query: (query) => ({
-        ...skillQueries.list(directory, sessionType, provider),
+        ...skillQueries.list(directory, provider),
         select: (skills: SessionSkill[]) =>
           skills
             .filter((skill) =>
@@ -63,9 +62,9 @@ export function promptCompletionSources({
       trigger: wordTrigger("@"),
       empty: "No matching sessions.",
       query: (query) => ({
-        ...sessionQueries.state(),
+        ...sessionQueries.state,
         select: (state: SessionsState) =>
-          matchSessions(selectTopLevelSessions(state, hyperSessionIds), query, sessionId).map(
+          matchSessions(selectTopLevelSessions(state, hyperSessionId), query, sessionId).map(
             (session) => {
               const reference = sessionReference(session);
               return {

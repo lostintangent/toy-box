@@ -98,7 +98,7 @@ response carries an undeclared generic `limits` array, which Toy Box does not re
 does not type it.
 
 Provider failures are isolated during catalog/history discovery, so Codex alone works.
-Copilot discovery and context use the SDK's `listSessions()` and `getSessionMetadata()`;
+Copilot discovery and context use the SDK's `listSessions()`, `rpc.sessions.list`, `enrichMetadata`, and `getSessionMetadata()`;
 history uses `rpc.sessions.readPersistedEvents()` without resuming. Native history files are not parsed for metadata. An empty
 native handle is not yet catalog history; Sessions owns the draft until its first turn.
 A private Channel Agent without an explicit model inherits workspace defaults within its existing

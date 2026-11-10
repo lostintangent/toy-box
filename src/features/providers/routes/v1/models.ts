@@ -5,10 +5,7 @@ export const Route = createFileRoute("/api/v1/models")({
   server: {
     handlers: {
       GET: async () =>
-        Response.json(
-          { version: 1, ...(await getModelChoices()) },
-          { headers: { "Cache-Control": "no-store" } },
-        ),
+        Response.json(await getModelChoices(), { headers: { "Cache-Control": "no-store" } }),
     },
   },
 });

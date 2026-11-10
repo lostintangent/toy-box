@@ -1,9 +1,7 @@
 import { expect, onTestFinished, spyOn, test } from "bun:test";
-import { subscribeWorkspaceEvents } from "@workspace/server/events";
-import * as state from "@/server/database";
+import { broadcast, subscribeWorkspaceEvents } from "@workspace/server/events";
+import { openTestDatabase } from "@/server/testFixtures";
 import * as sessionRuntime from "@sessions/server/runtime";
-import * as workers from "@workers/server";
-import { sharedMap } from "@/shared/server/processState";
 import type { SessionCompletion, SessionLaunch } from "@sessions/model";
 import { getWorker, listWorkers, updateWorker } from "@workers/server";
 import { WorkerDatabase, registerWorkerSession } from "@workers/server/database";
@@ -13,7 +11,6 @@ import type { InboxEntry } from "../model";
 import {
   deleteInboxEntry,
   dispatchInboxTask,
-  ensureInboxRecovered,
   failInboxTask,
   getInboxEntry,
   listInboxEntries,
@@ -22,10 +19,7 @@ import {
 
 // Keep Inbox and Worker persistence real; control only the Session execution boundary.
 async function openInbox() {
-  const db = await state.createTestDatabase();
-  const readDatabase = spyOn(state, "getStateDatabase").mockResolvedValue(db);
-  sharedMap<Promise<void>>("inbox-recovery").clear();
-  await ensureInboxRecovered();
+  const db = await openTestDatabase();
   const completion = Promise.withResolvers<SessionCompletion>();
   const createSession = spyOn(sessionRuntime, "createSession").mockImplementation(async () => ({
     disposition: "started",
@@ -34,6 +28,7 @@ async function openInbox() {
   const deleteSession = spyOn(sessionRuntime, "deleteSessionIfExists").mockImplementation(
     async (sessionId) => {
       await detachManagedSession(sessionId);
+      broadcast({ type: "session.deleted", sessionId });
       return true;
     },
   );
@@ -45,8 +40,6 @@ async function openInbox() {
     await finish();
     createSession.mockRestore();
     deleteSession.mockRestore();
-    readDatabase.mockRestore();
-    await db.close();
   });
   return { db, createSession, finish };
 }
@@ -56,7 +49,7 @@ test("configured tasks publish readable results and retain them until deletion",
   let announcedEntries: Promise<InboxEntry[]> = Promise.resolve([]);
   onTestFinished(
     subscribeWorkspaceEvents((event) => {
-      if (event.type === "inbox.changed" || event.type === "inbox.entry.deleted") {
+      if (event.type === "inbox.changed" || event.type === "session.deleted") {
         announcedEntries = listInboxEntries();
       }
     }),
@@ -80,7 +73,7 @@ test("configured tasks publish readable results and retain them until deletion",
     expect(createSession).toHaveBeenCalledWith(
       sessionId,
       launch.message,
-      expect.objectContaining({ ...launch.location, sessionType: "worker" }),
+      expect.objectContaining(launch.location),
     );
   });
 
@@ -191,69 +184,6 @@ test("startup failure retains a visible error until explicit deletion", async ()
   });
   expect(await deleteInboxEntry(sessionId)).toBe(true);
   expect(await getInboxEntry(sessionId)).toBeNull();
-});
-
-test("recovery preserves outcomes and finishes before new reads or admissions", async () => {
-  const { createSession, finish } = await openInbox();
-  for (const sessionId of ["unfinished", "reported", "unreadable"]) {
-    await registerWorkerSession({
-      type: "inbox",
-      sessionId,
-      createdAt: new Date(0).toISOString(),
-      ephemeral: false,
-    });
-  }
-  await sendToInbox("reported", "A durable result");
-  await updateWorker("unreadable", { metadata: { message: 42 } });
-  sharedMap<Promise<void>>("inbox-recovery").clear();
-
-  const blocked = Promise.withResolvers<void>();
-  const readWorkers = workers.listWorkers;
-  const list = spyOn(workers, "listWorkers").mockImplementationOnce(async (type) => {
-    await blocked.promise;
-    return readWorkers(type);
-  });
-  onTestFinished(() => {
-    blocked.resolve();
-    list.mockRestore();
-  });
-
-  const admission = dispatchInboxTask({ message: { content: "New work" } });
-  let readFinished = false;
-  const snapshot = listInboxEntries().then((entries) => {
-    readFinished = true;
-    return entries;
-  });
-  await Bun.sleep(0);
-  expect(createSession).not.toHaveBeenCalled();
-  expect(readFinished).toBe(false);
-  blocked.resolve();
-  const [receipt, entries] = await Promise.all([admission, snapshot]);
-
-  expect(entries.find(({ id }) => id === "unfinished")).toMatchObject({
-    kind: "error",
-    error: expect.stringContaining("interrupted"),
-  });
-  expect(await getInboxEntry("reported")).toMatchObject({
-    kind: "result",
-    message: "A durable result",
-  });
-  expect((await getWorker("unreadable", "inbox"))?.metadata).toEqual({ message: 42 });
-  await ensureInboxRecovered();
-  expect((await getInboxEntry(receipt.sessionId))?.kind).toBe("pending");
-  await sendToInbox(receipt.sessionId, "New result");
-  await finish();
-});
-
-test("failed recovery can be retried", async () => {
-  await openInbox();
-  sharedMap<Promise<void>>("inbox-recovery").clear();
-  const list = spyOn(workers, "listWorkers")
-    .mockRejectedValueOnce(new Error("Storage unavailable"))
-    .mockResolvedValue([]);
-  onTestFinished(() => list.mockRestore());
-  await expect(ensureInboxRecovered()).rejects.toThrow("Storage unavailable");
-  await expect(ensureInboxRecovered()).resolves.toBeUndefined();
 });
 
 test("a reported result replaces an earlier failure and survives later failures", async () => {

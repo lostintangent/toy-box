@@ -75,6 +75,26 @@ export function deriveVisibleWorkspacePanes({
   return visiblePanes;
 }
 
+/**
+ * The panes a workspace presents as open: the roots a navigation targets, already open while it
+ * commits, and the other panes it shows, such as those its roots link. A root the navigation
+ * leaves is no longer open.
+ */
+export function deriveOpenPaneIds({
+  visiblePanes,
+  rootIds,
+  targetRootIds,
+}: {
+  visiblePanes: readonly WorkspacePane[];
+  rootIds: readonly string[];
+  targetRootIds: readonly string[];
+}): Set<string> {
+  return new Set([
+    ...visiblePanes.flatMap(({ id }) => (rootIds.includes(id) ? [] : [id])),
+    ...targetRootIds,
+  ]);
+}
+
 export function deriveReachablePanes(
   rootPanes: WorkspacePane[],
   panePublications: PanePublications,

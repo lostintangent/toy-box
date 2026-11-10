@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import { channelLeadTools, channelMemberTools, channelTools } from "./tools";
 
-test("only leads receive nonterminal task, routine, and member tools", () => {
+test("only leads receive nonterminal channel, task, routine, artifact, and member tools", () => {
   for (const name of [
+    "update_channel",
     "edit_channel_tasks",
     "set_routine",
     "delete_routine",
+    "remove_channel_artifact",
     "update_channel_member",
     "remove_channel_member",
     "message_channel_lead",

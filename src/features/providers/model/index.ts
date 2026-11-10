@@ -1,25 +1,21 @@
 import { z } from "zod";
 
-export const modelConfigurationSchema = z
-  .object({
-    provider: z.string().trim().min(1).describe("Session provider"),
-    name: z.string().trim().min(1).describe("Model name"),
-    reasoningEffort: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe("Reasoning effort for models that support it"),
-    contextTier: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe("Context tier for models that support it"),
-  })
-  // Preserve future JSON-valued SDK/catalog knobs so adding one only needs
-  // its boundary behavior and picker updated.
-  .catchall(z.json().optional());
+export const modelConfigurationSchema = z.object({
+  provider: z.string().trim().min(1).describe("Session provider"),
+  name: z.string().trim().min(1).describe("Model name"),
+  reasoningEffort: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Reasoning effort for models that support it"),
+  contextTier: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Context tier for models that support it"),
+});
 
 export type ModelConfiguration = z.infer<typeof modelConfigurationSchema>;
 

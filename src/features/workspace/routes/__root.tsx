@@ -4,7 +4,7 @@ import { createIsomorphicFn } from "@tanstack/react-start";
 import type { CSSProperties, ReactNode } from "react";
 import { domMax, LazyMotion, MotionConfig } from "motion/react";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
-import { workspaceQueries } from "@workspace/queries";
+import { preloadWorkspace } from "@workspace/sync";
 import { TooltipProvider } from "@/shared/ui/tooltip";
 
 import appCss from "./styles.css?url";
@@ -32,9 +32,7 @@ function RouteLoadingIndicator() {
 export const Route = createRootRouteWithContext<RouterContext>()({
   // Capture before any route loader reads the snapshots sent through SSR.
   beforeLoad: async () => ({ workspaceRevision: await readWorkspaceRevision() }),
-  loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData(workspaceQueries.state());
-  },
+  loader: ({ context }) => preloadWorkspace(context.queryClient),
   head: () => ({
     meta: [
       { charSet: "utf-8" },

@@ -32,9 +32,7 @@ export async function createSessionWorktree(
 
 /** Get every session worktree for session-list hydration. */
 export async function getAllSessionWorktrees(): Promise<Record<string, SessionWorktree>> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return {};
-
+  const db = await getStateDatabase();
   const rows = await db<SessionWorktreeRow[]>`SELECT * FROM worktrees`;
   const worktrees: Record<string, SessionWorktree> = {};
   for (const row of rows) {
@@ -92,9 +90,7 @@ type SessionWorktreeRow = {
 };
 
 async function getSessionWorktree(sessionId: string): Promise<SessionWorktree | null> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return null;
-
+  const db = await getStateDatabase();
   const [row] = await db<SessionWorktreeRow[]>`
     SELECT * FROM worktrees WHERE session_id = ${sessionId}
   `;
@@ -142,8 +138,7 @@ async function saveSessionWorktree(sessionId: string, worktree: SessionWorktree)
 }
 
 async function deleteSessionWorktreeRecord(sessionId: string): Promise<void> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return;
+  const db = await getStateDatabase();
   await db`DELETE FROM worktrees WHERE session_id = ${sessionId}`;
 }
 

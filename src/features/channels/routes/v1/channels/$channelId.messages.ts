@@ -1,11 +1,24 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { getChannelHistoryResponse, postChannelMessageResponse } from "@channels/server/api";
+import { postChannelMessageInputSchema } from "@channels/model";
+import { getChannelHistory, postChannelMessage } from "@channels/server";
+import { invalidRequest, notFound, readInput, respond } from "@channels/server/http";
 
 export const Route = createFileRoute("/api/v1/channels/$channelId/messages")({
   server: {
     handlers: {
-      GET: ({ params, request }) => getChannelHistoryResponse(params.channelId, request),
-      POST: ({ params, request }) => postChannelMessageResponse(params.channelId, request),
+      GET: async ({ params, request }) => {
+        const before = Number(new URL(request.url).searchParams.get("before"));
+        if (!Number.isSafeInteger(before) || before <= 0) return invalidRequest();
+        const page = await getChannelHistory(params.channelId, before);
+        return page
+          ? Response.json(page, { headers: { "Cache-Control": "no-store" } })
+          : notFound("Channel");
+      },
+      POST: ({ params, request }) =>
+        respond("post Channel message", async () => {
+          const input = await readInput(request, postChannelMessageInputSchema, params);
+          return Response.json(await postChannelMessage(input, { type: "user" }), { status: 201 });
+        }),
     },
   },
 });

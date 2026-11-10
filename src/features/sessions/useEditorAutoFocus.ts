@@ -15,11 +15,11 @@ export function useEditorAutoFocus(surface: WorkspaceSurface, panes: WorkspacePa
     (workspace) => workspace.settings.autoFocusArtifacts,
   );
   const { data: automationSessionIds } = useSuspenseQuery({
-    ...sessionQueries.state(),
+    ...sessionQueries.state,
     select: selectAutomationSessionIds,
   });
   const { data: initialEditorPaneIds = [] } = useQuery({
-    ...sessionQueries.state(),
+    ...sessionQueries.state,
     select: (state) =>
       state.sessions.flatMap((session) =>
         !session.provider && session.artifactPath

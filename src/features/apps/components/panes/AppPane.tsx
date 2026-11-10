@@ -1,5 +1,4 @@
-import { ClientOnly } from "@tanstack/react-router";
-import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useLayoutEffect, useState } from "react";
 import { updateApp } from "@apps/server/functions";
 import { appQueries } from "@apps/queries";
@@ -12,13 +11,13 @@ import { PaneStatus, type PaneVariant } from "@/shared/panes/PaneSlots";
 import { WorkersMenu } from "@workers/components/WorkersMenu";
 import { AppStateStore } from "../host/state";
 import { PaneMessage } from "@/shared/ui/pane-message";
-import { AppErrorBoundary, AppHost, appErrorMessage } from "../host/AppHost";
+import { AppHost, AppMount, type AppBundle } from "../host/AppHost";
 
 export function AppPane({ pane, variant }: { pane: WorkspacePane<"app">; variant: PaneVariant }) {
   const {
     data: { app, definition },
   } = useSuspenseQuery({
-    ...appQueries.list(),
+    ...appQueries.list,
     select: ({ apps, definitions }) => {
       const app = apps.find((candidate) => candidate.id === pane.appId);
       return {
@@ -28,7 +27,7 @@ export function AppPane({ pane, variant }: { pane: WorkspacePane<"app">; variant
     },
   });
   const { data: appWorkers } = useSuspenseQuery({
-    ...workerQueries.active(),
+    ...workerQueries.active,
     select: (workers) =>
       workers.filter(
         (worker): worker is Extract<Worker, { type: "app" }> =>
@@ -54,38 +53,34 @@ export function AppPane({ pane, variant }: { pane: WorkspacePane<"app">; variant
   }
 
   return (
-    <ClientOnly
-      fallback={<PaneMessage title="Loading app" detail="Getting everything ready…" loading />}
-    >
-      <AppErrorBoundary
+    <>
+      {appWorkers.length > 0 && (
+        <PaneStatus>
+          <WorkersMenu workers={appWorkers} variant={variant} />
+        </PaneStatus>
+      )}
+      <AppMount
         key={`${app.id}:${definition.revision}`}
         title={app.title}
+        bundle={appQueries.bundle(definition.id, definition.revision)}
         resetKey={app.revision}
       >
-        <MountedApp
-          pane={pane}
-          app={app}
-          definition={definition}
-          appWorkers={appWorkers}
-          variant={variant}
-        />
-      </AppErrorBoundary>
-    </ClientOnly>
+        {(bundle) => <SavedApp pane={pane} app={app} definition={definition} bundle={bundle} />}
+      </AppMount>
+    </>
   );
 }
 
-function MountedApp({
+function SavedApp({
   pane,
   app,
   definition,
-  appWorkers,
-  variant,
+  bundle,
 }: {
   pane: WorkspacePane<"app">;
   app: AppInstance;
   definition: AppDefinition;
-  appWorkers: Extract<Worker, { type: "app" }>[];
-  variant: PaneVariant;
+  bundle: AppBundle;
 }) {
   const queryClient = useQueryClient();
   const [appState] = useState(
@@ -100,35 +95,5 @@ function MountedApp({
   );
   useLayoutEffect(() => appState.sync(app), [app, appState]);
 
-  const bundleQuery = useQuery(appQueries.bundle(definition.id, definition.revision));
-
-  if (bundleQuery.isPending) {
-    return <PaneMessage title={`Loading ${app.title}`} detail="Loading app…" loading />;
-  }
-  if (bundleQuery.isError) {
-    return (
-      <PaneMessage
-        title={`Unable to load ${app.title}`}
-        detail={appErrorMessage(bundleQuery.error)}
-      />
-    );
-  }
-
-  const { Component: AppComponent, css } = bundleQuery.data;
-  return (
-    <>
-      {appWorkers.length > 0 && (
-        <PaneStatus>
-          <WorkersMenu workers={appWorkers} variant={variant} />
-        </PaneStatus>
-      )}
-      <AppHost
-        scopeId={definition.id}
-        publisherPaneId={pane.id}
-        AppComponent={AppComponent}
-        css={css}
-        savedApp={appState}
-      />
-    </>
-  );
+  return <AppHost bundle={bundle} publisherPaneId={pane.id} savedApp={appState} />;
 }

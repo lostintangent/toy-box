@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import {
-  AppWindow,
   Clock3,
   File,
   FileText,
@@ -15,7 +14,7 @@ import { ALTERNATE_SHORTCUT, type Command } from "@/shared/commands/command";
 import { SidebarStatusMark, type SidebarStatus } from "@/shared/sidebar/SidebarStatus";
 import { RelativeTime } from "@/shared/ui/relative-time";
 import { appCommands } from "@apps/commands";
-import { APP_ICONS } from "@apps/components/runtime/icons";
+import { appIcon } from "@apps/components/runtime/icons";
 import { createAppPane, type AppDefinition, type AppInstance } from "@apps/model";
 import { automationCommands } from "@automations/commands";
 import type { Automation } from "@automations/model";
@@ -33,21 +32,13 @@ import type { Session } from "@sessions/model";
 import { getSessionLabel } from "@sessions/model/label";
 import { createSessionPane } from "@sessions/model/panes";
 import type { RecentDirectory } from "@sessions/model/recentDirectories";
-import type { WorkspacePane } from "@workspace/model/panes";
+import type { WorkspaceRoots } from "@workspace/hooks/layout/roots";
 import { sessionAttention, type SessionActivity } from "@sessions/model/activity";
 import type { PaletteItem } from "./palette";
 
 // How each kind of thing in the workspace reads as a palette row: what it's called, what
 // identifies it (the ID of the pane it opens, so "This …" finds the current pane's row), its live
-// status, and what Enter, Mod+Enter and its actions do to it.
-
-/** Where the palette opens what's chosen: the workspace's root verbs, as the sidebar uses them. */
-export type PaletteNavigation = {
-  /** Shows a pane in place of the workspace's others. */
-  selectRoot: (pane: WorkspacePane) => void;
-  /** Opens a pane beside the workspace's others. */
-  openRoot: (pane: WorkspacePane) => Promise<void>;
-};
+// status, and what Enter, Mod+Enter and its actions do to it, through the workspace's roots.
 
 /** Only a desktop's grid has room to add a pane beside the others. */
 export const addToWorkspace = (canAdd: boolean, add: Command["run"]): PaletteItem[] =>
@@ -67,16 +58,14 @@ export function sessionItem(
   session: Session,
   {
     activity,
-    isOpen,
     pin,
-    navigation,
+    roots,
     canAdd,
   }: {
     activity?: SessionActivity;
-    isOpen: boolean;
     /** A child session's row has no Pin, as in the sidebar. */
     pin?: { isPinned: boolean; toggle: () => void };
-    navigation: PaletteNavigation;
+    roots: WorkspaceRoots;
     canAdd: boolean;
   },
 ): PaletteItem {
@@ -93,17 +82,17 @@ export function sessionItem(
         : Shapes
       : MessageSquare,
     accessory: (
-      <SessionAccessory activity={activity} isOpen={isOpen}>
+      <SessionAccessory activity={activity} isOpen={roots.isOpen(pane)}>
         <RelativeTime date={session.updatedAt} />
       </SessionAccessory>
     ),
     preview: () => <SessionPreviewPane sessionId={session.id} />,
     actions: [
-      ...addToWorkspace(canAdd, () => navigation.openRoot(pane)),
+      ...addToWorkspace(canAdd, () => roots.openRoot(pane)),
       ...sessionCommands(session, pin),
     ],
     verb: "Open",
-    run: () => navigation.selectRoot(pane),
+    run: () => roots.selectRoot(pane),
   };
 }
 
@@ -143,15 +132,11 @@ function Status({ kind, children }: { kind: SidebarStatus["kind"]; children: Rea
 }
 
 export function channelItem(
-  channel: Channel,
-  {
-    isOpen,
-    navigation,
-    canAdd,
-  }: { isOpen: boolean; navigation: PaletteNavigation; canAdd: boolean },
+  channel: Omit<Channel, "tasks">,
+  { roots, canAdd }: { roots: WorkspaceRoots; canAdd: boolean },
 ): PaletteItem {
   const pane = createChannelPane(channel.id);
-  const attention = channelAttention(channel, isOpen);
+  const attention = channelAttention(channel, roots.isOpen(pane));
   const updated = <RelativeTime date={channel.updatedAt} />;
   return {
     id: pane.id,
@@ -163,19 +148,16 @@ export function channelItem(
     ) : (
       updated
     ),
-    actions: [
-      ...addToWorkspace(canAdd, () => navigation.openRoot(pane)),
-      ...channelCommands(channel),
-    ],
+    actions: [...addToWorkspace(canAdd, () => roots.openRoot(pane)), ...channelCommands(channel)],
     verb: "Open",
-    run: () => navigation.selectRoot(pane),
+    run: () => roots.selectRoot(pane),
   };
 }
 
 export function appItem(
   app: AppInstance,
   definition: AppDefinition | undefined,
-  { navigation, canAdd }: { navigation: PaletteNavigation; canAdd: boolean },
+  { roots, canAdd }: { roots: WorkspaceRoots; canAdd: boolean },
 ): PaletteItem {
   const pane = createAppPane(app.id);
   return {
@@ -183,10 +165,10 @@ export function appItem(
     title: app.title,
     group: "Apps",
     detail: definition && definition.title !== app.title ? definition.title : undefined,
-    icon: (definition?.icon && APP_ICONS[definition.icon]) || AppWindow,
-    actions: [...addToWorkspace(canAdd, () => navigation.openRoot(pane)), ...appCommands(app)],
+    icon: appIcon(definition?.icon),
+    actions: [...addToWorkspace(canAdd, () => roots.openRoot(pane)), ...appCommands(app)],
     verb: "Open",
-    run: () => navigation.selectRoot(pane),
+    run: () => roots.selectRoot(pane),
   };
 }
 
@@ -194,14 +176,12 @@ export function automationItem(
   automation: Automation,
   {
     activity,
-    isOpen,
-    navigation,
+    roots,
     canAdd,
     run,
   }: {
     activity?: SessionActivity;
-    isOpen: boolean;
-    navigation: PaletteNavigation;
+    roots: WorkspaceRoots;
     canAdd: boolean;
     run: Parameters<typeof automationCommands>[1]["run"];
   },
@@ -214,27 +194,23 @@ export function automationItem(
     detail: automation.cwd ? resolveSessionLocation({ cwd: automation.cwd })?.label : undefined,
     icon: Clock3,
     accessory: (
-      <SessionAccessory activity={activity} isOpen={isOpen}>
+      <SessionAccessory activity={activity} isOpen={roots.isOpen(pane)}>
         <span>
           Runs <RelativeTime date={automation.nextRunAt} />
         </span>
       </SessionAccessory>
     ),
     actions: [
-      ...addToWorkspace(canAdd, () => navigation.openRoot(pane)),
+      ...addToWorkspace(canAdd, () => roots.openRoot(pane)),
       ...automationCommands(automation, { run, isRunning: activity?.status === "running" }),
     ],
     verb: "Open",
-    run: () => navigation.selectRoot(pane),
+    run: () => roots.selectRoot(pane),
   };
 }
 
 /** A file found beneath `directory`, by its path relative to it. */
-export function fileItem(
-  directory: string,
-  path: string,
-  navigation: PaletteNavigation,
-): PaletteItem {
+export function fileItem(directory: string, path: string, roots: WorkspaceRoots): PaletteItem {
   const dirname = getPathDirname(path);
   return {
     id: `file:${path}`,
@@ -243,9 +219,7 @@ export function fileItem(
     icon: File,
     verb: "Open",
     run: () =>
-      navigation.openRoot(
-        createEditorPane(machineFile(`${directory.replace(/[\\/]+$/, "")}/${path}`)),
-      ),
+      roots.openRoot(createEditorPane(machineFile(`${directory.replace(/[\\/]+$/, "")}/${path}`))),
   };
 }
 

@@ -11,7 +11,6 @@ import { useComposerDraft, type ComposerMessage } from "@/shared/composers/useCo
 import { promptReferences } from "../references/PromptReferences";
 import type { ModelConfiguration, ModelInfo } from "@providers/model";
 import type { SessionArtifact, SessionState, TodoItem, UserMessage } from "../../model";
-import type { DiffStats } from "@/shared/diffStats";
 import { ModelConfigurationPicker } from "@providers/components/ModelPicker";
 import {
   SessionLocationPicker,
@@ -32,7 +31,7 @@ import type { ChecklistItem } from "@/shared/ui/checklist";
 import { sessionFile } from "@files/model";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useSavedDraft } from "@workspace/hooks/useSavedDraft";
-import type { FileDiffSummary } from "../transcript/editDiffs";
+import type { FileDiffStats } from "../../model/fileDiffs";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { cn } from "@/shared/utils";
 
@@ -52,7 +51,7 @@ type SessionComposerCommonProps = {
   onModelChange?: (model: ModelConfiguration) => void;
   locationPicker?: SessionLocationPickerProps;
   todos?: TodoItem[];
-  sessionDiff?: { total: DiffStats; byFile: FileDiffSummary[] };
+  diff?: FileDiffStats;
   artifacts?: SessionArtifact[];
   onOpenArtifact?: (path: string) => void;
   preview?: Preview;
@@ -91,7 +90,7 @@ export function SessionComposer(props: SessionComposerProps) {
     onModelChange,
     locationPicker,
     todos,
-    sessionDiff,
+    diff,
     artifacts = [],
     onOpenArtifact,
     preview,
@@ -111,12 +110,12 @@ export function SessionComposer(props: SessionComposerProps) {
   const [isOverflowing, setIsOverflowing] = useState(false);
   const { isMobile } = useViewport();
   const environment = useWorkspaceSelector((workspace) => workspace.environment);
-  const hyperSessionIds = useWorkspaceSelector((workspace) => workspace.hyperSessionIds);
+  const hyperSessionId = useWorkspaceSelector((workspace) => workspace.settings.hyperSessionId);
   const queueHandle = useRef<QueuedMessageListHandle>(null);
   const queuedInputs = queuedMessages.flatMap((message) =>
     message.role === "user" && message.status === "queued" ? [message] : [],
   );
-  const hasDiff = sessionDiff && (sessionDiff.total.added > 0 || sessionDiff.total.removed > 0);
+  const hasDiff = diff && (diff.total.added > 0 || diff.total.removed > 0);
   // Desktop teaches one relevant shortcut while a turn runs.
   const placeholder = !isBusy
     ? "Ask a question or describe your idea..."
@@ -186,7 +185,7 @@ export function SessionComposer(props: SessionComposerProps) {
               preview || hasDiff ? (
                 <>
                   {preview && <WorkspacePreview preview={preview} />}
-                  {hasDiff && <DiffPopup total={sessionDiff.total} byFile={sessionDiff.byFile} />}
+                  {hasDiff && <DiffPopup diff={diff} cwd={directory} />}
                 </>
               ) : undefined
             }
@@ -208,7 +207,7 @@ export function SessionComposer(props: SessionComposerProps) {
           sessionId,
           directory,
           provider: model?.provider,
-          hyperSessionIds,
+          hyperSessionId,
         }),
         menu: (completions) => <PromptCompletionMenu completions={completions} />,
       }}

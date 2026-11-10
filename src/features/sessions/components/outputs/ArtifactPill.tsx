@@ -20,7 +20,7 @@ export function useArtifactState(file: WorkspaceFile): { open: boolean; busy: bo
   const paneId = createEditorPane(file).id;
   const fileId = workspaceFileId(file);
   const { data: busy } = useSuspenseQuery({
-    ...workerQueries.active(),
+    ...workerQueries.active,
     select: (workers) =>
       workers.some((worker) => worker.type === "file" && workspaceFileId(worker.file) === fileId),
   });

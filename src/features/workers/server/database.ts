@@ -98,8 +98,7 @@ export class WorkerDatabase {
 }
 
 export async function getWorkerSessionIdsForParent(parentSessionId: string): Promise<string[]> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return [];
+  const db = await getStateDatabase();
   const rows = await db<WorkerSessionIdRow[]>`
     SELECT session_id FROM workers
     WHERE parent_session_id = ${parentSessionId}
@@ -109,8 +108,7 @@ export async function getWorkerSessionIdsForParent(parentSessionId: string): Pro
 }
 
 export async function getWorkerSessionIdsForApp(appId: string): Promise<string[]> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return [];
+  const db = await getStateDatabase();
   const rows = await db<WorkerSessionIdRow[]>`
     SELECT session_id FROM workers WHERE app_id = ${appId} ORDER BY session_id
   `;
@@ -119,8 +117,7 @@ export async function getWorkerSessionIdsForApp(appId: string): Promise<string[]
 
 /** Ephemeral workers cannot outlive their process-local supervisor. */
 export async function getEphemeralWorkerSessionIds(): Promise<string[]> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return [];
+  const db = await getStateDatabase();
   const rows = await db<WorkerSessionIdRow[]>`
     SELECT session_id FROM workers WHERE ephemeral = 1 ORDER BY session_id
   `;
@@ -128,17 +125,15 @@ export async function getEphemeralWorkerSessionIds(): Promise<string[]> {
 }
 
 export async function getPersistedWorker(sessionId: string): Promise<Worker | null> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  return db ? new WorkerDatabase(db).get(sessionId) : null;
+  return new WorkerDatabase(await getStateDatabase()).get(sessionId);
 }
 
 export async function registerWorkerSession(worker: Worker): Promise<void> {
   await new WorkerDatabase(await getStateDatabase()).create(worker);
 }
 
-export async function unregisterWorkerSession(sessionId: string): Promise<boolean> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  return db ? new WorkerDatabase(db).delete(sessionId) : false;
+export async function unregisterWorkerSession(sessionId: string): Promise<void> {
+  await new WorkerDatabase(await getStateDatabase()).delete(sessionId);
 }
 
 function workerColumns(worker: WorkerOwner) {

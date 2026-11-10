@@ -15,7 +15,7 @@ export function SidebarFooter({
   leadingSlot?: ReactNode;
 }) {
   const appTitle = import.meta.env.VITE_APP_TITLE;
-  const { data: inboxEntries } = useSuspenseQuery(inboxQueries.list());
+  const { data: inboxEntries } = useSuspenseQuery(inboxQueries.list);
   const hasUnreadInbox = useSessionsActivity((activities) =>
     inboxEntries.some((entry) => activities[entry.id]?.status === "unread"),
   );

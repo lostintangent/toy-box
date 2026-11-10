@@ -1,7 +1,4 @@
 import { z } from "zod";
-import type { CustomEditorKind } from "./editors";
-
-export * from "./editors";
 
 // A workspace file is one address for a file surfaced in the workspace: an
 // artifact under a session's artifacts directory, or a real file on the host machine.
@@ -21,6 +18,7 @@ export const workspaceFileInputSchema = z.object({ file: workspaceFileSchema });
 
 export const writeFileInputSchema = workspaceFileInputSchema.extend({
   content: z.string(),
+  notifyAgent: z.boolean().optional(),
 });
 
 export const watchFileInputSchema = workspaceFileInputSchema.extend({
@@ -57,7 +55,7 @@ export type FileChange =
 
 declare module "@workspace/model/events" {
   interface WorkspaceEvents {
-    files: { type: "editor.registered"; kind: CustomEditorKind } | FileChange;
+    files: FileChange;
   }
 }
 

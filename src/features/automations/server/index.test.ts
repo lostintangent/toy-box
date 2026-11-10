@@ -1,5 +1,5 @@
 import { describe, expect, onTestFinished, setSystemTime, spyOn, test } from "bun:test";
-import * as state from "@/server/database";
+import { openTestDatabase } from "@/server/testFixtures";
 import * as sessions from "@sessions/server/runtime";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import type { SessionCompletion } from "@sessions/model";
@@ -24,12 +24,6 @@ const options = {
 } satisfies AutomationOptions;
 
 describe("automation lifecycle", () => {
-  test("lists no definitions before state storage exists", async () => {
-    const database = spyOn(state, "getStateDatabase").mockResolvedValue(null);
-    onTestFinished(() => database.mockRestore());
-    expect(await listAutomations()).toEqual([]);
-  });
-
   test("publishes definition changes and deletes the session before its definition", async () => {
     const { database, events, deleteSession } = await setup();
     const created = await createAutomation(options);
@@ -60,18 +54,18 @@ describe("automation lifecycle", () => {
     expect(events).toEqual([]);
   });
 
-  test("runs the saved definition under its stable ID with the client's message ID", async () => {
+  test("runs the saved definition under its stable ID", async () => {
     const { database, recreate } = await setup();
     const automation = await database.create(options);
 
-    expect(await runAutomation(automation.id, "requested-run")).toEqual({
+    expect(await runAutomation(automation.id)).toEqual({
       sessionId: automation.id,
       started: true,
     });
     expect(recreate).toHaveBeenCalledWith(
       automation.id,
-      { clientId: "requested-run", content: options.prompt, model: options.model },
-      { directory: options.cwd, name: options.title, sessionType: "automation" },
+      { content: options.prompt, model: options.model },
+      { directory: options.cwd, name: options.title },
     );
   });
 
@@ -199,9 +193,8 @@ describe("automation lifecycle", () => {
 });
 
 async function setup() {
-  const db = await state.createTestDatabase();
+  const db = await openTestDatabase();
   const database = new AutomationDatabase(db);
-  const readDatabase = spyOn(state, "getStateDatabase").mockResolvedValue(db);
   const deleteSession = spyOn(sessions, "deleteSessionIfExists").mockResolvedValue(true);
   const running = spyOn(sessions, "isSessionRunning").mockReturnValue(false);
   const completion = Promise.withResolvers<SessionCompletion>();
@@ -220,12 +213,10 @@ async function setup() {
 
   onTestFinished(async () => {
     unsubscribe();
-    readDatabase.mockRestore();
     deleteSession.mockRestore();
     running.mockRestore();
     recreate.mockRestore();
     release.mockRestore();
-    await db.close();
   });
   return { db, database, events, deleteSession, running, recreate, completion, released };
 }

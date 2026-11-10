@@ -38,14 +38,20 @@ function normalizeDiffPath(rawPath: string, cwd?: string): string {
 
   const withoutGitPrefix = /^[ab]\//.test(cleanPath) ? cleanPath.slice(2) : cleanPath;
   if (withoutGitPrefix === "dev/null") return DEV_NULL;
-  if (!cwd || withoutGitPrefix.startsWith("/")) return withoutGitPrefix;
+  return resolveDiffPath(withoutGitPrefix, cwd);
+}
 
-  const maybeAbsolutePath = `/${withoutGitPrefix}`;
+/** Restores the leading slash a git prefix replaced on a path inside `cwd`, which
+ *  keys a path normalized without a cwd the same as one normalized with it. */
+function resolveDiffPath(path: string, cwd?: string): string {
+  if (!cwd || path.startsWith("/")) return path;
+
+  const maybeAbsolutePath = `/${path}`;
   if (maybeAbsolutePath === cwd || maybeAbsolutePath.startsWith(`${cwd}/`)) {
     return maybeAbsolutePath;
   }
 
-  return withoutGitPrefix;
+  return path;
 }
 
 function statusFromPaths(
@@ -268,36 +274,43 @@ export function getToolCallFileDiffs(toolCall: ToolCall, cwd?: string): FileDiff
   return undefined;
 }
 
-export function computeFileDiffStats(fileDiffs: FileDiff[]): {
+/** Line counts of file diffs, in total and per file. */
+export type FileDiffStats = {
   total: DiffStats;
   byFile: Array<{ path: string; diff: DiffStats }>;
-} {
-  if (!fileDiffs.length) return { total: { added: 0, removed: 0 }, byFile: [] };
+};
 
+export function computeFileDiffStats(fileDiffs: FileDiff[]): FileDiffStats {
+  return sumFileDiffStats(
+    fileDiffs.flatMap(({ path, hunks }) =>
+      hunks.map(({ stats }) => ({ total: stats, byFile: [{ path, diff: stats }] })),
+    ),
+  );
+}
+
+/** Adds diff stats, merging files by path in first-seen order. */
+export function sumFileDiffStats(summaries: Iterable<FileDiffStats>): FileDiffStats {
+  const total = { added: 0, removed: 0 };
   const byFile = new Map<string, { path: string; diff: DiffStats }>();
-  let totalAdded = 0;
-  let totalRemoved = 0;
-
-  for (const file of fileDiffs) {
-    for (const hunk of file.hunks) {
-      const diff = hunk.stats;
-      const existing = byFile.get(file.path);
-      if (existing) {
-        existing.diff.added += diff.added;
-        existing.diff.removed += diff.removed;
-      } else {
-        byFile.set(file.path, {
-          path: file.path,
-          diff: { added: diff.added, removed: diff.removed },
-        });
-      }
-      totalAdded += diff.added;
-      totalRemoved += diff.removed;
+  for (const summary of summaries) {
+    total.added += summary.total.added;
+    total.removed += summary.total.removed;
+    for (const { path, diff } of summary.byFile) {
+      const file = byFile.get(path) ?? { path, diff: { added: 0, removed: 0 } };
+      file.diff.added += diff.added;
+      file.diff.removed += diff.removed;
+      byFile.set(path, file);
     }
   }
+  return { total, byFile: [...byFile.values()] };
+}
 
-  return {
-    total: { added: totalAdded, removed: totalRemoved },
-    byFile: Array.from(byFile.values()),
-  };
+/** Diff stats keyed by `cwd`-resolved paths, merging keys that resolve alike. */
+export function resolveFileDiffStats(diff: FileDiffStats, cwd?: string): FileDiffStats {
+  return sumFileDiffStats([
+    {
+      ...diff,
+      byFile: diff.byFile.map((file) => ({ ...file, path: resolveDiffPath(file.path, cwd) })),
+    },
+  ]);
 }

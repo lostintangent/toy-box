@@ -21,7 +21,7 @@ function catalog(source: ReturnType<typeof promptCompletionSources>[number], que
 
 describe("prompt completion sources", () => {
   test("skills complete only at the start of a prompt", () => {
-    const [{ trigger }] = promptCompletionSources({ hyperSessionIds: [] });
+    const [{ trigger }] = promptCompletionSources({ hyperSessionId: null });
     expect(matchCompletion(trigger, "/rev", 4)).toEqual({ start: 0, end: 4, query: "rev" });
     expect(matchCompletion(trigger, "/review later", 4)).toEqual({
       start: 0,
@@ -32,21 +32,17 @@ describe("prompt completion sources", () => {
     expect(matchCompletion(trigger, "see /rev", 8)).toBeUndefined();
   });
 
-  test("skills come from the catalog for the composer's directory, role, and provider", () => {
-    const [hyper] = promptCompletionSources({
-      sessionId: "hyper",
+  test("skills come from the catalog for the composer's directory and provider", () => {
+    const [session] = promptCompletionSources({
+      sessionId: "session",
       directory: "/project",
       provider: "codex",
-      hyperSessionIds: ["hyper"],
+      hyperSessionId: null,
     });
-    expect(catalog(hyper!, "").queryKey).toEqual(
-      skillQueries.list("/project", "hyper", "codex").queryKey,
-    );
+    expect(catalog(session!, "").queryKey).toEqual(skillQueries.list("/project", "codex").queryKey);
     // Inbox composes before a session exists.
-    const [inbox] = promptCompletionSources({ provider: "claude", hyperSessionIds: ["hyper"] });
-    expect(catalog(inbox!, "").queryKey).toEqual(
-      skillQueries.list(undefined, "standard", "claude").queryKey,
-    );
+    const [inbox] = promptCompletionSources({ provider: "claude", hyperSessionId: "hyper" });
+    expect(catalog(inbox!, "").queryKey).toEqual(skillQueries.list(undefined, "claude").queryKey);
   });
 
   test("skills match by name or description and mark global skills within a directory", () => {
@@ -54,7 +50,7 @@ describe("prompt completion sources", () => {
       { name: "review", description: "Check a diff", type: "global", path: "/r.md" },
       { name: "deploy", description: "Ship it", type: "project" },
     ];
-    const [withDirectory] = promptCompletionSources({ directory: "/p", hyperSessionIds: [] });
+    const [withDirectory] = promptCompletionSources({ directory: "/p", hyperSessionId: null });
     expect(catalog(withDirectory!, "DIFF").select!(skills)).toEqual([
       {
         value: "/review",
@@ -64,14 +60,14 @@ describe("prompt completion sources", () => {
         filePath: "/r.md",
       },
     ]);
-    const [withoutDirectory] = promptCompletionSources({ hyperSessionIds: [] });
+    const [withoutDirectory] = promptCompletionSources({ hyperSessionId: null });
     expect(catalog(withoutDirectory!, "ship").select!(skills)).toMatchObject([
       { value: "/deploy", badge: undefined },
     ]);
   });
 
   test("sessions offer other top-level sessions by title, newest first", () => {
-    const [, sessions] = promptCompletionSources({ sessionId: "self", hyperSessionIds: ["hyper"] });
+    const [, sessions] = promptCompletionSources({ sessionId: "self", hyperSessionId: "hyper" });
     const values = catalog(sessions!, "pLaN").select!({
       sessions: [
         session("self", 9),
@@ -96,7 +92,7 @@ describe("prompt completion sources", () => {
   });
 
   test("files are referenced by their search path, named with their folder beside them", () => {
-    const [, , files] = promptCompletionSources({ directory: "/p", hyperSessionIds: [] });
+    const [, , files] = promptCompletionSources({ directory: "/p", hyperSessionId: null });
     const search = catalog(files!, "plan");
     expect(search.queryKey).toEqual(fileQueries.search("/p", "plan").queryKey);
     expect(search.select!(["src/a folder/plan.md", "plan.txt"])).toMatchObject([
@@ -107,7 +103,7 @@ describe("prompt completion sources", () => {
       },
       { value: "[plan.txt](file:plan.txt)", label: "plan.txt", detail: undefined },
     ]);
-    const [, , noDirectory] = promptCompletionSources({ hyperSessionIds: [] });
+    const [, , noDirectory] = promptCompletionSources({ hyperSessionId: null });
     expect(noDirectory!.query("plan")).toEqual([]);
   });
 });

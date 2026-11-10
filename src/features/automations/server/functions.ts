@@ -4,7 +4,6 @@ import { createServerFn } from "@tanstack/react-start";
 import {
   automationIdInputSchema,
   automationOptionsSchema,
-  runAutomationInputSchema,
   updateAutomationInputSchema,
 } from "../model";
 import * as lifecycle from "./index";
@@ -29,5 +28,5 @@ export const deleteAutomation = createServerFn({ method: "POST" })
   .handler(({ data }) => lifecycle.deleteAutomation(data.automationId));
 
 export const runAutomation = createServerFn({ method: "POST" })
-  .validator(runAutomationInputSchema)
-  .handler(({ data }) => lifecycle.runAutomation(data.automationId, data.clientId));
+  .validator(automationIdInputSchema)
+  .handler(({ data }) => lifecycle.runAutomation(data.automationId));

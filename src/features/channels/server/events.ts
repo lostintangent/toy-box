@@ -18,8 +18,8 @@ export function publishChannelEvent(channelId: string, event: ChannelEvent): voi
 }
 
 /**
- * Return ordered changes, or undefined when a snapshot is required. Each publication carries a
- * fresh revision, so a complete range has no duplicates and the length check only needs to catch gaps.
+ * Return ordered changes, or undefined when a snapshot is required. Commits publish in revision
+ * order, so history is already ordered and the length check only needs to catch eviction or restart.
  */
 export function replayChannelEvents(
   channelId: string,
@@ -28,9 +28,9 @@ export function replayChannelEvents(
 ): ChannelEvent[] | undefined {
   if (afterRevision === throughRevision) return [];
   if (afterRevision > throughRevision) return undefined;
-  const replay = getChannelEvents(channelId)
-    .history.filter(({ revision }) => revision > afterRevision && revision <= throughRevision)
-    .sort((left, right) => left.revision - right.revision);
+  const replay = getChannelEvents(channelId).history.filter(
+    ({ revision }) => revision > afterRevision && revision <= throughRevision,
+  );
   return replay.length === throughRevision - afterRevision ? replay : undefined;
 }
 

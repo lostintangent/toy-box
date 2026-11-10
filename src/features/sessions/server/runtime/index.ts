@@ -1,9 +1,9 @@
-// Public operations for the session runtime. Headless callers explicitly
-// create, recreate, or deliver; connected callers use one composite that subscribes while
-// optionally doing either. Every mutation acquires the same live runtime.
+// Public operations for the session runtime. Callers create, recreate, or deliver
+// without observing, and follow a live execution separately from a replay cursor.
+// Every mutation acquires the same live runtime.
 
 import { listSessionArtifacts } from "../artifacts";
-import type { SessionQuestionAnswer, StreamSessionRequest } from "@sessions/model/protocol";
+import type { SessionQuestionAnswer } from "@sessions/model/protocol";
 import type {
   SessionCompletion,
   SessionLaunch,
@@ -15,8 +15,8 @@ import * as sessionRegistry from "@sessions/server/state/registry";
 import { loadSessionSnapshot, refreshSessionSnapshot } from "@sessions/server/state/snapshots";
 import { broadcast } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
-import { SessionStream, SessionStreamFinishedError } from "./sessionStream";
-import type { SessionStreamSubscription } from "./eventBus";
+import { SessionExecution, SessionExecutionFinishedError } from "./sessionExecution";
+import type { SessionSubscription } from "./eventBus";
 
 export { getSessionDirectory } from "../providers";
 export { deleteSession, deleteSessionIfExists, releaseIdleSession } from "../state/registry";
@@ -29,12 +29,12 @@ type PendingSessionCompletion = {
 
 const SETTLED_SESSION_COMPLETION_RETENTION_MS = 5 * 60_000;
 
-// Sessions announced before their live stream exists remain waitable by ID.
+// Sessions announced before their live execution exists remain waitable by ID.
 const pendingSessionCompletions = sharedMap<PendingSessionCompletion>(
   "pending-session-completions",
 );
 
-/** Register a session that callers may wait for before its live stream exists. */
+/** Register a session that callers may wait for before its live execution exists. */
 export function registerPendingSessionCompletion(sessionId: string): PendingSessionCompletion {
   if (pendingSessionCompletions.has(sessionId)) {
     throw new Error(`Session ${sessionId} already has a pending completion.`);
@@ -90,44 +90,44 @@ export function waitForSessions(
 
 function waitForSession(sessionId: string, timeoutMs?: number): Promise<SessionCompletion> {
   const pending = pendingSessionCompletions.get(sessionId);
-  if (!pending) return SessionStream.waitForCompletion(sessionId, timeoutMs);
+  if (!pending) return SessionExecution.waitForCompletion(sessionId, timeoutMs);
   if (timeoutMs === undefined) return pending.promise;
   return waitForPendingSession(pending.promise, timeoutMs);
 }
 
 /** Read the current canonical state, whether the session is live, starting, or persisted. */
 export async function getSessionSnapshot(sessionId: string): Promise<SessionState> {
-  const stream = await currentSessionStream(sessionId);
-  return stream ? stream.getSessionState() : loadSessionSnapshot(sessionId);
+  const execution = await currentSessionExecution(sessionId);
+  return execution ? execution.getSessionState() : loadSessionSnapshot(sessionId);
 }
 
 export function isSessionRunning(sessionId: string): boolean {
-  return SessionStream.isRunning(sessionId);
+  return SessionExecution.isRunning(sessionId);
 }
 
 export function getSessionRuntimeStatus(sessionId: string): {
   running: boolean;
   queuedCount: number;
 } {
-  const stream = SessionStream.get(sessionId);
+  const execution = SessionExecution.get(sessionId);
   return {
-    running: stream !== undefined || pendingStreamCreations.has(sessionId),
-    queuedCount: stream?.getSessionState().queuedMessages.length ?? 0,
+    running: execution !== undefined || startingExecutions.has(sessionId),
+    queuedCount: execution?.getSessionState().queuedMessages.length ?? 0,
   };
 }
 
 export function cancelQueuedMessage(sessionId: string, clientId: string): boolean {
-  return SessionStream.get(sessionId)?.cancelQueuedMessage(clientId) ?? false;
+  return SessionExecution.get(sessionId)?.cancelQueuedMessage(clientId) ?? false;
 }
 
 export async function steerQueuedMessage(sessionId: string, clientId: string): Promise<boolean> {
-  return SessionStream.get(sessionId)?.steerQueuedMessage(clientId) ?? false;
+  return SessionExecution.get(sessionId)?.steerQueuedMessage(clientId) ?? false;
 }
 
 export async function abortSession(sessionId: string): Promise<boolean> {
-  const stream = SessionStream.get(sessionId);
-  if (!stream) return false;
-  await stream.abort();
+  const execution = SessionExecution.get(sessionId);
+  if (!execution) return false;
+  await execution.abort();
   return true;
 }
 
@@ -135,25 +135,26 @@ export async function answerSessionQuestion(
   sessionId: string,
   answer: SessionQuestionAnswer,
 ): Promise<boolean> {
-  return SessionStream.get(sessionId)?.answerQuestion(answer) ?? false;
+  return SessionExecution.get(sessionId)?.answerQuestion(answer) ?? false;
 }
 
 /** Discard one root user turn and every later conversation event while preserving files. */
 export async function rewindSession(sessionId: string, timestamp: string): Promise<SessionState> {
-  if (SessionStream.isRunning(sessionId)) throw new Error("Stop this session before rewinding it.");
+  if (SessionExecution.isRunning(sessionId))
+    throw new Error("Stop this session before rewinding it.");
   await sessionRegistry.withSession(sessionId, (session) => session.rewind(timestamp));
 
   const snapshot = await refreshSessionSnapshot(sessionId);
   // The SDK's snapshot_rewind event is ephemeral and idle sessions have no
-  // SessionStream, so notify other browser clients through the shared plane.
+  // SessionExecution, so notify other browser clients through the shared plane.
   broadcast({ type: "session.touched", sessionId });
   return snapshot;
 }
 
 /** Filesystem observation refreshes artifact membership for active sessions. */
 export async function refreshSessionArtifacts(sessionId: string): Promise<void> {
-  const stream = SessionStream.get(sessionId);
-  if (stream) stream.updateArtifacts(await listSessionArtifacts(sessionId));
+  const execution = SessionExecution.get(sessionId);
+  if (execution) execution.updateArtifacts(await listSessionArtifacts(sessionId));
 }
 
 function waitForPendingSession(
@@ -175,45 +176,12 @@ function waitForPendingSession(
   });
 }
 
-/**
- * Stream a session, optionally creating it and delivering a message.
- * Subscriptions are active by default; passive ones do not acknowledge completion.
- */
-export async function streamSession(
-  request: StreamSessionRequest,
-): Promise<SessionStreamSubscription | undefined> {
-  if (!request.message) {
-    const stream = await currentSessionStream(request.sessionId);
-    return stream?.subscribe(request.afterEventId, request.mode);
-  }
-
-  const message = normalizeMessage(request.message);
-  const create = request.location;
-  let retriedFinishedStream = false;
-
-  for (;;) {
-    const stream = await acquireSessionStream(request.sessionId, message, create);
-    // Subscribe eagerly before delivery. If another caller already opened the
-    // turn, deliver() queues this message and this same subscription follows the
-    // active stream through the queued turn instead of returning event-less.
-    const events = stream.subscribe(request.afterEventId);
-
-    try {
-      await stream.deliver(message);
-    } catch (error) {
-      if (error instanceof SessionStreamFinishedError && !retriedFinishedStream) {
-        retriedFinishedStream = true;
-        await events.return();
-        continue;
-      }
-
-      // Turn-start failures publish their canonical end/error event before
-      // rejecting. Drain those events so the client sees the domain failure
-      // rather than a transport exception.
-    }
-
-    return events;
-  }
+/** Follow a session's live execution after a replay cursor, or nothing when it is idle. */
+export async function followSession(
+  sessionId: string,
+  afterEventId?: number,
+): Promise<SessionSubscription | undefined> {
+  return (await currentSessionExecution(sessionId))?.subscribe(afterEventId);
 }
 
 type MessageInput =
@@ -238,10 +206,7 @@ export async function recreateSession(
   options: SessionCreationOptions,
 ) {
   await sessionRegistry.deleteSessionIfExists(sessionId, { publish: false });
-  await sessionRegistry.createSessionRecord(sessionId, {
-    title: options.name,
-    sessionType: options.sessionType,
-  });
+  await sessionRegistry.createSessionRecord(sessionId, { title: options.name });
   try {
     return await createSession(sessionId, message, options);
   } catch (error) {
@@ -257,26 +222,26 @@ export function deliverSessionMessage(sessionId: string, message: MessageInput) 
 
 async function deliver(sessionId: string, message: MessageInput, create?: SessionCreationOptions) {
   const normalizedMessage = normalizeMessage(message);
-  let retriedFinishedStream = false;
+  let retriedFinishedExecution = false;
   let retriedStaleSession = false;
 
   for (;;) {
     try {
-      const stream = await acquireSessionStream(sessionId, normalizedMessage, create);
-      const disposition = await stream.deliver(normalizedMessage);
+      const execution = await acquireSessionExecution(sessionId, normalizedMessage, create);
+      const disposition = await execution.deliver(normalizedMessage);
       return {
         disposition,
-        waitForCompletion: () => stream.waitForCompletion(),
+        waitForCompletion: () => execution.waitForCompletion(),
       };
     } catch (error) {
-      if (error instanceof SessionStreamFinishedError && !retriedFinishedStream) {
-        retriedFinishedStream = true;
+      if (error instanceof SessionExecutionFinishedError && !retriedFinishedExecution) {
+        retriedFinishedExecution = true;
         continue;
       }
 
       // A stale cached SDK session (possible on the snapshot-seed path, which
       // skips the replay path's getEvents probe) surfaces as a send failure
-      // after turn start evicts it and finishes the stream. No client is subscribed
+      // after turn start evicts it and finishes the execution. No client is subscribed
       // to retry, so rebuild once — the resume is fresh by construction and the
       // cached snapshot is still valid (the log never changed).
       if (!retriedStaleSession && sessionRegistry.evictCachedSessionIfStale(sessionId, error)) {
@@ -289,47 +254,47 @@ async function deliver(sessionId: string, message: MessageInput, create?: Sessio
   }
 }
 
-// Covers concurrent acquisition before the stream reaches the registry.
-const pendingStreamCreations = sharedMap<Promise<SessionStream>>("pending-session-streams");
+// Covers concurrent acquisition before the execution reaches the registry.
+const startingExecutions = sharedMap<Promise<SessionExecution>>("starting-session-executions");
 
-/** The live stream, including one still being acquired. A failed acquisition belongs to its initiator. */
-async function currentSessionStream(sessionId: string): Promise<SessionStream | undefined> {
+/** The live execution, including one still being acquired. A failed acquisition belongs to its initiator. */
+async function currentSessionExecution(sessionId: string): Promise<SessionExecution | undefined> {
   return (
-    SessionStream.get(sessionId) ?? pendingStreamCreations.get(sessionId)?.catch(() => undefined)
+    SessionExecution.get(sessionId) ?? startingExecutions.get(sessionId)?.catch(() => undefined)
   );
 }
 
-/** Single-flight get-or-create. SessionStream.deliver owns first-turn selection. */
-async function acquireSessionStream(
+/** Single-flight get-or-create. SessionExecution.deliver owns first-turn selection. */
+async function acquireSessionExecution(
   sessionId: string,
   message: SessionMessage,
   create?: SessionCreationOptions,
-): Promise<SessionStream> {
-  const existing = SessionStream.get(sessionId);
+): Promise<SessionExecution> {
+  const existing = SessionExecution.get(sessionId);
   if (existing) return existing;
 
-  const pending = pendingStreamCreations.get(sessionId);
+  const pending = startingExecutions.get(sessionId);
   if (pending) return pending;
 
-  const creation = createStreamForMessage(sessionId, message, create).finally(() => {
-    pendingStreamCreations.delete(sessionId);
+  const creation = createExecutionForMessage(sessionId, message, create).finally(() => {
+    startingExecutions.delete(sessionId);
   });
-  pendingStreamCreations.set(sessionId, creation);
+  startingExecutions.set(sessionId, creation);
   return creation;
 }
 
-async function createStreamForMessage(
+async function createExecutionForMessage(
   sessionId: string,
   message: SessionMessage,
   create?: SessionCreationOptions,
-): Promise<SessionStream> {
+): Promise<SessionExecution> {
   if (create) {
     const model = message.role === "user" ? message.model : undefined;
     const created = await sessionRegistry.createSession(sessionId, {
       ...create,
       model,
     });
-    return SessionStream.getOrCreate(sessionId, created.session, {
+    return SessionExecution.getOrCreate(sessionId, created.session, {
       ...(created.artifactPath ? { artifacts: await listSessionArtifacts(sessionId) } : {}),
       ...(model ? { model } : {}),
     });
@@ -340,12 +305,12 @@ async function createStreamForMessage(
   const snapshot = await loadSessionSnapshot(sessionId);
   const sdkSession = await sessionRegistry.acquireSession(sessionId);
   const { lastSeenEventId: _lastSeenEventId, ...snapshotState } = snapshot;
-  const stream = SessionStream.getOrCreate(sessionId, sdkSession, snapshotState);
-  // This replacement stream is now the session's current execution. Retained
+  const execution = SessionExecution.getOrCreate(sessionId, sdkSession, snapshotState);
+  // This replacement is now the session's current execution. Retained
   // completion receipts remain valid for existing waiters, but must no longer
   // answer future ID-based waits for an earlier execution.
   pendingSessionCompletions.delete(sessionId);
-  return stream;
+  return execution;
 }
 
 function normalizeMessage(message: MessageInput): SessionMessage {

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
-import { dispatchInboxTask } from "@inbox/server/functions";
+import { dispatchInboxTask } from "@inbox/server";
 import { attachmentsSchema } from "@/shared/attachments/model";
 
 const inboxInputSchema = z.object({
@@ -22,7 +22,7 @@ export const Route = createFileRoute("/api/v1/inbox")({
         }
 
         const result = await dispatchInboxTask({
-          data: { message: { content: input.prompt, attachments: input.attachments } },
+          message: { content: input.prompt, attachments: input.attachments },
         });
 
         return Response.json(result, { status: 202 });

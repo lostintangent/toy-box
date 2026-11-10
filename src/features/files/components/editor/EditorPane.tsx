@@ -9,7 +9,7 @@ import { resolveEditorPaneMode } from "../../model/panes";
 import { createFileServeBaseUrl } from "../../model/paths";
 import { PaneActions, PaneStatus, type PaneVariant } from "@/shared/panes/PaneSlots";
 import { WorkersMenu } from "@workers/components/WorkersMenu";
-import { useFile } from "../../useFile";
+import { useFile, useMountedContent } from "../../useFile";
 import { useEditorKind, type EditorProps, type EditorKind } from "./kinds";
 import { EditorActions } from "./actions";
 
@@ -26,19 +26,20 @@ export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
   const { file, title } = pane;
   const fileId = workspaceFileId(file);
   const { data: automationSessionIds } = useSuspenseQuery({
-    ...sessionQueries.state(),
+    ...sessionQueries.state,
     select: selectAutomationSessionIds,
   });
   const chosenMode = useSelector(chosenModes, (modes) => modes[fileId]);
   const mode = resolveEditorPaneMode(pane, automationSessionIds, chosenMode);
   const kind = useEditorKind(file);
-  const { editable = true } = kind;
-  const { workers, spawnWorker, ...fileState } = useFile(file, mode);
+  const { binary = false, editable = !binary } = kind;
+  const fileState = useFile(file, mode);
   const baseUri =
     typeof window === "undefined"
       ? undefined
       : `${window.location.origin}${createFileServeBaseUrl(file)}`;
-  const { error, isLoading, isSaving, isReady } = fileState;
+  const { error, isLoading, isSaving, isReady, revision, workers } = fileState;
+  const renders = isReady || (binary && revision > 0);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -47,10 +48,10 @@ export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
           <WorkersMenu workers={workers} variant={variant} />
         </PaneStatus>
       )}
-      {(editable || isSaving) && (
+      {((editable && renders) || isSaving) && (
         <PaneActions>
           <EditorActions
-            editable={editable}
+            editable={editable && renders}
             mode={mode}
             isSaving={isSaving}
             onModeChange={(nextMode) =>
@@ -64,17 +65,15 @@ export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
       <div className="min-h-0 flex-1">
         {isLoading ? (
           <EditorSkeleton />
-        ) : isReady ? (
+        ) : renders ? (
           <EditorContent
+            key={kind.id}
             kind={kind}
             title={title}
             mode={mode}
             variant={variant}
             baseUri={baseUri}
-            definition={kind.definition}
             file={fileState}
-            pendingWorkers={workers}
-            spawnWorker={spawnWorker}
           />
         ) : (
           <EditorMessage>{error ?? "Unable to load this file."}</EditorMessage>
@@ -84,12 +83,14 @@ export function EditorPane({ pane, variant = "normal" }: EditorPaneProps) {
   );
 }
 
-function EditorContent({ kind, ...props }: EditorProps & { kind: EditorKind }) {
+/** Mounts one kind's renderer, starting it from the pane's latest text. */
+function EditorContent({ kind, file, ...props }: EditorProps & { kind: EditorKind }) {
   const { Renderer } = kind;
+  const content = useMountedContent(file);
   return (
     <EditorErrorBoundary fallback={<EditorMessage>Unable to load this view.</EditorMessage>}>
       <Suspense fallback={<EditorSkeleton />}>
-        <Renderer {...props} />
+        <Renderer {...props} file={{ ...file, content }} />
       </Suspense>
     </EditorErrorBoundary>
   );

@@ -1,15 +1,11 @@
-import { queryOptions } from "@tanstack/react-query";
+import { reducedQuery } from "@/shared/query";
+import { reduceAutomationList } from "./model/catalog";
 import { listAutomations } from "./server/functions";
 
 export const automationQueries = {
-  listKey: () => ["automations", "list"] as const,
-
-  list: () =>
-    queryOptions({
-      queryKey: automationQueries.listKey(),
-      queryFn: listAutomations,
-      staleTime: Infinity,
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-    }),
+  list: reducedQuery({
+    queryKey: ["automations", "list"],
+    fetch: ({ signal }) => listAutomations({ signal }),
+    reduce: reduceAutomationList,
+  }),
 };

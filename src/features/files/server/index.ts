@@ -3,15 +3,18 @@
 import { open, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
+import { deliverSessionMessage } from "@sessions/server/runtime";
 import { attachToConnection } from "@workspace/server/connections";
-import type {
-  CreateFileInput,
-  DirectoryEntry,
-  DirectoryListing,
-  FileChange,
-  ListDirectoryInput,
-  SearchFilesInput,
-  WorkspaceFile,
+import {
+  ownerSessionId,
+  workspaceFileId,
+  type CreateFileInput,
+  type DirectoryEntry,
+  type DirectoryListing,
+  type FileChange,
+  type ListDirectoryInput,
+  type SearchFilesInput,
+  type WorkspaceFile,
 } from "../model";
 import { rankFilePaths } from "../model/paths";
 import { resolveWorkspaceFile } from "./paths";
@@ -19,23 +22,63 @@ import { fileWatcher, readFileChange } from "./watcher";
 
 const SEARCH_RESULT_LIMIT = 12;
 const SCANNED_FILE_LIMIT = 20_000;
+const EDIT_NOTICE_DELAY_MS = 8_000;
+/** Git's rule: a NUL in a file's first 8,000 bytes makes it binary. */
+const BINARY_PROBE_BYTES = 8_000;
+const utf8 = new TextDecoder("utf-8", { fatal: true });
 
+/** Read a file's text. A file that isn't UTF-8 text reads as null content, so no surface edits it
+ *  as text, and a NUL in the probe skips reading the rest. */
 export async function readFile(
   file: WorkspaceFile,
-): Promise<{ content: string; timestamp: number }> {
+): Promise<{ content: string | null; timestamp: number }> {
   const absolutePath = requireFilePath(file);
   const diskFile = Bun.file(absolutePath);
-  const [content, info] = await Promise.all([diskFile.text(), diskFile.stat()]);
-  return { content, timestamp: info.mtimeMs };
+  const [head, info] = await Promise.all([
+    diskFile.slice(0, BINARY_PROBE_BYTES).bytes(),
+    diskFile.stat(),
+  ]);
+  const timestamp = info.mtimeMs;
+  if (head.includes(0)) return { content: null, timestamp };
+  const bytes = head.length < BINARY_PROBE_BYTES ? head : await diskFile.bytes();
+  return { content: decodeText(bytes), timestamp };
 }
 
+function decodeText(bytes: Uint8Array): string | null {
+  try {
+    return utf8.decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/** Write a file. A write that notifies the agent tells the file's owning session once its edits
+ *  pause, however many tabs or panes wrote it and whether or not they're still open. */
 export async function writeFile(
   file: WorkspaceFile,
   content: string,
+  notifyAgent = false,
 ): Promise<{ timestamp: number }> {
   const absolutePath = requireFilePath(file);
   await Bun.write(absolutePath, content);
+  if (notifyAgent) scheduleEditNotice(file);
   return { timestamp: (await Bun.file(absolutePath).stat()).mtimeMs };
+}
+
+const editNotices = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleEditNotice(file: WorkspaceFile): void {
+  const owner = ownerSessionId(file);
+  if (!owner) return;
+  const id = workspaceFileId(file);
+  clearTimeout(editNotices.get(id));
+  const notice = setTimeout(() => {
+    editNotices.delete(id);
+    deliverSessionMessage(owner, { systemMessage: { type: "file_edited", file } }).catch((error) =>
+      console.error(`Unable to tell session ${owner} about an edit:`, error),
+    );
+  }, EDIT_NOTICE_DELAY_MS);
+  editNotices.set(id, notice);
 }
 
 /** Publish a file's changes while a tab's connection holds the returned lease. The file's current

@@ -59,7 +59,7 @@ test("history keeps the conversation before a compaction, once and without its s
     store.append({ projectKey: "test", sessionId: id }, transcript),
   );
   const state = history
-    .flatMap(createClaudeProjector(sessionId))
+    .flatMap(createClaudeProjector())
     .reduce(applySessionEvent, createInitialSessionState());
 
   expect(state.messages.map(({ role, content }) => [role, content])).toEqual([

@@ -1,8 +1,7 @@
 // Per-session event bus: bounded replay plus live fan-out for canonical
 // SessionEvents. Subscribing registers immediately, before the caller starts
 // pulling, so producers can publish synchronously without losing the first
-// event. SessionStream owns the policy that distinguishes active from passive
-// subscriptions.
+// event.
 //
 // The shared replay history is capped; each subscriber's pending live queue is
 // not. Consumers should keep reading or cancel the subscription.
@@ -12,19 +11,17 @@
 // release its subscriber immediately when the request disconnects.
 
 import type { SessionEvent } from "@sessions/model";
-import type { SessionSubscriptionMode } from "@sessions/model/protocol";
 
-export type SessionStreamSubscription = AsyncIterableIterator<SessionEvent> & {
+export type SessionSubscription = AsyncIterableIterator<SessionEvent> & {
   return(value?: unknown): Promise<IteratorResult<SessionEvent>>;
 };
 
 type SessionEventBus = {
   publish(event: SessionEvent): SessionEvent;
-  subscribe(afterEventId?: number, mode?: SessionSubscriptionMode): SessionStreamSubscription;
+  subscribe(afterEventId?: number): SessionSubscription;
   replaySince(afterEventId?: number): SessionEvent[];
   clearReplay(): void;
   close(): void;
-  readonly hasActiveSubscribers: boolean;
 };
 
 type StampedSessionEvent = SessionEvent & { eventId: number };
@@ -33,13 +30,12 @@ type PendingRead = (event: SessionEvent | undefined) => void;
 type SessionSubscriber = {
   pendingEvents: SessionEvent[];
   disconnected: boolean;
-  mode: SessionSubscriptionMode;
   resumePendingRead?: PendingRead;
 };
 
 // Last event id issued in this process. The first event uses a Date.now seed;
 // every later event increments that seed densely. A burst faster than 1
-// event/ms therefore cannot hand a replacement stream a lower id, which would
+// event/ms therefore cannot hand a replacement execution a lower id, which would
 // make the client's lastSeenEventId filter silently drop the next turn.
 let lastIssuedEventId = 0;
 
@@ -95,7 +91,7 @@ export function createSessionEventBus(capacity: number): SessionEventBus {
     });
   }
 
-  function createSubscription(subscriber: SessionSubscriber): SessionStreamSubscription {
+  function createSubscription(subscriber: SessionSubscriber): SessionSubscription {
     let finished = false;
 
     function finish(): IteratorResult<SessionEvent> {
@@ -140,11 +136,10 @@ export function createSessionEventBus(capacity: number): SessionEventBus {
       return published;
     },
 
-    subscribe(afterEventId, mode = "active") {
+    subscribe(afterEventId) {
       const subscriber: SessionSubscriber = {
         pendingEvents: replaySince(afterEventId),
         disconnected: closed,
-        mode,
       };
 
       if (!closed) {
@@ -168,13 +163,6 @@ export function createSessionEventBus(capacity: number): SessionEventBus {
       for (const subscriber of subscribers) {
         disconnectSubscriber(subscriber);
       }
-    },
-
-    get hasActiveSubscribers() {
-      for (const subscriber of subscribers) {
-        if (subscriber.mode === "active") return true;
-      }
-      return false;
     },
   };
 }

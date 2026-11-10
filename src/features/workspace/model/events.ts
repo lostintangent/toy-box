@@ -1,5 +1,5 @@
 import type { Settings } from "./config/settings";
-import type { WorkspaceAction } from "./state/actions";
+import type { DraftKey, SavedDraft } from "./state/drafts";
 
 /**
  * The events each feature publishes on the shared workspace stream, keyed by
@@ -8,7 +8,7 @@ import type { WorkspaceAction } from "./state/actions";
  */
 export interface WorkspaceEvents {
   workspace:
-    | WorkspaceAction
+    | { type: "draft.changed"; key: DraftKey; draft: SavedDraft }
     | { type: "workspace.connected"; revision: string; connection: string }
     | { type: "settings.changed"; settings: Settings };
 }

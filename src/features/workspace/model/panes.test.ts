@@ -6,7 +6,11 @@ import { INBOX_PANE } from "@inbox/model";
 import { createScreenPane } from "@screens/model";
 import type { SessionCanvas } from "@sessions/model";
 import { createCanvasPane, createSessionPane } from "@sessions/model/panes";
-import { deriveVisibleWorkspacePanes, type WorkspacePane } from "@workspace/model/panes";
+import {
+  deriveOpenPaneIds,
+  deriveVisibleWorkspacePanes,
+  type WorkspacePane,
+} from "@workspace/model/panes";
 
 function derivePanes(
   rootPanes: WorkspacePane[],
@@ -139,5 +143,30 @@ describe("workspace pane graph", () => {
         focusedPaneId: "departed",
       }),
     ).toEqual(rootPanes);
+  });
+});
+
+describe("open panes", () => {
+  const root = createAppPane("factory");
+  const linked = createSessionPane("child", true);
+  const target = createSessionPane("next");
+  const navigating = {
+    visiblePanes: [root, linked],
+    rootIds: [root.id],
+    targetRootIds: [target.id],
+  };
+
+  test("are the panes a workspace shows at rest, its roots and the panes they link", () => {
+    const open = deriveOpenPaneIds({ ...navigating, targetRootIds: [root.id] });
+
+    expect([...open].sort()).toEqual([root.id, linked.id].sort());
+  });
+
+  test("include a navigation's target root before it commits", () => {
+    expect(deriveOpenPaneIds(navigating).has(target.id)).toBe(true);
+  });
+
+  test("exclude a root the navigation leaves", () => {
+    expect(deriveOpenPaneIds(navigating).has(root.id)).toBe(false);
   });
 });

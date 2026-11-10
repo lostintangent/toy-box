@@ -9,48 +9,40 @@ import { encodeSystemMessage, systemMessagePrompt } from "@sessions/model/system
 import { toSdkAttachments } from "./attachments";
 import { createSdkEventProjector } from "./projector";
 
+/** The first subscriber receives persisted native events, such as start and resume, that precede it. */
+export function holdNativeEvents() {
+  let held: SdkEvent[] | undefined = [];
+  return {
+    onEvent: (event: SdkEvent) => {
+      if (!event.ephemeral) held?.push(event);
+    },
+    release() {
+      const events = held ?? [];
+      held = undefined;
+      return events;
+    },
+  };
+}
+
 /** Native SDK event and RPC details never cross the Sessions contract. */
 export function connectCopilotSession(
   native: CopilotSession,
-  sessionId: string,
-  appliedModel?: ModelConfiguration,
+  early: ReturnType<typeof holdNativeEvents>,
 ): SessionConnection {
-  const pendingInputs = new Map<string, string>();
   return {
-    provider: { id: "copilot", sessionId: native.sessionId },
+    nativeId: native.sessionId,
     onEvent(listener) {
-      // Native start and resume events predate subscription; seed the live stream with their model.
-      if (appliedModel) listener({ type: "model_changed", model: appliedModel });
-      const project = createSdkEventProjector(sessionId);
-      return native.on((event: SdkEvent) => {
-        if (event.type === "session.idle") {
-          listener({ type: "end", reason: "idle" });
-          return;
-        }
-        if (event.type === "abort") {
-          listener({ type: "end", reason: "error" });
-          return;
-        }
-        for (const projected of project(event)) {
-          if (
-            (projected.type === "user_message" || projected.type === "system_message") &&
-            event.type === "user.message"
-          ) {
-            const clientId = event.data.messageId
-              ? pendingInputs.get(event.data.messageId)
-              : undefined;
-            if (clientId) {
-              pendingInputs.delete(event.data.messageId!);
-              listener({ ...projected, clientId });
-              continue;
-            }
-          }
-          listener(projected);
-        }
-      });
+      const project = createSdkEventProjector();
+      const forward = (event: SdkEvent) => {
+        if (event.type === "session.idle") listener({ type: "end", reason: "idle" });
+        else if (event.type === "abort") listener({ type: "end", reason: "error" });
+        else for (const projected of project(event)) listener(projected);
+      };
+      for (const event of early.release()) forward(event);
+      return native.on(forward);
     },
     async send(message) {
-      const id = await native.send({
+      await native.send({
         ...(message.role === "system"
           ? {
               prompt: systemMessagePrompt(message.content),
@@ -62,8 +54,8 @@ export function connectCopilotSession(
               attachments: toSdkAttachments(message.attachments),
             }),
         ...(message.immediate ? { mode: "immediate" } : {}),
+        clientTurnId: message.clientId,
       });
-      pendingInputs.set(id, message.clientId);
     },
     async setModel(model: ModelConfiguration) {
       await native.setModel(model.name, toSdkSetModelOptions(model));
@@ -96,13 +88,10 @@ export function connectCopilotSession(
 
 type SdkSetModelOptions = NonNullable<Parameters<CopilotSession["setModel"]>[1]>;
 
-// The SDK's public option unions are narrower than live metadata, so these
-// open strings are cast at the boundary.
+// The SDK's context tier union is narrower than live metadata, so it is cast at the boundary.
 export function toSdkSetModelOptions(configuration?: ModelConfiguration): SdkSetModelOptions {
   return {
-    ...(configuration?.reasoningEffort
-      ? { reasoningEffort: configuration.reasoningEffort as SdkSessionConfig["reasoningEffort"] }
-      : {}),
+    ...(configuration?.reasoningEffort ? { reasoningEffort: configuration.reasoningEffort } : {}),
     ...(configuration?.contextTier
       ? { contextTier: configuration.contextTier as SdkSessionConfig["contextTier"] }
       : {}),

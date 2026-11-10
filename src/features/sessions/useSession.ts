@@ -1,9 +1,10 @@
 /**
  * Client facade for one session's live state.
  *
- * The hook owns one pane's session lifecycle: hydrate cold state, stream live
- * work while visible, reduce stream events, and expose user commands. Mutations
- * carry request/response commands; the long-lived event stream stays explicit.
+ * The session's detail query holds its one reduced state, and that query's
+ * observation follows live work while a visible pane watches it (see `stream.ts`).
+ * The hook derives what the pane shows from that cache and shared activity, and
+ * applies the user's commands to it optimistically.
  *
  * First turn: a draft session owns a public ID and artifacts,
  * and its first send creates the selected provider's history with
@@ -12,24 +13,24 @@
  * provider creation then supplies the authoritative metadata.
  */
 
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ModelConfiguration } from "@providers/model";
 import { applySessionEvent, createInitialSessionState } from "./model/reducer";
+import { joinPreviousMessages } from "./model/transcriptPages";
 import type { Session, SessionEvent, SessionLaunch, SessionState, UserMessage } from "./model";
-import type { SessionSubscriptionMode, StreamSessionRequest } from "./model/protocol";
-import { sessionMutations } from "./mutations";
-import { sessionActivityJournal, sessionQueries } from "./queries";
-import { cancelSessionsStateQuery, invalidateSessionsStateQuery } from "./cache";
 import { isLiveActivity } from "./model/activity";
+import { repairFailedDraft } from "./cache";
+import { sessionMutations } from "./mutations";
+import { sessionQueries } from "./queries";
 import { useSessionsActivity } from "./useSessionActivity";
-import { streamSession } from "./server/functions";
 import { usePageVisibility } from "@/shared/hooks/usePageVisibility";
 import { generateUUID } from "@/shared/utils";
 import { applyWorkspaceEvent } from "@workspace/sync";
 
 interface SessionConfig {
-  mode?: SessionSubscriptionMode;
+  /** A passive pane never acknowledges completion or clears an existing unread state. */
+  mode?: "active" | "passive";
   /** Whether the owning pane is currently presented by its workspace host. */
   isVisible?: boolean;
   /** Browser default, used when no model has been projected for the session.
@@ -43,10 +44,13 @@ interface SessionConfig {
   session?: Session;
 }
 
+/** A new turn's state before it was sent, restored if the server never takes it. */
+type UnsentTurn = { clientId: string; state: SessionState; isDraft: boolean };
+
 export function useSession(
   sessionId: string,
   {
-    mode: subscriptionMode = "active",
+    mode = "active",
     isVisible: paneIsVisible = true,
     defaultModel,
     directory: sessionDirectory,
@@ -56,206 +60,96 @@ export function useSession(
 ) {
   const queryClient = useQueryClient();
   const sessionQuery = sessionQueries.detail(sessionId);
+  const { queryKey } = sessionQuery;
   const isDraft = session !== undefined && !session.provider;
   const activityStatus = useSessionsActivity((activities) => activities[sessionId]?.status);
-  const isSessionLive = isLiveActivity(activityStatus);
-  const isSessionUnread = activityStatus === "unread";
-  const pageIsVisible = usePageVisibility();
-  const isVisible = pageIsVisible && paneIsVisible;
+  const isVisible = usePageVisibility() && paneIsVisible;
 
   // ---------------------------------------------------------------------------
   // Session state
   // ---------------------------------------------------------------------------
-  // Events reduce into immutable states in this ref. The latest state is
-  // published to React immediately for discrete events or once per frame for
-  // rapid text and tool output deltas.
-  const [publishedSession, setPublishedSession] = useState(() =>
+  // A draft has no history to read, so it starts from its own initial state.
+  const [draftState] = useState(() =>
     createInitialSessionState(
       session?.artifactPath
         ? { artifacts: [{ path: session.artifactPath, updatedAt: session.createdAt.getTime() }] }
         : {},
     ),
   );
-  const sessionRef = useRef(publishedSession);
-  const rafIdRef = useRef<number | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const wasVisibleRef = useRef(isVisible);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [hasLoadedSessionState, setHasLoadedSessionState] = useState(isDraft);
-  const { data: sessionSnapshot, error } = useQuery({
-    ...sessionQuery,
-    enabled: isVisible && !isDraft && !isStreaming,
-  });
+  // A hidden pane stops watching, which ends the observation once nothing else watches.
+  const { data, error } = useQuery({ ...sessionQuery, enabled: !isDraft, subscribed: isVisible });
+  const state = data ?? draftState;
+  const hasLoadedSessionState = isDraft || data !== undefined;
+  // A run's `end` settles the pane before the shared activity that announced it.
+  const isStreaming = isLiveActivity(activityStatus) && state.status !== "idle";
 
-  /** Flush any pending batched update and publish the latest reduced state. */
-  const publishState = () => {
-    if (rafIdRef.current !== null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
-    setPublishedSession(sessionRef.current);
-  };
-
-  /** Publish rapid updates together on the next animation frame. */
-  const scheduleStatePublish = () => {
-    if (rafIdRef.current !== null) return;
-    rafIdRef.current = requestAnimationFrame(() => {
-      publishState();
-    });
-  };
-
-  // During connection handshake we still want a spinner even if no events arrived yet.
-  const status =
-    isStreaming && publishedSession.status === "idle" ? "thinking" : publishedSession.status;
-
-  // ---------------------------------------------------------------------------
-  // Event application
-  // ---------------------------------------------------------------------------
-  const applyEvent = (event: SessionEvent) => {
-    sessionRef.current = applySessionEvent(sessionRef.current, event);
-
-    if (
-      event.type === "delta" ||
-      event.type === "reasoning_delta" ||
-      event.type === "tool_output_delta"
-    ) {
-      scheduleStatePublish();
-    } else {
-      publishState();
-    }
-  };
+  const read = () => queryClient.getQueryData<SessionState>(queryKey) ?? draftState;
+  const update = (recipe: (current: SessionState) => SessionState) =>
+    queryClient.setQueryData<SessionState>(queryKey, (current) => recipe(current ?? draftState));
+  const applyEvent = (event: SessionEvent) =>
+    update((current) => applySessionEvent(current, event));
 
   /** The client-selected Session model. Takes effect immediately in the UI
    *  and is sent with the next message. */
-  const setModel = (model: ModelConfiguration) => {
-    sessionRef.current = { ...sessionRef.current, model };
-    publishState();
-  };
+  const setModel = (model: ModelConfiguration) => update((current) => ({ ...current, model }));
 
   // ---------------------------------------------------------------------------
-  // Stream lifecycle
+  // Commands
   // ---------------------------------------------------------------------------
-  const invalidateSessionSnapshot = () =>
-    queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
-
-  const streamEvents = async (request: StreamSessionRequest) => {
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    setIsStreaming(true);
-
-    const consume = async () => {
-      const events = await streamSession({
-        data: request,
-        signal: controller.signal,
-      });
-      let receivedEvent = false;
-      if (events) {
-        const iterator = events[Symbol.asyncIterator]();
-        while (!controller.signal.aborted) {
-          const next = await iterator.next();
-          if (next.done) break;
-          receivedEvent = true;
-          applyEvent(next.value);
-        }
-      }
-
-      if (controller.signal.aborted) return;
-
-      // Real runtime streams publish `end` from the server. This fallback is
-      // only for an event-less subscription when no live stream exists.
-      if (!receivedEvent) {
-        applyEvent({ type: "end", reason: "idle" });
-      }
-
-      // Keep the snapshot aligned with live state so reenabling its query
-      // cannot briefly replay stale linked-session state.
-      queryClient.setQueryData<SessionState>(sessionQuery.queryKey, sessionRef.current);
-
-      // Do not change workspace session status here. The runtime publishes
-      // the terminal idle/unread transition when the execution truly finishes. A
-      // passive event-less subscription can also end without receiving a turn.
-    };
-
-    try {
-      await consume().finally(() => {
-        if (abortControllerRef.current === controller) {
-          abortControllerRef.current = null;
-          setIsStreaming(false);
-        }
-      });
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      throw error;
-    }
-
-    if (controller.signal.aborted) return;
-    await invalidateSessionSnapshot();
-  };
-
-  const subscribeToSession = async (mode: SessionSubscriptionMode = "active") => {
-    if (abortControllerRef.current) return;
-
-    try {
-      await streamEvents({
-        sessionId,
-        afterEventId: sessionRef.current.lastSeenEventId,
-        mode,
-      });
-    } catch (error) {
-      console.error("Subscription error:", error);
-      await invalidateSessionSnapshot();
-    }
-  };
-
-  // Ending observation never changes canonical session state; background work
-  // continues on the server and a later subscription resumes from its cursor.
-  const endSubscription = () => {
-    const controller = abortControllerRef.current;
-    if (!controller) return;
-
-    controller.abort();
-    abortControllerRef.current = null;
-    setIsStreaming(false);
-  };
-
   const { mutate: abort } = useMutation({
     ...sessionMutations.abortSession(sessionId),
-    onMutate: () => {
-      endSubscription();
+    onMutate: async () => {
+      // Ending the observation first keeps its follow from replaying the stopped run.
+      await queryClient.cancelQueries({ queryKey, exact: true });
       applyEvent({ type: "end", reason: "idle" });
       applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
     },
   });
 
   const stop = () => {
-    if (abortControllerRef.current) abort();
+    if (isStreaming) abort();
   };
 
   const { mutate: markRead } = useMutation(sessionMutations.markRead(sessionId));
 
+  /** Join the page before the first loaded message into the session's state. */
+  const loadPrevious = async () => {
+    const before = read().messageOffset;
+    if (!before) return;
+    try {
+      const page = await queryClient.query(sessionQueries.messagesBefore(sessionId, before));
+      update((current) => joinPreviousMessages(page, current));
+    } catch (error) {
+      console.error("Failed to load previous session messages:", error);
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Messaging
   // ---------------------------------------------------------------------------
-  /** Optimistically show a follow-up prompt and deliver it to the server;
-   *  rolls the local queue back if the server rejects it. */
-  const { mutate: deliverFollowUp } = useMutation({
+  const unsentTurn = useRef<UnsentTurn>(undefined);
+  const { mutateAsync: deliver } = useMutation({
     ...sessionMutations.deliverMessage(sessionId),
-    onMutate: (message) => {
-      applyEvent({
-        type: "message_queued",
-        message: { ...message, role: "user" },
-      });
-    },
-    onSuccess: (receipt) => {
-      if (receipt.disposition === "started") {
-        // The server replaced a stream that was still winding down locally.
-        // Drop that stale subscription and follow the newly opened turn.
-        endSubscription();
-        void subscribeToSession();
+    // Query runs this before the delivery settles, so the session's observation
+    // resumes on the rolled-back state.
+    onError: (error, { message }) => {
+      const turn = unsentTurn.current;
+      if (turn?.clientId !== message.clientId) {
+        applyEvent({ type: "message_cancelled", clientId: message.clientId });
+        return;
+      }
+      // The server never took the turn. Drop its optimistic message and hand
+      // it back to the sender.
+      console.error("Send error:", error);
+      queryClient.setQueryData(queryKey, turn.state);
+      if (turn.isDraft) {
+        void repairFailedDraft(queryClient, sessionId);
+      } else {
+        applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
       }
     },
-    onError: (_error, message) => {
-      applyEvent({ type: "message_cancelled", clientId: message.clientId });
+    onSettled: (_receipt, _error, { message }) => {
+      if (unsentTurn.current?.clientId === message.clientId) unsentTurn.current = undefined;
     },
   });
 
@@ -269,7 +163,7 @@ export function useSession(
 
     // The session's own model always wins; otherwise this message makes the
     // browser selection the session's effective model.
-    const model = sessionRef.current.model ?? defaultModel;
+    const model = read().model ?? defaultModel;
     const message = {
       ...input,
       clientId,
@@ -278,7 +172,6 @@ export function useSession(
       immediate,
     } satisfies SessionLaunch["message"] & { clientId: string };
 
-    if (isDraft) void cancelSessionsStateQuery(queryClient);
     applyWorkspaceEvent(queryClient, {
       type: "session.upserted",
       session: {
@@ -291,138 +184,57 @@ export function useSession(
       },
     });
 
-    // Server running state owns the send-vs-queue distinction. The controller
-    // also closes the same-tick gap before that shared state reaches React.
-    if (isSessionLive || abortControllerRef.current) {
-      deliverFollowUp(message);
+    // Server running state owns the send-vs-queue distinction. Reading it from the
+    // cache includes a run announced since the last render.
+    const activities = queryClient.getQueryData(sessionQueries.activity.queryKey);
+    if (isLiveActivity(activities?.[sessionId]?.status)) {
+      applyEvent({ type: "message_queued", message: { ...message, role: "user" } });
+      await deliver({ message });
       return;
     }
 
-    // Start a new streaming response. Seed the session's model
-    // with what we're about to send — this mirrors the server, which seeds its
-    // stream state the same way and therefore never re-announces the initial
-    // model via a model_changed event. This keeps the picker stable
-    // while the first turn starts.
-    if (model) {
-      sessionRef.current = { ...sessionRef.current, model };
-    }
-    applyWorkspaceEvent(queryClient, { type: "session.running", sessionId, at: Date.now() });
-    applyEvent({
-      type: "user_message",
-      content: message.content,
-      attachments: message.attachments,
-      clientId,
-      timestamp: now.toISOString(),
-    });
-
-    const request: StreamSessionRequest = {
-      sessionId,
-      afterEventId: sessionRef.current.lastSeenEventId,
+    unsentTurn.current = { clientId, state: read(), isDraft };
+    applyWorkspaceEvent(queryClient, { type: "session.running", sessionId, at: now.getTime() });
+    // Seed the session's model with what we're about to send to keep the picker
+    // stable until the provider announces the model it applies.
+    update((current) =>
+      [
+        {
+          type: "user_message",
+          content: message.content,
+          attachments: message.attachments,
+          clientId,
+          timestamp: now.toISOString(),
+        } satisfies SessionEvent,
+        { type: "status", status: "thinking" } satisfies SessionEvent,
+      ].reduce(applySessionEvent, model ? { ...current, model } : current),
+    );
+    await deliver({
       message,
       location: isDraft
-        ? {
-            directory: sessionDirectory,
-            useWorktree: sessionUseWorktree,
-          }
+        ? { directory: sessionDirectory, useWorktree: sessionUseWorktree }
         : undefined,
-    };
-
-    try {
-      await streamEvents(request);
-    } catch (error) {
-      console.error("Streaming error:", error);
-      applyEvent({ type: "end", reason: "error" });
-      if (isDraft) {
-        // Creation may have failed before or after creating native history. Read
-        // the authoritative lifecycle rather than guessing whether to undo it.
-        await sessionActivityJournal.repair(queryClient);
-        await invalidateSessionsStateQuery(queryClient);
-      } else {
-        applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
-        await invalidateSessionSnapshot();
-      }
-    }
+    });
   };
 
   // ---------------------------------------------------------------------------
   // Pane lifecycle
   // ---------------------------------------------------------------------------
-  useEffect(
-    () => () => {
-      abortControllerRef.current?.abort();
-      abortControllerRef.current = null;
-
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
-    },
-    [],
-  );
-
-  // Live state wins while connected. Otherwise adopt the cached snapshot, including
-  // a replacement draft with its optimistic first message.
+  // Opening a finished run acknowledges it. The observation already healed the
+  // transcript when the run ended.
+  const isUnread = activityStatus === "unread";
   useEffect(() => {
-    if (!isStreaming && sessionSnapshot) {
-      // Keep the locally picked model when older history has none.
-      const restoredSession = {
-        ...sessionSnapshot,
-        model: sessionSnapshot.model ?? sessionRef.current.model,
-      };
-      sessionRef.current = restoredSession;
-      setPublishedSession(restoredSession);
-      setHasLoadedSessionState(true);
-    }
-  }, [isStreaming, sessionSnapshot]);
-
-  // Reconcile the subscriber whenever its visibility or the session's
-  // workspace state changes. Effect events keep transport implementation
-  // details out of the reactive transition inputs.
-  const reconcileSubscription = useEffectEvent(() => {
-    if (wasVisibleRef.current !== isVisible) {
-      wasVisibleRef.current = isVisible;
-      if (!isVisible) {
-        endSubscription();
-        return;
-      }
-      void invalidateSessionSnapshot();
-    }
-
-    if (isDraft || !isVisible || !hasLoadedSessionState) return;
-
-    if (isSessionLive) {
-      void subscribeToSession(subscriptionMode);
-      return;
-    }
-
-    if (subscriptionMode === "passive" || !isSessionUnread) return;
-
-    void invalidateSessionSnapshot();
-    markRead();
-  });
-
-  // Every visible pane streams live work. A passive subscriber never
-  // acknowledges completion or clears an existing unread state.
-  useEffect(() => {
-    reconcileSubscription();
-  }, [
-    hasLoadedSessionState,
-    isDraft,
-    isSessionLive,
-    isSessionUnread,
-    isVisible,
-    sessionId,
-    subscriptionMode,
-  ]);
+    if (mode !== "passive" && isVisible && isUnread && hasLoadedSessionState) markRead();
+  }, [hasLoadedSessionState, isUnread, isVisible, markRead, mode]);
 
   return {
-    ...publishedSession,
-    status,
+    ...state,
     isStreaming,
     hasLoadedSessionState,
     error,
     setModel,
     stop,
     sendMessage,
+    loadPrevious,
   };
 }

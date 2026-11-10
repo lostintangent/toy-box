@@ -13,17 +13,15 @@ import * as runtimeWorkersModule from "./supervisor";
 import { waitForSessions } from "@sessions/server/runtime";
 import { sessionFile } from "@files/model";
 import * as filePathsModule from "@files/server/paths";
-import * as databaseModule from "@/server/database";
+import { openTestDatabase } from "@/server/testFixtures";
 import { AppDatabase } from "@apps/server/database";
 import type { SessionCompletion } from "@sessions/model";
 import type { WorkspaceEvent } from "@workspace/model/events";
 
 const realRuntimeWorkersModule = { ...runtimeWorkersModule };
 const realFilePathsModule = { ...filePathsModule };
-const realDatabaseModule = { ...databaseModule };
 
 let completions: Promise<SessionCompletion>[];
-let currentDb: Awaited<ReturnType<typeof databaseModule.createTestDatabase>> | undefined;
 const superviseWorkerMock = mock(
   async (input: Parameters<typeof runtimeWorkersModule.superviseWorker>[0]) => {
     const completion = completions.shift() ?? Promise.resolve({ status: "completed" as const });
@@ -48,27 +46,18 @@ mock.module("@files/server/paths", () => ({
       ? join(import.meta.dir, "../../../../package.json")
       : import.meta.path,
 }));
-mock.module("@/server/database", () => ({
-  ...realDatabaseModule,
-  getStateDatabase: async () => {
-    if (!currentDb) throw new Error("Test database has not been opened.");
-    return currentDb;
-  },
-}));
 
 const { spawnWorkerFromRequest, spawnWorker, buildWorkerPrompt, cancelWorker } =
   await import("./admission");
-const { finishWorker, hasWorker, getWorkers } = await import("./registry");
+const { finishWorker, hasWorker } = await import("./registry");
 const { subscribeWorkspaceEvents } = await import("@workspace/server/events");
 
 afterAll(() => {
   mock.module("@workers/server/supervisor", () => realRuntimeWorkersModule);
   mock.module("@files/server/paths", () => realFilePathsModule);
-  mock.module("@/server/database", () => realDatabaseModule);
 });
 
 beforeEach(() => {
-  currentDb = undefined;
   completions = [];
   superviseWorkerMock.mockClear();
   superviseWorkerMock.mockImplementation(async (input) => {
@@ -96,9 +85,8 @@ describe("workers", () => {
   test.each(["file", "app", "session", "inbox"] as const)(
     "%s spawning waits for durable admission, not execution",
     async (owner) => {
-      currentDb = await databaseModule.createTestDatabase();
-      onTestFinished(async () => currentDb?.close());
-      const app = await new AppDatabase(currentDb).create({
+      const db = await openTestDatabase();
+      const app = await new AppDatabase(db).create({
         definitionId: "regex",
         title: "Admission test",
         color: "#8b5cf6",
@@ -221,9 +209,8 @@ describe("workers", () => {
   });
 
   test("adds the scoped app state contract to an existing app's task", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    onTestFinished(async () => currentDb?.close());
-    const app = await new AppDatabase(currentDb).create({
+    const db = await openTestDatabase();
+    const app = await new AppDatabase(db).create({
       definitionId: "regex",
       title: "Regex",
       color: "#8b5cf6",
@@ -267,9 +254,8 @@ describe("workers", () => {
   });
 
   test("allows workers for the same app to execute concurrently", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    onTestFinished(async () => currentDb?.close());
-    const app = await new AppDatabase(currentDb).create({
+    const db = await openTestDatabase();
+    const app = await new AppDatabase(db).create({
       definitionId: "regex",
       title: "Regex",
       color: "#8b5cf6",
@@ -308,61 +294,34 @@ describe("workers", () => {
     await waitFor(() => expect(hasWorker(secondWorker.sessionId)).toBe(false));
   });
 
-  test("does not start an app worker canceled while its current state is loading", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    onTestFinished(async () => currentDb?.close());
-    const apps = new AppDatabase(currentDb);
+  test("rejects an app worker whose app is deleted before admission", async () => {
+    const db = await openTestDatabase();
+    const apps = new AppDatabase(db);
     const app = await apps.create({
       definitionId: "regex",
       title: "Regex",
       color: "#8b5cf6",
       state: {},
     });
-    const stateRead = Promise.withResolvers<void>();
-    const releaseRead = Promise.withResolvers<void>();
-    // oxlint-disable-next-line typescript/unbound-method -- The original method is explicitly rebound with call below.
-    const realGet = AppDatabase.prototype.get;
-    let reads = 0;
-    const get = spyOn(AppDatabase.prototype, "get").mockImplementation(async function (
-      this: AppDatabase,
-      appId,
-    ) {
-      const result = await realGet.call(this, appId);
-      reads += 1;
-      if (reads === 2) {
-        stateRead.resolve();
-        await releaseRead.promise;
-      }
-      return result;
+    superviseWorkerMock.mockImplementationOnce(async (input) => {
+      await apps.delete(app.id);
+      await input.admit?.();
+      throw new Error("A rejected admission must not start its worker.");
     });
-    onTestFinished(() => get.mockRestore());
-
-    const spawning = spawnWorkerFromRequest({
-      type: "app",
-      appId: app.id,
-      message: { content: "Generate a pattern." },
-    });
-    await stateRead.promise;
-    const worker = getWorkers().find((worker) => worker.type === "app" && worker.appId === app.id)!;
-    onTestFinished(() => finishWorker(worker.sessionId));
 
     await expect(
-      cancelWorker({
+      spawnWorkerFromRequest({
         type: "app",
         appId: app.id,
-        workerSessionId: worker.sessionId,
+        message: { content: "Generate a pattern." },
       }),
-    ).resolves.toBe(true);
-    releaseRead.resolve();
-
-    await expect(spawning).rejects.toBeInstanceOf(realRuntimeWorkersModule.WorkerCanceledError);
-    await waitFor(() => expect(hasWorker(worker.sessionId)).toBe(false));
-    expect(superviseWorkerMock).not.toHaveBeenCalled();
+    ).rejects.toThrow("The app was deleted before its worker started.");
+    const sessionId = superviseWorkerMock.mock.calls[0]![0].worker.sessionId;
+    await waitFor(() => expect(hasWorker(sessionId)).toBe(false));
   });
 
   test("rejects workers for missing apps", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    onTestFinished(async () => currentDb?.close());
+    await openTestDatabase();
 
     await expect(
       spawnWorkerFromRequest({

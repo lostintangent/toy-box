@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
-import { homedir } from "node:os";
 import type { JSONType } from "zod";
 import { encodeSystemMessage } from "@sessions/model/systemMessages";
 import { replaySessionHistory } from "@sessions/model/reducer";
@@ -24,10 +23,6 @@ const PATCH_DIFF = `diff --git a/Users/lostintangent/Desktop/toy-box/docs/notes.
 @@ -1 +1 @@
 -old
 +new`;
-const ARTIFACT_PATCH_TEXT = `*** Begin Patch
-*** Add File: ${homedir()}/.toy-box/sessions/toy-box-session/artifacts/plan.md
-+# Plan
-*** End Patch`;
 
 function modelChange(
   newModel: string,
@@ -160,7 +155,7 @@ function userInputCompleted(
   });
 }
 
-function expectOmittedToolLifecycle(
+function expectHiddenToolLifecycle(
   project: ReturnType<typeof createSdkEventProjector>,
   options: {
     toolName: string;
@@ -176,7 +171,7 @@ function expectOmittedToolLifecycle(
     project(toolExecutionStart(options.toolName, options.toolCallId, options.argumentsRecord)),
   ).toEqual(options.startEvents ?? []);
 
-  expect(project(toolExecutionProgress(options.toolCallId, "still omitted"))).toEqual([]);
+  expect(project(toolExecutionProgress(options.toolCallId, "still hidden"))).toEqual([]);
 
   expect(
     project(
@@ -194,14 +189,14 @@ describe("projector", () => {
 
   describe("streaming: visible tool calls", () => {
     test("projects normal tool calls into visible tool lifecycle events", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
       const args = { filePath: "notes.md" };
 
       expect(project(toolExecutionStart("write_file", "tool-write", args))).toEqual([
         { type: "tool_start", toolName: "write_file", toolCallId: "tool-write", arguments: args },
       ]);
       // Progress events carry no canonical meaning (nothing downstream consumes
-      // them) and project to nothing for visible and omitted tools alike.
+      // them) and project to nothing for visible and hidden tools alike.
       expect(project(toolExecutionProgress("tool-write", "Writing file"))).toEqual([]);
       expect(project(toolExecutionComplete("tool-write", { resultContent: "done" }))).toEqual([
         { type: "tool_end", toolCallId: "tool-write", success: true, result: "done" },
@@ -209,7 +204,7 @@ describe("projector", () => {
     });
 
     test("native output images become attachments while model-only images do not", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
       const image = { type: "image", data: "aW1hZ2U=", mimeType: "image/png" };
       const complete = (toolCallId: string, result: object) =>
         sdkEvent({
@@ -236,7 +231,7 @@ describe("projector", () => {
     });
 
     test("failed tool calls surface the error message as the result", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
       project(toolExecutionStart("bash", "tool-fail", { command: "exit 1" }));
 
       expect(
@@ -254,8 +249,34 @@ describe("projector", () => {
       ]);
     });
 
+    test("a host tool projects the same result live and from history", () => {
+      // Recorded from CLI 1.0.108-1, without toolTelemetry: a host tool's start, its completion
+      // as streamed live, and the same completion as persisted to events.jsonl.
+      const [start, live, persisted] = String.raw`
+{"type":"tool.execution_start","data":{"toolCallId":"toolu_01B2f7iFkgpXmzaQPBf7eDMA","toolName":"echo","arguments":{"value":"pv100"},"turnId":"0","model":"claude-haiku-5.5"},"id":"47de6a54-abd2-4699-9c26-923068d6167a","timestamp":"2026-11-09T23:37:49.167Z","parentId":"54c44c1c-c388-416d-8e9b-24c7d9795839"}
+{"type":"tool.execution_complete","data":{"toolCallId":"toolu_01B2f7iFkgpXmzaQPBf7eDMA","model":"claude-haiku-5.5","interactionId":"e4cd0415-24c7-4f69-9a60-d20aeb4ab544","turnId":"0","rte":true,"success":true,"result":{"content":"{\"value\":\"pv100\"}","detailedContent":"{\"value\":\"pv100\"}"}},"id":"2472fa0d-7c80-40a6-ab9b-87deb7010b25","timestamp":"2026-11-09T23:37:49.191Z","parentId":"ab0bc1f8-0df2-479c-ae32-101ee58f31bf"}
+{"type":"tool.execution_complete","data":{"toolCallId":"toolu_01B2f7iFkgpXmzaQPBf7eDMA","model":"claude-haiku-5.5","interactionId":"e4cd0415-24c7-4f69-9a60-d20aeb4ab544","turnId":"0","rte":true,"success":true,"result":{"content":"{\"value\":\"pv100\"}"}},"id":"2472fa0d-7c80-40a6-ab9b-87deb7010b25","timestamp":"2026-11-09T23:37:49.191Z","parentId":"ab0bc1f8-0df2-479c-ae32-101ee58f31bf"}`
+        .trim()
+        .split("\n")
+        .map((line) => sdkEvent(JSON.parse(line)));
+
+      for (const completion of [live, persisted]) {
+        const project = createSdkEventProjector();
+        project(start);
+        expect(project(completion)).toEqual([
+          {
+            type: "tool_end",
+            toolCallId: "toolu_01B2f7iFkgpXmzaQPBf7eDMA",
+            success: true,
+            result: '{"value":"pv100"}',
+            details: undefined,
+          },
+        ]);
+      }
+    });
+
     test("projects apply_patch as patch with freeform arguments and detailed completion diffs", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
 
       expect(project(toolExecutionStart("apply_patch", "tool-patch", PATCH_TEXT))).toEqual([
         {
@@ -286,7 +307,7 @@ describe("projector", () => {
     });
 
     test("keeps open_canvas visible and projects typed canvas-opened events", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
       const args = {
         extensionId: "user:documint",
         canvasId: "documint-markdown-agent",
@@ -362,7 +383,7 @@ describe("projector", () => {
     });
 
     test("drops canvas-opened events without a renderable URL", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
       expect(
         project(
           sdkEvent({
@@ -381,7 +402,7 @@ describe("projector", () => {
 
   describe("streaming: user questions", () => {
     test("projects a live question and suppresses duplicate durable resolution", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
       const question = "Which database should I use?";
       const choices = ["SQLite", "PostgreSQL"];
 
@@ -434,7 +455,7 @@ describe("projector", () => {
         ["question-choice", "User selected: SQLite", "SQLite"],
         ["question-freeform", "User responded: Deploy after 5 PM", "Deploy after 5 PM"],
       ] as const) {
-        const project = createSdkEventProjector("toy-box-session");
+        const project = createSdkEventProjector();
         project(
           toolExecutionStart("ask_user", toolCallId, {
             question: "How should I proceed?",
@@ -462,7 +483,7 @@ describe("projector", () => {
 
   describe("streaming: subagents", () => {
     test("nests native subagent replies and work beneath the spawning agent call", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
       const nativeAgentId = "native-agent-9";
       const parentToolCallId = "call-task-9";
       const state = replaySessionHistory(
@@ -505,7 +526,7 @@ describe("projector", () => {
     });
 
     test("background agent calls suppress the early tool_end and complete via subagent.completed", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
 
       expect(
         project(
@@ -537,7 +558,7 @@ describe("projector", () => {
     });
 
     test("failed background agents emit a failed tool_end via subagent.failed", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
       project(toolExecutionStart("task", "call-bg-2", { mode: "background" }));
       project(toolExecutionComplete("call-bg-2", { success: true }));
 
@@ -547,69 +568,36 @@ describe("projector", () => {
     });
   });
 
-  describe("streaming: omitted and translated tools", () => {
-    test("resolves Sessions tool policies through Copilot's tool aliases", () => {
-      const project = createSdkEventProjector("toy-box-session");
-      const path = "~/.toy-box/sessions/toy-box-session/artifacts/report.md";
-
-      expect(project(toolExecutionStart("view", "tool-view", { path }))).toEqual([]);
-      expect(project(toolExecutionStart("str_replace", "tool-edit", { path }))).toEqual([]);
-      expect(project(toolExecutionStart("apply_patch", "tool-patch", ARTIFACT_PATCH_TEXT))).toEqual(
-        [],
-      );
-      expect(project(toolExecutionStart("view", "tool-read", { path: "/tmp/report.md" }))).toEqual([
-        {
-          type: "tool_start",
-          toolName: "read",
-          toolCallId: "tool-read",
-          arguments: { path: "/tmp/report.md" },
-        },
-      ]);
-    });
-
-    test("omitted tools stay hidden through progress and completion, even when they fail", () => {
-      expectOmittedToolLifecycle(createSdkEventProjector("toy-box-session"), {
-        toolName: "read_agent",
-        toolCallId: "tool-read-agent",
-        completionSuccess: false,
-        completionErrorMessage: "boom",
-      });
-    });
-
-    test("tools translated on start publish their events and are otherwise hidden", () => {
-      expectOmittedToolLifecycle(createSdkEventProjector("toy-box-session"), {
-        toolName: "open_session",
-        toolCallId: "tool-open-session",
-        argumentsRecord: { sessionId: "toy-box-linked-1" },
-        startEvents: [{ type: "linked_session_added", sessionId: "toy-box-linked-1" }],
-        completionResultContent: "Session toy-box-linked-1 opened.",
-      });
-    });
-
-    test("tools translated on completion publish their events only once they complete", () => {
-      const project = createSdkEventProjector("toy-box-session");
+  describe("streaming: hidden tools", () => {
+    test("names aliased tools canonically, so Sessions' tool policies apply to them", () => {
+      const project = createSdkEventProjector();
+      const args = { path: "/tmp/report.md" };
 
       expect(
-        project(
-          toolExecutionStart("create_session", "tool-create-session", {
-            prompt: "Start a visible investigation",
-            open: true,
-          }),
-        ),
-      ).toEqual([]);
-      expect(
-        project(
-          toolExecutionComplete("tool-create-session", {
-            resultContent: JSON.stringify({ sessionId: "toy-box-created-1", opened: true }),
-          }),
-        ),
-      ).toEqual([{ type: "linked_session_added", sessionId: "toy-box-created-1" }]);
+        [
+          toolExecutionStart("view", "tool-view", args),
+          toolExecutionStart("str_replace", "tool-edit", args),
+        ]
+          .flatMap(project)
+          .map((event) => event.type === "tool_start" && event.toolName),
+      ).toEqual(["read", "edit"]);
+    });
+
+    test("native bookkeeping tools stay hidden through progress and completion, even when they fail", () => {
+      for (const toolName of ["skill", "read_agent", "write_agent", "list_agents"]) {
+        expectHiddenToolLifecycle(createSdkEventProjector(), {
+          toolName,
+          toolCallId: `tool-${toolName}`,
+          completionSuccess: false,
+          completionErrorMessage: "boom",
+        });
+      }
     });
   });
 
   describe("streaming: todo SQL", () => {
     test("sql mutations publish todo patches on start and keep them when the call fails", () => {
-      expectOmittedToolLifecycle(createSdkEventProjector("toy-box-session"), {
+      expectHiddenToolLifecycle(createSdkEventProjector(), {
         toolName: "sql",
         toolCallId: "tool-insert",
         argumentsRecord: {
@@ -640,8 +628,8 @@ describe("projector", () => {
       });
     });
 
-    test("sql reads of todo tables are omitted without publishing todo patches", () => {
-      expectOmittedToolLifecycle(createSdkEventProjector("toy-box-session"), {
+    test("sql reads of todo tables are hidden without publishing todo patches", () => {
+      expectHiddenToolLifecycle(createSdkEventProjector(), {
         toolName: "sql",
         toolCallId: "tool-select",
         argumentsRecord: { query: "SELECT id, title, status FROM todos;" },
@@ -658,7 +646,7 @@ describe("projector", () => {
         data: { toolCallId: "call-bash", sequence: 0, text: "12 pass\n" },
       });
 
-      expect(createSdkEventProjector("toy-box-session")(shellOutput)).toEqual([
+      expect(createSdkEventProjector()(shellOutput)).toEqual([
         { type: "tool_output_delta", toolCallId: "call-bash", content: "12 pass\n" },
       ]);
     });
@@ -682,13 +670,13 @@ describe("projector", () => {
         ...history,
       ];
       const replay = (events: SdkSessionEvent[]) =>
-        replaySessionHistory(events.flatMap(createSdkEventProjector("toy-box-session"))).messages;
+        replaySessionHistory(events.flatMap(createSdkEventProjector())).messages;
       expect(replay(live)).toEqual([{ role: "assistant", messageId: "answer", content: "Done." }]);
       expect(replay(history)).toEqual(replay(live));
     });
 
     test("projects committed user and assistant messages", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
 
       expect(
         project(
@@ -761,8 +749,51 @@ describe("projector", () => {
       ]);
     });
 
+    test("identifies inputs by the client turn ID the CLI echoes", () => {
+      const content = { type: "channel_message" as const, senderName: "Ada" };
+      // Sanitized from CLI 1.0.108-1 history; the live events are identical.
+      const events = [
+        sdkEvent({
+          type: "user.message",
+          timestamp: "2026-11-09T20:37:19.675Z",
+          data: {
+            content: "Reply with only: ok",
+            messageId: "5de4b0be-1c00-447e-ad07-6b55b3be0ac6",
+            clientTurnId: "client-user",
+            delivery: "idle",
+          },
+        }),
+        sdkEvent({
+          type: "user.message",
+          timestamp: "2026-11-09T20:37:20.831Z",
+          data: {
+            content: encodeSystemMessage(content),
+            source: "system",
+            messageId: "5a969d7c-c0d3-4982-95dd-68b21b65ba7a",
+            clientTurnId: "client-system",
+            delivery: "idle",
+          },
+        }),
+      ];
+
+      expect(events.flatMap(createSdkEventProjector())).toEqual([
+        {
+          type: "user_message",
+          content: "Reply with only: ok",
+          clientId: "client-user",
+          timestamp: "2026-11-09T20:37:19.675Z",
+        },
+        {
+          type: "system_message",
+          content,
+          clientId: "client-system",
+          timestamp: "2026-11-09T20:37:20.831Z",
+        },
+      ]);
+    });
+
     test("drops agent-scoped, system-source, and skill-source user messages", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
       const events = [
         sdkEvent({
           type: "user.message",
@@ -789,7 +820,7 @@ describe("projector", () => {
 
     test("projects invoked skills as completed calls containing the skill path", () => {
       expect(
-        createSdkEventProjector("toy-box-session")(
+        createSdkEventProjector()(
           sdkEvent({
             type: "skill.invoked",
             id: "skill-event-1",
@@ -821,7 +852,7 @@ describe("projector", () => {
 
     test("keeps context-loaded skills out of the transcript", () => {
       expect(
-        createSdkEventProjector("toy-box-session")(
+        createSdkEventProjector()(
           sdkEvent({
             type: "skill.invoked",
             id: "skill-event-1",
@@ -843,7 +874,7 @@ describe("projector", () => {
       });
 
       expect(
-        createSdkEventProjector("toy-box-session")(
+        createSdkEventProjector()(
           sdkEvent({
             type: "user.message",
             timestamp: "2026-01-01T00:00:00.000Z",
@@ -867,7 +898,7 @@ describe("projector", () => {
     });
 
     test("drops empty-content deltas at the source", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
 
       expect(
         project(sdkEvent({ type: "assistant.message_delta", data: { deltaContent: "" } })),
@@ -890,7 +921,7 @@ describe("projector", () => {
     });
 
     test("drops transient subagent text deltas", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
 
       expect(
         project(
@@ -916,7 +947,7 @@ describe("projector", () => {
           data: { content: "", reasoningText, toolRequests: [{ toolCallId: "t", name: "view" }] },
         });
       const subagentReasoning = (events: SdkSessionEvent[]) => {
-        const project = createSdkEventProjector("toy-box-session");
+        const project = createSdkEventProjector();
         const state = replaySessionHistory(
           [
             toolExecutionStart("task", parentToolCallId, { description: "Inspect" }),
@@ -954,7 +985,7 @@ describe("projector", () => {
 
   describe("streaming: session events", () => {
     test("reports only the root agent's context usage", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
       const usageInfo = (agentId?: string) =>
         sdkEvent({
           type: "session.usage_info",
@@ -970,7 +1001,7 @@ describe("projector", () => {
     });
 
     test("drops subagent status events so they do not mutate root status", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
 
       expect(project(sdkEvent({ type: "assistant.idle", data: {} }))).toEqual([
         { type: "status", status: "background" },
@@ -1004,7 +1035,7 @@ describe("projector", () => {
     });
 
     test("projects native model, title, and failure transitions", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
 
       expect(
         project(
@@ -1093,7 +1124,7 @@ describe("projector", () => {
     });
 
     test("projects subagent start model as a scoped model change", () => {
-      const project = createSdkEventProjector("toy-box-session");
+      const project = createSdkEventProjector();
 
       expect(
         project(
@@ -1119,9 +1150,7 @@ describe("projector", () => {
     });
 
     test("returns no events for unknown SDK event types", () => {
-      expect(
-        createSdkEventProjector("toy-box-session")(sdkEvent({ type: "unknown.event", data: {} })),
-      ).toEqual([]);
+      expect(createSdkEventProjector()(sdkEvent({ type: "unknown.event", data: {} }))).toEqual([]);
     });
   });
 });

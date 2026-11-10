@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, onTestFinished, setSystemTime, spyOn, test } from "bun:test";
+import { describe, expect, onTestFinished, setSystemTime, test } from "bun:test";
 import { createTestDatabase } from "@/server/database";
 import type { AutomationOptions } from "../model";
 import { AutomationDatabase } from "./database";
@@ -71,30 +71,6 @@ describe("automation persistence and scheduling", () => {
     });
     expect(await automations.get(created.id)).toEqual(finished);
     expect(await automations.recordRunFinish("missing", finishedAt)).toBeNull();
-  });
-
-  test("an unreadable definition does not hide or block healthy automations", async () => {
-    mockTime("2026-02-14T10:00:00.000Z");
-    const log = spyOn(console, "error").mockImplementation(() => {});
-    onTestFinished(() => log.mockRestore());
-    const { db, automations } = await openTestDatabase();
-    const valid = await automations.create({ ...options, cron: "* * * * *" });
-    const invalid = await automations.create({
-      ...options,
-      title: "Unreadable",
-      cron: "* * * * *",
-    });
-    await db`UPDATE automations SET model_configuration = ${"{bad json"} WHERE id = ${invalid.id}`;
-
-    expect(await automations.list()).toEqual([valid]);
-    setSystemTime(new Date("2026-02-14T10:01:30.000Z"));
-    expect(await automations.claimDue()).toEqual([
-      { ...valid, nextRunAt: "2026-02-14T10:02:00.000Z" },
-    ]);
-    const [row] = await db<{ next_run_at: string }[]>`
-      SELECT next_run_at FROM automations WHERE id = ${invalid.id}
-    `;
-    expect(row?.next_run_at).toBe("2026-02-14T10:02:00.000Z");
   });
 });
 

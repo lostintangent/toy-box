@@ -7,6 +7,7 @@ function invalidateProviderQueries(queryClient: QueryClient): Promise<void> {
 }
 
 export default {
+  preload: (queryClient) => queryClient.ensureQueryData(providerQueries.catalog()),
   applyEvent(queryClient, event) {
     if (event.type === "providers.changed") void invalidateProviderQueries(queryClient);
   },

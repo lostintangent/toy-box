@@ -17,8 +17,7 @@ const pendingAutomationRuns =
   sharedMap<ReturnType<typeof beginAutomationRun>>("pending-automation-runs");
 
 export async function listAutomations(): Promise<Automation[]> {
-  const database = await getStateDatabase({ createIfMissing: false });
-  return database ? new AutomationDatabase(database).list() : [];
+  return new AutomationDatabase(await getStateDatabase()).list();
 }
 
 export async function createAutomation(input: AutomationOptions): Promise<Automation> {
@@ -50,14 +49,14 @@ export async function deleteAutomation(automationId: string): Promise<boolean> {
   return deleted;
 }
 
-export async function runAutomation(automationId: string, clientId?: string) {
+export async function runAutomation(automationId: string) {
   const pending = pendingAutomationRuns.get(automationId);
   if (pending) {
     const { sessionId } = await pending;
     return { sessionId, started: false };
   }
 
-  const run = beginAutomationRun(automationId, clientId);
+  const run = beginAutomationRun(automationId);
   pendingAutomationRuns.set(automationId, run);
 
   try {
@@ -67,7 +66,7 @@ export async function runAutomation(automationId: string, clientId?: string) {
   }
 }
 
-async function beginAutomationRun(automationId: string, clientId?: string) {
+async function beginAutomationRun(automationId: string) {
   const database = new AutomationDatabase(await getStateDatabase());
   const automation = await database.get(automationId);
   if (!automation) throw new Error("Automation not found");
@@ -78,8 +77,8 @@ async function beginAutomationRun(automationId: string, clientId?: string) {
 
   const receipt = await recreateSession(
     automation.id,
-    { clientId, content: automation.prompt, model: automation.model },
-    { directory: automation.cwd, name: automation.title, sessionType: "automation" },
+    { content: automation.prompt, model: automation.model },
+    { directory: automation.cwd, name: automation.title },
   );
 
   void superviseAutomationRun(database, automation.id, receipt.waitForCompletion).catch((error) => {

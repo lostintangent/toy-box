@@ -19,11 +19,7 @@ export function notificationRequestBody(
   if (text) return truncateNotificationText(text);
   const attachments = message.attachments ?? [];
   if (!attachments.length) return notificationWaitingBody;
-  const images = attachments.every((attachment) =>
-    "mimeType" in attachment
-      ? attachment.mimeType.startsWith("image/")
-      : /\.(?:png|jpe?g|gif|webp|heic|heif|avif|bmp|tiff?|ico|svg)$/i.test(attachment.name),
-  );
+  const images = attachments.every(({ mimeType }) => mimeType.startsWith("image/"));
   return attachments.length === 1
     ? images
       ? "Sent an image"

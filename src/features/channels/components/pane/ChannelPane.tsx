@@ -62,7 +62,7 @@ function ChannelContent({
   const agents = [lead, ...members];
   const send = (message: Parameters<typeof postMessage>[0]) => {
     transcriptRef.current?.followNextPost();
-    postMessage(message);
+    return postMessage(message);
   };
 
   return (
@@ -76,7 +76,7 @@ function ChannelContent({
         bookmarks: state?.bookmarks ?? [],
         bookmark: (sequence, bookmarked) => bookmark({ channelId, sequence, bookmarked }),
         reply: (agent) => composerRef.current?.reply(agent),
-        answer: (content) => send({ content }),
+        answer: (content) => void send({ content }).catch(console.error),
         mention: () => composerRef.current?.mention(),
       }}
     >

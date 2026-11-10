@@ -150,7 +150,7 @@ type MenuSide = "top" | "right";
 
 /** Starts or finds work from the sidebar, as one action: Hyper, or the command palette. */
 export function HyperMenu({ side }: { side: MenuSide }) {
-  const hyperSessionId = useWorkspaceSelector((workspace) => workspace.hyperSessionIds[0]);
+  const hyperSessionId = useWorkspaceSelector((workspace) => workspace.settings.hyperSessionId);
   const isOpen = useCommand("workspace.toggleHyper")?.checked ?? false;
 
   return (

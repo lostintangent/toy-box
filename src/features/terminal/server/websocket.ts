@@ -1,50 +1,39 @@
-import type { Hooks, Peer } from "crossws";
-import { terminalClientMessageSchema, type TerminalClientMessage } from "../model/protocol";
+import { getSettings } from "@workspace/server/state/settings";
+import { refuse, type SocketService } from "@/server/socket";
+import {
+  terminalAttachSchema,
+  terminalClientMessageSchema,
+  type TerminalClientMessage,
+} from "../model/protocol";
 import { terminalRuntime } from "./runtime";
 
-export default {
-  message(peer, message) {
-    if (typeof message.rawData !== "string") {
-      const clientId = getClientId(peer);
-      if (clientId) terminalRuntime.input(clientId, message.uint8Array());
-      return;
-    }
+/** Each socket shows the PTY of the tab its URL names, starting one in the owner's chosen shell. */
+const connect: SocketService = async (request) => {
+  const attach = terminalAttachSchema.safeParse(
+    Object.fromEntries(new URL(request.url).searchParams),
+  );
+  if (!attach.success) return refuse(400, "A terminal socket names its tab.");
+  const { clientId, cols, rows } = attach.data;
+  const shell = (await getSettings()).terminalShell.trim() || undefined;
 
-    let control: TerminalClientMessage;
-    try {
-      control = terminalClientMessageSchema.parse(message.json());
-    } catch {
-      console.error("[terminal] Invalid client message");
-      return;
-    }
+  return {
+    open: (peer) => terminalRuntime.attach(peer, clientId, cols, rows, shell),
+    message(_peer, message) {
+      if (typeof message.rawData !== "string")
+        return terminalRuntime.input(clientId, message.uint8Array());
 
-    switch (control.type) {
-      case "init":
-        peer.context.terminalClientId = control.clientId;
-        terminalRuntime.attach(peer, control.clientId, control.cols, control.rows, control.shell);
-        break;
-      case "resize": {
-        const clientId = getClientId(peer);
-        if (clientId) terminalRuntime.resize(clientId, control.cols, control.rows);
-        break;
+      let control: TerminalClientMessage;
+      try {
+        control = terminalClientMessageSchema.parse(message.json());
+      } catch {
+        return console.error("[terminal] Invalid client message");
       }
-      case "close": {
-        const clientId = getClientId(peer);
-        if (clientId) terminalRuntime.close(clientId);
-        break;
-      }
-    }
-  },
-  close(peer) {
-    const clientId = getClientId(peer);
-    if (clientId) terminalRuntime.detach(clientId, peer.id);
-  },
-  error(_peer, error) {
-    console.error("[terminal] WebSocket error:", error);
-  },
-} satisfies Partial<Hooks>;
+      if (control.type === "close") return terminalRuntime.close(clientId);
+      terminalRuntime.resize(clientId, control.cols, control.rows);
+    },
+    close: (peer) => terminalRuntime.detach(clientId, peer.id),
+    error: (_peer, error) => console.error("[terminal] WebSocket error:", error),
+  };
+};
 
-function getClientId(peer: Peer): string | undefined {
-  const clientId = peer.context.terminalClientId;
-  return typeof clientId === "string" ? clientId : undefined;
-}
+export default connect;

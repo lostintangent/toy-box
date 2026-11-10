@@ -1,12 +1,28 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { bookmarkChannelMessageResponse } from "@channels/server/api";
+import { bookmarkChannelMessageInputSchema } from "@channels/model";
+import { bookmarkChannelMessage } from "@channels/server";
+import { invalidRequest, noContent, respond } from "@channels/server/http";
 
+/** Bookmarking is idempotent, so either verb succeeds when the message is already in that state. */
 export const Route = createFileRoute("/api/v1/channels/$channelId/bookmarks/$sequence")({
   server: {
     handlers: {
-      PUT: ({ params }) => bookmarkChannelMessageResponse(params.channelId, params.sequence, true),
-      DELETE: ({ params }) =>
-        bookmarkChannelMessageResponse(params.channelId, params.sequence, false),
+      PUT: ({ params }) => bookmark(params, true),
+      DELETE: ({ params }) => bookmark(params, false),
     },
   },
 });
+
+function bookmark(params: { channelId: string; sequence: string }, bookmarked: boolean) {
+  const { channelId, sequence } = params;
+  const input = bookmarkChannelMessageInputSchema.safeParse({
+    channelId,
+    sequence: Number(sequence),
+    bookmarked,
+  });
+  if (!input.success) return invalidRequest();
+  return respond(`${bookmarked ? "bookmark" : "unbookmark"} message ${sequence}`, async () => {
+    await bookmarkChannelMessage(input.data);
+    return noContent();
+  });
+}

@@ -29,9 +29,7 @@ const prompt = native({
   origin: { kind: "human" },
 });
 const replay = (messages: SDKMessage[]) =>
-  messages
-    .flatMap(createClaudeProjector("test"))
-    .reduce(applySessionEvent, createInitialSessionState());
+  messages.flatMap(createClaudeProjector()).reduce(applySessionEvent, createInitialSessionState());
 
 test("catalog, startup, and history agree on the model and its reasoning options", () => {
   const catalog = [
@@ -54,7 +52,7 @@ test("catalog, startup, and history agree on the model and its reasoning options
     ),
   ];
   for (const message of messages) {
-    const state = createClaudeProjector("test")(message).reduce(
+    const state = createClaudeProjector()(message).reduce(
       applySessionEvent,
       createInitialSessionState(),
     );
@@ -71,7 +69,7 @@ test("catalog, startup, and history agree on the model and its reasoning options
 });
 
 test("turn results do not finish a session before native idle", () => {
-  const project = createClaudeProjector("test");
+  const project = createClaudeProjector();
   expect(project(native({ type: "result", subtype: "success", is_error: false }))).toEqual([]);
   expect(
     project(native({ type: "system", subtype: "session_state_changed", state: "idle" })),
@@ -79,7 +77,7 @@ test("turn results do not finish a session before native idle", () => {
 });
 
 test("turn results report the main thread's latest request against its model's context window", () => {
-  const project = createClaudeProjector("test");
+  const project = createClaudeProjector();
   const reply = (model: string, input_tokens: number, parent_tool_use_id: string | null = null) =>
     native({
       type: "assistant",
@@ -119,7 +117,7 @@ test("turn results report the main thread's latest request against its model's c
 });
 
 test("turn results find a 1M model's context window under its suffixed usage key", () => {
-  const project = createClaudeProjector("test");
+  const project = createClaudeProjector();
   project(
     native({
       type: "assistant",
@@ -149,7 +147,7 @@ test("turn results find a 1M model's context window under its suffixed usage key
 });
 
 test("compaction leaves the context unknown until a request reports it", () => {
-  const project = createClaudeProjector("test");
+  const project = createClaudeProjector();
   const reply = (input_tokens: number) =>
     native({
       type: "assistant",
@@ -253,7 +251,7 @@ test("models project once per transition, and each live turn's init restates the
   const init = (model: string) => native({ type: "system", subtype: "init", model });
   const changes = (messages: SDKMessage[]) =>
     messages
-      .flatMap(createClaudeProjector("test"))
+      .flatMap(createClaudeProjector())
       .flatMap((event) =>
         event.type === "model_changed"
           ? [
@@ -297,7 +295,7 @@ test.each(["[Request interrupted by user]", "[Request interrupted by user for to
     ];
     const state = messages
       .map(native)
-      .flatMap(createClaudeProjector("test"))
+      .flatMap(createClaudeProjector())
       .reduce(applySessionEvent, createInitialSessionState());
     expect(state.messages.map((message) => message.content)).toEqual([
       text,
@@ -338,7 +336,7 @@ test("native tool results replay edits, a completed checklist, and an answered q
     .trim()
     .split("\n")
     .map((line) => native(JSON.parse(line)));
-  const project = createClaudeProjector("toy-box-test");
+  const project = createClaudeProjector();
   const state = messages.flatMap(project).reduce(applySessionEvent, createInitialSessionState());
   const calls = state.messages.flatMap((message) =>
     message.role === "assistant" ? (message.toolCalls ?? []) : [],
@@ -360,6 +358,22 @@ test("native tool results replay edits, a completed checklist, and an answered q
   expect(calls.some((call) => ["ToolSearch", "TaskCreate", "TaskUpdate"].includes(call.name))).toBe(
     false,
   );
+});
+
+test("skill loads stay out of the transcript", () => {
+  const state = replay([
+    assistant([{ type: "tool_use", id: "skill", name: "Skill", input: { skill: "review" } }]),
+    native({
+      type: "user",
+      parent_tool_use_id: null,
+      message: { content: [{ type: "tool_result", tool_use_id: "skill", content: "Loaded." }] },
+    }),
+  ]);
+  expect(
+    state.messages.flatMap((message) =>
+      message.role === "assistant" ? (message.toolCalls ?? []) : [],
+    ),
+  ).toEqual([]);
 });
 
 test("streaming and committed text blocks converge on one assistant message", () => {
@@ -387,16 +401,15 @@ test("streaming and committed text blocks converge on one assistant message", ()
     committed[1]!,
   ];
   const reduce = (messages: SDKMessage[]) =>
-    messages
-      .flatMap(createClaudeProjector("test"))
-      .reduce(applySessionEvent, createInitialSessionState()).messages;
+    messages.flatMap(createClaudeProjector()).reduce(applySessionEvent, createInitialSessionState())
+      .messages;
   expect(reduce(stream)).toEqual(reduce(committed));
   expect(reduce(stream)).toHaveLength(1);
   expect(reduce(stream)[0]?.content).toBe("Hello world");
 });
 
 test("thinking summaries survive token progress and start fresh for the next block", () => {
-  const project = createClaudeProjector("test");
+  const project = createClaudeProjector();
   let state = createInitialSessionState();
   const receive = (message: SDKMessage) => {
     state = project(message).reduce(applySessionEvent, state);
@@ -422,7 +435,7 @@ test("thinking summaries survive token progress and start fresh for the next blo
   expect(state.reasoningContent).toBe("haha");
   receive(committed);
   expect(state).toEqual(
-    createClaudeProjector("test")(committed).reduce(applySessionEvent, createInitialSessionState()),
+    createClaudeProjector()(committed).reduce(applySessionEvent, createInitialSessionState()),
   );
   receive(start);
   expect(state.reasoningContent).toBe("");
@@ -464,7 +477,7 @@ test("background history retains the launch result and nested child activity", (
     }),
   ];
   const state = messages
-    .flatMap(createClaudeProjector("test"))
+    .flatMap(createClaudeProjector())
     .reduce(applySessionEvent, createInitialSessionState());
   const root = state.messages.find((message) => message.role === "assistant");
   expect(root?.toolCalls?.[0]).toMatchObject({
@@ -545,7 +558,7 @@ test("a fork's history drops the context it inherited, as the live stream does",
 test.each(["completed", "failed", "stopped"] as const)(
   "a background agent stays running until its native %s notification",
   (status) => {
-    const project = createClaudeProjector("test");
+    const project = createClaudeProjector();
     let state = createInitialSessionState({ status: "thinking" });
     const receive = (message: unknown) => {
       state = project(native(message)).reduce(applySessionEvent, state);

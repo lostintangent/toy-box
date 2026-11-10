@@ -17,12 +17,11 @@ export function socketDevelopment(): Plugin {
     name: "toy-box:websocket-development",
     apply: "serve",
     async config() {
-      // Bun loads the gateway here, outside Vite, so expand its glob as Vite would.
-      await import(/* @vite-ignore */ new URL("./importMetaGlob.ts", import.meta.url).href);
+      // Bun loads the gateway here, outside Vite, and expands its glob itself.
       const { socketHooks } = (await import(
         /* @vite-ignore */ new URL("./socket.ts", import.meta.url).href
       )) as typeof import("./socket");
-      const sockets = crossws({ hooks: socketHooks });
+      const sockets = crossws({ resolve: socketHooks });
       listener = Bun.serve({
         hostname: "127.0.0.1",
         port: 0,

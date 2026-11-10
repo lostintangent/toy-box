@@ -1,34 +1,14 @@
 import { utimes } from "node:fs/promises";
 import { resolveSessionArtifactPath } from "@files/server/paths";
 import { deleteSessionFiles } from "@sessions/server/artifacts";
-import { expect, mock, onTestFinished, test } from "bun:test";
-import { createTestDatabase } from "@/server/database";
-
-let currentDb: Bun.SQL | undefined;
-
-mock.module("@/server/database", () => ({
-  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
-    if (!currentDb && options?.createIfMissing === false) return null;
-    if (!currentDb) throw new Error("Test database has not been opened");
-    return currentDb;
-  },
-}));
-
-const { WorkerDatabase } = await import("@workers/server/database");
-const { ensureInboxRecovered, getInboxEntry } = await import("./index");
-const { inboxTools } = await import("./tools");
-
-async function openInboxToolTestDatabase(): Promise<void> {
-  currentDb = await createTestDatabase();
-  await ensureInboxRecovered();
-  onTestFinished(async () => {
-    await currentDb?.close();
-    currentDb = undefined;
-  });
-}
+import { expect, onTestFinished, test } from "bun:test";
+import { openTestDatabase } from "@/server/testFixtures";
+import { registerWorkerSession } from "@workers/server/database";
+import { getInboxEntry } from "./index";
+import { inboxTools } from "./tools";
 
 function createInboxWorker(sessionId: string) {
-  return new WorkerDatabase(currentDb!).create({
+  return registerWorkerSession({
     type: "inbox",
     sessionId,
     createdAt: new Date(0).toISOString(),
@@ -37,7 +17,7 @@ function createInboxWorker(sessionId: string) {
 }
 
 test("send_to_inbox attaches an existing nested file without rewriting it, and can clear its reference", async () => {
-  await openInboxToolTestDatabase();
+  await openTestDatabase();
   const sessionId = `toy-box-${crypto.randomUUID()}`;
   await createInboxWorker(sessionId);
   const artifact = "reports/research.md";
@@ -71,7 +51,7 @@ test("send_to_inbox attaches an existing nested file without rewriting it, and c
 });
 
 test("send_to_inbox rejects invalid artifacts without replacing the existing result", async () => {
-  await openInboxToolTestDatabase();
+  await openTestDatabase();
   const sessionId = `toy-box-${crypto.randomUUID()}`;
   await createInboxWorker(sessionId);
   await Bun.write(resolveSessionArtifactPath(sessionId, "reports/result.md")!, "Result");

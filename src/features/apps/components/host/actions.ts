@@ -1,13 +1,12 @@
+import { abortSession, deliverMessage, waitForSession } from "@sessions/server/functions";
+import { sessionMutations } from "@sessions/mutations";
+import { readFile } from "@files/server/functions";
+import { fileMutations } from "@files/mutations";
 import {
-  abortSession,
-  startSession,
-  deleteSession,
-  deliverMessage,
-  waitForSession,
-} from "@sessions/server/functions";
-import { readFile, writeFile } from "@files/server/functions";
-import type { QueryClient } from "@tanstack/react-query";
-import { invalidateSessionsStateQuery } from "@sessions/cache";
+  MutationObserver,
+  type MutationObserverOptions,
+  type QueryClient,
+} from "@tanstack/react-query";
 import type { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import type { useAppActions } from "@apps/sdk";
 import { createEditorPane } from "@files/model/panes";
@@ -27,6 +26,15 @@ export function bindAppActions({
   queryClient: QueryClient;
 }): ReturnType<typeof useAppActions> {
   const publications = surface.panePublications.actions;
+
+  // Runs a feature's own mutation, so app actions update caches as the UI's do.
+  function mutate<TData, TVariables, TContext>(
+    options: MutationObserverOptions<TData, Error, TVariables, TContext>,
+    variables: TVariables,
+  ) {
+    const observer = new MutationObserver(queryClient, options);
+    return observer.mutate(variables).finally(() => observer.reset());
+  }
 
   function closePane(paneId: string) {
     publications.publishLinkedPanes(publisherPaneId, (current) =>
@@ -57,19 +65,15 @@ export function bindAppActions({
   return {
     async createSession(input) {
       const { open, ...launch } = input;
-      const result = await startSession({ data: launch });
-      if (open) {
-        await invalidateSessionsStateQuery(queryClient);
-        openPane(createSessionPane(result.sessionId, true));
-      }
+      const result = await mutate(sessionMutations.startSession(), launch);
+      if (open) openPane(createSessionPane(result.sessionId, true));
       return result;
     },
     waitForSession(sessionId, timeoutMs) {
       return waitForSession({ data: { sessionId, timeoutMs } });
     },
     async deleteSession(sessionId) {
-      await deleteSession({ data: { sessionId } });
-      closePane(createSessionPane(sessionId, true).id);
+      await mutate(sessionMutations.deleteSession(sessionId), undefined);
     },
     async deliverMessage(sessionId, message) {
       await beforeDeliverMessage?.();
@@ -97,10 +101,12 @@ export function bindAppActions({
       togglePane(createEditorPane(file, mode));
     },
     async readFile(file) {
-      return (await readFile({ data: { file } })).content;
+      const { content } = await readFile({ data: { file } });
+      if (content === null) throw new Error("This file isn't text.");
+      return content;
     },
     async writeFile(file, content) {
-      await writeFile({ data: { file, content } });
+      await mutate(fileMutations.write(file), { content });
     },
   };
 }

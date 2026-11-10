@@ -42,7 +42,7 @@ export function SidebarSessionItem({
   const hasDraft = useWorkspaceSelector((workspace) =>
     Boolean(workspace.drafts[`session:${sessionId}`]?.text.trim()),
   );
-  const justFinished = useJustFinished(isLiveActivity(status));
+  const justFinished = useJustFinished(status);
   const sidebarStatus = getSessionListItemStatus(title, status, hasDraft, isActive, justFinished);
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
@@ -98,13 +98,15 @@ export function SidebarSessionItem({
   );
 }
 
-/** True for a beat after a run ends, so finishing reads as a check before the unread dot. */
-function useJustFinished(live: boolean): boolean {
+/** True for a beat after a run completes, even once it's read, so every client sees it finish.
+ *  A stopped run ends idle rather than unread, so it isn't a completion. */
+function useJustFinished(status: SessionActivityStatus | undefined): boolean {
+  const live = isLiveActivity(status);
   const [wasLive, setWasLive] = useState(live);
   const [justFinished, setJustFinished] = useState(false);
   if (live !== wasLive) {
     setWasLive(live);
-    setJustFinished(!live);
+    setJustFinished(status === "unread");
   }
 
   useEffect(() => {
@@ -141,14 +143,15 @@ function getSessionListItemStatus(
       tooltip: "Background tasks running",
     };
   }
+  if (justFinished) {
+    return { kind: "finished", ariaLabel: `${title} finished`, tooltip: "Session finished" };
+  }
   if (attention === "unread") {
-    return justFinished
-      ? { kind: "finished", ariaLabel: `${title} finished`, tooltip: "Session finished" }
-      : {
-          kind: "unread",
-          ariaLabel: `${title} has unread messages`,
-          tooltip: "Session has unread messages",
-        };
+    return {
+      kind: "unread",
+      ariaLabel: `${title} has unread messages`,
+      tooltip: "Session has unread messages",
+    };
   }
   if (hasDraft) {
     return {

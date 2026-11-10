@@ -27,7 +27,7 @@ function renderPicker(
     queryClient.setQueryData(sessionQueries.context(context.directory).queryKey, context);
   }
   if (sessions) {
-    queryClient.setQueryData(sessionQueries.stateKey(), {
+    queryClient.setQueryData(sessionQueries.state.queryKey, {
       ...createEmptySessionsState(),
       sessions,
     });

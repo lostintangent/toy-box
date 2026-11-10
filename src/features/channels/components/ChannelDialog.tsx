@@ -1,7 +1,12 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Hash, Loader2 } from "lucide-react";
-import { createChannelInputSchema, editChannelInputSchema, type Channel } from "@channels/model";
+import {
+  createChannelInputSchema,
+  createChannelPane,
+  editChannelInputSchema,
+  type Channel,
+} from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import { ModelConfigurationPicker } from "@providers/components/ModelPicker";
 import { areModelConfigurationsEqual, type ModelConfiguration } from "@providers/model";
@@ -20,15 +25,18 @@ import { Textarea } from "@/shared/ui/textarea";
 import { SessionLocationPicker } from "@sessions/components/location/SessionLocationPicker";
 import { getRecentDirectories } from "@sessions/model/recentDirectories";
 import { sessionQueries } from "@sessions/queries";
+import { useWorkspaceRoots } from "@workspace/hooks/layout/roots";
 
 type ChannelDialogProps = {
   /** The Channel to edit, or none to create one. */
-  channel?: Channel;
+  channel?: Omit<Channel, "tasks">;
+  open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated?: (channelId: string) => void;
 };
 
-export function ChannelDialog({ channel, onOpenChange, onCreated }: ChannelDialogProps) {
+/** Edits a Channel, or creates one and selects it. */
+export function ChannelDialog({ channel, open, onOpenChange }: ChannelDialogProps) {
+  const { selectRoot } = useWorkspaceRoots();
   const [initialChannel] = useState(channel);
   const [name, setName] = useState(initialChannel?.name ?? "");
   const [purpose, setPurpose] = useState(initialChannel?.purpose ?? "");
@@ -39,7 +47,7 @@ export function ChannelDialog({ channel, onOpenChange, onCreated }: ChannelDialo
   const { isPending, error } = initialChannel ? edit : create;
   const { models, defaultModel } = useModels(initialChannel?.model.provider);
   const { data: recentDirectory } = useQuery({
-    ...sessionQueries.state(),
+    ...sessionQueries.state,
     select: (state) => getRecentDirectories(state.sessions)[0]?.cwd,
   });
   const effectiveDirectory = directory === null ? undefined : (directory ?? recentDirectory);
@@ -72,14 +80,14 @@ export function ChannelDialog({ channel, onOpenChange, onCreated }: ChannelDialo
       create.mutate(input.data, {
         onSuccess: (created) => {
           onOpenChange(false);
-          onCreated?.(created.id);
+          selectRoot(createChannelPane(created.id));
         },
       });
     }
   }
 
   return (
-    <Dialog open onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[min(50rem,calc(100vh-2rem))] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

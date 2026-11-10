@@ -10,7 +10,7 @@ and apps compose sessions rather than introducing another transcript or executio
 `model/` is the canonical application language for a session:
 
 - `index.ts` owns `Session` (identity, optional provider, context, title, and timestamps) and
-  `SessionState` (reduced transcript, activity, queue, artifacts, and todos). A draft session
+  `SessionState` (reduced transcript, activity, queue, artifacts, todos, and diff). A draft session
   has no provider; `provider.sessionId` overrides the root ID only when native history uses a
   different ID. `SessionContext` groups directory and Git metadata. Snapshots cache `SessionState`
   and are keyed by session ID outside the value.
@@ -24,7 +24,9 @@ and apps compose sessions rather than introducing another transcript or executio
 - `questions.ts` owns derived queries over pending and blocking transcript questions.
 - `fileDiffs.ts` parses edit and patch tool-call results for transcript presentation and
   identifying artifact-only tools that stay hidden. Its `DiffStats` value comes from
-  `shared/diffStats.ts`, also used by Channel task outcomes.
+  `shared/diffStats.ts`, also used by Channel task outcomes. The reducer adds each successful
+  top-level edit and patch to `SessionState.diff`, keyed without a directory, and
+  `resolveFileDiffStats` keys it by a reader's directory, merging paths that resolve alike.
 - [Providers' model](../providers/model/index.ts) supplies the validated model, reasoning-effort,
   and context-tier configuration used by session state and message ingress.
 - `reducer.ts` is the one pure transition function shared by live server execution, persisted
@@ -54,7 +56,7 @@ message payload with an optional `SessionLocation`; location is creation context
 for Automation and Worker sessions. Ownership is derived from feature records and can exist
 before a backing session. Worker ownership includes its optional parent relationship. Generic
 consumers use this index for filtering, draft reuse, editor defaults, and SDK classification rather
-than consulting feature catalogs. Hyper membership remains process-local Workspace coordination.
+than consulting feature catalogs. Hyper membership is Workspace's `hyperSessionId` setting.
 Managed sessions remain addressable for linked children, previews, and activity.
 
 `model/activity.ts` owns session activity: whether a session is running, waiting on a blocking
@@ -64,14 +66,16 @@ session without an entry is idle. Live activity carries `since`, stamped from th
 that began the run; waiting and background keep it and a new run restarts it. Background sessions
 remain live but do not count as foreground work.
 The runtime writes activity through `server/state/activity.ts`, which broadcasts each accepted
-transition as a `session.*` workspace event. Browsers read it through `sessionQueries.activity()`
+transition as a `session.*` workspace event. Browsers read it through `sessionQueries.activity`
 and `useSessionActivity.ts`, and `sessionMutations.markRead` clears unread before the server confirms.
 
 `src/server/managedSessions.ts` at the application composition boundary selects the 250 most recent
 ordinary, unpinned sessions, plus all managed and pinned sessions. Drafts and sessions with shared
 activity are retained as well. This bounds browsing metadata without deleting history; old ordinary
-sessions outside the catalog do not reopen through a URL. The sidebar filters the retained catalog
-before displaying up to 50 ordinary matches, while keeping pins visible outside that display limit.
+sessions outside the catalog do not reopen through a URL. Each read lists enough of every
+provider's newest sessions to cover that window, and `findSessions` reads retained sessions outside
+those listings by ID. The sidebar filters the retained catalog before displaying up to 50 ordinary
+matches, while keeping pins visible outside that display limit.
 Sessions with Worker children have a compact child-count badge and chevron beside the title.
 The badge is a separate disclosure button, collapsed by default.
 It occupies only the title line; the relative time and location keep their normal alignment.
@@ -88,6 +92,7 @@ pane, including when replaying older spawn results.
 An explicit `open_session` call still publishes the child through the ordinary session pane path.
 
 `Session.context` carries its execution `directory` and available native catalog Git fields.
+Sessions start in the home directory when none was chosen, so one there outside Git has no `directory`.
 Session IDs, including automation IDs, are plain UUIDs. Imported histories use `provider:nativeId`, which
 the sidebar uses to distinguish external sessions without inspecting provider-native namespaces.
 Sidebar badges, pane pickers, and derived recent directories use those fields for immediate
@@ -101,38 +106,68 @@ directory and worktree choice; worktrees retain their own state.
 `queries.ts` is the declarative read API for the durable session list, one transcript snapshot,
 and directory-, role-, and provider-scoped skills. `mutations.ts` is the request/response operation API for
 creation, first-turn launch, delivery, queue control, abort, rewind, rename, deletion, and worktree actions. It
-owns only the cache transitions that make those operations immediate and rolls optimistic changes
-back when the request fails.
+owns only the cache transitions that make those operations immediate, and a failed rename or
+deletion repairs the catalog from the server. Deletion hides the session in the catalog alone,
+applying `session.deleted` directly to the catalog's `reducedQuery` rather than through
+`applyWorkspaceEvent`, so every other workspace cache waits for the confirmed event.
 
-`cache.ts` applies shared workspace session events to session-owned queries. The workspace
-event stream is a synchronization hint; the list query and session snapshot remain the recovery
-sources. Its `recreateSessionInCache` operation cancels older reads and replaces the catalog entry
-and transcript with a fresh draft containing the first message. Callers pass that message's
-`clientId` to their server operation and call `invalidateSessionQueries` when it settles, so
-success, overlap, and failure reconcile from authoritative state. This cache operation has no
-React lifetime and is shared by mutation owners such as Automations.
+`cache.ts` applies shared workspace session events to session-owned queries. The catalog and
+activity are each a [`reducedQuery`](../../shared/query.ts), with the catalog's pure
+transitions in `model/catalog.ts`, so a read in flight replays the live and optimistic events
+applied meanwhile instead of overwriting them. The workspace event stream is a synchronization
+hint; the list query and session snapshot remain the recovery sources.
 
 Automation events also maintain their ownership claims, while session creation carries
 Worker ownership, including Inbox-owned work. Backing-session deletion preserves Automation
 ownership until the owning record is deleted; Worker ownership ends with its session. Inbox result
-events do not touch Sessions queries. Committed ownership changes replace an
-overlapping catalog fetch with a post-commit read. SSR initializes the complete catalog before the
+events do not touch Sessions queries. SSR initializes the complete catalog before the
 shared subscription mounts, and reconnects recover ownership from the authoritative catalog.
 
 An idle conversation rewind refreshes the initiating client's snapshot and emits a
 `session.touched` hint so other clients refresh its detail and list metadata; it never rewinds files.
 Deletion cancels pending history reads and clears the cached transcript. A replacement upsert
-with a different `createdAt` does the same for an existing provider session and starts fresh
-catalog metadata. Acknowledging an optimistic draft retains its starting message, which the
-canonical echo replaces by `clientId`. The browser adopts the replacement snapshot while it
-is a draft, before subscribing to its first turn.
+with a different `createdAt` does the same and starts fresh catalog metadata. A replacement that is
+still a draft shows the empty state it leaves until its first turn.
 The public ID and mounted workspace pane remain stable.
 
-`useSession.ts` owns one mounted session's browser lifecycle. It reads snapshots and subscribes
-while visible, reduces ordered events, batches text and tool output deltas to animation frames, and
-exposes delivery and control operations. The long-lived async event stream deliberately remains
-explicit instead of being disguised as a mutation. Ending a browser subscription never stops
-server work; abort is a separate operation.
+A session's detail query is its one browser state. `stream.ts` observes the session for as long
+as an enabled observer watches the detail: it opens with a snapshot, follows each run the shared
+activity announces from the cached cursor, and heals with one snapshot when the run ends, including
+a run that finished unseen. It batches text and tool output deltas to animation frames. A preview
+and a pane share one observation, and a pin retains the detail without watching it. Nothing awaits
+or returns the detail's fetch, which lasts until the last watcher leaves; restarts go through
+`refetchQueries` with `type: "active"`. Ending an observation never stops server work; abort is a
+separate operation. `cache.ts` resumes an ended observation on the session's activity hints and on
+refresh, and leaves a running one alone.
+
+`useSession.ts` derives one pane's view from the detail and shared activity, applies its commands
+optimistically to the detail, and acknowledges a finished run while an active pane shows it.
+
+A client snapshot carries the transcript's latest page, about 1 MiB of messages, and `messageOffset`
+counts the messages before it. Everything else in the snapshot, including the composer's diff, is
+reduced over the whole transcript. `model/transcriptPages.ts` pages backward from `messageOffset`,
+ending each page with the first loaded message as its seam. The detail query's structural sharing
+joins every write with the pages already loaded while the seam still matches, so refetches, rewinds,
+and stream ends keep the reader's place; a mismatch keeps only the newer page. Agent tools and
+Workers read complete snapshots in process.
+
+The browser sends one way and follows one way. A send posts `deliverMessage`, keyed by the detail's
+query key, and the observation waits for this client's deliveries before following from the cursor
+it held before sending, so the follow replays the whole turn even when it started first. While a
+delivery is pending, the observation neither reads a snapshot nor adopts one that returns during it,
+since that snapshot could hide the optimistic turn. A draft's first send carries its location, which
+creates the session with that message, and `sessionMutations.startSession()` does the same for a new
+ID without mounting a pane. A follow reads `GET /api/sessions/$sessionId` with `after` through the
+shared `readEventStream`, which Channels also uses. It ends at once when nothing is live, and the
+heal's snapshot then holds the outcome.
+
+A follow that fails after delivering events, such as when its replay backlog overflows the
+transport, resumes from its cursor; one that fails before any event goes straight to the heal. Only
+the opening snapshot fails the detail; a failed heal ends the observation quietly with its state
+kept, and the next activity hint or refresh resumes it. A rejected send counts as never taken:
+`useSession` restores the session's pre-send state and rejects, so the composer puts the message
+back, and the observation then rereads the snapshot. Once the send is accepted the server owns the
+turn, and failures while following it take the rules above.
 
 Ordinary Sessions remain unbranded coordinators. Their Channel tools can create Channels with an
 intrinsic lead, create channel-specific members, discover available model configurations, read
@@ -143,9 +178,13 @@ member work. Collaboration identity and `@mention` delivery belong to Channels.
 draft session. Unsent composer text is a Workspace saved draft keyed `session:<id>`. First submission in
 `useSession.ts` adds the provider and context to the existing catalog entry and transitions the
 same ID to running, so its timestamp and directory appear before provider creation completes.
-Creation failure reconciles the catalog and session activity from the server.
+A failed first submission ends the draft's observation and repairs the catalog and session activity
+from the server, since creation may have failed before or after the provider recorded the session.
+When the repaired catalog shows the server created it, its observation resumes and follows or heals
+any run the send started.
 Providers' `useModels.ts` composes the model catalog with the workspace default. `useWarmSessionSnapshots.ts`
-retains explicitly pinned snapshots without creating UI output or a second cache.
+retains explicitly pinned snapshots without creating UI output or a second cache. Desktop reads each
+pinned snapshot once; a pin never watches its session, so it never keeps an observation running.
 
 ## Presentation
 
@@ -160,7 +199,9 @@ shows user and assistant text without system messages, ordinary tool calls, or r
 Question cards and their recorded answers remain conversation, and assistant errors
 and the activity indicator stay visible. `components/transcript/transcriptView.ts` derives the
 visible messages without changing session state; filtering precedes transcript windowing.
-Switching views lands the transcript afresh without restarting the session or its subscription.
+The window bounds rendered messages by transcript position, so a previous page loads beneath it
+without moving the reader, and revealing past the first loaded message loads the next page.
+Switching views lands the transcript afresh without restarting the session or its observation.
 The pane's override is neither persisted nor synchronized across clients. Changing the workspace
 default does not change already-open panes; overlays and passive previews keep the full view.
 
@@ -267,7 +308,7 @@ Only encoded references are recognized. Pills are constructed on insertion, past
 draft adoption; ordinary typing stays native rather than being re-parsed after each key.
 The composer does not infer references from bare names/paths or apply Markdown rules.
 `completions/completionSources.ts` is a pure `promptCompletionSources` over the prompt's scope
-and Hyper membership, which `SessionComposer` reads and passes in. Each source declares its id,
+and the Hyper session, which `SessionComposer` reads and passes in. Each source declares its id,
 trigger, and no-match text, and projects an existing catalog query (`skillQueries`, the session
 catalog, or `fileQueries.search`) into menu items with `select`, so a catalog is observed only
 while its menu is open. The composer passes its session ID, directory, and model provider
@@ -318,10 +359,15 @@ does not own session data or streaming behavior.
 
 - [`runtime/`](server/runtime/AGENTS.md) is the public server capability for creation, recreation, delivery,
   streaming, snapshots, completion, queue control, abort, idle conversation rewind, and deletion.
-  `SessionStream` remains its live implementation detail.
-- `providers.ts` prepares provider configuration, dispatches native operations, and binds public/native
-  identities. [Providers](../providers/AGENTS.md) defines the native contract, registers implementations,
-  and aggregates catalogs; Sessions owns the shared domain events and uses Providers' model configuration.
+  `SessionExecution` remains its live implementation detail.
+- `providers.ts` prepares provider configuration, including tools bound to the public session,
+  dispatches native operations, and binds public/native identities. [Providers](../providers/AGENTS.md)
+  defines the native contract, registers implementations, and aggregates catalogs; Sessions owns the
+  shared domain events and uses Providers' model configuration.
+- `toolProjection.ts` applies Toy Box tool-call policy to every provider's canonical events, live in
+  `SessionExecution` and in history replay. Coordination and session-artifact calls are omitted, and
+  calls such as `open_file` and `open_session` become their domain events. Providers report plain
+  tool calls and hide only their own native machinery.
 - `instructions.ts`, `bundledSkills.ts`, and `artifacts.ts` own shared instructions, role-scoped
   skills, and provider-independent files. Provider implementations receive prepared directories and
   question policy rather than deriving them from session roles or storage conventions.
@@ -353,8 +399,8 @@ Session execution.
   activity with `parentToolCallId`, and the reducer stores that activity in `ToolCall.subagent`.
 - Active truth comes from the live runtime; idle truth comes from provider history. Query snapshots
   are cached `SessionState` values, not another authority or another state shape.
-- Queries and mutations are the browser API for request/response session operations; `useSession`
-  owns the connected stream lifecycle.
+- Queries and mutations are the browser API for session operations; the detail query owns the
+  connected stream lifecycle, and nothing awaits its fetch.
 - Managed features may govern a session's lifecycle, but they do not redefine session execution,
   transcript state, native event projection, registry, or UI primitives.
 - The application rebuilds private Channel agent configuration, including its working directory,

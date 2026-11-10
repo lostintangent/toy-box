@@ -7,23 +7,26 @@ import { OptionalModelConfigurationPicker } from "@providers/components/ModelPic
 import { areModelConfigurationsEqual, type ModelConfiguration } from "@providers/model";
 import { sessionQueries } from "@sessions/queries";
 import { useModels } from "@providers/useModels";
+import { DestructiveConfirmationDialog } from "@/shared/dialogs/DestructiveConfirmationDialog";
 import { Button } from "@/shared/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
-import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
 import { Textarea } from "@/shared/ui/textarea";
 import { AgentAvatar } from "./AgentAvatar";
 
-export function AgentEditor({ agent, onClose }: { agent: ChannelMember; onClose: () => void }) {
+export function AgentEditor({
+  agent,
+  open,
+  onOpenChange,
+}: {
+  agent: ChannelMember;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[min(50rem,calc(100vh-2rem))] overflow-y-auto sm:max-w-2xl">
-        <AgentForm key={agent.id} agent={agent} onClose={onClose} />
+        <AgentForm agent={agent} onClose={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   );
@@ -35,7 +38,7 @@ function AgentForm({ agent, onClose }: { agent: ChannelMember; onClose: () => vo
   const [model, setModel] = useState<ModelConfiguration | undefined>(agent.model);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const { data: sessionProvider } = useQuery({
-    ...sessionQueries.state(),
+    ...sessionQueries.state,
     select: (state) => state.sessions.find(({ id }) => id === agent.id)?.provider?.id,
   });
   const provider = sessionProvider ?? agent.model?.provider;
@@ -108,16 +111,15 @@ function AgentForm({ agent, onClose }: { agent: ChannelMember; onClose: () => vo
         </DialogFooter>
       </form>
 
-      {confirmingDelete && (
-        <DestructiveConfirmationDialog
-          title={`Remove ${agent.name}?`}
-          description="This removes the agent from the channel and deletes its private session. Its channel messages and reactions remain attributed to Deleted agent."
-          confirmLabel="Remove agent"
-          mutation={channelMutations.removeMember(agent.id)}
-          onSubmit={onClose}
-          onOpenChange={setConfirmingDelete}
-        />
-      )}
+      {/* Removing closes the editor with it, while a failure stays in view. */}
+      <DestructiveConfirmationDialog
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        title={`Remove ${agent.name}?`}
+        description="This removes the agent from the channel and deletes its private session. Its channel messages and reactions remain attributed to Deleted agent."
+        confirmLabel="Remove agent"
+        mutation={{ ...channelMutations.removeMember(agent.id), onSuccess: onClose }}
+      />
     </>
   );
 }

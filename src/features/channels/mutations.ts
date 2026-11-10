@@ -1,6 +1,7 @@
 import { mutationOptions } from "@tanstack/react-query";
 import type {
   BookmarkChannelMessageInput,
+  ChannelConversationMessage,
   CreateChannelMemberInput,
   CreateChannelInput,
   EditChannelInput,
@@ -8,8 +9,6 @@ import type {
   UpdateChannelMemberInput,
 } from "@channels/model";
 import { channelQueries, type ChannelQueryData } from "@channels/queries";
-import { reduceChannelState } from "@channels/model/reducer";
-import { invalidateChannelListQuery } from "@channels/cache";
 import { applyWorkspaceEvent } from "@workspace/sync";
 import {
   bookmarkChannelMessage,
@@ -30,7 +29,7 @@ export const channelMutations = {
   create: () =>
     mutationOptions({
       mutationFn: (input: CreateChannelInput) => createChannel({ data: input }),
-      onSuccess: (_channel, _input, _result, { client }) => invalidateChannelListQuery(client),
+      onSuccess: (_channel, _input, _result, { client }) => channelQueries.list.refresh(client),
     }),
   createMember: () =>
     mutationOptions({
@@ -43,7 +42,7 @@ export const channelMutations = {
   edit: () =>
     mutationOptions({
       mutationFn: (input: EditChannelInput) => editChannel({ data: input }),
-      onSuccess: (_channel, _input, _result, { client }) => invalidateChannelListQuery(client),
+      onSuccess: (_channel, _input, _result, { client }) => channelQueries.list.refresh(client),
     }),
   delete: (channelId: string) =>
     mutationOptions({
@@ -81,24 +80,39 @@ export const channelMutations = {
   post: () =>
     mutationOptions({
       mutationFn: (input: PostChannelMessageInput) => postChannelMessage({ data: input }),
-      onMutate: (input, { client }) => {
-        client.setQueryData<ChannelQueryData | null>(
-          channelQueries.detail(input.channelId).queryKey,
-          (state) =>
-            state && {
-              ...state,
-              ...reduceChannelState(state, {
-                type: "message",
-                message: {
-                  id: input.id,
-                  sender: { type: "user" },
-                  content: input.content,
-                  ...(input.attachments ? { attachments: input.attachments } : {}),
-                  timestamp: new Date().toISOString(),
-                },
-              }),
-            },
-        );
+      // A pending post follows the transcript until its echo replaces it by ID. A failure
+      // removes only this copy, never the echo.
+      onMutate: ({ channelId, id, content, attachments }, { client }) => {
+        const { queryKey } = channelQueries.detail(channelId);
+        const state = client.getQueryData<ChannelQueryData | null>(queryKey);
+        if (!state) return;
+        const pending: ChannelConversationMessage = {
+          id,
+          sequence: (state.messages.at(-1)?.sequence ?? 0) + 1,
+          sender: { type: "user" },
+          content,
+          ...(attachments
+            ? {
+                attachments: attachments.map(({ mimeType, base64 }, index) => ({
+                  name: `Image ${index + 1}`,
+                  url: `data:${mimeType};base64,${base64}`,
+                  mimeType,
+                })),
+              }
+            : {}),
+          timestamp: new Date().toISOString(),
+        };
+        client.setQueryData<ChannelQueryData>(queryKey, {
+          ...state,
+          messages: [...state.messages, pending],
+        });
+        return pending;
       },
+      onError: (_error, { channelId }, sent, { client }) =>
+        client.setQueryData<ChannelQueryData | null>(
+          channelQueries.detail(channelId).queryKey,
+          (state) =>
+            state && { ...state, messages: state.messages.filter((message) => message !== sent) },
+        ),
     }),
 };

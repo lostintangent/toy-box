@@ -2,7 +2,7 @@
 
 The terminal runtime lets a shell survive refreshes and short disconnects without losing the PTY or corrupting its visible scrollback. The shared [socket gateway](../../cli/AGENTS.md#socket-gateway) dispatches `/socket?service=terminal` to Terminal's hooks, and `server/runtime.ts` owns process, reconnect, and replay policy.
 
-`model/protocol.ts` defines the validated client control plane shared by both sides. `client/` owns the browser WebSocket and the input it holds while reconnecting, the xterm instance, and resize lifetime; `server/` owns the PTY, replay policy, WebSocket handler, and the `startup.ts` that closes live PTYs with the server; and `components/` mounts that capability into React. Workspace owns only whether the terminal is visible and where its shell is placed. Nitro's route adapter and the Vite development proxy remain in their application composition roots.
+`model/protocol.ts` defines the validated client control plane shared by both sides. `client/` owns the input it holds while its socket reconnects, the xterm instance, and resize lifetime; `server/` owns the PTY, replay policy, WebSocket handler, and the `startup.ts` that closes live PTYs with the server; and `components/` mounts that capability into React. Workspace owns only whether the terminal is visible and where its shell is placed. Nitro's route adapter and the Vite development proxy remain in their application composition roots.
 
 The xterm-backed component and client runtime stay behind dynamic imports so opening Toy Box does not load the terminal bundle until the terminal is used.
 
@@ -12,15 +12,14 @@ One WebSocket multiplexes a JSON control plane with a binary data plane. Lifecyc
 The shared `/socket` gateway refuses browser pages from another origin before
 dispatching to Terminal. Native clients send no Origin and are admitted.
 
-Every browser tab creates a stable `clientId` in session storage. That ID owns zero or one PTY. Connecting with the same ID resumes the existing PTY; the newest socket replaces any older connection without temporarily orphaning the process.
+Every browser tab creates a stable `clientId` in session storage. That ID owns zero or one PTY. A socket's URL names its tab's ID and, when known, the terminal's size, and the server reads the owner's configured shell as the socket upgrades. Connecting with the same ID resumes the existing PTY; the newest socket replaces any older connection without temporarily orphaning the process.
 
 ### Client control
 
-| Message  | Meaning                                                              |
-| -------- | -------------------------------------------------------------------- |
-| `init`   | Create or resume the client's PTY with optional dimensions and shell |
-| `resize` | Resize the active PTY                                                |
-| `close`  | Explicitly terminate and release the PTY                             |
+| Message  | Meaning                                  |
+| -------- | ---------------------------------------- |
+| `resize` | Resize the active PTY                    |
+| `close`  | Explicitly terminate and release the PTY |
 
 ### Server control
 

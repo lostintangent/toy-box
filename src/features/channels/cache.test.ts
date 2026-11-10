@@ -4,7 +4,7 @@ import { channelLead, type ChannelCatalogEntry, type ChannelList } from "@channe
 import { channelMutations } from "@channels/mutations";
 import { channelQueries, type ChannelQueryData } from "@channels/queries";
 import { workspaceQueries } from "@workspace/queries";
-import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model/state/reducer";
+import { createEmptyWorkspaceState } from "@workspace/model/state/reducer";
 import cache, { loadChannelHistory } from "./cache";
 import type { ChannelConversationMessage, ChannelState } from "./model";
 
@@ -13,13 +13,13 @@ const channel: ChannelCatalogEntry = {
   name: "Planning",
   purpose: "Prepare the release plan.",
   model: { provider: "copilot", name: "gpt-5.5" },
-  tasks: [],
   latestSequence: 0,
   seenThrough: 0,
   completedSequence: null,
   requestSequence: null,
   updatedAt: "2026-09-05T12:00:00.000Z",
   revision: 101,
+  request: null,
 };
 
 const message: ChannelConversationMessage = {
@@ -32,7 +32,7 @@ const message: ChannelConversationMessage = {
 const older = { ...message, id: "older", sequence: 100 };
 const snapshot: ChannelQueryData = {
   arrival: { id: 1, unreadAfter: 0 },
-  channel: { ...channel, latestSequence: message.sequence },
+  channel: { ...channel, tasks: [], latestSequence: message.sequence },
   request: null,
   bookmarks: [],
   presence: {},
@@ -45,15 +45,9 @@ const snapshot: ChannelQueryData = {
 };
 const detailKey = channelQueries.detail(channel.id).queryKey;
 
-test("live events do not replace initial catalog loading with a partial list", () => {
-  const client = createQueryClient();
-  cache.applyEvent(client, { type: "channel.upserted", channel });
-  expect(client.getQueryData(channelQueries.listKey())).toBeUndefined();
-});
-
 test("catalog membership follows workspace events without touching detail state", () => {
   const client = createQueryClient();
-  const key = channelQueries.listKey();
+  const key = channelQueries.list.queryKey;
   client.setQueryData(key, { channels: [channel], members: [] });
   client.setQueryData(detailKey, snapshot);
   const member = { id: "reviewer", channelId: channel.id, name: "Reviewer" };
@@ -143,41 +137,9 @@ test("a request jump survives repeated overtaken pages without advancing the str
   });
 });
 
-test.each(["channel.upserted", "channel.deleted"] as const)(
-  "%s replaces an in-flight catalog read without resurrecting old state",
-  async (type) => {
-    const client = createQueryClient();
-    const held = Promise.withResolvers<ChannelList>();
-    const updated = { ...channel, name: "Updated planning" };
-    const other = { ...channel, id: "other" };
-    const member = { channelId: channel.id, id: "reviewer", name: "Reviewer" };
-    const otherMember = { channelId: other.id, id: "builder", name: "Builder" };
-    const latest = {
-      channels: type === "channel.upserted" ? [updated, other] : [other],
-      members: type === "channel.upserted" ? [member, otherMember] : [otherMember],
-    };
-    const stale = { channels: [channel, other], members: [member, otherMember] };
-    client.setQueryData<ChannelList>(channelQueries.listKey(), stale);
-    let reads = 0;
-    const pending = client.query({
-      ...channelQueries.list(),
-      staleTime: 0,
-      queryFn: () => (++reads === 1 ? held.promise : Promise.resolve(latest)),
-    });
-    cache.applyEvent(
-      client,
-      type === "channel.upserted" ? { type, channel: updated } : { type, channelId: channel.id },
-    );
-    expect(client.getQueryData<ChannelList>(channelQueries.listKey())).toEqual(latest);
-    held.resolve(stale);
-    await pending;
-    expect(client.getQueryData<ChannelList>(channelQueries.listKey())).toEqual(latest);
-  },
-);
-
 test("create and edit responses invalidate instead of overwriting newer catalog state", async () => {
   const client = createQueryClient();
-  const key = channelQueries.listKey();
+  const key = channelQueries.list.queryKey;
   const deleted: ChannelList = { channels: [], members: [] };
   client.setQueryData(key, deleted);
 
@@ -208,8 +170,8 @@ test("create and edit responses invalidate instead of overwriting newer catalog 
 test("deleting a channel removes it and its unsent draft right away", async () => {
   const client = createQueryClient();
   const draft = { text: "Half-written idea", origin: "client", updatedAt: 1 };
-  client.setQueryData<ChannelList>(channelQueries.listKey(), { channels: [channel], members: [] });
-  client.setQueryData<WorkspaceState>(workspaceQueries.stateKey(), {
+  client.setQueryData(channelQueries.list.queryKey, { channels: [channel], members: [] });
+  client.setQueryData(workspaceQueries.state.queryKey, {
     ...createEmptyWorkspaceState(),
     drafts: { [`channel:${channel.id}`]: draft },
   });
@@ -219,8 +181,32 @@ test("deleting a channel removes it and its unsent draft right away", async () =
     meta: undefined,
   });
 
-  expect(client.getQueryData<ChannelList>(channelQueries.listKey())?.channels).toEqual([]);
-  expect(client.getQueryData<WorkspaceState>(workspaceQueries.stateKey())?.drafts).toEqual({});
+  expect(client.getQueryData(channelQueries.list.queryKey)?.channels).toEqual([]);
+  expect(client.getQueryData(workspaceQueries.state.queryKey)?.drafts).toEqual({});
+});
+
+test("a failed post removes its local copy, unless the echo already replaced it", async () => {
+  const client = createQueryClient();
+  client.setQueryData(detailKey, snapshot);
+  const post = channelMutations.post();
+  const input = { channelId: channel.id, id: "sent", content: "Sent" };
+  const context = { client, meta: undefined };
+
+  const failed = await post.onMutate!(input, context);
+  await post.onError!(new Error("Offline"), input, failed, context);
+  expect(client.getQueryData(detailKey)).toEqual(snapshot);
+
+  const committed = await post.onMutate!(input, context);
+  const echo = { ...committed!, timestamp: message.timestamp };
+  client.setQueryData<ChannelQueryData>(
+    detailKey,
+    (state) => state && { ...state, messages: [...state.messages.slice(0, -1), echo] },
+  );
+  await post.onError!(new Error("Response lost"), input, committed, context);
+  expect(client.getQueryData<ChannelQueryData>(detailKey)?.messages.map(({ id }) => id)).toEqual([
+    "latest",
+    "sent",
+  ]);
 });
 
 function mockHistory() {

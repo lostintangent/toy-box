@@ -34,18 +34,20 @@ those compressed assets; the server's executable code and SSR bundles are separa
 
 ## Socket gateway
 
-`src/server/socket.ts` dispatches `/socket?service=<feature>` to the crossws hooks
-that feature's `server/websocket.ts` default-exports, discovered by convention and
-loaded on first connection. Terminal and Screens use it, on independent physical
-connections. The gateway validates Origin; features own their protocols and
-lifetimes. In production, Nitro serves it. In development, Nitro's in-process runner
+`src/server/socket.ts` binds each `/socket?service=<feature>` connection, once as
+it upgrades, to the hooks of the `SocketService` that feature's
+`server/websocket.ts` default-exports, discovered by convention and loaded on first
+connection. A service reads what the socket's URL names, so its hooks close over
+their subject for the connection's lifetime. Terminal and Screens use it, on
+independent physical connections that the client's `connectSocket` keeps open. The
+gateway validates Origin; features own their protocols and lifetimes. In
+production, Nitro serves it. In development, Nitro's in-process runner
 upgrades through crossws's Node adapter, which refuses to run on Bun, so
 `src/server/socketDevelopment.ts` serves it from a Bun listener in Vite's process,
 where RPCs and sockets share the feature runtimes. Bun loads the gateway there outside
-Vite, so the listener first registers `src/server/importMetaGlob.ts` to expand its
-feature glob, the same plugin `bun test` preloads. That listener uses `Bun.serve`
-rather than srvx, whose default SIGINT handler would close only the listener and keep
-Vite running.
+Vite and expands its feature glob itself. That listener uses `Bun.serve` rather than
+srvx, whose default SIGINT handler would close only the listener and keep Vite
+running.
 
 ## Shutdown
 

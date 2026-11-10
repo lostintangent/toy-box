@@ -8,27 +8,17 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import * as databaseModule from "@/server/database";
+import { openTestDatabase } from "@/server/testFixtures";
 import * as sessionRuntimeModule from "@sessions/server/runtime";
 import * as supervisorModule from "./supervisor";
 import { sessionFile } from "@files/model";
 
-const realDatabaseModule = { ...databaseModule };
 const realSessionRuntimeModule = { ...sessionRuntimeModule };
 const realSupervisorModule = { ...supervisorModule };
 
-let currentDb: Bun.SQL | undefined;
 const abortWorkerMock = mock(async (_sessionId: string) => false);
 const deleteSessionIfExistsMock = mock(async (_sessionId: string) => true);
 
-mock.module("@/server/database", () => ({
-  ...realDatabaseModule,
-  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
-    if (!currentDb && options?.createIfMissing === false) return null;
-    if (!currentDb) throw new Error("Test database has not been opened.");
-    return currentDb;
-  },
-}));
 mock.module("@workers/server/supervisor", () => ({
   ...realSupervisorModule,
   abortWorker: abortWorkerMock,
@@ -43,13 +33,11 @@ const { registerWorkerSession } = await import("./database");
 const { finishWorker, hasWorker, startWorker } = await import("./registry");
 
 afterAll(() => {
-  mock.module("@/server/database", () => realDatabaseModule);
   mock.module("@workers/server/supervisor", () => realSupervisorModule);
   mock.module("@sessions/server/runtime", () => realSessionRuntimeModule);
 });
 
 beforeEach(() => {
-  currentDb = undefined;
   abortWorkerMock.mockClear();
   abortWorkerMock.mockImplementation(async () => false);
   deleteSessionIfExistsMock.mockClear();
@@ -58,7 +46,7 @@ beforeEach(() => {
 
 describe("worker cleanup", () => {
   test("deletes direct session children without treating its own worker as a child", async () => {
-    await openDatabase();
+    await openTestDatabase();
     const parent = "parent-worker";
     const sessionChild = "session-child";
     const fileChild = "file-child";
@@ -107,7 +95,7 @@ describe("worker cleanup", () => {
   });
 
   test("removes live, queued, and abandoned workers", async () => {
-    await openDatabase();
+    await openTestDatabase();
     const appId = "app-a";
     const active = "active-app-worker";
     const queued = "queued-app-worker";
@@ -154,7 +142,7 @@ describe("worker cleanup", () => {
   });
 
   test("attempts every independent cleanup", async () => {
-    await openDatabase();
+    await openTestDatabase();
     await registerWorkerSession({
       createdAt: new Date(0).toISOString(),
       type: "app",
@@ -188,11 +176,3 @@ describe("worker cleanup", () => {
     );
   });
 });
-
-async function openDatabase(): Promise<void> {
-  currentDb = await databaseModule.createTestDatabase();
-  onTestFinished(async () => {
-    await currentDb?.close();
-    currentDb = undefined;
-  });
-}

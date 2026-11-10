@@ -140,6 +140,9 @@ export const appManifestSchema = z
     color: hexColorSchema.default(DEFAULT_APP_COLOR),
     state: appStateDefinitionSchema,
     accepts: z.array(appShareMimeTypeSchema).default([]),
+    opens: z
+      .array(z.string().regex(/^[a-z0-9]+$/, "Use lowercase file extensions without the dot."))
+      .default([]),
   })
   .strict();
 
@@ -165,6 +168,14 @@ export type AppDefinition = z.output<typeof appManifestSchema> & {
   /** Content-derived identity used to invalidate a loaded component bundle. */
   revision: string;
 };
+
+/** The first installed definition, in catalog order, that opens files with this extension. */
+export function definitionOpening(
+  definitions: AppDefinition[],
+  extension: string,
+): AppDefinition | undefined {
+  return definitions.find(({ opens }) => opens.includes(extension));
+}
 
 /** A durable, reopenable app surface backed by one installed definition. */
 export type AppInstance = {

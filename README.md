@@ -9,29 +9,34 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
 ## Features
 
 - **Supports GitHub Copilot, OpenAI Codex, and Claude Code:** Use an installed CLI with its existing login. Choose the provider in the model picker; sessions, tools, skills, and workflows share the same workspace.
+
 - **Live, multi-device sessions:** Start or resume work from desktop or mobile, watch and steer it from every connected client, answer agent questions, manage queued follow-ups, and pin important sessions.
+
 - **Rich composer:** Choose the model and reasoning effort, attach images, invoke skills, dictate by voice, and start sessions in a working directory or isolated Git worktree.
+
 - **Multi-pane workspace:** Open up to four sessions, local files, artifacts, apps, terminals, or agent-provided canvases together, with live previews and an adaptive mobile layout.
+
 - **Multi-agent orchestration:** Delegate parallel work to child sessions and use the floating Hyper workspace for a dedicated orchestration thread.
+
 - **Agent channels:** Create channel-specific teammates with distinct roles, then collaborate through messages, reactions, statuses, screenshots, and shared artifacts.
+
 - **Collaborative artifacts:** Browse and edit Markdown, HTML, JSON, and SVG alongside the agent, or use structured briefs to review and launch consequential work.
+
 - **Toy Box apps:** Build session-scoped `.toy` React artifacts or install reusable, stateful apps from trusted GitHub Gists. Apps can compose sessions, files, panes, workers, and shared content.
+
 - **Scheduled automations:** Configure recurring prompts that automate routine work and produce reviewable artifacts such as reports, analyses, and news digests.
+
 - **Inbox and webhook:** Dispatch asynchronous tasks from Toy Box, webpages, mobile voice capture, or any HTTP client, then review concise results and editable artifacts in one place.
 
 ## Getting Started
 
-1. Install and sign in to at least one provider:
-
-- [GitHub Copilot CLI](https://github.com/github/copilot)
-- [Codex CLI](https://developers.openai.com/codex/cli/)
-- [Claude Code](https://code.claude.com/docs/en/setup) **2.1.278+** (`claude update` to upgrade)
-
+1. Install and sign in to at least one coding agent provider:
+   - [GitHub Copilot CLI](https://github.com/github/copilot)
+   - [Codex CLI](https://developers.openai.com/codex/cli/)
+   - [Claude Code](https://code.claude.com/docs/en/setup)
 1. Install Toy Box: `npm install -g @lostintangent/toy-box`
 1. Start the agent server: `toy-box`
 1. Open `http://localhost:3000` in your browser
-
-Restart Toy Box and reload the page after installing, removing, or updating a provider to refresh the model catalog.
 
 ## Access From Anywhere
 
@@ -74,7 +79,9 @@ The webhook supports both JSON and multipart form data:
 The same endpoint works with several ready-made integrations:
 
 - **Browser extension:** Follow [`browser/README.md`](browser/README.md), then set its server URL to the Toy Box base URL without `/api/v1/inbox`. It can include the current page, selected text, and a viewport screenshot, with toolbar, shortcut, and context-menu actions.
+
 - **Pebble Index 01:** In CoreApp, open **Index Settings → Webhook**, use the full Inbox URL, and choose **Transcription only**. Toy Box accepts CoreApp's `transcription` field directly.
+
 - **QuickCast Hook:** Install it from the [App Store](https://apps.apple.com/us/app/quickcast-hook/id6756369952), then create a `POST` multipart webhook using the full Inbox URL. Enable on-device transcription, name its field `transcription`, and use `attachments` as the file field when sending audio or images.
 
 ## Developing
@@ -82,21 +89,3 @@ The same endpoint works with several ready-made integrations:
 1. Clone this repo
 1. Run `bun install`
 1. Run `bun dev`
-
-## Publishing
-
-Update `package.json` to the next stable version and keep its release notes under a
-matching `## 📅 vX.Y.Z (date)` heading in `CHANGELOG.md`. Commit and push those changes,
-then select **Actions → Publish → Run workflow** on the branch to release.
-
-The workflow reads the version and notes from that exact commit, rejects an already
-published npm version, runs checks and tests, and builds the Apple silicon macOS CLI.
-It publishes the tested package through npm trusted publishing, then creates the
-matching GitHub tag and release with the changelog notes, standalone binary, and npm
-tarball attached. No npm token or separately entered release version is needed.
-
-If a run fails before npm publication, fix the failure and rerun. If npm succeeds but
-GitHub release creation fails, recover the tarball from npm with `npm pack
-@lostintangent/toy-box@X.Y.Z --ignore-scripts`, verify its registry integrity, and use
-that package's executable and the original commit's changelog notes to finish the
-GitHub release manually. Do not rebuild or republish the same npm version.

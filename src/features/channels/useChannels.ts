@@ -7,7 +7,7 @@ import { channelQueries } from "./queries";
 export function useChannels() {
   const {
     data: { channels, members },
-  } = useSuspenseQuery(channelQueries.list());
+  } = useSuspenseQuery(channelQueries.list);
 
   return useSessionsActivity((activities) =>
     channels.map((channel) => ({

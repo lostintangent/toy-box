@@ -12,15 +12,18 @@ import {
 } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { appMutations } from "@apps/mutations";
-import type { AppInstance } from "@apps/model";
+import { createAppPane } from "@apps/model";
+import { useWorkspaceRoots } from "@workspace/hooks/layout/roots";
 
+/** Installs an app definition from a Gist, and selects its first saved app. */
 export function InstallAppDialog({
+  open,
   onOpenChange,
-  onInstalled,
 }: {
+  open: boolean;
   onOpenChange: (open: boolean) => void;
-  onInstalled: (app: AppInstance) => void;
 }) {
+  const { selectRoot } = useWorkspaceRoots();
   const [url, setUrl] = useState("");
   const installMutation = useMutation(appMutations.install());
 
@@ -29,12 +32,17 @@ export function InstallAppDialog({
     const value = url.trim();
     if (!value) return;
 
-    installMutation.mutate(value, { onSuccess: ({ app }) => onInstalled(app) });
+    installMutation.mutate(value, {
+      onSuccess: ({ app }) => {
+        selectRoot(createAppPane(app.id));
+        onOpenChange(false);
+      },
+    });
   }
 
   return (
     <Dialog
-      open
+      open={open}
       onOpenChange={(open) => {
         if (!installMutation.isPending) onOpenChange(open);
       }}

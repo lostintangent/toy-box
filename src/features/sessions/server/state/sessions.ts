@@ -3,14 +3,12 @@ import type { Session } from "@sessions/model";
 import { getStateDatabase } from "@/server/database";
 
 export async function readSessions(): Promise<Session[]> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return [];
+  const db = await getStateDatabase();
   return (await db<SessionRow[]>`SELECT * FROM sessions`).map(sessionFromRow);
 }
 
 export async function readSession(id: string): Promise<Session | undefined> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return undefined;
+  const db = await getStateDatabase();
   const [row] = await db<SessionRow[]>`SELECT * FROM sessions WHERE session_id = ${id}`;
   return row ? sessionFromRow(row) : undefined;
 }
@@ -25,10 +23,11 @@ export async function insertSession(
   `;
 }
 
+/** Records the session's native history once, returning the stored association. */
 export async function setSessionProvider(
   id: string,
   provider: NonNullable<Session["provider"]>,
-): Promise<void> {
+): Promise<NonNullable<Session["provider"]>> {
   const db = await getStateDatabase();
   const nativeId = provider.sessionId && provider.sessionId !== id ? provider.sessionId : null;
   await db`INSERT INTO sessions (session_id, provider_id, native_id, created_at)
@@ -43,11 +42,11 @@ export async function setSessionProvider(
   ) {
     throw new Error("Session already uses a different provider history.");
   }
+  return persisted.provider;
 }
 
 export async function deleteSessionRecord(id: string): Promise<void> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return;
+  const db = await getStateDatabase();
   await db`DELETE FROM sessions WHERE session_id = ${id}`;
 }
 

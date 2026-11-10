@@ -5,6 +5,7 @@ import type { ModelConfiguration } from "@providers/model";
 import type { Attachment } from "@/shared/attachments/model";
 import type { SessionSystemMessage } from "./systemMessages";
 import type { SessionType } from "./protocol";
+import type { FileDiffStats } from "./fileDiffs";
 
 export type SessionContext = {
   directory?: string;
@@ -118,6 +119,11 @@ export type ContextUsage = {
 /** Canonical reduced state for a session at any point in time. */
 export type SessionState = {
   messages: Message[];
+  /** How many messages precede `messages[0]` when a client holds only later pages. */
+  messageOffset?: number;
+  /** Line counts of the session's successful top-level edits and patches, keyed
+   *  without a cwd so each reader resolves them against its own. */
+  diff?: FileDiffStats;
   queuedMessages: Array<SessionMessage & { status: "queued" | "submitting" | "submitted" }>;
   model?: ModelConfiguration;
   /** Reported while the provider runs; native histories do not retain it. */

@@ -3,7 +3,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { settingsUpdateSchema } from "../model/config/settings";
-import { workspaceActionSchema } from "../model/state/actions";
+import { draftKeySchema, savedDraftSchema } from "../model/state/drafts";
 import * as workspace from "./state";
 import * as connections from "./connections";
 
@@ -11,9 +11,9 @@ export const getWorkspaceState = createServerFn({ method: "GET" }).handler(() =>
   workspace.getWorkspaceState(),
 );
 
-export const dispatchWorkspaceAction = createServerFn({ method: "POST" })
-  .validator(workspaceActionSchema)
-  .handler(({ data }) => workspace.applyWorkspaceAction(data));
+export const updateDraft = createServerFn({ method: "POST" })
+  .validator(savedDraftSchema.pick({ text: true, origin: true }).extend({ key: draftKeySchema }))
+  .handler(({ data }) => workspace.updateDraft(data.key, data.text, data.origin));
 
 export const updateSettings = createServerFn({ method: "POST" })
   .validator(settingsUpdateSchema)

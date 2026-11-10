@@ -1,19 +1,19 @@
 import { expect, onTestFinished, spyOn, test } from "bun:test";
 import * as push from "@push/server";
 import * as database from "@/server/database";
+import { openTestDatabase } from "@/server/testFixtures";
 import * as stream from "./stream";
 import * as reducer from "@channels/model/reducer";
 import { PushDatabase } from "@push/server/database";
 import type { APNsMessage } from "@push/server/apns";
-import { ChannelDatabase } from "./database";
+import { ChannelDatabase, catalogEntry } from "./database";
 import { createStoredChannel } from "./testFixtures";
 import { publishChannelNotification, startChannelPush } from "./push";
 import { broadcast } from "@workspace/server/events";
 import type { ChannelObservationEvent } from "@channels/model";
 
 test("the unread check builds current channel text and the lead's Reply handle on the server", async () => {
-  const db = await database.createTestDatabase();
-  onTestFinished(() => db.close());
+  const db = await openTestDatabase();
   const channels = new ChannelDatabase(db);
   const channel = await createStoredChannel(channels, {
     name: "Original",
@@ -26,11 +26,9 @@ test("the unread check builds current channel text and the lead's Reply handle o
     request: true,
     content: "@lead Which **door**?",
   });
-  const access = spyOn(database, "getStateDatabase").mockResolvedValue(db);
   const publishing = spyOn(push, "publish").mockImplementation(() => undefined);
   const sleep = spyOn(Bun, "sleep").mockResolvedValue(undefined);
   onTestFinished(() => {
-    access.mockRestore();
     publishing.mockRestore();
     sleep.mockRestore();
   });
@@ -57,8 +55,7 @@ test("the unread check builds current channel text and the lead's Reply handle o
 });
 
 test("workspace changes update badges from the catalog, and replacing or stopping the observer removes it", async () => {
-  const db = await database.createTestDatabase();
-  onTestFinished(() => db.close());
+  const db = await openTestDatabase();
   const channels = new ChannelDatabase(db);
   const changes = [];
   for (const name of ["First", "Second"]) {
@@ -90,7 +87,6 @@ test("workspace changes update badges from the catalog, and replacing or stoppin
       return { status: 200 };
     },
   });
-  const access = spyOn(database, "getStateDatabase").mockResolvedValue(db);
   const publishing = spyOn(push, "publishBadge").mockImplementation((topics, count) =>
     service.publishBadge(topics, count),
   );
@@ -99,7 +95,6 @@ test("workspace changes update badges from the catalog, and replacing or stoppin
     stop();
     service.stop();
     publishing.mockRestore();
-    access.mockRestore();
   });
   await service.load();
   stop = startChannelPush();
@@ -107,7 +102,7 @@ test("workspace changes update badges from the catalog, and replacing or stoppin
   expect(sent.map(({ payload }) => payload)).toEqual([{ aps: { badge: 2 } }]);
   const read = await channels.markUserSeen(first.channel.id, first.message.sequence);
   if (!read) throw new Error("Missing read transition.");
-  broadcast({ type: "channel.upserted", channel: read.channel });
+  broadcast({ type: "channel.upserted", channel: catalogEntry(read.channel) });
   await service.load();
   expect(sent).toHaveLength(1);
   const replied = await channels.appendMessage({
@@ -116,7 +111,7 @@ test("workspace changes update badges from the catalog, and replacing or stoppin
     sender: { type: "user" },
     content: "The blue door.",
   });
-  broadcast({ type: "channel.upserted", channel: replied.channel });
+  broadcast({ type: "channel.upserted", channel: catalogEntry(replied.channel) });
   await service.load();
   expect(sent.at(-1)?.payload).toEqual({ aps: { badge: 1 } });
   await channels.deleteChannel(second.channel.id);
@@ -126,7 +121,7 @@ test("workspace changes update badges from the catalog, and replacing or stoppin
   stop = startChannelPush();
   await service.load();
   publishing.mockClear();
-  broadcast({ type: "channel.upserted", channel: replied.channel });
+  broadcast({ type: "channel.upserted", channel: catalogEntry(replied.channel) });
   await service.load();
   expect(publishing).toHaveBeenCalledTimes(1);
   stop();
@@ -137,14 +132,13 @@ test("workspace changes update badges from the catalog, and replacing or stoppin
 });
 
 test("Follow observes only interested channels and promptly dismisses deleted content", async () => {
-  const db = await database.createTestDatabase();
-  onTestFinished(() => db.close());
+  const db = await openTestDatabase();
   const channels = new ChannelDatabase(db);
   const channel = await createStoredChannel(channels, {
     name: "Test",
     model: { provider: "copilot", name: "test" },
   });
-  const access = spyOn(database, "getStateDatabase").mockResolvedValue(db);
+  const access = spyOn(database, "getStateDatabase");
   const snapshot = await stream.getChannelSnapshot(channel.id);
   if (!snapshot) throw new Error("Missing fixture channel.");
   const followed = {

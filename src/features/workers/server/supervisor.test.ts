@@ -79,7 +79,7 @@ mock.module("@workers/server/database", () => ({
 
 const { abortWorker, superviseWorker, sweepAbandonedWorkers, WorkerCanceledError } =
   await import("./supervisor");
-const { sharedMap, sharedSet } = await import("@/shared/server/processState");
+const { getProcessValue, sharedSet } = await import("@/shared/server/processState");
 
 afterAll(() => {
   mock.module("@sessions/server/runtime", () => realStreamModule);
@@ -121,7 +121,8 @@ beforeEach(() => {
     workerCompletion.resolve({ status: "completed" });
     return true;
   });
-  sharedMap<Promise<void>>("worker-startup-sweeps").clear();
+  getProcessValue<{ promise?: Promise<void> }>("worker-startup-sweep", () => ({})).promise =
+    undefined;
   sharedSet<string>("active-workers").clear();
   sharedSet<string>("canceling-workers").clear();
 });
@@ -143,7 +144,6 @@ describe("superviseWorker", () => {
       { content: "Do one focused job.", model: parentModel },
       {
         directory: parentDirectory,
-        sessionType: "worker",
         parentSessionId: "toy-box-parent",
         useWorktree: false,
         name: "Focused job",
@@ -276,7 +276,6 @@ describe("superviseWorker", () => {
       { content: "Generate a pattern.", model: explicitModel },
       {
         directory: undefined,
-        sessionType: "worker",
         parentSessionId: undefined,
         useWorktree: false,
       },
@@ -313,7 +312,6 @@ describe("superviseWorker", () => {
       response: "Findings.",
     });
     expect(createSessionMock.mock.calls[0]![2]).toMatchObject({
-      sessionType: "worker",
       parentSessionId: "toy-box-parent",
       useWorktree: true,
     });
@@ -333,7 +331,7 @@ describe("superviseWorker", () => {
     expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
   });
 
-  test("cancels a running worker through its live stream", async () => {
+  test("cancels a running worker through its live execution", async () => {
     const receipt = await superviseWorker({
       worker: fileWorker,
       retention: "ephemeral",

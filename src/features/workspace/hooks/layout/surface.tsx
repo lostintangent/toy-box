@@ -31,9 +31,6 @@ const { StoreProvider, useStoreContext: useWorkspaceSurface } = createStoreConte
     panes: readonly WorkspacePane[];
     /** Brings a pane forward: focuses it where the surface can reach it, and opens it otherwise. */
     reveal: (pane: WorkspacePane) => void;
-    /** Whether Channel overviews stay pinned open, where the surface remembers it. */
-    channelOverviewPinned?: boolean;
-    setChannelOverviewPinned?: (pinned: boolean) => void;
   }
 >();
 export { useWorkspaceSurface };
@@ -72,16 +69,12 @@ export function WorkspaceSurfaceProvider({
   surface,
   panes,
   onOpen,
-  channelOverviewPinned,
-  onChannelOverviewPinnedChange,
   children,
 }: {
   surface: WorkspaceSurface;
   panes: WorkspacePane[];
   /** Opens a pane this surface can't reach yet. */
   onOpen: (pane: WorkspacePane) => void;
-  channelOverviewPinned?: boolean;
-  onChannelOverviewPinnedChange?: (pinned: boolean) => void;
   children: ReactNode;
 }) {
   const workspaceSurface = workspaceSurfaces[surface];
@@ -103,17 +96,5 @@ export function WorkspaceSurfaceProvider({
     );
   }, [panes, workspaceSurface.focusedPaneAtom]);
 
-  return (
-    <StoreProvider
-      value={{
-        ...workspaceSurface,
-        panes,
-        reveal,
-        channelOverviewPinned,
-        setChannelOverviewPinned: onChannelOverviewPinnedChange,
-      }}
-    >
-      {children}
-    </StoreProvider>
-  );
+  return <StoreProvider value={{ ...workspaceSurface, panes, reveal }}>{children}</StoreProvider>;
 }

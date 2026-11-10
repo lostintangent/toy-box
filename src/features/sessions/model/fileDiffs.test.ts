@@ -4,6 +4,7 @@ import {
   getToolCallFileDiffs,
   parsePatchTouchedFiles,
   parseUnifiedDiff,
+  resolveFileDiffStats,
 } from "./fileDiffs";
 import type { ToolCall } from "./index";
 
@@ -247,6 +248,21 @@ index 0000000..0000000
     expect(fileDiffs && computeFileDiffStats(fileDiffs).total).toEqual({
       added: 2,
       removed: 2,
+    });
+  });
+
+  test("resolving against a cwd merges paths that only a git prefix kept apart", () => {
+    const diff = { added: 1, removed: 0 };
+    const total = { added: 3, removed: 0 };
+    const paths = [`${cwd.slice(1)}/a.md`, "b/c.ts", `${cwd}/a.md`];
+    const byFile = paths.map((path) => ({ path, diff }));
+
+    expect(resolveFileDiffStats({ total, byFile }, cwd)).toEqual({
+      total,
+      byFile: [
+        { path: `${cwd}/a.md`, diff: { added: 2, removed: 0 } },
+        { path: "b/c.ts", diff },
+      ],
     });
   });
 });

@@ -3,44 +3,35 @@ import { H3 } from "h3";
 import compression from "./middleware/compression";
 
 describe("response compression", () => {
-  test.each(["text/html; charset=utf-8", "application/json; charset=utf-8"])(
-    "compresses %s when gzip is accepted",
-    async (contentType) => {
-      const body = "compressible response ".repeat(100);
-      const response = await request(
-        new Response(body, {
-          headers: { "Content-Type": contentType, "Content-Length": String(body.length) },
-        }),
-      );
+  test.each([
+    ["text/html; charset=utf-8", "gzip, deflate, br, zstd", "br"],
+    ["application/json; charset=utf-8", "gzip, deflate", "gzip"],
+    ["text/event-stream; charset=utf-8", "gzip, deflate, br", "gzip"],
+    ["application/x-tss-framed; v=1", "gzip, deflate, br", "gzip"],
+  ] as const)("flushes %s for %s as %s", async (contentType, acceptEncoding, encoding) => {
+    const body = "compressible response ".repeat(100);
+    const stream = new ReadableStream<Uint8Array<ArrayBuffer>>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(body));
+        // Leave the stream open to prove each write reaches the client before the response ends.
+      },
+    });
+    const response = await request(
+      new Response(stream, {
+        headers: { "Content-Type": contentType, "Content-Length": String(body.length) },
+      }),
+      acceptEncoding,
+    );
 
-      expect(response.headers.get("Content-Encoding")).toBe("gzip");
-      expect(response.headers.get("Vary")).toContain("Accept-Encoding");
-      expect(response.headers.get("Content-Length")).toBeNull();
-      expect(
-        await new Response(response.body!.pipeThrough(new DecompressionStream("gzip"))).text(),
-      ).toBe(body);
-    },
-  );
-
-  test.each(["text/event-stream", "application/x-tss-framed; v=1"])(
-    "preserves immediate streaming for %s",
-    async (contentType) => {
-      const body = new ReadableStream<Uint8Array<ArrayBuffer>>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode("first event"));
-          // Leave the stream open to prove that middleware does not wait for completion.
-        },
-      });
-      const response = await request(
-        new Response(body, { headers: { "Content-Type": contentType } }),
-      );
-
-      expect(response.headers.get("Content-Encoding")).toBeNull();
-      const reader = response.body!.getReader();
-      expect(new TextDecoder().decode((await reader.read()).value)).toBe("first event");
-      await reader.cancel();
-    },
-  );
+    expect(response.headers.get("Content-Encoding")).toBe(encoding);
+    expect(response.headers.get("Vary")).toContain("Accept-Encoding");
+    expect(response.headers.get("Content-Length")).toBeNull();
+    // Bun decodes brotli, though the DOM's CompressionFormat doesn't name it.
+    const format = (encoding === "br" ? "brotli" : "gzip") as CompressionFormat;
+    const reader = response.body!.pipeThrough(new DecompressionStream(format)).getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe(body);
+    await reader.cancel();
+  });
 
   test("leaves JSON readable when the client does not accept compression", async () => {
     const response = await request(Response.json({ ready: true }), "identity");

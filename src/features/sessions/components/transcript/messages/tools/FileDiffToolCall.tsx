@@ -2,9 +2,13 @@ import { startTransition, useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
 import type { ThemedToken } from "shiki/core";
 import type { ToolCallProps } from "./types";
-import { useToolCallDiff } from "../../editDiffs";
 import { useCurrentSession } from "../../../CurrentSessionContext";
-import { getToolCallFileDiffs, type DiffHunk, type FileDiff } from "../../../../model/fileDiffs";
+import {
+  computeFileDiffStats,
+  getToolCallFileDiffs,
+  type DiffHunk,
+  type FileDiff,
+} from "../../../../model/fileDiffs";
 import { toRelativePath } from "@files/model/paths";
 import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";
@@ -297,7 +301,7 @@ function getFileDiffToolCallLabel(
 export function FileDiffToolCall({ toolCall, ...props }: ToolCallProps) {
   const { cwd } = useCurrentSession();
   const fileDiffs = getToolCallFileDiffs(toolCall, cwd);
-  const lineDiff = useToolCallDiff(toolCall.id);
+  const lineDiff = fileDiffs && computeFileDiffStats(fileDiffs).total;
   const patch = typeof toolCall.arguments.patch === "string" ? toolCall.arguments.patch : undefined;
   const argumentsText =
     Object.keys(toolCall.arguments).length > 0

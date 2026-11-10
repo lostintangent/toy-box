@@ -1,38 +1,45 @@
 import { expect, test } from "bun:test";
 import { homedir } from "node:os";
-import { resolveToolCallPolicy, type ToolCompletion } from "./toolProjection";
+import { createToolCallProjector } from "./toolProjection";
 import { createInitialSessionState, applySessionEvent } from "../model/reducer";
 import type { SessionEvent, ToolCall } from "../model";
+
+type ToolEnd = Extract<SessionEvent, { type: "tool_end" }>;
 
 const sessionId = "owner";
 const sessions = `${homedir()}/.toy-box/sessions`;
 const artifacts = `${sessions}/${sessionId}/artifacts`;
-const omitted = { kind: "omitted" } as const;
 
-function policy(name: string, args: ToolCall["arguments"] = {}) {
-  return resolveToolCallPolicy(name, args, { sessionId });
+function lifecycle(
+  toolName: string,
+  args: ToolCall["arguments"] = {},
+  end: Partial<ToolEnd> = {},
+): SessionEvent[] {
+  return [
+    { type: "tool_start", toolName, toolCallId: "call-1", arguments: args },
+    { type: "tool_end", toolCallId: "call-1", success: true, ...end },
+  ];
 }
 
-function complete(name: string, args: ToolCall["arguments"], completion: ToolCompletion) {
-  const resolved = policy(name, args);
-  if (resolved?.kind !== "translated") throw new Error("Expected a translated tool result.");
-  return resolved.projectOnComplete?.(completion) ?? [];
+// A whole call's lifecycle through a fresh projector.
+function call(toolName: string, args?: ToolCall["arguments"], end?: Partial<ToolEnd>) {
+  return lifecycle(toolName, args, end).flatMap(createToolCallProjector(sessionId));
 }
 
 function project(name: string, result: unknown, success = true): SessionEvent[] {
-  return complete(name, {}, { success, result: JSON.stringify(result) });
+  return call(name, {}, { success, result: JSON.stringify(result) });
 }
 
 function patch(...lines: string[]) {
   return { patch: ["*** Begin Patch", ...lines, "*** End Patch"].join("\n") };
 }
 
+function expectVisible(toolName: string, args?: ToolCall["arguments"]) {
+  expect(call(toolName, args)).toEqual(lifecycle(toolName, args));
+}
+
 test("Toy Box bookkeeping tools are always omitted", () => {
   for (const name of [
-    "skill",
-    "read_agent",
-    "write_agent",
-    "list_agents",
     "check_session_status",
     "wait_for_sessions",
     "deliver_message",
@@ -42,41 +49,44 @@ test("Toy Box bookkeeping tools are always omitted", () => {
     "update_automation",
     "run_automation",
   ]) {
-    expect(policy(name)).toEqual(omitted);
+    expect(call(name)).toEqual([]);
   }
 });
 
 test("spawn_worker stays a visible tool call", () => {
-  expect(policy("spawn_worker", { task: "Review the auth flow" })).toBeUndefined();
+  expectVisible("spawn_worker", { task: "Review the auth flow" });
 });
 
 test.each([
   [
     "omits this session's artifacts",
     { path: `~/.toy-box/sessions/${sessionId}/artifacts/a.md` },
-    omitted,
+    true,
   ],
-  ["omits this session's artifacts by filePath", { filePath: `${artifacts}/a.md` }, omitted],
+  ["omits this session's artifacts by filePath", { filePath: `${artifacts}/a.md` }, true],
   [
     "shows another session's artifacts",
     { path: "~/.toy-box/sessions/other/artifacts/a.md" },
-    undefined,
+    false,
   ],
-  ["shows root session state", { path: `~/.toy-box/sessions/${sessionId}/a.md` }, undefined],
-  ["shows files outside session state", { path: "/tmp/a.md" }, undefined],
-])("read, create, and edit %s", (_, args, expected) => {
-  for (const name of ["read", "create", "edit"]) expect(policy(name, args)).toEqual(expected);
+  ["shows root session state", { path: `~/.toy-box/sessions/${sessionId}/a.md` }, false],
+  ["shows files outside session state", { path: "/tmp/a.md" }, false],
+])("read, create, and edit %s", (_, args, omitted) => {
+  for (const name of ["read", "create", "edit"]) {
+    if (omitted) expect(call(name, args)).toEqual([]);
+    else expectVisible(name, args);
+  }
 });
 
 test.each([
-  ["an artifact addition", patch(`*** Add File: ${artifacts}/plan.md`, "+# Plan"), omitted],
-  ["an artifact of any type", patch(`*** Add File: ${artifacts}/run.sh`, "+bun test"), omitted],
+  ["an artifact addition", patch(`*** Add File: ${artifacts}/plan.md`, "+# Plan"), true],
+  ["an artifact of any type", patch(`*** Add File: ${artifacts}/run.sh`, "+bun test"), true],
   [
     "a home-relative artifact",
     patch(`*** Add File: .toy-box/sessions/${sessionId}/artifacts/plan.html`, "<!doctype html>"),
-    omitted,
+    true,
   ],
-  ["an artifact deletion", patch(`*** Delete File: ${artifacts}/plan.md`), omitted],
+  ["an artifact deletion", patch(`*** Delete File: ${artifacts}/plan.md`), true],
   [
     "an artifact conversion",
     patch(
@@ -84,26 +94,23 @@ test.each([
       "<!doctype html>",
       `*** Delete File: ${artifacts}/plan.md`,
     ),
-    omitted,
+    true,
   ],
-  [
-    "root session state",
-    patch(`*** Add File: ${sessions}/${sessionId}/plan.md`, "+# Plan"),
-    undefined,
-  ],
+  ["root session state", patch(`*** Add File: ${sessions}/${sessionId}/plan.md`, "+# Plan"), false],
   [
     "another session's artifact",
     patch(`*** Add File: ${sessions}/other/artifacts/plan.md`, "+# Plan"),
-    undefined,
+    false,
   ],
   [
     "artifacts mixed with other files",
     patch(`*** Add File: ${artifacts}/plan.md`, "+# Plan", "*** Update File: /repo/notes.md"),
-    undefined,
+    false,
   ],
-  ["no files", { patch: "not a patch" }, undefined],
-])("patch with %s", (_, args, expected) => {
-  expect(policy("patch", args)).toEqual(expected);
+  ["no files", { patch: "not a patch" }, false],
+])("patch with %s", (_, args, omitted) => {
+  if (omitted) expect(call("patch", args)).toEqual([]);
+  else expectVisible("patch", args);
 });
 
 test.each([
@@ -111,10 +118,10 @@ test.each([
   ["close_session", "linked_session_removed"],
   ["delete_session", "linked_session_removed"],
 ] as const)("%s updates linked sessions as soon as it starts", (name, type) => {
-  expect(policy(name, { sessionId: "linked" })).toEqual({
-    kind: "translated",
-    projectOnStart: [{ type, sessionId: "linked" }],
-  });
+  const project = createToolCallProjector(sessionId);
+  const [start, end] = lifecycle(name, { sessionId: "linked" });
+  expect(project(start!)).toEqual([{ type, sessionId: "linked" }]);
+  expect(project(end!)).toEqual([]);
 });
 
 test("create_session links only sessions it opened successfully", () => {
@@ -124,7 +131,7 @@ test("create_session links only sessions it opened successfully", () => {
   ]);
   expect(project("create_session", { ...created, opened: false })).toEqual([]);
   expect(project("create_session", created, false)).toEqual([]);
-  expect(complete("create_session", {}, { success: true, result: "not json" })).toEqual([]);
+  expect(call("create_session", {}, { result: "not json" })).toEqual([]);
 });
 
 test.each([
@@ -135,9 +142,26 @@ test.each([
     ["open_file", "file_opened"],
     ["close_file", "file_closed"],
   ] as const) {
-    expect(complete(name, { path }, { success: true })).toEqual([{ type, file }]);
-    expect(complete(name, { path }, { success: false })).toEqual([]);
+    expect(call(name, { path })).toEqual([{ type, file }]);
+    expect(call(name, { path }, { success: false })).toEqual([]);
   }
+});
+
+test("a subagent's open_file takes effect, keyed apart from its siblings' calls", () => {
+  const path = "/repo/src/foo.ts";
+  const subagentCall = (parentToolCallId: string, toolName: string, args = {}) =>
+    lifecycle(toolName, args).map((event) => ({ ...event, parentToolCallId }) as SessionEvent);
+  const [openStart, openEnd] = subagentCall("agent-1", "open_file", { path });
+  const [bashStart, bashEnd] = subagentCall("agent-2", "bash");
+
+  expect(
+    [openStart!, bashStart!, bashEnd!, openEnd!].flatMap(createToolCallProjector(sessionId)),
+  ).toEqual([bashStart, bashEnd, { type: "file_opened", file: { kind: "machine", path } }]);
+});
+
+test("a completion whose start was never seen passes through", () => {
+  const [, end] = lifecycle("open_file", { path: "/repo/src/foo.ts" });
+  expect(createToolCallProjector(sessionId)(end!)).toEqual([end]);
 });
 
 test("screen and URL publication reduce through one durable session preview contract", () => {

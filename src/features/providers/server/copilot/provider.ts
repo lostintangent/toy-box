@@ -1,22 +1,20 @@
-import { homedir } from "node:os";
 import { approveAll } from "@github/copilot-sdk";
 import type {
   CopilotSession,
   CopilotClient,
   SessionConfig,
-  SessionContext,
+  SessionMetadata,
   Tool as CopilotTool,
 } from "@github/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
 import type { ProviderSubscription } from "@providers/model";
-import {
-  SessionNotFoundError,
-  type SessionConfiguration,
-  type SessionProvider,
+import type {
+  NativeSession,
+  SessionConfiguration,
+  SessionProvider,
 } from "@providers/server/provider";
-import { normalizeToolResult } from "@sessions/server/tools/definition";
 import { startCopilotClient, stopCopilotClient } from "./client";
-import { connectCopilotSession, toSdkSetModelOptions } from "./connection";
+import { connectCopilotSession, holdNativeEvents, toSdkSetModelOptions } from "./connection";
 import { toModelInfo } from "./models";
 import { toSessionSkills } from "./skills";
 import { createSdkEventProjector } from "./projector";
@@ -37,26 +35,38 @@ export const copilotProvider: SessionProvider = {
       authInfo && "copilotUser" in authInfo ? authInfo.copilotUser?.copilot_plan : undefined;
     return plan ? toSubscription(plan, (await rpc.account.getQuota({})).quotaSnapshots) : undefined;
   },
-  async listSessions() {
-    return (await (await startCopilotClient()).listSessions()).map(
-      ({ sessionId, startTime, modifiedTime, summary, context }) => ({
-        id: sessionId,
-        createdAt: startTime,
-        updatedAt: modifiedTime,
-        title: summary,
-        context: {
-          directory: sessionDirectory(context),
-          gitRoot: context?.gitRoot,
-          repository: context?.repository,
-          branch: context?.branch,
-        },
-      }),
-    );
-  },
-  async readHistory({ id, provider }) {
-    const nativeId = provider?.sessionId ?? id;
+  async listSessions(limit) {
     const client = await startCopilotClient();
-    const project = createSdkEventProjector(id);
+    if (limit === undefined) return (await client.listSessions()).map(toSession);
+    const entries = (await client.rpc.sessions.list({ metadataLimit: 0 })).sessions.filter(
+      (entry) => !entry.isRemote,
+    );
+    // Enrichment drops empty sessions, but its start times differ from `readSession`'s, so
+    // metadata supplies the fields.
+    const sessions: NativeSession[] = [];
+    let start = 0;
+    while (start < entries.length && sessions.length < limit) {
+      const end = start + limit - sessions.length;
+      const batch = entries.slice(start, end);
+      const [enriched, metadata] = await Promise.all([
+        client.rpc.sessions.enrichMetadata({ sessions: batch }),
+        Promise.all(batch.map(({ sessionId }) => client.getSessionMetadata(sessionId))),
+      ]);
+      const listed = new Set(enriched.sessions.map(({ sessionId }) => sessionId));
+      for (const session of metadata) {
+        if (session && listed.has(session.sessionId)) sessions.push(toSession(session));
+      }
+      start = end;
+    }
+    return sessions;
+  },
+  async readSession(nativeId) {
+    const metadata = await (await startCopilotClient()).getSessionMetadata(nativeId);
+    return metadata && toSession(metadata);
+  },
+  async readHistory(nativeId) {
+    const client = await startCopilotClient();
+    const project = createSdkEventProjector();
     const events: SessionEvent[] = [];
     let cursor: string | undefined;
     let hasMore: boolean;
@@ -84,35 +94,28 @@ export const copilotProvider: SessionProvider = {
   },
   async create(sessionId, configuration) {
     const client = await startCopilotClient();
+    const early = holdNativeEvents();
     const session = await client.createSession({
-      ...nativeConfiguration(sessionId, configuration),
+      ...nativeConfiguration(configuration),
       sessionId,
       name: configuration.name || undefined,
+      onEvent: early.onEvent,
     });
     try {
-      return await connect(
-        session,
-        sessionId,
-        configuration.allowUserQuestions,
-        configuration.model,
-      );
+      return await connect(session, configuration.allowUserQuestions, early);
     } catch (error) {
       await client.deleteSession(session.sessionId).catch(console.error);
       throw error;
     }
   },
-  async resume(session, configuration) {
+  async resume(nativeId, configuration) {
     const client = await startCopilotClient();
-    const native = await client.resumeSession(
-      session.provider?.sessionId ?? session.id,
-      nativeConfiguration(session.id, configuration),
-    );
-    return connect(native, session.id, configuration.allowUserQuestions, configuration.model);
-  },
-  async readDirectory(nativeId) {
-    return sessionDirectory(
-      (await (await startCopilotClient()).getSessionMetadata(nativeId))?.context,
-    );
+    const early = holdNativeEvents();
+    const native = await client.resumeSession(nativeId, {
+      ...nativeConfiguration(configuration),
+      onEvent: early.onEvent,
+    });
+    return connect(native, configuration.allowUserQuestions, early);
   },
   async isHistoryCurrent(nativeId, capturedAt) {
     const metadata = await (await startCopilotClient()).getSessionMetadata(nativeId);
@@ -120,9 +123,11 @@ export const copilotProvider: SessionProvider = {
     return !!metadata && metadata.modifiedTime.getTime() <= capturedAt + 2_000;
   },
   async delete(nativeId) {
-    const client = await startCopilotClient();
-    if (!(await client.getSessionMetadata(nativeId))) throw new SessionNotFoundError(nativeId);
-    await client.deleteSession(nativeId);
+    await (await startCopilotClient()).deleteSession(nativeId).catch((error: Error) => {
+      // Workaround (Copilot CLI 1.0.108; listed in providers/AGENTS.md): a missing history is
+      // reported only in the error's message. Remove once the CLI reports it with a code.
+      if (!error.message.endsWith(`Session file not found for ${nativeId}`)) throw error;
+    });
   },
   stop: stopCopilotClient,
 };
@@ -151,39 +156,19 @@ export function toSubscription(plan: string, quotas: CopilotQuotas): ProviderSub
 
 async function connect(
   session: CopilotSession,
-  sessionId: string,
   allowUserQuestions: boolean,
-  appliedModel?: SessionConfiguration["model"],
+  early: ReturnType<typeof holdNativeEvents>,
 ) {
-  // Toy Box approves every request; allow-all also keeps the CLI from journaling each one.
-  await session.rpc.permissions.setMode({ mode: "allow-all" });
   if (allowUserQuestions)
     await session.rpc.eventLog.registerInterest({ eventType: "user_input.requested" });
-  return connectCopilotSession(session, sessionId, appliedModel);
+  return connectCopilotSession(session, early);
 }
 
-function nativeConfiguration(
-  sessionId: string,
-  configuration: SessionConfiguration,
-): SessionConfig {
+function nativeConfiguration(configuration: SessionConfiguration): SessionConfig {
   const tools: CopilotTool<any>[] = configuration.tools.map((tool) => ({
     ...tool,
     skipPermission: true,
     defer: tool.alwaysLoad ? "never" : "auto",
-    handler: async (args) => {
-      const result = normalizeToolResult(
-        await tool.handler(tool.parameters ? tool.parameters.parse(args) : args, sessionId),
-      );
-      return {
-        textResultForLlm: result.content
-          .flatMap((item) => (item.type === "text" ? [item.text] : []))
-          .join("\n"),
-        binaryResultsForLlm: result.content.flatMap((item) =>
-          item.type === "image" ? [{ ...item, type: "image" as const }] : [],
-        ),
-        resultType: result.isError ? ("failure" as const) : ("success" as const),
-      };
-    },
   }));
   return {
     streaming: true,
@@ -196,16 +181,25 @@ function nativeConfiguration(
     enableSkills: true,
     skillDirectories: configuration.skillDirectories,
     systemMessage: { mode: "append", content: configuration.instructions },
+    // Toy Box approves every request; allow-all also keeps the CLI from journaling each one.
+    permissionMode: "allow-all",
     onPermissionRequest: approveAll,
     tools,
     ...(configuration.disableMemory ? { memory: { enabled: false } } : {}),
   };
 }
 
-/** The SDK's implicit home directory is not a user-selected workspace. */
-function sessionDirectory(context?: SessionContext): string | undefined {
-  if (!context?.workingDirectory) return undefined;
-  return context.workingDirectory === homedir() && !context.gitRoot && !context.repository
-    ? undefined
-    : context.workingDirectory;
+function toSession({ sessionId, startTime, modifiedTime, summary, context }: SessionMetadata) {
+  return {
+    nativeId: sessionId,
+    createdAt: startTime,
+    updatedAt: modifiedTime,
+    title: summary,
+    context: {
+      directory: context?.workingDirectory,
+      gitRoot: context?.gitRoot,
+      repository: context?.repository,
+      branch: context?.branch,
+    },
+  };
 }

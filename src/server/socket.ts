@@ -1,21 +1,30 @@
 import type { Hooks } from "crossws";
 import { byFeature } from "@/shared/features";
 
+/** A feature's socket service: the hooks serving one connection, bound to what its URL names. */
+export type SocketService = (request: Request) => Partial<Hooks> | Promise<Partial<Hooks>>;
+
 /** Each feature's `server/websocket.ts` serves `/socket?service=<feature folder>`,
  * loaded when its first connection arrives. */
 const services = byFeature(
-  import.meta.glob<Partial<Hooks>>("../features/*/server/websocket.ts", { import: "default" }),
+  import.meta.glob<SocketService>("../features/*/server/websocket.ts", { import: "default" }),
 );
-const loaded: Record<string, Promise<Partial<Hooks>>> = {};
+const loaded: Record<string, Promise<SocketService>> = {};
 
-function isService(value: string | null): value is string {
-  return value !== null && Object.hasOwn(services, value);
+/** Binds a connection to its feature's hooks once, as it upgrades, for its complete lifetime. */
+export async function socketHooks(request: Request): Promise<Partial<Hooks>> {
+  const service = new URL(request.url).searchParams.get("service");
+  if (service === null || !Object.hasOwn(services, service))
+    return refuse(400, "Unknown WebSocket service.");
+
+  if (!isSocketOrigin(request)) return refuse(403, "Socket connections must be same-origin.");
+
+  return (await (loaded[service] ??= services[service]()))(request);
 }
 
-async function hooks(request: Request): Promise<Partial<Hooks>> {
-  const service = new URL(request.url).searchParams.get("service");
-  if (!isService(service)) throw new Error("Unknown WebSocket service.");
-  return (loaded[service] ??= services[service]());
+/** Hooks that turn a socket away before it opens. */
+export function refuse(status: number, reason: string): Partial<Hooks> {
+  return { upgrade: () => new Response(reason, { status }) };
 }
 
 /**
@@ -39,32 +48,3 @@ export function isSocketOrigin(request: Request): boolean {
     return false;
   }
 }
-
-/** Composition only. Each connection is bound to a feature for its complete lifetime. */
-export const socketHooks = {
-  async upgrade(request) {
-    if (!isService(new URL(request.url).searchParams.get("service")))
-      return new Response("Unknown WebSocket service.", { status: 400 });
-
-    if (!isSocketOrigin(request))
-      return new Response("Socket connections must be same-origin.", { status: 403 });
-
-    return (await hooks(request)).upgrade?.(request);
-  },
-
-  async open(peer) {
-    return (await hooks(peer.request)).open?.(peer);
-  },
-
-  async message(peer, message) {
-    return (await hooks(peer.request)).message?.(peer, message);
-  },
-
-  async close(peer, details) {
-    return (await hooks(peer.request)).close?.(peer, details);
-  },
-
-  async error(peer, error) {
-    return (await hooks(peer.request)).error?.(peer, error);
-  },
-} satisfies Partial<Hooks>;

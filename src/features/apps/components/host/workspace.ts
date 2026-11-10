@@ -10,7 +10,7 @@ import type { Worker } from "@workers/model";
 
 type AppWorkspaceSource = {
   activities: SessionsActivity;
-  hyperSessionIds: readonly string[];
+  hyperSessionId: string | null;
   workers: readonly Worker[];
   apps: AppList;
   sessions: SessionsState;
@@ -23,7 +23,7 @@ type AppWorkspaceSource = {
 export function projectAppWorkspace(
   {
     activities,
-    hyperSessionIds,
+    hyperSessionId,
     workers,
     apps,
     sessions,
@@ -35,11 +35,10 @@ export function projectAppWorkspace(
   previous?: AppWorkspace,
 ): AppWorkspace {
   const definitions = new Map(apps.definitions.map((definition) => [definition.id, definition]));
-  const hyperIds = new Set(hyperSessionIds);
   const sessionKind = (sessionId: string): AppSession["kind"] =>
     sessions.ownership[sessionId]?.type === "automation"
       ? "automation"
-      : hyperIds.has(sessionId)
+      : sessionId === hyperSessionId
         ? "hyper"
         : "standard";
   const childrenByParent = selectSessionChildren(sessions);

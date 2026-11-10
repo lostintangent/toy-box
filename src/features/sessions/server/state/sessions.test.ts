@@ -1,31 +1,16 @@
-import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import { createTestDatabase } from "@/server/database";
-
-let currentDb: Bun.SQL | undefined;
-
-mock.module("@/server/database", () => ({
-  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
-    if (!currentDb && options?.createIfMissing === false) return null;
-    if (!currentDb) throw new Error("Test database has not been opened");
-    return currentDb;
-  },
-}));
-
-const { deleteSessionRecord, insertSession, setSessionProvider, readSession, readSessions } =
-  await import("./sessions");
+import { describe, expect, test } from "bun:test";
+import { openTestDatabase } from "@/server/testFixtures";
+import {
+  deleteSessionRecord,
+  insertSession,
+  readSession,
+  readSessions,
+  setSessionProvider,
+} from "./sessions";
 
 describe("session database", () => {
-  async function setup() {
-    currentDb = await createTestDatabase();
-    onTestFinished(async () => {
-      await currentDb?.close();
-      currentDb = undefined;
-    });
-    return currentDb;
-  }
-
   test("starting a session keeps its ID, creation time and initial artifact", async () => {
-    await setup();
+    await openTestDatabase();
     const plain = { id: "plain", createdAt: new Date(41) };
     const artifact = { id: "artifact", artifactPath: "document.md", createdAt: new Date(42) };
     await insertSession(plain);
@@ -49,7 +34,7 @@ describe("session database", () => {
   });
 
   test("native history is exclusive until deletion releases the canonical ID", async () => {
-    const db = await setup();
+    const db = await openTestDatabase();
     const id = "automation";
     await setSessionProvider(id, { id: "copilot", sessionId: id });
     await setSessionProvider(id, { id: "copilot" });
@@ -70,7 +55,7 @@ describe("session database", () => {
   });
 
   test("storage permits a canonical native ID but requires its provider", async () => {
-    const db = await setup();
+    const db = await openTestDatabase();
     const insert = async (provider: string | null, nativeId: string | null) => {
       await db`INSERT INTO sessions (session_id, provider_id, native_id, created_at)
         VALUES (${crypto.randomUUID()}, ${provider}, ${nativeId}, 1)`;

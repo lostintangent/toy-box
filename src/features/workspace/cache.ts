@@ -1,29 +1,22 @@
 import { providerQueries } from "@providers/queries";
-import { invalidateSessionsStateQuery } from "@sessions/cache";
-import type { WorkspaceState } from "./model/state/reducer";
-import { workspaceJournal, workspaceQueries } from "./queries";
+import { sessionQueries } from "@sessions/queries";
+import { CATALOG_SETTINGS, isSettingEqual, type Settings } from "./model/config/settings";
+import { workspaceQueries } from "./queries";
 import type { WorkspaceCache } from "./sync";
 
 export default {
+  preload: (queryClient) => queryClient.ensureQueryData(workspaceQueries.state),
   applyEvent(queryClient, event) {
-    const previousSettings = queryClient.getQueryData<WorkspaceState>(
-      workspaceQueries.stateKey(),
-    )?.settings;
-    workspaceJournal.apply(queryClient, event);
+    const previousSettings = queryClient.getQueryData(workspaceQueries.state.queryKey)?.settings;
+    workspaceQueries.state.apply(queryClient, event);
     if (event.type === "settings.changed") {
-      const providersChanged =
-        previousSettings?.disabledProviders.length !== event.settings.disabledProviders.length ||
-        previousSettings.disabledProviders.some(
-          (id) => !event.settings.disabledProviders.includes(id),
-        );
-      const pinsChanged =
-        previousSettings?.pinnedSessionIds.length !== event.settings.pinnedSessionIds.length ||
-        previousSettings.pinnedSessionIds.some(
-          (id) => !event.settings.pinnedSessionIds.includes(id),
-        );
-      if (providersChanged) void queryClient.invalidateQueries({ queryKey: providerQueries.all() });
-      if (providersChanged || pinsChanged) void invalidateSessionsStateQuery(queryClient);
+      const changed = (key: keyof Settings) =>
+        !previousSettings || !isSettingEqual(key, previousSettings, event.settings);
+      if (changed("disabledProviders")) {
+        void queryClient.invalidateQueries({ queryKey: providerQueries.all() });
+      }
+      if (CATALOG_SETTINGS.some(changed)) void sessionQueries.state.refresh(queryClient);
     }
   },
-  refresh: workspaceJournal.refresh,
+  refresh: workspaceQueries.state.refresh,
 } satisfies WorkspaceCache;

@@ -1,5 +1,6 @@
 import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
-import * as database from "@/server/database";
+import { createTestDatabase } from "@/server/database";
+import { openTestDatabase } from "@/server/testFixtures";
 import { PushDatabase } from "./database";
 import { publishBadge, PushService, startPush } from ".";
 import type { NotificationEvent, UpdateEvent } from "@push/model";
@@ -24,7 +25,7 @@ const update = (value: number, attention?: number, ending = false): UpdateEvent 
   render: (at) => ({ value, updatedAt: at }),
 });
 async function setup(sending?: (message: APNsMessage) => Promise<APNsResult>) {
-  const db = await database.createTestDatabase(),
+  const db = await createTestDatabase(),
     store = new PushDatabase(db);
   const sent: APNsMessage[] = [],
     interests: [string, boolean][] = [];
@@ -72,19 +73,15 @@ async function setup(sending?: (message: APNsMessage) => Promise<APNsResult>) {
 }
 
 test("a badge source registered before Push starts survives startup and a consumer restart", async () => {
-  const db = await database.createTestDatabase();
-  const store = new PushDatabase(db);
+  const store = new PushDatabase(await openTestDatabase());
   await store.register(registration);
   await store.subscribe({ registrationID: id, token: null, startedAt: null }, "requests");
-  const access = spyOn(database, "getStateDatabase").mockResolvedValue(db);
   const sending = spyOn(RelaySender.prototype, "send").mockResolvedValue({ status: 200 });
   let stop = () => {};
   onTestFinished(async () => {
     stop();
     await publishBadge([], async () => undefined);
     sending.mockRestore();
-    access.mockRestore();
-    await db.close();
   });
   const count = mock(async () => 2);
   expect(publishBadge(badgeTopics, count)).toBeUndefined();

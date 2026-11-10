@@ -76,7 +76,6 @@ test("model discovery returns the client catalog with provider and option metada
   const [tool] = modelTools;
   expect(await tool.handler({ provider: undefined }, "toy-box-caller")).toEqual(catalog);
   expect(await tool.handler({ provider: "codex" }, "toy-box-caller")).toEqual([catalog[1]]);
-  expect(tool.parameters?.safeParse({ provider: "other" }).success).toBe(false);
 });
 
 test("session discovery bounds results and searches titles across providers, newest first", async () => {
@@ -185,7 +184,6 @@ describe("SDK lifecycle tools", () => {
       { content: "Start a durable investigation", model: undefined },
       {
         directory: undefined,
-        sessionType: "standard",
         useWorktree: false,
       },
     );
@@ -214,7 +212,6 @@ describe("SDK lifecycle tools", () => {
     expect(createSessionMock.mock.calls[0]?.[1]).toEqual({ content: "Work elsewhere", model });
     expect(createSessionMock.mock.calls[0]?.[2]).toEqual({
       directory: "/other",
-      sessionType: "standard",
       useWorktree: true,
     });
   });

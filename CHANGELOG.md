@@ -1,3 +1,22 @@
+## 📅 v0.3.8 (11/10/26)
+
+- The Toy Box web client now loads faster, especially on your phone.
+- Very large sessions now open reliably. Long sessions load their latest messages first, and load earlier ones as you scroll up.
+- If a session loses its connection mid-turn, it now picks up where it left off, instead of freezing until the turn ends
+- If a message fails to send (in a session or a channel), it's now restored to the composer instead of being lost
+- Open sessions now recover on their own after the server restarts, and your Hyper session stays your Hyper session across restarts
+- Codex subagents can now use Toy Box's tools, instead of having their calls declined
+- Deleting a session whose history was already removed outside Toy Box now succeeds, instead of failing with "not found"
+- Live updates for sessions and channels are now compressed, which makes them much lighter over slow connections (e.g. your phone)
+- Channel attachments are now more reliable, since they're stored with the channel, and keep working even if their original file is moved or deleted. This also makes channels lighter to load, and deleting a channel now deletes its attachments.
+- The channel list now includes each channel's pending request, so the iOS/macOS apps can show what's waiting on you without downloading message history
+- Custom file editors are now apps. An app can declare the file types it opens (e.g. `.http`), and those files then open in it, so there's one way to build an editor.
+- Images and videos now preview in file panes. Files that aren't text (e.g. PDFs or archives) show "This file isn't text" instead of opening as garbled, editable text, so they can't be accidentally overwritten.
+- If an agent changes a file while you're typing in it, your pending save no longer overwrites the agent's change
+- When a file switches to a different editor (e.g. after installing an app that opens it), the new editor starts from your latest edits instead of the last save
+- Files opened in a browser tab now use their real type, so PDFs, audio, CSV and Markdown files display instead of downloading
+- The Channels and Automations sidebar sections are now always visible, even when empty, so you can create your first one from there
+
 ## 📅 v0.3.7 (11/06/26)
 
 - Channels now support bookmarking messages, so you can keep track of ones you want to revisit.

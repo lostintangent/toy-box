@@ -5,11 +5,8 @@
 import { z } from "zod";
 import { modelConfigurationSchema } from "@providers/model";
 import { attachmentsSchema } from "@/shared/attachments/model";
-import { sessionSystemMessageSchema } from "./systemMessages";
 
-export const sessionTypeSchema = z.enum(["standard", "automation", "hyper", "worker"]);
-
-export type SessionType = z.infer<typeof sessionTypeSchema>;
+export type SessionType = "standard" | "automation" | "hyper" | "worker";
 
 export const sessionInputSchema = z.object({
   sessionId: z.string(),
@@ -22,7 +19,6 @@ export const waitForSessionInputSchema = sessionInputSchema.extend({
 export const listSkillsInputSchema = z.object({
   provider: z.string().optional(),
   cwd: z.string().min(1).optional(),
-  sessionType: sessionTypeSchema.optional(),
 });
 
 export const resolveSessionContextInputSchema = z.object({
@@ -37,6 +33,10 @@ export const renameSessionInputSchema = sessionInputSchema.extend({
 
 export const rewindSessionInputSchema = sessionInputSchema.extend({
   timestamp: z.string().min(1),
+});
+
+export const querySessionMessagesInputSchema = sessionInputSchema.extend({
+  before: z.number().int().positive(),
 });
 
 export const createSessionInputSchema = sessionInputSchema.extend({
@@ -76,32 +76,8 @@ export const sessionLaunchSchema = z.object({
 
 export type SessionLaunch = z.infer<typeof sessionLaunchSchema>;
 
-const streamSessionBaseSchema = sessionInputSchema.extend({
-  afterEventId: z.number().int().nonnegative().optional(),
-});
-
-const sessionSubscriptionModeSchema = z.enum(["active", "passive"]);
-
-// Every request identifies the streamed session and replay cursor. A message
-// optionally mutates that same stream; location is established only with its first message.
-export const streamSessionRequestSchema = streamSessionBaseSchema.and(
-  z.union([
-    sessionLaunchSchema,
-    z.object({
-      message: z.never().optional(),
-      location: z.never().optional(),
-      mode: sessionSubscriptionModeSchema.optional(),
-    }),
-  ]),
-);
-
-export const deliverMessageInputSchema = sessionInputSchema.extend({
-  message: sessionMessageSchema,
-});
-
-export const sendSystemMessageInputSchema = sessionInputSchema.extend({
-  message: sessionSystemMessageSchema,
-});
+// A location establishes the session with its first message.
+export const deliverMessageInputSchema = sessionInputSchema.extend(sessionLaunchSchema.shape);
 
 export const queuedMessageInputSchema = sessionInputSchema.extend({
   clientId: z.string(),
@@ -118,5 +94,3 @@ export const answerSessionQuestionInputSchema = sessionInputSchema.extend(
 );
 
 export type SessionQuestionAnswer = z.infer<typeof sessionQuestionAnswerSchema>;
-export type SessionSubscriptionMode = z.infer<typeof sessionSubscriptionModeSchema>;
-export type StreamSessionRequest = z.infer<typeof streamSessionRequestSchema>;

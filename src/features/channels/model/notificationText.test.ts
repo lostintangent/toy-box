@@ -9,8 +9,8 @@ import {
 } from "./notificationText";
 
 const agents = [{ name: "Lead" }, { name: "Ada Lovelace" }];
-const image = { name: "door.png", url: "/door.png" };
-const file = { name: "notes.pdf", url: "/notes.pdf" };
+const image = { name: "door.png", url: "/door.png", mimeType: "image/png" };
+const file = { name: "walkthrough.mov", url: "/walkthrough.mov", mimeType: "video/quicktime" };
 const graphemes = (text: string) => [
   ...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text),
 ];
@@ -50,12 +50,9 @@ test("attachment-only and empty requests mirror Swift's exact words", () => {
   expect(notificationRequestBody({ content: "", attachments: [image, file] }, agents)).toBe(
     "Sent 2 files",
   );
-  expect(
-    notificationRequestBody(
-      { content: "@lead", attachments: [{ mimeType: "image/png", base64: "" }] },
-      agents,
-    ),
-  ).toBe("Sent an image");
+  expect(notificationRequestBody({ content: "@lead", attachments: [image] }, agents)).toBe(
+    "Sent an image",
+  );
   expect(notificationRequestBody({ content: "  " }, agents)).toBe(notificationWaitingBody);
   expect(notificationRequestBody({ content: "@unknown" }, agents)).toBe(notificationWaitingBody);
 });

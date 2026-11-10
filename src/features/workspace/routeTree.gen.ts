@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as indexRouteImport } from './routes/index'
 import { Route as ApiWorkspaceRouteImport } from './routes/api/workspace'
+import { Route as ApiSessionsSessionIdRouteImport } from './../sessions/routes/sessions/$sessionId'
 import { Route as ApiV1InboxRouteImport } from './../inbox/routes/v1/inbox'
 import { Route as ApiV1ModelsRouteImport } from './../providers/routes/v1/models'
 import { Route as ApiServeScopeSplatRouteImport } from './../files/routes/serve/$scope/$'
@@ -38,6 +39,11 @@ const indexRoute = indexRouteImport.update({
 const ApiWorkspaceRoute = ApiWorkspaceRouteImport.update({
   id: '/api/workspace',
   path: '/api/workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSessionsSessionIdRoute = ApiSessionsSessionIdRouteImport.update({
+  id: '/api/sessions/$sessionId',
+  path: '/api/sessions/$sessionId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiV1InboxRoute = ApiV1InboxRouteImport.update({
@@ -145,6 +151,7 @@ const ApiV1ChannelsChannelIdDotroutinesDotroutineIdDotrunRoute =
 export interface FileRoutesByFullPath {
   '/': typeof indexRoute
   '/api/workspace': typeof ApiWorkspaceRoute
+  '/api/sessions/$sessionId': typeof ApiSessionsSessionIdRoute
   '/api/v1/inbox': typeof ApiV1InboxRoute
   '/api/v1/models': typeof ApiV1ModelsRoute
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
@@ -167,6 +174,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof indexRoute
   '/api/workspace': typeof ApiWorkspaceRoute
+  '/api/sessions/$sessionId': typeof ApiSessionsSessionIdRoute
   '/api/v1/inbox': typeof ApiV1InboxRoute
   '/api/v1/models': typeof ApiV1ModelsRoute
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
@@ -190,6 +198,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof indexRoute
   '/api/workspace': typeof ApiWorkspaceRoute
+  '/api/sessions/$sessionId': typeof ApiSessionsSessionIdRoute
   '/api/v1/inbox': typeof ApiV1InboxRoute
   '/api/v1/models': typeof ApiV1ModelsRoute
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
@@ -214,6 +223,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/api/workspace'
+    | '/api/sessions/$sessionId'
     | '/api/v1/inbox'
     | '/api/v1/models'
     | '/api/serve/$scope/$'
@@ -236,6 +246,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/api/workspace'
+    | '/api/sessions/$sessionId'
     | '/api/v1/inbox'
     | '/api/v1/models'
     | '/api/serve/$scope/$'
@@ -258,6 +269,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/api/workspace'
+    | '/api/sessions/$sessionId'
     | '/api/v1/inbox'
     | '/api/v1/models'
     | '/api/serve/$scope/$'
@@ -281,6 +293,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   indexRoute: typeof indexRoute
   ApiWorkspaceRoute: typeof ApiWorkspaceRoute
+  ApiSessionsSessionIdRoute: typeof ApiSessionsSessionIdRoute
   ApiV1InboxRoute: typeof ApiV1InboxRoute
   ApiV1ModelsRoute: typeof ApiV1ModelsRoute
   ApiServeScopeSplatRoute: typeof ApiServeScopeSplatRoute
@@ -305,6 +318,13 @@ declare module '@tanstack/react-router' {
       path: '/api/workspace'
       fullPath: '/api/workspace'
       preLoaderRoute: typeof ApiWorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/sessions/$sessionId': {
+      id: '/api/sessions/$sessionId'
+      path: '/api/sessions/$sessionId'
+      fullPath: '/api/sessions/$sessionId'
+      preLoaderRoute: typeof ApiSessionsSessionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/v1/inbox': {
@@ -528,6 +548,7 @@ const ApiV1PushRegistrationIDRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   indexRoute: indexRoute,
   ApiWorkspaceRoute: ApiWorkspaceRoute,
+  ApiSessionsSessionIdRoute: ApiSessionsSessionIdRoute,
   ApiV1InboxRoute: ApiV1InboxRoute,
   ApiV1ModelsRoute: ApiV1ModelsRoute,
   ApiServeScopeSplatRoute: ApiServeScopeSplatRoute,

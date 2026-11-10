@@ -11,18 +11,18 @@ import {
   CHANNEL_LEAD_PROFILE,
   resolveChannelAgentId,
   type Channel,
-  type ChannelEvent as ClientChannelEvent,
+  type ChannelCatalogEntry,
+  type ChannelEvent,
   type ChannelChanges,
   type ChannelMessageActor,
   type ChannelMemberChanges,
   type ChannelAgentStatus,
   type ChannelArtifact,
-  type ChannelCatalogEntry,
   type ChannelList,
   channelMemberIdentity,
   type ChannelMember,
-  type ChannelMessage as ClientChannelMessage,
-  type ChannelConversationMessage as ClientConversationMessage,
+  type ChannelMessage,
+  type ChannelConversationMessage,
   type ChannelReaction,
   type ChannelMessageSender,
   type ChannelSystemMessageContent,
@@ -39,6 +39,7 @@ import { reduceChannel } from "@channels/model/reducer";
 import { applyPatch } from "@channels/model/changes";
 import { previewSchema } from "@/shared/preview";
 import { machineFile, sessionFile, workspaceFileId } from "@files/model";
+import { createFileServeUrl } from "@files/model/paths";
 import { modelConfigurationSchema } from "@providers/model";
 import { inStateTransaction } from "@/server/database";
 import { nextCronOccurrence } from "@/shared/cron";
@@ -51,17 +52,22 @@ import {
   channelRoster,
   isChannelLead,
 } from "@channels/model/worker";
+import { channelAttachment } from "./attachments";
 
 import { z } from "zod";
-import { attachmentSchema } from "@/shared/attachments/model";
 
-const channelAttachmentSchema = z.union([attachmentSchema, z.string().min(1).max(4_096)]);
+/** The names of a message's attachments, which the Channel keeps in that message's folder. */
+const channelAttachmentsSchema = z.array(z.string().min(1));
 const channelBookmarksSchema = z.array(z.number().int().positive());
-export type StoredAttachment = z.output<typeof channelAttachmentSchema>;
-export type StoredChannelMessage = ClientChannelMessage<StoredAttachment>;
-type ChannelMessage = StoredChannelMessage;
-type ChannelConversationMessage = ClientConversationMessage<StoredAttachment>;
-type ChannelEvent = ClientChannelEvent<StoredAttachment>;
+/** A Channel with its tasks, which only its detail carries; the catalog projects it without them. */
+export type StoredChannel = Channel & {
+  revision: number;
+  request: ChannelConversationMessage | null;
+};
+
+export function catalogEntry({ tasks: _tasks, ...entry }: StoredChannel): ChannelCatalogEntry {
+  return entry;
+}
 
 export class ChannelInputError extends Error {}
 
@@ -69,21 +75,29 @@ export class ChannelInputError extends Error {}
 export type ChannelChange = {
   channelId: string;
   events: readonly ChannelEvent[];
-  channel?: ChannelCatalogEntry;
+  channel?: StoredChannel;
 };
 
 /** Durable Channels, ordered messages, agent read positions, and shared file references. */
 export class ChannelDatabase {
   constructor(private readonly db: Bun.SQL) {}
 
+  /** Each entry's request is read in the same instant as the cursor that points at it. */
   async listChannels(): Promise<ChannelList> {
-    const [rows, workers] = await Promise.all([
-      readChannelRows(this.db),
-      new WorkerDatabase(this.db).list("channel"),
-    ]);
+    const [rows, requests, workers] = await inStateTransaction(this.db, (db) =>
+      Promise.all([
+        readChannelRows(db),
+        readPendingRequests(db),
+        new WorkerDatabase(db).list("channel"),
+      ]),
+    );
     const channelIds = new Set(rows.map(({ id }) => id));
     return {
-      channels: rows.map(catalogEntryFromRow),
+      channels: rows.map((row) => ({
+        ...channelMetadataFromRow(row),
+        revision: row.revision,
+        request: requests.get(row.id) ?? null,
+      })),
       members: workers.flatMap((worker) =>
         !channelIds.has(worker.channelId) || isChannelLead(worker)
           ? []
@@ -95,7 +109,7 @@ export class ChannelDatabase {
   async createChannel(
     input: CreateChannelInput,
     lead: Extract<Worker, { type: "channel" }>,
-  ): Promise<ChannelCatalogEntry> {
+  ): Promise<StoredChannel> {
     const id = lead.sessionId;
     return inStateTransaction(this.db, async (db) => {
       await db`
@@ -106,13 +120,14 @@ export class ChannelDatabase {
         })}
       `;
       await new WorkerDatabase(db).create(lead);
-      return requireChannel(db, id);
+      const [row] = await readChannelRows(db, id);
+      return { ...channelFromRow(row!), revision: row!.revision, request: null };
     });
   }
 
-  async getChannel(channelId: string): Promise<ChannelCatalogEntry | null> {
+  async getChannel(channelId: string): Promise<StoredChannel | null> {
     const [row] = await readChannelRows(this.db, channelId);
-    return row ? catalogEntryFromRow(row) : null;
+    return row ? readCatalogEntry(this.db, channelFromRow(row), row.revision) : null;
   }
 
   async editChannel({ channelId, ...changes }: EditChannelInput) {
@@ -144,7 +159,7 @@ export class ChannelDatabase {
         RETURNING *
       `;
       if (!row) return null;
-      const channel = catalogEntryFromRow(row);
+      const channel = await readCatalogEntry(db, channelFromRow(row), row.revision);
       return {
         channelId,
         channel,
@@ -271,26 +286,27 @@ export class ChannelDatabase {
     return changeAgentStatus(this.db, agentId, undefined, false, state);
   }
 
-  async updateChannel(leadId: string, input: UpdateChannelInput) {
+  /** The lead's update, whose ID is its Channel's. */
+  async updateChannel(channelId: string, input: UpdateChannelInput) {
     return inStateTransaction(this.db, async (db) => {
-      const channel = await requireLeadChannel(db, leadId);
+      const channel = await requireChannel(db, channelId);
       const tasks = input.tasks && (await resolveTaskReferences(db, channel.id, input.tasks));
       return updateChannelFields(db, channel, tasks ? { ...input, tasks } : input, {
         type: "agent",
-        agentId: leadId,
+        agentId: channelId,
       });
     });
   }
 
-  async editTasks(leadId: string, { operations }: EditChannelTasksInput) {
+  async editTasks(channelId: string, { operations }: EditChannelTasksInput) {
     return inStateTransaction(this.db, async (db) => {
-      const channel = await requireLeadChannel(db, leadId);
+      const channel = await requireChannel(db, channelId);
       const tasks = await resolveTaskReferences(
         db,
         channel.id,
         applyChannelTaskEdits(channel.tasks, operations),
       );
-      return updateChannelFields(db, channel, { tasks }, { type: "agent", agentId: leadId });
+      return updateChannelFields(db, channel, { tasks }, { type: "agent", agentId: channelId });
     });
   }
 
@@ -354,16 +370,21 @@ export class ChannelDatabase {
     });
   }
 
-  /** Appends a user or Agent message. The lead can flag its own message as a request for the user. */
+  /** Appends a user or Agent message. The lead can flag its own message as a request for the user.
+   *  An ID the Channel already has returns that stored message without recording an event. */
   async appendMessage({
     channelId,
     attachments,
     request,
     replies,
     ...message
-  }: Omit<ChannelConversationMessage, "sequence" | "timestamp" | "reactions" | "request"> & {
+  }: Omit<
+    ChannelConversationMessage,
+    "sequence" | "timestamp" | "reactions" | "request" | "attachments"
+  > & {
     channelId: string;
     request?: boolean;
+    attachments?: string[];
   }) {
     // A lead's Agent ID is its Channel's ID.
     if (request && !(message.sender.type === "agent" && message.sender.agentId === channelId)) {
@@ -371,6 +392,14 @@ export class ChannelDatabase {
     }
     return inStateTransaction(this.db, async (db) => {
       const channel = await requireChannel(db, channelId);
+      const [row] = await db<ChannelMessageRow[]>`
+        SELECT * FROM channel_messages
+        WHERE channel_id = ${channelId} AND id = ${message.id}
+      `;
+      if (row) {
+        const replay = await recordChannelChange(db, channel, []);
+        return { ...replay, message: messageFromRow(row, []), acknowledgedRequest: false };
+      }
       const acknowledgedRequest =
         message.sender.type === "user" && channel.requestSequence !== null;
       const change = await appendMessage(db, channelId, (position) => ({
@@ -534,10 +563,10 @@ export class ChannelDatabase {
     return listRoutines(this.db, channelId);
   }
 
-  /** Adds a routine to the lead's Channel, or changes one. An identical change is a no-op. */
-  async setRoutine(leadId: string, { routineId, ...input }: SetChannelRoutineInput) {
+  /** Adds a routine to the Channel, or changes one. An identical change is a no-op. */
+  async setRoutine(channelId: string, { routineId, ...input }: SetChannelRoutineInput) {
     return inStateTransaction(this.db, async (db) => {
-      const channel = await requireLeadChannel(db, leadId);
+      const channel = await requireChannel(db, channelId);
       const routine = { id: routineId ?? crypto.randomUUID(), ...input };
       const nextAt = nextCronOccurrence(input.schedule, new Date()).toISOString();
       if (routineId) {
@@ -710,7 +739,11 @@ async function recordChannelChange<Event extends ChannelEvent>(
     SELECT revision FROM channels WHERE id = ${channel.id}
   `;
   if (!row) throw new Error("Channel not found.");
-  return { channelId: channel.id, events, channel: { ...channel, revision: row.revision } };
+  return {
+    channelId: channel.id,
+    events,
+    channel: await readCatalogEntry(db, channel, row.revision),
+  };
 }
 
 async function updateChannelFields(
@@ -796,10 +829,12 @@ function appendSystemMessage(db: Bun.SQL, channelId: string, content: ChannelSys
   }));
 }
 
-async function appendMessage<Message extends ChannelMessage>(
+async function appendMessage(
   db: Bun.SQL,
   channelId: string,
-  build: (position: Pick<ChannelMessage, "sequence" | "timestamp">) => Message,
+  build: (
+    position: Pick<ChannelMessage, "sequence" | "timestamp">,
+  ) => Omit<ChannelMessage, "attachments"> & { attachments?: string[] },
 ) {
   const now = new Date().toISOString();
   const [channel] = await db<Pick<ChannelRow, "latest_sequence" | "revision">[]>`
@@ -816,18 +851,8 @@ async function appendMessage<Message extends ChannelMessage>(
     sequence: channel.latest_sequence,
     timestamp: now,
   });
-  await db`
-    INSERT INTO channel_messages ${db({ channel_id: channelId, ...messageColumns(message) })}
-  `;
-  return {
-    type: "message" as const,
-    message,
-    revision: channel.revision,
-  };
-}
-
-function messageColumns(message: ChannelMessage) {
-  return {
+  const row = {
+    channel_id: channelId,
     id: message.id,
     sequence: message.sequence,
     timestamp: message.timestamp,
@@ -838,6 +863,12 @@ function messageColumns(message: ChannelMessage) {
     attachments: message.attachments?.length ? JSON.stringify(message.attachments) : null,
     request: message.request ? 1 : 0,
     replies: message.replies ? JSON.stringify(message.replies) : null,
+  };
+  await db`INSERT INTO channel_messages ${db(row)}`;
+  return {
+    type: "message" as const,
+    message: messageFromRow(row, []),
+    revision: channel.revision,
   };
 }
 
@@ -878,6 +909,35 @@ async function getAgent(db: Bun.SQL, agentId: string) {
   const worker = await new WorkerDatabase(db).get(agentId, "channel");
   if (!worker) return null;
   return channelAgentFromWorker(worker);
+}
+
+/** The catalog shows a pending request without reactions, which only its transcript tracks. */
+async function readCatalogEntry(
+  db: Bun.SQL,
+  channel: Channel,
+  revision: number,
+): Promise<StoredChannel> {
+  const request =
+    channel.requestSequence === null
+      ? undefined
+      : (await readPendingRequests(db, channel.id)).get(channel.id);
+  return { ...channel, revision, request: request ?? null };
+}
+
+async function readPendingRequests(db: Bun.SQL, channelId?: string) {
+  const where = channelId === undefined ? db`` : db`WHERE channels.id = ${channelId}`;
+  const rows = await db<ChannelMessageRow[]>`
+    SELECT channel_messages.* FROM channels
+    JOIN channel_messages ON channel_messages.channel_id = channels.id
+      AND channel_messages.sequence = channels.request_sequence
+    ${where}
+  `;
+  const requests = new Map<string, ChannelConversationMessage>();
+  for (const row of rows) {
+    const message = messageFromRow(row, []);
+    if (!isChannelSystemMessage(message)) requests.set(row.channel_id, message);
+  }
+  return requests;
 }
 
 /** Request content is retained even when its message has left the snapshot window. */
@@ -995,18 +1055,21 @@ async function readChannelRows(db: Bun.SQL, channelId?: string) {
   `;
 }
 
-function catalogEntryFromRow(row: ChannelRow): ChannelCatalogEntry {
-  return { ...channelFromRow(row), revision: row.revision };
+function channelFromRow(row: ChannelRow): Channel {
+  return {
+    ...channelMetadataFromRow(row),
+    tasks: channelTasksSchema.parse(JSON.parse(row.tasks)),
+  };
 }
 
-function channelFromRow(row: ChannelRow): Channel {
+/** Everything but tasks, which the catalog leaves to each Channel's detail. */
+function channelMetadataFromRow(row: ChannelRow): Omit<Channel, "tasks"> {
   return {
     id: row.id,
     name: row.name,
     ...(row.purpose ? { purpose: row.purpose } : {}),
     ...(row.directory ? { directory: row.directory } : {}),
     model: modelConfigurationSchema.parse(JSON.parse(row.model)),
-    tasks: channelTasksSchema.parse(JSON.parse(row.tasks)),
     ...(row.preview ? { preview: previewSchema.parse(JSON.parse(row.preview)) } : {}),
     latestSequence: row.latest_sequence,
     seenThrough: row.seen_through,
@@ -1034,15 +1097,9 @@ async function requireChannelMemberWorker(
   return worker;
 }
 
-async function requireChannel(db: Bun.SQL, channelId: string): Promise<ChannelCatalogEntry> {
+async function requireChannel(db: Bun.SQL, channelId: string): Promise<Channel> {
   const [row] = await readChannelRows(db, channelId);
   if (!row) throw new Error("Channel not found.");
-  return catalogEntryFromRow(row);
-}
-
-async function requireLeadChannel(db: Bun.SQL, leadId: string): Promise<Channel> {
-  const [row] = await readChannelRows(db, leadId);
-  if (!row) throw new Error("Only the channel lead can update the channel.");
   return channelFromRow(row);
 }
 
@@ -1072,7 +1129,13 @@ async function assertMemberNameAvailable(
 function artifactFromRow(row: ChannelArtifactRow): ChannelArtifact {
   const file =
     row.kind === "session" ? sessionFile(row.session_id, row.path) : machineFile(row.path);
-  return { id: workspaceFileId(file), file, title: row.title, sharedAt: row.created_at };
+  return {
+    id: workspaceFileId(file),
+    file,
+    title: row.title,
+    sharedAt: row.created_at,
+    url: createFileServeUrl(file),
+  };
 }
 
 function messageFromRow(row: ChannelMessageRow, reactions: ChannelReaction[]): ChannelMessage {
@@ -1082,15 +1145,21 @@ function messageFromRow(row: ChannelMessageRow, reactions: ChannelReaction[]): C
     timestamp: row.timestamp,
   };
   if (row.sender_type === "system") {
+    const content = channelSystemMessageContentSchema.parse(JSON.parse(row.content));
+    if (!("artifact" in content)) return { ...common, sender: { type: "system" }, content };
+    const { file } = content.artifact;
+    const address = { id: workspaceFileId(file), url: createFileServeUrl(file) };
     return {
       ...common,
       sender: { type: "system" },
-      content: channelSystemMessageContentSchema.parse(JSON.parse(row.content)),
+      content: { ...content, artifact: { ...content.artifact, ...address } },
     };
   }
 
   const attachments = row.attachments
-    ? channelAttachmentSchema.array().parse(JSON.parse(row.attachments))
+    ? channelAttachmentsSchema
+        .parse(JSON.parse(row.attachments))
+        .map((name) => channelAttachment(row.channel_id, row.id, name))
     : undefined;
   const replies = row.replies ? channelRepliesSchema.parse(JSON.parse(row.replies)) : undefined;
   const sender: Exclude<ChannelMessageSender, { type: "system" }> =

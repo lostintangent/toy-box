@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import type { Channel, ChannelList, ChannelMessage } from "@channels/model";
+import type { ChannelCatalogEntry, ChannelList, ChannelMessage } from "@channels/model";
 import {
   bookmarkChannelMessageInputSchema,
   channelIdentitySchema,
@@ -20,7 +20,7 @@ export const listChannels = createServerFn({ method: "GET" }).handler((): Promis
 
 export const createChannel = createServerFn({ method: "POST" })
   .validator(createChannelInputSchema)
-  .handler(({ data }): Promise<Channel> => channels.createChannel(data));
+  .handler(({ data }): Promise<ChannelCatalogEntry> => channels.createChannel(data));
 
 export const createChannelMember = createServerFn({ method: "POST" })
   .validator(createChannelMemberInputSchema)
@@ -32,7 +32,7 @@ export const updateChannelMember = createServerFn({ method: "POST" })
 
 export const editChannel = createServerFn({ method: "POST" })
   .validator(editChannelInputSchema)
-  .handler(({ data }): Promise<Channel> => channels.editChannel(data));
+  .handler(({ data }): Promise<ChannelCatalogEntry> => channels.editChannel(data));
 
 export const deleteChannel = createServerFn({ method: "POST" })
   .validator(channelIdentitySchema)
@@ -72,4 +72,6 @@ export const bookmarkChannelMessage = createServerFn({ method: "POST" })
 
 export const postChannelMessage = createServerFn({ method: "POST" })
   .validator(postChannelMessageInputSchema)
-  .handler(({ data }): Promise<ChannelMessage> => channels.postChannelMessage(data));
+  .handler(({ data }): Promise<ChannelMessage> =>
+    channels.postChannelMessage(data, { type: "user" }),
+  );

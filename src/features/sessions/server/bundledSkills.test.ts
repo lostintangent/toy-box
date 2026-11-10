@@ -2,8 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SessionType } from "@sessions/model";
-import { getSessionSkillDirectories, installBundledSkills } from "./bundledSkills";
+import { installBundledSkills } from "./bundledSkills";
 
 const temporaryRoots: string[] = [];
 
@@ -58,22 +57,5 @@ describe("bundled SDK skills", () => {
     );
     expect(await readFile(join(root, "second-skill", "SKILL.md"), "utf-8")).toBe("second");
     expect(await readFile(userSkill, "utf-8")).toBe("user owned");
-  });
-
-  test("exposes universal skills to every session and editor authoring only to Hyper", () => {
-    const root = "/skills";
-    const universal = ["create-toy-box-app", "create-toy-box-brief", "execute-toy-box-brief"];
-    const expected = {
-      standard: universal,
-      automation: universal,
-      worker: universal,
-      hyper: [...universal, "create-toy-box-editor"],
-    } satisfies Record<SessionType, readonly string[]>;
-
-    for (const [sessionType, skillNames] of Object.entries(expected)) {
-      expect(getSessionSkillDirectories(sessionType as SessionType, root)).toEqual(
-        skillNames.map((name) => join(root, name)),
-      );
-    }
   });
 });

@@ -34,19 +34,18 @@ import { appDefinitionRegistry, parseAppDefinitionFiles } from "./definitions";
 const definitionQueues = sharedMap<SerialTaskQueue>("app-definition-queues");
 
 export async function getArtifactAppBundle(file: SessionFile) {
-  const source = await readFile(file);
-  return compileArtifactApp(file, source.content);
+  const { content } = await readFile(file);
+  if (content === null) throw new Error("This file isn't text.");
+  return compileArtifactApp(file, content);
 }
 
 export async function listApps(): Promise<AppList> {
-  const [definitions, database] = await Promise.all([
+  const appStore = new AppDatabase(await getStateDatabase());
+  const [definitions, apps, shares] = await Promise.all([
     appDefinitionRegistry.list(),
-    getStateDatabase({ createIfMissing: false }),
+    appStore.list(),
+    appStore.listShares(),
   ]);
-  if (!database) return { apps: [], definitions, shares: [] };
-
-  const appStore = new AppDatabase(database);
-  const [apps, shares] = await Promise.all([appStore.list(), appStore.listShares()]);
   return { apps, definitions, shares };
 }
 

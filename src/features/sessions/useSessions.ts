@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
 import { generateUUID } from "@/shared/utils";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { sessionMutations } from "./mutations";
@@ -14,11 +14,13 @@ function selectCatalog(state: SessionsState) {
 }
 
 /** Session catalog and optimistic creation, including reuse of an untouched session. */
-export function useSessions({ hiddenSessionIds }: { hiddenSessionIds: string[] }) {
-  const { data, isLoading } = useQuery({ ...sessionQueries.state(), select: selectCatalog });
+export function useSessions() {
+  const { data } = useSuspenseQuery({ ...sessionQueries.state, select: selectCatalog });
   const create = useMutation(sessionMutations.createSession());
-  const draftSessions =
-    data?.sessions.filter((session) => !session.provider && !data.ownership[session.id]) ?? [];
+  const draftSessions = data.sessions.filter(
+    (session) => !session.provider && !data.ownership[session.id],
+  );
+  const hyperSessionId = useWorkspaceSelector((workspace) => workspace.settings.hyperSessionId);
   const drafts = useWorkspaceSelector((workspace) =>
     Object.fromEntries(
       draftSessions.map(({ id }) => {
@@ -27,7 +29,7 @@ export function useSessions({ hiddenSessionIds }: { hiddenSessionIds: string[] }
       }),
     ),
   );
-  const sessions = data?.sessions.map((session) => {
+  const sessions = data.sessions.map((session) => {
     const updatedAt = drafts[session.id]?.updatedAt;
     return updatedAt ? { ...session, updatedAt: new Date(updatedAt) } : session;
   });
@@ -36,9 +38,7 @@ export function useSessions({ hiddenSessionIds }: { hiddenSessionIds: string[] }
     if (!options?.hyper && !options?.artifact) {
       const reusable = draftSessions.find(
         (session) =>
-          !session.artifactPath &&
-          !drafts[session.id]?.hasText &&
-          !hiddenSessionIds.includes(session.id),
+          !session.artifactPath && !drafts[session.id]?.hasText && session.id !== hyperSessionId,
       );
       if (reusable) return reusable.id;
     }
@@ -49,9 +49,8 @@ export function useSessions({ hiddenSessionIds }: { hiddenSessionIds: string[] }
 
   return {
     sessions,
-    ownership: data?.ownership,
-    isLoading,
-    worktreeSessionIds: data?.worktreeSessionIds ?? [],
+    ownership: data.ownership,
+    worktreeSessionIds: data.worktreeSessionIds,
     createSession,
   };
 }

@@ -1,144 +1,69 @@
-import { expect, onTestFinished, test } from "bun:test";
+import { expect, test } from "bun:test";
+import { installFakeSockets } from "@/shared/testFixtures";
 import { TerminalConnection } from "./connection";
 
-test("introduces the client with its current size and shell each time the socket opens", () => {
-  const harness = createHarness();
-  harness.connection.open();
-  harness.socket().accept();
+test("sends input typed before the socket opens as soon as it does", () => {
+  const { socket, connection } = createHarness();
+  connection.open();
+  connection.send("l");
+  connection.send("s\r");
 
-  Object.assign(harness.size, { cols: 100, rows: 30 });
-  harness.socket().drop();
-  harness.runTimers();
-  harness.socket().accept();
+  socket().accept();
 
-  expect(harness.sockets.map((socket) => socket.sent[0])).toEqual([
-    { type: "init", clientId: "tab-1", cols: 80, rows: 24, shell: "zsh" },
-    { type: "init", clientId: "tab-1", cols: 100, rows: 30, shell: "zsh" },
-  ]);
+  expect(socket().sent).toEqual(["ls\r"]);
 });
 
-test("sends input typed before the socket opens right after init", () => {
-  const harness = createHarness();
-  harness.connection.open();
-  harness.connection.send("l");
-  harness.connection.send("s\r");
+test("sends a resize made while the socket connects as soon as it opens", () => {
+  const { socket, connection } = createHarness();
+  connection.open();
+  connection.resize(100, 30);
 
-  harness.socket().accept();
+  socket().accept();
 
-  expect(harness.socket().sent).toEqual([expect.objectContaining({ type: "init" }), "ls\r"]);
+  expect(socket().sent).toEqual([{ type: "resize", cols: 100, rows: 30 }]);
 });
 
 test("reconnects as soon as input arrives while the socket is down", () => {
-  const harness = createHarness();
-  harness.connection.open();
-  harness.socket().accept();
-  harness.socket().drop();
+  const { sockets, socket, connection } = createHarness();
+  connection.open();
+  socket().accept();
+  socket().drop();
 
-  harness.connection.send("x");
-  expect(harness.sockets).toHaveLength(2);
+  connection.send("x");
+  expect(sockets).toHaveLength(2);
 
-  harness.socket().accept();
-  expect(harness.socket().sent).toEqual([expect.objectContaining({ type: "init" }), "x"]);
+  socket().accept();
+  expect(socket().sent).toEqual(["x"]);
 });
 
 test("stays closed after another tab replaces its socket", () => {
-  const harness = createHarness();
-  harness.connection.open();
-  harness.socket().accept();
+  const { sockets, socket, connection, runTimers } = createHarness();
+  connection.open();
+  socket().accept();
 
-  harness.socket().drop(4000);
-  harness.runTimers();
+  socket().drop(4000);
+  runTimers();
 
-  expect(harness.sockets).toHaveLength(1);
+  expect(sockets).toHaveLength(1);
 });
 
 test("drops held input when closed", () => {
-  const harness = createHarness();
-  harness.connection.open();
-  harness.connection.send("make\r");
-  harness.connection.close();
+  const { socket, connection } = createHarness();
+  connection.open();
+  connection.send("make\r");
+  connection.close();
 
-  harness.connection.open();
-  harness.socket().accept();
+  connection.open();
+  socket().accept();
 
-  expect(harness.socket().sent).toEqual([expect.objectContaining({ type: "init" })]);
+  expect(socket().sent).toEqual([]);
 });
 
 function createHarness() {
-  const sockets: FakeWebSocket[] = [];
-  const timers = new Map<number, () => void>();
-  let nextTimer = 0;
-
-  class FakeWebSocket {
-    static readonly CONNECTING = 0;
-    static readonly OPEN = 1;
-    static readonly CLOSED = 3;
-
-    readyState = FakeWebSocket.CONNECTING;
-    binaryType = "blob";
-    sent: unknown[] = [];
-    onopen: (() => void) | null = null;
-    onclose: ((event: { code: number }) => void) | null = null;
-    onmessage: (() => void) | null = null;
-    onerror: (() => void) | null = null;
-
-    constructor() {
-      sockets.push(this);
-    }
-
-    send(data: string | Uint8Array) {
-      this.sent.push(typeof data === "string" ? JSON.parse(data) : new TextDecoder().decode(data));
-    }
-
-    close() {
-      this.readyState = FakeWebSocket.CLOSED;
-    }
-
-    accept() {
-      this.readyState = FakeWebSocket.OPEN;
-      this.onopen?.();
-    }
-
-    drop(code = 1006) {
-      this.readyState = FakeWebSocket.CLOSED;
-      this.onclose?.({ code });
-    }
-  }
-
-  const globals = {
-    WebSocket: FakeWebSocket,
-    window: { location: { origin: "http://localhost" } },
-    setTimeout: (callback: () => void) => {
-      timers.set(++nextTimer, callback);
-      return nextTimer;
-    },
-    clearTimeout: (id: number) => timers.delete(id),
-  };
-  const originals = Object.keys(globals).map(
-    (name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const,
-  );
-  for (const [name, value] of Object.entries(globals)) {
-    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  }
-  onTestFinished(() => {
-    for (const [name, descriptor] of originals) {
-      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
-      else Reflect.deleteProperty(globalThis, name);
-    }
-  });
-
-  const size = { cols: 80, rows: 24 };
   return {
-    sockets,
-    size,
-    socket: () => sockets.at(-1)!,
-    runTimers: () => {
-      const pending = [...timers.values()];
-      timers.clear();
-      for (const callback of pending) callback();
-    },
+    ...installFakeSockets(),
     connection: new TerminalConnection({
-      hello: () => ({ clientId: "tab-1", ...size, shell: "zsh" }),
+      params: () => ({ clientId: "tab-1", cols: 80, rows: 24 }),
       onData: () => {},
       onMessage: () => {},
       onClose: () => {},

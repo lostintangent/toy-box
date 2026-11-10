@@ -33,23 +33,14 @@ describe("session event bus replay and live delivery", () => {
     await subscription.return();
   });
 
-  test("registers active and passive subscribers before the first pull", async () => {
+  test("registers a subscriber before the first pull", async () => {
     const bus = createTestBus();
-    const passive = bus.subscribe(undefined, "passive");
-
-    expect(bus.hasActiveSubscribers).toBe(false);
-
     const subscription = bus.subscribe();
-    expect(bus.hasActiveSubscribers).toBe(true);
-
     const live = bus.publish(event("live"));
 
     expect(await nextValue(subscription)).toEqual(live);
 
     await subscription.return();
-    expect(bus.hasActiveSubscribers).toBe(false);
-
-    await passive.return();
   });
 
   test("keeps event ids monotonic across buses after a synchronous burst", () => {

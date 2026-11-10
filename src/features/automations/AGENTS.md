@@ -12,9 +12,9 @@ Creation and update validate the cron expression and calculate the next occurren
 
 ## Scheduling
 
-A 30-second interval starts with the Nitro server and claims due work. `claimDue` runs inside an immediate SQLite transaction: it selects due definitions and advances each claimed `nextRunAt` before dispatch. Advancing while the claim is held prevents another tick from selecting the same occurrence, so a tick that starts while an earlier one is still dispatching finds nothing left to claim. Each committed claim is published before dispatch so clients receive its new schedule even if execution cannot start.
+A 30-second interval runs with the Nitro server and claims due work. `claimDue` runs inside an immediate SQLite transaction: it selects due definitions and advances each claimed `nextRunAt` before dispatch. Advancing while the claim is held prevents another tick from selecting the same occurrence, so a tick that starts while an earlier one is still dispatching finds nothing left to claim. Each committed claim is published before dispatch so clients receive its new schedule even if execution cannot start.
 
-Missed intervals collapse into one current run instead of producing a catch-up storm. Malformed definitions cannot prevent valid work from being claimed. Cron validation and next-occurrence math live in `src/shared/cron.ts`, which Channel routines share. This feature owns only its dialog's schedule-editing model.
+Missed intervals collapse into one current run instead of producing a catch-up storm. Cron validation and next-occurrence math live in `src/shared/cron.ts`, which Channel routines share. This feature owns only its dialog's schedule-editing model.
 
 Manual requests and claimed schedules both call `runAutomation`. Whether a run was requested by a user or claimed by the scheduler does not change its execution semantics.
 
@@ -30,26 +30,26 @@ Each run follows one path:
    `lastRunAt`, publishes the updated definition, and releases the now-idle SDK session while
    preserving the result for inspection and follow-up.
 
-The session runtime owns every execution transition: the first turn publishes running, and stream closure publishes idle or unread. Automation events only synchronize durable definition and schedule metadata. A creation failure leaves the automation idle without changing `lastRunAt`; a metadata persistence failure leaves no changed automation row to publish.
+The session runtime owns every execution transition: the first turn publishes running, and the execution's end publishes idle or unread. Automation events only synchronize durable definition and schedule metadata. A creation failure leaves the automation idle without changing `lastRunAt`; a metadata persistence failure leaves no changed automation row to publish.
 
 ## Client synchronization
 
-`automationQueries.list()` owns the Automation catalog independently of Workspace. The main route
-preloads it during SSR before mounting the shared workspace subscription. `cache.ts` patches
-committed upsert/delete events and replaces an overlapping fetch with a post-commit read; events
-never seed a partial catalog. `useWorkspaceSync` reuses SSR data when the initial stream revision
-matches and refetches the catalog after reconnects or missed updates.
+`automationQueries.list` owns the Automation catalog independently of Workspace. `cache.ts`
+preloads it for SSR and applies committed upsert/delete events to that
+[`reducedQuery`](../../shared/query.ts) over `model/catalog.ts`, so a read in flight replays them
+over the snapshot it returns; events never seed a partial catalog. `useWorkspaceSync` reuses SSR
+data when the initial stream revision matches and refetches the catalog after reconnects or missed
+updates.
 
-`automationMutations` owns CRUD and run requests. Create/update responses invalidate rather than
-reapply potentially stale definitions over scheduler events. Creation also refreshes Sessions'
-ownership projection; deletion removes both the definition and its managed session from client
-caches. `commands.ts` defines what can be done to one automation (Run, Edit, and Delete), so its
+`automationMutations` owns CRUD and run requests. Create and update rely on the
+`automation.upserted` event their server operations publish; deletion removes both the definition
+and its managed session from client caches. `commands.tsx` defines what can be done to one automation (Run, Edit, and Delete), so its
 sidebar menu and its command palette row offer the same actions. Both surfaces list only
 automations whose provider isn't disabled, the same rule that hides sessions.
 
 The mounted automation dialog owns one schedule draft. Daily, interval, and cron are editing modes; inactive tab inputs are remembered, and only the selected mode determines the saved cron.
 
-A run from its sidebar menu displays as running immediately through the mutation's pending state, without opening its pane. The mutation calls Sessions' `recreateSessionInCache` with the cached prompt and model. Only the automation ID and client message ID accompany the request; the server uses the saved definition and carries that message ID into delivery. Sessions owns replacing the old transcript and reconciling the canonical message. Settled requests call Sessions' `invalidateSessionQueries` to reconcile success, overlap, or failure. Automation list items combine the pending request with Session activity for presentation. Run fires the request without waiting on it, so the palette closes immediately. A run started there shows as running in the sidebar once the server announces the live stream. Run is disabled while the automation runs.
+A run from its sidebar menu displays as running immediately through the mutation's pending state, without opening its pane. Only the automation ID accompanies the request; the server uses the saved definition, and an open pane follows the replacement session's events exactly as it does for a scheduled run. Automation list items combine the pending request with Session activity for presentation. Run fires the request without waiting on it, so the palette closes immediately. A run started there shows as running in the sidebar once Session activity reports it running. Run is disabled while the automation runs.
 
 Automation events synchronize definition and schedule metadata through the shared workspace
 transport. Sessions consumes the same events to maintain ownership, without copying definitions.

@@ -20,6 +20,7 @@ describe("settings", () => {
       autoFocusArtifacts: "sessions",
       disabledProviders: ["claude"],
       pinnedSessionIds: ["session-a", "session-b"],
+      hyperSessionId: "session-c",
     };
 
     expect(normalizeSettings(settings)).toEqual(settings);

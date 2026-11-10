@@ -8,7 +8,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AskUserQuestionInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import type { ModelConfiguration } from "@providers/model";
-import type { Session, SessionEvent, SessionMessage, SessionQuestionBase } from "@sessions/model";
+import type { SessionEvent, SessionMessage, SessionQuestionBase } from "@sessions/model";
 import type { SessionQuestionAnswer } from "@sessions/model/protocol";
 import {
   SessionConnectionUnavailableError,
@@ -22,8 +22,6 @@ import { claudeQuestions, createClaudeProjector } from "./projector";
 
 /** One SDK query per attached session. Sessions owns the queue and browser lifetimes. */
 export class ClaudeConnection implements SessionConnection {
-  readonly provider: { id: string; sessionId: string };
-  private readonly sessionId: string;
   #native: Query | undefined;
   #input!: ReadableStreamDefaultController<SDKUserMessage>;
   #listeners = new Set<(event: SessionEvent) => void>();
@@ -34,12 +32,10 @@ export class ClaudeConnection implements SessionConnection {
   #reasoningEffort: ModelConfiguration["reasoningEffort"];
 
   private constructor(
-    session: Pick<Session, "id" | "provider">,
+    readonly nativeId: string,
     configuration: SessionConfiguration & { name?: string },
     resume: boolean,
   ) {
-    this.sessionId = session.id;
-    this.provider = { id: "claude", sessionId: session.provider?.sessionId ?? session.id };
     this.#reasoningEffort = configuration.model?.reasoningEffort;
     const prompt = new ReadableStream<SDKUserMessage>({
       start: (controller) => {
@@ -48,7 +44,7 @@ export class ClaudeConnection implements SessionConnection {
     });
     this.#native = startClaudeQuery(
       {
-        ...(resume ? { resume: this.provider.sessionId } : { sessionId: this.provider.sessionId }),
+        ...(resume ? { resume: nativeId } : { sessionId: nativeId }),
         cwd: configuration.directory,
         title: configuration.name,
         model: configuration.model?.name,
@@ -77,7 +73,7 @@ export class ClaudeConnection implements SessionConnection {
         permissionMode: "default",
         canUseTool: this.#canUseTool(configuration.allowUserQuestions),
         mcpServers: {
-          toy_box: createClaudeTools(this.sessionId, configuration.tools),
+          toy_box: createClaudeTools(configuration.tools),
         },
       },
       prompt,
@@ -85,11 +81,11 @@ export class ClaudeConnection implements SessionConnection {
   }
 
   static async open(
-    session: Pick<Session, "id" | "provider">,
+    nativeId: string,
     configuration: SessionConfiguration & { name?: string },
     resume = false,
   ): Promise<ClaudeConnection> {
-    const connection = new ClaudeConnection(session, configuration, resume);
+    const connection = new ClaudeConnection(nativeId, configuration, resume);
     try {
       await connection.#native!.initializationResult();
       void connection.#read(connection.#native!);
@@ -118,7 +114,7 @@ export class ClaudeConnection implements SessionConnection {
     this.#input.enqueue({
       type: "user",
       uuid,
-      session_id: this.provider.sessionId,
+      session_id: this.nativeId,
       parent_tool_use_id: null,
       message: { role: "user", content },
       ...(message.role === "user" ? { origin: { kind: "human" } as const } : {}),
@@ -161,8 +157,8 @@ export class ClaudeConnection implements SessionConnection {
   }
 
   async rename(name: string, automatic?: true): Promise<boolean> {
-    if (automatic && (await getSessionInfo(this.provider.sessionId))?.customTitle) return false;
-    await renameSession(this.provider.sessionId, name);
+    if (automatic && (await getSessionInfo(this.nativeId))?.customTitle) return false;
+    await renameSession(this.nativeId, name);
     return true;
   }
 
@@ -171,7 +167,7 @@ export class ClaudeConnection implements SessionConnection {
   }
 
   async #read(native: Query): Promise<void> {
-    const project = createClaudeProjector(this.sessionId);
+    const project = createClaudeProjector();
     let error = "Claude Agent disconnected.";
     try {
       for await (const message of native) {

@@ -12,6 +12,7 @@ export const settingsSchema = z.object({
   autoFocusArtifacts: z.enum(["always", "sessions", "automations", "never"]),
   disabledProviders: z.array(z.string()),
   pinnedSessionIds: z.array(z.string()),
+  hyperSessionId: z.string().nullable(),
 });
 
 export const settingsUpdateSchema = settingsSchema.partial();
@@ -26,6 +27,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoFocusArtifacts: "automations",
   disabledProviders: ["claude"],
   pinnedSessionIds: [],
+  hyperSessionId: null,
 };
 
 const SETTINGS_KEYS = settingsSchema.keyof().options;
@@ -45,16 +47,24 @@ export function normalizeSettings(value: unknown): Settings {
   return settings;
 }
 
+/** The settings that decide which sessions the catalog lists. */
+export const CATALOG_SETTINGS: readonly (keyof Settings)[] = [
+  "disabledProviders",
+  "pinnedSessionIds",
+];
+
 export function areSettingsEqual(left: Settings, right: Settings): boolean {
-  return SETTINGS_KEYS.every((key) => {
-    if (key === "defaultModel") {
-      return areModelConfigurationsEqual(left.defaultModel, right.defaultModel);
-    }
-    if (key === "pinnedSessionIds" || key === "disabledProviders") {
-      return shallow(new Set(left[key]), new Set(right[key]));
-    }
-    return Object.is(left[key], right[key]);
-  });
+  return SETTINGS_KEYS.every((key) => isSettingEqual(key, left, right));
+}
+
+export function isSettingEqual(key: keyof Settings, left: Settings, right: Settings): boolean {
+  if (key === "defaultModel") {
+    return areModelConfigurationsEqual(left.defaultModel, right.defaultModel);
+  }
+  if (key === "pinnedSessionIds" || key === "disabledProviders") {
+    return shallow(new Set(left[key]), new Set(right[key]));
+  }
+  return Object.is(left[key], right[key]);
 }
 
 export function matchesSessionFeatureScope(

@@ -1,10 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { runChannelRoutineResponse } from "@channels/server/api";
+import { runChannelRoutine } from "@channels/server";
+import { noContent, notFound, respond } from "@channels/server/http";
 
 export const Route = createFileRoute("/api/v1/channels/$channelId/routines/$routineId/run")({
   server: {
     handlers: {
-      POST: ({ params }) => runChannelRoutineResponse(params.channelId, params.routineId),
+      POST: ({ params: { channelId, routineId } }) =>
+        respond(`run routine ${routineId}`, async () =>
+          (await runChannelRoutine(channelId, routineId)) ? noContent() : notFound("Routine"),
+        ),
     },
   },
 });

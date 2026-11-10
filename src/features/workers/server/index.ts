@@ -4,20 +4,19 @@ import { WorkerDatabase } from "./database";
 
 export { deleteWorker, deleteWorkersForApp, deleteWorkersForSession } from "./cleanup";
 export { spawnWorker } from "./admission";
+export { hasWorker } from "./registry";
 
 export async function listWorkers<Type extends Worker["type"]>(
   scope: Type | Extract<WorkerOwner, { type: Type }>,
 ): Promise<Extract<Worker, { type: Type }>[]> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  return db ? new WorkerDatabase(db).list(scope) : [];
+  return new WorkerDatabase(await getStateDatabase()).list(scope);
 }
 
 export async function getWorker<Type extends Worker["type"]>(
   sessionId: string,
   scope: Type | Extract<WorkerOwner, { type: Type }>,
 ): Promise<Extract<Worker, { type: Type }> | null> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  return db ? new WorkerDatabase(db).get(sessionId, scope) : null;
+  return new WorkerDatabase(await getStateDatabase()).get(sessionId, scope);
 }
 
 /** Update a Worker by ID without changing ownership, identity, or lifetime. */

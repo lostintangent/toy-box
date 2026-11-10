@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Leafnode, type LeafnodeAgentRequest, type LeafnodeTheme } from "@lostintangent/leafnode";
+import { Leafnode, type LeafnodeTheme } from "@lostintangent/leafnode";
 import {
   Braces,
   Check,
@@ -17,6 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
+import { openDialog } from "@/shared/dialogs/DialogHost";
 import { cn } from "@/shared/utils";
 import { PaneActions, usePaneActionsAvailable } from "@/shared/panes/PaneSlots";
 import { PANE_OVERLAY_BUTTON_CLASS } from "@/shared/panes/paneControls";
@@ -31,88 +31,82 @@ const LEAFNODE_THEME = {
   text: "var(--foreground)",
 } satisfies LeafnodeTheme;
 
-export function JsonEditor({ mode, variant, file, pendingWorkers, spawnWorker }: EditorProps) {
-  const [agentRequest, setAgentRequest] = useState<LeafnodeAgentRequest | null>(null);
+export function JsonEditor({ mode, variant, file }: EditorProps) {
+  const { workers, spawnWorker } = file;
   const paneActionsAvailable = usePaneActionsAvailable();
 
   return (
-    <>
-      <Leafnode
-        content={file.content ?? ""}
-        onContentChanged={mode === "read" ? undefined : file.save}
-        theme={LEAFNODE_THEME}
-        agent={
-          spawnWorker
-            ? {
-                activePointers: activePointersOf(pendingWorkers),
-                onRequest: setAgentRequest,
-              }
-            : undefined
-        }
-        renderToolbar={
-          paneActionsAvailable
-            ? (actions) => (
-                <PaneActions>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <button
-                          type="button"
-                          aria-label="JSON view options"
-                          title="View options"
-                          className={cn(
-                            "flex shrink-0 items-center gap-1 text-xs transition-colors",
-                            variant === "normal"
-                              ? PANE_OVERLAY_BUTTON_CLASS
-                              : "rounded-md px-2 py-1.5 hover:bg-muted",
-                          )}
-                        >
-                          <Braces className="size-3.5" />
-                          {actions.copied ? (
-                            <Check className="size-3 text-green-500" />
-                          ) : (
-                            <ChevronDown className="size-3 opacity-60" />
-                          )}
-                        </button>
-                      }
-                    />
-                    <DropdownMenuContent align="end" finalFocus={false}>
-                      <DropdownMenuItem disabled={!actions.canUndo} onClick={actions.undo}>
-                        <Undo2 />
-                        Undo
-                      </DropdownMenuItem>
-                      <DropdownMenuItem disabled={!actions.canRedo} onClick={actions.redo}>
-                        <Redo2 />
-                        Redo
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={actions.expandAll}>
-                        <ChevronsUpDown />
-                        Expand all
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={actions.collapseAll}>
-                        <ChevronsDownUp />
-                        Collapse all
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => void actions.copyJson()}>
-                        <Copy />
-                        Copy JSON
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </PaneActions>
-              )
-            : undefined
-        }
-      />
-      {agentRequest && spawnWorker && (
-        <AgentPrompt
-          request={agentRequest}
-          spawnWorker={spawnWorker}
-          onDismiss={() => setAgentRequest(null)}
-        />
-      )}
-    </>
+    <Leafnode
+      content={file.content ?? ""}
+      onContentChanged={mode === "read" ? undefined : file.save}
+      theme={LEAFNODE_THEME}
+      agent={
+        spawnWorker
+          ? {
+              activePointers: activePointersOf(workers),
+              onRequest: (request) =>
+                openDialog((dialog) => (
+                  <AgentPrompt {...dialog} request={request} spawnWorker={spawnWorker} />
+                )),
+            }
+          : undefined
+      }
+      renderToolbar={
+        paneActionsAvailable
+          ? (actions) => (
+              <PaneActions>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label="JSON view options"
+                        title="View options"
+                        className={cn(
+                          "flex shrink-0 items-center gap-1 text-xs transition-colors",
+                          variant === "normal"
+                            ? PANE_OVERLAY_BUTTON_CLASS
+                            : "rounded-md px-2 py-1.5 hover:bg-muted",
+                        )}
+                      >
+                        <Braces className="size-3.5" />
+                        {actions.copied ? (
+                          <Check className="size-3 text-green-500" />
+                        ) : (
+                          <ChevronDown className="size-3 opacity-60" />
+                        )}
+                      </button>
+                    }
+                  />
+                  <DropdownMenuContent align="end" finalFocus={false}>
+                    <DropdownMenuItem disabled={!actions.canUndo} onClick={actions.undo}>
+                      <Undo2 />
+                      Undo
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={!actions.canRedo} onClick={actions.redo}>
+                      <Redo2 />
+                      Redo
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={actions.expandAll}>
+                      <ChevronsUpDown />
+                      Expand all
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={actions.collapseAll}>
+                      <ChevronsDownUp />
+                      Collapse all
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => void actions.copyJson()}>
+                      <Copy />
+                      Copy JSON
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </PaneActions>
+            )
+          : undefined
+      }
+    />
   );
 }

@@ -47,34 +47,6 @@ describe.serial("snapshot cache", () => {
     }, [{ type: "assistant_message", content: "Created deleted.md" }]);
   });
 
-  test("stores and serves snapshots as private copies", async () => {
-    spyOn(providers, "isHistoryCurrent").mockResolvedValue(true);
-    onTestFinished(() => {
-      mock.restore();
-      evictCachedSnapshot("snapshot-cache-test-clone");
-    });
-
-    const original = snapshot("snapshot-cache-test-clone");
-    cacheSnapshot("snapshot-cache-test-clone", original);
-
-    // Mutating the caller's object after caching must not reach the cache...
-    original.messages[0]! = { role: "assistant", content: "mutated by the producer" };
-    const served = await getCachedSnapshot("snapshot-cache-test-clone");
-    expect(served?.messages[0]).toEqual({
-      role: "assistant",
-      content: "final response for snapshot-cache-test-clone",
-    });
-
-    // ...and mutating a served snapshot (e.g. a snapshot-seeded stream's late
-    // tool completion) must not corrupt what the cache serves next.
-    served!.messages[0]! = { role: "assistant", content: "mutated by a reader" };
-    const servedAgain = await getCachedSnapshot("snapshot-cache-test-clone");
-    expect(servedAgain?.messages[0]).toEqual({
-      role: "assistant",
-      content: "final response for snapshot-cache-test-clone",
-    });
-  });
-
   test("eviction removes a session's snapshot", () => {
     cacheSnapshot("snapshot-cache-test-evicted", snapshot("snapshot-cache-test-evicted"));
     evictCachedSnapshot("snapshot-cache-test-evicted");

@@ -31,9 +31,7 @@ export function publishChannelNotification(channel: Channel, message: ChannelMes
   void publish(`${kind}s`, async () => {
     // TODO: replace this wait with client presence reporting.
     await Bun.sleep(3000);
-    const db = await getStateDatabase({ createIfMissing: false });
-    if (!db) return;
-    const channels = new ChannelDatabase(db);
+    const channels = new ChannelDatabase(await getStateDatabase());
     const current = await channels.getChannel(channel.id);
     if (!channelNotificationIsCurrent(current, kind, message.sequence) || !current) return;
     const agents = [channelLead(channel.id), ...(await channels.listMembers(channel.id))];
@@ -47,9 +45,8 @@ export function startChannelPush(): VoidFunction {
   const streams = new Map<string, VoidFunction>();
   const refreshBadge = () =>
     void publishBadge(["requests", "completions"], async () => {
-      const db = await getStateDatabase({ createIfMissing: false });
-      if (!db) return;
-      return channelBadgeCount((await new ChannelDatabase(db).listChannels()).channels);
+      const channels = new ChannelDatabase(await getStateDatabase());
+      return channelBadgeCount((await channels.listChannels()).channels);
     });
   const unsubscribeBadge = subscribeWorkspaceEvents((event) => {
     if (event.type === "channel.upserted" || event.type === "channel.deleted") refreshBadge();

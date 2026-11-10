@@ -2,12 +2,15 @@ import {
   getSessionProvider,
   listModels,
   listSessions as listNativeSessions,
+  readSession as readNativeSession,
   sessionProviders,
 } from "@providers/server";
-import type { Session, SessionType } from "../model";
+import { homedir } from "node:os";
+import type { Session, SessionContext, SessionType } from "../model";
 import { normalizeModelConfiguration, type ModelConfiguration } from "@providers/model";
 import {
   SessionNotFoundError,
+  type NativeSession,
   type SessionConfiguration,
   type SessionProvider,
 } from "@providers/server/provider";
@@ -15,53 +18,48 @@ import { setSessionProvider, readSession, readSessions } from "./state/sessions"
 import { buildSessionSystemPrompt } from "./instructions";
 import { getSessionSkillDirectories } from "./bundledSkills";
 import { ensureSessionFiles } from "./artifacts";
+import { toolResultText, type Tool } from "./tools/definition";
+import { createToolCallProjector } from "./toolProjection";
 import { sharedSet } from "@/shared/server/processState";
 
 // A native history can become discoverable before its create request returns.
 // Only unknown histories from that provider need to wait for their public IDs.
 const pendingCreations = sharedSet<{
   providerId: string;
-  completion: ReturnType<SessionProvider["create"]>;
+  completion: ReturnType<typeof createNativeSession>;
 }>("provider-session-creations");
 
 type ConfigurationOptions = Pick<SessionConfiguration, "model" | "directory" | "disableMemory"> & {
   sessionType: SessionType;
-  tools?: SessionConfiguration["tools"];
+  tools?: Tool<any>[];
   artifactPath?: string;
   additionalInstructions?: string;
 };
 
 /** External histories have stable public addresses without claiming a local record. */
-export async function resolveSession(
-  id: string,
-): Promise<Pick<Session, "id"> & Required<Pick<Session, "provider">>> {
-  const session = await readSession(id);
-  if (session?.provider) return { id, provider: session.provider };
-  for (const provider of sessionProviders) {
-    if (id.startsWith(`${provider.id}:`)) {
-      return { id, provider: { id: provider.id, sessionId: id.slice(provider.id.length + 1) } };
-    }
-  }
-  throw new SessionNotFoundError(id);
+export async function resolveSession(id: string) {
+  const address = nativeAddress(id, await readSession(id));
+  if (!address) throw new SessionNotFoundError(id);
+  return { provider: getSessionProvider(address.providerId), nativeId: address.nativeId };
 }
 
-export async function listSessions(): Promise<Session[]> {
+export async function listSessions(limit?: number): Promise<Session[]> {
   const before = await readSessions();
-  const nativeSessions = await listNativeSessions();
+  const nativeSessions = await listNativeSessions(limit);
   // Preserve public IDs across native discovery overlapping creation or deletion.
   let records = await readSessions();
-  const byNative = new Map(
-    [...before, ...records]
-      .filter((session) => session.provider)
-      .map((session) => [
-        `${session.provider!.id}:${session.provider!.sessionId ?? session.id}`,
-        session,
-      ]),
-  );
+  const byNative = new Map<string, Session>();
+  const claim = (records: Session[]) => {
+    for (const record of records) {
+      const address = record.provider && nativeAddress(record.id, record);
+      if (address) byNative.set(`${address.providerId}:${address.nativeId}`, record);
+    }
+  };
+  claim([...before, ...records]);
   const unknownProviders = new Set(
     nativeSessions
-      .filter((session) => !byNative.has(`${session.provider!.id}:${session.id}`))
-      .map((session) => session.provider!.id),
+      .filter((session) => !byNative.has(`${session.providerId}:${session.nativeId}`))
+      .map((session) => session.providerId),
   );
   const pending = [...pendingCreations].filter((creation) =>
     unknownProviders.has(creation.providerId),
@@ -69,37 +67,61 @@ export async function listSessions(): Promise<Session[]> {
   if (pending.length) {
     await Promise.allSettled(pending.map((creation) => creation.completion));
     records = await readSessions();
-    for (const session of records) {
-      if (session.provider)
-        byNative.set(`${session.provider.id}:${session.provider.sessionId ?? session.id}`, session);
-    }
+    claim(records);
   }
   return [
     ...records.filter((session) => !session.provider),
-    ...nativeSessions.map((native) => {
-      const record = byNative.get(`${native.provider!.id}:${native.id}`);
-      const id = record?.id ?? `${native.provider!.id}:${native.id}`;
-      return {
-        ...native,
-        id,
-        createdAt: record?.createdAt ?? native.createdAt,
-        provider: {
-          id: native.provider!.id,
-          ...(native.id !== id ? { sessionId: native.id } : {}),
-        },
-        ...(record?.artifactPath ? { artifactPath: record.artifactPath } : {}),
-      };
-    }),
+    ...nativeSessions.map((native) =>
+      publicSession(native, byNative.get(`${native.providerId}:${native.nativeId}`)),
+    ),
   ];
 }
 
-export async function listSkills(
-  directory?: string,
-  sessionType: SessionType = "standard",
-  providerId?: string,
-) {
+/** Read Sessions by public ID, omitting any without a provider history. */
+export async function findSessions(sessionIds: string[]): Promise<Session[]> {
+  const records = new Map((await readSessions()).map((record) => [record.id, record]));
+  const sessions = await Promise.all(
+    sessionIds.map(async (id) => {
+      const record = records.get(id);
+      const address = nativeAddress(id, record);
+      const native = address && (await readNativeSession(address.providerId, address.nativeId));
+      return native && publicSession(native, record);
+    }),
+  );
+  return sessions.filter((session) => session !== undefined);
+}
+
+/** A record's native history, or the one an external ID names by provider prefix. */
+function nativeAddress(id: string, record: Session | undefined) {
+  if (record?.provider)
+    return { providerId: record.provider.id, nativeId: record.provider.sessionId ?? id };
+  const provider = sessionProviders.find((provider) => id.startsWith(`${provider.id}:`));
+  return provider && { providerId: provider.id, nativeId: id.slice(provider.id.length + 1) };
+}
+
+function publicSession(
+  { nativeId, providerId, ...native }: NativeSession & { providerId: string },
+  record: Session | undefined,
+): Session {
+  const id = record?.id ?? `${providerId}:${nativeId}`;
+  return {
+    ...native,
+    id,
+    createdAt: record?.createdAt ?? native.createdAt,
+    provider: { id: providerId, ...(nativeId !== id ? { sessionId: nativeId } : {}) },
+    context: native.context && { ...native.context, directory: sessionDirectory(native.context) },
+    ...(record?.artifactPath ? { artifactPath: record.artifactPath } : {}),
+  };
+}
+
+/** Sessions start in the home directory when none was chosen, which is not a workspace. */
+function sessionDirectory({ directory, gitRoot, repository }: SessionContext = {}) {
+  return directory === homedir() && !gitRoot && !repository ? undefined : directory;
+}
+
+export async function listSkills(directory?: string, providerId?: string) {
   const provider = getSessionProvider(providerId ?? (await defaultModel()).provider);
-  return provider.listSkills(directory, getSessionSkillDirectories(sessionType));
+  return provider.listSkills(directory, getSessionSkillDirectories());
 }
 
 async function defaultModel(): Promise<ModelConfiguration> {
@@ -116,9 +138,15 @@ function configuration(sessionId: string, options: ConfigurationOptions): Sessio
     directory: options.directory,
     disableMemory: options.disableMemory,
     allowUserQuestions: options.sessionType === "standard" || options.sessionType === "hyper",
-    tools: options.tools ?? [],
+    tools: (options.tools ?? []).map((tool) => ({
+      ...tool,
+      handler: async (args) =>
+        toolResultText(
+          await tool.handler(tool.parameters ? tool.parameters.parse(args) : args, sessionId),
+        ),
+    })),
     instructions: buildSessionSystemPrompt(sessionId, options),
-    skillDirectories: getSessionSkillDirectories(options.sessionType),
+    skillDirectories: getSessionSkillDirectories(),
   };
 }
 
@@ -154,47 +182,45 @@ async function createNativeSession(
 ) {
   const connection = await provider.create(sessionId, { ...configuration, name });
   try {
-    await setSessionProvider(sessionId, connection.provider);
+    const association = await setSessionProvider(sessionId, {
+      id: provider.id,
+      sessionId: connection.nativeId,
+    });
+    return { connection, provider: association };
   } catch (error) {
     await connection.disconnect().catch(console.error);
-    await provider.delete(connection.provider.sessionId ?? sessionId).catch(console.error);
+    await provider.delete(connection.nativeId).catch(console.error);
     throw error;
   }
-  return connection;
 }
 
 export async function resumeSession(sessionId: string, options: ConfigurationOptions) {
-  const session = await resolveSession(sessionId);
-  if (options.model && options.model.provider !== session.provider.id) {
+  const { provider, nativeId } = await resolveSession(sessionId);
+  if (options.model && options.model.provider !== provider.id) {
     throw new Error(
       "An existing session cannot change providers. Start a new session to use that model.",
     );
   }
   await ensureSessionFiles(sessionId);
-  return getSessionProvider(session.provider.id).resume(session, configuration(sessionId, options));
+  return provider.resume(nativeId, configuration(sessionId, options));
 }
 
 export async function deleteSession(sessionId: string) {
-  const session = await resolveSession(sessionId);
-  await getSessionProvider(session.provider.id).delete(session.provider.sessionId ?? session.id);
+  const { provider, nativeId } = await resolveSession(sessionId);
+  await provider.delete(nativeId);
 }
 
 export async function getSessionDirectory(sessionId: string) {
-  const session = await resolveSession(sessionId);
-  return getSessionProvider(session.provider.id).readDirectory(
-    session.provider.sessionId ?? session.id,
-  );
+  const { provider, nativeId } = await resolveSession(sessionId);
+  return sessionDirectory((await provider.readSession(nativeId))?.context);
 }
 
 export async function readSessionHistory(sessionId: string) {
-  const session = await resolveSession(sessionId);
-  return getSessionProvider(session.provider.id).readHistory(session);
+  const { provider, nativeId } = await resolveSession(sessionId);
+  return (await provider.readHistory(nativeId)).flatMap(createToolCallProjector(sessionId));
 }
 
 export async function isHistoryCurrent(sessionId: string, capturedAt: number) {
-  const session = await resolveSession(sessionId);
-  return getSessionProvider(session.provider.id).isHistoryCurrent(
-    session.provider.sessionId ?? session.id,
-    capturedAt,
-  );
+  const { provider, nativeId } = await resolveSession(sessionId);
+  return provider.isHistoryCurrent(nativeId, capturedAt);
 }

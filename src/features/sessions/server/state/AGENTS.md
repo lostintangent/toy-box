@@ -22,7 +22,8 @@ creating another source of transcript truth.
   Native connections finish disconnecting before their history is deleted, so a final flush cannot
   recreate a deleted session.
 - `snapshots.ts` reconstructs `SessionState` through provider history projection and the canonical
-  reducer, then caches that same value under the caller-supplied session ID. Active truth always
+  reducer, then caches that same value under the caller-supplied session ID. Readers share it
+  without copying, because the reducer replaces every branch it changes. Active truth always
   comes from the runtime; cached snapshots only avoid replay work.
 - `schema.ts` defines the Sessions-owned `sessions` and `worktrees` tables. `sessions.ts` owns
   durable public identity in the `sessions` table. A row without a provider

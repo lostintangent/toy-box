@@ -34,14 +34,12 @@ class TerminalManager {
 
   /** Whether the terminal has shown output since it last reset or lost its socket. */
   #isReady = false;
-  #shell: string | undefined;
 
   readonly #connection = new TerminalConnection({
-    hello: () => ({
+    params: () => ({
       clientId: getOrCreateClientId(),
       cols: this.#xterm?.cols,
       rows: this.#xterm?.rows,
-      shell: this.#shell,
     }),
     onData: (data) => {
       this.#xterm?.write(data);
@@ -77,10 +75,6 @@ class TerminalManager {
     if (!data) return;
     this.#connection.send(data);
     this.#xterm?.focus();
-  }
-
-  setShell(shell: string) {
-    this.#shell = shell.trim() || undefined;
   }
 
   // Container lifecycle

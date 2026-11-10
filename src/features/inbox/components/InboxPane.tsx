@@ -33,9 +33,9 @@ export function InboxPane({ onFocusPane }: { onFocusPane?: (paneId: string) => v
   const dispatchTaskMutation = useMutation(inboxMutations.dispatchTask());
   const createSessionMutation = useMutation(sessionMutations.startSession());
   const { panePublications } = useWorkspaceSurface();
-  const { data: entries } = useSuspenseQuery(inboxQueries.list());
+  const { data: entries } = useSuspenseQuery(inboxQueries.list);
   const { data: sessions = [] } = useQuery({
-    ...sessionQueries.state(),
+    ...sessionQueries.state,
     select: (state) => selectInboxSessions(state, entries),
   });
   const defaultUseWorktree = useWorkspaceSelector((workspace) => workspace.settings.useWorktree);

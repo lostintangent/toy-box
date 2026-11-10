@@ -2,7 +2,6 @@ import { compareChannelAgents, isChannelSystemMessage, unlinkChannelTasks } from
 import type {
   Channel,
   ChannelArtifact,
-  ChannelConversationMessage,
   ChannelEvent,
   ChannelMessage,
   ChannelObservationEvent,
@@ -11,29 +10,11 @@ import type {
 } from ".";
 import { workspaceFileId } from "@files/model";
 
-type ChannelStateEvent =
-  | Exclude<ChannelObservationEvent, { type: "deleted" }>
-  | {
-      type: "message";
-      revision?: never;
-      message: Omit<ChannelConversationMessage, "sequence" | "reactions"> & {
-        sender: { type: "user" };
-      };
-    };
-
-export function reduceChannelState(previous: ChannelState, event: ChannelStateEvent): ChannelState {
+export function reduceChannelState(
+  previous: ChannelState,
+  event: Exclude<ChannelObservationEvent, { type: "deleted" }>,
+): ChannelState {
   if (event.type === "snapshot") return event.state;
-  // Local posts have identity, but no committed position or attention changes yet.
-  if (event.type === "message" && event.revision === undefined) {
-    if (previous.messages.some(({ id }) => id === event.message.id)) return previous;
-    return {
-      ...previous,
-      messages: upsertMessage(previous.messages, {
-        ...event.message,
-        sequence: (previous.messages.at(-1)?.sequence ?? 0) + 1,
-      }),
-    };
-  }
   if (event.type === "presence" || event.type === "resumed") {
     return {
       ...previous,
@@ -54,7 +35,7 @@ export function reduceChannelState(previous: ChannelState, event: ChannelStateEv
     if (state.request) state.request = reduceChannelReaction(state.request, event);
   } else if (event.type === "message") {
     const { message } = event;
-    state.messages = upsertMessage(state.messages, message);
+    state.messages = upsertMessage(state.messages, keepSentImages(state.messages, message));
     const content = isChannelSystemMessage(message) ? message.content : undefined;
     switch (content?.type) {
       case "member_left":
@@ -88,7 +69,7 @@ export function reduceChannelState(previous: ChannelState, event: ChannelStateEv
 }
 
 /** Metadata and attention changes expressed by committed Channel events. */
-export function reduceChannel(channel: Channel, event: ChannelEvent<unknown>): Channel {
+export function reduceChannel(channel: Channel, event: ChannelEvent): Channel {
   switch (event.type) {
     case "tasks":
       return { ...channel, tasks: event.tasks };
@@ -210,6 +191,16 @@ function upsertMessage(messages: ChannelMessage[], message: ChannelMessage): Cha
   const index = next.findIndex(({ sequence }) => sequence >= message.sequence);
   if (index === -1) return [...next, message];
   return [...next.slice(0, index), message, ...next.slice(index)];
+}
+
+/** An echo keeps the local image bytes its sender shows, so sending doesn't refetch them. */
+function keepSentImages(messages: ChannelMessage[], message: ChannelMessage): ChannelMessage {
+  const sent = message.attachments && messages.find(({ id }) => id === message.id)?.attachments;
+  if (!sent || isChannelSystemMessage(message)) return message;
+  const attachments = message.attachments?.map((attachment, index) =>
+    sent[index]?.url.startsWith("data:") ? { ...attachment, url: sent[index].url } : attachment,
+  );
+  return { ...message, attachments };
 }
 
 /** Adds a routine, or changes one in place so the list keeps its order. */

@@ -1,43 +1,27 @@
-import { beforeEach, describe, expect, mock, onTestFinished, spyOn, test } from "bun:test";
+import { beforeEach, describe, expect, onTestFinished, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { createTestDatabase } from "@/server/database";
+import { getStateDatabase } from "@/server/database";
+import { openTestDatabase } from "@/server/testFixtures";
 import type { SessionWorktree } from "@sessions/model";
+import {
+  applySessionWorktree,
+  createSessionWorktree,
+  deleteSessionWorktree,
+  getAllSessionWorktrees,
+  mergeSessionWorktree,
+} from "./worktrees";
 
-let currentDb: Bun.SQL | undefined;
 let gitCalls: Array<{ directory: string; args: string[] }> = [];
 let runGit = async (_directory: string, _args: string[]): Promise<string> => {
   throw new Error("fatal: not a git repository (or any of the parent directories): .git");
 };
 
-mock.module("@/server/database", () => ({
-  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
-    if (!currentDb && options?.createIfMissing === false) return null;
-    if (!currentDb) throw new Error("Test database has not been opened");
-    return currentDb;
-  },
-}));
-
-const {
-  createSessionWorktree,
-  deleteSessionWorktree,
-  getAllSessionWorktrees,
-  applySessionWorktree,
-  mergeSessionWorktree,
-} = await import("./worktrees");
-
-async function openWorktreeTestDatabase(): Promise<void> {
-  currentDb = await createTestDatabase();
-  onTestFinished(async () => {
-    await currentDb?.close();
-    currentDb = undefined;
-  });
-}
-
 async function insertWorktree(sessionId: string, worktree: SessionWorktree): Promise<void> {
-  await currentDb!`
+  const db = await getStateDatabase();
+  await db`
     INSERT INTO worktrees (
       session_id,
       worktree_path,
@@ -82,7 +66,7 @@ describe("session worktrees", () => {
   });
 
   test("creates the Git worktree and its record as one operation", async () => {
-    await openWorktreeTestDatabase();
+    await openTestDatabase();
     runGit = async (_directory, args) => {
       if (args.join(" ") === "rev-parse --show-toplevel") return "/source";
       if (args.join(" ") === "rev-parse --abbrev-ref HEAD") return "main";
@@ -109,7 +93,7 @@ describe("session worktrees", () => {
   });
 
   test("reads persisted worktree state", async () => {
-    await openWorktreeTestDatabase();
+    await openTestDatabase();
     await insertWorktree("toy-box-session", {
       path: "/tmp/toy-box-session",
       branch: "toy-box/session",
@@ -129,7 +113,7 @@ describe("session worktrees", () => {
   });
 
   test("deletion releases the Git worktree before removing its record", async () => {
-    await openWorktreeTestDatabase();
+    await openTestDatabase();
     await insertWorktree("toy-box-session", {
       path: "/worktrees/session",
       branch: "toy-box/session",
@@ -161,7 +145,7 @@ describe("session worktrees", () => {
   });
 
   test("deletion removes the record when the Git worktree is already gone", async () => {
-    await openWorktreeTestDatabase();
+    await openTestDatabase();
     await insertWorktree("toy-box-session", {
       path: `/tmp/toy-box-missing-worktree-${crypto.randomUUID()}`,
       branch: "toy-box/session",
@@ -178,16 +162,12 @@ describe("session worktrees", () => {
     expect(await createSessionWorktree("toy-box-session", directory)).toBeUndefined();
   });
 
-  test("read paths no-op when the server-state database does not exist", async () => {
-    expect(await getAllSessionWorktrees()).toEqual({});
-  });
-
   test("database requires complete worktree identity fields", async () => {
-    await openWorktreeTestDatabase();
+    const db = await openTestDatabase();
 
     let failure: unknown;
     try {
-      await currentDb!`
+      await db`
         INSERT INTO worktrees (session_id)
         VALUES (${"toy-box-session"})
       `;
@@ -203,7 +183,7 @@ for (const [name, finish] of [
   ["merge", mergeSessionWorktree],
 ] as const) {
   test(`${name} preserves unfinished edits, then transfers committed work to the source checkout`, async () => {
-    await openWorktreeTestDatabase();
+    await openTestDatabase();
     const directory = await mkdtemp(join(tmpdir(), "toy-box-worktree-test-"));
     onTestFinished(() => rm(directory, { recursive: true, force: true }));
     const source = join(directory, "source");

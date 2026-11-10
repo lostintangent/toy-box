@@ -2,7 +2,7 @@
 //
 // Providers persist native history; this module keeps live SessionConnection
 // instances in memory, creates and resumes them with role-scoped tools, and
-// coordinates lifecycle effects across runtime streams, workspace state,
+// coordinates lifecycle effects across runtime executions, workspace state,
 // snapshots, worktrees, and provider persistence.
 
 import { homedir } from "node:os";
@@ -20,18 +20,17 @@ import {
 } from "../providers";
 import { getSessionConfiguration } from "@/server/sessionConfiguration";
 import { broadcast } from "@workspace/server/events";
-import { deleteSessionWorkspaceState, unpinSession } from "@workspace/server/state";
+import { deleteSessionWorkspaceState, updateSettings } from "@workspace/server/state";
 import { deleteSessionActivity } from "./activity";
 import { createSessionWorktree, deleteSessionWorktree } from "./worktrees";
 import { deleteSessionRecord, readSession, insertSession } from "./sessions";
+import { evictCachedSnapshot } from "./snapshots";
 import {
   deleteOwnedSessions,
   detachManagedSession,
   resolveSessionType,
 } from "@/server/managedSessions";
 import { sharedMap } from "@/shared/server/processState";
-import { addHyperSession, hasHyperSession } from "@workspace/server/state/hyperSessions";
-import type { SessionType } from "@sessions/model";
 import type { ModelConfiguration } from "@providers/model";
 
 // Release idle native connections explicitly while preserving durable history.
@@ -53,7 +52,6 @@ export type CreateSessionOptions = {
   model?: ModelConfiguration;
   name?: string;
   directory?: string;
-  sessionType?: SessionType;
   useWorktree?: boolean;
   parentSessionId?: string;
 };
@@ -66,12 +64,10 @@ export async function createSessionRecord(
   options: {
     artifact?: { path: string; content: string };
     hyper?: true;
-    sessionType?: SessionType;
     title?: string;
   },
 ): Promise<void> {
   const artifact = options.artifact;
-  const sessionType = options.sessionType ?? (options.hyper ? "hyper" : "standard");
 
   const createdAt = new Date();
   const record = {
@@ -83,21 +79,22 @@ export async function createSessionRecord(
   try {
     await ensureSessionFiles(sessionId);
     if (artifact) await writeSessionArtifact(sessionId, artifact.path, artifact.content);
+    if (options.hyper) await updateSettings({ hyperSessionId: sessionId });
+    const { sessionType } = await resolveSessionType(sessionId);
+    broadcast({
+      type: "session.upserted",
+      session: {
+        ...record,
+        createdAt: createdAt.toISOString(),
+        updatedAt: createdAt.toISOString(),
+        title: options.title,
+        sessionType,
+      },
+    });
   } catch (error) {
     await deleteSessionRecord(sessionId);
     throw error;
   }
-  if (options.hyper) addHyperSession(sessionId);
-  broadcast({
-    type: "session.upserted",
-    session: {
-      ...record,
-      createdAt: createdAt.toISOString(),
-      updatedAt: createdAt.toISOString(),
-      title: options.title,
-      sessionType,
-    },
-  });
 }
 
 /** Create and publish a new provider session with a caller-provided ID. */
@@ -106,15 +103,11 @@ export async function createSession(
   options?: CreateSessionOptions,
 ): Promise<{ session: SessionConnection; artifactPath?: string }> {
   const requested = options ?? {};
-  const sessionType = options?.sessionType ?? (hasHyperSession(sessionId) ? "hyper" : "standard");
   const model = requested.model;
   const name = requested.name;
   const useWorktree = requested.useWorktree;
   const record = await readSession(sessionId);
-  const { configurationKey, ...sessionConfiguration } = await getSessionConfiguration(
-    sessionId,
-    sessionType,
-  );
+  const { configurationKey, ...sessionConfiguration } = await getSessionConfiguration(sessionId);
   const directory =
     "directory" in sessionConfiguration ? sessionConfiguration.directory : requested.directory;
   const worktree =
@@ -124,13 +117,12 @@ export async function createSession(
   // Providers require a working directory. When none was explicitly provided
   // (e.g. automations with no cwd), fall back to the user's home directory
   // so the provider has a valid path without leaking the server's cwd.
-  let session: SessionConnection;
+  let created: Awaited<ReturnType<typeof createProviderSession>>;
   try {
     await ensureSessionFiles(sessionId);
-    session = await createProviderSession(sessionId, {
+    created = await createProviderSession(sessionId, {
       model,
       name,
-      sessionType,
       ...sessionConfiguration,
       directory: executionDirectory ?? homedir(),
       artifactPath: record?.artifactPath,
@@ -139,6 +131,7 @@ export async function createSession(
     if (worktree) await deleteSessionWorktree(sessionId).catch(console.error);
     throw error;
   }
+  const { connection: session, provider } = created;
   const now = new Date().toISOString();
   cachedSessions.set(sessionId, { session, configurationKey, executionLease: true });
 
@@ -147,19 +140,14 @@ export async function createSession(
     type: "session.upserted",
     session: {
       id: sessionId,
-      provider: {
-        id: session.provider.id,
-        ...(session.provider.sessionId && session.provider.sessionId !== sessionId
-          ? { sessionId: session.provider.sessionId }
-          : {}),
-      },
+      provider,
       createdAt: record?.createdAt.toISOString() ?? now,
       updatedAt: now,
       title: name ?? "",
       context: { directory: executionDirectory },
       worktree,
       parentSessionId: requested.parentSessionId,
-      sessionType,
+      sessionType: sessionConfiguration.sessionType,
     },
   });
 
@@ -203,11 +191,8 @@ async function acquireConfiguredSession(
   let acquisition = sessionAcquisitions.get(sessionId);
   if (!acquisition) {
     acquisition = (async () => {
-      const sessionType = await resolveSessionType(sessionId);
-      const { configurationKey, ...sessionConfiguration } = await getSessionConfiguration(
-        sessionId,
-        sessionType,
-      );
+      const { configurationKey, ...sessionConfiguration } =
+        await getSessionConfiguration(sessionId);
       if (cached && cached.configurationKey === configurationKey) return cached.session;
 
       if (cached) await disconnectCachedSession(sessionId, cached);
@@ -216,7 +201,6 @@ async function acquireConfiguredSession(
           ? sessionConfiguration.directory
           : await getSessionDirectory(sessionId);
       const session = await resumeProviderSession(sessionId, {
-        sessionType,
         ...sessionConfiguration,
         directory: directory ?? homedir(),
       });
@@ -233,7 +217,7 @@ async function acquireConfiguredSession(
   return acquisition;
 }
 
-/** Release an execution-owned provider session after its SessionStream finishes. */
+/** Release an execution-owned provider session after its SessionExecution finishes. */
 export function releaseSession(sessionId: string): void {
   const cached = cachedSessions.get(sessionId);
   if (!cached) return;
@@ -252,7 +236,7 @@ export async function releaseIdleSession(sessionId: string): Promise<void> {
  * Run a short provider operation and retry once if it reveals a stale session.
  *
  * Use this for bounded calls such as history replay, rename, and rewind, not
- * for a SessionStream that owns one SessionConnection throughout execution. A
+ * for a SessionExecution that owns one SessionConnection throughout execution. A
  * cached call retains its configuration; only execution acquisition refreshes it.
  */
 export async function withSession<T>(
@@ -357,28 +341,21 @@ async function removeDeletedSessionState(
   await deleteSessionFiles(sessionId);
   await deleteSessionRecord(sessionId);
   await detachManagedSession(sessionId);
-  await unpinSession(sessionId);
   deleteSessionActivity(sessionId);
-  deleteSessionWorkspaceState(sessionId);
-  await evictDeletedSessionSnapshot(sessionId);
+  evictCachedSnapshot(sessionId);
+  // Publish first so other clients drop the session before its pin or Hyper setting clears.
   if (publish) broadcast({ type: "session.deleted", sessionId });
+  await deleteSessionWorkspaceState(sessionId);
 }
 
 async function removeSessionRuntime(sessionId: string): Promise<void> {
   // Dynamic import keeps the registry from forming a static cycle with the
-  // runtime stream, which imports this module to create and resume provider sessions.
-  const { SessionStream } = await import("../runtime/sessionStream");
-  await SessionStream.remove(sessionId);
+  // session execution, which imports this module to create and resume provider sessions.
+  const { SessionExecution } = await import("../runtime/sessionExecution");
+  await SessionExecution.remove(sessionId);
   // Native teardown can flush history; it must finish before history is deleted.
   const cached = cachedSessions.get(sessionId);
   if (cached) await disconnectCachedSession(sessionId, cached);
-}
-
-async function evictDeletedSessionSnapshot(sessionId: string): Promise<void> {
-  // Snapshots use withSession from this module; importing lazily keeps that
-  // dependency one-way during module initialization.
-  const { evictCachedSnapshot } = await import("./snapshots");
-  evictCachedSnapshot(sessionId);
 }
 
 async function releaseCachedSessionIfIdle(sessionId: string, cached: CachedSession): Promise<void> {

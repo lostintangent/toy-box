@@ -1,42 +1,48 @@
+// A window bounds the rendered messages by transcript position, so loading a
+// previous page leaves it unchanged. `positions` lists the messages in view, ascending.
+
 const MESSAGE_WINDOW_SIZE = 20;
 
 export type MessageWindow = {
-  readonly startIndex: number;
-  readonly messageCount: number;
+  readonly startPosition: number;
+  readonly lastPosition: number;
 };
 
 export function createMessageWindow(
-  messageCount: number,
+  positions: readonly number[],
   windowSize = MESSAGE_WINDOW_SIZE,
 ): MessageWindow {
   return {
-    startIndex: Math.max(0, messageCount - windowSize),
-    messageCount,
+    startPosition: positions[Math.max(0, positions.length - windowSize)] ?? 0,
+    lastPosition: positions.at(-1) ?? -1,
   };
 }
 
 /** Preserve an escaped reader's start as output grows; otherwise reconcile to the latest window. */
 export function reconcileMessageWindow(
   current: MessageWindow,
-  messageCount: number,
+  positions: readonly number[],
   isPinned: boolean,
   windowSize = MESSAGE_WINDOW_SIZE,
 ): MessageWindow {
-  if (messageCount === current.messageCount) return current;
-  if (messageCount < current.messageCount) {
-    return createMessageWindow(messageCount, windowSize);
+  const lastPosition = positions.at(-1) ?? -1;
+  if (lastPosition === current.lastPosition) return current;
+  if (lastPosition < current.lastPosition) {
+    return createMessageWindow(positions, windowSize);
   }
 
-  return isPinned ? createMessageWindow(messageCount, windowSize) : { ...current, messageCount };
+  return isPinned ? createMessageWindow(positions, windowSize) : { ...current, lastPosition };
 }
 
 export function revealPreviousMessageWindow(
   current: MessageWindow,
+  positions: readonly number[],
   chunkSize = MESSAGE_WINDOW_SIZE,
 ): MessageWindow {
-  if (current.startIndex === 0) return current;
+  const startIndex = positions.findIndex((position) => position >= current.startPosition);
+  if (startIndex <= 0) return current;
   return {
     ...current,
-    startIndex: Math.max(0, current.startIndex - chunkSize),
+    startPosition: positions[Math.max(0, startIndex - chunkSize)],
   };
 }

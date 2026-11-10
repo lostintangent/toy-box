@@ -1,11 +1,25 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { subscribeResponse, removeResponse } from "@push/server/api";
+import { pushRegistrationIdSchema, pushSubscriptionSchema } from "@push/model";
+import { subscribeInstall, unsubscribeInstall } from "@push/server";
+
+const invalid = () => Response.json({ error: "Invalid push registration." }, { status: 400 });
 
 export const Route = createFileRoute("/api/v1/push/$registrationID/topics/$topic")({
   server: {
     handlers: {
-      PUT: ({ params, request }) => subscribeResponse(params.registrationID, params.topic, request),
-      DELETE: ({ params }) => removeResponse(params.registrationID, params.topic),
+      PUT: async ({ params: { registrationID, topic }, request }) => {
+        const input = pushSubscriptionSchema.safeParse(await request.json().catch(() => undefined));
+        if (!input.success || !pushRegistrationIdSchema.safeParse(registrationID).success)
+          return invalid();
+        if (!(await subscribeInstall({ registrationID, ...input.data }, topic)))
+          return Response.json({ error: "Push registration not found." }, { status: 404 });
+        return new Response(null, { status: 204 });
+      },
+      DELETE: async ({ params: { registrationID, topic } }) => {
+        if (!pushRegistrationIdSchema.safeParse(registrationID).success) return invalid();
+        await unsubscribeInstall(registrationID, topic);
+        return new Response(null, { status: 204 });
+      },
     },
   },
 });

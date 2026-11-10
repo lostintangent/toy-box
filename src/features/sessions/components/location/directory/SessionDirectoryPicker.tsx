@@ -231,7 +231,7 @@ function useRecentDirectories(): {
   isLoading: boolean;
 } {
   const { data, isLoading } = useQuery({
-    ...sessionQueries.state(),
+    ...sessionQueries.state,
     select: (state) => getRecentDirectories(state.sessions),
   });
 

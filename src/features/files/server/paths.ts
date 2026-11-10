@@ -7,7 +7,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { SESSION_STORAGE_PATH } from "@sessions/model/constants";
 import { machineFile, sessionFile, type WorkspaceFile } from "../model";
 
-const SESSION_ARTIFACTS_DIRECTORY = "artifacts";
+export const SESSION_ARTIFACTS_DIRECTORY = "artifacts";
 
 /** Resolve a domain-relative artifact path under a session's artifacts directory. */
 export function resolveSessionArtifactPath(sessionId: string, artifactPath: string): string | null {
@@ -67,7 +67,7 @@ export function projectSessionArtifactPath(
   return file.kind === "session" && file.sessionId === sessionId ? file.path : undefined;
 }
 
-/** Sessions owns one artifact location, independent of its provider. */
+/** A session's artifacts directory, where its session files resolve, whatever its provider. */
 export function sessionArtifactDirectory(sessionId: string): string | null {
   if (
     !sessionId ||

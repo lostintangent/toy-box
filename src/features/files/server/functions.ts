@@ -9,7 +9,6 @@ import {
   workspaceFileInputSchema,
   writeFileInputSchema,
 } from "../model";
-import { loadCustomEditors } from "./editors";
 import * as files from "./index";
 
 export const readFile = createServerFn({ method: "GET" })
@@ -18,7 +17,7 @@ export const readFile = createServerFn({ method: "GET" })
 
 export const writeFile = createServerFn({ method: "POST" })
   .validator(writeFileInputSchema)
-  .handler(({ data }) => files.writeFile(data.file, data.content));
+  .handler(({ data }) => files.writeFile(data.file, data.content, data.notifyAgent));
 
 export const watchFile = createServerFn({ method: "POST" })
   .validator(watchFileInputSchema)
@@ -35,7 +34,3 @@ export const listDirectory = createServerFn({ method: "GET" })
 export const searchFiles = createServerFn({ method: "GET" })
   .validator(searchFilesInputSchema)
   .handler(({ data }) => files.searchFiles(data));
-
-export const listCustomEditors = createServerFn({ method: "GET" }).handler(() =>
-  loadCustomEditors(),
-);

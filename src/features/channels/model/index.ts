@@ -1,11 +1,7 @@
 import { z } from "zod";
 import { workspaceFileSchema } from "@files/model";
 import { modelConfigurationSchema, type ModelConfiguration } from "@providers/model";
-import {
-  attachmentsSchema,
-  type Attachment,
-  type AttachmentReference,
-} from "@/shared/attachments/model";
+import { attachmentsSchema, type AttachmentReference } from "@/shared/attachments/model";
 import { cronSchema } from "@/shared/cron";
 import { createPane } from "@workspace/model/panes";
 import { previewSchema, type Preview } from "@/shared/preview";
@@ -62,15 +58,17 @@ export type Channel = {
 };
 
 /** Attention refers to transcript milestones; reading never answers a request. */
-export function channelHasUnreadCompletion(channel: Channel): boolean {
+export function channelHasUnreadCompletion(channel: Omit<Channel, "tasks">): boolean {
   return (channel.completedSequence ?? 0) > channel.seenThrough;
 }
 
-export function channelHasPendingRequest(channel: Channel): boolean {
+export function channelHasPendingRequest(channel: Omit<Channel, "tasks">): boolean {
   return channel.requestSequence !== null;
 }
 
-export function channelStatus(channel: Channel): "waiting" | "finished" | "unread" | null {
+export function channelStatus(
+  channel: Omit<Channel, "tasks">,
+): "waiting" | "finished" | "unread" | null {
   if (channelHasPendingRequest(channel)) return "waiting";
   if (channelHasUnreadCompletion(channel)) return "finished";
   if (channelHasUnread(channel)) return "unread";
@@ -79,13 +77,17 @@ export function channelStatus(channel: Channel): "waiting" | "finished" | "unrea
 
 /** What a Channel asks of you: a request stays while it's open, and completion and unread
  *  messages clear once it is. */
-export function channelAttention(channel: Channel, isOpen: boolean) {
+export function channelAttention(channel: Omit<Channel, "tasks">, isOpen: boolean) {
   const status = channelStatus(channel);
   return status === "waiting" || (status && !isOpen) ? status : undefined;
 }
 
-/** A Channel as the catalog publishes it; its revision orders that Channel's catalog changes. */
-export type ChannelCatalogEntry = Channel & { revision: number };
+/** A Channel as the catalog publishes it; its revision orders that Channel's catalog changes, and
+ *  its pending request comes along, without reactions, so lists can show what it asks. */
+export type ChannelCatalogEntry = Omit<Channel, "tasks"> & {
+  revision: number;
+  request: ChannelConversationMessage | null;
+};
 
 export type ChannelList = {
   channels: ChannelCatalogEntry[];
@@ -94,7 +96,6 @@ export type ChannelList = {
 
 /** The catalog as JSON, which its event stream opens with. */
 export type ChannelCatalog = ChannelList & {
-  version: 1;
   lead: typeof CHANNEL_LEAD_PROFILE;
   /** Lead and member IDs whose Sessions are running. */
   working: string[];
@@ -225,9 +226,6 @@ export type ChannelMessageSender = ChannelMessageActor | { type: "system" };
 
 export type ChannelReaction = z.output<typeof channelReactionSchema>;
 
-/** Client attachments carry either uploaded bytes or one resolved file address. */
-export type ChannelAttachment = Attachment | AttachmentReference;
-
 /** A shared file. Sharing it again only changes its title, never when it was first shared. */
 const channelArtifactSchema = z
   .object({
@@ -353,14 +351,14 @@ type ChannelMessageBase = {
   timestamp: string;
 };
 
-export type ChannelConversationMessage<A = ChannelAttachment> = ChannelMessageBase & {
+export type ChannelConversationMessage = ChannelMessageBase & {
   sender: ChannelMessageActor;
   content: string;
   /** The lead asks for the user's response; a later user message acknowledges it. */
   request?: true;
   /** Suggested answers to a request, which the user can post with one click. */
   replies?: string[];
-  attachments?: A[];
+  attachments?: AttachmentReference[];
   reactions?: ChannelReaction[];
 };
 
@@ -373,13 +371,9 @@ export type ChannelSystemMessage = ChannelMessageBase & {
   replies?: never;
 };
 
-export type ChannelMessage<A = ChannelAttachment> =
-  | ChannelConversationMessage<A>
-  | ChannelSystemMessage;
+export type ChannelMessage = ChannelConversationMessage | ChannelSystemMessage;
 
-export function isChannelSystemMessage(
-  message: ChannelMessage<unknown>,
-): message is ChannelSystemMessage {
+export function isChannelSystemMessage(message: ChannelMessage): message is ChannelSystemMessage {
   return message.sender.type === "system";
 }
 
@@ -402,10 +396,10 @@ export type ChannelState = {
   presence: Record<string, ChannelAgentPresence>;
 };
 
-export type ChannelEvent<A = ChannelAttachment> = (
+export type ChannelEvent = (
   | {
       type: "message";
-      message: ChannelMessage<A>;
+      message: ChannelMessage;
     }
   | {
       type: "reaction";

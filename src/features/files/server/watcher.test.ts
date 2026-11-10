@@ -24,6 +24,19 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   expect(predicate()).toBe(true);
 }
 
+/**
+ * Bun rebuilds one macOS event stream for every watch in the process, asynchronously. It
+ * drops changes made before the rebuild is live and can deliver earlier ones late, but in
+ * order. So once the last registered watch has `seen` a write to `path`, a test can act.
+ */
+async function waitForWatch(path: string, seen: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200 && !seen(); attempt++) {
+    await Bun.write(path, `${attempt}`);
+    await Bun.sleep(10);
+  }
+  expect(seen()).toBe(true);
+}
+
 /** Every file change published while the test runs. */
 function captureChanges(): FileChange[] {
   const changes: FileChange[] = [];
@@ -52,6 +65,10 @@ test("one artifact watcher serves discovery and every watched artifact while any
   const releaseSecondTab = watcher.watch(report, path);
   const releaseOther = watcher.watch(sessionFile("second", "index.html"), secondPath);
   expect(nativeWatch).toHaveBeenCalledTimes(1);
+  await waitForWatch(join(root, "sentinel", "artifacts", "ready.md"), () =>
+    sessions.has("sentinel"),
+  );
+  sessions.clear();
 
   await Bun.write(path, "After");
   const timestamp = (await Bun.file(path).stat()).mtimeMs;
@@ -88,6 +105,10 @@ test("artifact directory rename and recreation refresh both membership and watch
   const report = sessionFile("session", "nested/report.md");
   const changes = captureChanges();
   watcher.watch(report, path);
+  await waitForWatch(join(root, "sentinel", "artifacts", "ready.md"), () =>
+    sessions.includes("sentinel"),
+  );
+  sessions.length = 0;
 
   await rename(directory, join(root, "session", "artifacts", "renamed"));
   await waitFor(() => changes.at(-1)?.type === "file.deleted" && sessions.includes("session"));
@@ -113,7 +134,11 @@ test("machine files in one directory share its watch until the last one is relea
   const releaseDocument = watcher.watch(document, path);
   const releaseSibling = watcher.watch(machineFile(sibling), sibling);
   expect(nativeWatch).toHaveBeenCalledTimes(1);
-  const closeWatcher = spyOn(nativeWatch.mock.results[0]!.value as fs.FSWatcher, "close");
+  const native = nativeWatch.mock.results[0]!.value as fs.FSWatcher;
+  const closeWatcher = spyOn(native, "close");
+  const names = new Set<string>();
+  native.on("change", (_event, name) => names.add(String(name)));
+  await waitForWatch(join(directory, "sentinel"), () => names.has("sentinel"));
 
   await Bun.write(`${path}.tmp`, "Atomic replacement");
   await rename(`${path}.tmp`, path);
@@ -168,23 +193,24 @@ test("input files do not publish artifact changes, and disposal stops publishing
   await Bun.write(artifact, "Artifact");
   await Bun.write(machine, "Machine");
   await mkdir(join(root, "session", "inputs"));
-  const sessions = mock(async () => {});
+  const sessions = mock(async (_sessionId: string) => {});
+  watcher.watch(machineFile(machine), machine);
   watcher.observeArtifacts(sessions);
   watcher.watch(sessionFile("session", "report.md"), artifact);
-  watcher.watch(machineFile(machine), machine);
+  await waitForWatch(join(root, "sentinel", "artifacts", "ready.md"), () =>
+    sessions.mock.calls.some(([sessionId]) => sessionId === "sentinel"),
+  );
 
-  // macOS may deliver creation events buffered before registration.
-  await Bun.sleep(75);
   sessions.mockClear();
   await Bun.write(join(root, "session", "inputs", "image.png"), "Input");
   await Bun.sleep(75);
-  expect(sessions).not.toHaveBeenCalled();
+  expect(sessions).not.toHaveBeenCalledWith("session");
 
   const changes = captureChanges();
   watcher.dispose();
   await Bun.write(artifact, "After shutdown");
   await Bun.write(machine, "After shutdown");
   await Bun.sleep(75);
-  expect(sessions).not.toHaveBeenCalled();
+  expect(sessions).not.toHaveBeenCalledWith("session");
   expect(changes).toEqual([]);
 });

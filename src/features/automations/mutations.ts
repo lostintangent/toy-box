@@ -5,31 +5,19 @@ import {
   runAutomation,
   updateAutomation,
 } from "./server/functions";
-import {
-  invalidateSessionQueries,
-  invalidateSessionsStateQuery,
-  recreateSessionInCache,
-} from "@sessions/cache";
-import { isLiveActivity, type SessionsActivity } from "@sessions/model/activity";
-import { sessionQueries } from "@sessions/queries";
 import { applyWorkspaceEvent } from "@workspace/sync";
-import type { Automation, AutomationOptions } from "./model";
-import { invalidateAutomationListQuery } from "./cache";
+import type { AutomationOptions } from "./model";
 
 export const automationMutations = {
   create: () =>
     mutationOptions({
       mutationFn: (input: AutomationOptions) => createAutomation({ data: input }),
-      onSuccess: (_automation, _variables, _onMutateResult, { client }) =>
-        Promise.all([invalidateAutomationListQuery(client), invalidateSessionsStateQuery(client)]),
     }),
 
   update: (automationId: string) =>
     mutationOptions({
       mutationFn: (input: AutomationOptions) =>
         updateAutomation({ data: { automationId, ...input } }),
-      onSuccess: (_automation, _variables, _onMutateResult, { client }) =>
-        invalidateAutomationListQuery(client),
     }),
 
   delete: (automationId: string) =>
@@ -42,23 +30,7 @@ export const automationMutations = {
 
   run: () =>
     mutationOptions({
-      mutationFn: ({ automation, clientId }: { automation: Automation; clientId: string }) =>
-        runAutomation({ data: { automationId: automation.id, clientId } }),
-      onMutate: ({ automation, clientId }, { client }) => {
-        const status = client.getQueryData<SessionsActivity>(sessionQueries.activityKey())?.[
-          automation.id
-        ]?.status;
-        if (isLiveActivity(status)) return;
-
-        return recreateSessionInCache(
-          client,
-          automation.id,
-          { clientId, content: automation.prompt, model: automation.model },
-          { title: automation.title, sessionType: "automation" },
-        );
-      },
-      onSettled: (_result, _error, { automation }, _onMutateResult, { client }) =>
-        invalidateSessionQueries(client, automation.id),
+      mutationFn: (automationId: string) => runAutomation({ data: { automationId } }),
     }),
 };
 

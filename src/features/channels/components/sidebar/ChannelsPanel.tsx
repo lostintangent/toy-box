@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import { Hash, Plus } from "lucide-react";
 import { WorkingAgents } from "@channels/components/agents/WorkingAgents";
 import { channelCommands } from "@channels/commands";
-import { channelAttention } from "@channels/model";
+import { channelAttention, createChannelPane } from "@channels/model";
 import { useChannels } from "@channels/useChannels";
 import { CommandButton } from "@/shared/commands/CommandButton";
 import { CommandMenuItems } from "@/shared/commands/CommandMenuItem";
@@ -10,6 +10,7 @@ import { SidebarListItem } from "@/shared/sidebar/SidebarListItem";
 import { SidebarPanel } from "@/shared/sidebar/SidebarPanel";
 import { RelativeTime } from "@/shared/ui/relative-time";
 import { SessionMetadataBadges } from "@sessions/components/location/SessionMetadataBadges";
+import { useWorkspaceRoots } from "@workspace/hooks/layout/roots";
 import { channelSidebarStatus } from "./status";
 
 /** The channel icon's identity fill, cyan in both appearances. */
@@ -18,19 +19,15 @@ const CHANNEL_ICON_STYLE: CSSProperties & { "--identity": string } = { "--identi
 export function ChannelsPanel({
   isExpanded,
   onExpandedChange,
-  openChannelIds,
-  onChannelOpen,
 }: {
   isExpanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
-  openChannelIds: string[];
-  onChannelOpen: (channelId: string, toggleInWorkspace: boolean) => void;
 }) {
+  const { selectRoot, isOpen } = useWorkspaceRoots();
   const channels = useChannels();
-  if (channels.length === 0) return null;
 
   const rows = channels.map((entry) => {
-    const attention = channelAttention(entry.channel, openChannelIds.includes(entry.channel.id));
+    const attention = channelAttention(entry.channel, isOpen(createChannelPane(entry.channel.id)));
     return { ...entry, status: attention && channelSidebarStatus(entry.channel, attention) };
   });
 
@@ -50,6 +47,7 @@ export function ChannelsPanel({
           <Plus className="h-4 w-4" />
         </CommandButton>
       }
+      emptyMessage="Channels keep a team of agents working together."
     >
       {rows.map(({ channel, agents, status }) => {
         const { directory } = channel;
@@ -79,8 +77,10 @@ export function ChannelsPanel({
             badge={directory ? <SessionMetadataBadges cwd={directory} /> : undefined}
             menuItems={<CommandMenuItems commands={channelCommands(channel)} />}
             status={status}
-            isActive={openChannelIds.includes(channel.id)}
-            onClick={(event) => onChannelOpen(channel.id, event.metaKey || event.ctrlKey)}
+            isActive={isOpen(createChannelPane(channel.id))}
+            onClick={(event) =>
+              selectRoot(createChannelPane(channel.id), event.metaKey || event.ctrlKey)
+            }
           />
         );
       })}

@@ -9,8 +9,8 @@ import {
 import * as supervisor from "./supervisor";
 import { WorkerCanceledError } from "./supervisor";
 import type { WorkerReceipt, WorkerRetention } from "./supervisor";
-import { finishWorker, getRegisteredWorker, hasWorker, startWorker } from "./registry";
-import { createWorker } from "./database";
+import { finishWorker, getRegisteredWorker, startWorker } from "./registry";
+import { createWorker, registerWorkerSession } from "./database";
 import { getStateDatabase } from "@/server/database";
 import { AppDatabase } from "@apps/server/database";
 import { resolveWorkspaceFile } from "@files/server/paths";
@@ -54,25 +54,21 @@ export async function spawnWorkerFromRequest(
   }
 
   const apps = new AppDatabase(await getStateDatabase());
-  if (!(await apps.get(input.appId))) throw new Error("Workers require an existing app.");
-  const request: WorkerSpawn = {
+  const app = await apps.get(input.appId);
+  if (!app) throw new Error("Workers require an existing app.");
+  const { sessionId } = await spawnWorker({
     ...details,
-    owner: { type: "app", appId: input.appId },
+    owner: { type: "app", appId: app.id },
     retention: (input.ephemeral ?? true) ? "ephemeral" : "durable",
-    message: input.message,
-  };
-  const { sessionId } = await admitWorker(request, async (worker) => {
-    const app = await apps.get(input.appId);
-    if (!app) throw new Error("The app was deleted before its worker started.");
-    return superviseAdmittedWorker({
-      worker,
-      retention: request.retention,
-      location: input.location,
-      message: {
-        ...input.message,
-        content: buildWorkerPrompt(input.message.content, { type: "app", app }),
-      },
-    });
+    message: {
+      ...input.message,
+      content: buildWorkerPrompt(input.message.content, { type: "app", app }),
+    },
+    // App deletion cancels only published workers, so recheck the app once this one is published.
+    admit: async (worker) => {
+      if (await apps.get(app.id)) return registerWorkerSession(worker);
+      throw new Error("The app was deleted before its worker started.");
+    },
   });
   return { sessionId };
 }
@@ -86,21 +82,6 @@ export function spawnWorker<Owner extends WorkerOwner, Value>(
   input: WorkerSpawn<Owner, Value>,
 ): Promise<WorkerReceipt<Value | void>> {
   const { admit } = input;
-  return admitWorker(input, (worker) =>
-    superviseAdmittedWorker({
-      worker,
-      message: input.message,
-      location: input.location,
-      retention: input.retention,
-      admit: admit ? () => admit(worker) : undefined,
-    }),
-  );
-}
-
-function admitWorker<Owner extends WorkerOwner, Value>(
-  input: WorkerSpawn<Owner, Value>,
-  spawn: (worker: Worker & Owner) => Promise<WorkerReceipt<Value>>,
-): Promise<WorkerReceipt<Value>> {
   const worker = createWorker(
     {
       ...input.owner,
@@ -111,10 +92,16 @@ function admitWorker<Owner extends WorkerOwner, Value>(
     input.sessionId,
   );
   const receipt = registerPendingSessionCompletion(worker.sessionId);
-  // Publish only after waiting by ID is safe. Workspace observers can react
-  // synchronously to worker.started before the backing Session exists.
+  const workerSession = supervisor.superviseWorker({
+    worker,
+    message: input.message,
+    location: input.location,
+    retention: input.retention,
+    admit: admit ? () => admit(worker) : undefined,
+  });
+  // Publish only after waiting by ID is safe and supervision observes cancellation.
+  // Workspace observers can react synchronously to worker.started before the backing Session exists.
   startWorker(worker);
-  const workerSession = spawn(worker);
   void completeAdmittedWorker(worker.sessionId, receipt, workerSession).catch(reportWorkerError);
   return workerSession;
 }
@@ -133,15 +120,6 @@ export async function cancelAdmittedWorker(sessionId: string): Promise<boolean> 
   finishWorker(sessionId);
   rejectWorkerCompletion(sessionId);
   return supervisor.abortWorker(sessionId);
-}
-
-function superviseAdmittedWorker<Value>(
-  input: Parameters<typeof supervisor.superviseWorker<Value>>[0],
-): Promise<WorkerReceipt<Value | void>> {
-  if (!hasWorker(input.worker.sessionId)) {
-    return Promise.reject(new WorkerCanceledError(input.worker.sessionId));
-  }
-  return supervisor.superviseWorker(input);
 }
 
 async function completeAdmittedWorker(

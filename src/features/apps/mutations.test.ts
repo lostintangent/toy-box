@@ -11,6 +11,7 @@ const definition = {
   color: "#f59e0b",
   state: { schema: { type: "object" }, default: {} },
   accepts: ["text/plain"],
+  opens: [],
   revision: "definition-a",
 } satisfies AppDefinition;
 
@@ -126,13 +127,13 @@ describe("app mutation options", () => {
 
 function createQueryClient(): QueryClient {
   const queryClient = new QueryClient();
-  queryClient.setQueryData(appQueries.listKey(), { apps: [], definitions: [], shares: [] });
+  queryClient.setQueryData(appQueries.list.queryKey, { apps: [], definitions: [], shares: [] });
   onTestFinished(() => queryClient.clear());
   return queryClient;
 }
 
 function readApps(queryClient: QueryClient): AppList {
-  const apps = queryClient.getQueryData<AppList>(appQueries.listKey());
+  const apps = queryClient.getQueryData(appQueries.list.queryKey);
   if (!apps) throw new Error("Apps were not cached");
   return apps;
 }

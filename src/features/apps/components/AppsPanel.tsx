@@ -1,14 +1,15 @@
-import { useState } from "react";
+import { createElement } from "react";
 import { mutationOptions, useMutation, useSuspenseQuery } from "@tanstack/react-query";
 import { AppWindow, Download, MessageCirclePlus, Plus, Trash2 } from "lucide-react";
 import { appCommands } from "@apps/commands";
 import { appMutations } from "@apps/mutations";
-import type { AppDefinition, AppInstance } from "@apps/model";
+import { createAppPane, type AppDefinition, type AppInstance } from "@apps/model";
 import { appQueries } from "@apps/queries";
 import { CommandMenuItems } from "@/shared/commands/CommandMenuItem";
 import { Button } from "@/shared/ui/button";
-import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
-import { NameDialog } from "@/shared/sidebar/NameDialog";
+import { DestructiveConfirmationDialog } from "@/shared/dialogs/DestructiveConfirmationDialog";
+import { openDialog } from "@/shared/dialogs/DialogHost";
+import { NameDialog } from "@/shared/dialogs/NameDialog";
 import { SidebarListItem } from "@/shared/sidebar/SidebarListItem";
 import { SidebarPanel } from "@/shared/sidebar/SidebarPanel";
 import {
@@ -18,155 +19,127 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { APP_ICONS } from "./runtime/icons";
+import { useWorkspaceRoots } from "@workspace/hooks/layout/roots";
+import { appIcon } from "./runtime/icons";
 import { AppColorMenu } from "./AppColorMenu";
 import { InstallAppDialog } from "./InstallAppDialog";
 
 export function AppsPanel({
   isExpanded,
   onExpandedChange,
-  openAppIds,
-  onAppOpen,
   onAppOpenInHyper,
 }: {
   isExpanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
-  openAppIds: string[];
-  onAppOpen: (appId: string, toggleInWorkspace: boolean) => void;
   onAppOpenInHyper: (appId: string) => void;
 }) {
+  const { selectRoot, isOpen } = useWorkspaceRoots();
   const {
     data: { apps, definitions },
   } = useSuspenseQuery({
-    ...appQueries.list(),
+    ...appQueries.list,
     select: ({ apps, definitions }) => ({ apps, definitions }),
   });
-  const [createDefinitionId, setCreateDefinitionId] = useState<string | null>(null);
-  const [installOpen, setInstallOpen] = useState(false);
-  const [uninstallDefinitionId, setUninstallDefinitionId] = useState<string | null>(null);
 
-  const createDefinition =
-    definitions.find((definition) => definition.id === createDefinitionId) ?? null;
-  const uninstallDefinition =
-    definitions.find((definition) => definition.id === uninstallDefinitionId) ?? null;
-  const uninstallInstanceCount = uninstallDefinition
-    ? apps.filter((app) => app.definitionId === uninstallDefinition.id).length
-    : 0;
+  function openCreateDialog(definition: AppDefinition) {
+    openDialog((dialog) => (
+      <NameDialog
+        {...dialog}
+        name=""
+        suggestedName={definition.title}
+        title={`Save a ${definition.title} app`}
+        description="This creates a durable instance with its own state."
+        submitLabel="Save app"
+        mutation={createAndOpenApp(definition.id, (appId) => selectRoot(createAppPane(appId)))}
+      />
+    ));
+  }
+
+  function openUninstallDialog(definition: AppDefinition) {
+    const instanceCount = apps.filter((app) => app.definitionId === definition.id).length;
+    openDialog((dialog) => (
+      <DestructiveConfirmationDialog
+        {...dialog}
+        title={`Uninstall ${definition.title}?`}
+        description={
+          instanceCount > 0
+            ? `${definition.title} has ${instanceCount} saved ${
+                instanceCount === 1 ? "app" : "apps"
+              }. Delete ${
+                instanceCount === 1 ? "it" : "them"
+              } from the Apps list before uninstalling the definition.`
+            : "This removes its app.json and app.tsx definition files from this machine."
+        }
+        confirmLabel={instanceCount > 0 ? "Delete saved apps first" : "Uninstall"}
+        pendingLabel="Uninstalling…"
+        disabled={instanceCount > 0}
+        mutation={appMutations.uninstall(definition.id)}
+      />
+    ));
+  }
 
   return (
-    <>
-      <SidebarPanel
-        title="Apps"
-        isExpanded={isExpanded}
-        onExpandedChange={onExpandedChange}
-        action={
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-6 w-6"
-                  aria-label="Add app"
-                  title="Add app"
-                />
-              }
-            >
-              <Plus className="h-4 w-4" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {definitions.map((definition) => (
-                <div key={definition.id} className="flex items-center">
-                  <DropdownMenuItem
-                    className="min-w-0 flex-1"
-                    onClick={() => setCreateDefinitionId(definition.id)}
-                  >
-                    <DefinitionIcon definition={definition} />
-                    <span className="truncate">{definition.title}</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    variant="destructive"
-                    className="size-8 shrink-0 justify-center p-0"
-                    aria-label={`Uninstall ${definition.title}`}
-                    title={`Uninstall ${definition.title}`}
-                    onClick={() => setUninstallDefinitionId(definition.id)}
-                  >
-                    <Trash2 />
-                  </DropdownMenuItem>
-                </div>
-              ))}
-              {definitions.length > 0 && <DropdownMenuSeparator />}
-              <DropdownMenuItem onClick={() => setInstallOpen(true)}>
-                <Download />
-                Install from Gist…
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        }
-        emptyMessage="Saved apps will stay here for quick reopening."
-      >
-        {apps.map((app) => (
-          <AppListItem
-            key={app.id}
-            app={app}
-            definition={definitions.find(({ id }) => id === app.definitionId)}
-            active={openAppIds.includes(app.id)}
-            onOpen={(toggle) => onAppOpen(app.id, toggle)}
-            onOpenInHyper={() => onAppOpenInHyper(app.id)}
-          />
-        ))}
-      </SidebarPanel>
-
-      {createDefinition && (
-        <NameDialog
-          key={createDefinition.id}
-          name=""
-          suggestedName={createDefinition.title}
-          title={`Save a ${createDefinition.title} app`}
-          description="This creates a durable instance with its own state."
-          submitLabel="Save app"
-          mutation={createAndOpenApp(createDefinition.id, (appId) => onAppOpen(appId, false))}
-          onOpenChange={(open) => {
-            if (!open) setCreateDefinitionId(null);
-          }}
+    <SidebarPanel
+      title="Apps"
+      isExpanded={isExpanded}
+      onExpandedChange={onExpandedChange}
+      action={
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6"
+                aria-label="Add app"
+                title="Add app"
+              />
+            }
+          >
+            <Plus className="h-4 w-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {definitions.map((definition) => (
+              <div key={definition.id} className="flex items-center">
+                <DropdownMenuItem
+                  className="min-w-0 flex-1"
+                  onClick={() => openCreateDialog(definition)}
+                >
+                  <DefinitionIcon definition={definition} />
+                  <span className="truncate">{definition.title}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  variant="destructive"
+                  className="size-8 shrink-0 justify-center p-0"
+                  aria-label={`Uninstall ${definition.title}`}
+                  title={`Uninstall ${definition.title}`}
+                  onClick={() => openUninstallDialog(definition)}
+                >
+                  <Trash2 />
+                </DropdownMenuItem>
+              </div>
+            ))}
+            {definitions.length > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuItem onClick={() => openDialog(InstallAppDialog)}>
+              <Download />
+              Install from Gist…
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      }
+      emptyMessage="Saved apps will stay here for quick reopening."
+    >
+      {apps.map((app) => (
+        <AppListItem
+          key={app.id}
+          app={app}
+          definition={definitions.find(({ id }) => id === app.definitionId)}
+          active={isOpen(createAppPane(app.id))}
+          onOpen={(toggle) => selectRoot(createAppPane(app.id), toggle)}
+          onOpenInHyper={() => onAppOpenInHyper(app.id)}
         />
-      )}
-
-      {installOpen && (
-        <InstallAppDialog
-          onOpenChange={(open) => {
-            if (!open) setInstallOpen(false);
-          }}
-          onInstalled={(app) => {
-            setInstallOpen(false);
-            onAppOpen(app.id, false);
-          }}
-        />
-      )}
-
-      {uninstallDefinition && (
-        <DestructiveConfirmationDialog
-          key={uninstallDefinition.id}
-          title={`Uninstall ${uninstallDefinition.title}?`}
-          description={
-            uninstallInstanceCount > 0
-              ? `${uninstallDefinition.title} has ${uninstallInstanceCount} saved ${
-                  uninstallInstanceCount === 1 ? "app" : "apps"
-                }. Delete ${
-                  uninstallInstanceCount === 1 ? "it" : "them"
-                } from the Apps list before uninstalling the definition.`
-              : "This removes its app.json and app.tsx definition files from this machine."
-          }
-          confirmLabel={uninstallInstanceCount > 0 ? "Delete saved apps first" : "Uninstall"}
-          pendingLabel="Uninstalling…"
-          disabled={uninstallInstanceCount > 0}
-          mutation={appMutations.uninstall(uninstallDefinition.id)}
-          onOpenChange={(open) => {
-            if (!open) setUninstallDefinitionId(null);
-          }}
-        />
-      )}
-    </>
+      ))}
+    </SidebarPanel>
   );
 }
 
@@ -233,6 +206,5 @@ function AppListItem({
 }
 
 function DefinitionIcon({ definition }: { definition: AppDefinition }) {
-  const Icon = definition.icon ? APP_ICONS[definition.icon] : AppWindow;
-  return <Icon className="size-4" />;
+  return createElement(appIcon(definition.icon), { className: "size-4" });
 }

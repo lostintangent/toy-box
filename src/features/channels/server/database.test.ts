@@ -1,6 +1,6 @@
 import { channelAgent, createStoredChannel } from "@channels/server/testFixtures";
 import { describe, expect, onTestFinished, setSystemTime, test } from "bun:test";
-import type { ChannelTask } from "@channels/model";
+import type { ChannelConversationMessage, ChannelTask } from "@channels/model";
 import { machineFile, sessionFile, workspaceFileId } from "@files/model";
 import { createTestDatabase } from "@/server/database";
 import { ChannelDatabase, ChannelInputError } from "./database";
@@ -53,7 +53,7 @@ describe("channel attention", () => {
         request: true,
         replies,
       });
-      return events[0]!.message;
+      return events[0]!.message as ChannelConversationMessage;
     };
     return { channels, channel, post, complete, ask };
   }
@@ -140,6 +140,22 @@ describe("channel attention", () => {
     ).toEqual([done]);
   });
 
+  test("the catalog carries a pending request, without reactions, until the user replies", async () => {
+    const { channels, channel, post, ask } = await setup();
+    const question = await ask("Which color?");
+    await channels.setMessageReaction({
+      channelId: channel.id,
+      sequence: question.sequence,
+      agentId: "reviewer-session",
+      reaction: "agree",
+    });
+    expect((await channels.listChannels()).channels[0]?.request).toEqual(question);
+    expect((await channels.markUserSeen(channel.id, question.sequence))?.channel.request).toEqual(
+      question,
+    );
+    expect((await post("Green.", { type: "user" })).channel.request).toBeNull();
+  });
+
   test("only the lead can request input", async () => {
     const { channels, channel } = await setup();
     const { member } = await channels.createMember(channelAgent(channel.id, "member", "Member"));
@@ -165,11 +181,19 @@ describe("channel attention", () => {
 
   test("a rejected reply preserves attention and allocates no sequence number", async () => {
     const { channels, channel, post, ask } = await setup();
-    const request = await ask("Please approve.");
+    await ask("Please approve.");
+    const other = await createStoredChannel(channels, { name: "Other", ...CHANNEL_DEFAULTS });
+    const { message: elsewhere } = await channels.appendMessage({
+      id: crypto.randomUUID(),
+      channelId: other.id,
+      sender: { type: "user" },
+      content: "Elsewhere.",
+    });
     const before = await channels.getSnapshot(channel.id, 100);
+    // An ID from another Channel fails the insert after the transaction advanced the sequence.
     await expect(
       channels.appendMessage({
-        id: request.id,
+        id: elsewhere.id,
         channelId: channel.id,
         sender: { type: "user" },
         content: "Approved.",
@@ -351,10 +375,7 @@ describe("channel database", () => {
     const joined = joinedEvent!.message;
     await createStoredChannel(channels, { name: "Another room", ...CHANNEL_DEFAULTS });
 
-    const attachments = [
-      "/workspace/screenshot.png",
-      { mimeType: "image/png", base64: "aW1hZ2U=" },
-    ];
+    const attachments = ["screenshot.png", "flow.mov"];
     const { message: first } = await channels.appendMessage({
       id: "message-1",
       channelId: channel.id,
@@ -373,7 +394,7 @@ describe("channel database", () => {
     });
 
     expect(first.sequence).toBe(2);
-    expect(first.attachments).toEqual(attachments);
+    expect(first.attachments?.map(({ name }) => name)).toEqual(attachments);
     expect(second.channel).toEqual((await channels.getChannel(channel.id))!);
     expect(await channels.listMembers(channel.id)).toEqual([member]);
     expect((await channels.listChannels()).members).toEqual([member]);
@@ -652,6 +673,9 @@ describe("channel database", () => {
     await expect(
       channels.updateMember(member.id, { name: "Reviewer", role: "New role" }),
     ).rejects.toThrow("already uses the @reviewer mention");
+    await expect(channels.updateMember(member.id, { name: "Lead" })).rejects.toThrow(
+      "The intrinsic lead already uses the @lead mention.",
+    );
 
     expect(await channels.getSnapshot(channel.id, 100)).toEqual(before);
   });
@@ -744,16 +768,6 @@ describe("channel database", () => {
       actor: { type: "agent", agentId: channel.id },
       purpose: null,
     });
-    await expect(
-      channels.updateChannel(member.id, {
-        tasks: [{ id: "take-over", title: "Take over", status: "pending" }],
-      }),
-    ).rejects.toThrow("Only the channel lead");
-    await expect(
-      channels.editTasks(member.id, {
-        operations: [{ type: "update", taskId: "build", patch: { status: "done" } }],
-      }),
-    ).rejects.toThrow("Only the channel lead");
 
     await channels.deleteMember(member.id, { type: "user" });
     expect((await channels.getChannel(channel.id))?.tasks).toEqual([
@@ -862,12 +876,14 @@ describe("channel database", () => {
         file: machineFile("/workspace/plan.md"),
         title: "Release plan",
         sharedAt: expect.any(String),
+        url: "/api/serve/machine/workspace/plan.md",
       },
       {
         id: "session:designer-session:plan.md",
         file: sessionFile("designer-session", "plan.md"),
         title: "Design plan",
         sharedAt: expect.any(String),
+        url: "/api/serve/designer-session/plan.md",
       },
     ]);
     expect((await channels.getSnapshot(channel.id, 100))?.messages).toHaveLength(3);
@@ -898,10 +914,15 @@ describe("channel database", () => {
     expect(draft).not.toHaveProperty("artifactId");
     expect(review).toMatchObject({ artifactId: designId });
     expect((await channels.listArtifacts(channel.id)).map(({ id }) => id)).toEqual([designId]);
-    expect((await channels.listMessagesAfter(channel.id)).at(-1)?.content).toEqual({
+    expect((await channels.listMessagesAfter(channel.id)).at(-1)?.content).toMatchObject({
       type: "artifact_removed",
       actor: { type: "user" },
-      artifact: { file: plan, title: "Plan" },
+      artifact: {
+        file: plan,
+        title: "Plan",
+        id: planId,
+        url: "/api/serve/machine/workspace/plan.md",
+      },
     });
     expect(await channels.removeArtifact(channel.id, planId, { type: "user" })).toBeNull();
   });
@@ -994,12 +1015,10 @@ describe("channel routines", () => {
     expect((await channels.getChannel(channel.id))?.latestSequence).toBe(2);
   });
 
-  test("routine edits require the channel lead and an existing routine", async () => {
+  test("routine edits require an existing routine", async () => {
     const { channels, channel } = await setup();
-    const { member } = await channels.createMember(channelAgent(channel.id, "watcher", "Watcher"));
     const routine = { title: "CI", schedule: "0 9 * * *", prompt: "Check CI" };
 
-    await expect(channels.setRoutine(member.id, routine)).rejects.toThrow("Only the channel lead");
     await expect(
       channels.setRoutine(channel.id, { ...routine, routineId: "missing" }),
     ).rejects.toThrow("Routine not found");

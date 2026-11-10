@@ -1,5 +1,5 @@
 // Process-wide registries for runtime state that should survive module reloads
-// in development, such as live session streams, pending acquisitions, and
+// in development, such as live session executions, pending acquisitions, and
 // global broadcast listener sets.
 
 export function getProcessValue<T>(name: string, create: () => T): T {

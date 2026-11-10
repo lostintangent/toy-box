@@ -15,13 +15,15 @@ import type { EditorProps } from "../../index";
 import { buildAgentPrompt, targetMetadata } from "./bridge";
 
 export function AgentPrompt({
-  onDismiss,
+  open,
+  onOpenChange,
   request,
   spawnWorker,
 }: {
-  onDismiss: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   request: LeafnodeAgentRequest;
-  spawnWorker: NonNullable<EditorProps["spawnWorker"]>;
+  spawnWorker: NonNullable<EditorProps["file"]["spawnWorker"]>;
 }) {
   const [instruction, setInstruction] = useState("");
   const spawnMutation = useMutation({
@@ -37,11 +39,11 @@ export function AgentPrompt({
     const trimmed = instruction.trim();
     if (!trimmed || spawnMutation.isPending) return;
 
-    spawnMutation.mutate(trimmed, { onSuccess: onDismiss });
+    spawnMutation.mutate(trimmed, { onSuccess: () => onOpenChange(false) });
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onDismiss()}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Ask the agent</DialogTitle>
@@ -72,7 +74,7 @@ export function AgentPrompt({
           </p>
         )}
         <DialogFooter>
-          <Button variant="ghost" onClick={onDismiss}>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button onClick={submit} disabled={!instruction.trim() || spawnMutation.isPending}>

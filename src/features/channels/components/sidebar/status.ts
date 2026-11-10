@@ -2,7 +2,7 @@ import type { Channel, channelAttention } from "@channels/model";
 
 /** How the sidebar labels what a Channel asks of you. */
 export function channelSidebarStatus(
-  { name }: Channel,
+  { name }: Omit<Channel, "tasks">,
   kind: NonNullable<ReturnType<typeof channelAttention>>,
 ) {
   const [ariaLabel, tooltip] = {

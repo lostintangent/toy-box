@@ -1,52 +1,64 @@
 import { describe, expect, test } from "bun:test";
-import type { CustomEditorKind } from "@files/model";
-import { resolveEditorKind } from "./index";
-import { CustomEditor } from "./custom/CustomEditor";
+import type { AppDefinition } from "@apps/model";
 import { machineFile, sessionFile } from "@files/model";
+import { resolveEditorKind } from "./index";
 
-// The core contract of the whole feature: a registered custom kind resolves for the files
-// it claims, built-ins keep priority, and unknown extensions fall back — all from the path.
+// The core contract of the whole feature: an installed app definition opens the files it claims,
+// built-ins keep priority, and unknown extensions fall back — all from the path.
 
-const csvTable: CustomEditorKind = {
-  name: "csv-table",
-  extensions: ["csv"],
-  editable: true,
-  html: "<html><body></body></html>",
-};
-
+const definition = (id: string, opens: string[]): AppDefinition => ({
+  id,
+  title: id,
+  color: "#f59e0b",
+  state: { schema: { type: "object" }, default: {} },
+  accepts: [],
+  opens,
+  revision: `${id}-a`,
+});
+const httpClient = definition("http-client", ["http", "rest"]);
 const machine = (name: string) => machineFile(`/repo/${name}`);
+const markdown = resolveEditorKind(machine("notes.md"), []);
 
 describe("resolveEditorKind", () => {
-  test("resolves a registered custom kind for the files it claims, case-insensitively", () => {
-    expect(resolveEditorKind(machine("data.csv"), [csvTable])).toMatchObject({
-      Renderer: CustomEditor,
-      definition: csvTable,
-      editable: true,
-    });
-    expect(resolveEditorKind(machine("DATA.CSV"), [csvTable]).definition).toBe(csvTable);
+  test("an installed definition opens the files it claims, case-insensitively", () => {
+    const kind = resolveEditorKind(machine("api.http"), [httpClient]);
+
+    expect(kind.extensions).toEqual(["http", "rest"]);
+    expect(kind.Renderer).not.toBe(markdown.Renderer);
+    expect(resolveEditorKind(machine("API.REST"), [httpClient]).Renderer).toBe(kind.Renderer);
   });
 
-  test("normalizes custom kinds without editing support to read-only", () => {
-    const readOnlyKind = { ...csvTable, editable: undefined };
+  test("the first definition in catalog order wins a shared extension", () => {
+    const first = definition("first", ["http"]);
 
-    expect(resolveEditorKind(machine("data.csv"), [readOnlyKind]).editable).toBe(false);
+    expect(resolveEditorKind(machine("api.http"), [first, httpClient]).extensions).toEqual([
+      "http",
+    ]);
   });
 
-  test.each(["md", "svg", "json", "brief"])(
-    "the built-in .%s editor beats a rival custom kind, case-insensitively",
+  test("a new definition revision is a new kind, so open panes remount it from their latest text", () => {
+    const file = machine("api.http");
+    const revised = { ...httpClient, revision: "http-client-b" };
+
+    expect(resolveEditorKind(file, [revised]).id).not.toBe(
+      resolveEditorKind(file, [httpClient]).id,
+    );
+  });
+
+  test.each(["md", "html", "svg", "json", "brief"])(
+    "the built-in .%s editor beats a rival definition, case-insensitively",
     (extension) => {
-      const rival = { ...csvTable, name: `not-${extension}`, extensions: [extension] };
       const builtIn = resolveEditorKind(machine(`file.${extension}`), []);
-      const contested = resolveEditorKind(machine(`FILE.${extension.toUpperCase()}`), [rival]);
+      const rival = definition(`not-${extension}`, [extension]);
 
       expect(builtIn.extensions).toContain(extension);
-      expect(builtIn.definition).toBeUndefined();
-      expect(contested.Renderer).toBe(builtIn.Renderer);
+      expect(resolveEditorKind(machine(`FILE.${extension.toUpperCase()}`), [rival])).toBe(builtIn);
     },
   );
 
-  test("an unclaimed extension falls back to a built-in, not a registered kind", () => {
-    expect(resolveEditorKind(machine("notes.txt"), [csvTable]).definition).toBeUndefined();
+  test("an unclaimed extension falls back to Markdown", () => {
+    expect(resolveEditorKind(machine("notes.txt"), [httpClient])).toBe(markdown);
+    expect(resolveEditorKind(machine("Makefile"), [httpClient])).toBe(markdown);
   });
 
   test("runs .toy files only when they belong to a session", () => {

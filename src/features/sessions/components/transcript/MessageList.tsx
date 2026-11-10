@@ -23,7 +23,7 @@ import {
 } from "./virtualization";
 
 type PendingMessageAnchor = {
-  messageIndex: number;
+  position: number;
   viewportOffset: number;
 };
 
@@ -36,6 +36,8 @@ function isRenderableMessage(message: SessionTranscriptMessage): boolean {
 
 export function SessionMessageList({
   messages,
+  messageOffset = 0,
+  onLoadPrevious,
   view = "all",
   isStreaming,
   isWaiting,
@@ -44,6 +46,8 @@ export function SessionMessageList({
   scrollToBottomRef,
 }: {
   messages: SessionTranscriptMessage[];
+  messageOffset?: number;
+  onLoadPrevious?: () => void;
   view?: TranscriptView;
   isStreaming: boolean;
   isWaiting: boolean;
@@ -61,7 +65,9 @@ export function SessionMessageList({
       initial={false}
     >
       <VirtualizedMessageList
-        messages={messagesInView(messages, view)}
+        {...messagesInView(messages, view, messageOffset)}
+        messageOffset={messageOffset}
+        onLoadPrevious={onLoadPrevious}
         isStreaming={isStreaming}
         isWaiting={isWaiting}
         status={status}
@@ -82,6 +88,9 @@ function SessionScrollToBottomButton() {
 
 function VirtualizedMessageList({
   messages,
+  positions,
+  messageOffset,
+  onLoadPrevious,
   isStreaming,
   isWaiting,
   status,
@@ -89,6 +98,9 @@ function VirtualizedMessageList({
   scrollToBottomRef,
 }: {
   messages: SessionTranscriptMessage[];
+  positions: number[];
+  messageOffset: number;
+  onLoadPrevious?: () => void;
   isStreaming: boolean;
   isWaiting: boolean;
   status: SessionStatus;
@@ -105,18 +117,17 @@ function VirtualizedMessageList({
   const contentRef = useRef<HTMLDivElement>(null);
   const historySentinelRef = useRef<HTMLDivElement>(null);
   const pendingAnchorRef = useRef<PendingMessageAnchor | null>(null);
-  const [messageWindow, setMessageWindow] = useState(() => createMessageWindow(messages.length));
+  const [messageWindow, setMessageWindow] = useState(() => createMessageWindow(positions));
 
   // Reconcile before commit so an append or replacement never paints with stale bounds.
-  let renderedWindow = messageWindow;
-  if (messageWindow.messageCount !== messages.length) {
-    renderedWindow = reconcileMessageWindow(messageWindow, messages.length, isAtBottom);
-    setMessageWindow(renderedWindow);
-  }
+  const renderedWindow = reconcileMessageWindow(messageWindow, positions, isAtBottom);
+  if (renderedWindow !== messageWindow) setMessageWindow(renderedWindow);
 
-  const startIndex = renderedWindow.startIndex;
-  const hasEarlierMessages = startIndex > 0;
-  const previousStartIndexRef = useRef(startIndex);
+  const { startPosition } = renderedWindow;
+  const startIndex = positions.findIndex((position) => position >= startPosition);
+  const hasHiddenMessages = startIndex > 0;
+  const hasPreviousMessages = hasHiddenMessages || messageOffset > 0;
+  const previousStartPositionRef = useRef(startPosition);
 
   useEffect(() => {
     scrollToBottomRef.current = scrollToBottom;
@@ -135,7 +146,8 @@ function VirtualizedMessageList({
   }, [scrollRef, scrollToBottom]);
 
   const revealPreviousMessages = useEffectEvent(() => {
-    if (messageWindow.startIndex === 0 || pendingAnchorRef.current) return;
+    if (pendingAnchorRef.current) return;
+    if (!hasHiddenMessages) return onLoadPrevious?.();
 
     const scrollEl = scrollRef.current;
     const contentEl = contentRef.current;
@@ -145,22 +157,24 @@ function VirtualizedMessageList({
     // escaped the bottom lock. History anchoring owns this resize transition.
     stopScroll();
 
-    const anchorEl = contentEl.querySelector<HTMLElement>("[data-message-index]");
+    const anchorEl = contentEl.querySelector<HTMLElement>("[data-message-position]");
     if (anchorEl) {
       pendingAnchorRef.current = {
-        messageIndex: Number(anchorEl.dataset.messageIndex),
+        position: Number(anchorEl.dataset.messagePosition),
         viewportOffset: anchorEl.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top,
       };
     }
 
-    setMessageWindow((current) => revealPreviousMessageWindow(current));
+    setMessageWindow((current) => revealPreviousMessageWindow(current, positions));
   });
 
   // Reveal the previous window before its sentinel reaches the visible scroll viewport.
+  // Reaching the first loaded message, or loading a page, observes again, since the
+  // sentinel may still be in view and must then load or reveal the next messages.
   useEffect(() => {
     const scrollEl = scrollRef.current;
     const sentinelEl = historySentinelRef.current;
-    if (!hasEarlierMessages || !scrollEl || !sentinelEl) return;
+    if (!hasPreviousMessages || !scrollEl || !sentinelEl) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -173,21 +187,21 @@ function VirtualizedMessageList({
     );
     observer.observe(sentinelEl);
     return () => observer.disconnect();
-  }, [hasEarlierMessages, scrollRef]);
+  }, [messageOffset, hasPreviousMessages, hasHiddenMessages, scrollRef]);
 
   // Anchor prepended history in place, or keep an advancing tail window pinned before paint.
   useLayoutEffect(() => {
     const scrollEl = scrollRef.current;
     const contentEl = contentRef.current;
-    const previousStartIndex = previousStartIndexRef.current;
-    previousStartIndexRef.current = startIndex;
+    const previousStartPosition = previousStartPositionRef.current;
+    previousStartPositionRef.current = startPosition;
     if (!scrollEl || !contentEl) return;
 
     const pendingAnchor = pendingAnchorRef.current;
     pendingAnchorRef.current = null;
     if (pendingAnchor) {
       const anchorEl = contentEl.querySelector<HTMLElement>(
-        `[data-message-index="${pendingAnchor.messageIndex}"]`,
+        `[data-message-position="${pendingAnchor.position}"]`,
       );
       if (!anchorEl) return;
 
@@ -199,10 +213,10 @@ function VirtualizedMessageList({
 
     // Crossing the window boundary removes old rows above the viewport. Keep
     // the latest output pinned before paint when the reader was already there.
-    if (startIndex > previousStartIndex && isAtBottom) {
+    if (startPosition > previousStartPosition && isAtBottom) {
       void scrollToBottom({ animation: "instant", ignoreEscapes: true });
     }
-  }, [isAtBottom, scrollRef, scrollToBottom, startIndex]);
+  }, [isAtBottom, scrollRef, scrollToBottom, startPosition]);
 
   return (
     <ScrollableFade ref={scrollRef} axis="vertical" rootClassName="size-full">
@@ -213,15 +227,15 @@ function VirtualizedMessageList({
           data-message-window-start-index={startIndex}
           style={{ opacity: 0 }}
         >
-          {hasEarlierMessages && (
+          {hasPreviousMessages && (
             <div ref={historySentinelRef} className="h-px" aria-hidden="true" />
           )}
 
           {messages.slice(startIndex).map((message, index) => {
-            const absoluteIndex = startIndex + index;
+            const position = positions[startIndex + index];
             if (!isRenderableMessage(message)) return null;
 
-            const isLast = absoluteIndex === messages.length - 1;
+            const isLast = startIndex + index === messages.length - 1;
             const content = (
               <Message
                 message={message}
@@ -231,11 +245,7 @@ function VirtualizedMessageList({
               />
             );
             return (
-              <div
-                // eslint-disable-next-line react/no-array-index-key -- messages append in order and streaming updates replace content in place
-                key={`${message.role}-${absoluteIndex}`}
-                data-message-index={absoluteIndex}
-              >
+              <div key={`${message.role}-${position}`} data-message-position={position}>
                 {message.role === "user" && message.clientId ? (
                   // A user message shares identity with the queued row it came from, so it
                   // travels up from the composer when sent. A fixed layout dependency limits

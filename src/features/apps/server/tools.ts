@@ -27,8 +27,7 @@ const listAppsTool = defineTool("list_apps", {
     "Lists saved Toy Box app instances without their state. Call get_app to inspect an instance before updating it.",
   parameters: z.object({}).strict(),
   handler: async () => {
-    const database = await getStateDatabase({ createIfMissing: false });
-    const apps = database ? await new AppDatabase(database).list() : [];
+    const apps = await new AppDatabase(await getStateDatabase()).list();
     return apps.map(({ id, definitionId, title, color, revision, createdAt, updatedAt }) => ({
       id,
       definitionId,

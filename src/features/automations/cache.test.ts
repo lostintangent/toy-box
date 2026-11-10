@@ -15,11 +15,9 @@ const automation: Automation = {
   nextRunAt: "2026-01-02T09:00:00.000Z",
 };
 
-test("events leave initial loading authoritative and maintain an ordered, idempotent catalog", () => {
+test("events maintain an ordered, idempotent catalog", () => {
   const client = createClient();
-  const key = automationQueries.listKey();
-  cache.applyEvent(client, { type: "automation.upserted", automation });
-  expect(client.getQueryData(key)).toBeUndefined();
+  const key = automationQueries.list.queryKey;
   client.setQueryData(key, []);
   const newer = { ...automation, id: "newer", updatedAt: "2026-01-02T00:00:00.000Z" };
   for (const item of [newer, automation, { ...newer }]) {
@@ -31,34 +29,6 @@ test("events leave initial loading authoritative and maintain an ordered, idempo
   }
   expect(client.getQueryData<Automation[]>(key)).toEqual([newer]);
 });
-
-test.each(["automation.upserted", "automation.deleted"] as const)(
-  "%s replaces an overlapping snapshot with the complete current catalog",
-  async (type) => {
-    const client = createClient();
-    const snapshot = Promise.withResolvers<Automation[]>();
-    const other = { ...automation, id: "other" };
-    const current = { ...automation, nextRunAt: "2026-01-03T09:00:00.000Z" };
-    const latest = type === "automation.upserted" ? [current, other] : [other];
-    client.setQueryData(automationQueries.listKey(), [automation]);
-    let reads = 0;
-    const pending = client.fetchQuery({
-      ...automationQueries.list(),
-      staleTime: 0,
-      queryFn: () => (++reads === 1 ? snapshot.promise : Promise.resolve(latest)),
-    });
-    cache.applyEvent(
-      client,
-      type === "automation.upserted"
-        ? { type, automation: current }
-        : { type, automationId: automation.id },
-    );
-    snapshot.resolve([automation]);
-    await expect(pending).resolves.toEqual(latest);
-    expect(reads).toBe(2);
-    expect(client.getQueryData<Automation[]>(automationQueries.listKey())).toEqual(latest);
-  },
-);
 
 function createClient(): QueryClient {
   const client = new QueryClient();

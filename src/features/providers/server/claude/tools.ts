@@ -1,12 +1,11 @@
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { normalizeToolResult, type Tool } from "@sessions/server/tools/definition";
+import type { SessionConfiguration } from "../provider";
 
 /** An in-process SDK server, using the app's Zod version to preserve full tool schemas. */
 export function createClaudeTools(
-  sessionId: string,
-  definitions: Tool<any>[],
+  definitions: SessionConfiguration["tools"],
 ): McpSdkServerConfigWithInstance {
   const instance = new McpServer({ name: "toy_box", version: "1" });
   for (const definition of definitions)
@@ -17,15 +16,10 @@ export function createClaudeTools(
         inputSchema: definition.parameters ?? z.object({}),
         ...(definition.alwaysLoad ? { _meta: { "anthropic/alwaysLoad": true } } : {}),
       },
-      async (args) => {
-        const result = normalizeToolResult(await definition.handler(args, sessionId));
-        return {
-          ...result,
-          ...(definition.isTerminal && !result.isError
-            ? { _meta: { "claude/endTurn": true } }
-            : {}),
-        };
-      },
+      async (args) => ({
+        content: [{ type: "text", text: await definition.handler(args) }],
+        ...(definition.isTerminal ? { _meta: { "claude/endTurn": true } } : {}),
+      }),
     );
   return { type: "sdk", name: "toy_box", instance };
 }

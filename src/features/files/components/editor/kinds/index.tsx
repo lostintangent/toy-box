@@ -2,53 +2,53 @@ import { lazy, type ComponentType } from "react";
 import {
   Braces,
   BookOpen,
-  ChartBar,
   Code2,
-  Database,
-  FileCode,
-  FileJson,
   FileText,
-  Image,
-  List,
+  Film,
+  ImageIcon,
   ListTodo,
   AppWindow,
   PenTool,
-  Table,
   type LucideIcon,
 } from "lucide-react";
 import type { PaneVariant } from "@/shared/panes/PaneSlots";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import type { CustomEditorKind, WorkspaceFile } from "@files/model";
-import { ARTIFACT_APP_EXTENSION } from "@apps/model";
-import type { Worker } from "@workers/model";
-import type { FileState, WorkerRequest } from "../../../useFile";
+import type { WorkspaceFile } from "@files/model";
+import {
+  ARTIFACT_APP_EXTENSION,
+  definitionOpening,
+  type AppDefinition,
+  type AppList,
+} from "@apps/model";
+import { appQueries } from "@apps/queries";
+import { appIcon } from "@apps/components/runtime/icons";
+import type { WorkspaceFileState } from "../../../useFile";
 import type { WorkspaceFileMode } from "../../../model";
-import { fileName, getPathBasename } from "../../../model/paths";
-import { fileQueries } from "../../../queries";
+import { fileExtension, fileName, getPathBasename } from "../../../model/paths";
 import { HtmlEditor } from "./html/HtmlEditor";
-import { CustomEditor } from "./custom/CustomEditor";
+import { ImageViewer, VideoViewer } from "./media/MediaViewer";
 
-// Rendering registry for built-in and user-registered file kinds. Pane state
-// stores only the path; rendering details are resolved here at the point of use.
+// Rendering registry for built-in file kinds and installed app definitions that open
+// files. Pane state stores only the path; rendering details are resolved here at the point of use.
 
 export type EditorProps = {
   title: string;
   mode: WorkspaceFileMode;
   variant: PaneVariant;
   baseUri?: string;
-  definition?: CustomEditorKind;
-  file: FileState;
-  pendingWorkers: Worker[];
-  spawnWorker?: (request: WorkerRequest) => Promise<{ sessionId: string }>;
+  file: WorkspaceFileState;
 };
 
 export type EditorKind = {
+  /** Mount identity: when it changes, the pane remounts the renderer from its latest text. */
+  id: string;
   extensions: string[];
   Renderer: ComponentType<EditorProps>;
   icon: LucideIcon;
+  /** Renders from the file's URL rather than its text, so it mounts without text and is read-only. */
+  binary?: boolean;
   editable?: boolean;
   fileIcons?: Record<string, LucideIcon>;
-  definition?: CustomEditorKind;
 };
 
 const MarkdownEditor = lazy(() =>
@@ -73,90 +73,95 @@ const ArtifactAppPane = lazy(() =>
   })),
 );
 
+const AppEditor = lazy(() =>
+  import("@apps/components/panes/AppEditor").then((module) => ({ default: module.AppEditor })),
+);
+
 const ARTIFACT_APP_EDITOR_KIND: EditorKind = {
+  id: "artifact-app",
   extensions: [ARTIFACT_APP_EXTENSION.slice(1)],
   Renderer: ArtifactAppPane,
   icon: AppWindow,
   editable: false,
 };
 
-const BUILTIN_EDITOR_KINDS: Record<string, EditorKind> = {
-  markdown: {
-    extensions: ["md", "markdown"],
-    Renderer: MarkdownEditor,
-    icon: FileText,
-    fileIcons: { "plan.md": ListTodo },
-  },
-  html: {
+const MARKDOWN_EDITOR_KIND: EditorKind = {
+  id: "markdown",
+  extensions: ["md", "markdown"],
+  Renderer: MarkdownEditor,
+  icon: FileText,
+  fileIcons: { "plan.md": ListTodo },
+};
+
+const BUILTIN_EDITOR_KINDS: EditorKind[] = [
+  MARKDOWN_EDITOR_KIND,
+  {
+    id: "html",
     extensions: ["html", "htm"],
     Renderer: HtmlEditor,
     icon: Code2,
   },
-  svg: {
+  {
+    id: "svg",
     extensions: ["svg"],
     Renderer: SvgEditor,
     icon: PenTool,
   },
-  json: {
+  {
+    id: "json",
     extensions: ["json"],
     Renderer: JsonEditor,
     icon: Braces,
   },
-  brief: {
+  {
+    id: "brief",
     extensions: ["brief"],
     Renderer: BriefEditor,
     icon: BookOpen,
   },
-};
+  {
+    id: "image",
+    extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif"],
+    Renderer: ImageViewer,
+    icon: ImageIcon,
+    binary: true,
+  },
+  {
+    id: "video",
+    extensions: ["mp4", "webm", "mov"],
+    Renderer: VideoViewer,
+    icon: Film,
+    binary: true,
+  },
+];
 
-const FALLBACK_EDITOR_KIND = BUILTIN_EDITOR_KINDS.markdown;
-
-const CUSTOM_ICONS: Record<string, LucideIcon> = {
-  braces: Braces,
-  json: FileJson,
-  code: Code2,
-  table: Table,
-  list: List,
-  database: Database,
-  image: Image,
-  chart: ChartBar,
-  text: FileText,
-  file: FileCode,
-};
-
-function toEditorKind(definition: CustomEditorKind): EditorKind {
-  return {
-    extensions: definition.extensions,
-    Renderer: CustomEditor,
-    icon: (definition.icon && CUSTOM_ICONS[definition.icon]) || FileCode,
-    editable: definition.editable === true,
-    definition,
-  };
-}
-
-function extensionOf(path: string): string {
-  return getPathBasename(path).split(".").pop()?.toLowerCase() ?? "";
-}
-
-/** Built-ins win extension conflicts; unclaimed files render as Markdown. */
-export function resolveEditorKind(
-  file: WorkspaceFile,
-  customKinds: CustomEditorKind[],
-): EditorKind {
-  const extension = extensionOf(file.path);
+/** Session `.toy` files run as apps, built-ins win extension conflicts, then installed definitions, and unclaimed files render as Markdown. */
+export function resolveEditorKind(file: WorkspaceFile, definitions: AppDefinition[]): EditorKind {
+  const extension = fileExtension(file.path);
   if (file.kind === "session" && ARTIFACT_APP_EDITOR_KIND.extensions.includes(extension)) {
     return ARTIFACT_APP_EDITOR_KIND;
   }
-  for (const kind of Object.values(BUILTIN_EDITOR_KINDS)) {
+  for (const kind of BUILTIN_EDITOR_KINDS) {
     if (kind.extensions.includes(extension)) return kind;
   }
-  const custom = customKinds.find((definition) => definition.extensions.includes(extension));
-  return custom ? toEditorKind(custom) : FALLBACK_EDITOR_KIND;
+  const definition = definitionOpening(definitions, extension);
+  if (!definition) return MARKDOWN_EDITOR_KIND;
+  return {
+    id: `${definition.id}:${definition.revision}`,
+    extensions: definition.opens,
+    Renderer: AppEditor,
+    icon: appIcon(definition.icon),
+  };
 }
 
+const selectDefinitions = (list: AppList) => list.definitions;
+
 export function useEditorKind(file: WorkspaceFile): EditorKind {
-  const { data: customKinds } = useSuspenseQuery(fileQueries.editors());
-  return resolveEditorKind(file, customKinds);
+  const { data: definitions } = useSuspenseQuery({
+    ...appQueries.list,
+    select: selectDefinitions,
+  });
+  return resolveEditorKind(file, definitions);
 }
 
 export function useEditorDisplay(file: WorkspaceFile): { name: string; Icon: LucideIcon } {

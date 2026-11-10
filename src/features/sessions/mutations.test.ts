@@ -1,5 +1,5 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
-import { MutationObserver, QueryClient } from "@tanstack/react-query";
+import { MutationObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
 import { workspaceQueries } from "@workspace/queries";
 import { createEmptyWorkspaceState, type WorkspaceState } from "@workspace/model/state/reducer";
 import type { Session, SessionState } from "./model";
@@ -8,7 +8,6 @@ import { createInitialSessionState } from "./model/reducer";
 import { sessionMutations } from "./mutations";
 import type { SessionsState } from "./model";
 import { createEmptySessionsState, sessionQueries } from "./queries";
-import { snapshotSessionsState } from "./cache";
 
 const sessionId = "session-a";
 const session = {
@@ -37,9 +36,10 @@ describe("session mutation options", () => {
       hyper: true,
     });
 
+    const workspace = createEmptyWorkspaceState();
     expect(readWorkspaceState(queryClient)).toEqual({
-      ...createEmptyWorkspaceState(),
-      hyperSessionIds: [sessionId],
+      ...workspace,
+      settings: { ...workspace.settings, hyperSessionId: sessionId },
     });
 
     expect(readSessionsState(queryClient).sessions).toEqual([
@@ -72,64 +72,37 @@ describe("session mutation options", () => {
     expect(readSessionsState(queryClient).sessions).toEqual([]);
   });
 
-  test("trusts successful queue events and invalidates rejected queue commands", async () => {
-    const acceptedClient = createQueryClient();
-    await new MutationObserver(acceptedClient, {
-      ...sessionMutations.cancelQueuedMessage(sessionId),
-      mutationFn: async () => true,
-    }).mutate("message-a");
-    expect(isSessionInvalidated(acceptedClient)).toBe(false);
-
-    const rejectedClient = createQueryClient();
-    await new MutationObserver(rejectedClient, {
-      ...sessionMutations.steerQueuedMessage(sessionId),
-      mutationFn: async () => false,
-    }).mutate("message-b");
-    expect(isSessionInvalidated(rejectedClient)).toBe(true);
-  });
-
-  test("trusts accepted question answers and refreshes rejected requests", async () => {
-    const answer = {
-      requestId: "request-1",
-      answer: "SQLite",
-      wasFreeform: false,
-    };
-    const acceptedClient = createQueryClient();
-    await new MutationObserver(acceptedClient, {
-      ...sessionMutations.answerSessionQuestion(sessionId),
-      mutationFn: async () => true,
-    }).mutate(answer);
-    expect(isSessionInvalidated(acceptedClient)).toBe(false);
-
-    const rejectedClient = createQueryClient();
-    await new MutationObserver(rejectedClient, {
-      ...sessionMutations.answerSessionQuestion(sessionId),
-      mutationFn: async () => false,
-    }).mutate(answer);
-    expect(isSessionInvalidated(rejectedClient)).toBe(true);
-  });
-
-  test("leaves session data alone after queue errors and refreshes after aborts", async () => {
-    const failedClient = createQueryClient();
-    const failedMutation = new MutationObserver(failedClient, {
-      ...sessionMutations.cancelQueuedMessage(sessionId),
-      mutationFn: async () => {
-        throw new Error("network unavailable");
+  test("settles an abort while the detail is watched and restarts its observation", async () => {
+    const queryClient = createQueryClient();
+    let observations = 0;
+    const watcher = new QueryObserver(queryClient, {
+      queryKey: sessionQueries.detail(sessionId).queryKey,
+      // An observation lasts until nothing watches the detail.
+      queryFn: ({ signal }) => {
+        observations++;
+        return new Promise<SessionState>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason)),
+        );
       },
     });
-    await expect(failedMutation.mutate("message-a")).rejects.toThrow("network unavailable");
-    expect(isSessionInvalidated(failedClient)).toBe(false);
+    onTestFinished(watcher.subscribe(() => {}));
+    expect(observations).toBe(1);
 
-    const abortedClient = createQueryClient();
-    await new MutationObserver(abortedClient, {
+    await new MutationObserver(queryClient, {
       ...sessionMutations.abortSession(sessionId),
       mutationFn: async () => true,
     }).mutate();
-    expect(isSessionInvalidated(abortedClient)).toBe(true);
+
+    expect(observations).toBe(2);
   });
 
   test("replaces the detail cache with the authoritative rewind snapshot", async () => {
     const queryClient = createQueryClient();
+    const model = { provider: "copilot", name: "claude-haiku-5.5" };
+    queryClient.setQueryData<SessionState>(sessionQueries.detail(sessionId).queryKey, {
+      ...createInitialSessionState(),
+      model,
+    });
     const rewoundSnapshot: SessionState = {
       ...createInitialSessionState(),
       messages: [{ role: "user", content: "retained" }],
@@ -143,7 +116,7 @@ describe("session mutation options", () => {
 
     expect(
       queryClient.getQueryData<SessionState>(sessionQueries.detail(sessionId).queryKey),
-    ).toEqual(rewoundSnapshot);
+    ).toEqual({ ...rewoundSnapshot, model });
   });
 
   test("refreshes durable session state after successful worktree operations", async () => {
@@ -171,7 +144,7 @@ describe("session mutation options", () => {
     expect(isSessionsStateInvalidated(queryClient)).toBe(false);
   });
 
-  test("optimistically renames sessions and restores failed renames", async () => {
+  test("optimistically renames sessions and refreshes the catalog after a failed rename", async () => {
     const queryClient = createSessionListQueryClient();
     const renameMutation = new MutationObserver(queryClient, {
       ...sessionMutations.renameSession(sessionId),
@@ -182,10 +155,10 @@ describe("session mutation options", () => {
     });
 
     await expect(renameMutation.mutate("Optimistic name")).rejects.toThrow("rename failed");
-    expect(readSession(queryClient)).toEqual(session);
+    expect(isSessionsStateInvalidated(queryClient)).toBe(true);
   });
 
-  test("optimistically deletes sessions and restores failed deletions", async () => {
+  test("optimistically deletes sessions and refreshes the catalog after a failed deletion", async () => {
     const queryClient = createSessionListQueryClient();
     const deleteMutation = new MutationObserver(queryClient, {
       ...sessionMutations.deleteSession(sessionId),
@@ -196,7 +169,8 @@ describe("session mutation options", () => {
     });
 
     await expect(deleteMutation.mutate()).rejects.toThrow("delete failed");
-    expect(readSession(queryClient)).toEqual(session);
+    expect(isSessionsStateInvalidated(queryClient)).toBe(true);
+    expect(readActivity(queryClient)).toEqual({ [sessionId]: { status: "unread" } });
   });
 
   test("projects successful deletion into shared session activity", async () => {
@@ -222,7 +196,7 @@ describe("session mutation options", () => {
     });
 
     await expect(markRead.mutate()).rejects.toThrow("read failed");
-    expect(queryClient.getQueryState(sessionQueries.activityKey())?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(sessionQueries.activity.queryKey)?.isInvalidated).toBe(true);
   });
 });
 
@@ -233,23 +207,17 @@ function createQueryClient(): QueryClient {
   return queryClient;
 }
 
-function isSessionInvalidated(queryClient: QueryClient): boolean {
-  return (
-    queryClient.getQueryState(sessionQueries.detail(sessionId).queryKey)?.isInvalidated ?? false
-  );
-}
-
 function isSessionsStateInvalidated(queryClient: QueryClient): boolean {
-  return queryClient.getQueryState(sessionQueries.stateKey())?.isInvalidated ?? false;
+  return queryClient.getQueryState(sessionQueries.state.queryKey)?.isInvalidated ?? false;
 }
 
 function createSessionListQueryClient(): QueryClient {
   const queryClient = new QueryClient();
-  queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), {
+  queryClient.setQueryData(sessionQueries.state.queryKey, {
     ...createEmptySessionsState(),
     sessions: [session],
   });
-  queryClient.setQueryData<SessionsActivity>(sessionQueries.activityKey(), {
+  queryClient.setQueryData(sessionQueries.activity.queryKey, {
     [sessionId]: { status: "unread" },
   });
   onTestFinished(() => queryClient.clear());
@@ -258,13 +226,14 @@ function createSessionListQueryClient(): QueryClient {
 
 function createWorkspaceQueryClient(): QueryClient {
   const queryClient = new QueryClient();
-  queryClient.setQueryData(workspaceQueries.stateKey(), createEmptyWorkspaceState());
+  queryClient.setQueryData(workspaceQueries.state.queryKey, createEmptyWorkspaceState());
+  queryClient.setQueryData(sessionQueries.state.queryKey, createEmptySessionsState());
   onTestFinished(() => queryClient.clear());
   return queryClient;
 }
 
 function readSessionsState(queryClient: QueryClient): SessionsState {
-  const state = snapshotSessionsState(queryClient);
+  const state = queryClient.getQueryData(sessionQueries.state.queryKey);
   if (!state) throw new Error("Sessions state was not cached");
   return state;
 }
@@ -276,11 +245,11 @@ function readSession(queryClient: QueryClient): Session {
 }
 
 function readActivity(queryClient: QueryClient): SessionsActivity | undefined {
-  return queryClient.getQueryData<SessionsActivity>(sessionQueries.activityKey());
+  return queryClient.getQueryData(sessionQueries.activity.queryKey);
 }
 
 function readWorkspaceState(queryClient: QueryClient): WorkspaceState {
-  const state = queryClient.getQueryData<WorkspaceState>(workspaceQueries.stateKey());
+  const state = queryClient.getQueryData(workspaceQueries.state.queryKey);
   if (!state) throw new Error("Workspace state was not cached");
   return state;
 }

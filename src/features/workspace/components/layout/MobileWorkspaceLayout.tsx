@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { TerminalShell } from "@terminal/components/TerminalShell";
 import { Sidebar, type SidebarProps } from "@workspace/components/sidebar/Sidebar";
-import { sidebarPanelsSchema } from "@workspace/model/config/layoutPrefs";
+import { useLayoutPref } from "@workspace/hooks/layout/layoutPrefs";
 import {
   WorkspacePager,
   type WorkspacePagerProps,
@@ -16,11 +16,7 @@ export type MobileWorkspaceLayoutProps = {
   hydrated: boolean;
   sidebar: SidebarProps;
   workspace: MobileWorkspace;
-  terminal: {
-    open: boolean;
-    body: ReactNode;
-    onClose: () => void;
-  };
+  terminal: ReactNode;
 };
 
 /** Compact workspace composition: sidebar, pane pager, and terminal overlay. */
@@ -30,9 +26,7 @@ export function MobileWorkspaceLayout({
   workspace,
   terminal,
 }: MobileWorkspaceLayoutProps) {
-  // A phone's sidebar expands one panel at a time: the first expanded, in sidebar order.
-  const expanded = sidebarPanelsSchema.keyof().options.find((panel) => sidebar.panels[panel]);
-  const sidebarPanels: SidebarProps["panels"] = expanded ? { [expanded]: true } : {};
+  const [isTerminalOpen, setIsTerminalOpen] = useLayoutPref("terminalOpen");
 
   return (
     <div className="relative h-full overflow-clip md:hidden">
@@ -41,7 +35,7 @@ export function MobileWorkspaceLayout({
         style={{ transform: workspace.visible ? "translateX(-50%)" : "translateX(0)" }}
       >
         <div className="h-full w-1/2 shrink-0">
-          <Sidebar {...sidebar} panels={sidebarPanels} />
+          <Sidebar {...sidebar} />
         </div>
 
         <div className="h-full w-1/2 shrink-0">
@@ -59,12 +53,12 @@ export function MobileWorkspaceLayout({
       <div
         className={`absolute inset-y-0 w-full ${
           hydrated ? "transition-[left] duration-300 ease-in-out" : ""
-        } ${terminal.open ? "pointer-events-auto" : "pointer-events-none"}`}
-        style={{ left: terminal.open ? "0%" : "100%" }}
+        } ${isTerminalOpen ? "pointer-events-auto" : "pointer-events-none"}`}
+        style={{ left: isTerminalOpen ? "0%" : "100%" }}
       >
         <div className="h-full">
-          {terminal.open && (
-            <TerminalShell onClose={terminal.onClose}>{terminal.body}</TerminalShell>
+          {isTerminalOpen && (
+            <TerminalShell onClose={() => setIsTerminalOpen(false)}>{terminal}</TerminalShell>
           )}
         </div>
       </div>

@@ -1,16 +1,17 @@
 // Shared application database.
 //
 // Opens a single SQLite connection at ~/.toy-box/toy-box.sqlite and migrates it
-// on startup. Each feature's `server/schema.ts` default-exports its schema: an
-// ordered list of versions that builds its tables. The `feature_schemas` table
-// records which version of each feature's schema is installed, by folder name.
+// on startup, so every reader can await it. Each feature's `server/schema.ts`
+// default-exports its schema: an ordered list of versions that builds its
+// tables. The `feature_schemas` table records which version of each feature's
+// schema is installed, by folder name.
 // This module owns the connection, its pragmas, and discovering those schemas.
 //
 // To change a feature's tables, append a version to its schema. Never edit or
 // reorder one that has shipped. Versions run with foreign keys enforced, so
 // rebuilding a referenced table in one would cascade into its rows.
 
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { byFeature } from "@/shared/features";
@@ -25,18 +26,10 @@ const featureSchemas = byFeature(
 
 const databases = sharedMap<Promise<Bun.SQL>>("state-databases");
 
-export function getStateDatabase(): Promise<Bun.SQL>;
-export function getStateDatabase(options: { createIfMissing: false }): Promise<Bun.SQL | null>;
-export function getStateDatabase(
-  options: { createIfMissing?: false } = {},
-): Promise<Bun.SQL | null> {
+export function getStateDatabase(): Promise<Bun.SQL> {
   let database = databases.get("default");
   if (!database) {
-    const path = resolveDefaultPath();
-    if (options.createIfMissing === false && !existsSync(path)) {
-      return Promise.resolve(null);
-    }
-
+    const path = join(homedir(), ".toy-box", "toy-box.sqlite");
     database = (async () => {
       const db = createRuntimeDatabase(path);
       await initializeSchema(db, path);
@@ -45,6 +38,11 @@ export function getStateDatabase(
     databases.set("default", database);
   }
   return database;
+}
+
+/** Serve a connection as the state database, as tests do with their own. */
+export function setStateDatabase(db: Bun.SQL): void {
+  databases.set("default", Promise.resolve(db));
 }
 
 /** Run an operation atomically. Bun queues overlapping transactions on the
@@ -87,12 +85,6 @@ export async function migrate(
       `;
     });
   }
-}
-
-function resolveDefaultPath(): string {
-  const home = homedir().trim();
-  if (home.length > 0) return join(home, ".toy-box", "toy-box.sqlite");
-  return join(process.cwd(), ".toy-box", "toy-box.sqlite");
 }
 
 function createRuntimeDatabase(path: string): Bun.SQL {

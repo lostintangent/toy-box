@@ -8,6 +8,7 @@ import { TerminalShell } from "@terminal/components/TerminalShell";
 import { HyperSession, type HyperSessionProps } from "./HyperSession";
 import { CARD_CLASS, CARD_INSET_CLASS } from "./card";
 import { Sidebar, type SidebarProps } from "@workspace/components/sidebar/Sidebar";
+import { useLayoutPref } from "@workspace/hooks/layout/layoutPrefs";
 import {
   WorkspaceGrid,
   type WorkspaceGridProps,
@@ -16,13 +17,7 @@ import {
 export type DesktopWorkspaceLayoutProps = {
   sidebar: SidebarProps;
   workspace: WorkspaceGridProps;
-  terminal: {
-    open: boolean;
-    size: number;
-    body: ReactNode;
-    onOpenChange: (open: boolean) => void;
-    onSizeChange: (size: number) => void;
-  };
+  terminal: ReactNode;
   hyper: HyperSessionProps | null;
 };
 
@@ -33,7 +28,8 @@ export function DesktopWorkspaceLayout({
   terminal,
   hyper,
 }: DesktopWorkspaceLayoutProps) {
-  const { open, size, body, onOpenChange, onSizeChange } = terminal;
+  const [open, onOpenChange] = useLayoutPref("terminalOpen");
+  const [size, onSizeChange] = useLayoutPref("terminalSize");
   const terminalPanelRef = useRef<ImperativePanelHandle>(null);
   const terminalSizeRef = useRef(size);
   const isTerminalDraggingRef = useRef(false);
@@ -70,7 +66,7 @@ export function DesktopWorkspaceLayout({
 
   return (
     <div className={cn("hidden h-full bg-backdrop md:flex", CARD_INSET_CLASS)}>
-      <Sidebar {...sidebar} />
+      <Sidebar {...sidebar} collapsible />
 
       <div className="min-w-0 flex-1">
         <ResizablePanelGroup direction="vertical" className="h-full">
@@ -107,7 +103,7 @@ export function DesktopWorkspaceLayout({
                   className={cn("size-full", CARD_INSET_CLASS)}
                 >
                   <div className={cn(CARD_CLASS, "h-full")}>
-                    <TerminalShell onClose={() => onOpenChange(false)}>{body}</TerminalShell>
+                    <TerminalShell onClose={() => onOpenChange(false)}>{terminal}</TerminalShell>
                   </div>
                 </m.div>
               )}

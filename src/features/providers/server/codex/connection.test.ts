@@ -2,7 +2,6 @@ import { expect, onTestFinished, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { z } from "zod";
 import {
   applySessionEvent,
   createInitialSessionState,
@@ -10,7 +9,6 @@ import {
 } from "@sessions/model/reducer";
 import type { SessionEvent, SessionMessage } from "@sessions/model";
 import type { SessionConfiguration } from "@providers/server/provider";
-import { defineTool } from "@sessions/server/tools/definition";
 import { CodexConnection } from "./connection";
 import { CodexTransport } from "./protocol/transport";
 import * as transport from "./protocol/transport";
@@ -50,7 +48,6 @@ function sessionState(events: SessionEvent[]) {
 }
 
 function setup(tools: SessionConfiguration["tools"] = []) {
-  const sessionId = `toy-box-test-${crypto.randomUUID()}`;
   const written: Record<string, unknown>[] = [];
   const responses = new Map<string, (value: unknown) => void>();
   const events: SessionEvent[] = [];
@@ -94,7 +91,7 @@ function setup(tools: SessionConfiguration["tools"] = []) {
   const startClient = spyOn(transport, "startCodexClient").mockResolvedValue(rpc);
   const connection = new CodexConnection(
     rpc,
-    { id: sessionId, provider: { id: "codex", sessionId: "native" } },
+    "native",
     {
       directory: "/tmp",
       allowUserQuestions: true,
@@ -122,22 +119,22 @@ function setup(tools: SessionConfiguration["tools"] = []) {
   });
   return {
     connection,
-    readHistory: () => codexProvider.readHistory({ id: sessionId, provider: connection.provider }),
+    readHistory: () => codexProvider.readHistory(connection.nativeId),
     rpc,
     notify,
     notifyThread,
     request,
     written,
     events,
-    sessionId,
-    callTool: (id: string, name: string, args: unknown, namespace = "toy_box") =>
+    callTool: (id: string, name: string, args: unknown, params: object = {}) =>
       new Promise<unknown>((resolve) => {
         responses.set(id, resolve);
         request(id, "item/tool/call", {
-          namespace,
+          namespace: "toy_box",
           tool: name,
           arguments: args,
           callId: `${id}-call`,
+          ...params,
         });
       }),
     beforeStartResponse: (callback: () => void) => {
@@ -622,26 +619,26 @@ test("multi-question input resolves live cards and gathers one native response",
   ]);
 });
 
-test("native tools validate arguments, retain public identity, and terminate after native completion", async () => {
+test("native tools answer with their text and terminate after native completion", async () => {
   const invoked: unknown[] = [];
-  const terminal = defineTool("finish_test", {
-    parameters: z.object({ value: z.string() }),
+  const terminal = {
+    name: "finish_test",
     isTerminal: true,
-    handler: (args, sessionId) => {
-      invoked.push({ args, sessionId });
+    handler: async (args: unknown) => {
+      invoked.push(args);
+      if ((args as { value: unknown }).value !== "ok") throw new Error("Invalid value");
       return "Accepted";
     },
-  });
-  const { connection, notify, callTool, written, sessionId } = setup([terminal]);
+  };
+  const { connection, notify, callTool, written } = setup([terminal]);
   notify("turn/started", { turn });
   expect(await callTool("invalid", "finish_test", { value: 3 })).toMatchObject({
-    result: { success: false },
+    result: { success: false, contentItems: [{ type: "inputText", text: "Invalid value" }] },
   });
-  expect(invoked).toEqual([]);
   expect(await callTool("valid", "finish_test", { value: "ok" })).toMatchObject({
     result: { success: true, contentItems: [{ type: "inputText", text: "Accepted" }] },
   });
-  expect(invoked).toEqual([{ args: { value: "ok" }, sessionId }]);
+  expect(invoked).toEqual([{ value: 3 }, { value: "ok" }]);
   expect(written.some((message) => message.method === "turn/interrupt")).toBe(false);
   notify("item/completed", {
     turnId: turn.id,
@@ -664,8 +661,53 @@ test("native tools validate arguments, retain public identity, and terminate aft
   expect(await callTool("later", "finish_test", { value: "unexpected" })).toMatchObject({
     result: { success: false },
   });
-  expect(invoked).toHaveLength(1);
+  expect(invoked).toHaveLength(2);
   await connection.abort();
+});
+
+test("direct subagents call Toy Box tools in their own turns, and other threads are declined", async () => {
+  const finish = { name: "finish_test", isTerminal: true, handler: async () => "Accepted" };
+  const { notify, notifyThread, callTool, written } = setup([finish]);
+  const child = { threadId: "child", turnId: "child-turn" };
+  notify("turn/started", { turn });
+  notify("item/started", {
+    turnId: turn.id,
+    item: {
+      type: "subAgentActivity",
+      id: "spawn",
+      kind: "started",
+      agentThreadId: "child",
+      agentPath: "/root/inspect",
+      model: "model-one",
+      reasoningEffort: "low",
+    },
+  });
+  notifyThread("child", "turn/started", { turn: { ...turn, id: child.turnId } });
+  expect(await callTool("stranger", "finish_test", {}, { threadId: "stranger" })).toMatchObject({
+    error: { code: -32601 },
+  });
+  expect(await callTool("child", "finish_test", {}, child)).toMatchObject({
+    result: { success: true, contentItems: [{ type: "inputText", text: "Accepted" }] },
+  });
+  notifyThread("child", "item/completed", {
+    turnId: child.turnId,
+    item: {
+      type: "dynamicToolCall",
+      id: "child-call",
+      namespace: "toy_box",
+      tool: "finish_test",
+      arguments: {},
+      status: "completed",
+      contentItems: [{ type: "inputText", text: "Accepted" }],
+      success: true,
+      durationMs: null,
+    },
+  });
+  expect(written.filter((message) => message.method === "turn/interrupt")).toMatchObject([
+    { params: child },
+  ]);
+  // The subagent's terminal action ends only its own turn.
+  expect(await callTool("root", "finish_test", {})).toMatchObject({ result: { success: true } });
 });
 
 test.each(["abort", "completion", "disconnect"] as const)(
@@ -673,13 +715,14 @@ test.each(["abort", "completion", "disconnect"] as const)(
   async (end) => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    const held = defineTool("held", {
+    const held = {
+      name: "held",
       handler: async () => {
         entered.resolve();
         await release.promise;
         return "Finished after cancellation";
       },
-    });
+    };
     const { connection, notify, callTool } = setup([held]);
     notify("turn/started", { turn });
     const response = callTool("held", "held", {});
@@ -715,27 +758,10 @@ test("Stop interrupts the session tree's running turns, including every loaded s
   ]);
 });
 
-test("native tools return text and images and reject calls outside the Toy Box namespace", async () => {
-  const preview = defineTool("preview", {
-    handler: () => ({
-      content: [
-        { type: "text", text: "Preview" },
-        { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
-      ],
-    }),
-  });
-  const { notify, callTool } = setup([preview]);
+test("native tools reject calls outside the Toy Box namespace", async () => {
+  const { notify, callTool } = setup([{ name: "preview", handler: async () => "Preview" }]);
   notify("turn/started", { turn });
-  expect(await callTool("image", "preview", {})).toMatchObject({
-    result: {
-      success: true,
-      contentItems: [
-        { type: "inputText", text: "Preview" },
-        { type: "inputImage", imageUrl: "data:image/png;base64,aW1hZ2U=" },
-      ],
-    },
-  });
-  expect(await callTool("external", "preview", {}, "another_app")).toMatchObject({
+  expect(await callTool("external", "preview", {}, { namespace: "another_app" })).toMatchObject({
     error: { code: -32601 },
   });
 });

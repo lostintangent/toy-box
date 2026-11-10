@@ -7,16 +7,15 @@ import { runAutomation } from "./index";
 
 const POLL_INTERVAL_MS = 30_000;
 
-export function startScheduler(): void {
-  setInterval(() => void runSchedulerTick(), POLL_INTERVAL_MS).unref?.();
+export function startScheduler(): VoidFunction {
+  const timer = setInterval(() => void runSchedulerTick(), POLL_INTERVAL_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 export async function runSchedulerTick(): Promise<void> {
   try {
-    const appDatabase = await getStateDatabase({ createIfMissing: false });
-    if (!appDatabase) return;
-
-    const database = new AutomationDatabase(appDatabase);
+    const database = new AutomationDatabase(await getStateDatabase());
     for (const automation of await database.claimDue()) {
       // The claim durably advances nextRunAt, even when dispatch later fails.
       broadcast({ type: "automation.upserted", automation });

@@ -7,8 +7,9 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { SESSION_STORAGE_PATH } from "@sessions/model/constants";
 import { broadcast } from "@workspace/server/events";
-import { sharedMap } from "@/shared/server/processState";
+import { getProcessValue } from "@/shared/server/processState";
 import { workspaceFileId, type FileChange, type WorkspaceFile } from "../model";
+import { SESSION_ARTIFACTS_DIRECTORY } from "./paths";
 
 type WatchedFile = { file: WorkspaceFile; path: string; leases: number };
 type ArtifactObserver = (sessionId: string) => Promise<void>;
@@ -104,7 +105,9 @@ export class FileWatcher {
 
   #artifactSession(path: string): string | undefined {
     const [sessionId, directory] = relative(this.root, path).split(sep);
-    return sessionId && sessionId !== ".." && (!directory || directory === "artifacts")
+    return sessionId &&
+      sessionId !== ".." &&
+      (!directory || directory === SESSION_ARTIFACTS_DIRECTORY)
       ? sessionId
       : undefined;
   }
@@ -137,6 +140,4 @@ export async function readFileChange(file: WorkspaceFile, path: string): Promise
   }
 }
 
-const watchers = sharedMap<FileWatcher>("file-watcher");
-export const fileWatcher = watchers.get("shared") ?? new FileWatcher();
-watchers.set("shared", fileWatcher);
+export const fileWatcher = getProcessValue("files.watcher", () => new FileWatcher());

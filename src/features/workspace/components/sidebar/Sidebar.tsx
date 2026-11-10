@@ -1,20 +1,17 @@
 import { AutomationPanel } from "@automations/components/AutomationPanel";
 import { cn } from "@/shared/utils";
 import type { Session } from "@sessions/model";
-import { createSessionPane } from "@sessions/model/panes";
 import type { SessionFilters } from "@sessions/components/sidebar/sessionFilters";
 import { AppsPanel } from "@apps/components/AppsPanel";
-import { createAppPane } from "@apps/model";
-import { createChannelPane } from "@channels/model";
-import type { WorkspacePane } from "@workspace/model/panes";
 import { SidebarHeader } from "./SidebarHeader";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarRail } from "./SidebarRail";
-import { SidebarResizer, type SidebarCollapseControl } from "./SidebarResizer";
+import { SidebarResizer } from "./SidebarResizer";
 import { ActionSpacer, CollapseToggle, SettingsButton } from "./SidebarActions";
 import { SessionList } from "@sessions/components/sidebar/SessionList";
 import { ChannelsPanel } from "@channels/components/sidebar/ChannelsPanel";
-import type { SidebarPanels } from "@workspace/model/config/layoutPrefs";
+import { sidebarPanelsSchema, type SidebarPanels } from "@workspace/model/config/layoutPrefs";
+import { useLayoutPref } from "@workspace/hooks/layout/layoutPrefs";
 
 /**
  * Crossfade one of the sidebar's two layouts. Whichever layout is leaving clears
@@ -33,27 +30,16 @@ export type SidebarProps = {
   onFilterChange: (value: SessionFilters) => void;
 
   sessions: Session[];
-  isSessionsLoading: boolean;
-  /** Selects a root pane in place of the others, or toggles it beside them. */
-  selectRoot: (pane: WorkspacePane, toggleInWorkspace?: boolean) => void;
-  openSessionIds: string[];
   worktreeSessionIds: string[];
   emptyMessage?: string;
 
-  panels: SidebarPanels;
-  onPanelExpanded: (panel: keyof SidebarPanels, expanded: boolean) => void;
-
-  openAppIds: string[];
   onAppOpenInHyper: (appId: string) => void;
-  openChannelIds: string[];
 
   /**
-   * Desktop only, and the presence of this is what makes the sidebar
-   * collapsible. The sidebar owns how it resizes and collapses; the layout above
-   * only holds the resulting width and chooses whether this is a sidebar that
-   * collapses at all.
+   * Desktop only. A collapsible sidebar resizes and collapses to its rail, while
+   * one that can't fills a phone's screen and expands one panel at a time.
    */
-  collapsible?: SidebarCollapseControl;
+  collapsible?: boolean;
 
   className?: string;
 };
@@ -71,25 +57,24 @@ export function Sidebar({
   onFilterChange,
 
   sessions,
-  isSessionsLoading,
-  selectRoot,
-  openSessionIds,
   worktreeSessionIds,
   emptyMessage,
 
-  panels,
-  onPanelExpanded,
-
-  openAppIds,
   onAppOpenInHyper,
-  openChannelIds,
 
   collapsible,
   className,
 }: SidebarProps) {
   // Only a collapsible sidebar pins the collapse toggle and settings actions
   // outside its two layouts, and only it has a rail for them to head and foot.
-  const collapsed = collapsible?.collapsed ?? false;
+  const [isCollapsed] = useLayoutPref("sidebarCollapsed");
+  const collapsed = !!collapsible && isCollapsed;
+
+  // A sidebar that can't collapse fills a phone's screen, so it expands one panel at a time.
+  const [expandedPanels, setExpandedPanels] = useLayoutPref("panels");
+  const panels = collapsible ? expandedPanels : firstPanel(expandedPanels);
+  const setPanelExpanded = (panel: keyof SidebarPanels, expanded: boolean) =>
+    setExpandedPanels({ ...(collapsible && expandedPanels), [panel]: expanded || undefined });
 
   /*
     The sidebar clips its two layouts; it is never a scroll port. `clip` rather
@@ -129,35 +114,24 @@ export function Sidebar({
           <SessionList
             className="px-3 py-2"
             sessions={sessions}
-            isLoading={isSessionsLoading}
-            onSessionSelect={(sessionId, toggle) =>
-              selectRoot(createSessionPane(sessionId), toggle)
-            }
-            openSessionIds={openSessionIds}
             worktreeSessionIds={worktreeSessionIds}
             emptyMessage={emptyMessage}
           />
 
           <ChannelsPanel
             isExpanded={panels.channels ?? false}
-            onExpandedChange={(expanded) => onPanelExpanded("channels", expanded)}
-            openChannelIds={openChannelIds}
-            onChannelOpen={(channelId, toggle) => selectRoot(createChannelPane(channelId), toggle)}
+            onExpandedChange={(expanded) => setPanelExpanded("channels", expanded)}
           />
 
           <AppsPanel
             isExpanded={panels.apps ?? false}
-            onExpandedChange={(expanded) => onPanelExpanded("apps", expanded)}
-            openAppIds={openAppIds}
-            onAppOpen={(appId, toggle) => selectRoot(createAppPane(appId), toggle)}
+            onExpandedChange={(expanded) => setPanelExpanded("apps", expanded)}
             onAppOpenInHyper={onAppOpenInHyper}
           />
 
           <AutomationPanel
             isExpanded={panels.automations ?? false}
-            onExpandedChange={(expanded) => onPanelExpanded("automations", expanded)}
-            openSessionIds={openSessionIds}
-            onSessionOpen={(sessionId) => selectRoot(createSessionPane(sessionId))}
+            onExpandedChange={(expanded) => setPanelExpanded("automations", expanded)}
           />
         </div>
 
@@ -174,5 +148,11 @@ export function Sidebar({
     </div>
   );
 
-  return collapsible ? <SidebarResizer {...collapsible}>{body}</SidebarResizer> : body;
+  return collapsible ? <SidebarResizer>{body}</SidebarResizer> : body;
+}
+
+/** The first expanded panel, in sidebar order. */
+function firstPanel(panels: SidebarPanels): SidebarPanels {
+  const panel = sidebarPanelsSchema.keyof().options.find((key) => panels[key]);
+  return panel ? { [panel]: true } : {};
 }

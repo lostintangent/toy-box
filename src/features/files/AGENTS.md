@@ -28,7 +28,7 @@ A file exposes seven operations with distinct transport needs:
 | Browse    | Validated RPC returns one directory's immediate children                                          |
 | Search    | Validated RPC ranks a directory's files, honoring Git ignores, for `#` completions                |
 | Create    | Validated RPC exclusively creates an empty machine file                                           |
-| Read      | Validated RPC returns UTF-8 content and modification time                                         |
+| Read      | Validated RPC returns UTF-8 content, null when the file isn't text, and modification time         |
 | Write     | Validated RPC persists UTF-8 content and returns the new modification time                        |
 | Watch     | Validated RPC leases a file to the tab's workspace connection; changes arrive as workspace events |
 | Serve     | `/api/serve/<scope>/<path>` returns raw bytes or media ranges for browser URLs                    |
@@ -41,6 +41,7 @@ not another workspace file identity or file-loading path.
 
 The route scope is a session id for an artifact or the literal `machine` for a host file. One resolver (`resolveWorkspaceFile`) maps that `WorkspaceFile` to an allowed absolute path for every operation: a session file resolves beneath its durable artifacts directory; a machine file resolves to its own absolute path.
 Serve responses are privately cached and revalidated from file metadata, so unchanged resources reuse browser-cached bytes without hiding edits.
+A read decides whether a file is text: a NUL in its first 8,000 bytes (Git's rule) or bytes that aren't UTF-8 make its content null. A file with a NUL is never read past those bytes, and no surface can save lossy text over a file that isn't text.
 
 `server/watcher.ts` owns shared filesystem observation. One server-lifetime recursive watcher
 covers all session artifacts and serves both artifact discovery and open files. Machine files
@@ -56,11 +57,11 @@ at-most-once hints like every other workspace event: [`cache.ts`](cache.ts) rere
 whose query a change names, and only when its timestamp is news to that tab.
 
 `queries.ts` defines canonical browse, search, and file-snapshot identity; the Session
-file-completion source projects search results into references. `mutations.ts` defines creation and per-file serialized writes. `useFile` owns one file's lifetime for editor panes and app file surfaces: it reads initial content, watches the file for as long as it is open in the tab, debounces saves, and submits them through the write mutation. A save confirms the tab's cached copy, so its own change notice is no news, and its renderer revision advances only for versions it didn't write: a save never resets the writer's buffer, while any other surface showing the same file picks it up. It flushes pending edits before unmount. Opening any file, such as a machine file from the browser, starts this lifecycle, so it is watched with no other step. Other features open files through [`useRevealFile`](useRevealFile.ts), which brings a file forward in the current surface and opens its editor when it isn't showing, so they never build editor panes themselves. Pane identity is keyed by the file's identity (`workspaceFileId`), so opening a different file remounts the complete lifecycle while mode changes preserve it.
+file-completion source projects search results into references. `mutations.ts` defines creation and per-file serialized writes. `useFile` owns one file's lifetime for editor panes and app file surfaces: it reads initial content, watches the file for as long as it is open in the tab, debounces saves, and submits them through the write mutation. A pending edit that a newer external version has replaced is dropped rather than written, so the file keeps matching what the pane shows. A save confirms the tab's cached copy, so its own change notice is no news, and its renderer revision advances only for versions it didn't write: a save never resets the writer's buffer, while any other surface showing the same file picks it up. A renderer that mounts into an open pane, as when another editor kind claims the file, starts from the pane's latest text through `useMountedContent`, including edits not yet saved, and then follows external revisions. It flushes pending edits before unmount. A file that isn't text has null content and the error "This file isn't text.", so it is never ready for a text renderer. Opening any file, such as a machine file from the browser, starts this lifecycle, so it is watched with no other step. Other features open files through [`useRevealFile`](useRevealFile.ts), which brings a file forward in the current surface and opens its editor when it isn't showing, so they never build editor panes themselves. [`OpenFileDialog`](components/browser/OpenFileDialog.tsx) opens what the file browser picks through it, so any feature offers Open a file with `openDialog`. Pane identity is keyed by the file's identity (`workspaceFileId`), so opening a different file remounts the complete lifecycle while mode changes preserve it.
 
 The file-mode browser can optionally restrict selection and creation by extension. It can create an empty machine file in any visible directory and returns it as a machine file through the same completion callback used to select an existing file. Creation is exclusive, so an existing entry is never replaced; once selected, the new file enters the ordinary `WorkspaceFile` lifecycle above.
 
-Shared edits schedule a debounced `file_edited` system message through the ordinary Session delivery path. The file is written first; the message tells the agent to reread durable state rather than copying the content.
+A shared-mode save asks the write to notify the agent. Once that file's notifying writes pause for 8 seconds, from any tab or pane and whether or not it's still open, the server sends its owning Session one `file_edited` system message through the ordinary Session delivery path. The file is written first; the message tells the agent to reread durable state rather than copying the content.
 
 ## Background collaboration
 
@@ -79,11 +80,10 @@ Markdown layers inline comments on this primitive. Comment additions, edits, and
 without sending `file_edited` system messages. Documint exposes the anonymous Assistant, and a new
 comment or reply spawns a Worker. The renderer authors the complete
 Documint response prompt. The responder changes the body, replies in the persisted thread, or does both
-according to the comment; the file stays the public source of truth. Custom editors continue to use the Worker capability through
-`Toybox.spawnWorker({ name?, prompt, metadata? })` and receive pending workers in the idempotent
-`onRender` context.
+according to the comment; the file stays the public source of truth. An app that opens files uses
+the same capability through its opened file's `spawnWorker` and `workers`.
 
-The pane, rather than an individual renderer, owns worker inspection and cancellation. While associations are pending, it declares a worker count through `PaneStatus`; the session overlay declares its trigger into that same host-owned slot, while save and editor-mode controls use `PaneActions`. The desktop grid presents status as lower-right overlay controls, while pagers place it in their header. Workspace's pane shell scopes both slots around the leaf pane and overlay, so neither receives or positions DOM targets. The compact worker menu lists friendly names and status icons. A running worker can open the existing passive `SessionPreview`; starting entries remain visible before their SDK sessions exist. Each entry can cancel starting or running work through the pane-owned file address. This keeps session IDs, preview placement, cancellation, and read semantics out of custom iframe APIs.
+The pane, rather than an individual renderer, owns worker inspection and cancellation. While associations are pending, it declares a worker count through `PaneStatus`; the session overlay declares its trigger into that same host-owned slot, while save and editor-mode controls use `PaneActions`. The desktop grid presents status as lower-right overlay controls, while pagers place it in their header. Workspace's pane shell scopes both slots around the leaf pane and overlay, so neither receives or positions DOM targets. The compact worker menu lists friendly names and status icons. A running worker can open the existing passive `SessionPreview`; starting entries remain visible before their SDK sessions exist. Each entry can cancel starting or running work through the pane-owned file address. This keeps session IDs, preview placement, cancellation, and read semantics out of renderers and apps.
 
 Pending describes worker lifecycle, not whether every intermediate file effect is still absent. A worker can persist its substantive result before its session finishes. Renderers that use placeholders for expected durable content must therefore encode a target identity or baseline in metadata and reconcile it against current content, while presence-style indicators may intentionally remain until the worker finishes.
 
@@ -95,14 +95,16 @@ Pending describes worker lifecycle, not whether every intermediate file effect i
 - HTML renders in a sandboxed iframe. A generated serve base lets relative scripts, styles, images, and links resolve within the source session's file storage.
 - SVG files delegate to the [Whiteboard feature](../whiteboard/AGENTS.md). The file-kind adapter supplies content, editability, persistence, relative-resource resolution, and pane actions without owning the native SVG model or editor presentation.
 - Brief files delegate to the [Briefs feature](../briefs/AGENTS.md). The file-kind adapter supplies content revisions, persistence, relative-resource resolution, and worker-backed actions without owning the brief model or presentation.
+- Images and videos render read-only from the file's serve URL and reload for each external revision. These binary kinds mount without text, while any other kind shows that a file isn't text instead of mounting.
 - A session `.toy` file compiles as a stateless artifact app and mounts through the shared app runtime. It remains an editor pane and file-owned artifact; machine `.toy` files never execute.
-- Custom editors provide a persisted HTML viewer template for claimed extensions. Built-in editors keep priority, and unclaimed extensions fall back to Markdown.
+- An installed app definition renders the extensions its manifest `opens`. Built-in editors keep priority, the first definition in catalog order wins a shared extension, and unclaimed extensions fall back to Markdown.
 
 File-kind adapters live in their own kind directories. `.svg` delegates to the
-Whiteboard feature, `.brief` delegates to the Briefs feature, and `.toy`
-delegates to the Apps feature that owns its compiler and runtime.
+Whiteboard feature, `.brief` delegates to the Briefs feature, and `.toy` files
+and the extensions installed definitions open delegate to the Apps feature that
+owns their compiler and runtime.
 
-Custom editor definitions live under `~/.toy-box/editors/`. `fileQueries.editors()` loads them with the workspace, and [`cache.ts`](cache.ts) applies each registration, so connected clients resolve the new renderer immediately. The viewer receives file content, its external revision, and pending workers through the Toy Box bridge, can spawn workers, and can emit replacement content only when the kind is editable. Own edits do not advance the external revision, allowing the viewer to retain its editing buffer while context-only renders update worker presence or editability.
+The registry resolves definitions from the Apps catalog, selecting only its definitions, so connected clients switch renderers as soon as a definition that opens a file is installed or uninstalled, and other app changes don't re-render file surfaces. The app receives this pane's file lifecycle through the SDK's `useOpenedFile()`: content, its external revision, mode, pending workers, saving, and worker spawning. Own edits do not advance the external revision, so the app keeps its editing buffer while worker presence and mode update.
 
 ## Workspace integration
 
@@ -117,6 +119,6 @@ Inbox entries reference at most one existing file beneath their Worker Session's
 - [`components/editor/kinds/svg/SvgEditor.tsx`](components/editor/kinds/svg/SvgEditor.tsx) adapts that lifecycle and [`SvgPaneActions.tsx`](components/editor/kinds/svg/SvgPaneActions.tsx) adapts semantic editor actions to pane chrome for the host-neutral [Whiteboard feature](../whiteboard/AGENTS.md).
 - [`components/editor/kinds/brief/BriefEditor.tsx`](components/editor/kinds/brief/BriefEditor.tsx) adapts that lifecycle to the host-neutral [Briefs feature](../briefs/AGENTS.md).
 - [`server/functions.ts`](server/functions.ts) owns validated filesystem RPC ingress, while the rest of `server/` owns operations and path resolution. `routes/` owns the serve HTTP adapter because relative-resource loading needs a browser URL.
-- [`../inbox/AGENTS.md`](../inbox/AGENTS.md) owns Inbox rows and result lifecycle. This feature owns custom-editor definitions, persistence, and registration; [Sessions](../sessions/AGENTS.md) owns session-file teardown.
+- [`../inbox/AGENTS.md`](../inbox/AGENTS.md) owns Inbox rows and result lifecycle. [Apps](../apps/AGENTS.md) owns installed definitions, including which extensions they open; [Sessions](../sessions/AGENTS.md) owns session-file teardown.
 - The [session provider boundary](../providers/INTEGRATION.md) owns projecting tool activity and encoding system messages across SDK history. Sessions owns filesystem-based artifact discovery; [`server/tools.ts`](server/tools.ts) owns file-specific agent ingress.
 - Keep one file as the source of truth, one server path resolver for every operation, and one `useFile` lifecycle per mounted pane.

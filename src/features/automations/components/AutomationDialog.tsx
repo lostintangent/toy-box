@@ -32,9 +32,11 @@ type AutomationForm = Omit<AutomationOptions, "model" | "cron"> & {
 
 export function AutomationDialog({
   automation,
+  open,
   onOpenChange,
 }: {
   automation?: Automation;
+  open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const { models, defaultModel } = useModels();
@@ -68,7 +70,7 @@ export function AutomationDialog({
   }
 
   return (
-    <Dialog open onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent aria-describedby={undefined}>
         <form className="space-y-4" onSubmit={handleSubmit}>
           <DialogHeader>

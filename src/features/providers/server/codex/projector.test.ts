@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { sessionArtifactsDirectory } from "@sessions/server/artifacts";
+import { createToolCallProjector } from "@sessions/server/toolProjection";
 import { applySessionEvent, createInitialSessionState } from "@sessions/model/reducer";
 import { computeFileDiffStats, getToolCallFileDiffs } from "@sessions/model/fileDiffs";
 import type { SessionEvent } from "@sessions/model";
@@ -34,7 +35,7 @@ test("native Toy Box tools keep their friendly identity and result live and afte
     durationMs: null,
     contentItems: [{ type: "inputText", text: "Updated" }],
   };
-  const live = createCodexProjector("native-tools", "native");
+  const live = createCodexProjector("native");
   const events = [
     ...live(
       itemEvent(
@@ -44,53 +45,17 @@ test("native Toy Box tools keep their friendly identity and result live and afte
     ),
     ...live(itemEvent(item)),
   ];
-  const replay = createCodexProjector("native-tools", "native")(itemEvent(item));
+  const replay = createCodexProjector("native")(itemEvent(item));
   expect(reduce(events)).toEqual(reduce(replay));
   expect(events).toMatchObject([
     { type: "tool_start", toolName: "update_session_title", arguments: item.arguments },
     { type: "tool_end", success: true, result: "Updated" },
   ]);
   expect(
-    createCodexProjector(
-      "external-tools",
-      "native",
-    )(itemEvent({ ...item, namespace: "another_app" }, "item/started")),
-  ).toMatchObject([{ type: "tool_start", toolName: "another_app/update_session_title" }]);
-});
-
-test.each([
-  ["open_file", "file_opened"],
-  ["close_file", "file_closed"],
-] as const)("%s derives artifact identity from arguments live and after replay", (tool, type) => {
-  const item: ThreadItem = {
-    type: "dynamicToolCall",
-    id: "file-visibility",
-    namespace: "toy_box",
-    tool,
-    arguments: { path: join(sessionArtifactsDirectory("owner"), "plan.md") },
-    status: "completed",
-    success: true,
-    durationMs: null,
-    contentItems: [{ type: "inputText", text: "OK" }],
-  };
-  const project = createCodexProjector("file-tools", "native");
-  expect(
-    project(
-      itemEvent(
-        { ...item, status: "inProgress", success: null, contentItems: null },
-        "item/started",
-      ),
+    createCodexProjector("native")(
+      itemEvent({ ...item, namespace: "another_app" }, "item/started"),
     ),
-  ).toEqual([]);
-  const live = project(itemEvent(item));
-  expect(live).toEqual([{ type, file: { kind: "session", sessionId: "owner", path: "plan.md" } }]);
-  expect(createCodexProjector("file-tools", "native")(itemEvent(item))).toEqual(live);
-  expect(
-    createCodexProjector(
-      "file-tools",
-      "native",
-    )(itemEvent({ ...item, status: "failed", success: false })),
-  ).toEqual([]);
+  ).toMatchObject([{ type: "tool_start", toolName: "another_app/update_session_title" }]);
 });
 
 const commandItem = (
@@ -144,10 +109,7 @@ test.each<{ actions: CommandAction[]; description: string }>([
   { actions: [], description: "Run pwd" },
 ])("native command actions describe the tool: $description", ({ actions, description }) => {
   expect(
-    createCodexProjector(
-      "command-labels",
-      "native",
-    )(itemEvent(commandItem(actions), "item/started")),
+    createCodexProjector("native")(itemEvent(commandItem(actions), "item/started")),
   ).toMatchObject([{ type: "tool_start", arguments: { description } }]);
 });
 
@@ -155,7 +117,7 @@ test("full commands and output survive live projection and history replay", () =
   const item = commandItem([
     { type: "unknown", command: "node <<'NODE'\nconsole.log('hello');\nNODE" },
   ]);
-  const live = createCodexProjector("command-details", "native");
+  const live = createCodexProjector("native");
   const events = [
     ...live(
       itemEvent(
@@ -169,7 +131,7 @@ test("full commands and output survive live projection and history replay", () =
     }),
     ...live(itemEvent(item)),
   ];
-  const replay = createCodexProjector("command-details", "native")(itemEvent(item));
+  const replay = createCodexProjector("native")(itemEvent(item));
   expect(reduce(events)).toEqual(reduce(replay));
   expect(events).toMatchObject([
     { type: "tool_start", toolName: "bash", arguments: { command: item.command } },
@@ -179,7 +141,7 @@ test("full commands and output survive live projection and history replay", () =
 });
 
 test("context usage counts the last request's tokens, not the thread's running total", () => {
-  const project = createCodexProjector("context-usage", "native");
+  const project = createCodexProjector("native");
   const updated = (modelContextWindow: number | null): RpcNotification => ({
     method: "thread/tokenUsage/updated",
     params: {
@@ -212,7 +174,7 @@ const imageItem: ThreadItem = {
 };
 
 test("generated images appear on their tool call live and after history replay", () => {
-  const live = createCodexProjector("native-images", "native");
+  const live = createCodexProjector("native");
   const events = [
     ...live(
       itemEvent(
@@ -222,7 +184,7 @@ test("generated images appear on their tool call live and after history replay",
     ),
     ...live(itemEvent(imageItem)),
   ];
-  const replay = createCodexProjector("native-images", "native")(itemEvent(imageItem));
+  const replay = createCodexProjector("native")(itemEvent(imageItem));
   expect(reduce(events)).toEqual(reduce(replay));
   expect(events).toEqual([
     { type: "tool_start", toolCallId: "image-1", toolName: "image_generation", arguments: {} },
@@ -246,7 +208,7 @@ test("a generated image stored as a file reference completes without its image",
     failure: null,
     generationId: null,
   };
-  expect(createCodexProjector("native-images", "native")(itemEvent(stored)).at(-1)).toEqual({
+  expect(createCodexProjector("native")(itemEvent(stored)).at(-1)).toEqual({
     type: "tool_end",
     toolCallId: "image-1",
     success: true,
@@ -257,10 +219,9 @@ test("a generated image stored as a file reference completes without its image",
 test("image generation limits fail the tool call without an image", () => {
   const failure = { type: "usageLimitExceeded" as const, limitId: "images", resetsAt: null };
   expect(
-    createCodexProjector(
-      "native-images",
-      "native",
-    )(itemEvent({ ...imageItem, status: "failed", revisedPrompt: null, result: "", failure })),
+    createCodexProjector("native")(
+      itemEvent({ ...imageItem, status: "failed", revisedPrompt: null, result: "", failure }),
+    ),
   ).toEqual([
     { type: "tool_start", toolCallId: "image-1", toolName: "image_generation", arguments: {} },
     {
@@ -289,12 +250,12 @@ test("native additions, deletions, and edits use the shared diff statistics live
     changes: updates,
     status: "completed",
   };
-  const live = createCodexProjector("diff-test", "native");
+  const live = createCodexProjector("native");
   const events = [
     ...live(itemEvent({ ...item, status: "inProgress" }, "item/started")),
     ...live(itemEvent(item)),
   ];
-  const replay = createCodexProjector("diff-test", "native")(itemEvent(item));
+  const replay = createCodexProjector("native")(itemEvent(item));
   const state = reduce(events);
   expect(state).toEqual(reduce(replay));
   const tool = state.messages.flatMap((message) =>
@@ -307,20 +268,14 @@ test("native additions, deletions, and edits use the shared diff statistics live
     { path: "/tmp/old.txt", diff: { added: 0, removed: 1 } },
     { path: "/tmp/updated.txt", diff: { added: 1, removed: 1 } },
   ]);
-  const failed = createCodexProjector(
-    "diff-test",
-    "native",
-  )(itemEvent({ ...item, status: "failed" }));
+  const failed = createCodexProjector("native")(itemEvent({ ...item, status: "failed" }));
   expect(failed.find((event) => event.type === "tool_end")).toMatchObject({ success: false });
 });
 
-test("native artifact renames leave membership to filesystem observation", () => {
+test("native artifact renames stay hidden and leave membership to filesystem observation", () => {
   const sessionId = "artifact-projection";
   const root = sessionArtifactsDirectory(sessionId);
-  const state = createCodexProjector(
-    sessionId,
-    "native",
-  )(
+  const state = createCodexProjector("native")(
     itemEvent({
       type: "fileChange",
       id: "rename",
@@ -333,10 +288,13 @@ test("native artifact renames leave membership to filesystem observation", () =>
         },
       ],
     }),
-  ).reduce(
-    applySessionEvent,
-    createInitialSessionState({ artifacts: [{ path: "before.md", updatedAt: 1 }] }),
-  );
+  )
+    // Codex's native diff format is what Sessions' tool policy reads to hide artifact edits.
+    .flatMap(createToolCallProjector(sessionId))
+    .reduce(
+      applySessionEvent,
+      createInitialSessionState({ artifacts: [{ path: "before.md", updatedAt: 1 }] }),
+    );
   expect(state.artifacts).toEqual([{ path: "before.md", updatedAt: 1 }]);
   expect(state.messages).toEqual([]);
 });
@@ -346,7 +304,7 @@ test("native plan updates replace and clear shared todos", () => {
     method: "turn/plan/updated",
     params: { threadId: "native", turnId: "turn", explanation: null, plan },
   });
-  const project = createCodexProjector("plans", "native");
+  const project = createCodexProjector("native");
   const initial = project(
     updated([
       { step: "First", status: "pending" },
@@ -355,7 +313,7 @@ test("native plan updates replace and clear shared todos", () => {
     ]),
   ).reduce(applySessionEvent, createInitialSessionState());
   expect(initial.todos?.map((todo) => todo.status)).toEqual(["pending", "in_progress", "done"]);
-  const resumed = createCodexProjector("plans", "native");
+  const resumed = createCodexProjector("native");
   const next = resumed(updated([{ step: "Replacement", status: "completed" }])).reduce(
     applySessionEvent,
     initial,

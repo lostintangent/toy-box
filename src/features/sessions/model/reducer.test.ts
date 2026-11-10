@@ -450,6 +450,49 @@ describe("session reducer", () => {
     });
   });
 
+  test("the session diff sums successful top-level edits by file", () => {
+    const edit = (
+      toolCallId: string,
+      path: string,
+      end: { success?: boolean; parentToolCallId?: string } = {},
+    ): SessionEvent[] => [
+      {
+        type: "tool_start",
+        toolCallId,
+        toolName: "edit",
+        arguments: {},
+        parentToolCallId: end.parentToolCallId,
+      },
+      {
+        type: "tool_end",
+        toolCallId,
+        success: true,
+        details: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1,2 @@\n-old\n+new\n+new`,
+        ...end,
+      },
+    ];
+    const [start, end] = edit("deferred", "src/a.ts");
+    const state = reduceEvents([
+      ...edit("edit", "src/a.ts"),
+      ...edit("other", "src/b.ts"),
+      ...edit("failed", "src/b.ts", { success: false }),
+      { type: "tool_start", toolCallId: "agent", toolName: "agent", arguments: {} },
+      ...edit("child", "src/b.ts", { parentToolCallId: "agent" }),
+      start,
+      { type: "delta", content: "Meanwhile." },
+      end,
+    ]);
+
+    expect(state.messages).toHaveLength(2);
+    expect(state.diff).toEqual({
+      total: { added: 6, removed: 3 },
+      byFile: [
+        { path: "src/a.ts", diff: { added: 4, removed: 2 } },
+        { path: "src/b.ts", diff: { added: 2, removed: 1 } },
+      ],
+    });
+  });
+
   describe("questions", () => {
     test("moves a question through unanswered, pending, and answered states", () => {
       const question = {

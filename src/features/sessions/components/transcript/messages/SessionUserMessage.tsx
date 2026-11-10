@@ -1,8 +1,8 @@
-import { useState } from "react";
 import { Undo2 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
+import { DestructiveConfirmationDialog } from "@/shared/dialogs/DestructiveConfirmationDialog";
+import { openDialog } from "@/shared/dialogs/DialogHost";
 import { isLiveActivity } from "../../../model/activity";
 import { useSessionsActivity } from "../../../useSessionActivity";
 import type { UserMessage as UserMessageType } from "../../../model";
@@ -30,36 +30,33 @@ export function SessionUserMessage({ message }: { message: UserMessageType }) {
 }
 
 function RewindControl({ sessionId, timestamp }: { sessionId: string; timestamp: string }) {
-  const [open, setOpen] = useState(false);
-
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground hover:text-foreground"
-              aria-label="Rewind to before this message"
-              onClick={() => setOpen(true)}
-            >
-              <Undo2 aria-hidden />
-            </Button>
-          }
-        />
-        <TooltipContent sideOffset={4}>Rewind to before this message</TooltipContent>
-      </Tooltip>
-      {open && (
-        <DestructiveConfirmationDialog
-          title="Rewind conversation?"
-          description="This removes this message and every message after it. Files are not changed. This action cannot be undone."
-          confirmLabel="Rewind"
-          pendingLabel="Rewinding..."
-          mutation={sessionMutations.rewindSession(sessionId, timestamp)}
-          onOpenChange={setOpen}
-        />
-      )}
-    </>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="text-muted-foreground hover:text-foreground"
+            aria-label="Rewind to before this message"
+            onClick={() =>
+              openDialog((dialog) => (
+                <DestructiveConfirmationDialog
+                  {...dialog}
+                  title="Rewind conversation?"
+                  description="This removes this message and every message after it. Files are not changed. This action cannot be undone."
+                  confirmLabel="Rewind"
+                  pendingLabel="Rewinding..."
+                  mutation={sessionMutations.rewindSession(sessionId, timestamp)}
+                />
+              ))
+            }
+          >
+            <Undo2 aria-hidden />
+          </Button>
+        }
+      />
+      <TooltipContent sideOffset={4}>Rewind to before this message</TooltipContent>
+    </Tooltip>
   );
 }

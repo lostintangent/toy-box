@@ -1,6 +1,8 @@
 import type {
   NotificationEvent,
   PushPublication,
+  PushRegistration,
+  PushSubscription,
   TopicSubscription,
   UpdateEvent,
 } from "@push/model";
@@ -45,8 +47,31 @@ export function observeTopics(listener: TopicListener): VoidFunction {
     runtime.listeners.delete(listener);
   };
 }
-export async function refreshPush(topic?: string): Promise<void> {
-  await runtime.service?.load(topic);
+
+/** Install writes reload delivery, and a new Live Activity token also catches up its topic. */
+export async function registerInstall(registration: PushRegistration): Promise<boolean> {
+  const created = await (await installs()).register(registration);
+  await runtime.service?.load();
+  return created;
+}
+export async function subscribeInstall(
+  subscription: PushSubscription,
+  topic: string,
+): Promise<boolean> {
+  if (!(await (await installs()).subscribe(subscription, topic))) return false;
+  await runtime.service?.load(subscription.token === null ? undefined : topic);
+  return true;
+}
+export async function unsubscribeInstall(registrationID: string, topic: string): Promise<void> {
+  await (await installs()).unsubscribe(registrationID, topic);
+  await runtime.service?.load();
+}
+export async function removeInstall(registrationID: string): Promise<void> {
+  await (await installs()).unregister(registrationID);
+  await runtime.service?.load();
+}
+async function installs(): Promise<PushDatabase> {
+  return new PushDatabase(await getStateDatabase());
 }
 
 export class PushService {

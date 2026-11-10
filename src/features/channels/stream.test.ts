@@ -1,6 +1,6 @@
 import { expect, onTestFinished, spyOn, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
-import { channelLead, type ChannelConversationMessage, type ChannelList } from "./model";
+import { channelLead, type ChannelConversationMessage } from "./model";
 import type { ChannelObservationEvent, ChannelState } from "./model";
 import { channelQueries, type ChannelQueryData } from "./queries";
 import { channelMutations } from "./mutations";
@@ -55,8 +55,12 @@ test.each([undefined, 0])(
       latestSequence: 102,
       seenThrough: 102,
       revision: 102,
+      request: null,
     };
-    stream.client.setQueryData(channelQueries.listKey(), { channels: [acknowledged], members: [] });
+    stream.client.setQueryData(channelQueries.list.queryKey, {
+      channels: [acknowledged],
+      members: [],
+    });
     const connection = await stream.nextConnection();
     expect(connection.url).toBe(
       `/api/v1/channels/channel${revision === undefined ? "" : "?after=0"}`,
@@ -64,7 +68,7 @@ test.each([undefined, 0])(
     connection.send({ type: "snapshot", state: snapshot });
     await stream.waitFor((view) => view?.revision === 101);
     expect(stream.view()!.arrival.unreadAfter).toBe(0);
-    expect(stream.client.getQueryData<ChannelList>(channelQueries.listKey())?.channels).toEqual([
+    expect(stream.client.getQueryData(channelQueries.list.queryKey)?.channels).toEqual([
       acknowledged,
     ]);
   },

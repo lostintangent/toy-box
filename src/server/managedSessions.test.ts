@@ -1,42 +1,23 @@
 import { createStoredChannel } from "@channels/server/testFixtures";
-import { describe, expect, mock, onTestFinished, test } from "bun:test";
-import { createTestDatabase } from "@/server/database";
-import type { Session } from "@sessions/model";
+import { describe, expect, onTestFinished, test } from "bun:test";
+import { openTestDatabase } from "@/server/testFixtures";
+import type { Session, SessionsState } from "@sessions/model";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
 import { deleteSessionActivity, setSessionActivity } from "@sessions/server/state/activity";
 import { deleteSavedDraft, saveDraft } from "@workspace/server/state/drafts";
-import { subscribeWorkspaceEvents } from "@workspace/server/events";
-import type { WorkspaceEvent } from "@workspace/model/events";
 
-let currentDb: Bun.SQL | undefined;
-
-mock.module("@/server/database", () => ({
-  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
-    if (!currentDb && options?.createIfMissing === false) return null;
-    if (!currentDb) throw new Error("Test database has not been opened");
-    return currentDb;
-  },
-}));
-
-const { AutomationDatabase } = await import("@automations/server/database");
-const { ChannelDatabase } = await import("@channels/server/database");
-const { registerWorkerSession, unregisterWorkerSession, WorkerDatabase } =
-  await import("@workers/server/database");
-const { addHyperSession, deleteHyperState } = await import("@workspace/server/state/hyperSessions");
-const { saveSettings } = await import("@workspace/server/state/settings");
-const { detachManagedSession, readSessionCatalog, resolveSessionType } =
-  await import("./managedSessions");
-
-async function openSessionTypeTestDatabase(): Promise<void> {
-  currentDb = await createTestDatabase();
-  onTestFinished(async () => {
-    await currentDb?.close();
-    currentDb = undefined;
-  });
-}
+import { AutomationDatabase } from "@automations/server/database";
+import { ChannelDatabase } from "@channels/server/database";
+import {
+  registerWorkerSession,
+  unregisterWorkerSession,
+  WorkerDatabase,
+} from "@workers/server/database";
+import { saveSettings } from "@workspace/server/state/settings";
+import { detachManagedSession, readSessionCatalog, resolveSessionType } from "./managedSessions";
 
 function createInboxWorker(sessionId: string) {
-  return new WorkerDatabase(currentDb!).create({
+  return registerWorkerSession({
     type: "inbox",
     sessionId,
     createdAt: new Date(0).toISOString(),
@@ -46,13 +27,13 @@ function createInboxWorker(sessionId: string) {
 
 describe("session type resolution", () => {
   test("defaults sessions without a managing record to standard", async () => {
-    await openSessionTypeTestDatabase();
-    expect(await resolveSessionType("toy-box-standard")).toBe("standard");
+    await openTestDatabase();
+    expect(await resolveSessionType("toy-box-standard")).toEqual({ sessionType: "standard" });
   });
 
   test("resolves every managed session type from its authoritative record", async () => {
-    await openSessionTypeTestDatabase();
-    const automation = await new AutomationDatabase(currentDb!).create({
+    const db = await openTestDatabase();
+    const automation = await new AutomationDatabase(db).create({
       title: "Managed automation",
       prompt: "Run",
       model: { provider: "copilot", name: "gpt-5" },
@@ -63,7 +44,7 @@ describe("session type resolution", () => {
     const workerId = `toy-box-${crypto.randomUUID()}`;
     const channelWorkerId = `toy-box-${crypto.randomUUID()}`;
     await createInboxWorker(inboxId);
-    addHyperSession(hyperId);
+    await saveSettings({ ...DEFAULT_SETTINGS, hyperSessionId: hyperId });
     await registerWorkerSession({
       createdAt: new Date(0).toISOString(),
       type: "app",
@@ -80,14 +61,20 @@ describe("session type resolution", () => {
       name: "Architect",
       metadata: { seenThrough: 0 },
     });
-    onTestFinished(() => deleteHyperState(hyperId));
 
-    expect(await resolveSessionType(automation.id)).toBe("automation");
-    expect(await resolveSessionType(inboxId)).toBe("worker");
-    expect(await resolveSessionType(hyperId)).toBe("hyper");
-    expect(await resolveSessionType(workerId)).toBe("worker");
-    expect(await resolveSessionType(channelWorkerId)).toBe("worker");
-    expect(await readSessionCatalog(async () => [[], {}])).toEqual({
+    expect(await resolveSessionType(automation.id)).toEqual({ sessionType: "automation" });
+    expect(await resolveSessionType(hyperId)).toEqual({ sessionType: "hyper" });
+    for (const [sessionId, type] of [
+      [inboxId, "inbox"],
+      [workerId, "app"],
+      [channelWorkerId, "channel"],
+    ]) {
+      expect(await resolveSessionType(sessionId!)).toMatchObject({
+        sessionType: "worker",
+        worker: { type, sessionId },
+      });
+    }
+    expect(await readSessionCatalog(catalogSource([]))).toEqual({
       sessions: [],
       worktrees: {},
       ownership: {
@@ -99,21 +86,9 @@ describe("session type resolution", () => {
     });
   });
 
-  test("rejects conflicting managed records", async () => {
-    await openSessionTypeTestDatabase();
-    const sessionId = `toy-box-${crypto.randomUUID()}`;
-    await createInboxWorker(sessionId);
-    addHyperSession(sessionId);
-    onTestFinished(() => deleteHyperState(sessionId));
-
-    await expect(resolveSessionType(sessionId)).rejects.toThrow(
-      `Session ${sessionId} has conflicting types: worker, hyper`,
-    );
-  });
-
-  test("catalog and runtime resolution reject the same conflicting durable owners", async () => {
-    await openSessionTypeTestDatabase();
-    const automation = await new AutomationDatabase(currentDb!).create({
+  test("the catalog rejects conflicting durable owners", async () => {
+    const db = await openTestDatabase();
+    const automation = await new AutomationDatabase(db).create({
       title: "Conflicting owner",
       prompt: "Run",
       model: { provider: "copilot", name: "gpt-5" },
@@ -126,24 +101,22 @@ describe("session type resolution", () => {
       parentSessionId: "parent",
       ephemeral: false,
     });
-    const message = `Session ${automation.id} has conflicting types: automation, worker`;
-    await expect(resolveSessionType(automation.id)).rejects.toThrow(message);
-    await expect(readSessionCatalog(async () => [[], {}])).rejects.toThrow(message);
+    await expect(readSessionCatalog(catalogSource([]))).rejects.toThrow(
+      `Session ${automation.id} has conflicting types: automation, worker`,
+    );
   });
 });
 
 describe("Session catalog projection", () => {
   test("reserves 250 history slots independently of managed and pinned sessions", async () => {
-    await openSessionTypeTestDatabase();
-    const automation = await new AutomationDatabase(currentDb!).create({
+    const db = await openTestDatabase();
+    const automation = await new AutomationDatabase(db).create({
       title: "Old automation",
       prompt: "Run",
       model: { provider: "copilot", name: "gpt-5" },
       cron: "0 9 * * *",
     });
     await createInboxWorker("old-inbox");
-    addHyperSession("old-hyper");
-    onTestFinished(() => deleteHyperState("old-hyper"));
     await registerWorkerSession({
       createdAt: new Date(0).toISOString(),
       type: "channel",
@@ -154,6 +127,7 @@ describe("Session catalog projection", () => {
     await saveSettings({
       ...DEFAULT_SETTINGS,
       pinnedSessionIds: ["old-pin", "new-pin"],
+      hyperSessionId: "old-hyper",
     });
     const history = Array.from({ length: 260 }, (_, i) => catalogSession(`history-${i}`, i + 1));
     const required = [automation.id, "old-inbox", "old-hyper", "old-channel-member", "old-pin"];
@@ -164,7 +138,7 @@ describe("Session catalog projection", () => {
     ];
     const worktree = { branch: "old-work", baseBranch: "main", path: "/repo/old-work" };
 
-    const catalog = await readSessionCatalog(async () => [sessions, { "history-0": worktree }]);
+    const catalog = await readSessionCatalog(catalogSource(sessions, { "history-0": worktree }));
 
     expect(catalog.sessions.map(({ id }) => id).sort()).toEqual(
       [...required, "new-pin", ...history.slice(10).map(({ id }) => id)].sort(),
@@ -179,7 +153,7 @@ describe("Session catalog projection", () => {
   });
 
   test("retains older running, waiting, unread and draft work outside the history window", async () => {
-    await openSessionTypeTestDatabase();
+    await openTestDatabase();
     const protectedIds = ["old-running", "old-waiting", "old-unread", "old-unsent"];
     for (const [index, status] of (["running", "waiting", "unread"] as const).entries()) {
       setSessionActivity(protectedIds[index]!, status);
@@ -195,7 +169,7 @@ describe("Session catalog projection", () => {
       ...Array.from({ length: 260 }, (_, i) => catalogSession(`history-${i}`, i + 1)),
     ];
 
-    const catalog = await readSessionCatalog(async () => [sessions, {}]);
+    const catalog = await readSessionCatalog(catalogSource(sessions));
 
     const sessionIds = catalog.sessions.map(({ id }) => id);
     expect(sessionIds).toHaveLength(255);
@@ -204,12 +178,14 @@ describe("Session catalog projection", () => {
   });
 
   test("selects the same history window when equal timestamps arrive in another order", async () => {
-    await openSessionTypeTestDatabase();
+    await openTestDatabase();
     const sessions = Array.from({ length: 260 }, (_, i) =>
       catalogSession(`session-${String(i).padStart(3, "0")}`, 1),
     );
-    const first = await readSessionCatalog(async () => [sessions, {}]);
-    const second = await readSessionCatalog(async () => [[...sessions].reverse(), {}]);
+    const read = (sessions: Session[]) =>
+      readSessionCatalog({ list: async () => [sessions, {}], find: async () => [] });
+    const first = await read(sessions);
+    const second = await read([...sessions].reverse());
 
     expect(first.sessions.map(({ id }) => id).sort()).toEqual(
       second.sessions.map(({ id }) => id).sort(),
@@ -220,7 +196,7 @@ describe("Session catalog projection", () => {
   test.each(["creation", "deletion"])(
     "keeps backing Sessions classified during concurrent %s",
     async (change) => {
-      await openSessionTypeTestDatabase();
+      const db = await openTestDatabase();
       const admit = async () => {
         await createInboxWorker("inbox");
         await registerWorkerSession({
@@ -249,15 +225,18 @@ describe("Session catalog projection", () => {
       }));
       const worktree = { branch: "work", baseBranch: "main", path: "/repo/work" };
 
-      const catalog = await readSessionCatalog(async () => {
-        if (change === "creation") {
-          await admit();
-        } else {
-          await unregisterWorkerSession("channel-worker");
-          await unregisterWorkerSession("worker");
-          await new WorkerDatabase(currentDb!).delete("inbox");
-        }
-        return [sessions, { "channel-worker": worktree, worker: worktree }];
+      const catalog = await readSessionCatalog({
+        async list() {
+          if (change === "creation") {
+            await admit();
+          } else {
+            await unregisterWorkerSession("channel-worker");
+            await unregisterWorkerSession("worker");
+            await new WorkerDatabase(db).delete("inbox");
+          }
+          return [sessions, { "channel-worker": worktree, worker: worktree }];
+        },
+        find: async () => [],
       });
 
       expect(catalog).toEqual({
@@ -283,9 +262,27 @@ function catalogSession(id: string, updatedAt: number): Session {
   };
 }
 
+/** Lists the least one provider may: its newest `limit` Sessions, plus drafts. */
+function catalogSource(
+  sessions: Session[],
+  worktrees: SessionsState["worktrees"] = {},
+): Parameters<typeof readSessionCatalog>[0] {
+  const newestFirst = sessions
+    .filter(({ provider }) => provider)
+    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
+  return {
+    list: async (limit) => [
+      [...sessions.filter(({ provider }) => !provider), ...newestFirst.slice(0, limit)],
+      worktrees,
+    ],
+    find: async (sessionIds) =>
+      sessions.filter(({ id, provider }) => provider && sessionIds.includes(id)),
+  };
+}
+
 test("detaching a Channel Agent removes its Worker and records the user's removal", async () => {
-  await openSessionTypeTestDatabase();
-  const channels = new ChannelDatabase(currentDb!);
+  const db = await openTestDatabase();
+  const channels = new ChannelDatabase(db);
   const channel = await createStoredChannel(channels, {
     name: "Dormant team",
     purpose: "Coordinate a dormant team.",
@@ -310,26 +307,8 @@ test("detaching a Channel Agent removes its Worker and records the user's remova
   ]);
 });
 
-test("shared teardown publishes one Inbox deletion even when callers detach concurrently", async () => {
-  await openSessionTypeTestDatabase();
-  const sessionId = crypto.randomUUID();
-  await createInboxWorker(sessionId);
-  const events: WorkspaceEvent[] = [];
-  onTestFinished(
-    subscribeWorkspaceEvents((event) => {
-      if (event.type === "inbox.entry.deleted" && event.entryId === sessionId) events.push(event);
-    }),
-  );
-
-  await Promise.all([detachManagedSession(sessionId), detachManagedSession(sessionId)]);
-  await detachManagedSession(sessionId);
-
-  expect(await new WorkerDatabase(currentDb!).get(sessionId)).toBeNull();
-  expect(events).toEqual([{ type: "inbox.entry.deleted", entryId: sessionId }]);
-});
-
 test("detaching a deleted session ends pending work registered for or under it", async () => {
-  await openSessionTypeTestDatabase();
+  await openTestDatabase();
   const { finishWorker, getRegisteredWorker, startWorker } =
     await import("@workers/server/registry");
   const sessionId = crypto.randomUUID();

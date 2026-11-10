@@ -7,8 +7,7 @@ export const Route = createFileRoute("/api/v1/screens/")({
     handlers: {
       GET: () =>
         screenRuntime.list().then(
-          (list) =>
-            Response.json({ version: 1, ...list }, { headers: { "Cache-Control": "no-store" } }),
+          (list) => Response.json(list, { headers: { "Cache-Control": "no-store" } }),
           (error: Error) => Response.json({ error: error.message }, { status: 422 }),
         ),
     },

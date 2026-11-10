@@ -20,28 +20,28 @@ and surface; those reusable capabilities never import a feature.
 ## Shared projection
 
 `WorkspaceState` is the aggregate read model delivered during SSR and refreshed after reconnects.
-It holds only the facts Workspace owns: settings, drafts, Hyper membership, and environment
-capabilities. Every other feature's shared state, including Sessions' activity, Workers' active
-workers, and Files' custom editors, lives in that feature's own Query cache.
-Sessions, Channels, Automations, Inbox, Apps, Providers, Workers, and Files have independent Query
-catalogs preloaded by the main route. The session catalog supplies durable ownership for generic session
+It holds only the facts Workspace owns: settings, including the `hyperSessionId` that names the
+Hyper session, drafts, and environment capabilities. Every other feature's shared state,
+including Sessions' activity, Workers' active workers, and Apps' installed definitions, lives in
+that feature's own Query cache.
+Sessions, Channels, Automations, Inbox, Apps, Providers, and Workers have independent Query
+catalogs, each preloaded for the first render by its own cache. The session catalog supplies durable ownership for generic session
 classification; feature catalogs supply the records needed by their own surfaces.
 
 The snapshot path reads those feature-owned facts once; the event path incrementally maintains the
 owning caches. Each feature declares the events it publishes by augmenting `WorkspaceEvents` in
 [`model/events.ts`](model/events.ts) from its own model, publishes them through
-`server/events.ts`, and default-exports a `WorkspaceCache` from its `cache.ts` that applies
-events to its caches and refreshes them after a gap. A cache that writes an event into a query's
-data then calls `replaceOverlappingRead` from [`src/shared/query.ts`](../../shared/query.ts), so a
-read already in flight can't overwrite it. A snapshot that every event reduces into, such as
-`WorkspaceState` or Sessions' activity, instead reads and applies through that module's
-`snapshotJournal`, which reduces the events applied during a read over the snapshot it returns. [`sync.ts`](sync.ts) discovers those
-caches by convention, Workspace's own included, so neither the event type nor the client fan-out lists features. Live, optimistic, and confirmed events all go through `applyWorkspaceEvent`, so no caller reaches into a feature's cache directly. Meanwhile,
-the central pure reducer owns only Workspace's facts, such as clearing a deleted session's draft and
-Hyper membership. It never performs a feature's persistence or lifecycle work.
+`server/events.ts`, and default-exports a `WorkspaceCache` from its `cache.ts` that applies events
+to its queries and, when it owns a catalog, preloads it for the first render and refreshes it after a gap. A cache that reduces events into a query's
+data declares that query as a [`reducedQuery`](../../shared/query.ts), which reduces the
+events applied during a read over the snapshot it returns, so a read already in flight can't
+overwrite them. [`sync.ts`](sync.ts) discovers those
+caches by convention, Workspace's own included, so neither the event type nor the client fan-out lists features. Live, optimistic, and confirmed events all go through `applyWorkspaceEvent`, so no caller reaches into a feature's cache directly. The one exception is Sessions' optimistic delete, which hides the session only in its own catalog until the server confirms. Meanwhile,
+the central pure reducer owns only Workspace's facts, such as clearing a deleted session's draft. It
+never performs a feature's persistence or lifecycle work.
 General invalidation hints such as `session.touched` remain reducer no-ops and instead prompt the
 owning feature cache to recover from its authoritative snapshot.
-Inbox owns its list query and handles `inbox.changed` and `inbox.entry.deleted` in its feature cache.
+Inbox owns its list query and handles `inbox.changed` and `session.deleted` in its feature cache.
 Its entries are absent from `WorkspaceState`; presentation combines the Inbox list with shared
 Session activity where needed. The shared stream routes its events without another connection.
 Apps owns its definitions, saved instances, and shares in one catalog query; its cache handles
@@ -64,16 +64,16 @@ unread is Sessions' activity, not workspace state; see
 [`../sessions/AGENTS.md`](../sessions/AGENTS.md).
 
 [`model/state/drafts.ts`](model/state/drafts.ts) defines saved drafts: each composer's unsent
-text, keyed by its owner (`session:<id>`, `channel:<id>`, or `inbox`). A `draft.changed` action
-carries a client's edit; the server stamps it, keeps it in a process-local map for a day after its
-last edit, and broadcasts it. Deleting a session or channel drops its draft. A session's draft
+text, keyed by its owner (`session:<id>`, `channel:<id>`, or `inbox`). `updateDraft` sends a
+client's edit; the server stamps it, keeps it in a process-local map for a day after its last edit,
+and broadcasts it as `draft.changed`. Deleting a session or channel drops its draft. A session's draft
 marks its sidebar row and keeps it in the catalog. [`hooks/useSavedDraft.ts`](hooks/useSavedDraft.ts)
 is the composer-facing hook: it applies edits locally, debounces them out, adopts other clients'
 edits but not its own echoes, syncs a cleared draft at once, and flushes on unmount. It returns
 the `value` and `onValueChange` a composer draft takes; images stay local to each client.
 
 [`queries.ts`](queries.ts) is the canonical TanStack Query interface to that projection. It owns
-snapshot identity and reads through a `snapshotJournal`, so an in-flight snapshot never overwrites
+snapshot identity as a `reducedQuery`, so an in-flight snapshot never overwrites
 newer events. [`cache.ts`](cache.ts) is Workspace's own `WorkspaceCache`: it reduces
 each event into the snapshot and refreshes provider and session catalogs when the settings they
 depend on change. [`sync.ts`](sync.ts) applies each event to every cache and refreshes them all
@@ -99,14 +99,15 @@ when the stream does. Reconnecting yields a new id, and holders attach again.
 [`server/functions.ts`](server/functions.ts) validates remote ingress for hydration, shared
 workspace actions, and settings updates, then delegates to the plain operations in
 [`server/state/`](server/state). That module assembles the cross-feature snapshot and owns only
-workspace-wide coordination: drafts, Hyper membership, settings, and environment
-capabilities. [`server/tools.ts`](server/tools.ts) exposes Workspace-owned settings
-updates to model sessions.
+workspace-wide coordination: drafts, settings, and environment capabilities.
+[`server/tools.ts`](server/tools.ts) exposes Workspace-owned settings updates to model sessions.
 [`server/events.ts`](server/events.ts) owns the process-local fan-out behind the shared
 [`routes/api/workspace.ts`](routes/api/workspace.ts) SSE route.
 Shared SQLite connection management and schema composition stay in [`../../server/`](../../server), while
 each feature owns its schema, records, and lifecycle. Workspace's own `server/schema.ts`
-defines the durable settings table.
+defines the durable settings table. The server opens and migrates the state database at startup,
+so readers simply await `getStateDatabase()`. Tests serve their own with `openTestDatabase()` from
+[`../../server/testFixtures.ts`](../../server/testFixtures.ts).
 
 Browser-local pane topology, focus, layout, and client identity are deliberately absent from the
 server projection.
@@ -189,13 +190,17 @@ the hosts supply, and `components/panes/kinds.ts` holds the discovered kinds. No
 inside a pane.
 
 One sparse browser cookie retains non-default `WorkspaceLayout` values across reloads and SSR.
+[`hooks/layout/layoutPrefs.tsx`](hooks/layout/layoutPrefs.tsx) holds them in one store per route
+mount, seeded from the loader's cookie read and written back by its one subscriber, so SSR requests
+never share it and each component re-renders only for the preference it reads.
 `sidebarCollapsed` is the shared visibility fact: it produces the desktop rail or reveals the
 mobile workspace, whose no-root fallback is Inbox.
 
 [`components/layout/HyperSession.tsx`](components/layout/HyperSession.tsx) is an independent
 mini-workspace around a managed session. It has its own roots, focus, and publication graph while
-reusing the ordinary pager and pane components. Promotion preserves the transcript and live
-runtime while transferring lifecycle management into the normal workspace.
+reusing the ordinary pager and pane components. Promotion clears the `hyperSessionId` setting,
+preserving the transcript and live runtime while transferring lifecycle management into the normal
+workspace.
 
 [`../sessions/components/SessionPreview.tsx`](../sessions/components/SessionPreview.tsx)
 renders a passive session in a delayed hover popover. [`../sessions/components/SessionOverlay.tsx`](../sessions/components/SessionOverlay.tsx)
@@ -214,17 +219,21 @@ creating work and showing its surfaces. The main route owns that state, so it pr
 `CommandProvider`, which binds their shortcuts and supplies them through context to its descendants:
 the sidebar, palette, and dialogs reference them by ID during render, so the sidebar's header, rail,
 and footer render their command buttons in the server's HTML. Each feature defines its items'
-commands once in its `commands.ts`, such as [`../sessions/commands.ts`](../sessions/commands.ts),
-[`../channels/commands.ts`](../channels/commands.ts), [`../apps/commands.ts`](../apps/commands.ts),
-and [`../automations/commands.ts`](../automations/commands.ts), and its sidebar menu, its palette
+commands once in its `commands.tsx`, such as [`../sessions/commands.tsx`](../sessions/commands.tsx),
+[`../channels/commands.tsx`](../channels/commands.tsx), [`../apps/commands.tsx`](../apps/commands.tsx),
+and [`../automations/commands.tsx`](../automations/commands.tsx), and its sidebar menu, its palette
 row, and any other menu for the item render that same list.
-Commands that open a shared dialog call `openWorkspaceDialog`, hosted by
-[`components/WorkspaceDialogs.tsx`](components/WorkspaceDialogs.tsx) inside the main surface, so
-what a dialog opens is revealed there. To rename or delete its item, a feature calls
-`openRenameDialog` or `openDeleteDialog` with its own copy and mutation options, so its cache
-effects run and the host needs no branch per feature. Each opening gets a new dialog, which starts
-fresh. A delete closes no pane itself: the route closes any root whose session, Channel, or app
-left its list, in every tab.
+
+A dialog is any component of `{ open, onOpenChange }`. Commands and components open one with
+`openDialog` from [`src/shared/dialogs`](../../shared/dialogs/DialogHost.tsx), passing its props
+inline, and the route renders one `DialogHost` inside the main surface and roots, so a dialog shows
+what it opens itself and outlives the menu, sheet, or message that opened it. Each opening starts
+fresh, and the last dialog stays mounted after it closes so it animates out. To rename or delete its
+item, a feature gives the shared `NameDialog` or `DestructiveConfirmationDialog` its own copy and
+mutation options, so its cache effects run and the host needs no branch per feature. A delete
+closes no pane itself: the route closes any root whose session, Channel, or app left its list, in
+every tab. A dialog nested over another, such as a member editor's remove confirm, keeps its own
+`open` state.
 
 [`components/palette/`](components/palette/) is the Mod+K palette, a composition over sessions,
 channels, apps, automations, files, and the provided commands. The sidebar's Hyper menu also runs
@@ -237,7 +246,7 @@ peek. The root leads with "This …", headed by the noun of the row's group: the
 current pane's row, or else of the row of the session it belongs to. A child session isn't listed,
 so its row is built for the section alone, without Pin, as the sidebar shows it. A row's ID is the
 ID of the pane it opens, so a pane needs nothing more to get the section once its row has actions,
-and a row is open while its pane is among the surface's panes.
+and a row is open as the workspace's roots say, the same rule its sidebar row follows.
 The current pane is read once as the palette opens, from the pane hosts' `data-pane-id`: the pane
 holding focus, else the maximized one, the phone's page, or the only one. The section skips the
 default selection, so Enter on opening runs what it would without it, never an action on what's
@@ -259,9 +268,14 @@ Inbox Send does, then opens the running session's pane; "Run in Inbox" dispatche
 - [`routes/__root.tsx`](routes/__root.tsx) owns the document shell, global presentation providers,
   and initial Workspace hydration. Its stylesheet is co-located in the same route boundary.
 - [`routes/index.tsx`](routes/index.tsx) is the main composition root. It derives root panes
-  from the URL, owns the root verbs (`selectRoot`, `openRoot`, `closeRoot`) that the sidebar,
-  palette, and dialogs call with panes, closes roots whose content left its catalog, and supplies shared state and commands to the responsive
-  workspace shell.
+  from the URL, owns the root verbs (`selectRoot`, `openRoot`, `closeRoot`), closes roots whose
+  content left its catalog, and supplies shared state and commands to the responsive workspace
+  shell. It provides the shell's chrome (the sidebar's panels, the palette, and dialogs) with
+  [`hooks/layout/roots.ts`](hooks/layout/roots.ts): `selectRoot`, `openRoot`, and one `isOpen`
+  rule, under which a pane is open while the workspace shows it, and a navigation's target root
+  already is while it commits, in place of the root it leaves (`deriveOpenPaneIds`). Only the
+  chrome renders for that pending frame, not the whole route. Panes reach their surface through
+  `reveal` instead, since Hyper's surface has no roots.
 - [`hooks/layout/surface.tsx`](hooks/layout/surface.tsx) owns the independent Main and Hyper surface
   stores, `reveal`, and `useSurfacePanes`, which derives a surface's visible panes from its roots
   and prunes publishers those roots no longer reach. [`hooks/layout/panePublications.ts`](hooks/layout/panePublications.ts) owns
@@ -274,9 +288,9 @@ Inbox Send does, then opens the running session's pane; "Run in Inbox" dispatche
   [Inbox](../inbox/AGENTS.md), [Files](../files/AGENTS.md), and
   [Apps](../apps/AGENTS.md) own the data and behavior rendered in their panes. Channels owns
   its Agent identity and membership UI.
-- [Terminal](../terminal/AGENTS.md) owns its PTY and connection lifecycle; the main route
-  owns only shared drawer visibility and size, while each responsive layout owns placement and
-  transient presentation mechanics.
+- [Terminal](../terminal/AGENTS.md) owns its PTY and connection lifecycle; the drawer's visibility
+  and size are layout preferences, while each responsive layout owns placement and transient
+  presentation mechanics.
 
 To add a pane kind, declare its parameters in the owning feature's model and a constructor that
 names its content's key through `createPane`, which makes the id the kind plus that key, then add

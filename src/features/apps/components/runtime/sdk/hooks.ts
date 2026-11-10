@@ -38,6 +38,10 @@ export function useAppActions() {
   return useAppHost().actions;
 }
 
+export function useOpenedFile() {
+  return useAppHost().openedFile ?? null;
+}
+
 export function useWorkspace<T>(selector: (workspace: AppWorkspace) => T): T {
   return useSelector(useAppHost().workspace, selector);
 }

@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, useRouterState, ClientOnly } from "@tanstack/react-router";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createIsomorphicFn } from "@tanstack/react-start";
-import { useState, useEffect, useDeferredValue, lazy, Suspense } from "react";
+import { useState, useEffect, useDeferredValue, lazy, Suspense, type ReactNode } from "react";
 import { useSessions } from "@sessions/useSessions";
 import { useHyperSession } from "@workspace/hooks/layout/useHyperSession";
 import { useWarmSessionSnapshots } from "@sessions/useWarmSessionSnapshots";
@@ -9,8 +9,8 @@ import { useWorkspaceSync } from "@workspace/hooks/useWorkspaceSync";
 import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { CommandProvider } from "@/shared/commands/CommandProvider";
+import { DialogHost } from "@/shared/dialogs/DialogHost";
 import type { SidebarProps } from "@workspace/components/sidebar/Sidebar";
-import { WorkspaceDialogs } from "@workspace/components/WorkspaceDialogs";
 import { CommandPalette } from "@workspace/components/palette/CommandPalette";
 import { workspaceCommands, type SessionCreationOptions } from "@workspace/commands";
 import {
@@ -23,30 +23,24 @@ import {
   workspaceSurfaces,
   WorkspaceSurfaceProvider,
 } from "@workspace/hooks/layout/surface";
-import { MAX_WORKSPACE_PANES, type WorkspacePane } from "@workspace/model/panes";
+import { WorkspaceRootsProvider, type WorkspaceRoots } from "@workspace/hooks/layout/roots";
+import { deriveOpenPaneIds, MAX_WORKSPACE_PANES, type WorkspacePane } from "@workspace/model/panes";
 import { parseRootPanes, serializeRootPanes } from "@workspace/components/panes/kinds";
 import { createSessionPane } from "@sessions/model/panes";
 import { useEditorAutoFocus } from "@sessions/useEditorAutoFocus";
 import { createAppPane } from "@apps/model";
 import { INBOX_PANE } from "@inbox/model";
-import {
-  readWorkspaceLayout,
-  serializeWorkspaceLayout,
-  type SidebarPanels,
-} from "@workspace/model/config/layoutPrefs";
+import { readWorkspaceLayout } from "@workspace/model/config/layoutPrefs";
+import { LayoutPrefsProvider, useLayoutPref } from "@workspace/hooks/layout/layoutPrefs";
 import {
   filterSessionList,
   type SessionFilters,
 } from "@sessions/components/sidebar/sessionFilters";
-import { selectTopLevelSessions, sessionQueries } from "@sessions/queries";
-import { providerQueries } from "@providers/queries";
+import { selectTopLevelSessions } from "@sessions/queries";
 import { useHasModels } from "@providers/useModels";
 import { channelQueries } from "@channels/queries";
 import { automationQueries } from "@automations/queries";
-import { inboxQueries } from "@inbox/queries";
 import { appQueries } from "@apps/queries";
-import { fileQueries } from "@files/queries";
-import { workerQueries } from "@workers/queries";
 const Terminal = lazy(() =>
   import("@terminal/components/Terminal").then((m) => ({
     default: m.Terminal,
@@ -56,21 +50,12 @@ const Terminal = lazy(() =>
 export const Route = createFileRoute("/")({
   // Each root pane kind declares its URL key, so the workspace URL is just the panes it opens.
   validateSearch: (search: Record<string, unknown>) => serializeRootPanes(parseRootPanes(search)),
-  loader: async ({ context }) => {
-    await Promise.all([
-      context.queryClient.ensureQueryData(sessionQueries.state()),
-      context.queryClient.ensureQueryData(sessionQueries.activity()),
-      context.queryClient.ensureQueryData(channelQueries.list()),
-      context.queryClient.ensureQueryData(automationQueries.list()),
-      context.queryClient.ensureQueryData(inboxQueries.list()),
-      context.queryClient.ensureQueryData(appQueries.list()),
-      context.queryClient.ensureQueryData(providerQueries.catalog()),
-      context.queryClient.ensureQueryData(workerQueries.active()),
-      context.queryClient.ensureQueryData(fileQueries.editors()),
-    ]);
-    return readWorkspaceLayout(await readCookieHeader());
-  },
-  component: WorkspacePage,
+  loader: async () => readWorkspaceLayout(await readCookieHeader()),
+  component: () => (
+    <LayoutPrefsProvider initialLayout={Route.useLoaderData()}>
+      <WorkspacePage />
+    </LayoutPrefsProvider>
+  ),
 });
 
 const readCookieHeader = createIsomorphicFn()
@@ -84,12 +69,6 @@ function WorkspacePage() {
   const navigate = useNavigate();
   const { workspaceRevision } = Route.useRouteContext();
   const selectedRoots = parseRootPanes(Route.useSearch());
-  const targetSelectedSessionIds = useRouterState({
-    select: (state) => selectSessionIds(parseRootPanes(state.location.search)),
-    structuralSharing: true,
-  });
-  const selectedSessionIds = selectSessionIds(selectedRoots);
-  const initialLayout = Route.useLoaderData();
   const { isMobile: isMobileLayout, hydrated } = useViewport();
 
   function updateRoots(
@@ -105,7 +84,9 @@ function WorkspacePage() {
 
   // A full workspace admits only the panes it already shows.
   function hasRoomFor(pane: WorkspacePane) {
-    return openPanes.length < MAX_WORKSPACE_PANES || openPanes.some(({ id }) => id === pane.id);
+    return (
+      visiblePanes.length < MAX_WORKSPACE_PANES || visiblePanes.some(({ id }) => id === pane.id)
+    );
   }
 
   // Selecting a root replaces the workspace; a modifier toggles it beside the other roots.
@@ -134,59 +115,38 @@ function WorkspacePage() {
     void updateRoots((roots) => roots.filter(({ id }) => id !== pane.id), { replace: true });
   }
 
-  const primarySelectedSessionId = selectedSessionIds[0];
+  const primarySelectedSessionId = selectedRoots.find(({ kind }) => kind === "session")?.sessionId;
   const hasWorkspaceRoot = selectedRoots.length > 0;
   const rootPanes = hasWorkspaceRoot ? selectedRoots : [INBOX_PANE];
   const resolvePaneClose = (pane: WorkspacePane) =>
     selectedRoots.some(({ id }) => id === pane.id) ? () => closeRoot(pane) : undefined;
-  const openPanes = useSurfacePanes("main", rootPanes);
-  const openSessionIds = selectSessionIds(openPanes);
-  useEditorAutoFocus("main", openPanes);
-  const selectedSessionIdSet = new Set(selectedSessionIds);
-  const sidebarOpenSessionIds = [
-    ...new Set([
-      ...openSessionIds.filter((sessionId) => !selectedSessionIdSet.has(sessionId)),
-      ...targetSelectedSessionIds,
-    ]),
-  ];
+  const visiblePanes = useSurfacePanes("main", rootPanes);
+  useEditorAutoFocus("main", visiblePanes);
 
   const disabledProviders = useWorkspaceSelector(
     (workspace) => workspace.settings.disabledProviders,
   );
 
-  // Layout state is restored from and persisted to the workspace layout cookie.
-  const [sidebarWidth, setSidebarWidth] = useState(initialLayout.sidebarWidth);
-  const [terminalSize, setTerminalSize] = useState(initialLayout.terminalSize);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(initialLayout.sidebarCollapsed);
-  const [isTerminalOpen, setIsTerminalOpen] = useState(initialLayout.terminalOpen);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useLayoutPref("sidebarCollapsed");
+  const [isTerminalOpen, setIsTerminalOpen] = useLayoutPref("terminalOpen");
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
-  const [sidebarPanels, setSidebarPanels] = useState<SidebarPanels>(initialLayout.panels);
-  const [isChannelOverviewPinned, setIsChannelOverviewPinned] = useState(
-    initialLayout.channelOverviewPinned,
-  );
 
   const hasModels = useHasModels();
-  const { data: channelList } = useQuery(channelQueries.list());
+  const { data: channelList } = useQuery(channelQueries.list);
   const channels = channelList?.channels;
-  const { data: automations } = useSuspenseQuery(automationQueries.list());
+  const { data: automations } = useSuspenseQuery(automationQueries.list);
   const { data: appIds } = useSuspenseQuery({
-    ...appQueries.list(),
+    ...appQueries.list,
     select: (list) => list.apps.map((app) => app.id),
   });
-  const { hyperSessionIds, pinnedSessionIds } = useWorkspaceSelector((workspace) => ({
-    hyperSessionIds: workspace.hyperSessionIds,
-    pinnedSessionIds: workspace.settings.pinnedSessionIds,
-  }));
+  const { hyperSessionId: storedHyperSessionId, pinnedSessionIds } = useWorkspaceSelector(
+    (workspace) => ({
+      hyperSessionId: workspace.settings.hyperSessionId,
+      pinnedSessionIds: workspace.settings.pinnedSessionIds,
+    }),
+  );
   useWorkspaceSync(workspaceRevision);
-  const {
-    sessions,
-    ownership,
-    isLoading: isSessionsLoading,
-    worktreeSessionIds,
-    createSession,
-  } = useSessions({
-    hiddenSessionIds: hyperSessionIds,
-  });
+  const { sessions, ownership, worktreeSessionIds, createSession } = useSessions();
 
   // Create a draft session, optionally with an initial artifact or alongside the workspace.
   function handleCreateSession(options: SessionCreationOptions = {}) {
@@ -200,13 +160,13 @@ function WorkspacePage() {
   // Close roots whose content left its catalog, such as a deleted channel or app, or an older
   // session losing its pin.
   useEffect(() => {
-    const sessionIds = new Set(sessions?.map(({ id }) => id));
+    const sessionIds = new Set(sessions.map(({ id }) => id));
     for (const automation of automations) {
       if (!disabledProviders.includes(automation.model.provider)) sessionIds.add(automation.id);
     }
     const isStale = (pane: WorkspacePane) =>
       pane.kind === "session"
-        ? !isSessionsLoading && !sessionIds.has(pane.sessionId)
+        ? !sessionIds.has(pane.sessionId)
         : pane.kind === "app"
           ? !appIds.includes(pane.appId)
           : pane.kind === "channel" &&
@@ -219,26 +179,17 @@ function WorkspacePage() {
       search: (prev) => serializeRootPanes(parseRootPanes(prev).filter((pane) => !isStale(pane))),
       replace: true,
     });
-  }, [
-    appIds,
-    automations,
-    channels,
-    disabledProviders,
-    isSessionsLoading,
-    navigate,
-    selectedRoots,
-    sessions,
-  ]);
+  }, [appIds, automations, channels, disabledProviders, navigate, selectedRoots, sessions]);
 
   const [filter, setFilter] = useState<SessionFilters>({
     query: "",
     hiddenProviders: [],
     showExternalSessions: true,
   });
-  const toggleSidebar = () => setIsSidebarCollapsed((collapsed) => !collapsed);
+  const toggleSidebar = () => setIsSidebarCollapsed(!isSidebarCollapsed);
 
   function toggleTerminal() {
-    setIsTerminalOpen((prev) => !prev);
+    setIsTerminalOpen(!isTerminalOpen);
   }
 
   function handleTerminalClose() {
@@ -247,10 +198,7 @@ function WorkspacePage() {
 
   const deferredFilter = useDeferredValue(filter.query);
 
-  const listedSessions = selectTopLevelSessions(
-    { sessions: sessions ?? [], ownership: ownership ?? {} },
-    hyperSessionIds,
-  );
+  const listedSessions = selectTopLevelSessions({ sessions, ownership }, storedHyperSessionId);
 
   useWarmSessionSnapshots();
 
@@ -264,31 +212,11 @@ function WorkspacePage() {
     pinnedSessionIds,
   );
 
-  const hyperSessionId = hyperSessionIds.find((id) =>
-    sessions?.some((session) => session.id === id),
-  );
-  const hyper = useHyperSession({
-    hyperSessionId,
-    initialLayout: { open: initialLayout.hyperOpen, position: initialLayout.hyperPosition },
-    createSession,
-    openRoot,
-  });
+  // The setting can outlive a session deleted outside Toy Box.
+  const hyperSessionId = sessions.find(({ id }) => id === storedHyperSessionId)?.id;
+  const hyper = useHyperSession({ hyperSessionId, createSession, openRoot });
   const hyperSession = hyper.state;
   const { getOrCreateSessionId: getOrCreateHyperSessionId, toggle: toggleHyperSession } = hyper;
-
-  const layoutCookie = serializeWorkspaceLayout({
-    sidebarWidth,
-    terminalSize,
-    sidebarCollapsed: isSidebarCollapsed,
-    terminalOpen: isTerminalOpen,
-    panels: sidebarPanels,
-    hyperOpen: hyper.isOpen,
-    hyperPosition: hyperSession?.position ?? initialLayout.hyperPosition,
-    channelOverviewPinned: isChannelOverviewPinned,
-  });
-  useEffect(() => {
-    document.cookie = layoutCookie;
-  }, [layoutCookie]);
 
   // The hyper session has no floating deck on mobile; opening it there means
   // selecting it into the main view — the same URL navigation any list session
@@ -350,112 +278,101 @@ function WorkspacePage() {
     </ClientOnly>
   );
 
-  function handlePanelExpanded(panel: keyof SidebarPanels, expanded: boolean) {
-    setSidebarPanels((current) =>
-      isMobileLayout
-        ? expanded
-          ? { [panel]: true }
-          : {}
-        : { ...current, [panel]: expanded ? true : undefined },
-    );
-  }
-
   // Shared sidebar props for both mobile and desktop.
   const sidebarProps = {
     filter,
     onFilterChange: setFilter,
     sessions: filteredSessions,
-    isSessionsLoading,
-    selectRoot,
-    openSessionIds: sidebarOpenSessionIds,
     worktreeSessionIds,
     emptyMessage:
       deferredFilter || filter.hiddenProviders.length || !filter.showExternalSessions
         ? "No sessions match your filters"
         : undefined,
-    panels: sidebarPanels,
-    onPanelExpanded: handlePanelExpanded,
-    openAppIds: selectedRoots.flatMap((pane) => (pane.kind === "app" ? [pane.appId] : [])),
     onAppOpenInHyper: handleAppOpenInHyper,
-    openChannelIds: selectedRoots.flatMap((pane) =>
-      pane.kind === "channel" ? [pane.channelId] : [],
-    ),
   } satisfies SidebarProps;
 
   const mobileLayoutProps = {
     sidebar: sidebarProps,
     workspace: {
       visible: isMobileWorkspaceVisible,
-      panes: openPanes,
+      panes: visiblePanes,
       primaryPaneId: rootPanes[0].id,
       onBack: handleMobileWorkspaceBack,
       resolvePaneClose,
     },
-    terminal: {
-      open: isTerminalOpen,
-      body: isMobileLayout ? terminalBody : terminalBodySkeleton,
-      onClose: handleTerminalClose,
-    },
+    terminal: isMobileLayout ? terminalBody : terminalBodySkeleton,
   } satisfies WorkspaceLayoutProps["mobile"];
 
   const desktopLayoutProps = {
-    sidebar: {
-      ...sidebarProps,
-      collapsible: {
-        expandedWidth: sidebarWidth,
-        collapsed: isSidebarCollapsed,
-        onExpandedWidthChange: setSidebarWidth,
-        onCollapsedChange: setIsSidebarCollapsed,
-      },
-    },
-    workspace: { panes: openPanes, resolvePaneClose },
-    terminal: {
-      open: isTerminalOpen,
-      size: terminalSize,
-      body: !isMobileLayout ? terminalBody : terminalBodySkeleton,
-      onOpenChange: setIsTerminalOpen,
-      onSizeChange: setTerminalSize,
-    },
-    hyper: hyperSession?.open
-      ? {
-          state: hyperSession,
-          onPositionChange: hyper.setPosition,
-          onRemove: hyper.removeSurface,
-          onMinimize: hyper.toggle,
-          onPromote: hyper.promote,
-          onOpenApp: hyper.openApp,
-          onCloseApp: hyper.closeApp,
-        }
-      : null,
+    sidebar: sidebarProps,
+    workspace: { panes: visiblePanes, resolvePaneClose },
+    terminal: !isMobileLayout ? terminalBody : terminalBodySkeleton,
+    hyper:
+      hyperSession && hyper.isOpen
+        ? {
+            state: hyperSession,
+            onRemove: hyper.removeSurface,
+            onMinimize: hyper.toggle,
+            onPromote: hyper.promote,
+            onOpenApp: hyper.openApp,
+            onCloseApp: hyper.closeApp,
+          }
+        : null,
   } satisfies WorkspaceLayoutProps["desktop"];
 
   return (
     <CommandProvider commands={commands}>
       <WorkspaceSurfaceProvider
         surface="main"
-        panes={openPanes}
+        panes={visiblePanes}
         onOpen={(pane) => void openRoot(pane)}
-        channelOverviewPinned={isChannelOverviewPinned}
-        onChannelOverviewPinnedChange={setIsChannelOverviewPinned}
       >
-        <WorkspaceLayout
-          hydrated={hydrated}
-          isMobile={isMobileLayout}
-          mobile={mobileLayoutProps}
-          desktop={desktopLayoutProps}
-        />
-        <CommandPalette
-          open={isPaletteOpen}
-          onOpenChange={setIsPaletteOpen}
-          sessions={listedSessions}
-          navigation={{ selectRoot, openRoot }}
-        />
-        <WorkspaceDialogs selectRoot={selectRoot} />
+        <RootsProvider
+          selectRoot={selectRoot}
+          openRoot={openRoot}
+          visiblePanes={visiblePanes}
+          rootIds={selectedRoots.map(({ id }) => id)}
+        >
+          <WorkspaceLayout
+            hydrated={hydrated}
+            isMobile={isMobileLayout}
+            mobile={mobileLayoutProps}
+            desktop={desktopLayoutProps}
+          />
+          <CommandPalette
+            open={isPaletteOpen}
+            onOpenChange={setIsPaletteOpen}
+            sessions={listedSessions}
+          />
+          <DialogHost />
+        </RootsProvider>
       </WorkspaceSurfaceProvider>
     </CommandProvider>
   );
 }
 
-function selectSessionIds(panes: readonly WorkspacePane[]): string[] {
-  return panes.flatMap((pane) => (pane.kind === "session" ? [pane.sessionId] : []));
+/**
+ * Provides the chrome its roots. A root is open from the moment a navigation heads to it, so
+ * only the chrome renders until the navigation commits, not the whole workspace.
+ */
+function RootsProvider({
+  visiblePanes,
+  rootIds,
+  children,
+  ...roots
+}: Omit<WorkspaceRoots, "isOpen"> & {
+  visiblePanes: WorkspacePane[];
+  rootIds: string[];
+  children: ReactNode;
+}) {
+  const targetRootIds = useRouterState({
+    select: (state) => parseRootPanes(state.location.search).map(({ id }) => id),
+    structuralSharing: true,
+  });
+  const openPaneIds = deriveOpenPaneIds({ visiblePanes, rootIds, targetRootIds });
+  return (
+    <WorkspaceRootsProvider value={{ ...roots, isOpen: (pane) => openPaneIds.has(pane.id) }}>
+      {children}
+    </WorkspaceRootsProvider>
+  );
 }

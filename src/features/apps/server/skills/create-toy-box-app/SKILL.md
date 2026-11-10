@@ -1,6 +1,6 @@
 ---
 name: create-toy-box-app
-description: Create, edit, promote, install, uninstall, or repair Toy Box apps—session-scoped .toy artifact apps and installed React TSX surfaces that use the public app SDK to compose workspace sessions, files, and panes. Use for requests to build or change an artifact app, session app, or installed Toy Box app.
+description: Create, edit, promote, install, uninstall, or repair Toy Box apps—session-scoped .toy artifact apps and installed React TSX surfaces that use the public app SDK to compose workspace sessions, files, and panes, including installed apps that open a file extension as its editor. Use for requests to build or change an artifact app, session app, installed Toy Box app, or a custom editor or viewer for a file type.
 ---
 
 # Author Toy Box Apps
@@ -15,7 +15,8 @@ two storage and ownership models:
   durable app state, pending shares, or app-owned workers.
 - An **installed definition** is a reusable `app.tsx` plus `app.json` under
   `~/.toy-box/apps/`. Each saved instance has its own durable state and global
-  workspace identity.
+  workspace identity. A definition can also open file extensions, rendering
+  matching files in their editor panes without a saved instance.
 
 Use ordinary filesystem tools to author either kind. These app files are
 authored extensions, not Toy Box repository changes. Do not invoke repository
@@ -47,7 +48,9 @@ SDK.
 Create an artifact app when the user asks for an artifact, session app,
 session-local app, stateless app, or a visual interactive result that belongs to
 this conversation. Create an installed app when the user asks for a reusable,
-global, bookmarked, distributable, or durably stateful app. If that distinction
+global, bookmarked, distributable, or durably stateful app. Create an installed
+definition that `opens` the extensions when the user asks for a custom editor
+or viewer for a file type. If that distinction
 would materially change the result and the request does not establish it, ask.
 Installed app work requires `register_app`; if that tool is unavailable, do not
 leave a partially written definition.
@@ -101,6 +104,7 @@ An installed definition contains exactly two files:
   "icon": "Feather",
   "color": "#8b5cf6",
   "accepts": ["x-session-launch"],
+  "opens": ["http"],
   "state": {
     "schema": {
       "type": "object",
@@ -127,6 +131,14 @@ Both the schema and each state value must fit under 64 KiB.
 `accepts` is optional. List the MIME types the app can interpret, such as
 `"text/plain"`, `"text/markdown"`, or the Toy Box-specific
 `"x-session-launch"`. Omit it when the app does not consume shared content.
+`opens` is optional. List lowercase file extensions without the dot, such as
+`"http"`, when the app should render those files as their editor. Built-in
+editors for Markdown, HTML, SVG, JSON, briefs, images (png, jpg, jpeg, gif, webp,
+avif), and videos (mp4, webm, mov) keep priority, and the first definition by
+title wins an extension two definitions open. List only text formats, because a
+file that isn't UTF-8 text shows "This file isn't text." instead of the app. Read
+`useOpenedFile()` in the runtime reference before authoring one, and omit
+`opens` when the app is not a file editor.
 
 ## Author or Revise an Installed App
 
@@ -152,7 +164,8 @@ Both the schema and each state value must fit under 64 KiB.
    app-owned worker sessions but does not delete ordinary sessions it created.
    Use the `previewUrl` returned by `create_app` or `get_app` to open and exercise
    the app when possible because successful registration proves compilation, not
-   runtime behavior.
+   runtime behavior. A definition that only opens files needs no instance; open
+   a matching file instead.
 
 ## Promote an Artifact App
 

@@ -90,7 +90,8 @@ whether it is watched or reopened.
 - **Models.** Native messages restate their model; `model_changed` projects only when the main
   thread's or a subagent's model or effort changes, and on each turn's `init`.
 - **Tool calls.** A call starts with its `tool_use` and completes with its `tool_result`. Native
-  names map to Toy Box's canonical tools, and ToolSearch and omitted Toy Box tools stay hidden.
+  names map to Toy Box's canonical tools. The projector hides native ToolSearch and Skill calls,
+  and Sessions applies Toy Box tool policy downstream.
   Questions, checklists, and background agents retain only the native correlation they require.
   Live background agent cards stay running from native `task_started` through
   `task_notification`, including failed or stopped outcomes; history retains the native launch
@@ -120,7 +121,7 @@ replay only from their own latest compaction.
 
 The SDK reads a session's `cwd` only from the first 64 KB of its transcript (its branch comes from
 the tail), so a large first message, such as a pasted image, leaves the catalog without a
-directory. `readDirectory` alone reads the first transcript entry that records one, a listed
+directory. `readSession` alone reads the first transcript entry that records one, a listed
 native workaround, so resuming such a session does not fall back to the home directory.
 
 ## Native limits

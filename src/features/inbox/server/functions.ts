@@ -1,4 +1,4 @@
-// Validated Inbox operations shared by UI clients and other external ingress.
+// Validated Inbox operations for UI clients.
 
 import { createServerFn } from "@tanstack/react-start";
 import { sessionLaunchSchema } from "@sessions/model/protocol";

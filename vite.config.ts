@@ -6,8 +6,8 @@ import { resolve } from "node:path";
 import { constants } from "node:zlib";
 import compression from "compression";
 import tailwindcss from "@tailwindcss/vite";
-import { removeUncompressedAssets } from "./src/cli/build/publicAssets";
-import { socketDevelopment } from "./src/server/socketDevelopment";
+import { removeUncompressedAssets } from "./src/cli/build/publicAssets.ts";
+import { socketDevelopment } from "./src/server/socketDevelopment.ts";
 
 export default defineConfig(({ mode }) => {
   const isProduction = mode === "production";
@@ -18,10 +18,10 @@ export default defineConfig(({ mode }) => {
       allowedHosts: [".ts.net"],
     },
 
-    // These two libraries are only used on the server, and therefore,
+    // These libraries are only used on the server, and therefore,
     // don't need to be optimized for EJS by Vite during development.
     optimizeDeps: {
-      exclude: ["@tailwindcss/oxide", "app-typescript"],
+      exclude: ["@tailwindcss/oxide", "app-typescript", "@github/copilot-sdk"],
     },
 
     resolve: {
@@ -69,10 +69,10 @@ export default defineConfig(({ mode }) => {
         serveStatic: isProduction,
         compressPublicAssets: { gzip: true, brotli: true },
         hooks: {
-          "rollup:before"(nitro, config) {
-            if (nitro.options.dev) return;
-            config.plugins = [
-              config.plugins,
+          "build:config"(nitro, { rolldown }) {
+            if (nitro.options.dev || !rolldown) return;
+            rolldown.plugins = [
+              rolldown.plugins,
               {
                 name: "toy-box:compressed-public-assets",
                 // Nitro copies and compresses assets before bundling its server.

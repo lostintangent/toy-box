@@ -1,10 +1,14 @@
 import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { createSdkEventProjector } from "@providers/server/copilot/projector";
 import { replaySessionHistory } from "@sessions/model/reducer";
+import { createToolCallProjector } from "@sessions/server/toolProjection";
 
-/** Exercise native history projection and the same finalization used by the snapshot loader. */
+/** Exercise native history projection, Sessions' tool-call policy, and the same finalization
+ *  used by the snapshot loader. */
 export async function replayCopilotHistory(sessionId: string, events: SdkSessionEvent[]) {
-  return replaySessionHistory(events.flatMap(createSdkEventProjector(sessionId)));
+  return replaySessionHistory(
+    events.flatMap(createSdkEventProjector()).flatMap(createToolCallProjector(sessionId)),
+  );
 }
 
 /** Load a committed session fixture (raw SDK events, one JSON object per line). */

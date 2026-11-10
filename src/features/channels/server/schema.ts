@@ -103,4 +103,7 @@ export default [
     ALTER TABLE channels
       ADD COLUMN bookmarks TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(bookmarks));
   `,
+  `
+    DROP INDEX IF EXISTS idx_channel_messages_sender;
+  `,
 ];

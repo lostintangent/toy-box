@@ -8,27 +8,6 @@ type ServeRouteParams = {
   _splat?: string;
 };
 
-const CONTENT_TYPES: Record<string, string> = {
-  ".css": "text/css; charset=utf-8",
-  ".gif": "image/gif",
-  ".htm": "text/html; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".ico": "image/x-icon",
-  ".jpeg": "image/jpeg",
-  ".jpg": "image/jpeg",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".mov": "video/quicktime",
-  ".mp4": "video/mp4",
-  ".png": "image/png",
-  ".svg": "image/svg+xml; charset=utf-8",
-  ".txt": "text/plain; charset=utf-8",
-  ".wasm": "application/wasm",
-  ".webm": "video/webm",
-  ".webp": "image/webp",
-};
-
 export async function createServeResponse(
   { scope, _splat }: ServeRouteParams,
   request: Request,
@@ -37,9 +16,8 @@ export async function createServeResponse(
   if (!requestPath) return new Response("Missing file path.", { status: 400 });
   const absolutePath = resolveWorkspaceFile(decodeFileRoute(scope, requestPath));
   if (!absolutePath) return new Response("Invalid file path.", { status: 403 });
-  const stats = await Bun.file(absolutePath)
-    .stat()
-    .catch(() => null);
+  const served = Bun.file(absolutePath);
+  const stats = await served.stat().catch(() => null);
   if (!stats) return new Response("File not found.", { status: 404 });
   if (!stats.isFile()) return new Response("Requested path is not a file.", { status: 404 });
 
@@ -48,7 +26,7 @@ export async function createServeResponse(
   const headers = {
     "Cache-Control": "private, no-cache",
     "Content-Security-Policy": HTML_SANDBOX_CONTENT_SECURITY_POLICY,
-    "Content-Type": getContentType(absolutePath),
+    "Content-Type": served.type,
     ETag: etag,
     "X-Content-Type-Options": "nosniff",
   };
@@ -65,14 +43,14 @@ export async function createServeResponse(
     const start = Number(range[1]);
     const end = Math.min(range[2] ? Number(range[2]) : size - 1, size - 1);
     if (start <= end) {
-      return new Response(Bun.file(absolutePath).slice(start, end + 1), {
+      return new Response(served.slice(start, end + 1), {
         status: 206,
         headers: { ...headers, "Content-Range": `bytes ${start}-${end}/${size}` },
       });
     }
   }
 
-  return new Response(Bun.file(absolutePath), {
+  return new Response(served, {
     headers: { ...headers, "Content-Length": String(size) },
   });
 }
@@ -86,8 +64,3 @@ export const Route = createFileRoute("/api/serve/$scope/$")({
     },
   },
 });
-
-function getContentType(path: string): string {
-  const extension = path.match(/\.[^.\\/]+$/)?.[0]?.toLowerCase();
-  return (extension && CONTENT_TYPES[extension]) || "application/octet-stream";
-}

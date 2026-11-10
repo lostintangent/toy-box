@@ -1,113 +1,125 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
-import { snapshotJournal } from "./query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { reducedQuery } from "./query";
 
-const queryKey = ["journal"] as const;
-const journal = snapshotJournal<string[], string>(queryKey, (state, event) => [...state, event]);
-
-describe("snapshot journal", () => {
+describe("reduced query", () => {
   test("reconciles a snapshot with every event applied during its read", async () => {
-    const queryClient = createQueryClient();
+    const { query, snapshots } = declareQuery();
+    const client = createQueryClient();
     const snapshot = Promise.withResolvers<string[]>();
+    snapshots.push(snapshot.promise);
 
-    const fetch = queryClient.fetchQuery({
-      queryKey,
-      queryFn: ({ client }) => journal.read(client, () => snapshot.promise),
-      retry: false,
-    });
-    journal.apply(queryClient, "live");
-    expect(queryClient.getQueryData(queryKey)).toBeUndefined();
+    const fetch = client.fetchQuery(query);
+    query.apply(client, "live");
+    expect(client.getQueryData(query.queryKey)).toBeUndefined();
 
     snapshot.resolve(["snapshot"]);
-    await fetch;
-    expect(queryClient.getQueryData(queryKey)).toEqual(["snapshot", "live"]);
+    expect(await fetch).toEqual(["snapshot", "live"]);
   });
 
-  test("carries buffered events into a replacement read", async () => {
-    const queryClient = createQueryClient();
-    const first = Promise.withResolvers<string[]>();
-    const second = Promise.withResolvers<string[]>();
-    const snapshots = [first.promise, second.promise];
-    queryClient.setQueryData(queryKey, []);
-    const query = {
-      queryKey,
-      queryFn: ({ client }: { client: QueryClient }) =>
-        journal.read(client, () => snapshots.shift()!),
-      retry: false,
-      staleTime: 0,
-    };
+  test("a refresh carries buffered events into its replacement read", async () => {
+    const { query, snapshots } = declareQuery();
+    const client = createQueryClient();
+    const [first, second] = [Promise.withResolvers<string[]>(), Promise.withResolvers<string[]>()];
+    snapshots.push(first.promise, second.promise);
+    client.setQueryData(query.queryKey, []);
 
-    const firstFetch = queryClient.fetchQuery(query);
-    journal.apply(queryClient, "live");
-    const replacementFetch = queryClient.refetchQueries(
-      { queryKey, exact: true },
-      { throwOnError: true },
-    );
+    observe(client, query);
+    query.apply(client, "live");
+    const refreshed = query.refresh(client);
+    await Bun.sleep(0);
 
     first.resolve(["stale"]);
-    await Promise.resolve();
-    expect(queryClient.getQueryData(queryKey)).toEqual(["live"]);
+    await Bun.sleep(0);
+    expect(client.getQueryData(query.queryKey)).toEqual(["live"]);
 
     second.resolve(["fresh"]);
-    await Promise.all([firstFetch, replacementFetch]);
-    expect(queryClient.getQueryData(queryKey)).toEqual(["fresh", "live"]);
+    await refreshed;
+    expect(client.getQueryData(query.queryKey)).toEqual(["fresh", "live"]);
+  });
+
+  test("a refresh replaces an initial read still in flight", async () => {
+    const { query, snapshots } = declareQuery();
+    const client = createQueryClient();
+    const [first, second] = [Promise.withResolvers<string[]>(), Promise.withResolvers<string[]>()];
+    snapshots.push(first.promise, second.promise);
+
+    observe(client, query);
+    const refreshed = query.refresh(client);
+    await Bun.sleep(0);
+
+    second.resolve(["fresh"]);
+    first.resolve(["stale"]);
+    await refreshed;
+    expect(client.getQueryData(query.queryKey)).toEqual(["fresh"]);
   });
 
   test("keeps live data when a snapshot read fails", async () => {
-    const queryClient = createQueryClient();
+    const { query, snapshots } = declareQuery();
+    const client = createQueryClient();
     const snapshot = Promise.withResolvers<string[]>();
-    queryClient.setQueryData(queryKey, []);
+    snapshots.push(snapshot.promise);
+    client.setQueryData(query.queryKey, []);
 
-    const fetch = queryClient.fetchQuery({
-      queryKey,
-      queryFn: ({ client }) => journal.read(client, () => snapshot.promise),
-      retry: false,
-      staleTime: 0,
-    });
-    journal.apply(queryClient, "live");
+    const fetch = client.fetchQuery({ ...query, staleTime: 0, retry: false });
+    query.apply(client, "live");
     snapshot.reject(new Error("snapshot failed"));
 
     await expect(fetch).rejects.toThrow("snapshot failed");
-    expect(queryClient.getQueryData(queryKey)).toEqual(["live"]);
+    expect(client.getQueryData(query.queryKey)).toEqual(["live"]);
   });
 
-  test("repair keeps a rejected event out of every snapshot already in flight", async () => {
-    const queryClient = createQueryClient();
-    const first = Promise.withResolvers<string[]>();
-    const second = Promise.withResolvers<string[]>();
-    const snapshots = [first.promise, second.promise];
-    queryClient.setQueryData(queryKey, []);
-    const firstRead = journal.read(queryClient, () => snapshots.shift()!);
+  test("repair keeps a rejected event out of the replacement read", async () => {
+    const { query, snapshots } = declareQuery();
+    const client = createQueryClient();
+    const [first, second] = [Promise.withResolvers<string[]>(), Promise.withResolvers<string[]>()];
+    snapshots.push(first.promise, second.promise);
+    client.setQueryData(query.queryKey, []);
 
-    journal.apply(queryClient, "rejected");
-    const repaired = journal.repair(queryClient);
-    const replacementRead = journal.read(queryClient, () => snapshots.shift()!);
+    observe(client, query);
+    query.apply(client, "rejected");
+    const repaired = query.repair(client);
+    await Bun.sleep(0);
 
     first.resolve(["authoritative"]);
     second.resolve(["authoritative"]);
-    expect(await firstRead).toEqual(["authoritative"]);
-    expect(await replacementRead).toEqual(["authoritative"]);
     await repaired;
+    expect(client.getQueryData(query.queryKey)).toEqual(["authoritative"]);
   });
 
   test("keeps each QueryClient's buffered events to itself", async () => {
+    const { query, snapshots } = declareQuery();
     const [left, right] = [createQueryClient(), createQueryClient()];
-    const leftSnapshot = Promise.withResolvers<string[]>();
-    const rightSnapshot = Promise.withResolvers<string[]>();
-    const leftRead = journal.read(left, () => leftSnapshot.promise);
-    const rightRead = journal.read(right, () => rightSnapshot.promise);
+    snapshots.push(Promise.resolve([]), Promise.resolve([]));
+    const leftFetch = left.fetchQuery(query);
+    const rightFetch = right.fetchQuery(query);
 
-    journal.apply(left, "left only");
-    leftSnapshot.resolve([]);
-    rightSnapshot.resolve([]);
+    query.apply(left, "left only");
 
-    expect(await leftRead).toEqual(["left only"]);
-    expect(await rightRead).toEqual([]);
+    expect(await leftFetch).toEqual(["left only"]);
+    expect(await rightFetch).toEqual([]);
   });
 });
 
+/** A declared query whose reads resolve the queued snapshots in order. */
+function declareQuery() {
+  const snapshots: Promise<string[]>[] = [];
+  const query = reducedQuery({
+    queryKey: ["reduced"],
+    fetch: () => snapshots.shift()!,
+    reduce: (state: string[], event: string) => [...state, event],
+  });
+  return { query, snapshots };
+}
+
+/** Refreshes only refetch observed queries, as the app's always are. */
+function observe(client: QueryClient, query: ReturnType<typeof declareQuery>["query"]) {
+  const observer = new QueryObserver(client, { ...query, staleTime: 0 });
+  onTestFinished(observer.subscribe(() => {}));
+}
+
 function createQueryClient(): QueryClient {
-  const queryClient = new QueryClient();
-  onTestFinished(() => queryClient.clear());
-  return queryClient;
+  const client = new QueryClient();
+  onTestFinished(() => client.clear());
+  return client;
 }

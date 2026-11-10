@@ -19,9 +19,10 @@ const ASSISTANT_USER = {
 const DOCUMINT_USERS = [ASSISTANT_USER];
 
 /** Rich Markdown editing with live external diffs and inline Assistant responses. */
-export function MarkdownEditor({ mode, file, pendingWorkers, spawnWorker }: EditorProps) {
+export function MarkdownEditor({ mode, file }: EditorProps) {
+  const { workers, spawnWorker } = file;
   const theme = useDocumintTheme();
-  const presence: DocumentPresence[] = pendingWorkers.flatMap((worker) => {
+  const presence: DocumentPresence[] = workers.flatMap((worker) => {
     const threadId = artifactCommentThreadId(worker.metadata);
     return threadId
       ? [

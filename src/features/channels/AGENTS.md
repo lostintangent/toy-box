@@ -77,7 +77,10 @@ Channel        name, purpose, directory, lead model, tasks, preview, user read p
   its private Session ID and public Agent ID. The projection contains its name, optional role,
   model, avatar, and collaboration status. Its read position stays private in Worker metadata.
 - `ChannelMessage` has a durable ID and transactionally allocated sequence. User and Agent messages
-  contain Markdown and optional image or video attachments. Typed system messages record name, purpose,
+  contain Markdown and optional image or video attachments. Posting stores each as a file the Channel
+  owns at `~/.toy-box/channels/<channelId>/attachments/<messageId>/<name>`, so it outlives its
+  source, and a repeated name gains `-2`, `-3`. The message records only names; `attachments.ts`
+  owns the rest of the path. Typed system messages record name, purpose,
   directory, preview, membership, and artifact changes. Agent senders retain only their stable Worker ID, so deleting
   a member preserves prior content while the UI presents a deleted identity.
   `tasks_completed` records the task list becoming complete. The lead flags an ordinary message with
@@ -117,7 +120,7 @@ projections for persistence and runtime configuration; private read positions st
 - Create a Channel and its lead together, then immediately start the lead. With a purpose, the lead
   frames the current work and begins. Without one, the lead asks the user what they want to work on.
 - Edit a Channel's name, purpose, and lead model; list, read, and delete Channels. The sidebar,
-  overview, and command palette offer the same channel commands, from `commands.ts`, and open the
+  overview, and command palette offer the same channel commands, from `commands.tsx`, and open the
   same create/edit form. Only the lead can change the Channel's working directory through its
   `update_channel` tool; the form shows it read-only. Existing private Sessions keep their provider
   and history. Model and directory changes take effect at each agent's next execution, not during
@@ -218,7 +221,7 @@ detail is requested. `detail: "full"` also includes Channel metadata, the comple
 roster roles and models, artifacts, and routines for reorientation, planning, and final review.
 `detail: "tasks"` swaps unfinished tasks and agents for just the complete task tree, so a lead can
 review or replace it without loading the roster. Never replace the task tree from `unfinishedTasks`.
-Every view uses the same forward read cursor and attachments;
+Every view uses the same forward read cursor and absolute attachment paths, whoever sent them;
 passive Session reads retain their full context and backward paging. Public messages, reactions,
 statuses, artifacts, and attachments are the only peer communication contract. Private transcripts
 and tool logs never enter the Channel. Model-facing message tools cap posts at 3,000 characters so
@@ -268,7 +271,8 @@ the user or the removing lead, then tears down its Session, as Channel deletion 
 member's Session elsewhere, such as from the Sessions list, records the user.
 Removing a member also clears that member from task ownership. Profile and status changes update
 Worker metadata and advance the Channel revision. Deleting a Channel removes its rows and Worker
-ownership together, publishes one deletion, then tears down every captured agent Session. Those
+ownership together, publishes one deletion, then tears down every captured agent Session and deletes
+the Channel's files. Those
 teardowns cannot produce member departures for the deleted Channel. Name, purpose, and directory
 changes update Channel metadata and append a separate typed system message for each changed property
 in one transaction, advancing sequence and revision for each; a user purpose change also wakes the lead
@@ -306,15 +310,19 @@ and their `isRunning` flags, and a derived `status` (waiting for a reply, unread
 messages). The sidebar and Apps SDK share this hook and the same caches. `channelAttention(channel,
 isOpen)` owns which marks an open channel hides: a request stays while it's open, and completion and
 unread messages clear. The sidebar and palette both read it. Badge text stays in the sidebar.
-The route loads the catalog before subscribing to workspace events. Live events patch that cache;
-an event overlapping a refetch triggers TanStack's native replacement refetch. Reconnects refresh
-the complete catalog. Create/edit responses invalidate it rather than replay potentially older
-rows over live updates. Message and read cursors are not catalog versions.
+The route loads the catalog before subscribing to workspace events. Live events reduce into that
+cache, a [`reducedQuery`](../../shared/query.ts), with the pure transitions in
+`model/catalog.ts`, so a read in flight replays the events applied meanwhile over the snapshot it
+returns. Reconnects refresh the complete catalog. Create/edit responses refresh it rather than
+replay potentially older rows over live updates. Message and read cursors are not catalog versions.
 
 Message sequence is transcript order and the basis of paging and read positions. Revision is detail
 state order and advances for every durable public change, including tasks, model, shared reads,
-reactions, profiles, and statuses. A bounded replay ring repairs changes missed by a reconnecting
-client, including reactions on older loaded messages. Presence is transient and refreshed on arrival.
+reactions, profiles, and statuses. Commits publish in revision order, so streams forward them
+without repair, and any other order closes the stream. A bounded replay ring serves a reconnecting
+client from its cursor, including reactions on older loaded messages. Browser and native clients
+reconnect that way, while push's Live Activity observer stops updating. Presence is transient and
+refreshed on arrival.
 
 Agent reads move forward from private `seenThrough` and advance it. Passive Session reads page
 backward without changing read state. Agent-facing projections use `agentId` for both the lead and
@@ -331,18 +339,19 @@ and message targets only while its state matches that presence.
 
 ### Shared client protocol
 
-`GET /api/v1/channels` serves the catalog `{ version: 1, channels, members, lead, working }` for
+`GET /api/v1/channels` serves the catalog `{ channels, members, lead, working }` for
 client channel selection, using the same list operation as browser RPC. Each entry carries its
-`revision`, the Channel's detail revision. The request chooses the
-representation: JSON by default with `Cache-Control: no-store`, or an SSE stream when it sends
+`revision`, the Channel's detail revision, and `request`, its pending request message without
+reactions, or `null`. Entries omit `tasks`, which only the detail stream carries. The request chooses
+the representation: JSON by default with `Cache-Control: no-store`, or an SSE stream when it sends
 `Accept: text/event-stream`. Both set `Vary: Accept`. The stream opens with a `snapshot` event whose
-`catalog` equals the JSON body, then forwards `channel.*` events verbatim. It drops an upsert whose
-revision is not newer than the last one sent for that Channel, and any upsert for a deleted Channel,
-and it sends `working` only when the set changes. `lead` is the profile every Channel's lead shares,
-with the Channel's ID as its own, so clients draw leads of Channels they haven't opened without
-keeping a copy. It never appears in `members`. `working` is sorted and names the leads and members
-whose sessions are running, the same fact presence uses, because native clients cannot read the
-Session activity the browser's sidebar uses for closed Channels.
+`catalog` equals the JSON body, then forwards `channel.*` events verbatim in commit order, so none
+repeats the snapshot or follows its Channel's deletion. It sends `working` only when the set
+changes. `lead` is the profile every Channel's lead shares, with the Channel's ID as its own, so
+clients draw leads of Channels they haven't opened without keeping a copy. It never appears in
+`members`. `working` is sorted and names the leads and members whose sessions are running, the same
+fact presence uses, because native clients cannot read the Session activity the browser's sidebar
+uses for closed Channels.
 
 The catalog stream has no cursor, so a reconnect opens a fresh snapshot that replaces
 the client's catalog. Native clients hold one catalog stream while active instead of polling the JSON
@@ -359,9 +368,8 @@ The snapshot includes the latest 100 public messages, roster, artifacts, routine
 and the pending request even outside that message window. Its durable facts come from one
 transaction. Reads never acknowledge the Channel or expose private Agent context. Artifacts carry
 the `id` that tasks reference as `artifactId` and a Files serving URL, so clients match task
-outcomes without knowing the file identity encoding. Each attachment is either `{ name, url }` for
-a file or `{ mimeType, base64 }` for an inline upload. Stored paths remain available only in the
-agent tool projection.
+outcomes without knowing the file identity encoding. Each attachment is `{ name, url, mimeType }`
+with a Files serving URL. Agent tools map each one back to its absolute path.
 
 The stream establishes state and follows changes:
 
@@ -371,22 +379,26 @@ The stream establishes state and follows changes:
   replay becomes a replacement snapshot; clients discard older loaded history and can page it again.
 - Live durable events forward directly. The observer keeps only the roster needed to project
   runtime presence; it does not reread metadata or history on each event. Presence updates send
-  only changed agents. Subscribe before reading so changes during bootstrap follow its coherent view.
+  only changed agents. Each read subscribes in its own continuation, with no I/O or timer between,
+  so live events continue its revision.
 - Deletion sends `{ type: "deleted", channelId }` and closes, including when the Channel is already
   absent on connection. Workspace deletion also removes closed panes.
 
 `reduceChannelState` applies the complete public protocol: messages derive metadata and attention,
 quiet events replace tasks/model/read state, and presence updates merge or replace the presence map.
 The separately retained pending request follows replies and reactions even outside the message window.
-Optimistic posts enter the reducer with their client-generated message ID without advancing server
-cursors or clearing attention; the committed echo replaces that message and applies its authoritative
-position and metadata. Older pages merge already-materialized messages without replaying their events.
+The post mutation appends a pending message with its client-generated ID after the transcript,
+leaving server cursors and attention alone, so the reducer takes only wire events. The committed echo
+replaces that message and applies its authoritative position and metadata but keeps its sender's
+local image URLs. A failed post removes its local copy unless the echo already replaced it. Older
+pages merge already-materialized messages without replaying their events.
 `useChannel()` exposes the live state, unread boundary, history paging, and `postMessage` bound to
 that Channel. Posting supplies the message ID and invokes the shared mutation; the composer owns
 only its draft and submission UI. The app SDK exports this same hook. Observation defaults to
 `"active"`; visualizations use `mode: "passive"` to leave unread state untouched.
 The server reuses the metadata and roster reducers at their owning boundaries; SQLite remains its
-source of truth without a second live Channel aggregate. Resource URLs are resolved on the server.
+source of truth without a second live Channel aggregate. Its row decoders produce the public
+messages, artifacts, and requests that reads, snapshots, and live events all share.
 
 TanStack Query owns the browser's cached view, stream request, cancellation, and retries through
 `streamedQuery` with append semantics. `stream.ts` adapts the same SSE endpoint Minecraft uses into
@@ -396,20 +408,22 @@ There is no separate browser snapshot RPC or alternate native-client protocol.
 The browser's `ChannelQueryData` adds an arrival record to the state: a connection identity and the
 unread boundary after its initial snapshot or post-replay `resumed` event. Replayed shared reads
 therefore arrive before the browser captures that boundary. Paging, optimism, and later sparse
-presence updates cannot masquerade as arrival. A terminal deleted event leaves a null detail value
-and removes the catalog entry; Workspace deletion also retires the detail query. Both catalog paths
-replace an overlapping stale list read. This browser metadata does not change the public protocol.
+presence updates cannot masquerade as arrival. A terminal deleted event leaves a null detail value;
+Workspace deletion also retires the detail query. This browser metadata does not change the public
+protocol.
 
 `GET /api/v1/channels/:channelId/messages?before=<sequence>` returns up to 100 older messages with
-`{ version: 1, revision, messages }` from one transaction. The browser uses this same public endpoint.
+`{ revision, messages }` from one transaction. The browser uses this same public endpoint.
 It retries pages older than its cached revision, merges without advancing the stream cursor, and
 continues through the target sequence when revealing a message, such as the pending request or a
 bookmark.
 
 `POST /api/v1/channels/:channelId/messages` accepts `{ id, content, attachments? }`, uses the normal
-user-message schema and delivery policy, and returns HTTP 201 with `{ version: 1, message }`.
-Duplicate IDs return 409 without repeating delivery. `POST …/read` accepts `{ sequence }`, uses
-the same monotonic read operation as the browser, and returns `{ version: 1, seenThrough }`.
+user-message schema and delivery policy, and returns HTTP 201 with the message.
+Attachments are image uploads `{ mimeType, base64 }`. Retrying an ID the Channel already has returns
+its stored message without delivering again, and an ID from another Channel returns 409.
+`POST …/read` accepts `{ sequence }`, uses
+the same monotonic read operation as the browser, and returns `{ seenThrough }`.
 Reading acknowledges completion but never answers a request. `PUT` and `DELETE
 …/bookmarks/:sequence` bookmark and unbookmark a message idempotently and return 204; bookmarking a
 system or missing message returns 422. HTTP and RPC are thin entry points
@@ -419,17 +433,17 @@ Native clients manage Channels through the same operations as the browser's chan
 editor, mention completion, and routine actions:
 
 - `POST /api/v1/channels` creates a Channel from `{ name, purpose?, directory?, model }` and starts
-  its lead (201 `{ version: 1, channel }`). `PATCH /api/v1/channels/:channelId` edits its name,
-  purpose, or lead model (`{ version: 1, channel }`), and `DELETE` removes it (204).
+  its lead (201 with the Channel). `PATCH /api/v1/channels/:channelId` edits its name, purpose,
+  or lead model and returns the Channel, and `DELETE` removes it (204).
 - `POST …/members` creates a member from `{ name, role?, model? }` and starts its onboarding (201
-  `{ version: 1, member }`). `PATCH …/members/:agentId` changes its name, role, or model (null
+  with the member). `PATCH …/members/:agentId` changes its name, role, or model (null
   inherits the workspace default), and `DELETE` removes it (204) with a `member_left` message whose
   actor is the user. Both reach only members of the routed Channel; the intrinsic lead is never one.
   Once a member's session exists, its provider is fixed: an explicit model from another provider
   returns 422. Clearing the override with
   `model: null` remains allowed: Sessions follows a compatible workspace default or retains the
   existing provider's model and history when that default belongs to another provider.
-- `GET …/members/:agentId/models` returns `{ version: 1, provider, models, defaultModel }` scoped
+- `GET …/members/:agentId/models` returns `{ provider, models, defaultModel }` scoped
   like the browser's member editor: `provider` is the session's provider, else the configured
   model's, else null for no restriction. `defaultModel` is null when no compatible workspace
   default is available; it describes a model choice, not permission to clear an override.
@@ -438,16 +452,16 @@ editor, mention completion, and routine actions:
 - `DELETE …/artifacts/:artifactId` removes a shared artifact from the Channel and leaves its file on
   disk (204, or 404 when it is not shared). Clients percent-encode the id, since it contains `/` and
   `:`, for example `machine%3A%2Ftmp%2Fnotes.md`. The message records the user as its actor.
-- `GET /api/v1/models` returns `{ version: 1, models, defaultModel }`, the provider catalog and
+- `GET /api/v1/models` returns `{ models, defaultModel }`, the provider catalog and
   normalized workspace default that the browser's model pickers offer. Providers owns this route,
   its response, and the projection reused by the member-scoped endpoint.
 
-Bodies cannot name the identities in their route. Malformed bodies return 400, missing Channels,
-members, routines, and artifacts return 404, and domain rejections such as a taken mention return
-422 with the same message the browser shows. Unexpected management failures are logged server-side
-and return 500 with a generic `{ error }`, never an internal exception message. A failure can
-follow a committed change, so clients refresh authoritative state rather than automatically
-retrying writes.
+Bodies cannot name the identities in their route. Malformed requests return 400. Otherwise a path
+ID that names no Channel, member, routine, or artifact returns 404, and the Channel stream sends
+`deleted` instead. Domain rejections such as a taken mention return 422 with the same message the
+browser shows. Unexpected management failures are logged server-side and return 500 with a generic
+`{ error }`, never an internal exception message. A failure can follow a committed change, so
+clients refresh authoritative state rather than automatically retrying writes.
 
 ## Native push delivery
 
@@ -591,18 +605,23 @@ presents one deleted identity everywhere.
   ownership release, and completion. `agent.ts` owns agent names, roles, avatars, the lead profile, mention
   handles, resolving a tool's agent reference, and the deleted identity an ID resolves to once its agent is removed. `worker.ts` projects Worker metadata into the lead, members, and roster. `reducer.ts`
   reduces the complete public snapshot and owns the metadata and roster transitions shared with
-  the server. `presence.ts` and `reactions.ts`
-  derive how agents and reactions display.
+  the server. `catalog.ts` reduces the browser catalog over workspace events. `presence.ts` and
+  `reactions.ts` derive how agents and reactions display.
 - `server/` owns authority. `schema.ts` and `database.ts` own tables and transactions. `index.ts`
-  composes the algebra for RPC, tools, and wakes. `functions.ts` is browser RPC ingress, and
+  composes the algebra for RPC, tools, and wakes, and each verb takes its Channel and actor as
+  parameters. `functions.ts` is browser RPC ingress, and
   `stream.ts` composes public views and owns observation using `events.ts`'s detail replay ring.
-  The versioned SSE route delegates to that owner through `api.ts`.
-  `resources.ts` resolves client URLs before publication or snapshot delivery.
-  `tools.ts` owns agent-facing projections and the Session, lead, and member tool sets; `agent.ts` composes each agent's
+  Each `routes/v1/` file answers its `/api/v1/channels` requests in place, and `http.ts` reads
+  their command bodies and maps domain failures to statuses. `attachments.ts` owns the files
+  messages attach.
+  `tools.ts` owns agent-facing projections and the Session, lead, and member tool sets. It translates
+  the calling Session into its Channel, actor, and workspace-relative paths. Receiving the lead tool
+  set is a lead's authority, since a lead's Session ID is its Channel's ID. `agent.ts` composes each agent's
   execution, and `startup.ts` clears finished working statuses and starts the wake interval.
 - `queries.ts`, `stream.ts`, `mutations.ts`, `cache.ts`, and `useChannel.ts` own client data:
-  catalog and streamed detail queries, the SSE adapter, mutations, catalog event patches, and one
-  open Channel's visibility and read lifecycle. `commands.ts` defines a Channel's commands.
+  the catalog's `reducedQuery` and the streamed detail queries, the SSE adapter, mutations,
+  workspace event routing and history paging, and one open Channel's visibility and read lifecycle.
+  `commands.tsx` defines a Channel's commands.
 - `components/pane/` holds the pane, composer, and shared pane context, with `transcript/` and
   `overview/` beneath it. `components/agents/` holds avatars, mention Markdown, the mention
   source and menu, the member editor, and working agents. `components/sidebar/` holds the Channels panel and its

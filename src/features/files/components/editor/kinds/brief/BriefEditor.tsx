@@ -5,14 +5,8 @@ import { ownerSessionId } from "@files/model";
 import type { EditorProps } from "../index";
 import { briefWorkerRequest } from "./actions";
 
-export function BriefEditor({
-  mode,
-  variant,
-  baseUri,
-  file,
-  pendingWorkers,
-  spawnWorker,
-}: EditorProps) {
+export function BriefEditor({ mode, variant, baseUri, file }: EditorProps) {
+  const { workers, spawnWorker } = file;
   const owner = ownerSessionId(file.source);
   const ownerActive = useSessionsActivity((activities) => {
     if (!owner) return false;
@@ -27,7 +21,7 @@ export function BriefEditor({
       readOnly={mode === "read"}
       compact={variant === "compact"}
       baseUri={baseUri}
-      pendingActions={pendingWorkers.map(({ metadata }) => metadata as BriefAction)}
+      pendingActions={workers.map(({ metadata }) => metadata as BriefAction)}
       ownerActive={ownerActive}
       onContentChange={(content) => {
         file.save(content);

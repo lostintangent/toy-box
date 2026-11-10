@@ -75,7 +75,7 @@ export function channelNotification(
   };
 }
 
-export function channelBadgeCount(channels: readonly Channel[]): number {
+export function channelBadgeCount(channels: readonly Omit<Channel, "tasks">[]): number {
   return channels.filter((channel) => channelStatus(channel) === "waiting").length;
 }
 

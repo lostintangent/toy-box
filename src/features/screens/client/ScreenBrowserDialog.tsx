@@ -6,21 +6,21 @@ import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { SectionHeading } from "@/shared/ui/section-heading";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/utils";
-import { filterScreenWindows, type Screen } from "../model";
+import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
+import { createScreenPane, filterScreenWindows, type Screen } from "../model";
 import { getScreenThumbnail, listScreens } from "../server/functions";
 
 /** Picks a display or window to open, by how each looks right now. */
 export function ScreenBrowserDialog({
   open,
   onOpenChange,
-  onOpenScreen,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onOpenScreen: (screenId: string) => void;
 }) {
+  const { reveal } = useWorkspaceSurface();
   function openScreen(screenId: string) {
-    onOpenScreen(screenId);
+    reveal(createScreenPane(screenId));
     onOpenChange(false);
   }
   return (

@@ -76,30 +76,6 @@ describe("workspace state reducer", () => {
     const duplicate = reduceWorkspaceState(state, event);
 
     expect(duplicate).toBe(state);
-    expect(state.hyperSessionIds).toEqual([sessionId]);
-  });
-
-  test("delete clears every workspace fact for a session", () => {
-    let state = reduceWorkspaceState(createEmptyWorkspaceState(), {
-      type: "session.upserted",
-      session: { id: sessionId, sessionType: "hyper" },
-    });
-    state = reduceWorkspaceState(state, {
-      type: "draft.changed",
-      key: `session:${sessionId}`,
-      draft,
-    });
-    state = reduceWorkspaceState(state, { type: "session.deleted", sessionId });
-    expect(state).toEqual(createEmptyWorkspaceState());
-  });
-
-  test("Inbox events leave shared workspace facts unchanged", () => {
-    const entry = { id: "entry-a", createdAt: "2026-01-01T00:00:00.000Z", message: "Ready" };
-    const state = createEmptyWorkspaceState();
-    expect(reduceWorkspaceState(state, { type: "inbox.changed" })).toBe(state);
-    expect(reduceWorkspaceState(state, { type: "inbox.entry.deleted", entryId: entry.id })).toBe(
-      state,
-    );
-    expect(reduceWorkspaceState(state, { type: "inbox.changed" })).toBe(state);
+    expect(state.settings.hyperSessionId).toBe(sessionId);
   });
 });

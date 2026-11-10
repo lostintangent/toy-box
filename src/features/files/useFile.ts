@@ -2,26 +2,18 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { useSelector } from "@tanstack/react-store";
-import { sendSystemMessage } from "@sessions/server/functions";
-import { invalidateActiveWorkersQuery } from "@workers/cache";
 import { workerMutations } from "@workers/mutations";
 import { workerQueries } from "@workers/queries";
 import type { SpawnWorkerInput, Worker } from "@workers/model";
 import { releaseLease } from "@workspace/server/functions";
 import { applyWorkspaceEvent, workspaceConnection } from "@workspace/sync";
 import { fileMutations } from "./mutations";
-import {
-  ownerSessionId,
-  workspaceFileId,
-  type WorkspaceFile,
-  type WorkspaceFileMode,
-} from "./model";
+import { workspaceFileId, type WorkspaceFile, type WorkspaceFileMode } from "./model";
 import { fileQueries } from "./queries";
 import { watchFile } from "./server/functions";
 
 const SAVE_DEBOUNCE_MS = 2_000;
 const SAVE_SETTLE_MS = 1_000;
-const FILE_EDIT_SYSTEM_MESSAGE_DEBOUNCE_MS = 8_000;
 
 type FileFlushOptions = { notifyAgent?: boolean };
 
@@ -30,39 +22,54 @@ export type WorkerRequest = Pick<FileWorkerInput, "name" | "metadata"> & {
   prompt: FileWorkerInput["message"]["content"];
 };
 
-export type FileState = {
+/** A file's content lifecycle plus the pending workers scoped to it. */
+export type WorkspaceFileState = {
   /** File address whose live content and persistence lifecycle this state owns. */
   source: WorkspaceFile;
-  /** Last known on-disk content; the renderer owns its editing buffer. */
+  /** Content as of `revision`. Own saves leave it as is, so a mounted renderer keeps its buffer. */
   content: string | null;
   /** External file revision. Own saves do not advance it or reset renderer state. */
   revision: number;
+  /** This pane's latest text, including unsaved edits, for a renderer that mounts after them. */
+  latest: () => string | null;
   isReady: boolean;
   isLoading: boolean;
   isSaving: boolean;
   error: string | null;
   save: (content: string) => void;
   flush: (options?: FileFlushOptions) => Promise<void>;
-};
-
-/** A file's content lifecycle plus the pending workers scoped to it. */
-type WorkspaceFileState = FileState & {
   workers: Extract<Worker, { type: "file" }>[];
   spawnWorker?: (request: WorkerRequest) => Promise<{ sessionId: string }>;
   cancelWorker: (workerSessionId: string) => Promise<void>;
 };
 
+/** One edit this pane made, and the external revision it was made against. */
+type FileEdit = { content: string; revision: number };
+
+/** A pane's latest text: its last edit, until a newer external version replaces it. */
+export function latestContent(
+  file: Pick<WorkspaceFileState, "content" | "revision">,
+  edit: Pick<WorkspaceFileState, "content" | "revision"> | null,
+): string | null {
+  return edit?.revision === file.revision ? edit.content : file.content;
+}
+
+/**
+ * The content a renderer starts from when it mounts, then each external version. A renderer
+ * that mounts into an open pane, as on a kind switch, picks up the pane's own edits.
+ */
+export function useMountedContent(file: WorkspaceFileState): string | null {
+  const [seed] = useState(() => ({ revision: file.revision, content: file.latest() }));
+  return latestContent(file, seed);
+}
+
 export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): WorkspaceFileState {
   const queryClient = useQueryClient();
-  const scheduleFileEditSystemMessage = useFileEditSystemMessage({
-    enabled: mode === "shared",
-    file,
-  });
 
   const [showSaveIndicator, setShowSaveIndicator] = useState(false);
   const [writtenTimestamp, setWrittenTimestamp] = useState<number | null>(null);
 
-  const pendingContentRef = useRef("");
+  const editRef = useRef<FileEdit | null>(null);
   const flushOptionsRef = useRef<FileFlushOptions | undefined>(undefined);
   const latestSaveRef = useRef<Promise<unknown> | null>(null);
   const settleTask = useDebouncer(() => setShowSaveIndicator(false), { wait: SAVE_SETTLE_MS });
@@ -77,6 +84,7 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
   const [known, setKnown] = useState(read.data);
   if (read.data !== known && read.data?.timestamp !== writtenTimestamp) setKnown(read.data);
   const content = known?.content ?? null;
+  const revision = known?.timestamp ?? 0;
 
   const write = useMutation({
     ...fileMutations.write(file),
@@ -84,14 +92,13 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
       settleTask.cancel();
       setShowSaveIndicator(true);
     },
-    onSuccess: (result, { content: written, notifyAgent }) => {
+    onSuccess: (result, { content: written }) => {
       setWrittenTimestamp(result.timestamp);
       // The save is now the file's known version, so its own change notice is no news.
       queryClient.setQueryData(fileQueries.detailKey(fileId), {
         content: written,
         timestamp: result.timestamp,
       });
-      if (notifyAgent) scheduleFileEditSystemMessage();
     },
     onSettled: () => {
       setShowSaveIndicator(true);
@@ -103,7 +110,7 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
 
   // Pending workers scoped to this file. A machine file has no owner, so no workers.
   const { data: workers } = useSuspenseQuery({
-    ...workerQueries.active(),
+    ...workerQueries.active,
     select: (active) =>
       active.filter(
         (worker): worker is Extract<Worker, { type: "file" }> =>
@@ -113,11 +120,13 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
 
   const saveTask = useDebouncer(
     () => {
+      const edit = editRef.current!;
+      // A newer external version replaced this edit in the pane, so writing it would clobber that.
+      if (edit.revision !== revision) return;
       const { notifyAgent = true } = flushOptionsRef.current ?? {};
-      const nextContent = pendingContentRef.current;
       const pendingSave = write.mutateAsync({
-        content: nextContent,
-        notifyAgent,
+        content: edit.content,
+        notifyAgent: mode === "shared" && notifyAgent,
       });
       latestSaveRef.current = pendingSave;
       void pendingSave.catch(() => undefined);
@@ -129,7 +138,7 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
   );
 
   function save(nextContent: string) {
-    pendingContentRef.current = nextContent;
+    editRef.current = { content: nextContent, revision };
     saveTask.maybeExecute();
   }
 
@@ -155,7 +164,7 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
       file,
       message: { content: prompt },
     });
-    await invalidateActiveWorkersQuery(queryClient);
+    await workerQueries.active.refresh(queryClient);
     return worker;
   }
 
@@ -186,50 +195,25 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
   return {
     source: file,
     content,
-    revision: known?.timestamp ?? 0,
+    revision,
+    latest: () => latestContent({ content, revision }, editRef.current),
     isReady: content !== null,
     isLoading: read.isPending,
     isSaving: write.isPending || showSaveIndicator,
     error:
       known === null
         ? "This file was deleted."
-        : write.isError
-          ? "Unable to save this file."
-          : read.isError
-            ? "Unable to load this file."
-            : null,
+        : known?.content === null
+          ? "This file isn't text."
+          : write.isError
+            ? "Unable to save this file."
+            : read.isError
+              ? "Unable to load this file."
+              : null,
     save,
     flush,
     workers,
     spawnWorker: file.kind === "session" ? spawnWorker : undefined,
     cancelWorker,
   };
-}
-
-/** Tell the owning Session about shared edits after the file itself is durable. */
-function useFileEditSystemMessage({
-  enabled,
-  file,
-}: {
-  enabled: boolean;
-  file: WorkspaceFile;
-}): () => void {
-  const owner = ownerSessionId(file);
-  const systemMessageTask = useDebouncer(
-    () => {
-      if (!owner) return;
-      void sendSystemMessage({
-        data: { sessionId: owner, message: { type: "file_edited", file } },
-      }).catch((error) => {
-        console.error("Failed to deliver file edit system message:", error);
-      });
-    },
-    {
-      enabled,
-      wait: FILE_EDIT_SYSTEM_MESSAGE_DEBOUNCE_MS,
-      onUnmount: (debouncer) => debouncer.flush(),
-    },
-  );
-
-  return systemMessageTask.maybeExecute;
 }

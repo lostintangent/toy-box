@@ -17,8 +17,9 @@ here. No additional OpenAI npm SDK or Toy Box login is required.
   Browser subscriptions never own this connection or stop its execution.
 - `provider.ts` registers the supplied tools once as native functions in the `toy_box`
   namespace, deferring all but `alwaysLoad` tools. Codex retains their definitions on resume; the connection
-  handles `item/tool/call` over the same stdio transport. One turn-owned abort
-  controller cancels its handlers when interrupted, completed, or disconnected.
+  handles `item/tool/call` over the same stdio transport. Each running turn, the
+  root's or a direct subagent's, owns an abort controller that cancels its handlers when
+  interrupted, completed, or disconnected.
 - `projector.ts` exposes one native event-to-SessionEvents function for live notifications
   and history. `codexHistoryEvents` adapts stored turns into `turn/completed` notifications;
   the projector owns stable timestamps and native-ID deduplication. It projects one root
@@ -70,15 +71,17 @@ including on models whose catalog defaults to V1. Instant interrupts stay off: a
 that preempts a streaming reply drops that reply from history after the live transcript
 showed it, so steering waits for the current reply to finish.
 
-Codex runs host tool calls in parallel, each as its own request. Successful terminal tools
-reject subsequent host calls in their turn. Interruption waits until Codex records the
+Codex runs host tool calls in parallel, each as its own request. Direct subagents, known from
+the root's `subAgentActivity` records, call Toy Box tools in their own turns. Other threads'
+requests are declined, and questions stay with the root. Successful terminal tools reject
+subsequent host calls in their turn. Interruption waits until Codex records the
 successful dynamic tool result, then targets that native turn. This ordering is essential to
 preserve the result in durable history.
 
 Stop interrupts the session tree's running turns. Native `thread/list` supplies the loaded
-subagents at any depth, so the connection tracks none. Each one is interrupted with an empty
-turn ID until `thread/interrupt` exists. An interrupted command keeps running as a background
-terminal, like any other process the agent launched.
+subagents at any depth, and each one is interrupted with an empty turn ID until
+`thread/interrupt` exists. An interrupted command keeps running as a background terminal, like
+any other process the agent launched.
 
 Verify real CLI create/resume, deferred tool discovery and invocation, questions, terminal results,
 subagents, rename, and deletion alongside protocol tests and the shared reducer/queue fixtures.

@@ -1,8 +1,6 @@
 import { defineTool } from "@sessions/server/tools/definition";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { customEditorKindSchema } from "../model";
-import { registerEditorKind } from "./editors";
 
 // Successful calls project file visibility from their recorded path arguments.
 const absolutePath = z.string().trim().min(1).refine(isAbsolute, "Provide an absolute path.");
@@ -28,19 +26,3 @@ const closeFile = defineTool("close_file", {
 });
 
 export const fileTools = [openFile, closeFile];
-
-const registerEditorKindTool = defineTool("register_editor", {
-  description:
-    "Registers or replaces a custom editor for the supplied file extensions. Follow the loaded `create-toy-box-editor` skill for its HTML bridge contract.",
-  parameters: customEditorKindSchema,
-  handler: async (input) => {
-    const kind = await registerEditorKind(input);
-    return JSON.stringify({
-      registered: kind.name,
-      extensions: kind.extensions,
-      note: "Matching files now use this kind.",
-    });
-  },
-});
-
-export const editorTools = [registerEditorKindTool];

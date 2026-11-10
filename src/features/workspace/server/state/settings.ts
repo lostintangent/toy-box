@@ -6,9 +6,7 @@ import { getStateDatabase } from "@/server/database";
 const SETTINGS_ROW_ID = 1;
 
 export async function getSettings(): Promise<Settings> {
-  const db = await getStateDatabase({ createIfMissing: false });
-  if (!db) return DEFAULT_SETTINGS;
-
+  const db = await getStateDatabase();
   const [row] = await db<{ value: string }[]>`
     SELECT value FROM settings WHERE id = ${SETTINGS_ROW_ID}
   `;

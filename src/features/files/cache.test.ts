@@ -1,46 +1,13 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
-import { machineFile, workspaceFileId, type CustomEditorKind } from "./model";
+import { machineFile, workspaceFileId } from "./model";
 import { fileQueries } from "./queries";
 import cache from "./cache";
 
-const kind: CustomEditorKind = {
-  name: "json-tree",
-  extensions: ["json"],
-  icon: "json",
-  editable: false,
-  html: "<html>first</html>",
-};
-
-test("registering an editor adds it, then replaces it by name", () => {
-  const client = createClient([]);
-  cache.applyEvent(client, { type: "editor.registered", kind });
-  const registered = editors(client);
-  expect(registered).toEqual([kind]);
-
-  cache.applyEvent(client, { type: "editor.registered", kind });
-  expect(editors(client)).toBe(registered);
-
-  const updated = { ...kind, editable: true, html: "<html>updated</html>" };
-  cache.applyEvent(client, { type: "editor.registered", kind: updated });
-  expect(editors(client)).toEqual([updated]);
-});
-
-test("leaves an unloaded list for its first read", () => {
-  const client = createClient();
-  cache.applyEvent(client, { type: "editor.registered", kind });
-  expect(editors(client)).toBeUndefined();
-});
-
-function createClient(initial?: CustomEditorKind[]): QueryClient {
+function createClient(): QueryClient {
   const client = new QueryClient();
   onTestFinished(() => client.clear());
-  if (initial) client.setQueryData(fileQueries.editorsKey(), initial);
   return client;
-}
-
-function editors(client: QueryClient): CustomEditorKind[] | undefined {
-  return client.getQueryData(fileQueries.editorsKey());
 }
 
 describe("file changes", () => {

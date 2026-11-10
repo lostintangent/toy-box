@@ -285,34 +285,14 @@ test("member departure removes its presence and recursively releases task owners
   expect(previous.channel.tasks[0]!.ownerId).toBe(member.id);
 });
 
-test("local posts preserve server cursors and reconcile by identity across interleaved commits", () => {
+test("a pending post's echo replaces it by identity across interleaved commits", () => {
   const previous = snapshot();
   previous.request = { ...message(1), sender: { type: "agent", agentId: "channel" } };
   previous.messages[0] = previous.request;
   previous.channel.requestSequence = 1;
-  const local = {
-    type: "message" as const,
-    message: {
-      id: "local",
-      sender: { type: "user" as const },
-      content: "Still sending",
-      timestamp: "2026-10-03T20:01:00.000Z",
-    },
-  };
-  const first = reduceChannelState(previous, local);
-  const second = { ...local, message: { ...local.message, id: "second" } };
-  const pending = reduceChannelState(first, second);
-  expect(pending.messages.map(({ id }) => id)).toEqual([
-    "message-1",
-    "message-101",
-    "local",
-    "second",
-  ]);
-  expect(pending.revision).toBe(previous.revision);
-  expect(pending.channel).toBe(previous.channel);
-  expect(pending.request).toBe(previous.request);
-  expect(previous.messages).toHaveLength(2);
-  expect(reduceChannelState(pending, local)).toBe(pending);
+  const local = { ...message(102), id: "local", content: "Still sending" };
+  const second = { ...message(103), id: "second" };
+  const pending = { ...previous, messages: [...previous.messages, local, second] };
 
   const concurrent = { ...message(102), sender: { type: "agent" as const, agentId: "channel" } };
   const interleaved = reduceChannelState(pending, {
@@ -320,7 +300,7 @@ test("local posts preserve server cursors and reconcile by identity across inter
     revision: 102,
     message: concurrent,
   });
-  const committedSecond = { ...message(103), id: second.message.id };
+  const committedSecond = { ...message(103), id: second.id };
   const acknowledged = reduceChannelState(interleaved, {
     type: "message",
     revision: 103,
@@ -329,7 +309,7 @@ test("local posts preserve server cursors and reconcile by identity across inter
   const echo = {
     type: "message" as const,
     revision: 104,
-    message: { ...message(104), id: local.message.id },
+    message: { ...message(104), id: local.id },
   };
   const next = reduceChannelState(acknowledged, echo);
   expect(next.messages).toEqual([...previous.messages, concurrent, committedSecond, echo.message]);
@@ -341,8 +321,20 @@ test("local posts preserve server cursors and reconcile by identity across inter
     updatedAt: echo.message.timestamp,
   });
   expect(next.request).toBeNull();
-  expect(reduceChannelState(next, local)).toBe(next);
   expect(reduceChannelState(next, echo)).toBe(next);
+});
+
+test("a sent message's echo keeps the images this client already shows", () => {
+  const sent = { name: "Image 1", url: "data:image/png;base64,AAAA", mimeType: "image/png" };
+  const served = { name: "image.png", url: "/api/serve/machine/image.png", mimeType: "image/png" };
+  const previous = snapshot();
+  const pending = {
+    ...previous,
+    messages: [...previous.messages, { ...message(102), attachments: [sent] }],
+  };
+  const echo = { ...message(102), attachments: [served] };
+  const next = reduceChannelState(pending, { type: "message", revision: 102, message: echo });
+  expect(next.messages.at(-1)).toEqual({ ...echo, attachments: [{ ...served, url: sent.url }] });
 });
 
 test("member edits replace and reorder profiles without duplicating membership or transcript", () => {

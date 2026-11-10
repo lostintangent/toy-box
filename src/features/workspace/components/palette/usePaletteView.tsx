@@ -40,9 +40,9 @@ import { createSessionPane } from "@sessions/model/panes";
 import { getRecentDirectories } from "@sessions/model/recentDirectories";
 import { selectSessionChildren, sessionQueries } from "@sessions/queries";
 import { useSessionsActivity } from "@sessions/useSessionActivity";
+import { useWorkspaceRoots } from "@workspace/hooks/layout/roots";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
-import type { WorkspacePane } from "@workspace/model/panes";
 import {
   addToWorkspace,
   appItem,
@@ -52,7 +52,6 @@ import {
   fileItem,
   modelItem,
   sessionItem,
-  type PaletteNavigation,
 } from "./items";
 import {
   listItems,
@@ -65,12 +64,8 @@ import {
   type PaletteState,
 } from "./palette";
 
-/** What the workspace supplies the palette: its sessions, and how to open what's chosen. */
-export type PaletteData = {
-  /** The listed (top-level) sessions. */
-  sessions: readonly Session[];
-  navigation: PaletteNavigation;
-};
+/** What the workspace supplies the palette: its listed (top-level) sessions. */
+export type PaletteData = { sessions: readonly Session[] };
 
 /** The open page as it's shown: its sections, and what its field and an empty list say. */
 export type PaletteView = { sections: PaletteSection[]; placeholder: string; empty: string };
@@ -91,7 +86,7 @@ const FILE_SEARCH_DEBOUNCE_MS = 150;
 
 export function usePaletteView(
   { stack, launch }: PaletteState,
-  { sessions: listedSessions, navigation }: PaletteData,
+  { sessions: listedSessions }: PaletteData,
   { isMobile }: { isMobile: boolean },
 ): PaletteView {
   const page = stack.at(-1)!;
@@ -107,19 +102,20 @@ export function usePaletteView(
   const updateSetting = useUpdateWorkspaceSetting();
   const { models, hasModels, defaultModel } = useModels();
   const { data: channels = [] } = useQuery({
-    ...channelQueries.list(),
+    ...channelQueries.list,
     select: (list) => list.channels,
   });
-  const { data: appList } = useQuery(appQueries.list());
-  const { data: automations = [] } = useQuery(automationQueries.list());
+  const { data: appList } = useQuery(appQueries.list);
+  const { data: automations = [] } = useQuery(automationQueries.list);
   const { data: childrenByParent = {} } = useQuery({
-    ...sessionQueries.state(),
+    ...sessionQueries.state,
     select: selectSessionChildren,
   });
   const { mutateAsync: startSession } = useMutation(sessionMutations.startSession());
   const { mutateAsync: dispatchInboxTask } = useMutation(inboxMutations.dispatchTask());
   const { mutate: runAutomation } = useMutation(automationMutations.run());
   const { panes, focusedPaneAtom } = useWorkspaceSurface();
+  const roots = useWorkspaceRoots();
   // Ranking and the current pane hold still while the palette is open, rather than shifting as
   // commands run. This runs before the palette takes focus, so it still sees the pane that held it.
   const [{ usage, openedAt, currentPane }] = useState(() => ({
@@ -165,9 +161,6 @@ export function usePaletteView(
     placeholderData: (previous, query) => (query?.queryKey[2] === directory ? previous : undefined),
   });
 
-  // A row is keyed by the pane it opens, so it's open while that pane is.
-  const openPaneIds = new Set(panes.map(({ id }) => id));
-  const isOpen = (pane: WorkspacePane) => openPaneIds.has(pane.id);
   const pinnedIds = new Set(workspace.pinnedIds);
   const togglePin = (sessionId: string) =>
     updateSetting(
@@ -179,18 +172,16 @@ export function usePaletteView(
   const toSessionItem = (session: Session) =>
     sessionItem(session, {
       activity: activities[session.id],
-      isOpen: isOpen(createSessionPane(session.id)),
       pin: { isPinned: pinnedIds.has(session.id), toggle: () => togglePin(session.id) },
-      navigation,
+      roots,
       canAdd,
     });
-  const toChannelItem = (channel: Channel) =>
-    channelItem(channel, { isOpen: isOpen(createChannelPane(channel.id)), navigation, canAdd });
+  const toChannelItem = (channel: Omit<Channel, "tasks">) =>
+    channelItem(channel, { roots, canAdd });
   const toAutomationItem = (automation: Automation) =>
     automationItem(automation, {
       activity: activities[automation.id],
-      isOpen: isOpen(createSessionPane(automation.id)),
-      navigation,
+      roots,
       canAdd,
       run: runAutomation,
     });
@@ -206,7 +197,7 @@ export function usePaletteView(
         appItem(
           app,
           appList?.definitions.find(({ id }) => id === app.definitionId),
-          { navigation, canAdd },
+          { roots, canAdd },
         ),
       ),
     },
@@ -227,8 +218,7 @@ export function usePaletteView(
     .find(({ id }) => id === currentPane?.sessionId);
   const subjectRow =
     subject &&
-    (rows.find(({ id }) => id === subject.id) ??
-      (child && sessionItem(child, { isOpen: true, navigation, canAdd })));
+    (rows.find(({ id }) => id === subject.id) ?? (child && sessionItem(child, { roots, canAdd })));
   const currentActions: PaletteItem[] = subjectRow
     ? (subjectRow.actions ?? [])
         .filter((action) => action !== getAlternateAction(subjectRow))
@@ -305,10 +295,10 @@ export function usePaletteView(
             icon: MessageCirclePlus,
             verb: "Start",
             actions: [
-              ...addToWorkspace(canAdd, async () => navigation.openRoot(await launchSession())),
+              ...addToWorkspace(canAdd, async () => roots.openRoot(await launchSession())),
               ...launchOptions,
             ],
-            run: async () => navigation.selectRoot(await launchSession()),
+            run: async () => roots.selectRoot(await launchSession()),
           },
           {
             id: "palette.launch.inbox",
@@ -350,14 +340,14 @@ export function usePaletteView(
 
       // Within each tier, sessions lead, then channels, then automations.
       const sessionAttentionOf = ({ id }: { id: string }) =>
-        sessionAttention(activities[id]?.status, isOpen(createSessionPane(id)));
+        sessionAttention(activities[id]?.status, roots.isOpen(createSessionPane(id)));
       const readyForYou = rankReadyForYou([
         ...sessions.map((session) => ({
           attention: sessionAttentionOf(session),
           item: () => toSessionItem(session),
         })),
         ...channels.map((channel) => {
-          const attention = channelAttention(channel, isOpen(createChannelPane(channel.id)));
+          const attention = channelAttention(channel, roots.isOpen(createChannelPane(channel.id)));
           // A channel's unread messages alone don't make it ready for you.
           return {
             attention: attention === "unread" ? undefined : attention,
@@ -376,7 +366,7 @@ export function usePaletteView(
         {
           activities,
           pinnedIds: workspace.pinnedIds,
-          openIds: panes.flatMap((pane) => (pane.kind === "session" ? [pane.sessionId] : [])),
+          openIds: sessions.flatMap(({ id }) => (roots.isOpen(createSessionPane(id)) ? [id] : [])),
         },
       );
       return {
@@ -413,7 +403,7 @@ export function usePaletteView(
       };
 
     case "files": {
-      const files = directory ? filePaths.map((path) => fileItem(directory, path, navigation)) : [];
+      const files = directory ? filePaths.map((path) => fileItem(directory, path, roots)) : [];
       return {
         sections: [
           {

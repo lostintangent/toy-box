@@ -20,15 +20,21 @@ export type SessionConfiguration = {
   model?: ModelConfiguration;
   directory: string;
   allowUserQuestions: boolean;
-  tools: Tool<any>[];
+  /** Bound to the session: each handler validates its arguments and returns the model's text. */
+  tools: (Omit<Tool, "handler"> & { handler: (args: unknown) => Promise<string> })[];
   instructions: string;
   skillDirectories: string[];
   disableMemory?: boolean;
 };
 
+/** A native history's metadata, addressed by the provider's own ID. */
+export type NativeSession = Pick<Session, "title" | "createdAt" | "updatedAt" | "context"> & {
+  nativeId: string;
+};
+
 /** One attached native session, independent of browser observation. */
 export interface SessionConnection {
-  readonly provider: NonNullable<Session["provider"]>;
+  readonly nativeId: string;
   /** The runtime consumes end to drain queued work before publishing completion. */
   onEvent(listener: (event: SessionEvent) => void): () => void;
   send(message: SessionMessage): Promise<void>;
@@ -57,21 +63,20 @@ export interface SessionProvider {
     directory: string | undefined,
     skillDirectories: readonly string[],
   ): Promise<SessionSkill[]>;
-  listSessions(): Promise<Session[]>;
+  /** A limit asks for at least the newest `limit` sessions. */
+  listSessions(limit?: number): Promise<NativeSession[]>;
+  /** A gone history reads undefined or rejects, as its SDK reports it. */
+  readSession(nativeId: string): Promise<NativeSession | undefined>;
   /** Read durable history without resuming or acquiring the native session. */
-  readHistory(session: Pick<Session, "id" | "provider">): Promise<SessionEvent[]>;
+  readHistory(nativeId: string): Promise<SessionEvent[]>;
   create(
     sessionId: string,
     configuration: SessionConfiguration & { name?: string },
   ): Promise<SessionConnection>;
-  resume(
-    session: Pick<Session, "id" | "provider">,
-    configuration: SessionConfiguration,
-  ): Promise<SessionConnection>;
-  readDirectory(nativeId: string): Promise<string | undefined>;
+  resume(nativeId: string, configuration: SessionConfiguration): Promise<SessionConnection>;
   /** The provider owns persistence precision and any trailing-flush policy. */
   isHistoryCurrent(nativeId: string, capturedAt: number): Promise<boolean>;
-  /** Rejects with SessionNotFoundError when the history is already gone. */
+  /** Resolves when the history is already gone. */
   delete(nativeId: string): Promise<void>;
   stop(): Promise<void>;
 }

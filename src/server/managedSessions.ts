@@ -2,11 +2,10 @@
 // Sessions supplies execution and teardown; managing features supply ownership
 // and presentation policy without entering the Session kernel.
 
-import type { SessionOwnership, SessionsState, SessionType } from "@sessions/model";
+import type { SessionOwnership, SessionsState } from "@sessions/model";
 import { getSessionsActivity } from "@sessions/server/state/activity";
-import { broadcast } from "@workspace/server/events";
+import { getPersistedWorker, unregisterWorkerSession } from "@workers/server/database";
 import { getStateDatabase } from "@/server/database";
-import { getHyperSessionIds, hasHyperSession } from "@workspace/server/state/hyperSessions";
 import { draftSessionId, type DraftKey } from "@workspace/model/state/drafts";
 import { getSavedDrafts } from "@workspace/server/state/drafts";
 import { getSettings } from "@workspace/server/state/settings";
@@ -14,22 +13,30 @@ import { getSettings } from "@workspace/server/state/settings";
 const RECENT_SESSION_LIMIT = 250;
 
 /** Read the public Session catalog with feature-owned visibility and relationships. */
-export async function readSessionCatalog(
-  readCatalog: () => Promise<[SessionsState["sessions"], SessionsState["worktrees"]]>,
-): Promise<SessionsState> {
+export async function readSessionCatalog(source: {
+  /** At least each provider's newest `limit` Sessions, plus drafts. */
+  list(limit: number): Promise<[SessionsState["sessions"], SessionsState["worktrees"]]>;
+  /** The Sessions with these public IDs, omitting any that no longer exist. */
+  find(sessionIds: string[]): Promise<SessionsState["sessions"]>;
+}): Promise<SessionsState> {
   // Ownership precedes SDK creation and outlives SDK deletion. Read it on both
   // sides so a concurrent change cannot expose a backing Session as ordinary.
-  const ownershipBefore = await readSessionOwnership();
-  const [sessions, worktrees] = await readCatalog();
-  const [ownershipAfter, settings] = await Promise.all([readSessionOwnership(), getSettings()]);
-  const ownership = { ...ownershipBefore, ...ownershipAfter };
-  const retainedSessionIds = new Set([
-    ...Object.keys(ownership),
-    ...getHyperSessionIds(),
+  const [ownershipBefore, settings] = await Promise.all([readSessionOwnership(), getSettings()]);
+  const exemptSessionIds = new Set([
+    ...Object.keys(ownershipBefore),
     ...settings.pinnedSessionIds,
+    ...(settings.hyperSessionId ? [settings.hyperSessionId] : []),
   ]);
+  // Fewer than 250 ordinary Sessions precede any of the newest 250, so each lies
+  // within its own provider's newest 250 plus the exempt Sessions.
+  const [listedSessions, worktrees] = await source.list(
+    RECENT_SESSION_LIMIT + exemptSessionIds.size,
+  );
+  const ownershipAfter = await readSessionOwnership();
+  const ownership = { ...ownershipBefore, ...ownershipAfter };
+  const retainedSessionIds = new Set([...exemptSessionIds, ...Object.keys(ownershipAfter)]);
   // Managed sessions and pins do not consume the ordinary-history budget.
-  const recentSessions = sessions
+  const recentSessions = listedSessions
     .filter(({ id }) => !retainedSessionIds.has(id))
     .sort(
       (left, right) =>
@@ -43,6 +50,11 @@ export async function readSessionCatalog(
     const sessionId = draftSessionId(key as DraftKey);
     if (sessionId && draft?.text.trim()) retainedSessionIds.add(sessionId);
   }
+  const listedSessionIds = new Set(listedSessions.map(({ id }) => id));
+  const sessions = [
+    ...listedSessions,
+    ...(await source.find([...retainedSessionIds].filter((id) => !listedSessionIds.has(id)))),
+  ];
   return {
     sessions: sessions.filter(({ id, provider }) => retainedSessionIds.has(id) || !provider),
     worktrees,
@@ -50,23 +62,15 @@ export async function readSessionCatalog(
   };
 }
 
-/** Resolve the role claimed for a Session by application features. */
-export async function resolveSessionType(sessionId: string): Promise<SessionType> {
-  const database = await getStateDatabase({ createIfMissing: false });
-  const types: SessionType[] = database
-    ? (
-        await database<{ type: SessionType }[]>`
-          SELECT 'automation' AS type FROM automations WHERE id = ${sessionId}
-          UNION ALL
-          SELECT 'worker' AS type FROM workers WHERE session_id = ${sessionId}
-        `
-      ).map(({ type }) => type)
-    : [];
-  if (hasHyperSession(sessionId)) types.push("hyper");
-  if (types.length > 1) {
-    throw new Error(`Session ${sessionId} has conflicting types: ${types.join(", ")}`);
-  }
-  return types[0] ?? "standard";
+/** Resolve a Session's kind from the ownership that makes it one, with the Worker it found. */
+export async function resolveSessionType(sessionId: string) {
+  const worker = await getPersistedWorker(sessionId);
+  if (worker) return { sessionType: "worker", worker } as const;
+  const database = await getStateDatabase();
+  const [automation] = await database`SELECT 1 FROM automations WHERE id = ${sessionId}`;
+  if (automation) return { sessionType: "automation" } as const;
+  const { hyperSessionId } = await getSettings();
+  return { sessionType: hyperSessionId === sessionId ? "hyper" : "standard" } as const;
 }
 
 /** Delete the managed Session resources owned by one Session before its own teardown. */
@@ -77,24 +81,18 @@ export async function deleteOwnedSessions(sessionId: string): Promise<void> {
 
 /** Remove feature ownership after the shared Session resource is gone. */
 export async function detachManagedSession(sessionId: string): Promise<void> {
-  const { getPersistedWorker, unregisterWorkerSession } = await import("@workers/server/database");
   const worker = await getPersistedWorker(sessionId);
   if (worker?.type === "channel") {
     const { detachChannelAgentSession } = await import("@channels/server");
     await detachChannelAgentSession(sessionId);
-  } else if (worker && (await unregisterWorkerSession(sessionId))) {
-    if (worker.type === "inbox") {
-      broadcast({ type: "inbox.entry.deleted", entryId: sessionId });
-    }
-  }
+  } else if (worker) await unregisterWorkerSession(sessionId);
   // Pending work registered for or under the session ends with it.
   const { finishWorkersForSession } = await import("@workers/server/registry");
   finishWorkersForSession(sessionId);
 }
 
 async function readSessionOwnership(): Promise<SessionsState["ownership"]> {
-  const database = await getStateDatabase({ createIfMissing: false });
-  if (!database) return {};
+  const database = await getStateDatabase();
   const rows = await database<
     { session_id: string; type: SessionOwnership["type"]; parent_session_id: string | null }[]
   >`

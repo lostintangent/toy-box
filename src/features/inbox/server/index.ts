@@ -3,6 +3,7 @@
 import {
   deleteWorker,
   getWorker,
+  hasWorker,
   initializeWorkerMetadata,
   listWorkers,
   spawnWorker,
@@ -11,7 +12,6 @@ import {
 import type { Worker } from "@workers/model";
 import { broadcast } from "@workspace/server/events";
 import type { SessionCompletion, SessionLaunch } from "@sessions/model";
-import { sharedMap } from "@/shared/server/processState";
 import {
   inboxEntryFromWorker,
   inboxFailureSchema,
@@ -19,21 +19,19 @@ import {
   type InboxEntry,
 } from "../model";
 
-const recovery = sharedMap<Promise<void>>("inbox-recovery");
-
 export async function listInboxEntries(): Promise<InboxEntry[]> {
-  await ensureInboxRecovered();
-  return (await listWorkers("inbox")).map(inboxEntryFromWorker);
+  return (await listWorkers("inbox")).map((worker) =>
+    inboxEntryFromWorker(worker, hasWorker(worker.sessionId)),
+  );
 }
 
 export async function getInboxEntry(entryId: string): Promise<InboxEntry | null> {
   const worker = await getWorker(entryId, "inbox");
-  return worker ? inboxEntryFromWorker(worker) : null;
+  return worker ? inboxEntryFromWorker(worker, hasWorker(entryId)) : null;
 }
 
 /** Accept an Inbox task without attaching a client to its Worker. */
 export async function dispatchInboxTask(input: SessionLaunch): Promise<{ sessionId: string }> {
-  await ensureInboxRecovered();
   const { sessionId } = await spawnWorker({
     ...input,
     owner: { type: "inbox" },
@@ -78,28 +76,4 @@ export async function failInboxTask(sessionId: string, error: string): Promise<v
 
 export function deleteInboxEntry(entryId: string): Promise<boolean> {
   return deleteWorker(entryId, "inbox");
-}
-
-/** Finish recovery before accepting new work or serving the first snapshot. */
-export function ensureInboxRecovered(): Promise<void> {
-  const existing = recovery.get("startup");
-  if (existing) return existing;
-  const pending = recoverInbox().catch((error) => {
-    recovery.delete("startup");
-    throw error;
-  });
-  recovery.set("startup", pending);
-  return pending;
-}
-
-async function recoverInbox(): Promise<void> {
-  // Admission awaits this same recovery, so these Workers belong to an earlier process.
-  for (const worker of await listWorkers("inbox")) {
-    if (worker.metadata === undefined) {
-      await failInboxTask(
-        worker.sessionId,
-        "This task was interrupted before Inbox recorded its outcome. Some work may already have completed.",
-      );
-    }
-  }
 }

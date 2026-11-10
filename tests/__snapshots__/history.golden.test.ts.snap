@@ -230,14 +230,7 @@ Changes not staged for commit:
 	modified:   src/components/session/SessionView.tsx
 	modif…"
 ,
-                  "details": 
-"On branch main
-Changes not staged for commit:
-  (use "git add/rm <file>..." to update what will be committed)
-  (use "git restore <file>..." to discard changes in working directory)
-	modified:   src/components/session/SessionView.tsx
-	modif…"
-,
+                  "details": undefined,
                   "success": true,
                 },
               },
@@ -257,14 +250,7 @@ src/components/session/messages/AssistantMessage.tsx
 src/components/session/messages/tools/AgentToolCall.tsx
 src…"
 ,
-                  "details": 
-"src/components/session/SessionView.tsx
-src/components/session/input/DiffPopup.tsx
-src/components/session/input/SessionInput.tsx
-src/components/session/messages/AssistantMessage.tsx
-src/components/session/messages/tools/AgentToolCall.tsx
-src…"
-,
+                  "details": undefined,
                   "success": true,
                 },
               },
@@ -283,13 +269,7 @@ src…"
  M src/components/session/messages/AssistantMessage.tsx
  M src/components/session/messages/tools/AgentTo…"
 ,
-                  "details": 
-"M src/components/session/SessionView.tsx
- M src/components/session/input/DiffPopup.tsx
- M src/components/session/input/SessionInput.tsx
- M src/components/session/messages/AssistantMessage.tsx
- M src/components/session/messages/tools/AgentTo…"
-,
+                  "details": undefined,
                   "success": true,
                 },
               },
@@ -375,14 +355,7 @@ Changes not staged for commit:
 	modified:   src/components/session/SessionView.tsx
 	modif…"
 ,
-                  "details": 
-"On branch main
-Changes not staged for commit:
-  (use "git add/rm <file>..." to update what will be committed)
-  (use "git restore <file>..." to discard changes in working directory)
-	modified:   src/components/session/SessionView.tsx
-	modif…"
-,
+                  "details": undefined,
                   "success": true,
                 },
               },
@@ -404,16 +377,7 @@ index 375b1b8..9db9a3a 100644
  
  export…"
 ,
-                  "details": 
-"diff --git a/src/types.ts b/src/types.ts
-index 375b1b8..9db9a3a 100644
---- a/src/types.ts
-+++ b/src/types.ts
-@@ -77,12 +77,13 @@ export type AssistantMessage = BaseMessage & {
- export type Message = UserMessage | AssistantMessage;
- 
- export…"
-,
+                  "details": undefined,
                   "success": true,
                 },
               },

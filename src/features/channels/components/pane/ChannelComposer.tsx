@@ -49,7 +49,7 @@ export function ChannelComposer({
   channelId: string;
   state?: ChannelState;
   handleRef: RefObject<ChannelComposerHandle | null>;
-  onSubmit: (message: Pick<PostChannelMessageInput, "content" | "attachments">) => void;
+  onSubmit: (message: Pick<PostChannelMessageInput, "content" | "attachments">) => Promise<unknown>;
   /** Shows a message in the transcript, loading older history through it first when needed. */
   onShowMessage: (sequence: number) => void;
   onLoadPrevious: (throughSequence: number) => void;

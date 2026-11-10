@@ -1,5 +1,5 @@
 import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
-import type { CopilotClient } from "@github/copilot-sdk";
+import type { CopilotClient, SessionEvent as SdkEvent } from "@github/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
 import * as client from "./client";
 import { copilotProvider, toSubscription } from "./provider";
@@ -50,7 +50,7 @@ test("catalog metadata retains the native repository display fields", async () =
 
   expect(await copilotProvider.listSessions()).toEqual([
     {
-      id: "native",
+      nativeId: "native",
       createdAt: new Date(0),
       updatedAt: new Date(1),
       title: "Repository session",
@@ -64,20 +64,56 @@ test("catalog metadata retains the native repository display fields", async () =
   ]);
 });
 
-test("creation uses the canonical ID and configures the working directory", async () => {
-  const createSession = mock(async ({ sessionId }: { sessionId: string }) => ({
-    sessionId,
-    on: () => () => {},
-    rpc: { permissions: { setMode: async () => ({}) } },
-  }));
+test("a limited catalog reads only the newest local sessions it needs", async () => {
+  const entries = [
+    { sessionId: "remote", isRemote: true },
+    ...["first", "empty", "second", "older"].map((sessionId) => ({ sessionId, isRemote: false })),
+  ];
+  const read: string[] = [];
+  const start = spyOn(client, "startCopilotClient").mockResolvedValue({
+    rpc: {
+      sessions: {
+        list: async () => ({ sessions: entries }),
+        enrichMetadata: async ({ sessions }: { sessions: typeof entries }) => ({
+          sessions: sessions.filter(({ sessionId }) => sessionId !== "empty"),
+        }),
+      },
+    },
+    getSessionMetadata: async (sessionId: string) => {
+      read.push(sessionId);
+      return { sessionId };
+    },
+  } as unknown as CopilotClient);
+  onTestFinished(() => start.mockRestore());
+
+  expect((await copilotProvider.listSessions(2)).map(({ nativeId }) => nativeId)).toEqual([
+    "first",
+    "second",
+  ]);
+  expect(read).not.toContain("older");
+});
+
+test("creation uses the canonical ID and hands native start to the first subscriber", async () => {
+  const createSession = mock(
+    async ({ sessionId, onEvent }: { sessionId: string; onEvent: (event: SdkEvent) => void }) => {
+      onEvent({
+        type: "session.start",
+        data: { selectedModel: "gpt-5.4-mini", reasoningEffort: "none" },
+      } as SdkEvent);
+      onEvent({
+        type: "session.title_changed",
+        ephemeral: true,
+        data: { title: "Old" },
+      } as SdkEvent);
+      return { sessionId, on: () => () => {} };
+    },
+  );
   const start = spyOn(client, "startCopilotClient").mockResolvedValue({
     createSession,
   } as unknown as CopilotClient);
   onTestFinished(() => start.mockRestore());
 
-  const model = { provider: "copilot", name: "gpt-5.4-mini", reasoningEffort: "none" };
   const connection = await copilotProvider.create("public", {
-    model,
     directory: "/repo",
     allowUserQuestions: false,
     tools: [],
@@ -90,46 +126,48 @@ test("creation uses the canonical ID and configures the working directory", asyn
       sessionId: "public",
       workingDirectory: "/repo",
       imageGeneration: { enabled: true },
+      permissionMode: "allow-all",
     }),
   );
-  expect(connection.provider).toEqual({
-    id: "copilot",
-    sessionId: "public",
-  });
-  const events: SessionEvent[] = [];
-  connection.onEvent((event) => events.push(event));
-  expect(events).toEqual([{ type: "model_changed", model }]);
+  expect(connection.nativeId).toBe("public");
+  const first: SessionEvent[] = [];
+  const later: SessionEvent[] = [];
+  connection.onEvent((event) => first.push(event));
+  connection.onEvent((event) => later.push(event));
+  expect(first).toEqual([
+    {
+      type: "model_changed",
+      model: { provider: "copilot", name: "gpt-5.4-mini", reasoningEffort: "none" },
+    },
+  ]);
+  expect(later).toEqual([]);
 });
 
 test("resume requests the configured model and tool loading from the native session", async () => {
   const resumeSession = mock(async (_id: string, _configuration: object) => ({
     sessionId: "native",
-    rpc: { permissions: { setMode: async () => ({}) } },
   }));
   const start = spyOn(client, "startCopilotClient").mockResolvedValue({
     resumeSession,
   } as unknown as CopilotClient);
   onTestFinished(() => start.mockRestore());
 
-  await copilotProvider.resume(
-    { id: "public", provider: { id: "copilot", sessionId: "native" } },
-    {
-      model: {
-        provider: "copilot",
-        name: "gpt-6-luna",
-        reasoningEffort: "max",
-        contextTier: "long_context",
-      },
-      directory: "/repo",
-      allowUserQuestions: false,
-      tools: [
-        { name: "deferred", handler: () => "" },
-        { name: "loaded", alwaysLoad: true, handler: () => "" },
-      ],
-      instructions: "",
-      skillDirectories: [],
+  await copilotProvider.resume("native", {
+    model: {
+      provider: "copilot",
+      name: "gpt-6-luna",
+      reasoningEffort: "max",
+      contextTier: "long_context",
     },
-  );
+    directory: "/repo",
+    allowUserQuestions: false,
+    tools: [
+      { name: "deferred", handler: async () => "" },
+      { name: "loaded", alwaysLoad: true, handler: async () => "" },
+    ],
+    instructions: "",
+    skillDirectories: [],
+  });
 
   expect(resumeSession).toHaveBeenCalledWith(
     "native",
@@ -142,6 +180,8 @@ test("resume requests the configured model and tool loading from the native sess
       reasoningEffort: "max",
       contextTier: "long_context",
       imageGeneration: { enabled: true },
+      permissionMode: "allow-all",
+      onEvent: expect.any(Function),
     }),
   );
 });
@@ -183,12 +223,7 @@ test("read-only history preserves attachments and projector state across native 
   } as unknown as CopilotClient);
   onTestFinished(() => start.mockRestore());
 
-  expect(
-    await copilotProvider.readHistory({
-      id: "public",
-      provider: { id: "copilot", sessionId: "native" },
-    }),
-  ).toEqual([
+  expect(await copilotProvider.readHistory("native")).toEqual([
     {
       type: "user_message",
       content: "Review the attachments",
@@ -219,4 +254,24 @@ test("history is current through the trailing-flush window of its native modifie
   expect(await copilotProvider.isHistoryCurrent("native", 8_000)).toBe(true);
   expect(await copilotProvider.isHistoryCurrent("native", 7_999)).toBe(false);
   expect(await copilotProvider.isHistoryCurrent("missing", 10_000)).toBe(false);
+});
+
+test("deleting a history that is already gone resolves, and other failures propagate", async () => {
+  const histories = new Set(["native"]);
+  const start = spyOn(client, "startCopilotClient").mockResolvedValue({
+    deleteSession: async (sessionId: string) => {
+      if (sessionId === "locked")
+        throw new Error(`Failed to delete session ${sessionId}: Permission denied`);
+      if (!histories.delete(sessionId))
+        throw new Error(
+          `Failed to delete session ${sessionId}: Session file not found for ${sessionId}`,
+        );
+    },
+  } as unknown as CopilotClient);
+  onTestFinished(() => start.mockRestore());
+
+  await copilotProvider.delete("native");
+  await copilotProvider.delete("native");
+  expect(histories.size).toBe(0);
+  await expect(copilotProvider.delete("locked")).rejects.toThrow("Permission denied");
 });

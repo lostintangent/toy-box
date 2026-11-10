@@ -1,8 +1,13 @@
 import { deleteSession, getSessionInfo, listSessions } from "@anthropic-ai/claude-agent-sdk";
-import type { Options, Query, SDKControlGetUsageResponse } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  Options,
+  Query,
+  SDKControlGetUsageResponse,
+  SDKSessionInfo,
+} from "@anthropic-ai/claude-agent-sdk";
 import { homedir } from "node:os";
 import type { ProviderSubscription } from "@providers/model";
-import { SessionNotFoundError, type SessionProvider } from "@providers/server/provider";
+import type { SessionProvider } from "@providers/server/provider";
 import { ClaudeConnection } from "./connection";
 import { claudeSkillPlugins, closeClaudeQuery, startClaudeQuery, stopClaude } from "./client";
 import { readClaudeHistory, readTranscriptDirectory } from "./history";
@@ -47,46 +52,41 @@ export const claudeProvider: SessionProvider = {
     );
   },
   async listSessions() {
-    return (await listSessions()).map((session) => ({
-      id: session.sessionId,
-      title: session.summary,
-      createdAt: new Date(session.createdAt ?? session.lastModified),
-      updatedAt: new Date(session.lastModified),
-      context: {
-        directory: session.cwd === homedir() ? undefined : session.cwd,
-        branch: session.gitBranch === "HEAD" ? undefined : session.gitBranch,
-      },
-    }));
+    return (await listSessions()).map(toSession);
   },
-  async readHistory({ id, provider }) {
-    const nativeId = provider?.sessionId ?? id;
-    return (await readClaudeHistory(nativeId)).flatMap(createClaudeProjector(id));
+  async readSession(nativeId) {
+    const info = await getSessionInfo(nativeId);
+    return (
+      info && toSession({ ...info, cwd: info.cwd ?? (await readTranscriptDirectory(nativeId)) })
+    );
   },
-  create: (sessionId, configuration) => ClaudeConnection.open({ id: sessionId }, configuration),
-  async resume(session, configuration) {
+  async readHistory(nativeId) {
+    return (await readClaudeHistory(nativeId)).flatMap(createClaudeProjector());
+  },
+  create: (sessionId, configuration) => ClaudeConnection.open(sessionId, configuration),
+  async resume(nativeId, configuration) {
     // Workaround (Claude CLI 2.1.302; listed in providers/AGENTS.md): resume never restores
     // reasoning effort and restores the model only when the CLI recognizes it. Reopen with the
     // last reply's model and effort from history; remove once the CLI restores both itself.
     const model =
       configuration.model ??
-      (await claudeProvider.readHistory(session))
+      (await claudeProvider.readHistory(nativeId))
         .flatMap((event) =>
           event.type === "model_changed" && !event.parentToolCallId ? [event.model] : [],
         )
         .at(-1);
-    return ClaudeConnection.open(session, { ...configuration, model }, true);
-  },
-  async readDirectory(nativeId) {
-    const info = await getSessionInfo(nativeId);
-    return info && (info.cwd ?? (await readTranscriptDirectory(nativeId)));
+    return ClaudeConnection.open(nativeId, { ...configuration, model }, true);
   },
   async isHistoryCurrent(nativeId, capturedAt) {
     const info = await getSessionInfo(nativeId);
     return info !== undefined && info.lastModified < capturedAt;
   },
   async delete(nativeId) {
-    if (!(await getSessionInfo(nativeId))) throw new SessionNotFoundError(nativeId);
-    await deleteSession(nativeId);
+    await deleteSession(nativeId).catch((error: Error) => {
+      // Workaround (Claude Agent SDK 0.3.319; listed in providers/AGENTS.md): a missing history
+      // is reported only in the error's message. Remove once the SDK reports it with a code.
+      if (error.message !== `Session ${nativeId} not found in any project directory`) throw error;
+    });
   },
   stop: stopClaude,
 };
@@ -99,6 +99,19 @@ async function probeClaude<T>(read: (native: Query) => Promise<T>, options: Opti
   } finally {
     await closeClaudeQuery(native);
   }
+}
+
+function toSession(session: SDKSessionInfo) {
+  return {
+    nativeId: session.sessionId,
+    title: session.summary,
+    createdAt: new Date(session.createdAt ?? session.lastModified),
+    updatedAt: new Date(session.lastModified),
+    context: {
+      directory: session.cwd,
+      branch: session.gitBranch === "HEAD" ? undefined : session.gitBranch,
+    },
+  };
 }
 
 /**

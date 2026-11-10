@@ -1,21 +1,18 @@
-import { queryOptions } from "@tanstack/react-query";
 import type { SessionsState } from "@sessions/model";
 import type { SessionsActivity } from "@sessions/model/activity";
 import type { Worker } from "@workers/model";
+import { reducedQuery } from "@/shared/query";
 import type { InboxEntry } from "./model";
 import { listInboxEntries } from "./server/functions";
 
 export const inboxQueries = {
-  listKey: () => ["inbox", "list"] as const,
-
-  list: () =>
-    queryOptions({
-      queryKey: inboxQueries.listKey(),
-      queryFn: listInboxEntries,
-      staleTime: Infinity,
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-    }),
+  // Deleted sessions reduce into the list. Change hints refresh it instead.
+  list: reducedQuery({
+    queryKey: ["inbox", "list"],
+    fetch: ({ signal }) => listInboxEntries({ signal }),
+    reduce: (entries: InboxEntry[], { sessionId }: { sessionId: string }) =>
+      entries.filter(({ id }) => id !== sessionId),
+  }),
 };
 
 /** Result storage, shared activity, and admitted work remain separate; presentation combines them. */

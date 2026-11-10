@@ -1,66 +1,32 @@
 import { expect, mock, test } from "bun:test";
 import type { CopilotSession, SessionEvent as SdkEvent } from "@github/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
-import { connectCopilotSession } from "./connection";
+import { connectCopilotSession, holdNativeEvents } from "./connection";
 import { encodeSystemMessage, systemMessagePrompt } from "@sessions/model/systemMessages";
 
-test("native inputs retain payloads and client identity through interleaved echoes", async () => {
-  let emit!: (event: SdkEvent) => void;
-  let nextId = 0;
-  const send = mock(async () => `native-${++nextId}`);
-  const native = {
-    sessionId: "native",
-    on(handler: typeof emit) {
-      emit = handler;
-      return () => {};
-    },
-    send,
-  } as unknown as CopilotSession;
-  const connection = connectCopilotSession(native, "public");
-  const events: SessionEvent[] = [];
-  connection.onEvent((event) => events.push(event));
+test("native inputs carry their payloads and client IDs", async () => {
+  const send = mock(async () => "native");
+  const native = { sessionId: "native", send } as unknown as CopilotSession;
+  const connection = connectCopilotSession(native, holdNativeEvents());
   await connection.send({
     role: "user",
     clientId: "client",
-    content: "same prompt",
-  });
-  await connection.send({
-    role: "user",
-    clientId: "steer",
-    content: "same prompt",
-    immediate: true,
+    content: "prompt",
   });
   const content = { type: "channel_message" as const, senderName: "Ada" };
   await connection.send({ role: "system", clientId: "system", content, immediate: true });
+  expect(send).toHaveBeenNthCalledWith(1, {
+    prompt: "prompt",
+    attachments: undefined,
+    clientTurnId: "client",
+  });
   expect(send).toHaveBeenLastCalledWith({
     prompt: systemMessagePrompt(content),
     displayPrompt: encodeSystemMessage(content),
     source: "system",
     mode: "immediate",
+    clientTurnId: "system",
   });
-  expect(send).toHaveBeenNthCalledWith(1, {
-    prompt: "same prompt",
-    attachments: undefined,
-  });
-  emit({
-    type: "user.message",
-    data: { content: encodeSystemMessage(content), messageId: "native-3" },
-  } as SdkEvent);
-  emit({
-    type: "user.message",
-    data: { content: "same prompt", messageId: "native-2" },
-  } as SdkEvent);
-  emit({
-    type: "user.message",
-    data: { content: "same prompt", messageId: "native-1" },
-  } as SdkEvent);
-  emit({ type: "assistant.message_delta", data: { deltaContent: "Reply" } } as SdkEvent);
-  expect(events).toMatchObject([
-    { type: "system_message", content, clientId: "system" },
-    { type: "user_message", content: "same prompt", clientId: "steer" },
-    { type: "user_message", content: "same prompt", clientId: "client" },
-    { type: "delta", content: "Reply" },
-  ]);
 });
 
 test("native lifecycle events end live turns", () => {
@@ -73,7 +39,7 @@ test("native lifecycle events end live turns", () => {
         return () => {};
       },
     } as unknown as CopilotSession,
-    "public",
+    holdNativeEvents(),
   );
   const events: SessionEvent[] = [];
   connection.onEvent((event) => events.push(event));
@@ -111,7 +77,7 @@ test("rewind resolves the requested timestamp to a native conversation boundary"
         },
       },
     } as unknown as CopilotSession,
-    "public",
+    holdNativeEvents(),
   );
   await connection.rewind("2026-08-14T20:00:00.000Z");
   expect(rewind).toHaveBeenCalledWith({ eventId: "second", mode: "conversation" });

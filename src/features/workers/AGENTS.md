@@ -63,6 +63,8 @@ Workers owns lifecycle and owner-scoped storage capabilities:
   existing metadata or missing ownership. Commands acknowledge writes; reads own projections.
 
 Untrusted file and app creation enters through `spawnWorkerFromRequest` in `server/admission.ts`.
+An app request builds its prompt from the app it validated, then rechecks that app in `admit`,
+because app deletion cancels only Workers that are already published.
 The trusted `spawnWorker` admits ownership; `superviseWorker` in `server/supervisor.ts` composes
 Session creation with inheritance, cancellation, exact completion, and retention. Trusted
 supervisors use the public `spawnWorker` with a complete `SessionLaunch`, `owner`, optional `name`
@@ -80,8 +82,9 @@ Inbox and Channels use this path for creation. Channel admission commits the lea
 or a member with its membership message, before execution begins. Later mentions use Session delivery;
 Channels has no separate activation operation or startup queue.
 
-Waiting remains a Session operation. Admission registers completion before publishing
-`worker.started`, so fast ephemeral work cannot disappear before `waitForSessions` observes it.
+Waiting remains a Session operation. Admission registers completion and starts supervision before
+publishing `worker.started`, so fast ephemeral work cannot disappear before `waitForSessions`
+observes it, and every cancellation reaches the supervisor's one check.
 Unsuccessful execution outcomes remain data, including startup exceptions. Active Workers are
 available through the public read API so owners can distinguish current supervision from retained
 ownership.
@@ -95,17 +98,16 @@ ownership.
   parent relationships, so generic consumers need no separate Worker-classification cache.
 - `server/registry.ts` contains only currently admitted background work and publishes
   `worker.started` and `worker.finished`. Durable Channel membership is not active work.
-  [`queries.ts`](queries.ts) reads it, and [`cache.ts`](cache.ts) keeps that list current from those
-  events and from session and app deletion. Shared Session teardown finishes a deleted session's
-  own and child registrations.
+  [`queries.ts`](queries.ts) reads it, [`model/active.ts`](model/active.ts) reduces those events and
+  session and app deletion into that list, and [`cache.ts`](cache.ts) applies them. Shared Session
+  teardown finishes a deleted session's own and child registrations.
 - `components/WorkersMenu.tsx` presents active background work. Files and Apps select the Workers they
   own. Channels presents its durable Workers as the lead and members.
 - Sessions owns execution, history, streaming, completion, provider configuration, and worktrees.
 - Owners own all interpretation of their metadata and any richer public projection.
 - Worker persistence and metadata operations do not publish owner-specific events. Owners publish
   their accepted workflow changes; application composition handles owner notification during shared
-  Session teardown. Unregistration reports whether it removed a row so concurrent teardown does not
-  publish duplicate deletions. Raw `WorkerDatabase` operations remain composable into transactions.
+  Session teardown. Raw `WorkerDatabase` operations remain composable into transactions.
 - Metadata writes enforce the shared bounded-JSON contract before changing a row. SQLite enforces
   JSON validity; reads decode that JSON without reapplying write limits to historical records.
   Owners decide how to present metadata that no longer satisfies their own result schema.

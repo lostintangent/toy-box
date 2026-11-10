@@ -1,4 +1,5 @@
 import {
+  AppWindow,
   Archive,
   ArrowLeft,
   ArrowRight,
@@ -62,3 +63,8 @@ export const APP_ICONS = {
   Trash2,
   X,
 } satisfies Record<AppIconName, LucideIcon>;
+
+/** A definition's chosen icon, or the generic app icon when it has none. */
+export function appIcon(icon: AppIconName | undefined): LucideIcon {
+  return icon ? APP_ICONS[icon] : AppWindow;
+}

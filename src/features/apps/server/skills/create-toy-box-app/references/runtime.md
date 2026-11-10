@@ -161,6 +161,8 @@ The SDK has one portable surface and one saved-instance extension:
   mount-local state.
 - Only installed saved apps may use `useApp`, receive or consume pending shares,
   persist durable state, or own app workers.
+- Only an installed definition that opens a file in an editor pane receives that
+  file from `useOpenedFile`.
 
 ### Utilities
 
@@ -300,7 +302,8 @@ Each result contains `channel`, `agents` (identities plus `isRunning`), and
 completion, `"unread"` for other unread messages, or `null`. Opening an app does not mark
 channels read. The hook shares the host's catalog and workspace caches and uses Suspense
 while loading; errors reach the app's error boundary. It does not open channel detail
-streams. Store selected channel IDs in app state rather than copying catalog entries.
+streams, so `channel` has no `tasks`. Read them from `useChannel`. Store selected channel
+IDs in app state rather than copying catalog entries.
 
 `useChannel(channelId, { visible = true, mode = "active" } = {})` observes one
 channel using the same Query cache, stream, reducer, history, and post mutation as
@@ -328,7 +331,8 @@ A task's `artifactId` is the `id` of its artifact in `state.artifacts`. `channel
 sums their direct and reported descendant diffs, or returns `undefined` when none are reported;
 pass `[task]` for one subtree. It reuses the Channels logic.
 `loadPrevious(sequence?)` loads one older page or pages through a target message.
-`postMessage({ content, attachments? })` uses the shared optimistic mutation.
+`postMessage({ content, attachments? })` shows the message right away and resolves with the stored
+message. If the send fails, it removes that copy and rejects, so clear a draft only after it resolves.
 
 Observation is active by default and marks visible content read. Set `mode: "passive"`
 for previews and visualizations. `unreadAfter` is the reader's stable unread divider.
@@ -393,6 +397,45 @@ after spawning when the UI needs the final assistant response or completion
 status. Ephemeral worker completion is not retained as history. Use
 the saved app's `actions.spawnWorker` instead when the result belongs in its
 durable app state.
+
+### Opened File
+
+When a definition's manifest `opens` a file's extension, Toy Box renders that
+file's editor pane with the app and no saved instance. `useOpenedFile()` returns
+the pane's own `useFile` lifecycle with its `file` and `mode`, and returns null
+in any other surface. `useApp()` is unavailable in an editor pane, so handle
+null when the same definition also runs as a saved app.
+
+```tsx
+import { useOpenedFile, type OpenedFile } from "@toy-box/sdk";
+import { useState } from "react";
+
+export default function App() {
+  const opened = useOpenedFile();
+  if (!opened) return null;
+  return <Editor key={opened.revision} opened={opened} />;
+}
+
+function Editor({ opened }: { opened: OpenedFile }) {
+  const [draft, setDraft] = useState(opened.content ?? "");
+  return (
+    <textarea
+      readOnly={opened.mode === "read"}
+      value={draft}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        opened.save(event.target.value);
+      }}
+    />
+  );
+}
+```
+
+Seed the draft buffer from `content` once and reset it only when `revision`
+changes, because own saves don't advance it and an external write does. Call
+the current render's `save` rather than one captured at mount, and never call
+`save` in `read` mode. The pane already shows saving, mode, and file-worker
+controls, so the app renders only the file's content.
 
 ### Actions
 
@@ -545,7 +588,9 @@ async function generate() {
 
 Use `readFile` and `writeFile` for one-off file operations. Use `useFile` when
 the app presents a file continuously and needs live
-updates, queued saves, modes, or file-owned workers. Use `AppFilePicker` instead
+updates, queued saves, modes, or file-owned workers. A file that isn't UTF-8
+text can't be read: `readFile` rejects with "This file isn't text.", and
+`useFile` reports it as `error` with null `content`. Use `AppFilePicker` instead
 of asking the user to type an absolute host path when interactive selection
 makes sense.
 

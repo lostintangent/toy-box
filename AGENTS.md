@@ -31,7 +31,7 @@ flowchart LR
     API --> Terminal[Terminal PTY runtime]
 ```
 
-Toy Box currently assumes one trusted, coordinating server process for one owner; it does not provide an authentication boundary or horizontal coordination. Provider history, SQLite metadata, worktrees, and artifact files survive restarts; active execution, replay buffers, workspace coordination, Hyper membership, and terminal PTYs do not.
+Toy Box currently assumes one trusted, coordinating server process for one owner; it does not provide an authentication boundary or horizontal coordination. Provider history, SQLite metadata, worktrees, and artifact files survive restarts; active execution, replay buffers, workspace coordination, and terminal PTYs do not.
 
 ### Feature conventions
 
@@ -42,13 +42,13 @@ A feature contributes to the app by putting the right file in the right place; c
 | Own tables                        | `server/schema.ts`, default-exporting append-only SQL versions | `src/server/database.ts`                           |
 | Run at boot                       | `server/startup.ts`                                            | `src/server/plugins/startup.ts`                    |
 | Bundle agent skills               | `server/skills/**`                                             | `src/server/plugins/startup.ts`                    |
-| Serve `/socket?service=<feature>` | `server/websocket.ts`, default-exporting crossws hooks         | `src/server/socket.ts`                             |
+| Serve `/socket?service=<feature>` | `server/websocket.ts`, default-exporting a `SocketService`     | `src/server/socket.ts`                             |
 | Serve HTTP under `/api`           | `routes/`                                                      | `src/features/workspace/routes.ts`                 |
 | Publish workspace events          | a `WorkspaceEvents` augmentation in its model                  | TypeScript declaration merging                     |
-| Keep its client caches in sync    | a default `WorkspaceCache` export from `cache.ts`              | `src/features/workspace/sync.ts`                   |
+| Preload and sync client caches    | a default `WorkspaceCache` export from `cache.ts`              | `src/features/workspace/sync.ts`                   |
 | Show content in workspace panes   | a `WorkspacePanes` augmentation in its model, and `panes.tsx`  | `src/features/workspace/components/panes/kinds.ts` |
 
-Features broadcast workspace events, and sync applies them to every workspace cache. A feature's cache stays private: anything that applies a workspace event on the client, whether live, optimistic, or confirmed, calls `applyWorkspaceEvent`. Discovery uses Vite's `import.meta.glob`. Bun can't expand it yet, so [`src/server/importMetaGlob.ts`](src/server/importMetaGlob.ts) expands the same default-import globs wherever Bun loads source outside Vite, including `bun test`. Product decisions stay explicit: which agent tools each session type receives, managed-session ownership, and where a feature appears in the shell's sidebar and commands.
+Features broadcast workspace events, and sync applies them to every workspace cache. A feature's cache stays private: anything that applies a workspace event on the client, whether live, optimistic, or confirmed, calls `applyWorkspaceEvent`. Discovery uses `import.meta.glob`, which Vite expands when it builds or serves the app, and Bun expands wherever it loads source outside Vite, including `bun test`. Product decisions stay explicit: which agent tools each session type receives, managed-session ownership, and where a feature appears in the shell's sidebar and commands.
 
 ### Subsystem guides
 

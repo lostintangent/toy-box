@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { defineTool } from "@sessions/server/tools/definition";
 import type { SessionConfiguration, SessionConnection } from "@providers/server/provider";
 import * as transport from "./protocol/transport";
 import { codexProvider, toSubscription } from "./provider";
@@ -97,7 +96,7 @@ test("catalog metadata retains the native repository display fields", async () =
 
   expect(await codexProvider.listSessions()).toEqual([
     {
-      id: "native",
+      nativeId: "native",
       createdAt: new Date(0),
       updatedAt: new Date(1000),
       title: "Repository session",
@@ -156,10 +155,7 @@ test("history reads every stored turn page without acquiring the thread's writer
     start.mockRestore();
     rpc.close();
   });
-  const events = await codexProvider.readHistory({
-    id: "public",
-    provider: { id: "codex", sessionId: "native" },
-  });
+  const events = await codexProvider.readHistory("native");
   expect(
     events.filter((event) => event.type === "user_message").map((event) => event.content),
   ).toEqual(["Page 1", "Page 2"]);
@@ -205,12 +201,13 @@ test("resumed threads apply the current workspace, model, and session skills", a
     directory: root,
     allowUserQuestions: true,
     tools: [
-      defineTool("echo", {
+      {
+        name: "echo",
         description: "Echo a value",
         parameters: z.object({ value: z.string() }),
-        handler: ({ value }) => value,
-      }),
-      defineTool("finish", { alwaysLoad: true, handler: () => "Done" }),
+        handler: async () => "",
+      },
+      { name: "finish", alwaysLoad: true, handler: async () => "Done" },
     ],
     instructions: "Session instructions",
     skillDirectories: [root],
@@ -226,14 +223,11 @@ test("resumed threads apply the current workspace, model, and session skills", a
   const created = await codexProvider.create("public", configuration);
   connections.push(created);
   await created.disconnect();
-  const resumed = await codexProvider.resume(
-    { id: "public", provider: created.provider },
-    {
-      ...configuration,
-      directory: nextDirectory,
-      model: { provider: "codex", name: "next-model", reasoningEffort: "high" },
-    },
-  );
+  const resumed = await codexProvider.resume(created.nativeId, {
+    ...configuration,
+    directory: nextDirectory,
+    model: { provider: "codex", name: "next-model", reasoningEffort: "high" },
+  });
   connections.push(resumed);
   await resumed.send({ role: "user", clientId: "next-message", content: "Continue" });
   const requests = written.filter(
@@ -306,4 +300,30 @@ test("second-precision native timestamps cannot hide edits made during snapshot 
   expect(await codexProvider.isHistoryCurrent("native", 101_000)).toBe(true);
   updatedAt = 101;
   expect(await codexProvider.isHistoryCurrent("native", 101_000)).toBe(false);
+});
+
+test("deleting a thread that is already gone resolves, and other failures propagate", async () => {
+  const threads = new Set(["native"]);
+  const rpc = new transport.CodexTransport((line) => {
+    const { id, params } = JSON.parse(line);
+    const reply =
+      params.threadId === "locked"
+        ? { error: { code: -32603, message: "Permission denied" } }
+        : threads.delete(params.threadId)
+          ? { result: {} }
+          : {
+              error: { code: -32600, message: `no rollout found for thread id ${params.threadId}` },
+            };
+    queueMicrotask(() => rpc.receive(JSON.stringify({ id, ...reply }) + "\n"));
+  });
+  const start = spyOn(transport, "startCodexClient").mockResolvedValue(rpc);
+  onTestFinished(() => {
+    start.mockRestore();
+    rpc.close();
+  });
+
+  await codexProvider.delete("native");
+  await codexProvider.delete("native");
+  expect(threads.size).toBe(0);
+  await expect(codexProvider.delete("locked")).rejects.toThrow("Permission denied");
 });

@@ -69,7 +69,7 @@ export function useChannel(
   if (nextVisit !== visit) setVisit(nextVisit);
 
   const { mutate: markRead } = useMutation(channelMutations.markRead());
-  const { mutate: post } = useMutation(channelMutations.post());
+  const { mutateAsync: post } = useMutation(channelMutations.post());
   const latestSequence = state?.channel.latestSequence;
   const seenThrough = state?.channel.seenThrough;
   // Reading acknowledges only after the visit has captured where unread messages begin.

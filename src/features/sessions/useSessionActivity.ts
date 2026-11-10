@@ -4,7 +4,7 @@ import { sessionQueries } from "./queries";
 
 /** Subscribe to a projection of every session's activity, rerendering only when it changes. */
 export function useSessionsActivity<T>(select: (activities: SessionsActivity) => T): T {
-  return useSuspenseQuery({ ...sessionQueries.activity(), select }).data;
+  return useSuspenseQuery({ ...sessionQueries.activity, select }).data;
 }
 
 export function selectSessionActivity(activities: SessionsActivity, sessionId: string) {

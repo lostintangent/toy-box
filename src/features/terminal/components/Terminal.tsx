@@ -1,6 +1,5 @@
 import { useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { terminalManager } from "../client/terminalManager";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
 
 import "@xterm/xterm/css/xterm.css";
 
@@ -11,12 +10,7 @@ export interface TerminalProps {
 export function Terminal({ onClose }: TerminalProps) {
   const [isPtyReady, setIsPtyReady] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const terminalShell = useWorkspaceSelector((workspace) => workspace.settings.terminalShell);
   const handleClose = useEffectEvent(() => onClose?.());
-
-  useLayoutEffect(() => {
-    terminalManager.setShell(terminalShell);
-  }, [terminalShell]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;

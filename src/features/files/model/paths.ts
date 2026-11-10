@@ -14,6 +14,13 @@ export function getPathDirname(path: string): string {
   return normalized.slice(0, lastSeparator);
 }
 
+/** A file's lowercase extension without the dot, or empty when it has none. */
+export function fileExtension(path: string): string {
+  const basename = getPathBasename(path);
+  const dot = basename.lastIndexOf(".");
+  return dot === -1 ? "" : basename.slice(dot + 1).toLowerCase();
+}
+
 /** The concise workspace label for a file path. */
 export function fileName(path: string): string {
   const basename = getPathBasename(path);

@@ -3,7 +3,6 @@
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { SessionType } from "@sessions/model";
 import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 import { sharedMap } from "@/shared/server/processState";
 
@@ -16,9 +15,6 @@ const UNIVERSAL_SKILLS = [
   "create-toy-box-brief",
   "execute-toy-box-brief",
 ] as const;
-const ROLE_SKILLS: Partial<Record<SessionType, readonly string[]>> = {
-  hyper: ["create-toy-box-editor"],
-};
 
 /** Replace every bundled skill directory from its embedded files at server startup. */
 export function installBundledSkills(
@@ -61,10 +57,6 @@ async function replaceBundledSkills(
   );
 }
 
-export function getSessionSkillDirectories(
-  sessionType: SessionType,
-  root = DEFAULT_SKILLS_ROOT,
-): string[] {
-  const skillNames = [...UNIVERSAL_SKILLS, ...(ROLE_SKILLS[sessionType] ?? [])];
-  return skillNames.map((name) => join(root, name));
+export function getSessionSkillDirectories(root = DEFAULT_SKILLS_ROOT): string[] {
+  return UNIVERSAL_SKILLS.map((name) => join(root, name));
 }

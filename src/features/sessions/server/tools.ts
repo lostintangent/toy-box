@@ -35,7 +35,7 @@ export const modelTools = [
     parameters: z
       .object({
         provider: z
-          .enum(["copilot", "codex", "claude"])
+          .string()
           .optional()
           .describe("Optional provider filter. Omit it to return every available model."),
       })
@@ -172,7 +172,6 @@ const createSessionTool = defineTool("create_session", {
       { content: args.prompt, model: args.model },
       {
         directory: args.directory,
-        sessionType: "standard",
         useWorktree: args.useWorktree ?? false,
       },
     );

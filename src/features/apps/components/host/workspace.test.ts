@@ -13,7 +13,6 @@ describe("app workspace projection", () => {
       automation: { status: "unread" as const },
       hyper: { status: "running" as const, since: 1 },
     };
-    const hyperSessionIds = ["hyper"];
     const workers = [
       {
         createdAt: new Date(0).toISOString(),
@@ -52,6 +51,7 @@ describe("app workspace projection", () => {
           color: "#f59e0b" as const,
           state: { schema: { type: "object" as const }, default: {} },
           accepts: ["text/markdown"],
+          opens: [],
           revision: "definition-a",
         },
       ],
@@ -153,7 +153,7 @@ describe("app workspace projection", () => {
     const defaultModel = { provider: "copilot", name: "gpt-5", reasoningEffort: "low" };
     const source = {
       activities,
-      hyperSessionIds,
+      hyperSessionId: "hyper",
       workers,
       apps,
       sessions: sessionsState,
@@ -278,7 +278,6 @@ describe("app workspace projection", () => {
         {
           ...source,
           activities: { ...activities },
-          hyperSessionIds: [...hyperSessionIds],
           workers: [...workers],
           apps: { ...apps },
           sessions: { ...sessionsState },

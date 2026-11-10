@@ -6,16 +6,17 @@ import { channelCommands } from "@channels/commands";
 import { AgentEditor } from "@channels/components/agents/AgentEditor";
 import type { Channel, ChannelArtifact, ChannelMember, ChannelRoutine } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
-import { openWorkspaceDialog } from "@workspace/hooks/dialogs";
-import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
+import { useLayoutPref } from "@workspace/hooks/layout/layoutPrefs";
+import { OpenFileDialog } from "@files/components/browser/OpenFileDialog";
 import { useRevealFile } from "@files/useRevealFile";
 import { CommandMenuItems } from "@/shared/commands/CommandMenuItem";
+import { DestructiveConfirmationDialog } from "@/shared/dialogs/DestructiveConfirmationDialog";
+import { openDialog } from "@/shared/dialogs/DialogHost";
 import { PaneActions, type PaneVariant } from "@/shared/panes/PaneSlots";
 import { PANE_OVERLAY_BUTTON_CLASS, PANE_OVERLAY_ICON_CLASS } from "@/shared/panes/paneControls";
 import { Button } from "@/shared/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/shared/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/shared/ui/sheet";
-import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
 import { useChannelPane } from "../ChannelPaneContext";
 import { ChannelOverviewContent } from "./ChannelOverviewContent";
 
@@ -23,8 +24,6 @@ const OVERVIEW_WIDTH = 320;
 
 /** Closed, open over the transcript as a sheet, or pinned beside it, which the layout remembers. */
 type OverviewPresentation = "closed" | "sheet" | "pinned";
-
-type OverviewDialog = { type: "edit_member" | "remove_member"; member: ChannelMember };
 
 /** The Channel's current purpose, progress, shared work, and roster. */
 export function ChannelOverview({
@@ -41,12 +40,11 @@ export function ChannelOverview({
   /** The pane's other actions, which precede the overview's trigger and give way to it when pinned. */
   actions?: ReactNode;
 }) {
-  const { channelOverviewPinned = false, setChannelOverviewPinned } = useWorkspaceSurface();
+  const [channelOverviewPinned, setChannelOverviewPinned] = useLayoutPref("channelOverviewPinned");
   const revealFile = useRevealFile();
   const { mention } = useChannelPane();
   const overviewRef = useRef<HTMLDivElement>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
-  const [dialog, setDialog] = useState<OverviewDialog>();
   const canPin = variant === "normal";
   const isPinned = canPin && channelOverviewPinned;
   const openLabel = `Open #${channel.name} overview`;
@@ -66,7 +64,8 @@ export function ChannelOverview({
   );
 
   function present(presentation: OverviewPresentation) {
-    setChannelOverviewPinned?.(presentation === "pinned");
+    // Only a pane that can pin remembers it, so a compact overview never changes the pin.
+    if (canPin) setChannelOverviewPinned(presentation === "pinned");
     setIsSheetOpen(presentation === "sheet");
   }
 
@@ -80,16 +79,26 @@ export function ChannelOverview({
     revealFile(artifact.file);
   }
 
-  function openDialog(next: OverviewDialog) {
+  function editMember(member: ChannelMember) {
     closeSheet();
-    setDialog(next);
+    openDialog((dialog) => <AgentEditor {...dialog} agent={member} />);
   }
 
-  function onDialogOpenChange(open: boolean) {
-    if (!open) setDialog(undefined);
+  function removeMember(member: ChannelMember) {
+    closeSheet();
+    openDialog((dialog) => (
+      <DestructiveConfirmationDialog
+        {...dialog}
+        title={`Remove ${member.name}?`}
+        description={`This removes ${member.name} from #${channel.name} and deletes their private channel session. Their messages and reactions remain attributed to Deleted agent.`}
+        confirmLabel="Remove"
+        pendingLabel="Removing…"
+        mutation={channelMutations.removeMember(member.id)}
+      />
+    ));
   }
 
-  // The Channel's commands open workspace dialogs, which a sheet left open would sit over.
+  // The Channel's commands open dialogs, which a sheet left open would sit over.
   const commands = channelCommands(channel).map((action) => ({
     ...action,
     run: () => {
@@ -100,7 +109,7 @@ export function ChannelOverview({
 
   function browseDirectory() {
     closeSheet();
-    openWorkspaceDialog({ kind: "files", directory: channel.directory });
+    openDialog((dialog) => <OpenFileDialog {...dialog} directory={channel.directory} />);
   }
 
   const channelMenu = (
@@ -130,8 +139,8 @@ export function ChannelOverview({
       artifacts={artifacts}
       routines={routines}
       onArtifactOpen={openArtifact}
-      onEditMember={(member) => openDialog({ type: "edit_member", member })}
-      onRemoveMember={(member) => openDialog({ type: "remove_member", member })}
+      onEditMember={editMember}
+      onRemoveMember={removeMember}
       onAddAgent={() => {
         closeSheet();
         mention();
@@ -198,21 +207,6 @@ export function ChannelOverview({
             </m.aside>
           )}
         </AnimatePresence>
-      )}
-
-      {dialog?.type === "edit_member" && (
-        <AgentEditor agent={dialog.member} onClose={() => setDialog(undefined)} />
-      )}
-      {dialog?.type === "remove_member" && (
-        <DestructiveConfirmationDialog
-          key={dialog.member.id}
-          title={`Remove ${dialog.member.name}?`}
-          description={`This removes ${dialog.member.name} from #${channel.name} and deletes their private channel session. Their messages and reactions remain attributed to Deleted agent.`}
-          confirmLabel="Remove"
-          pendingLabel="Removing…"
-          mutation={channelMutations.removeMember(dialog.member.id)}
-          onOpenChange={onDialogOpenChange}
-        />
       )}
     </>
   );

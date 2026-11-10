@@ -11,10 +11,6 @@ import type {
 import type { JSONType } from "zod";
 import type { ModelConfiguration } from "@providers/model";
 import type { SessionEvent, SessionQuestionBase, TodoItemPatch } from "@sessions/model";
-import {
-  resolveToolCallPolicy,
-  type ToolCallProjectionPolicy,
-} from "@sessions/server/toolProjection";
 import { decodeInput } from "./messages";
 import { fileChangeDetails } from "./fileChanges";
 import { normalizeModelId } from "./models";
@@ -26,7 +22,6 @@ type Call = {
   name: string;
   arguments: Arguments;
   parentToolCallId?: string;
-  policy?: Extract<ToolCallProjectionPolicy, { kind: "translated" }>;
   background?: true;
 };
 
@@ -48,7 +43,6 @@ const TOOL_NAMES: Record<string, string> = {
   WebFetch: "fetch",
   WebSearch: "web_search",
   Agent: "agent",
-  Skill: "skill",
 };
 
 /** Each native question is its own domain question and tool call. */
@@ -63,7 +57,7 @@ export function claudeQuestions(
 }
 
 /** The same projection consumes SDK streaming messages and SDK-reconstructed native history. */
-export function createClaudeProjector(sessionId: string): (message: SDKMessage) => SessionEvent[] {
+export function createClaudeProjector(): (message: SDKMessage) => SessionEvent[] {
   const calls = new Map<string, Call>();
   // Every native message restates its model; the main thread and each subagent change separately.
   const models = new Map<string | undefined, string>();
@@ -253,12 +247,10 @@ export function createClaudeProjector(sessionId: string): (message: SDKMessage) 
     args: Arguments,
     parentToolCallId?: string,
   ): SessionEvent[] {
-    if (nativeName === "ToolSearch") return [];
-    const name = toolName(nativeName);
-    const arguments_ = toolArguments(nativeName, args, parentToolCallId);
-    const policy = resolveToolCallPolicy(name, arguments_, { sessionId });
-    if (policy?.kind === "omitted") return [];
-    calls.set(id, { name: nativeName, arguments: args, parentToolCallId, policy });
+    // The CLI's own bookkeeping: deferred tool lookup, and skill loads, which it records as
+    // instructions rather than a result.
+    if (nativeName === "ToolSearch" || nativeName === "Skill") return [];
+    calls.set(id, { name: nativeName, arguments: args, parentToolCallId });
     if (nativeName === "AskUserQuestion")
       return claudeQuestions(id, args as unknown as AskUserQuestionInput).map(
         ({ toolCallId, question }): SessionEvent => ({
@@ -270,13 +262,12 @@ export function createClaudeProjector(sessionId: string): (message: SDKMessage) 
         }),
       );
     if (isChecklistTool(nativeName)) return [];
-    if (policy) return policy.projectOnStart ?? [];
     return [
       {
         type: "tool_start",
-        toolName: name,
+        toolName: toolName(nativeName),
         toolCallId: id,
-        arguments: arguments_,
+        arguments: toolArguments(nativeName, args, parentToolCallId),
         parentToolCallId,
       },
     ];
@@ -308,23 +299,18 @@ export function createClaudeProjector(sessionId: string): (message: SDKMessage) 
       return success && !call.parentToolCallId
         ? [{ type: "todos_patch", patches: checklistPatches(call, output) }]
         : [];
-    const completion = {
-      success,
-      result,
-      ...(success && (call.name === "Edit" || call.name === "Write") && output
-        ? { details: fileChangeDetails(output as FileEditOutput | FileWriteOutput) }
-        : {}),
-    };
-    return call.policy
-      ? (call.policy.projectOnComplete?.(completion) ?? [])
-      : [
-          {
-            type: "tool_end",
-            toolCallId: id,
-            parentToolCallId: call.parentToolCallId,
-            ...completion,
-          },
-        ];
+    return [
+      {
+        type: "tool_end",
+        toolCallId: id,
+        parentToolCallId: call.parentToolCallId,
+        success,
+        result,
+        ...(success && (call.name === "Edit" || call.name === "Write") && output
+          ? { details: fileChangeDetails(output as FileEditOutput | FileWriteOutput) }
+          : {}),
+      },
+    ];
   }
 }
 

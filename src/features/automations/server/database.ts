@@ -3,8 +3,6 @@ import type { Automation, AutomationOptions } from "../model";
 import { inStateTransaction } from "@/server/database";
 import { nextCronOccurrence } from "@/shared/cron";
 
-const DUE_AUTOMATION_RETRY_DELAY_MS = 60_000;
-
 export class AutomationDatabase {
   constructor(private readonly db: Bun.SQL) {}
 
@@ -12,7 +10,7 @@ export class AutomationDatabase {
     const rows = await this.db<AutomationRow[]>`
       SELECT * FROM automations ORDER BY updated_at DESC, id
     `;
-    return readValidAutomations(rows, "list");
+    return rows.map(automationFromRow);
   }
 
   async get(automationId: string): Promise<Automation | null> {
@@ -81,24 +79,18 @@ export class AutomationDatabase {
   async claimDue(): Promise<Automation[]> {
     const now = new Date();
     const nowIso = now.toISOString();
-    const fallbackNextRunAt = new Date(now.getTime() + DUE_AUTOMATION_RETRY_DELAY_MS).toISOString();
     return inStateTransaction(this.db, async (db) => {
       const rows = await db<AutomationRow[]>`
         SELECT * FROM automations WHERE next_run_at <= ${nowIso} ORDER BY next_run_at ASC
       `;
 
       for (const row of rows) {
-        let nextRunAt = fallbackNextRunAt;
-        try {
-          nextRunAt = nextCronOccurrence(row.cron, now).toISOString();
-        } catch (error) {
-          console.error(`Failed to reschedule automation ${row.id}:`, error);
-        }
+        const nextRunAt = nextCronOccurrence(row.cron, now).toISOString();
         await db`UPDATE automations SET next_run_at = ${nextRunAt} WHERE id = ${row.id}`;
         row.next_run_at = nextRunAt;
       }
 
-      return readValidAutomations(rows, "claim");
+      return rows.map(automationFromRow);
     });
   }
 }
@@ -142,16 +134,4 @@ function automationFromRow(row: AutomationRow): Automation {
     nextRunAt: row.next_run_at,
     lastRunAt: row.last_run_at ?? undefined,
   };
-}
-
-function readValidAutomations(rows: AutomationRow[], source: string): Automation[] {
-  const automations: Automation[] = [];
-  for (const row of rows) {
-    try {
-      automations.push(automationFromRow(row));
-    } catch (error) {
-      console.error(`Skipping invalid automation row ${row.id} during ${source}:`, error);
-    }
-  }
-  return automations;
 }

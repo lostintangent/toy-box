@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { usePageVisibility } from "@/shared/hooks/usePageVisibility";
-import { socketUrl } from "@/shared/socket";
+import { connectSocket } from "@/shared/socket";
 import type { FrameSize, ScreenFrame, ScreenInput, ScreenStatus } from "../model";
 import {
   decodeScreenPacket,
@@ -77,9 +77,6 @@ function statusOf({ status, hasFrame }: ScreenState): "connecting" | ScreenStatu
 
 type ScreenConnection = ReturnType<typeof connectScreen>;
 
-/** A lost connection retries after 250 ms, doubling up to 4 s until the server answers. */
-const FIRST_RETRY_MS = 250;
-const LAST_RETRY_MS = 4000;
 /** Frames refit once the canvas holds still this long, since panes animate into place. */
 const RESIZE_SETTLE_MS = 150;
 
@@ -95,9 +92,6 @@ function connectScreen(
 ) {
   const renderer = createRenderer(canvas);
   let state = CONNECTING;
-  let socket: WebSocket | undefined;
-  let retry: ReturnType<typeof setTimeout> | undefined;
-  let retryDelay = FIRST_RETRY_MS;
   let size: FrameSize | undefined;
   let settling: ReturnType<typeof setTimeout> | undefined;
   const resizing = new ResizeObserver(resize);
@@ -111,21 +105,19 @@ function connectScreen(
     onChange(state);
   }
   function send(message: ScreenClientMessage) {
-    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+    return socket.send(JSON.stringify(message));
   }
 
-  function open() {
-    const url = socketUrl("screens");
-    url.searchParams.set("screen", screenId);
-    const current = (socket = new WebSocket(url));
-    current.binaryType = "arraybuffer";
-    let drawing = Promise.resolve();
-    // The server forgets a closed socket's size, so each new one sends it again.
-    size = undefined;
-    current.onopen = resize;
-
-    current.onmessage = ({ data }) => {
-      if (current !== socket) return;
+  let drawing = Promise.resolve();
+  const socket = connectSocket("screens", {
+    params: () => ({ screen: screenId }),
+    onOpen() {
+      // The server forgets a closed socket's size, so each new one sends it again.
+      size = undefined;
+      drawing = Promise.resolve();
+      resize();
+    },
+    onMessage(data, current) {
       if (typeof data === "string") return receive(JSON.parse(data));
       drawing = drawing
         .then(() => draw(current, new Uint8Array(data)))
@@ -134,24 +126,18 @@ function connectScreen(
           console.error("Unable to draw a screen frame:", error);
           current.close();
         });
-    };
-
-    current.onclose = () => {
-      if (current !== socket) return;
-      socket = undefined;
+    },
+    onClose() {
       renderer.clear();
       // A screen that ended said so before its socket closed. Any other close reconnects.
-      if (state.status === "ended") return;
+      if (state.status === "ended") return false;
       update({ status: undefined, hasControl: false, hasFrame: false, error: undefined });
-      retry = setTimeout(open, retryDelay);
-      retryDelay = Math.min(retryDelay * 2, LAST_RETRY_MS);
-    };
-  }
+    },
+  });
 
   function receive(message: ScreenServerMessage) {
     if (message.type === "error") return update({ error: message.message });
     const { title, status, reason, hasControl } = message;
-    retryDelay = FIRST_RETRY_MS;
     update({
       title,
       status,
@@ -170,7 +156,7 @@ function connectScreen(
           new Blob([payload as Uint8Array<ArrayBuffer>], { type: "image/jpeg" }),
         )
       : undefined;
-    if (current !== socket) return image?.close();
+    if (current.readyState !== WebSocket.OPEN) return image?.close();
     renderer.draw(frame, image);
     if (!state.hasFrame) update({ hasFrame: true });
     send({ type: "ack", sequence: frame.sequence });
@@ -189,14 +175,11 @@ function connectScreen(
       const width = Math.round(canvas.clientWidth * scale);
       const height = Math.round(canvas.clientHeight * scale);
       // A canvas with no area, like a pane yet to grow in, isn't shown.
-      if (!width || !height || socket?.readyState !== WebSocket.OPEN) return;
-      if (width === size?.width && height === size.height) return;
-      size = { width, height };
-      send({ type: "resize", size });
+      if (!width || !height || (width === size?.width && height === size.height)) return;
+      if (send({ type: "resize", size: { width, height } })) size = { width, height };
     }, RESIZE_SETTLE_MS);
   }
 
-  open();
   resizing.observe(canvas);
   zooming.observe(canvas, { attributeFilter: ["style"] });
   return {
@@ -221,13 +204,10 @@ function connectScreen(
       }
     },
     close() {
-      clearTimeout(retry);
       clearTimeout(settling);
       resizing.disconnect();
       zooming.disconnect();
-      const current = socket;
-      socket = undefined;
-      current?.close();
+      socket.close();
       renderer.clear();
     },
   };

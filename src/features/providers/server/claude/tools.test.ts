@@ -4,19 +4,16 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
 import { createClaudeTools } from "./tools";
 
-test("SDK tools preserve recursive schemas, validation, public identity, loading, and terminal results", async () => {
-  const server = createClaudeTools("public-session", [
+test("SDK tools preserve recursive schemas, validation, loading, and terminal results", async () => {
+  const server = createClaudeTools([
     {
       name: "echo",
       parameters: z
         .object({ value: z.json(), allowed: z.boolean() })
         .refine((args) => args.allowed),
-      handler: (args, sessionId) => {
-        expect(sessionId).toBe("public-session");
-        return args.value;
-      },
+      handler: async (args) => JSON.stringify((args as { value: unknown }).value),
     },
-    { name: "finish", isTerminal: true, alwaysLoad: true, handler: () => "Done" },
+    { name: "finish", isTerminal: true, alwaysLoad: true, handler: async () => "Done" },
   ]);
   const client = new Client({ name: "test", version: "1" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

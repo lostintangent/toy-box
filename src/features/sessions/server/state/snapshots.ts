@@ -1,4 +1,4 @@
-// Session snapshot cache and cold-path loader. Live streams own active state;
+// Session snapshot cache and cold-path loader. Live executions own active state;
 // idle sessions resolve from this in-memory snapshot first, then provider history.
 //
 // Providers decide whether their durable history still matches a captured
@@ -68,10 +68,10 @@ export async function retainSessionSnapshots(sessionIds: readonly string[]): Pro
   );
 }
 
-/** Cache a private copy of a reduced session snapshot. */
+/** Cache a reduced session snapshot. */
 export function cacheSnapshot(sessionId: string, snapshot: SessionState): void {
   snapshotCache.delete(sessionId);
-  snapshotCache.set(sessionId, { snapshot: structuredClone(snapshot), capturedAt: Date.now() });
+  snapshotCache.set(sessionId, { snapshot, capturedAt: Date.now() });
 
   // Rotate out the least recently used entries until the cache fits, skipping
   // retained sessions. The cap therefore governs the transient tail.
@@ -82,7 +82,7 @@ export function cacheSnapshot(sessionId: string, snapshot: SessionState): void {
   }
 }
 
-/** Return a fresh cached snapshot copy, evicting stale entries. */
+/** Return a cached snapshot with current artifacts, evicting stale entries. */
 export async function getCachedSnapshot(sessionId: string): Promise<SessionState | undefined> {
   const entry = snapshotCache.get(sessionId);
   if (!entry) return undefined;
@@ -96,10 +96,7 @@ export async function getCachedSnapshot(sessionId: string): Promise<SessionState
   snapshotCache.delete(sessionId);
   snapshotCache.set(sessionId, entry);
   const artifacts = await listSessionArtifacts(sessionId);
-  return {
-    ...structuredClone(entry.snapshot),
-    artifacts,
-  };
+  return { ...entry.snapshot, artifacts };
 }
 
 /** Forget a session's snapshot entirely, including any retention it was granted. */

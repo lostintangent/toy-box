@@ -1,11 +1,12 @@
-import { useId, useState } from "react";
+import { useId } from "react";
 import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
 import { FileText, Inbox as InboxIcon, Info, Loader2, Trash2, TriangleAlert } from "lucide-react";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { Button } from "@/shared/ui/button";
 import { Markdown } from "@/shared/ui/markdown";
 import { Skeleton } from "@/shared/ui/skeleton";
-import { DestructiveConfirmationDialog } from "@/shared/sidebar/DestructiveConfirmationDialog";
+import { DestructiveConfirmationDialog } from "@/shared/dialogs/DestructiveConfirmationDialog";
+import { openDialog } from "@/shared/dialogs/DialogHost";
 import { SidebarStatusMark } from "@/shared/sidebar/SidebarStatus";
 import { cn } from "@/shared/utils";
 import type { Session } from "@sessions/model";
@@ -28,7 +29,7 @@ export function InboxEntries({
   linkedEntryId?: string;
   onSelect: (entry: InboxEntry) => void;
 }) {
-  const { data: workers } = useSuspenseQuery(workerQueries.active());
+  const { data: workers } = useSuspenseQuery(workerQueries.active);
   const sortedEntries = useSessionsActivity((activities) =>
     sortInboxEntries(entries, activities, workers),
   );
@@ -75,9 +76,8 @@ function InboxEntryRow({
   onSelect: () => void;
 }) {
   const deleteMutation = useMutation(inboxMutations.deleteEntry(entry.id));
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const { unread, waiting, status } = useSessionActivity(entry.id);
-  const { data: workers } = useSuspenseQuery(workerQueries.active());
+  const { data: workers } = useSuspenseQuery(workerQueries.active);
   const running = useSessionsActivity((activities) =>
     isInboxTaskRunning(activities, workers, entry.id),
   );
@@ -98,87 +98,84 @@ function InboxEntryRow({
   }
 
   return (
-    <>
-      <div
-        className={cn(
-          "group/inbox flex items-center border-b text-sm transition-colors last:border-b-0 hover:bg-muted/50",
-          pending && "bg-muted/30",
-          linked && "bg-muted/60",
-        )}
-      >
-        {entry.kind === "error" ? (
-          <button
-            type="button"
-            aria-pressed={linked}
-            onClick={handleSelect}
-            className="flex min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left"
-          >
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-            <span className="min-w-0 break-words text-destructive">{entry.error}</span>
-          </button>
-        ) : (
-          <div
-            onMouseEnter={preview.onMouseEnter}
-            onMouseLeave={preview.onMouseLeave}
-            className="relative flex min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left"
-          >
-            <SessionPreview sessionId={entry.id} {...preview}>
-              <button
-                type="button"
-                aria-labelledby={label ? labelId : undefined}
-                aria-label={label ? undefined : "Loading inbox entry"}
-                aria-pressed={linked}
-                onClick={handleSelect}
-                className="absolute inset-0 cursor-pointer focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </SessionPreview>
-            {entry.kind === "result" && entry.artifact ? (
-              <FileText
-                className={cn(
-                  "pointer-events-none mt-0.5 h-4 w-4 shrink-0 text-muted-foreground",
-                  linked && "text-primary",
-                )}
-              />
-            ) : (
-              <Info className="pointer-events-none mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-            )}
-            {label ? (
-              <div
-                id={labelId}
-                className={cn(
-                  "pointer-events-none relative z-10 min-w-0 break-words [&_a]:pointer-events-auto",
-                  pending && "italic text-muted-foreground",
-                )}
-              >
-                <Markdown preserveLineBreaks linkSafety={{ enabled: false }}>
-                  {label}
-                </Markdown>
-              </div>
-            ) : (
-              <Skeleton className="pointer-events-none mt-0.5 h-4 w-3/5 max-w-80" />
-            )}
-          </div>
-        )}
-        <InboxEntryAction
-          label={label}
-          status={mark}
-          deleting={deleteMutation.isPending}
-          onDelete={() => {
-            if (entry.kind === "error" || (entry.kind === "result" && entry.artifact))
-              setDeleteOpen(true);
-            else deleteMutation.mutate();
-          }}
-        />
-      </div>
-      {deleteOpen && (
-        <DestructiveConfirmationDialog
-          title="Delete inbox entry?"
-          description="This will permanently delete this inbox entry and its attached artifact. This action cannot be undone."
-          mutation={inboxMutations.deleteEntry(entry.id)}
-          onOpenChange={setDeleteOpen}
-        />
+    <div
+      className={cn(
+        "group/inbox flex items-center border-b text-sm transition-colors last:border-b-0 hover:bg-muted/50",
+        pending && "bg-muted/30",
+        linked && "bg-muted/60",
       )}
-    </>
+    >
+      {entry.kind === "error" ? (
+        <button
+          type="button"
+          aria-pressed={linked}
+          onClick={handleSelect}
+          className="flex min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left"
+        >
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <span className="min-w-0 break-words text-destructive">{entry.error}</span>
+        </button>
+      ) : (
+        <div
+          onMouseEnter={preview.onMouseEnter}
+          onMouseLeave={preview.onMouseLeave}
+          className="relative flex min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left"
+        >
+          <SessionPreview sessionId={entry.id} {...preview}>
+            <button
+              type="button"
+              aria-labelledby={label ? labelId : undefined}
+              aria-label={label ? undefined : "Loading inbox entry"}
+              aria-pressed={linked}
+              onClick={handleSelect}
+              className="absolute inset-0 cursor-pointer focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </SessionPreview>
+          {entry.kind === "result" && entry.artifact ? (
+            <FileText
+              className={cn(
+                "pointer-events-none mt-0.5 h-4 w-4 shrink-0 text-muted-foreground",
+                linked && "text-primary",
+              )}
+            />
+          ) : (
+            <Info className="pointer-events-none mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
+          {label ? (
+            <div
+              id={labelId}
+              className={cn(
+                "pointer-events-none relative z-10 min-w-0 break-words [&_a]:pointer-events-auto",
+                pending && "italic text-muted-foreground",
+              )}
+            >
+              <Markdown preserveLineBreaks linkSafety={{ enabled: false }}>
+                {label}
+              </Markdown>
+            </div>
+          ) : (
+            <Skeleton className="pointer-events-none mt-0.5 h-4 w-3/5 max-w-80" />
+          )}
+        </div>
+      )}
+      <InboxEntryAction
+        label={label}
+        status={mark}
+        deleting={deleteMutation.isPending}
+        onDelete={() => {
+          if (entry.kind === "error" || (entry.kind === "result" && entry.artifact))
+            openDialog((dialog) => (
+              <DestructiveConfirmationDialog
+                {...dialog}
+                title="Delete inbox entry?"
+                description="This will permanently delete this inbox entry and its attached artifact. This action cannot be undone."
+                mutation={inboxMutations.deleteEntry(entry.id)}
+              />
+            ));
+          else deleteMutation.mutate();
+        }}
+      />
+    </div>
   );
 }
 

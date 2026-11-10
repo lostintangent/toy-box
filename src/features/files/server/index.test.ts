@@ -1,12 +1,14 @@
 import { $ } from "bun";
-import { describe, expect, onTestFinished, test } from "bun:test";
+import { describe, expect, jest, mock, onTestFinished, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as runtime from "@sessions/server/runtime";
 import { closeConnection, openConnection } from "@workspace/server/connections";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
-import { machineFile, type DirectoryEntry, type FileChange } from "../model";
-import { listDirectory, watchFile, writeFile } from "./index";
+import { machineFile, sessionFile, type DirectoryEntry, type FileChange } from "../model";
+import { listDirectory, readFile, watchFile, writeFile } from "./index";
+import * as paths from "./paths";
 
 async function fixture(repository = false): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "toy-box-directory with spaces-"));
@@ -105,6 +107,26 @@ describe("directory listings", () => {
   });
 });
 
+describe("file reads", () => {
+  async function readContent(name: string, bytes: string | Uint8Array) {
+    const file = machineFile(join(await fixture(), name));
+    await Bun.write(file.path, bytes);
+    return (await readFile(file)).content;
+  }
+
+  test("text reads in full, even with a character across the binary probe", async () => {
+    const text = `${"a".repeat(7_999)}é and more`;
+    expect(await readContent("notes.md", text)).toBe(text);
+  });
+
+  test("a file with a NUL or bytes that aren't UTF-8 reads as null content", async () => {
+    const utf16 = new Uint8Array([0x68, 0, 0x69, 0]);
+    const latin1 = new Uint8Array([...new TextEncoder().encode("a".repeat(9_000)), 0xe9]);
+    expect(await readContent("utf16.txt", utf16)).toBeNull();
+    expect(await readContent("latin1.txt", latin1)).toBeNull();
+  });
+});
+
 describe("file watching", () => {
   async function watchedDocument() {
     const directory = await fixture();
@@ -146,6 +168,48 @@ describe("file watching", () => {
     await writeFile(file, "After");
     await Bun.sleep(100);
     expect(changes).toEqual([]);
+  });
+});
+
+describe("edit notices", () => {
+  async function notices() {
+    const directory = await fixture();
+    // Session files resolve under the temporary directory instead of the real session storage.
+    spyOn(paths, "resolveWorkspaceFile").mockImplementation((file) =>
+      join(directory, file.path.replace(/^\//, "")),
+    );
+    const deliver = spyOn(runtime, "deliverSessionMessage").mockResolvedValue({
+      disposition: "queued",
+      waitForCompletion: async () => ({ status: "completed" }),
+    });
+    jest.useFakeTimers();
+    onTestFinished(() => {
+      jest.useRealTimers();
+      mock.restore();
+    });
+    return { file: sessionFile("owner", "report.md"), deliver };
+  }
+
+  test("edits reach the owning session once after they pause, with no surface left open", async () => {
+    const { file, deliver } = await notices();
+    await writeFile(file, "First", true);
+    jest.advanceTimersByTime(5_000);
+    await writeFile(file, "Second", true);
+    jest.advanceTimersByTime(7_999);
+    expect(deliver).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1);
+    expect(deliver.mock.calls).toEqual([
+      ["owner", { systemMessage: { type: "file_edited", file } }],
+    ]);
+  });
+
+  test("writes that don't ask, and files no session owns, notify no one", async () => {
+    const { file, deliver } = await notices();
+    await writeFile(file, "Quiet");
+    await writeFile(machineFile("/notes.md"), "Unowned", true);
+    jest.advanceTimersByTime(8_000);
+    expect(deliver).not.toHaveBeenCalled();
   });
 });
 

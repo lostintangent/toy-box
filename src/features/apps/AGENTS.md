@@ -6,8 +6,8 @@ Apps are trusted React surfaces with two ownership models:
   durable value; it has no manifest, registration, instance, durable app state,
   pending shares, or app-owned workers.
 - An installed app is a durable, reopenable workspace surface backed by three
-  feature-owned values. An `AppDefinition` is installed code, metadata, and a
-  state contract with its default. Every definition is an ordinary
+  feature-owned values. An `AppDefinition` is installed code, metadata, a
+  state contract with its default, and the file extensions it opens. Every definition is an ordinary
   `~/.toy-box/apps/<id>/app.json` and `app.tsx` pair.
 - An `AppInstance` is one saved use of a definition. SQLite owns its ID, title,
   icon color, small JSON state, optimistic revision, and timestamps.
@@ -18,14 +18,15 @@ Apps are trusted React surfaces with two ownership models:
 
 The feature is organized by responsibility:
 
-- `model/` owns schemas and domain values shared across the boundary.
+- `model/` owns schemas and domain values shared across the boundary. `catalog.ts` reduces the
+  browser catalog over workspace events.
 - `server/schema.ts` defines the SQLite tables, while `server/database.ts` owns saved instance and
   share rows.
-- `queries.ts`, `cache.ts`, and `mutations.ts` own the browser's Apps catalog,
-  compiled-bundle reads, cache transitions, and saved-app operations. The catalog is
+- `queries.ts`, `cache.ts`, and `mutations.ts` own the browser's Apps catalog `reducedQuery`,
+  compiled-bundle reads, workspace event routing, and saved-app operations. The catalog is
   one snapshot of definitions, saved instances, and pending shares, preloaded during SSR.
-- `commands.ts` defines a saved app's commands, shared by the Apps sidebar and the palette.
-- `components/` owns the Apps sidebar and workspace pane. Its private `host/`
+- `commands.tsx` defines a saved app's commands, shared by the Apps sidebar and the palette.
+- `components/` owns the Apps sidebar and the panes that mount apps. Its private `host/`
   modules adapt Toy Box capabilities to a mounted app; `runtime/` implements the
   authored SDK in the browser.
 - `sdk.ts` is the complete public authoring contract for `@toy-box/sdk`, while
@@ -88,13 +89,27 @@ Shares use the Apps catalog and shared workspace event stream, so a receiving ap
 can be closed when context is shared with it.
 
 The Apps-owned `listApps` server function reads definitions, instances, and shares
-from their owners into one catalog snapshot. `appQueries.list()` owns that cache,
+from their owners into one catalog snapshot. `appQueries.list` owns that cache,
 and `cache.ts` applies their at-most-once events from the shared workspace
-stream. Snapshot refetch repairs missed events on reconnect; an event received
-during a refetch replaces that read with one started after the accepted change.
+stream to that [`reducedQuery`](../../shared/query.ts). Snapshot refetch repairs missed
+events on reconnect, and a read in flight replays the events applied meanwhile over the snapshot it
+returns.
 Saved app revisions advance monotonically when applying events and mutation responses.
 Definition-sensitive transitions are serialized by definition ID;
 ordinary instance updates remain independently optimistic.
+
+## Opening files
+
+A manifest lists the file extensions a definition `opens`, beside the MIME types its
+instances `accept`. Files resolves an editor pane's renderer from the Apps catalog with
+`definitionOpening`, the pure picker `panes/AppEditor` also uses: built-in editors keep
+priority, then the first definition in catalog order that opens the extension wins.
+The pane stays an editor over its file. `AppEditor` mounts the definition with the
+pane's whole file lifecycle and no saved instance, so `useOpenedFile()` returns the
+file, its mode, content, external revision, saving, and file-owned workers, while
+`useApp()` is unavailable. Installing, re-registering, or uninstalling a definition
+switches open panes through the catalog event, and a new revision remounts the app
+from the pane's latest text.
 
 ## Compilation and SDK boundary
 
@@ -149,20 +164,23 @@ The SDK exposes:
   duplicating domain logic. Artifacts carry the `id` that tasks reference as `artifactId`.
 - `useFile`, which reuses the live file lifecycle from editor panes, including
   queued saves, external updates, modes, and file-owned workers.
+- `useOpenedFile()`, which returns that same lifecycle for the file an editor pane
+  opened the app on, and null in any other surface.
 - Actions that compose ordinary session, file, and pane capabilities, plus
   saved-only share consumption and app-worker operations.
 - Host-aware layout, feedback, session-toggle, model, file, location, and share
   components. React state owns their ephemeral interaction state.
 
-`AppHost` owns the common mounted lifetime: SDK workspace projection, portable
+`AppMount` loads a bundle on the client and owns its loading, failure, and crash-recovery
+states. `AppHost` owns the common mounted lifetime: SDK workspace projection, portable
 actions, linked-pane retention, rendering, and cleanup. It composes the Apps catalog
 with Session activity, Sessions, Providers, and the current pane surface without
 copying Apps data into the Workspace cache. `panes/AppPane`
 supplies the saved-instance state store; `panes/ArtifactAppPane` supplies only its
-editor pane identity. The SDK's `useApp()` adds saved-only share and worker actions,
+editor pane identity; `panes/AppEditor` supplies its editor pane identity and opened file. The SDK's `useApp()` adds saved-only share and worker actions,
 flushing state before starting a worker. Artifact apps have no saved state store.
-Creating and opening a session refreshes the session catalog before publishing
-its pane, so retention observes the newly created session.
+Session creation and deletion and file writes run the owning feature's mutations,
+so a created session is in the catalog before its pane opens.
 Its `runtime/` modules contain only what compiled author code can consume. The
 app-state store is intentionally imperative because it owns a debounced
 optimistic write, serialized conflict replay, and rollback lifecycle. Ordinary
@@ -181,6 +199,8 @@ app and bundle reads use `appQueries`; discrete saved-app operations use
   typing, and agent introspection; authored TSX never restates that contract.
 - Both app kinds reuse ordinary sessions, files, panes, workspace state, and
   events; only a saved instance may own pending shares or app workers.
+- A definition that opens a file renders an ordinary editor pane; the file is its
+  only durable value, and no instance is created.
 - Shares transfer MIME-typed JSON content; only sessions execute messages.
 - Deleting an instance cleans up all of its app-owned workers.
 - Breaking changes to a shipped author API require a new runtime module contract.

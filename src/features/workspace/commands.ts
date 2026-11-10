@@ -13,8 +13,13 @@ import {
   Shapes,
   SquareTerminal,
 } from "lucide-react";
+import { AutomationDialog } from "@automations/components/AutomationDialog";
+import { ChannelDialog } from "@channels/components/ChannelDialog";
+import { OpenFileDialog } from "@files/components/browser/OpenFileDialog";
+import { ScreenBrowserDialog } from "@screens/client/ScreenBrowserDialog";
 import { ALTERNATE_SHORTCUT, type Command } from "@/shared/commands/command";
-import { openWorkspaceDialog } from "./hooks/dialogs";
+import { openDialog } from "@/shared/dialogs/DialogHost";
+import { SettingsDialog } from "./components/sidebar/SettingsDialog";
 
 export type SessionCreationOptions = {
   addToWorkspace?: boolean;
@@ -102,7 +107,7 @@ export function workspaceCommands({
       group: "Create",
       icon: Clock3,
       disabled: !hasModels,
-      run: () => openWorkspaceDialog({ kind: "automation" }),
+      run: () => openDialog(AutomationDialog),
     },
     {
       id: "channel.create",
@@ -110,7 +115,7 @@ export function workspaceCommands({
       group: "Create",
       icon: Hash,
       disabled: !hasModels,
-      run: () => openWorkspaceDialog({ kind: "channel" }),
+      run: () => openDialog(ChannelDialog),
     },
     {
       id: "workspace.openInbox",
@@ -156,21 +161,21 @@ export function workspaceCommands({
       title: "Browse files",
       group: "Workspace",
       icon: Folder,
-      run: () => openWorkspaceDialog({ kind: "files" }),
+      run: () => openDialog(OpenFileDialog),
     },
     {
       id: "screens.browse",
       title: "Browse screens",
       group: "Workspace",
       icon: Monitor,
-      run: () => openWorkspaceDialog({ kind: "screens" }),
+      run: () => openDialog(ScreenBrowserDialog),
     },
     {
       id: "workspace.settings",
       title: "Open settings",
       group: "Workspace",
       icon: Settings,
-      run: () => openWorkspaceDialog({ kind: "settings" }),
+      run: () => openDialog(SettingsDialog),
     },
   ];
 }

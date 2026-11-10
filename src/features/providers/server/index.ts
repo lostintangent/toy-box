@@ -1,4 +1,3 @@
-import type { Session } from "@sessions/model";
 import {
   normalizeModelConfiguration,
   type ModelInfo,
@@ -29,14 +28,14 @@ export function getSessionProvider(id: string): SessionProvider {
   return provider;
 }
 
+/** Reads what discovery knows now, so a provider still being discovered is ready without models. */
 export async function getProviderCatalog(): Promise<ProviderCatalog> {
   const enabled = await enabledProviders();
   // Disabled providers aren't started just to check their account.
-  const discoveries = await Promise.all(
-    sessionProviders.map(async (provider) =>
-      enabled.includes(provider) ? discover(provider) : undefined,
-    ),
-  );
+  const discoveries = sessionProviders.map((provider) => {
+    const discovery = enabled.includes(provider) ? Bun.peek(discover(provider)) : undefined;
+    return discovery instanceof Promise ? undefined : discovery;
+  });
   return {
     providers: sessionProviders.map(({ id, name }, index) => ({
       id,
@@ -48,7 +47,7 @@ export async function getProviderCatalog(): Promise<ProviderCatalog> {
 }
 
 export async function getModelChoices(provider?: string) {
-  const [{ models }, { defaultModel }] = await Promise.all([getProviderCatalog(), getSettings()]);
+  const [models, { defaultModel }] = await Promise.all([listModels(), getSettings()]);
   const workspaceDefault =
     models.length > 0 ? normalizeModelConfiguration(models, defaultModel) : null;
   return {
@@ -58,15 +57,17 @@ export async function getModelChoices(provider?: string) {
 }
 
 export async function listModels(): Promise<ModelInfo[]> {
-  return (await getProviderCatalog()).models;
+  const discoveries = await Promise.all((await enabledProviders()).map(discover));
+  return discoveries.flatMap((discovery) => discovery.models);
 }
 
 export async function updateProvider(providerId: string) {
   const { id } = getSessionProvider(providerId);
   const result = await cli.updateProvider(id);
-  // Refresh even when unchanged: the CLI may have been upgraded outside Toy Box.
+  // Refresh even when unchanged: the CLI may have been upgraded outside Toy Box. Waiting makes
+  // discovery's broadcast the one hint, so no client refetches mid-rediscovery.
   discoveryByProvider.delete(id);
-  broadcast({ type: "providers.changed" });
+  await listModels();
   return result;
 }
 
@@ -76,10 +77,13 @@ function discover(provider: SessionProvider): Promise<Discovery> {
   if (cached) return cached;
 
   const discovery = (async (): Promise<Discovery> => {
-    if (!(await provider.isSignedIn())) return { status: "signedOut", models: [] };
-    const models = await provider.listModels();
+    const signedIn = await provider.isSignedIn();
+    const models = signedIn ? await provider.listModels() : [];
+    // Catalog reads don't wait, so this is their hint. A failure stays quiet, since its hint would
+    // send every client into a refetch and retry loop.
+    broadcast({ type: "providers.changed" });
     return {
-      status: "ready",
+      status: signedIn ? "ready" : "signedOut",
       models: models.map((model) => ({ ...model, providerName: provider.name })),
     };
   })().catch((error): Discovery => {
@@ -91,14 +95,24 @@ function discover(provider: SessionProvider): Promise<Discovery> {
   return discovery;
 }
 
-/** Catalog IDs belong to the native providers; Sessions maps them to public IDs. */
-export function listSessions(): Promise<Session[]> {
+/** Native sessions keep their native IDs; Sessions maps them to public IDs. */
+export function listSessions(limit?: number) {
   return collectAvailable(async (provider) =>
-    (await provider.listSessions()).map((session) => ({
+    (await provider.listSessions(limit)).map((session) => ({
       ...session,
-      provider: { id: provider.id },
+      providerId: provider.id,
     })),
   );
+}
+
+/** A disabled provider or failed read has no session to report. */
+export async function readSession(providerId: string, nativeId: string) {
+  const provider = (await enabledProviders()).find(({ id }) => id === providerId);
+  const session = await provider?.readSession(nativeId).catch((error) => {
+    console.error(`Unable to read ${providerId} session ${nativeId}:`, error);
+    return undefined;
+  });
+  return session && { ...session, providerId };
 }
 
 export async function stopProviders(): Promise<void> {

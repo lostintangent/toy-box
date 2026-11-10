@@ -42,35 +42,35 @@ Workers invokes Inbox's retention callback with the latest stored Worker and its
 2. A clean completion without metadata returns false; Workers removes the pending entry and session.
 3. Failed work retains both and reports an error when no result was published, including startup
    failures before provider history exists.
-4. User deletion delegates to Workers; shared session teardown removes artifacts and ownership, then publishes entry deletion. Deleting the backing session through another entrypoint removes the same entry.
+4. User deletion delegates to Workers; shared session teardown removes artifacts and ownership, then publishes the session deletion that removes the entry. Deleting the backing session through another entrypoint removes the same entry.
 
 Retained work uses Sessions' ordinary 30-minute idle connection timeout. Inbox does not manage provider connections or maintain a separate completion waiter or registry.
 Deliberate Worker cancellation bypasses Inbox retention policy.
 Results replace Worker metadata; failures initialize it only when absent. The conditional SQL
 update belongs to Workers and is atomic, so a failure cannot overwrite a reported or unreadable
 result or recreate deleted ownership. Inbox needs no write queue or read-check-write recovery.
-Once per process, a shared recovery promise marks unresolved submissions as interrupted before the
-first Inbox list or new admission. All Inbox spawning passes through that gate, so recovery needs
-no active-Worker scan or eager startup hook. Failed recovery can be retried. Existing outcomes are
-left alone, and recovery never reruns work whose external effects may already have occurred.
+An entry without an outcome reads as pending while Workers holds its Worker active and as
+interrupted otherwise, such as after a restart. Nothing is written back, and interrupted work is
+never rerun, since its external effects may already have occurred.
 
 ## Client synchronization
 
-`inboxQueries.list()` owns the Inbox list cache independently of workspace state. Its GET server
-function projects retained Inbox Workers after recovery. The main route preloads it alongside other
+`inboxQueries.list` owns the Inbox list cache independently of workspace state. Its GET server
+function projects retained Inbox Workers. Its cache preloads it alongside other
 feature catalogs. The existing workspace event connection routes `inbox.changed` to this query;
 reconnect and visibility recovery invalidate it in parallel with the other catalogs.
 
-`cache.ts` owns invalidation and immediate entry deletion. A change hint cancels an overlapping
-read, including an initial fetch, before requesting current data. A deletion removes the cached row
-and replaces any overlapping read so its older snapshot cannot restore the entry. No separate event
-journal or connection is needed. Inactive queries become stale and reload when consumed.
+`cache.ts` owns invalidation and immediate entry deletion through that
+[`reducedQuery`](../../shared/query.ts). A change hint refreshes the list, cancelling an
+overlapping read, including an initial fetch, before requesting current data. A `session.deleted`
+removes a matching cached row, and a read in flight drops it from the older snapshot it returns, so
+that snapshot cannot restore the entry. Inactive queries become stale and reload when consumed.
 
 Presentation combines entries with shared Worker and Session activity to order running work first
 and show progress and unread state. An active Worker supplies startup progress; ordinary Session
 activity covers later follow-ups. Inbox does not manufacture a Session running status.
 `inboxMutations` owns dispatch and deletion requests plus the immediate successful delete projection.
-Components retain only interaction state such as location choices and dialog visibility. The
+Components retain only interaction state such as location choices. The
 creation composer's text is the Workspace saved draft `inbox`, so it survives reloads and follows
 the user across clients. A dispatch or send that fails returns its message to that draft unless
 another has been started.
@@ -88,7 +88,7 @@ clickable links. Error text stays literal.
 ## Boundaries and invariants
 
 - [Workers](../workers/AGENTS.md) owns persistence and lifecycle operations. Inbox owns result validation, retention policy, webhook ingress, and presentation; it never starts or deletes sessions directly.
-- [Sessions](../sessions/AGENTS.md) sees Inbox work as ordinary managed Workers, not a separate session type. [Workspace](../workspace/AGENTS.md) routes the existing entry events to Inbox's cache; result updates do not change session classification.
+- [Sessions](../sessions/AGENTS.md) sees Inbox work as ordinary managed Workers, not a separate session type. [Workspace](../workspace/AGENTS.md) routes `inbox.changed` and `session.deleted` to Inbox's cache; result updates do not change session classification.
 - Inbox owns its role instructions and the `send_to_inbox` contract in `server/tools.ts`; application
   composition selects them for the [session provider boundary](../providers/INTEGRATION.md).
 - [Workspace](../workspace/AGENTS.md) owns generic pane composition. Inbox owns the behavior of its pane and entries.

@@ -9,12 +9,7 @@ import type { SessionEvent, SessionQuestionBase, ToolCall } from "@sessions/mode
 import type { Attachment } from "@/shared/attachments/model";
 import { decodeSystemMessage } from "@sessions/model/systemMessages";
 import { fromSdkAttachments } from "./attachments";
-import {
-  resolveToolCallPolicy,
-  type ToolCallProjectionPolicy as SharedToolCallProjectionPolicy,
-} from "@sessions/server/toolProjection";
 import { parseTodoSql } from "./todoParser";
-type ToolCallProjectionPolicy = SharedToolCallProjectionPolicy | { kind: "deferred" };
 type ToolArguments = ToolCall["arguments"];
 
 // ============================================================================
@@ -40,9 +35,12 @@ type SdkQuestion = Pick<
   "question" | "choices" | "allowFreeform"
 >;
 
+// Hidden calls never reach the transcript. A deferred call completes from a
+// later SDK event instead of its own tool completion.
+type ToolCallPolicy = "hidden" | "deferred";
+
 type ProjectionState = {
-  sessionId: string;
-  toolCallPolicies: Map<string, ToolCallProjectionPolicy>;
+  toolCallPolicies: Map<string, ToolCallPolicy>;
   subagentParents: Map<string, string>;
   binaryAssets: Map<string, Attachment>;
   questionToolCall?: {
@@ -57,9 +55,8 @@ type ProjectionState = {
 
 /** Create one stateful SDK → domain projector for a session. Tool lifecycle
  *  correlation stays private to the returned function. */
-export function createSdkEventProjector(sessionId: string) {
+export function createSdkEventProjector() {
   const state: ProjectionState = {
-    sessionId,
     toolCallPolicies: new Map(),
     subagentParents: new Map(),
     binaryAssets: new Map(),
@@ -85,11 +82,14 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       if (event.data.source?.startsWith("skill-")) return [];
 
       const systemMessage = decodeSystemMessage(event.data.content);
+      // Toy Box sends each input's client ID as its native turn ID, so live and replay correlate.
+      const clientId = event.data.clientTurnId;
       if (systemMessage) {
         return [
           {
             type: "system_message",
             content: systemMessage,
+            ...(clientId ? { clientId } : {}),
             timestamp: event.timestamp,
           },
         ];
@@ -102,6 +102,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         {
           type: "user_message",
           content: event.data.content,
+          ...(clientId ? { clientId } : {}),
           timestamp: event.timestamp,
           attachments: fromSdkAttachments(event.data.attachments, state.binaryAssets),
         },
@@ -241,8 +242,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
     case "subagent.failed": {
       const { toolCallId } = event.data;
       if (event.agentId) state.subagentParents.delete(event.agentId);
-      const policy = state.toolCallPolicies.get(toolCallId);
-      if (policy?.kind !== "deferred") return [];
+      if (state.toolCallPolicies.get(toolCallId) !== "deferred") return [];
 
       const success = event.type === "subagent.completed";
       state.toolCallPolicies.delete(toolCallId);
@@ -259,7 +259,12 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         state,
       );
       if (event.agentId && !parentToolCallId) return [];
-      const policy = resolveCopilotToolPolicy(toolName, args, state);
+      // A SQL call that only edits the todo list becomes todo patches instead of a tool call.
+      const todoPatches =
+        toolName === "sql" && typeof args?.query === "string"
+          ? parseTodoSql(args.query)
+          : undefined;
+      const policy = todoPatches ? "hidden" : resolveCopilotToolPolicy(toolName, args);
       const question =
         toolName === "ask_user" && !parentToolCallId
           ? toSessionQuestion(args as SdkQuestion)
@@ -267,8 +272,8 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
 
       if (policy) state.toolCallPolicies.set(toolCallId, policy);
       if (question) state.questionToolCall = { toolCallId };
-      if (policy?.kind === "omitted") return [];
-      if (policy?.kind === "translated") return policy.projectOnStart ?? [];
+      if (policy === "hidden")
+        return todoPatches?.length ? [{ type: "todos_patch", patches: todoPatches }] : [];
 
       return [
         {
@@ -300,23 +305,16 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       }
       const policy = state.toolCallPolicies.get(toolCallId);
       const result = data.result?.content ?? data.error?.message;
+      // Live, the CLI repeats the content as details. History keeps only details that differ.
+      const details =
+        data.result?.detailedContent !== data.result?.content
+          ? data.result?.detailedContent
+          : undefined;
       const questionEvents = projectDurableQuestionResolution(toolCallId, result, state);
 
-      if (policy?.kind === "omitted") {
+      if (policy === "hidden") {
         state.toolCallPolicies.delete(toolCallId);
         return questionEvents;
-      }
-
-      if (policy?.kind === "translated") {
-        state.toolCallPolicies.delete(toolCallId);
-        return [
-          ...questionEvents,
-          ...(policy.projectOnComplete?.({
-            success: data.success,
-            result,
-            details: data.result?.detailedContent,
-          }) ?? []),
-        ];
       }
 
       // Images in the tool's native output; model-only images in binaryResultsForLlm stay out.
@@ -329,13 +327,13 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         ...(parentToolCallId ? { parentToolCallId } : {}),
         success: data.success,
         result,
-        details: data.result?.detailedContent,
+        details,
         ...(attachments.length ? { attachments } : {}),
       };
 
       // Background tool calls can have a non-authoritative SDK completion event.
       // Skip it when another declared SDK event is the real completion source.
-      if (policy?.kind === "deferred") return questionEvents;
+      if (policy === "deferred") return questionEvents;
 
       return [...questionEvents, toolEnd];
     }
@@ -389,25 +387,20 @@ function resolveParentToolCallId(
 // Tool call policy
 // ============================================================================
 
-/** Decide how a tool call projects from its canonical name, so the SDK's
- *  "task" resolves the "agent" policy. Sessions owns the shared policies;
- *  Copilot adds native SQL todos and background agents, whose real
- *  completion arrives as a subagent event. */
+// The CLI's own bookkeeping, which the transcript shows another way or not at
+// all. Skill loads appear through skill.invoked.
+const HIDDEN_TOOLS = new Set(["skill", "read_agent", "write_agent", "list_agents"]);
+
+/** Decide how a native tool call projects from its canonical name, so the
+ *  SDK's "task" resolves the "agent" policy. Background agents complete from
+ *  their subagent event. Sessions applies Toy Box tools' policy downstream. */
 function resolveCopilotToolPolicy(
   toolName: string,
   args: ToolArguments,
-  state: ProjectionState,
-): ToolCallProjectionPolicy | undefined {
-  if (toolName === "agent" && args?.mode === "background") return { kind: "deferred" };
-  if (toolName === "sql" && typeof args?.query === "string") {
-    const patches = parseTodoSql(args.query);
-    if (patches)
-      return {
-        kind: "translated",
-        projectOnStart: patches.length ? [{ type: "todos_patch", patches }] : [],
-      };
-  }
-  return resolveToolCallPolicy(toolName, args, state);
+): ToolCallPolicy | undefined {
+  if (HIDDEN_TOOLS.has(toolName)) return "hidden";
+  if (toolName === "agent" && args?.mode === "background") return "deferred";
+  return undefined;
 }
 
 // ============================================================================

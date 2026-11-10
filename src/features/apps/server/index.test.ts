@@ -1,5 +1,14 @@
-import { afterAll, beforeEach, describe, expect, mock, onTestFinished, test } from "bun:test";
-import * as databaseModule from "@/server/database";
+import {
+  afterAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  onTestFinished,
+  spyOn,
+  test,
+} from "bun:test";
+import { openTestDatabase } from "@/server/testFixtures";
 import * as workersModule from "@workers/server";
 import * as definitionsModule from "./definitions";
 import * as gistModule from "./gist";
@@ -7,12 +16,10 @@ import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import type { AppDefinition } from "@apps/model";
 import { AppDatabase } from "./database";
 
-const realDatabaseModule = { ...databaseModule };
 const realWorkersModule = { ...workersModule };
 const realDefinitionsModule = { ...definitionsModule };
 const realGistModule = { ...gistModule };
 
-let currentDb: Bun.SQL | undefined;
 const objectState = { schema: { type: "object" as const }, default: {} };
 const arrayState = {
   schema: { type: "array" as const, items: { type: "string" as const } },
@@ -27,6 +34,7 @@ const getDefinitionMock = mock(
     title: "Shared board",
     color: "#3b82f6" as const,
     accepts: [],
+    opens: [],
     revision: "definition-a",
     state: objectState,
     tsx: "export default function App() { return null; }",
@@ -52,14 +60,6 @@ const downloadGistAppMock = mock(async (_url: string) => ({
   tsx: "export default function App() { return <main />; }",
 }));
 
-mock.module("@/server/database", () => ({
-  ...realDatabaseModule,
-  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
-    if (!currentDb && options?.createIfMissing === false) return null;
-    if (!currentDb) throw new Error("Test database has not been opened.");
-    return currentDb;
-  },
-}));
 mock.module("@workers/server", () => ({
   ...realWorkersModule,
   deleteWorkersForApp: deleteWorkersForAppMock,
@@ -89,14 +89,12 @@ const {
 } = await import("./index");
 
 afterAll(() => {
-  mock.module("@/server/database", () => realDatabaseModule);
   mock.module("@workers/server", () => realWorkersModule);
   mock.module("./definitions", () => realDefinitionsModule);
   mock.module("./gist", () => realGistModule);
 });
 
 beforeEach(() => {
-  currentDb = undefined;
   listDefinitionsMock.mockClear();
   listDefinitionsMock.mockResolvedValue([]);
   deleteWorkersForAppMock.mockClear();
@@ -109,24 +107,8 @@ beforeEach(() => {
 });
 
 describe("app lifecycle", () => {
-  test("lists definitions without creating a database for an empty workspace", async () => {
-    const definition = {
-      id: "shared-board",
-      title: "Shared board",
-      color: "#3b82f6" as const,
-      state: objectState,
-      accepts: [],
-      revision: "definition-a",
-    };
-    listDefinitionsMock.mockResolvedValue([definition]);
-
-    expect(await listApps()).toEqual({ apps: [], definitions: [definition], shares: [] });
-  });
-
   test("lists saved state and pending shares with their definitions", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    const db = currentDb;
-    onTestFinished(async () => db.close());
+    const db = await openTestDatabase();
     const apps = new AppDatabase(db);
     const definition = {
       id: "shared-board",
@@ -134,6 +116,7 @@ describe("app lifecycle", () => {
       color: "#3b82f6" as const,
       state: objectState,
       accepts: ["text/plain"],
+      opens: [],
       revision: "definition-a",
     };
     listDefinitionsMock.mockResolvedValue([definition]);
@@ -154,9 +137,7 @@ describe("app lifecycle", () => {
   });
 
   test("rejects invalid state before creating an instance", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    const db = currentDb;
-    onTestFinished(async () => db.close());
+    const db = await openTestDatabase();
 
     await expect(createApp({ definitionId: "shared-board", state: [] })).rejects.toThrow();
 
@@ -164,9 +145,7 @@ describe("app lifecycle", () => {
   });
 
   test("rejects invalid state before updating an instance", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    const db = currentDb;
-    onTestFinished(async () => db.close());
+    const db = await openTestDatabase();
     const app = await createApp({ definitionId: "shared-board" });
 
     await expect(
@@ -177,9 +156,7 @@ describe("app lifecycle", () => {
   });
 
   test("shares only with app definitions that accept the MIME type", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    const db = currentDb;
-    onTestFinished(async () => db.close());
+    const db = await openTestDatabase();
     const apps = new AppDatabase(db);
     const source = await apps.create({
       definitionId: "kanban",
@@ -198,6 +175,7 @@ describe("app lifecycle", () => {
       title: definitionId === "factory-floor" ? "Factory Floor" : "Kanban",
       color: "#f97316" as const,
       accepts: definitionId === "factory-floor" ? ["text/markdown"] : [],
+      opens: [],
       revision: "definition-a",
       state: objectState,
       tsx: "export default function App() { return null; }",
@@ -242,9 +220,7 @@ describe("app lifecycle", () => {
   });
 
   test("deletion delegates worker cleanup after removing the app", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    const db = currentDb;
-    onTestFinished(async () => db.close());
+    const db = await openTestDatabase();
     const app = await new AppDatabase(db).create({
       definitionId: "regex",
       title: "Regex",
@@ -262,9 +238,7 @@ describe("app lifecycle", () => {
   });
 
   test("uninstall refuses to orphan saved instances before removing the definition", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    const db = currentDb;
-    onTestFinished(async () => db.close());
+    const db = await openTestDatabase();
     const apps = new AppDatabase(db);
     const app = await apps.create({
       definitionId: "shared-board",
@@ -289,9 +263,7 @@ describe("app lifecycle", () => {
   });
 
   test("serializes instance creation with definition removal", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    const db = currentDb;
-    onTestFinished(async () => db.close());
+    await openTestDatabase();
     const entered = deferred<void>();
     const release = deferred<void>();
     getDefinitionMock.mockImplementationOnce(async (definitionId) => {
@@ -302,6 +274,7 @@ describe("app lifecycle", () => {
         title: "Shared board",
         color: "#3b82f6",
         accepts: [],
+        opens: [],
         revision: "definition-a",
         state: objectState,
         tsx: "export default function App() { return null; }",
@@ -328,9 +301,7 @@ describe("app lifecycle", () => {
   });
 
   test("Gist installation registers a definition and creates its first instance", async () => {
-    currentDb = await databaseModule.createTestDatabase();
-    const db = currentDb;
-    onTestFinished(async () => db.close());
+    const db = await openTestDatabase();
     const events: string[] = [];
     const unsubscribe = subscribeWorkspaceEvents((event) => events.push(event.type));
     onTestFinished(unsubscribe);
@@ -361,13 +332,16 @@ describe("app lifecycle", () => {
   });
 
   test("Gist installation removes the definition when its first instance cannot be saved", async () => {
+    await openTestDatabase();
+    const create = spyOn(AppDatabase.prototype, "create").mockRejectedValue(new Error("Disk full"));
+    onTestFinished(() => create.mockRestore());
     const events: string[] = [];
     const unsubscribe = subscribeWorkspaceEvents((event) => events.push(event.type));
     onTestFinished(unsubscribe);
 
     await expect(
       installApp({ url: "https://gist.github.com/octocat/aa5a315d61ae9438b18d" }),
-    ).rejects.toThrow("Test database has not been opened");
+    ).rejects.toThrow("Disk full");
 
     expect(uninstallDefinitionMock).toHaveBeenCalledWith("cafe-board");
     expect(events).toEqual([]);

@@ -41,7 +41,7 @@ export type InboxEntry = {
 
 declare module "@workspace/model/events" {
   interface WorkspaceEvents {
-    inbox: { type: "inbox.changed" } | { type: "inbox.entry.deleted"; entryId: string };
+    inbox: { type: "inbox.changed" };
   }
 }
 
@@ -76,9 +76,18 @@ export const inboxFailureSchema = z.object({
   error: z.string().trim().min(1).max(4000),
 });
 
-export function inboxEntryFromWorker(worker: Extract<Worker, { type: "inbox" }>): InboxEntry {
+/** A Worker without an outcome is pending while it's active and interrupted once it isn't. */
+export function inboxEntryFromWorker(
+  worker: Extract<Worker, { type: "inbox" }>,
+  active: boolean,
+): InboxEntry {
   const entry = { id: worker.sessionId, createdAt: worker.createdAt };
-  if (worker.metadata === undefined) return { ...entry, kind: "pending" };
+  if (worker.metadata === undefined) {
+    if (active) return { ...entry, kind: "pending" };
+    const error =
+      "This task was interrupted before Inbox recorded its outcome. Some work may already have completed.";
+    return { ...entry, kind: "error", error };
+  }
 
   const result = inboxResultSchema.safeParse(worker.metadata);
   if (result.success) return { ...entry, kind: "result", ...result.data };

@@ -1,5 +1,6 @@
 import { expect, onTestFinished, spyOn, test } from "bun:test";
-import * as inbox from "../../server/functions";
+import * as inbox from "../../server";
+import { invokeRoute } from "@/server/testFixtures";
 import { Route } from "./inbox";
 
 const receipt = { sessionId: "accepted-task" };
@@ -10,24 +11,11 @@ function acceptTask() {
   return dispatch;
 }
 
-async function post(init: RequestInit) {
-  const handlers = Route.options.server!.handlers!;
-  if (typeof handlers === "function" || !handlers.POST) {
-    throw new Error("Inbox route must handle POST requests.");
-  }
-  const response = await handlers.POST({
-    request: new Request("http://toy-box.test/api/v1/inbox", { ...init, method: "POST" }),
-    context: undefined,
-    params: {},
-    pathname: "/api/v1/inbox",
-    next: () => {
-      throw new Error("Inbox requests must be handled by the Inbox route.");
-    },
-  });
-  if (!(response instanceof Response)) {
-    throw new Error("Inbox route must return a response.");
-  }
-  return response;
+function post(init: RequestInit) {
+  return invokeRoute(
+    Route,
+    new Request("http://toy-box.test/api/v1/inbox", { ...init, method: "POST" }),
+  );
 }
 
 test("JSON submissions admit the prompt and attachments and return the task identity", async () => {
@@ -39,7 +27,7 @@ test("JSON submissions admit the prompt and attachments and return the task iden
   });
 
   expect(dispatch).toHaveBeenCalledWith({
-    data: { message: { content: "Research this", attachments } },
+    message: { content: "Research this", attachments },
   });
   expect(response.status).toBe(202);
   expect(await response.json()).toEqual(receipt);
@@ -61,14 +49,12 @@ test("multipart uploads use the explicit prompt and convert images into attachme
   const response = await post({ body });
 
   expect(dispatch).toHaveBeenCalledWith({
-    data: {
-      message: {
-        content: "Summarize this",
-        attachments: [
-          { mimeType: "image/png", base64: "AAEC" },
-          { mimeType: "image/jpeg", base64: "AwQF" },
-        ],
-      },
+    message: {
+      content: "Summarize this",
+      attachments: [
+        { mimeType: "image/png", base64: "AAEC" },
+        { mimeType: "image/jpeg", base64: "AwQF" },
+      ],
     },
   });
   expect(response.status).toBe(202);
@@ -82,7 +68,7 @@ test("transcription-only submissions admit text without attachments", async () =
   const response = await post({ body });
 
   expect(dispatch).toHaveBeenCalledWith({
-    data: { message: { content: "Research this", attachments: undefined } },
+    message: { content: "Research this", attachments: undefined },
   });
   expect(response.status).toBe(202);
   expect(await response.json()).toEqual(receipt);

@@ -5,14 +5,14 @@ import { sessionQueries } from "./queries";
 import { warmSessionSnapshotQuery } from "./useWarmSessionSnapshots";
 
 describe("warm session snapshot retention", () => {
-  test("mobile retains an opened snapshot without fetching in the background", async () => {
+  test("a pin retains an opened snapshot without watching or fetching it", async () => {
     const queryClient = createQueryClient();
     let requests = 0;
     const queryFn = async () => {
       requests++;
       return createInitialSessionState();
     };
-    const options = { ...warmSessionSnapshotQuery("pinned-session", false), queryFn };
+    const options = { ...warmSessionSnapshotQuery("pinned-session"), queryFn };
     const pin = new QueryObserver(queryClient, options);
     const unpin = pin.subscribe(() => {});
     onTestFinished(unpin);
@@ -44,34 +44,6 @@ describe("warm session snapshot retention", () => {
     unpin();
     await collectGarbage();
     expect(queryClient.getQueryData(options.queryKey)).toBeUndefined();
-  });
-
-  test("switching to desktop warms a cold pin and keeps it across observer remounts", async () => {
-    const queryClient = createQueryClient();
-    let requests = 0;
-    const queryFn = async () => {
-      requests++;
-      return createInitialSessionState();
-    };
-    const options = { ...warmSessionSnapshotQuery("pinned-session", false), queryFn };
-    const pin = new QueryObserver(queryClient, options);
-    const unpin = pin.subscribe(() => {});
-    onTestFinished(unpin);
-    expect(requests).toBe(0);
-
-    const desktopOptions = { ...warmSessionSnapshotQuery("pinned-session", true), queryFn };
-    pin.setOptions(desktopOptions);
-    await pin.getCurrentQuery().promise;
-    expect(requests).toBe(1);
-
-    pin.setOptions(options);
-    pin.setOptions(desktopOptions);
-    unpin();
-    const stopWarming = pin.subscribe(() => {});
-    onTestFinished(stopWarming);
-    await collectGarbage();
-    expect(requests).toBe(1);
-    expect(queryClient.getQueryData(options.queryKey)).toBeDefined();
   });
 });
 

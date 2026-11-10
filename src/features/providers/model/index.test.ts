@@ -174,27 +174,23 @@ describe("model configuration", () => {
         name: "removed-model",
         reasoningEffort: "high",
         contextTier: "removed_tier",
-        contextWindow: "long",
-      } as Parameters<typeof normalizeModelConfiguration>[1],
+      },
     );
 
-    expect(configuration as unknown).toEqual({
+    expect(configuration).toEqual({
       provider: "copilot",
       name: "gpt-5",
       reasoningEffort: "low",
       contextTier: "default",
-      contextWindow: "long",
     });
   });
 
-  test("round-trips nested options and compares top-level configuration changes", () => {
+  test("round-trips a serialized configuration and compares each of its options", () => {
     const expected = {
       provider: "future-provider",
       name: "future-model",
       reasoningEffort: "high",
       contextTier: "future_tier",
-      contextWindow: "long",
-      options: { budget: 42, modes: ["fast", "accurate"], enabled: true, fallback: null },
     };
     const configuration = parseSerializedModelConfiguration(JSON.stringify(expected));
     expect(configuration).toEqual(expected);

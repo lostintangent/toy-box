@@ -5,7 +5,7 @@
 import { appLifecycleTools, artifactAppTools, createAppStateTools } from "@apps/server/tools";
 import { AUTOMATION_SESSION_INSTRUCTIONS, automationTools } from "@automations/server/tools";
 import { channelTools, createChannelMembersTool } from "@channels/server/tools";
-import { editorTools, fileTools } from "@files/server/tools";
+import { fileTools } from "@files/server/tools";
 import { INBOX_SESSION_INSTRUCTIONS, inboxTools } from "@inbox/server/tools";
 import { getModelChoices } from "@providers/server";
 import type { ModelConfiguration } from "@providers/model";
@@ -24,10 +24,10 @@ import {
   STANDARD_SESSION_INSTRUCTIONS,
 } from "@sessions/server/tools";
 import type { Tool } from "@sessions/server/tools/definition";
-import { getPersistedWorker } from "@workers/server/database";
 import { workerTools } from "@workers/server/tools";
 import { settingsTools } from "@workspace/server/tools";
 import { screenTools } from "@screens/server/tools";
+import { resolveSessionType } from "@/server/managedSessions";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SessionTool = Tool<any>;
@@ -40,7 +40,6 @@ type SessionTypePolicy = {
   channels?: true;
   staffChannels?: true;
   settings?: true;
-  editor?: true;
   inbox?: true;
   screens?: true;
 };
@@ -64,7 +63,6 @@ const sessionTypePolicies: Record<SessionType, SessionTypePolicy> = {
     channels: true,
     staffChannels: true,
     settings: true,
-    editor: true,
   },
   automation: {
     instructions: [AUTOMATION_SESSION_INSTRUCTIONS, SESSION_HISTORY_DISCOVERY_INSTRUCTIONS],
@@ -84,38 +82,37 @@ const inboxPolicy: SessionTypePolicy = {
 };
 
 /** Compose feature-owned tools, instructions, and configuration lifetime over the Session runtime. */
-export async function getSessionConfiguration(sessionId: string, sessionType: SessionType) {
-  const worker = sessionType === "worker" ? await getPersistedWorker(sessionId) : undefined;
-  if (sessionType === "worker") {
-    if (!worker) throw new Error("Worker sessions require persisted ownership.");
-    if (worker.type === "channel") {
-      const { getChannelAgentConfiguration } = await import("@channels/server/agent");
-      const configuration = await getChannelAgentConfiguration(worker);
-      const model = configuration.model ?? (await getWorkspaceDefaultModel(sessionId));
-      return {
-        ...configuration,
-        tools: [
-          ...screenTools,
-          ...artifactAppTools,
-          ...appLifecycleTools,
-          ...automationTools,
-          ...createAppStateTools(),
-          ...modelTools,
-          ...configuration.tools,
-        ],
+export async function getSessionConfiguration(sessionId: string) {
+  const { sessionType, worker } = await resolveSessionType(sessionId);
+  if (worker?.type === "channel") {
+    const { getChannelAgentConfiguration } = await import("@channels/server/agent");
+    const configuration = await getChannelAgentConfiguration(worker);
+    const model = configuration.model ?? (await getWorkspaceDefaultModel(sessionId));
+    return {
+      ...configuration,
+      sessionType,
+      tools: [
+        ...screenTools,
+        ...artifactAppTools,
+        ...appLifecycleTools,
+        ...automationTools,
+        ...createAppStateTools(),
+        ...modelTools,
+        ...configuration.tools,
+      ],
+      model,
+      configurationKey: JSON.stringify([
         model,
-        configurationKey: JSON.stringify([
-          model,
-          configuration.directory,
-          configuration.additionalInstructions,
-        ]),
-      };
-    }
+        configuration.directory,
+        configuration.additionalInstructions,
+      ]),
+    };
   }
 
   const policy = worker?.type === "inbox" ? inboxPolicy : sessionTypePolicies[sessionType];
   const appId = worker?.type === "app" ? worker.appId : undefined;
   return {
+    sessionType,
     configurationKey: undefined,
     tools: getSessionTools(policy, { appId }),
     additionalInstructions: policy.instructions.join("\n\n"),
@@ -144,7 +141,6 @@ function getSessionTools(
     ...(policy.staffChannels ? [createChannelMembersTool] : []),
     ...createAppStateTools(appId),
     ...(policy.settings ? settingsTools : []),
-    ...(policy.editor ? editorTools : []),
     ...(policy.inbox ? inboxTools : []),
   ];
 }

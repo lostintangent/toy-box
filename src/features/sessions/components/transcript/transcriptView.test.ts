@@ -30,11 +30,12 @@ const messages: Message[] = [
 ];
 
 test("the full view preserves the canonical messages unchanged", () => {
-  expect(messagesInView(messages, "all")).toEqual(messages);
+  expect(messagesInView(messages, "all")).toEqual({ messages, positions: [...messages.keys()] });
 });
 
 test("responses retain conversation, questions, and errors in order without tool activity", () => {
-  const visible = messagesInView(messages, "responses");
+  const { messages: visible, positions } = messagesInView(messages, "responses", 10);
+  expect(positions).toEqual([10, 12, 14, 15, 17]);
   expect(visible).toMatchObject([
     messages[0],
     { role: "assistant", content: "I'll inspect it." },

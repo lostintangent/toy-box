@@ -1,11 +1,8 @@
-import { ClientOnly } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
 import type { EditorProps } from "@files/components/editor/kinds";
-import type { SessionFile } from "@files/model";
 import { appQueries } from "@apps/queries";
 import { createEditorPane } from "@files/model/panes";
 import { PaneMessage } from "@/shared/ui/pane-message";
-import { AppErrorBoundary, AppHost, appErrorMessage } from "../host/AppHost";
+import { AppHost, AppMount } from "../host/AppHost";
 
 /** Renders a stateless session `.toy` file through the shared app host. */
 export function ArtifactAppPane({ title, file }: EditorProps) {
@@ -20,43 +17,12 @@ export function ArtifactAppPane({ title, file }: EditorProps) {
   }
 
   return (
-    <ClientOnly
-      fallback={<PaneMessage title={`Loading ${title}`} detail="Compiling app…" loading />}
+    <AppMount
+      title={title}
+      bundle={appQueries.artifactBundle(source, file.revision)}
+      resetKey={file.revision}
     >
-      <MountedApp source={source} title={title} revision={file.revision} />
-    </ClientOnly>
-  );
-}
-
-function MountedApp({
-  source,
-  title,
-  revision,
-}: {
-  source: SessionFile;
-  title: string;
-  revision: number;
-}) {
-  const bundleQuery = useQuery(appQueries.artifactBundle(source, revision));
-
-  if (bundleQuery.isPending) {
-    return <PaneMessage title={`Loading ${title}`} detail="Compiling app…" loading />;
-  }
-  if (bundleQuery.isError) {
-    return (
-      <PaneMessage title={`Unable to load ${title}`} detail={appErrorMessage(bundleQuery.error)} />
-    );
-  }
-
-  const { Component: AppComponent, css, scopeId } = bundleQuery.data;
-  return (
-    <AppErrorBoundary title={title} resetKey={revision}>
-      <AppHost
-        scopeId={scopeId}
-        publisherPaneId={createEditorPane(source).id}
-        AppComponent={AppComponent}
-        css={css}
-      />
-    </AppErrorBoundary>
+      {(bundle) => <AppHost bundle={bundle} publisherPaneId={createEditorPane(source).id} />}
+    </AppMount>
   );
 }

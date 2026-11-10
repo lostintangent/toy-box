@@ -8,7 +8,7 @@ import {
   getPersistedWorker,
   registerWorkerSession,
 } from "./database";
-import { sharedMap, sharedSet } from "@/shared/server/processState";
+import { getProcessValue, sharedSet } from "@/shared/server/processState";
 import {
   abortSession,
   createSession,
@@ -34,7 +34,10 @@ export type WorkerReceipt<Value = void> = {
   waitForCompletion: () => Promise<SessionCompletion>;
 };
 
-const startupSweeps = sharedMap<Promise<void>>("worker-startup-sweeps");
+const startupSweep = getProcessValue<{ promise?: Promise<void> }>(
+  "worker-startup-sweep",
+  () => ({}),
+);
 const activeWorkers = sharedSet<string>("active-workers");
 const cancelingWorkers = sharedSet<string>("canceling-workers");
 
@@ -92,7 +95,6 @@ export function superviseWorker<Value = void>(
 
       const starting = createSession(sessionId, message, {
         directory: location?.directory ?? parentDirectory,
-        sessionType: "worker",
         parentSessionId,
         useWorktree: location?.useWorktree ?? false,
         ...(worker.name === undefined ? {} : { name: worker.name }),
@@ -124,7 +126,7 @@ export function superviseWorker<Value = void>(
   }
 }
 
-/** Cancel a worker whether its session stream is still spawning or already running. */
+/** Cancel a worker whether its session is still spawning or already running. */
 export async function abortWorker(sessionId: string): Promise<boolean> {
   if (!activeWorkers.has(sessionId)) return false;
 
@@ -142,15 +144,10 @@ export async function sweepAbandonedWorkers(): Promise<void> {
 }
 
 export function ensureWorkersSwept(): Promise<void> {
-  const existing = startupSweeps.get("startup");
-  if (existing) return existing;
-
-  const sweep = sweepAbandonedWorkers().catch((error) => {
-    if (startupSweeps.get("startup") === sweep) startupSweeps.delete("startup");
+  return (startupSweep.promise ??= sweepAbandonedWorkers().catch((error) => {
+    startupSweep.promise = undefined;
     throw error;
-  });
-  startupSweeps.set("startup", sweep);
-  return sweep;
+  }));
 }
 
 async function applyRetention(

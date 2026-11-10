@@ -28,6 +28,7 @@ import type { SessionActivityStatus } from "@sessions/model/activity";
 import type {
   Channel,
   ChannelAgent,
+  ChannelMessage,
   ChannelState,
   PostChannelMessageInput,
   channelStatus,
@@ -37,6 +38,7 @@ export type {
   AppInstance,
   AppShare,
   Channel,
+  ChannelMessage,
   ChannelState,
   ContextTier,
   ModelConfiguration,
@@ -208,7 +210,7 @@ export declare function useWorkspace<T>(selector: (workspace: AppWorkspace) => T
 
 /** The shared channel catalog, including each team's running agents and unread/reply status. */
 export declare function useChannels(): {
-  channel: Channel;
+  channel: Omit<Channel, "tasks">;
   agents: (ChannelAgent & { isRunning: boolean })[];
   status: ReturnType<typeof channelStatus>;
 }[];
@@ -221,7 +223,9 @@ export declare function useChannel(
   state: ChannelState | undefined;
   unreadAfter: number | null | undefined;
   loadPrevious(throughSequence?: number): Promise<void>;
-  postMessage(message: Pick<PostChannelMessageInput, "content" | "attachments">): void;
+  postMessage(
+    message: Pick<PostChannelMessageInput, "content" | "attachments">,
+  ): Promise<ChannelMessage>;
 };
 
 export declare function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): WorkspaceFileState;
@@ -240,6 +244,12 @@ export type AppHandle<T = JSONType> = Omit<AppInstance, "state"> & {
 };
 
 export declare function useApp(): AppHandle;
+
+/** The file an editor pane opened this app on, with that pane's file lifecycle and mode. */
+export type OpenedFile = WorkspaceFileState & { file: WorkspaceFile; mode: WorkspaceFileMode };
+
+/** The file this app renders when it opens one in an editor pane, or null in any other surface. */
+export declare function useOpenedFile(): OpenedFile | null;
 
 export type WorkspaceFileState = {
   /** Last known on-disk content. The mounted surface owns its editing buffer. */

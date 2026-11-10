@@ -1,49 +1,24 @@
-import { describe, expect, mock, onTestFinished, test } from "bun:test";
+import { describe, expect, onTestFinished, test } from "bun:test";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
-import { createTestDatabase } from "@/server/database";
-import { addHyperSession, deleteHyperState } from "./hyperSessions";
+import { openTestDatabase } from "@/server/testFixtures";
 import { deleteSavedDraft } from "./drafts";
 import type { WorkspaceEvent } from "@workspace/model/events";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
-
-let currentDb: Bun.SQL | undefined;
-
-mock.module("@/server/database", () => ({
-  getStateDatabase: async (options?: { createIfMissing?: boolean }) => {
-    if (!currentDb && options?.createIfMissing === false) return null;
-    if (!currentDb) throw new Error("Test database has not been opened");
-    return currentDb;
-  },
-}));
-
-const { applyWorkspaceAction, getWorkspaceState, unpinSession, updateSettings } = await import(".");
-
-async function openWorkspaceTestDatabase(): Promise<void> {
-  currentDb = await createTestDatabase();
-  onTestFinished(async () => {
-    await currentDb?.close();
-    currentDb = undefined;
-  });
-}
-
-function cleanup(sessionId: string): void {
-  deleteSavedDraft(`session:${sessionId}`);
-  deleteHyperState(sessionId);
-}
+import { deleteSessionWorkspaceState, getWorkspaceState, updateDraft, updateSettings } from ".";
 
 describe("workspace state", () => {
   test("persists settings as one complete document", async () => {
-    await openWorkspaceTestDatabase();
+    const db = await openTestDatabase();
     expect((await getWorkspaceState()).settings).toEqual(DEFAULT_SETTINGS);
 
     const settings = await updateSettings({ accentColor: "#123abc", pinnedSessionIds: ["a"] });
 
-    const rows = await currentDb!<{ id: number; value: string }[]>`SELECT id, value FROM settings`;
+    const rows = await db<{ id: number; value: string }[]>`SELECT id, value FROM settings`;
     expect(Array.from(rows)).toEqual([{ id: 1, value: JSON.stringify(settings) }]);
   });
 
   test("merges precise settings updates before broadcasting their complete value", async () => {
-    await openWorkspaceTestDatabase();
+    await openTestDatabase();
     const initial = {
       ...(await getWorkspaceState()).settings,
       defaultModel: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
@@ -70,7 +45,7 @@ describe("workspace state", () => {
   });
 
   test("serializes concurrent settings updates", async () => {
-    await openWorkspaceTestDatabase();
+    await openTestDatabase();
 
     await Promise.all([
       updateSettings({ accentColor: "#123abc" }),
@@ -83,9 +58,9 @@ describe("workspace state", () => {
     });
   });
 
-  test("deleting a session drops only its own pin", async () => {
-    await openWorkspaceTestDatabase();
-    await updateSettings({ pinnedSessionIds: ["kept", "deleted"] });
+  test("deleting a session drops only its own pin and Hyper membership", async () => {
+    await openTestDatabase();
+    await updateSettings({ pinnedSessionIds: ["kept", "deleted"], hyperSessionId: "hyper" });
 
     const events: WorkspaceEvent[] = [];
     const unsubscribe = subscribeWorkspaceEvents((event) => {
@@ -93,30 +68,34 @@ describe("workspace state", () => {
     });
     onTestFinished(unsubscribe);
 
-    await unpinSession("deleted");
-    expect((await getWorkspaceState()).settings.pinnedSessionIds).toEqual(["kept"]);
+    await deleteSessionWorkspaceState("deleted");
+    expect((await getWorkspaceState()).settings).toMatchObject({
+      pinnedSessionIds: ["kept"],
+      hyperSessionId: "hyper",
+    });
 
-    // Deleting a session that was never pinned commits and broadcasts nothing.
-    await unpinSession("never-pinned");
-    expect(events).toHaveLength(1);
+    await deleteSessionWorkspaceState("hyper");
+    expect((await getWorkspaceState()).settings).toMatchObject({
+      pinnedSessionIds: ["kept"],
+      hyperSessionId: null,
+    });
+
+    // Deleting a session that was neither pinned nor Hyper commits and broadcasts nothing.
+    await deleteSessionWorkspaceState("unrelated");
+    expect(events).toHaveLength(2);
   });
 
-  test("snapshot exposes a session's draft and Hyper membership", async () => {
+  test("snapshot exposes a session's draft", async () => {
+    await openTestDatabase();
     const sessionId = `workspace-snapshot-${crypto.randomUUID()}`;
-    onTestFinished(() => cleanup(sessionId));
+    onTestFinished(() => deleteSavedDraft(`session:${sessionId}`));
 
-    addHyperSession(sessionId);
-    applyWorkspaceAction({
-      type: "draft.changed",
-      key: `session:${sessionId}`,
-      draft: { text: "hello", origin: "client-a", updatedAt: 0 },
-    });
+    updateDraft(`session:${sessionId}`, "hello", "client-a");
 
     const state = await getWorkspaceState();
     expect(state.drafts[`session:${sessionId}`]).toMatchObject({
       text: "hello",
       origin: "client-a",
     });
-    expect(state.hyperSessionIds).toContain(sessionId);
   });
 });

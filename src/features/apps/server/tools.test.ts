@@ -1,27 +1,11 @@
 import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { afterAll, expect, mock, onTestFinished, spyOn, test } from "bun:test";
-import * as databaseModule from "@/server/database";
+import { expect, onTestFinished, spyOn, test } from "bun:test";
+import { openTestDatabase } from "@/server/testFixtures";
 import { AppDatabase } from "@apps/server/database";
 import { resolveSessionArtifactPath } from "@files/server/paths";
 import { appDefinitionRegistry } from "./definitions";
-
-const realDatabaseModule = { ...databaseModule };
-let currentDb: Bun.SQL | undefined;
-
-mock.module("@/server/database", () => ({
-  ...realDatabaseModule,
-  getStateDatabase: async () => {
-    if (!currentDb) throw new Error("Test database has not been opened.");
-    return currentDb;
-  },
-}));
-
-const { artifactAppTools, createAppStateTools } = await import("./tools");
-
-afterAll(() => {
-  mock.module("@/server/database", () => realDatabaseModule);
-});
+import { artifactAppTools, createAppStateTools } from "./tools";
 
 test("app-owned state tools read and update only their owning app", async () => {
   const definitionId = "test-board";
@@ -30,17 +14,13 @@ test("app-owned state tools read and update only their owning app", async () => 
     title: "Board",
     color: "#f59e0b",
     accepts: [],
+    opens: [],
     revision: "definition-a",
     state: { schema: { type: "object" }, default: {} },
     tsx: "export default function App() { return null; }",
   });
   onTestFinished(() => getDefinition.mockRestore());
-  currentDb = await databaseModule.createTestDatabase();
-  onTestFinished(async () => {
-    await currentDb?.close();
-    currentDb = undefined;
-  });
-  const apps = new AppDatabase(currentDb);
+  const apps = new AppDatabase(await openTestDatabase());
   const owned = await apps.create({
     definitionId,
     title: "Owned",
@@ -102,12 +82,7 @@ test("listing saved app summaries is independent of definitions and pending shar
     definitions.mockRestore();
     shares.mockRestore();
   });
-  currentDb = await databaseModule.createTestDatabase();
-  onTestFinished(async () => {
-    await currentDb?.close();
-    currentDb = undefined;
-  });
-  const { state: _state, ...summary } = await new AppDatabase(currentDb).create({
+  const { state: _state, ...summary } = await new AppDatabase(await openTestDatabase()).create({
     definitionId: "board",
     title: "Saved board",
     color: "#f59e0b",

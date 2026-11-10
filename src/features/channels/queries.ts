@@ -7,7 +7,10 @@ import {
   type ChannelMessage,
 } from "./model";
 import { listChannels } from "@channels/server/functions";
-import { ChannelStreamError, streamChannel } from "./stream";
+import { reducedQuery } from "@/shared/query";
+import { EventStreamError } from "@/shared/sse";
+import { reduceChannelList } from "./model/catalog";
+import { streamChannel } from "./stream";
 
 /** Browser arrival is distinct from cached content and from later live updates. */
 export type ChannelQueryData = ChannelState & {
@@ -15,20 +18,14 @@ export type ChannelQueryData = ChannelState & {
 };
 
 export const channelQueries = {
-  all: () => ["channels"] as const,
-  listKey: () => [...channelQueries.all(), "list"] as const,
-  list: () =>
-    queryOptions({
-      queryKey: channelQueries.listKey(),
-      queryFn: listChannels,
-      staleTime: Infinity,
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-    }),
-  details: () => [...channelQueries.all(), "detail"] as const,
+  list: reducedQuery({
+    queryKey: ["channels", "list"],
+    fetch: ({ signal }) => listChannels({ signal }),
+    reduce: reduceChannelList,
+  }),
   detail: (channelId: string) =>
     queryOptions({
-      queryKey: [...channelQueries.details(), channelId] as const,
+      queryKey: ["channels", "detail", channelId] as const,
       queryFn: streamedQuery<ChannelObservationEvent, ChannelQueryData | null>({
         initialValue: null,
         refetchMode: "append",
@@ -57,12 +54,12 @@ export const channelQueries = {
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
       retry: (_count, error) =>
-        !(error instanceof ChannelStreamError && error.status < 500 && error.status !== 429),
+        !(error instanceof EventStreamError && error.status < 500 && error.status !== 429),
       retryDelay: 1_000,
     }),
   messagesBefore: (channelId: string, beforeSequence: number) =>
     queryOptions({
-      queryKey: [...channelQueries.details(), channelId, "before", beforeSequence] as const,
+      queryKey: ["channels", "detail", channelId, "before", beforeSequence] as const,
       queryFn: async ({ signal }) => {
         const response = await fetch(
           `/api/v1/channels/${encodeURIComponent(channelId)}/messages?before=${beforeSequence}`,

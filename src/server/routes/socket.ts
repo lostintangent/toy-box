@@ -1,4 +1,4 @@
 import { defineWebSocketHandler } from "nitro";
 import { socketHooks } from "../socket";
 
-export default defineWebSocketHandler(socketHooks);
+export default defineWebSocketHandler((event) => socketHooks(event.req));

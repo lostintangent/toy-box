@@ -2,14 +2,14 @@ import { z } from "zod";
 
 const positiveIntSchema = z.number().int().positive();
 
+/** The tab a socket shows the PTY of, and its size, named in the socket's URL. */
+export const terminalAttachSchema = z.object({
+  clientId: z.string().min(1),
+  cols: z.coerce.number().int().positive().optional(),
+  rows: z.coerce.number().int().positive().optional(),
+});
+
 export const terminalClientMessageSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("init"),
-    clientId: z.string().min(1),
-    cols: positiveIntSchema.optional(),
-    rows: positiveIntSchema.optional(),
-    shell: z.string().optional(),
-  }),
   z.object({
     type: z.literal("resize"),
     cols: positiveIntSchema,

@@ -59,19 +59,13 @@ test("deleting an app removes only its workers", () => {
   expect(workers(client)).toBe(remaining);
 });
 
-test("leaves an unloaded list for its first read", () => {
-  const client = createClient();
-  cache.applyEvent(client, { type: "worker.started", worker: fileWorker });
-  expect(workers(client)).toBeUndefined();
-});
-
-function createClient(initial?: Worker[]): QueryClient {
+function createClient(initial: Worker[]): QueryClient {
   const client = new QueryClient();
   onTestFinished(() => client.clear());
-  if (initial) client.setQueryData(workerQueries.activeKey(), initial);
+  client.setQueryData(workerQueries.active.queryKey, initial);
   return client;
 }
 
 function workers(client: QueryClient): Worker[] | undefined {
-  return client.getQueryData(workerQueries.activeKey());
+  return client.getQueryData(workerQueries.active.queryKey);
 }

@@ -25,6 +25,7 @@ import {
   deriveHyperRootPanes,
   type HyperSessionState,
 } from "@workspace/hooks/layout/useHyperSession";
+import { useLayoutPref } from "@workspace/hooks/layout/layoutPrefs";
 import { sessionMutations } from "@sessions/mutations";
 import { createSessionPane } from "@sessions/model/panes";
 import { useEditorAutoFocus } from "@sessions/useEditorAutoFocus";
@@ -41,7 +42,6 @@ type DragState = {
 
 export interface HyperSessionProps {
   state: HyperSessionState;
-  onPositionChange: (sessionId: string, position: OverlayPosition) => void;
   onRemove: () => void;
   onMinimize: () => void;
   onPromote: (sessionId: string) => void;
@@ -87,7 +87,6 @@ function TrafficLight({
 
 export function HyperSession({
   state,
-  onPositionChange,
   onRemove,
   onMinimize,
   onPromote,
@@ -95,6 +94,7 @@ export function HyperSession({
   onCloseApp,
 }: HyperSessionProps) {
   const deleteMutation = useMutation(sessionMutations.deleteSession(state.sessionId));
+  const [position, setPosition] = useLayoutPref("hyperPosition");
   const dragRef = useRef<DragState | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   // The pager portals its toolbar (dots + the active pane's actions) into this
@@ -106,13 +106,14 @@ export function HyperSession({
     const handleResize = () => {
       // A live drag clamps every move itself; let it win until release.
       if (dragRef.current) return;
-      onPositionChange(state.sessionId, clampViewportOverlayPosition(state.position));
+      const clamped = clampViewportOverlayPosition(position);
+      if (clamped.x !== position.x || clamped.y !== position.y) setPosition(clamped);
     };
 
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [onPositionChange, state.position, state.sessionId]);
+  }, [position, setPosition]);
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
@@ -124,9 +125,9 @@ export function HyperSession({
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      originX: state.position.x,
-      originY: state.position.y,
-      position: state.position,
+      originX: position.x,
+      originY: position.y,
+      position,
     };
   }
 
@@ -163,7 +164,7 @@ export function HyperSession({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
 
-    onPositionChange(state.sessionId, drag.position);
+    setPosition(drag.position);
   }
 
   // The hyper session hosts its own mini-workspace: its interactive session
@@ -187,8 +188,8 @@ export function HyperSession({
       className={cn("fixed z-40 flex flex-col", SESSION_OVERLAY_BASE_CLASS)}
       style={{
         ...VIEWPORT_OVERLAY_BOUNDS,
-        left: state.position.x,
-        top: state.position.y,
+        left: position.x,
+        top: position.y,
       }}
     >
       <div

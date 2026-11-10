@@ -5,6 +5,7 @@ import { getRequest } from "@tanstack/react-start/server";
 import type { RealtimeToken } from "@tanstack/ai";
 import type { ServerRequest } from "nitro/types";
 import {
+  findSessions,
   listSessions as listProviderSessions,
   listSkills as listProviderSkills,
 } from "@sessions/server/providers";
@@ -24,23 +25,21 @@ import {
   getSessionSnapshot,
   rewindSession as rewindRuntimeSession,
   steerQueuedMessage as steerRuntimeQueuedMessage,
-  streamSession as streamSessionEvents,
   waitForSessions,
 } from "@sessions/server/runtime";
 import type { SessionCompletion, SessionSkill, SessionState } from "../model";
+import { latestMessages, messagesBefore } from "../model/transcriptPages";
 import {
   answerSessionQuestionInputSchema,
-  sessionLaunchSchema,
   createSessionInputSchema,
   deliverMessageInputSchema,
   listSkillsInputSchema,
-  sendSystemMessageInputSchema,
   queuedMessageInputSchema,
+  querySessionMessagesInputSchema,
   renameSessionInputSchema,
   resolveSessionContextInputSchema,
   rewindSessionInputSchema,
   sessionInputSchema,
-  streamSessionRequestSchema,
   waitForSessionInputSchema,
 } from "../model/protocol";
 import { readSessionCatalog } from "@/server/managedSessions";
@@ -52,7 +51,10 @@ const withSessionId = createMiddleware({ type: "function" }).validator(sessionIn
 
 /** Fetch durable session list metadata in a single round-trip. */
 export const getSessionsState = createServerFn({ method: "GET" }).handler(() =>
-  readSessionCatalog(() => Promise.all([listProviderSessions(), getAllSessionWorktrees()])),
+  readSessionCatalog({
+    list: (limit) => Promise.all([listProviderSessions(limit), getAllSessionWorktrees()]),
+    find: findSessions,
+  }),
 );
 
 /** Fetch every non-idle session's current activity. */
@@ -88,20 +90,29 @@ export const createVoiceToken = createServerFn({ method: "POST" }).handler(
 export const listSkills = createServerFn({ method: "POST" })
   .validator(listSkillsInputSchema)
   .handler(async ({ data }): Promise<SessionSkill[]> => {
-    return listProviderSkills(data.cwd, data.sessionType, data.provider);
+    return listProviderSkills(data.cwd, data.provider);
   });
 
 export const resolveSessionContext = createServerFn({ method: "POST" })
   .validator(resolveSessionContextInputSchema)
   .handler(({ data }) => resolveGitContext(data.directory));
 
-/** A session's reduced transcript snapshot, served from the cheapest source
- *  that is still truthful: the live stream's in-memory state, then the
- *  cold-path ladder (snapshot cache, then read-only provider history replay,
- *  which repopulates the cache for the next open). */
+/** A session's reduced transcript snapshot with its latest page of messages,
+ *  served from the cheapest source that is still truthful: the live execution's
+ *  in-memory state, then the cold-path ladder (snapshot cache, then read-only
+ *  provider history replay, which repopulates the cache for the next open). */
 export const querySession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(({ data }): Promise<SessionState> => getSessionSnapshot(data.sessionId));
+  .handler(async ({ data }): Promise<SessionState> =>
+    latestMessages(await getSessionSnapshot(data.sessionId)),
+  );
+
+/** The page of messages before position `before`, ending with that message. */
+export const querySessionMessages = createServerFn({ method: "POST" })
+  .validator(querySessionMessagesInputSchema)
+  .handler(async ({ data }) =>
+    messagesBefore((await getSessionSnapshot(data.sessionId)).messages, data.before),
+  );
 
 /** Wait for the announced, live, or latest persisted execution of one session. */
 export const waitForSession = createServerFn({ method: "POST" })
@@ -111,40 +122,6 @@ export const waitForSession = createServerFn({ method: "POST" })
     return completion!;
   });
 
-export const streamSession = createServerFn({ method: "POST" })
-  .validator(streamSessionRequestSchema)
-  .handler(async function* ({ data }) {
-    const request = getRequest() as ServerRequest;
-    request.runtime?.bun?.server.timeout(request, 0);
-    const subscription = await streamSessionEvents(data);
-    if (!subscription) return;
-
-    // Returning TanStack's serialized client iterator does not reach this
-    // underlying subscription. The browser instead aborts its fetch; Nitro/Bun
-    // exposes that disconnect through request.signal, and this bridge releases
-    // the server subscriber without affecting the session's work.
-    const disconnect = () => void subscription.return();
-    request.signal.addEventListener("abort", disconnect, { once: true });
-    if (request.signal.aborted) disconnect();
-
-    yield* subscription;
-  });
-
-/** Create a session and run its first turn without any client stream attached.
- *  Clients receive progress through the broadcast plane alone (upsert →
- *  running → idle/unread), the same way automation and agent-spawned sessions
- *  surface. Resolves once the turn has opened, not when it completes. */
-export const startSession = createServerFn({ method: "POST" })
-  .validator(sessionLaunchSchema)
-  .handler(async ({ data }): Promise<{ sessionId: string }> => {
-    const sessionId = crypto.randomUUID();
-    await createRuntimeSession(sessionId, data.message, {
-      ...data.location,
-      sessionType: "standard",
-    });
-    return { sessionId };
-  });
-
 /** Reserve a provider-independent draft and its optional initial artifact. */
 export const createSession = createServerFn({ method: "POST" })
   .validator(createSessionInputSchema)
@@ -152,20 +129,16 @@ export const createSession = createServerFn({ method: "POST" })
     sessionRegistry.createSessionRecord(sessionId, options),
   );
 
-/** Deliver a follow-up message, optionally requesting immediate delivery. */
+/** Deliver a message, optionally requesting immediate delivery. A location creates the
+ *  session with it as the first message. Clients follow the work separately. */
 export const deliverMessage = createServerFn({ method: "POST" })
   .validator(deliverMessageInputSchema)
-  .handler(async ({ data }): Promise<{ disposition: "started" | "queued" }> => {
-    const receipt = await deliverSessionMessage(data.sessionId, data.message);
-    return { disposition: receipt.disposition };
-  });
-
-/** Deliver a system message. Active Sessions queue equivalent messages together;
- *  idle historical Sessions resume and process them. */
-export const sendSystemMessage = createServerFn({ method: "POST" })
-  .validator(sendSystemMessageInputSchema)
-  .handler(async ({ data }): Promise<void> => {
-    await deliverSessionMessage(data.sessionId, { systemMessage: data.message });
+  .handler(async ({ data: { sessionId, message, location } }): Promise<void> => {
+    // Provider creation or resumption can outlast Bun's idle request timeout.
+    const request = getRequest() as ServerRequest;
+    request.runtime?.bun?.server.timeout(request, 0);
+    if (location) await createRuntimeSession(sessionId, message, location);
+    else await deliverSessionMessage(sessionId, message);
   });
 
 export const cancelQueuedMessage = createServerFn({ method: "POST" })
@@ -186,7 +159,7 @@ export const answerSessionQuestion = createServerFn({ method: "POST" })
   );
 
 /** Abort the currently processing message in a session.
- *  Finishes the stream after interrupting SDK work. */
+ *  Finishes the execution after interrupting SDK work. */
 export const abortSession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
   .handler(async ({ data }): Promise<boolean> => {
@@ -197,8 +170,8 @@ export const abortSession = createServerFn({ method: "POST" })
 /** Rewind an idle local session to immediately before one root user message. */
 export const rewindSession = createServerFn({ method: "POST" })
   .validator(rewindSessionInputSchema)
-  .handler(({ data }): Promise<SessionState> =>
-    rewindRuntimeSession(data.sessionId, data.timestamp),
+  .handler(async ({ data }): Promise<SessionState> =>
+    latestMessages(await rewindRuntimeSession(data.sessionId, data.timestamp)),
   );
 
 export const deleteSession = createServerFn({ method: "POST" })

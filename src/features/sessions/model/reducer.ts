@@ -1,6 +1,6 @@
 // Canonical session state reducer — the single transition function for
 // Session state. Three consumers feed it the same SessionEvents:
-//   - server live streaming (SessionStream#emit, server/runtime/sessionStream.ts)
+//   - server live streaming (SessionExecution#emit, server/runtime/sessionExecution.ts)
 //   - server history replay (server/state/snapshots.ts)
 //   - the client, for live SSE events and the buffered-event replay a
 //     late-connecting client catches up on (useSession#applyEvent)
@@ -23,6 +23,7 @@
 // they publish state to React without obscuring what changed.
 
 import { workspaceFileId, type WorkspaceFile } from "@files/model";
+import { computeFileDiffStats, getToolCallFileDiffs, sumFileDiffStats } from "./fileDiffs";
 import { hasBlockingSessionQuestion } from "./questions";
 import type {
   SessionCanvas,
@@ -227,7 +228,12 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
 
       // Deferred completions can arrive after a message boundary, so search
       // the transcript rather than assuming the call is on the last message.
-      updateToolCall(state, event.toolCallId, complete);
+      const completed = updateToolCall(state, event.toolCallId, complete);
+      const fileDiffs = completed && getToolCallFileDiffs(completed);
+      if (fileDiffs) {
+        const edit = computeFileDiffStats(fileDiffs);
+        state.diff = state.diff ? sumFileDiffStats([state.diff, edit]) : edit;
+      }
       return;
     }
 
@@ -540,12 +546,12 @@ function upsertToolCallOnLastAssistant(state: SessionState, toolCall: ToolCall):
   });
 }
 
-/** Replace a tool call wherever it lives in the transcript. */
+/** Replace a tool call wherever it lives in the transcript, returning the replacement. */
 function updateToolCall(
   state: SessionState,
   toolCallId: string,
   update: (toolCall: ToolCall) => ToolCall,
-): void {
+): ToolCall | undefined {
   for (let messageIndex = state.messages.length - 1; messageIndex >= 0; messageIndex--) {
     const message = state.messages[messageIndex];
     if (message.role !== "assistant" || !message.toolCalls) continue;
@@ -555,13 +561,13 @@ function updateToolCall(
 
     const current = message.toolCalls[toolCallIndex];
     const next = update(current);
-    if (next === current) return;
+    if (next === current) return next;
 
     replaceMessage(state, messageIndex, {
       ...message,
       toolCalls: replaceAt(message.toolCalls, toolCallIndex, next),
     });
-    return;
+    return next;
   }
 }
 

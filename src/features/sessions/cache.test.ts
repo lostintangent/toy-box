@@ -1,20 +1,10 @@
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { Session, SessionState } from "./model";
-import { applySessionEvent, createInitialSessionState } from "./model/reducer";
+import { createInitialSessionState } from "./model/reducer";
 import type { SessionsState } from "./model";
-import type { SessionsActivity } from "./model/activity";
-import {
-  createEmptySessionsState,
-  selectNonWorkerSessions,
-  sessionActivityJournal,
-  sessionQueries,
-} from "./queries";
-import cache, {
-  invalidateSessionsStateQuery,
-  recreateSessionInCache,
-  snapshotSessionsState,
-} from "./cache";
+import { createEmptySessionsState, selectNonWorkerSessions, sessionQueries } from "./queries";
+import cache, { repairFailedDraft } from "./cache";
 
 function createSession(sessionId: string): Session {
   return {
@@ -26,20 +16,36 @@ function createSession(sessionId: string): Session {
 }
 
 function seedState(queryClient: QueryClient, state: Partial<SessionsState>): void {
-  queryClient.setQueryData<SessionsState>(sessionQueries.stateKey(), {
+  queryClient.setQueryData(sessionQueries.state.queryKey, {
     ...createEmptySessionsState(),
     ...state,
   });
 }
 
+/** Watches a session's detail, recording each observation Query starts without settling it. */
+function watchDetail(queryClient: QueryClient, sessionId: string) {
+  const observations: Array<ReturnType<typeof Promise.withResolvers<SessionState>>> = [];
+  const observe = () => {
+    observations.push(Promise.withResolvers<SessionState>());
+    return observations.at(-1)!.promise;
+  };
+  const watcher = new QueryObserver(queryClient, {
+    queryKey: sessionQueries.detail(sessionId).queryKey,
+    queryFn: observe,
+  });
+  onTestFinished(watcher.subscribe(() => {}));
+  return observations;
+}
+
 function readState(queryClient: QueryClient): SessionsState {
-  return snapshotSessionsState(queryClient) ?? createEmptySessionsState();
+  return queryClient.getQueryData(sessionQueries.state.queryKey) ?? createEmptySessionsState();
 }
 
 describe("session query cache", () => {
   test("first-turn promotion and renaming retain the session's identity and initial artifact", () => {
     const queryClient = new QueryClient();
     const sessionId = "toy-box-upserted-session";
+    seedState(queryClient, {});
 
     cache.applyEvent(queryClient, {
       type: "session.upserted",
@@ -118,6 +124,7 @@ describe("session query cache", () => {
 
   test("retains Channel worker metadata without projecting it as an ordinary session", () => {
     const queryClient = new QueryClient();
+    seedState(queryClient, {});
 
     cache.applyEvent(queryClient, {
       type: "session.upserted",
@@ -138,6 +145,7 @@ describe("session query cache", () => {
 
   test("does not synthesize a missing session from an unclassified metadata patch", () => {
     const queryClient = new QueryClient();
+    seedState(queryClient, {});
 
     cache.applyEvent(queryClient, {
       type: "session.upserted",
@@ -180,14 +188,14 @@ describe("session query cache", () => {
         sessionId: "recent",
         at: 1,
       });
-      expect(client.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(false);
+      expect(client.getQueryState(sessionQueries.state.queryKey)?.isInvalidated).toBe(false);
 
       cache.applyEvent(client, {
         type: `session.${status}`,
         sessionId: "older",
         at: 1,
       });
-      expect(client.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionQueries.state.queryKey)?.isInvalidated).toBe(true);
       client.clear();
     },
   );
@@ -218,26 +226,6 @@ describe("session query cache", () => {
     expect(state.worktrees).toEqual({});
   });
 
-  test("a catalog refresh that later deletions replace settles quietly", async () => {
-    const queryClient = new QueryClient();
-    const sessionId = "toy-box-pinned";
-    seedState(queryClient, { sessions: [createSession(sessionId)] });
-    const observer = new QueryObserver(queryClient, {
-      ...sessionQueries.state(),
-      queryFn: () => Bun.sleep(5).then(() => createEmptySessionsState()),
-    });
-    onTestFinished(observer.subscribe(() => {}));
-
-    // Deleting a pinned session refreshes the catalog for the pin change, then applies its
-    // deletion locally and again when the server echoes it, each replacing the read in flight.
-    const refresh = invalidateSessionsStateQuery(queryClient);
-    cache.applyEvent(queryClient, { type: "session.deleted", sessionId });
-    await Bun.sleep(1);
-    cache.applyEvent(queryClient, { type: "session.deleted", sessionId });
-
-    expect(await refresh).toBeUndefined();
-  });
-
   test("touch invalidates the session list and affected detail", () => {
     const queryClient = new QueryClient();
     const sessionId = "toy-box-touched";
@@ -251,7 +239,7 @@ describe("session query cache", () => {
       sessionId: sessionId,
     });
 
-    expect(queryClient.getQueryState(sessionQueries.stateKey())?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(sessionQueries.state.queryKey)?.isInvalidated).toBe(true);
     expect(
       queryClient.getQueryState(sessionQueries.detail(sessionId).queryKey)?.isInvalidated,
     ).toBe(true);
@@ -260,141 +248,48 @@ describe("session query cache", () => {
     ).toBe(false);
   });
 
-  test("a refresh in flight when a session is read cannot bring its unread dot back", async () => {
+  test("activity and refreshes resume a watched detail's ended observation, never a running one", async () => {
     const queryClient = new QueryClient();
     onTestFinished(() => queryClient.clear());
-    queryClient.setQueryData<SessionsActivity>(sessionQueries.activityKey(), {
-      a: { status: "unread" },
-    });
-    const snapshot = Promise.withResolvers<SessionsActivity>();
-    const refresh = queryClient.fetchQuery({
-      ...sessionQueries.activity(),
-      queryFn: ({ client }) => sessionActivityJournal.read(client, () => snapshot.promise),
-      staleTime: 0,
-    });
+    const sessionId = "observed";
+    seedState(queryClient, { sessions: [createSession(sessionId)] });
+    const observations = watchDetail(queryClient, sessionId);
 
-    cache.applyEvent(queryClient, { type: "session.read", sessionId: "a" });
-    snapshot.resolve({ a: { status: "unread" } });
+    cache.applyEvent(queryClient, { type: "session.running", sessionId, at: 1 });
+    await cache.refresh(queryClient);
+    expect(observations).toHaveLength(1);
 
-    expect(await refresh).toEqual({});
-    expect(queryClient.getQueryData(sessionQueries.activityKey())).toEqual({});
+    observations[0]!.resolve(createInitialSessionState());
+    await Bun.sleep(0);
+    cache.applyEvent(queryClient, { type: "session.unread", sessionId });
+    expect(observations).toHaveLength(2);
+
+    observations[1]!.resolve(createInitialSessionState());
+    await Bun.sleep(0);
+    void cache.refresh(queryClient);
+    expect(observations).toHaveLength(3);
+  });
+
+  test("a failed draft send resumes the observation only of a session the server created", async () => {
+    const queryClient = new QueryClient();
+    onTestFinished(() => queryClient.clear());
+    const sessionId = "draft";
+    // The pane still watches the draft its optimistic send promoted until it renders the repair.
+    seedState(queryClient, { sessions: [createSession(sessionId)] });
+    const observations = watchDetail(queryClient, sessionId);
+
+    await repairFailedDraft(queryClient, sessionId);
+    expect(observations).toHaveLength(1);
+
+    seedState(queryClient, {
+      sessions: [{ ...createSession(sessionId), provider: { id: "copilot" } }],
+    });
+    await repairFailedDraft(queryClient, sessionId);
+    expect(observations).toHaveLength(2);
   });
 });
 
 describe("session replacement and deletion cache boundary", () => {
-  test("optimistic recreation replaces execution state and cancels older reads", async () => {
-    const client = new QueryClient();
-    const sessionId = "recreated-session";
-    const queryKey = sessionQueries.detail(sessionId).queryKey;
-    const otherSession = createSession("other-session");
-    seedState(client, {
-      sessions: [
-        {
-          ...createSession(sessionId),
-          provider: { id: "copilot", sessionId: "previous-native-id" },
-          context: { directory: "/previous" },
-          artifactPath: "old.md",
-        },
-        otherSession,
-      ],
-      ownership: { [sessionId]: { type: "worker", parentSessionId: "previous-parent" } },
-      worktrees: {
-        [sessionId]: { path: "/previous", branch: "old", baseBranch: "main" },
-      },
-    });
-    const previous = {
-      ...createInitialSessionState({
-        messages: [{ role: "assistant", content: "Previous run" }],
-        artifacts: [{ path: "old.md", updatedAt: 1 }],
-        model: { provider: "copilot", name: "previous-model" },
-      }),
-      lastSeenEventId: 100,
-    };
-    client.setQueryData(queryKey, previous);
-    const catalog = Promise.withResolvers<SessionsState>();
-    const history = Promise.withResolvers<SessionState>();
-    const oldCatalog = readState(client);
-    const reads = Promise.allSettled([
-      client.fetchQuery({ queryKey: sessionQueries.stateKey(), queryFn: () => catalog.promise }),
-      client.fetchQuery({ queryKey, queryFn: () => history.promise }),
-    ]);
-    const message = {
-      clientId: "first-message",
-      content: "Start fresh",
-      model: { provider: "codex", name: "new-model" },
-    };
-
-    await recreateSessionInCache(client, sessionId, message, {
-      title: "Replacement",
-      sessionType: "standard",
-    });
-    const replacement = readState(client);
-    expect(replacement).toEqual({
-      sessions: [
-        {
-          id: sessionId,
-          title: "Replacement",
-          createdAt: expect.any(Date),
-          updatedAt: expect.any(Date),
-        },
-        otherSession,
-      ],
-      ownership: {},
-      worktrees: {},
-    });
-    const optimistic = client.getQueryData<SessionState>(queryKey)!;
-    expect(optimistic).toMatchObject({
-      model: message.model,
-      status: "thinking",
-      artifacts: [],
-    });
-    expect(optimistic.messages).toEqual([
-      expect.objectContaining({
-        role: "user",
-        clientId: message.clientId,
-        content: message.content,
-      }),
-    ]);
-    expect(optimistic.lastSeenEventId).toBeUndefined();
-
-    catalog.resolve(oldCatalog);
-    history.resolve(previous);
-    await reads;
-    expect(readState(client)).toEqual(replacement);
-    expect(client.getQueryData<SessionState>(queryKey)).toEqual(optimistic);
-    client.clear();
-  });
-
-  test("the server acknowledges an optimistic draft and replaces its starting message by client ID", async () => {
-    const client = new QueryClient();
-    const sessionId = "new-session";
-    const queryKey = sessionQueries.detail(sessionId).queryKey;
-    await recreateSessionInCache(client, sessionId, {
-      clientId: "first-message",
-      content: "Cached prompt",
-    });
-    cache.applyEvent(client, {
-      type: "session.upserted",
-      session: {
-        id: sessionId,
-        createdAt: "2026-10-01T00:00:00.000Z",
-        sessionType: "standard",
-      },
-    });
-    const acknowledged = client.getQueryData<SessionState>(queryKey)!;
-    expect(acknowledged.messages).toEqual([
-      expect.objectContaining({ clientId: "first-message", content: "Cached prompt" }),
-    ]);
-    const streamed = applySessionEvent(acknowledged, {
-      type: "user_message",
-      clientId: "first-message",
-      content: "Authoritative prompt",
-    });
-    expect(streamed.messages).toHaveLength(1);
-    expect(streamed.messages[0]).toMatchObject({ content: "Authoritative prompt" });
-    client.clear();
-  });
-
   test("a replacement upsert retires the previous transcript without removing the session", async () => {
     const client = new QueryClient();
     const sessionId = "automation";
@@ -471,16 +366,6 @@ describe("session replacement and deletion cache boundary", () => {
       updatedAt: new Date(0).toISOString(),
       nextRunAt: new Date(1).toISOString(),
     };
-    test("owner events do not seed an incomplete session catalog", () => {
-      const client = new QueryClient();
-      onTestFinished(() => client.clear());
-      cache.applyEvent(client, {
-        type: "automation.upserted",
-        automation,
-      });
-      expect(snapshotSessionsState(client)).toBeUndefined();
-    });
-
     test("ownership precedes the session and survives metadata changes and backing-session deletion", () => {
       const client = new QueryClient();
       onTestFinished(() => client.clear());
@@ -513,77 +398,6 @@ describe("session replacement and deletion cache boundary", () => {
         automationId: automation.id,
       });
       expect(readState(client)).toEqual(createEmptySessionsState());
-    });
-
-    test.each(["automation.upserted", "automation.deleted"] as const)(
-      "%s replaces an older catalog read without losing unrelated sessions",
-      async (type) => {
-        const client = new QueryClient();
-        onTestFinished(() => client.clear());
-        const stale = {
-          ...createEmptySessionsState(),
-          sessions: [createSession(automation.id)],
-          ownership: {},
-        };
-        seedState(client, stale);
-        const latest: SessionsState = {
-          ...createEmptySessionsState(),
-          sessions:
-            type === "automation.upserted"
-              ? [...stale.sessions, createSession("other")]
-              : [createSession("other")],
-          ownership: type === "automation.upserted" ? { automation: { type: "automation" } } : {},
-        };
-        const snapshot = Promise.withResolvers<SessionsState>();
-        let reads = 0;
-        const pending = client.fetchQuery({
-          ...sessionQueries.state(),
-          staleTime: 0,
-          queryFn: () => (++reads === 1 ? snapshot.promise : Promise.resolve(latest)),
-        });
-        cache.applyEvent(
-          client,
-          type === "automation.upserted"
-            ? { type, automation }
-            : { type, automationId: automation.id },
-        );
-        snapshot.resolve(stale);
-        await expect(pending).resolves.toEqual(latest);
-        expect(reads).toBe(2);
-        expect(readState(client)).toEqual(latest);
-      },
-    );
-
-    test("Inbox results and unchanged Automation ownership do not replace a catalog read", async () => {
-      const client = new QueryClient();
-      onTestFinished(() => client.clear());
-      seedState(client, { ownership: { automation: { type: "automation" } } });
-      const state = readState(client);
-      const snapshot = Promise.withResolvers<SessionsState>();
-      let reads = 0;
-      const pending = client.fetchQuery({
-        ...sessionQueries.state(),
-        staleTime: 0,
-        queryFn: () => {
-          reads++;
-          return snapshot.promise;
-        },
-      });
-      cache.applyEvent(client, {
-        type: "automation.upserted",
-        automation: { ...automation, nextRunAt: new Date(2).toISOString() },
-      });
-      cache.applyEvent(client, {
-        type: "inbox.changed",
-      });
-      cache.applyEvent(client, {
-        type: "inbox.entry.deleted",
-        entryId: "inbox-worker",
-      });
-      expect(readState(client)).toBe(state);
-      snapshot.resolve(state);
-      await pending;
-      expect(reads).toBe(1);
     });
   });
 

@@ -4,7 +4,7 @@ import { createFile, writeFile } from "./server/functions";
 
 type FileWrite = {
   content: string;
-  notifyAgent: boolean;
+  notifyAgent?: boolean;
 };
 
 export const fileMutations = {
@@ -17,7 +17,8 @@ export const fileMutations = {
     const fileId = workspaceFileId(file);
     return mutationOptions({
       scope: { id: `file:${fileId}` },
-      mutationFn: ({ content }: FileWrite) => writeFile({ data: { file, content } }),
+      mutationFn: ({ content, notifyAgent }: FileWrite) =>
+        writeFile({ data: { file, content, notifyAgent } }),
     });
   },
 };

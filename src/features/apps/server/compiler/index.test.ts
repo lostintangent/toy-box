@@ -69,7 +69,7 @@ describe("app compiler", () => {
   test("typechecks portable SDK capabilities and schema-derived state", async () => {
     await compileAppDefinition(
       definition(`
-        import { useApp, useChannels, useChannel, useFile, useWorkspace, channelTasksDiff } from "@toy-box/sdk";
+        import { useApp, useChannels, useChannel, useFile, useOpenedFile, useWorkspace, channelTasksDiff } from "@toy-box/sdk";
         export default function App() {
           const { state, updateState, actions } = useApp();
           const channels = useChannels();
@@ -78,10 +78,12 @@ describe("app compiler", () => {
           const artifact = channel.state?.artifacts.find(({ id }) => id === task?.artifactId);
           const file = useFile({ kind: "session", sessionId: "session", path: "notes.md" }, "shared");
           const sessions = useWorkspace(workspace => workspace.sessions);
+          const opened = useOpenedFile();
           return <button onClick={async () => {
+            if (opened?.mode !== "read") opened?.save(opened.content ?? "");
             await updateState(draft => { draft.count += 1; });
             if (artifact) actions.openFile(artifact.file);
-            await channel.postMessage({ content: file.content ?? "" });
+            (await channel.postMessage({ content: file.content ?? "" })).sequence;
             await actions.createSession({ message: { content: "Start", model: { provider: "codex", name: "model" } } });
           }}>{state.count}{channels.length}{sessions[0]?.context?.directory}{channelTasksDiff(channel.state?.channel.tasks ?? [])?.added}</button>;
         }

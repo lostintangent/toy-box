@@ -3,7 +3,7 @@ import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";
 
 // Fallback display name for tools without a bespoke renderer: turn a snake_case
-// tool name like `register_editor` into "Register Editor".
+// tool name like `list_models` into "List models".
 function formatToolName(name: string): string {
   const spaced = name.replace(/_/g, " ").trim();
   if (!spaced) return name;

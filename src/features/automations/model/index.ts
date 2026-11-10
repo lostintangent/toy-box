@@ -39,10 +39,6 @@ export const automationIdInputSchema = z.object({
   automationId: automationIdSchema,
 });
 
-export const runAutomationInputSchema = automationIdInputSchema.extend({
-  clientId: z.string().optional(),
-});
-
 export const updateAutomationInputSchema = automationOptionsSchema.extend({
   automationId: automationIdSchema,
 });

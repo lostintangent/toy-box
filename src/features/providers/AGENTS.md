@@ -29,21 +29,28 @@ the workspace consumes the same provider-owned catalog and configuration.
   and `update` commands. Updates compare versions before and after; unchanged does not prove an installation
   is current (some installers require manual updates). Restart Toy Box to use updated runtimes.
 - `server/provider.ts` defines `SessionProvider`, `SessionConnection`, and the configuration
-  supplied by Sessions. Connections expose the provider reference used by `Session.provider`;
-  history and resume receive the relevant identity fields from the same `Session` type.
+  supplied by Sessions. The contract addresses each history by its native ID, and a connection
+  exposes the one it runs; Sessions maps public IDs to native ones.
   `isSignedIn` translates the runtime's native credential check. `readSubscription` maps the
   signed-in account's native plan and limits to a `ProviderSubscription`; an account using an API
   key has none.
+  `listSessions` lists at least the newest `limit` sessions, and `readSession` reads one without
+  listing filters. Both report `NativeSession` metadata with the working directory the history
+  records. `delete` resolves when the history is already gone.
   Native SDK and protocol types stay inside their implementations.
 - `server/index.ts` registers the providers, aggregates their available catalogs,
   isolates discovery failures, and stops their shared processes on server shutdown.
-  Its `getModelChoices` composes that catalog with the normalized workspace default, optionally
-  scoped to one provider. A scoped default is null when the workspace default uses another provider.
+  `getProviderCatalog` doesn't wait for discovery, so provider startup never holds a page load: a
+  provider still being discovered reads as ready without models. `listModels` waits, and
+  `getModelChoices` composes its models with the normalized workspace default, optionally scoped to
+  one provider. A scoped default is null when the workspace default uses another provider.
   Discovery checks sign-in before reading models and shares one process-wide promise per provider
-  until shutdown or a successful CLI update check; failed discovery is evicted so the next request
-  can retry, and its provider stays ready. A signed-out provider contributes no models but keeps its
-  sessions. Disabled providers are never started to check. Updates evict only that provider's
-  discovery and broadcast `providers.changed` to refresh client catalogs and versions.
+  until shutdown or a successful CLI update check. Completed discovery broadcasts
+  `providers.changed`. Failed discovery is evicted and stays quiet, so the next request retries
+  without looping clients, and its provider stays ready. A signed-out provider contributes no models
+  but keeps its sessions. Disabled providers are never started to check. Updates evict only that
+  provider's discovery and wait for rediscovery, so its broadcast is the one hint that refreshes
+  client catalogs and versions.
   Running native processes retain their version until restarted. Restart the server and reload
   the page after installing or removing a provider. Enabled providers are selected outside
   the cache, so toggling one never rediscovers the others. Session catalogs are read independently
@@ -51,7 +58,7 @@ the workspace consumes the same provider-owned catalog and configuration.
   visible in Settings. Disabling removes discovery and closes its open session panes; it does not
   delete history or stop server work already running.
 - `routes/v1/models.ts` exposes `GET /api/v1/models` to external clients as
-  `{ version: 1, models, defaultModel }`. Channels reuses `getModelChoices` for member-scoped
+  `{ models, defaultModel }`. Channels reuses `getModelChoices` for member-scoped
   choices; the HTTP entry point does not introduce another catalog or cache.
 - [`server/copilot/`](server/copilot/AGENTS.md) implements the contract through the
   GitHub Copilot SDK.
@@ -62,14 +69,17 @@ the workspace consumes the same provider-owned catalog and configuration.
 Sessions owns public IDs, draft records, native identity, role policy, tools, instructions,
 skill installation, artifact locations, connection retention, queues,
 completion, and broadcasts. It supplies providers with prepared skill directories,
-image inputs, and question policy on creation and resume. Providers must not reach
-into the Sessions registry, runtime, persistence, or resource layout.
+image inputs, question policy, and tools on creation and resume. Each tool arrives bound to
+the public session, validating its arguments and answering with text, so implementations only
+register it. Providers must not reach into the Sessions registry, runtime, persistence, or
+resource layout.
 
 Channel-owned Worker sessions receive composed Agent identity instructions and Channel tools like
 any other Session configuration. Providers receive no Agent-specific protocol or metadata.
 
 All providers project into Sessions' `SessionEvent` and use its shared reducer. This model
-dependency does not give providers ownership of `SessionState`.
+dependency does not give providers ownership of `SessionState`. Providers report Toy Box tools as
+plain tool calls, and Sessions applies their policy over every provider's events, live and on replay.
 `delta`, `reasoning_delta`, and `tool_output_delta` carry incremental text. `assistant_message`
 supplies complete message text, and `reasoning` replaces the current reasoning text. Native block
 assembly belongs in each projector; canonical text never mixes incremental and cumulative semantics.
@@ -81,6 +91,8 @@ before publishing completion. Disconnecting a browser never disconnects the prov
 `ModelConfiguration.provider` and `Session.provider.id` select the provider;
 these shared value fields also distinguish models with the same name across catalogs.
 Keep one model configuration and transcript shape across providers and all consumers.
+Sessions applies a turn's model with `setModel` only when it differs from the stream's model, and
+never announces it. Each provider emits `model_changed` with the model it applies.
 
 ## Native workarounds
 
@@ -95,7 +107,7 @@ check the list whenever a provider is upgraded:
   both itself.
 - Claude transcript directory (`server/claude/history.ts`): `getSessionInfo()` reads `cwd` only
   from a transcript's first 64 KB, so a large first message hides it (seen with SDK 0.3.302).
-  `readDirectory` reads the first transcript entry that records one instead. Remove once the SDK
+  `readSession` reads the first transcript entry that records one instead. Remove once the SDK
   finds it itself.
 - Copilot computer use (`server/copilot/client.ts`): headless SDK servers load no bundled
   plugins (seen through CLI 1.0.105), so the client registers the running CLI version's cached
@@ -104,7 +116,11 @@ check the list whenever a provider is upgraded:
 - Claude abort (`server/claude/connection.ts`): `Query.interrupt()` is typed without the
   `cancelQueued` option its runtime sends as `cancel_queued` (seen through SDK 0.3.314), so Stop
   expects a type error to cancel queued steers. Typecheck fails once the SDK types the option.
-- Codex abort (`server/codex/connection.ts`): `turn/interrupt` stops only one thread's turn and
-  subagent turns aren't tracked (seen with CLI 0.166.0). Stop interrupts each loaded subagent with
-  an empty `turnId`, the app-server's startup interrupt. Replace it with `thread/interrupt` once
+- Copilot and Claude delete (`server/copilot/provider.ts`, `server/claude/provider.ts`): a history
+  that is already gone is reported only in the error's message (seen with Copilot CLI 1.0.108 and
+  Claude Agent SDK 0.3.319), so `delete` matches that message to resolve. Remove once each reports
+  it with a code.
+- Codex abort (`server/codex/connection.ts`): `turn/interrupt` stops only one thread's turn (seen
+  with CLI 0.166.0). Stop interrupts each loaded subagent with an empty `turnId`, the app-server's
+  startup interrupt, so it needs no subagent turn IDs. Replace it with `thread/interrupt` once
   openai/codex#40953 ships.
