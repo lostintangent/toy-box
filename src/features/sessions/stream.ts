@@ -1,7 +1,8 @@
 /**
- * Observes one session for as long as an enabled observer watches its detail. The
- * observation opens with a snapshot, follows each run the session's shared activity
- * announces from the cached cursor, and heals with a snapshot once the run ends.
+ * Subscribes to one session for as long as an enabled observer watches its detail.
+ * Each subscription brings the detail current from its revision, with a replay or a
+ * snapshot, then streams the live run until it ends. The detail subscribes when it
+ * opens and again for each run the session's shared activity announces.
  */
 
 import {
@@ -11,32 +12,19 @@ import {
   type QueryKey,
 } from "@tanstack/react-query";
 import { readEventStream } from "@/shared/sse";
-import type { SessionEvent, SessionState } from "./model";
-import { isLiveActivity, type SessionActivity, type SessionsActivity } from "./model/activity";
-
-/** What an observation writes to a session's detail. */
-export type SessionObservation =
-  | { type: "snapshot"; state: SessionState }
-  | { type: "events"; events: SessionEvent[] };
+import type { SessionState, SessionSubscriptionEvent } from "./model";
+import type { SessionActivity, SessionsActivity } from "./model/activity";
 
 export async function* streamSession(
   { client, queryKey, signal }: QueryFunctionContext,
-  {
-    sessionId,
-    activityKey,
-    readSnapshot,
-  }: {
-    sessionId: string;
-    activityKey: QueryKey;
-    readSnapshot: (signal: AbortSignal) => Promise<SessionState>;
-  },
-): AsyncGenerator<SessionObservation> {
+  { sessionId, activityKey }: { sessionId: string; activityKey: QueryKey },
+): AsyncGenerator<SessionSubscriptionEvent[]> {
   const queryCache = client.getQueryCache();
   const detailHash = hashKey(queryKey);
   const activityHash = hashKey(activityKey);
   const readActivity = () => client.getQueryData<SessionsActivity>(activityKey)?.[sessionId];
   const readState = () => client.getQueryData<SessionState>(queryKey);
-  // This client's deliveries carry the detail's key, so the observation can wait for them.
+  // This client's deliveries carry the detail's key, so a subscription can wait for them.
   const deliveries = { mutationKey: queryKey, exact: true };
   const isDelivering = () => client.isMutating(deliveries) > 0;
 
@@ -50,8 +38,8 @@ export async function* streamSession(
   };
 
   let activity = readActivity();
-  // A run this observation has neither followed nor healed.
-  let unseen = isLiveActivity(activity?.status);
+  // A run, or the opening state, this detail hasn't subscribed to yet.
+  let unseen = true;
   let deliveriesStarted = 0;
   let opened = false;
 
@@ -74,80 +62,77 @@ export async function* streamSession(
     changed();
   });
 
-  /** Reads a snapshot, unless this client's delivery holds an optimistic turn it would hide. */
-  async function* readFresh(): AsyncGenerator<SessionObservation> {
-    if (isDelivering()) return;
-    const started = deliveriesStarted;
-    const state = await readSnapshot(signal);
-    if (deliveriesStarted === started) yield { type: "snapshot", state };
-  }
-
   try {
-    yield* readFresh();
-    opened = true;
-    // A prefetch only reads the snapshot.
-    if (!queryCache.get(detailHash)?.isActive()) return;
-
+    // A pending delivery holds an optimistic turn that a snapshot would hide.
     while (await until(() => unseen && !isDelivering())) {
       unseen = false;
-      if (isLiveActivity(readActivity()?.status)) {
-        // Show the run before its follow connects.
-        if (readState()?.status === "idle") {
-          yield { type: "events", events: [{ type: "status", status: "thinking" }] };
-        }
-        let received = false;
-        try {
-          for await (const events of follow(sessionId, readState()?.lastSeenEventId, signal)) {
-            received = true;
-            yield { type: "events", events };
-          }
-          // A live run ends with the server's `end`, so an event-less follow found none.
-          if (!received) yield { type: "events", events: [{ type: "end", reason: "idle" }] };
-        } catch (error) {
-          if (signal.aborted) return;
-          console.error("Session stream failed:", error);
-          // Resume a live run after the last event received, or let the heal reread it.
-          if (received) {
+      const started = deliveriesStarted;
+      let received = false;
+      try {
+        for await (const events of subscribe(sessionId, readState()?.revision, signal)) {
+          if (events[0]?.type === "deleted") throw new Error(`Session not found: ${sessionId}`);
+          received = true;
+          // A delivery that started since subscribing may postdate the snapshot.
+          if (events[0]?.type === "snapshot" && deliveriesStarted !== started) {
             unseen = true;
-            continue;
+            break;
+          }
+          yield events;
+          if (!opened && events.some(isCurrent)) {
+            opened = true;
+            // A prefetch only brings the detail current.
+            if (!queryCache.get(detailHash)?.isActive()) return;
           }
         }
+        if (!received)
+          throw new Error(`Session subscription closed before any event: ${sessionId}`);
+      } catch (error) {
+        if (signal.aborted) return;
+        if (!received) throw error;
+        // Resubscribe from the last revision received.
+        console.error("Session subscription failed:", error);
+        unseen = true;
       }
-      yield* readFresh();
     }
   } catch (error) {
-    // Only the opening snapshot fails the detail, so a missing session surfaces as an error.
-    // After a failed heal it keeps its state, and its next restart reads what the heal missed.
+    // Only the opening subscription fails the detail, so a missing session surfaces as an
+    // error. Later, the detail keeps its state until its next restart brings it current.
     if (!opened) throw error;
-    if (!signal.aborted) console.error("Session snapshot failed:", error);
+    if (!signal.aborted) console.error("Session subscription failed:", error);
   } finally {
     stopQueries();
     stopMutations();
   }
 }
 
-/** Whether activity announces a run this observation hasn't seen: a new live run, or
- *  a finished one whose live states it never saw. */
+/** Whether activity announces a run this detail hasn't subscribed to: a new live run, a
+ *  finished one whose live states it never saw, or a stopped one, whose history can keep
+ *  less than its live states showed. */
 function announcesRun(previous: SessionActivity | undefined, next: SessionActivity | undefined) {
   if (next && "since" in next) {
     return !(previous && "since" in previous && previous.since === next.since);
   }
-  return next?.status === "unread" && !previous;
+  if (!next) return previous !== undefined && "since" in previous;
+  return next.status === "unread" && !previous;
 }
 
-/** Follows a session's events after a cursor in render batches. Deltas wait for the
- *  next animation frame, and any other event flushes the batch with it. */
-async function* follow(
+/** Subscribes from a cursor and reads the subscription in render batches. Deltas wait
+ *  for the next animation frame, and any other event flushes the batch with it. Leaving
+ *  early closes the subscription. */
+async function* subscribe(
   sessionId: string,
   after: number | undefined,
   signal: AbortSignal,
-): AsyncGenerator<SessionEvent[]> {
+): AsyncGenerator<SessionSubscriptionEvent[]> {
+  const subscription = new AbortController();
+  const close = () => subscription.abort();
+  signal.addEventListener("abort", close, { once: true });
   const url = `/api/sessions/${encodeURIComponent(sessionId)}`;
-  const events = readEventStream<SessionEvent>(
+  const events = readEventStream<SessionSubscriptionEvent>(
     after === undefined ? url : `${url}?after=${after}`,
-    signal,
+    subscription.signal,
   );
-  const batch: SessionEvent[] = [];
+  const batch: SessionSubscriptionEvent[] = [];
   let next = events.next();
   let frame: Promise<void> | undefined;
   try {
@@ -168,12 +153,19 @@ async function* follow(
     }
     if (batch.length > 0) yield batch;
   } finally {
-    // The observation stops reading only once `signal` aborts, which settles the read in flight.
+    signal.removeEventListener("abort", close);
+    // Aborting settles the read in flight.
+    close();
     await next.catch(() => {});
   }
 }
 
-function isDelta(event: SessionEvent): boolean {
+/** Whether a subscription event marks the detail current. */
+function isCurrent(event: SessionSubscriptionEvent): boolean {
+  return event.type === "snapshot" || event.type === "resumed";
+}
+
+function isDelta(event: SessionSubscriptionEvent): boolean {
   return (
     event.type === "delta" || event.type === "reasoning_delta" || event.type === "tool_output_delta"
   );

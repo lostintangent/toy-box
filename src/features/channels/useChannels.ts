@@ -17,7 +17,7 @@ export function useChannels() {
         ...members.filter(({ channelId }) => channelId === channel.id),
       ].map((agent) => ({
         ...agent,
-        isRunning: activities[agent.id]?.status === "running",
+        isWorking: activities[agent.id]?.status === "running",
       })),
       status: channelStatus(channel),
     })),

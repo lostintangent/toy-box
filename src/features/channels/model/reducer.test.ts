@@ -40,7 +40,6 @@ function snapshot(): ChannelState {
     routines: [],
     request: null,
     bookmarks: [],
-    presence: { channel: { state: "idle" } },
   };
 }
 
@@ -230,29 +229,16 @@ test("a pending request survives paging and reading, receives reactions, and cle
   expect(replied.channel.requestSequence).toBeNull();
 });
 
-test("presence replaces the reconnect baseline or merges sparse live changes without advancing durable state", () => {
-  const previous = {
-    ...snapshot(),
-    presence: { channel: { state: "idle" as const }, removed: { state: "idle" as const } },
-  };
-  const presence = { channel: { state: "working" as const } };
-  const baseline = reduceChannelState(previous, { type: "resumed", presence });
-  expect(baseline.presence).toBe(presence);
-  const live = reduceChannelState(baseline, {
-    type: "presence",
-    presence: { reviewer: { state: "waiting", text: "Review" } },
-  });
-  expect(live.presence).toEqual({ ...presence, reviewer: { state: "waiting", text: "Review" } });
-  expect(live).toEqual({ ...previous, presence: live.presence });
-  expect(live.channel).toBe(previous.channel);
+test("a resume confirms the replayed state without replacing it", () => {
+  const previous = snapshot();
+  expect(reduceChannelState(previous, { type: "resumed" })).toBe(previous);
 });
 
-test("member departure removes its presence and recursively releases task ownership", () => {
+test("member departure recursively releases task ownership", () => {
   const member = { channelId: "channel", id: "reviewer", name: "Reviewer" };
   const outcome = { artifactId: "session:reviewer:review.md", diff: { added: 12, removed: 3 } };
   const previous = snapshot();
   previous.members = [member];
-  previous.presence[member.id] = { state: "working" };
   previous.channel.tasks = [
     {
       id: "release",
@@ -270,7 +256,6 @@ test("member departure removes its presence and recursively releases task owners
     system(102, { type: "member_left", actor: { type: "user" }, member }),
   );
   expect(departed.members).toEqual([]);
-  expect(departed.presence).toEqual({ channel: { state: "idle" } });
   expect(departed.channel.tasks).toEqual([
     {
       id: "release",

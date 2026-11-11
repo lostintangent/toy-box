@@ -1,10 +1,11 @@
 // One live session runtime. A SessionExecution owns a provider connection,
 // reduced live state, queued turns, completion waiters, and a replayable event
-// bus. It is the one live execution path shared by connected and headless
+// log. It is the one live execution path shared by connected and headless
 // delivery.
 //
-// The event bus stamps eventId for reconnect cursors. Client-provided message
-// identity is correlated separately when the provider echoes sent inputs.
+// The event log stamps each event's revision for subscription cursors.
+// Client-provided message identity is correlated separately when the provider
+// echoes sent inputs.
 
 import type { SessionConnection } from "@providers/server/provider";
 import { evictCachedSessionIfStale, releaseSession } from "@sessions/server/state/registry";
@@ -15,6 +16,7 @@ import { systemMessageCoalesceKey } from "@sessions/model/systemMessages";
 import { areModelConfigurationsEqual } from "@providers/model";
 import type { SessionQuestionAnswer } from "@sessions/model/protocol";
 import { applySessionEvent, createInitialSessionState } from "@sessions/model/reducer";
+import { latestMessages } from "@sessions/model/transcriptPages";
 import { hasBlockingSessionQuestion, hasPendingSessionQuestion } from "@sessions/model/questions";
 import type {
   SessionArtifact,
@@ -22,18 +24,17 @@ import type {
   SessionEvent,
   SessionMessage,
   SessionState,
+  SessionSubscriptionEvent,
 } from "@sessions/model";
 import { broadcast } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
-import { createSessionEventBus, type SessionSubscription } from "./eventBus";
+import { createSessionEventLog } from "./eventLog";
 
 type MessageDisposition = "started" | "queued";
 type StreamEndReason = Extract<SessionEvent, { type: "end" }>["reason"];
 
-// Replay retention cap. A client reconnecting across a gap larger than this
-// silently misses the trimmed events; the client heals by rereading the
-// detail snapshot when its follow completes (see stream.ts), so the cap
-// trades a rare extra refetch for bounded memory.
+// Replay retention cap. A subscriber whose cursor falls behind it gets a
+// snapshot instead, so the cap trades a rare larger frame for bounded memory.
 const MAX_REPLAY_EVENTS = 1500;
 
 // Dev HMR can reload this module while active turns are still running. Keep the
@@ -98,14 +99,12 @@ export class SessionExecution {
   /** Underlying provider session used by runtime-owned operations. */
   readonly connection: SessionConnection;
 
-  #bus = createSessionEventBus(MAX_REPLAY_EVENTS);
+  readonly #log: ReturnType<typeof createSessionEventLog>;
 
   // Settles once, when this execution finishes or is deleted.
   readonly #completion = Promise.withResolvers<SessionCompletion>();
   #unsubscribeProvider: () => void;
 
-  // Live session state survives turn boundaries; only replay history is
-  // turn-scoped.
   #sessionState: SessionState;
 
   // Claimed synchronously before #startTurn awaits so concurrent deliveries
@@ -122,6 +121,9 @@ export class SessionExecution {
     this.sessionId = sessionId;
     this.connection = connection;
     this.#sessionState = createInitialSessionState(initialState);
+    // The log continues this state, so a client holding a seed's revision, or a
+    // draft's 0, replays from the first event.
+    this.#log = createSessionEventLog(MAX_REPLAY_EVENTS, this.#sessionState.revision);
 
     const project = createToolCallProjector(sessionId);
     this.#unsubscribeProvider = connection.onEvent((event) => {
@@ -131,8 +133,27 @@ export class SessionExecution {
 
   // ── Live stream surface ──────────────────────────────────────────────
 
-  subscribe(afterEventId?: number): SessionSubscription {
-    return this.#bus.subscribe(afterEventId);
+  /** Bring a subscriber current from its cursor, then forward live events until this execution ends. */
+  subscribe(
+    send: (event: SessionSubscriptionEvent) => void,
+    close: VoidFunction,
+    after?: number,
+  ): VoidFunction {
+    const replay = this.#log.replay(after);
+    if (replay) {
+      for (const event of replay) send(event);
+      send({ type: "resumed" });
+    } else {
+      send({ type: "snapshot", state: latestMessages(this.#sessionState) });
+    }
+    if (this.#finished) {
+      close();
+      return () => {};
+    }
+    return this.#log.subscribe((event) => {
+      send(event);
+      if (event.type === "end") close();
+    });
   }
 
   /** Start the first message, or dispatch queued work when the assistant is ready. */
@@ -258,7 +279,6 @@ export class SessionExecution {
     // A finished turn waits to be read, even by a watching client, which marks it
     // read itself. A stopped one was already seen.
     setSessionActivity(this.sessionId, this.#abortRequested ? "idle" : "unread");
-    this.#bus.clearReplay();
     this.#dispose();
     releaseSession(this.sessionId);
   }
@@ -286,7 +306,6 @@ export class SessionExecution {
   // ── Turn execution ───────────────────────────────────────────────────
 
   async #startTurn(message: SessionMessage): Promise<void> {
-    this.#bus.clearReplay();
     this.#emit({ type: "status", status: "thinking" });
 
     try {
@@ -357,7 +376,7 @@ export class SessionExecution {
   // ── Event emission ───────────────────────────────────────────────────
 
   #emit(event: SessionEvent): void {
-    const published = this.#bus.publish(event);
+    const published = this.#log.publish(event);
     this.#sessionState = applySessionEvent(this.#sessionState, published);
     if (
       published.type === "status" ||
@@ -423,7 +442,6 @@ export class SessionExecution {
     // accept a message after registry removal.
     this.#finished = true;
 
-    this.#bus.close();
     this.#completion.resolve(completionResult(this.#sessionState.messages));
     this.#unsubscribeProvider();
     SessionExecution.executions.delete(this.sessionId);

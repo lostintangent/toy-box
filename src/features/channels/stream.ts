@@ -1,14 +1,14 @@
 import { readEventStream } from "@/shared/sse";
-import type { ChannelObservationEvent } from "./model";
+import type { ChannelSubscriptionEvent } from "./model";
 
-/** One observation attempt. Query retries from its current cached revision. */
+/** One subscription attempt. Query retries from its current cached revision. */
 export async function* streamChannel(
   channelId: string,
   signal: AbortSignal,
   after?: number,
-): AsyncGenerator<ChannelObservationEvent> {
+): AsyncGenerator<ChannelSubscriptionEvent> {
   const url = `/api/v1/channels/${encodeURIComponent(channelId)}`;
-  for await (const event of readEventStream<ChannelObservationEvent>(
+  for await (const event of readEventStream<ChannelSubscriptionEvent>(
     after === undefined ? url : `${url}?after=${after}`,
     signal,
   )) {

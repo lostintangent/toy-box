@@ -62,7 +62,7 @@ const {
   wakeDueChannelAgents,
 } = await import("./index");
 const { deleteChannelFiles } = await import("./attachments");
-const { subscribeChannelEvents, releaseChannelEvents } = await import("./events");
+const { subscribeChannelEvents, releaseChannelEvents } = await import("./eventLog");
 const { getChannelSnapshot } = await import("./stream");
 const { default: startChannels } = await import("./startup");
 const { channelLeadTools, channelMemberTools, channelTools, createChannelMembersTool } =

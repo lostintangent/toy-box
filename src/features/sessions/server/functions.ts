@@ -97,16 +97,6 @@ export const resolveSessionContext = createServerFn({ method: "POST" })
   .validator(resolveSessionContextInputSchema)
   .handler(({ data }) => resolveGitContext(data.directory));
 
-/** A session's reduced transcript snapshot with its latest page of messages,
- *  served from the cheapest source that is still truthful: the live execution's
- *  in-memory state, then the cold-path ladder (snapshot cache, then read-only
- *  provider history replay, which repopulates the cache for the next open). */
-export const querySession = createServerFn({ method: "POST" })
-  .middleware([withSessionId])
-  .handler(async ({ data }): Promise<SessionState> =>
-    latestMessages(await getSessionSnapshot(data.sessionId)),
-  );
-
 /** The page of messages before position `before`, ending with that message. */
 export const querySessionMessages = createServerFn({ method: "POST" })
   .validator(querySessionMessagesInputSchema)
@@ -130,7 +120,7 @@ export const createSession = createServerFn({ method: "POST" })
   );
 
 /** Deliver a message, optionally requesting immediate delivery. A location creates the
- *  session with it as the first message. Clients follow the work separately. */
+ *  session with it as the first message. Clients subscribe to the work separately. */
 export const deliverMessage = createServerFn({ method: "POST" })
   .validator(deliverMessageInputSchema)
   .handler(async ({ data: { sessionId, message, location } }): Promise<void> => {

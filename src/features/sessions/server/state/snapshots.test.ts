@@ -105,6 +105,26 @@ describe.serial("snapshot cache", () => {
     });
   });
 
+  test("a cache hit keeps its revision and every rebuild takes a fresh one", async () => {
+    const sessionId = "snapshot-cache-test-revision";
+    const isHistoryCurrent = spyOn(providers, "isHistoryCurrent").mockResolvedValue(true);
+    onTestFinished(() => {
+      mock.restore();
+      evictCachedSnapshot(sessionId);
+    });
+
+    await withProviderHistory(async () => {
+      const built = (await loadSessionSnapshot(sessionId)).revision;
+      expect(built).toBeGreaterThan(0);
+      expect((await loadSessionSnapshot(sessionId)).revision).toBe(built);
+
+      isHistoryCurrent.mockResolvedValue(false);
+      const rebuilt = (await loadSessionSnapshot(sessionId)).revision;
+      expect(rebuilt).toBeGreaterThan(built);
+      expect((await refreshSessionSnapshot(sessionId)).revision).toBeGreaterThan(rebuilt);
+    });
+  });
+
   test("retaining warms a cold session and keeps its slot through rotation", async () => {
     await withProviderHistory(async () => {
       await retainSessionSnapshots(["retained-0"]);

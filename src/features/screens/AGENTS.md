@@ -55,7 +55,8 @@ screen browser, `ScreenBrowserDialog`, in both layouts. It searches locally and
 shows each screen as a JPEG thumbnail, 960 pixels at most. Picking one opens it
 through the workspace's `reveal(pane)` verb, which focuses it if it's already open.
 Native apps list screens with `GET /api/v1/screens` and fetch a thumbnail's JPEG bytes
-from `GET /api/v1/screens/{id}/thumbnail`.
+from `GET /api/v1/screens/{id}/thumbnail`. They view and control a screen over the
+same socket as the browser, with `take-control`, `release-control` and `input`.
 Agents have only `list_screens`. They present a display or window with
 `set_session_preview`, clear it with `null`, or use the channel preview as lead.
 Automation belongs to provider computer-use tools or playwright-cli, not Screens.

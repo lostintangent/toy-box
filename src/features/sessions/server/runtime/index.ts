@@ -1,7 +1,8 @@
 // Public operations for the session runtime. Callers create, recreate, or deliver
-// without observing, and follow a live execution separately from a replay cursor.
-// Every mutation acquires the same live runtime.
+// without subscribing, and subscribe separately from a revision cursor. Every
+// mutation acquires the same live runtime.
 
+import { SessionNotFoundError } from "@providers/server/provider";
 import { listSessionArtifacts } from "../artifacts";
 import type { SessionQuestionAnswer } from "@sessions/model/protocol";
 import type {
@@ -9,75 +10,37 @@ import type {
   SessionLaunch,
   SessionMessage,
   SessionState,
+  SessionSubscriptionEvent,
   SessionSystemMessage,
 } from "@sessions/model";
+import { latestMessages } from "@sessions/model/transcriptPages";
 import * as sessionRegistry from "@sessions/server/state/registry";
 import { loadSessionSnapshot, refreshSessionSnapshot } from "@sessions/server/state/snapshots";
 import { broadcast } from "@workspace/server/events";
 import { sharedMap } from "@/shared/server/processState";
 import { SessionExecution, SessionExecutionFinishedError } from "./sessionExecution";
-import type { SessionSubscription } from "./eventBus";
 
 export { getSessionDirectory } from "../providers";
 export { deleteSession, deleteSessionIfExists, releaseIdleSession } from "../state/registry";
 
-type PendingSessionCompletion = {
-  promise: Promise<SessionCompletion>;
-  resolve: (completion: SessionCompletion) => boolean;
-  reject: (error: unknown) => boolean;
-};
+// Sessions whose owner runs work before their live execution exists remain waitable by ID.
+const expectedCompletions = sharedMap<Promise<SessionCompletion>>("expected-session-completions");
 
-const SETTLED_SESSION_COMPLETION_RETENTION_MS = 5 * 60_000;
-
-// Sessions announced before their live execution exists remain waitable by ID.
-const pendingSessionCompletions = sharedMap<PendingSessionCompletion>(
-  "pending-session-completions",
-);
-
-/** Register a session that callers may wait for before its live execution exists. */
-export function registerPendingSessionCompletion(sessionId: string): PendingSessionCompletion {
-  if (pendingSessionCompletions.has(sessionId)) {
-    throw new Error(`Session ${sessionId} already has a pending completion.`);
-  }
-
-  let complete!: (completion: SessionCompletion) => void;
-  let fail!: (error: unknown) => void;
-  const promise = new Promise<SessionCompletion>((resolve, reject) => {
-    complete = resolve;
-    fail = reject;
-  });
-  let settled = false;
-  let receipt!: PendingSessionCompletion;
-  const settle = (finish: () => void) => {
-    if (settled) return false;
-    settled = true;
-    finish();
-    // A managed Session may be deleted immediately after completion, before a
-    // waiter attaches. Keep its exact result briefly so fast teardown cannot
-    // become a misleading "session not found" result.
-    const expiration = setTimeout(() => {
-      if (pendingSessionCompletions.get(sessionId) === receipt) {
-        pendingSessionCompletions.delete(sessionId);
-      }
-    }, SETTLED_SESSION_COMPLETION_RETENTION_MS);
-    expiration.unref();
-    return true;
+/** Answer waits for a session with its owner's completion until a later execution replaces it. */
+export function expectSessionCompletion(
+  sessionId: string,
+  completion: Promise<SessionCompletion>,
+): void {
+  expectedCompletions.set(sessionId, completion);
+  // A managed Session may be deleted immediately after completion, before a
+  // waiter attaches. Keep its exact result briefly so fast teardown cannot
+  // become a misleading "session not found" result.
+  const expire = () => {
+    setTimeout(() => {
+      if (expectedCompletions.get(sessionId) === completion) expectedCompletions.delete(sessionId);
+    }, 5 * 60_000).unref();
   };
-  receipt = {
-    promise,
-    resolve: (completion) => settle(() => complete(completion)),
-    reject: (error) => settle(() => fail(error)),
-  };
-  pendingSessionCompletions.set(sessionId, receipt);
-  void promise.catch(() => {});
-  return receipt;
-}
-
-/** Reject an announced session that was canceled before completion. */
-export function rejectPendingSessionCompletion(sessionId: string, error: unknown): boolean {
-  const receipt = pendingSessionCompletions.get(sessionId);
-  if (!receipt) return false;
-  return receipt.reject(error);
+  void completion.then(expire, expire);
 }
 
 /** Monitor the announced, live, or latest persisted execution for each session ID. */
@@ -89,10 +52,10 @@ export function waitForSessions(
 }
 
 function waitForSession(sessionId: string, timeoutMs?: number): Promise<SessionCompletion> {
-  const pending = pendingSessionCompletions.get(sessionId);
-  if (!pending) return SessionExecution.waitForCompletion(sessionId, timeoutMs);
-  if (timeoutMs === undefined) return pending.promise;
-  return waitForPendingSession(pending.promise, timeoutMs);
+  const expected = expectedCompletions.get(sessionId);
+  if (!expected) return SessionExecution.waitForCompletion(sessionId, timeoutMs);
+  if (timeoutMs === undefined) return expected;
+  return waitForExpectedSession(expected, timeoutMs);
 }
 
 /** Read the current canonical state, whether the session is live, starting, or persisted. */
@@ -157,7 +120,7 @@ export async function refreshSessionArtifacts(sessionId: string): Promise<void> 
   if (execution) execution.updateArtifacts(await listSessionArtifacts(sessionId));
 }
 
-function waitForPendingSession(
+function waitForExpectedSession(
   completion: Promise<SessionCompletion>,
   timeoutMs: number,
 ): Promise<SessionCompletion> {
@@ -176,12 +139,31 @@ function waitForPendingSession(
   });
 }
 
-/** Follow a session's live execution after a replay cursor, or nothing when it is idle. */
-export async function followSession(
+/** Bring a subscriber current from its cursor, then forward live events until the
+ *  execution ends. An idle session closes once its subscriber is current. */
+export async function subscribeToSession(
   sessionId: string,
-  afterEventId?: number,
-): Promise<SessionSubscription | undefined> {
-  return (await currentSessionExecution(sessionId))?.subscribe(afterEventId);
+  send: (event: SessionSubscriptionEvent) => void,
+  close: VoidFunction,
+  after?: number,
+): Promise<VoidFunction> {
+  try {
+    const execution = await currentSessionExecution(sessionId);
+    if (execution) return execution.subscribe(send, close, after);
+    const snapshot = await loadSessionSnapshot(sessionId);
+    if (snapshot.revision === after) {
+      // A cached snapshot keeps its revision while its artifacts are listed fresh.
+      send({ type: "artifacts_changed", artifacts: snapshot.artifacts });
+      send({ type: "resumed" });
+    } else {
+      send({ type: "snapshot", state: latestMessages(snapshot) });
+    }
+  } catch (error) {
+    if (!(error instanceof SessionNotFoundError)) throw error;
+    send({ type: "deleted", sessionId });
+  }
+  close();
+  return () => {};
 }
 
 type MessageInput =
@@ -304,12 +286,11 @@ async function createExecutionForMessage(
   // cannot strand a session as active. Refresh configuration immediately after.
   const snapshot = await loadSessionSnapshot(sessionId);
   const sdkSession = await sessionRegistry.acquireSession(sessionId);
-  const { lastSeenEventId: _lastSeenEventId, ...snapshotState } = snapshot;
-  const execution = SessionExecution.getOrCreate(sessionId, sdkSession, snapshotState);
-  // This replacement is now the session's current execution. Retained
-  // completion receipts remain valid for existing waiters, but must no longer
-  // answer future ID-based waits for an earlier execution.
-  pendingSessionCompletions.delete(sessionId);
+  const execution = SessionExecution.getOrCreate(sessionId, sdkSession, snapshot);
+  // This replacement is now the session's current execution. An expected
+  // completion stays valid for existing waiters, but must no longer answer
+  // future ID-based waits for an earlier execution.
+  expectedCompletions.delete(sessionId);
   return execution;
 }
 

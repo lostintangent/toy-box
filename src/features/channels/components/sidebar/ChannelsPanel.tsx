@@ -40,7 +40,7 @@ export function ChannelsPanel({
         waiting: rows.some(({ status }) => status?.kind === "waiting"),
         finished: rows.some(({ status }) => status?.kind === "finished"),
         unread: rows.some(({ status }) => status?.kind === "unread"),
-        running: channels.some(({ agents }) => agents.some(({ isRunning }) => isRunning)),
+        running: channels.some(({ agents }) => agents.some(({ isWorking }) => isWorking)),
       }}
       action={
         <CommandButton command="channel.create" size="icon" variant="ghost" className="h-6 w-6">
@@ -60,7 +60,7 @@ export function ChannelsPanel({
               <span className="flex items-center gap-3">
                 <span>{channel.name}</span>
                 <WorkingAgents
-                  working={agents.filter(({ isRunning }) => isRunning).map((agent) => ({ agent }))}
+                  working={agents.filter(({ isWorking }) => isWorking).map((agent) => ({ agent }))}
                   variant="compact"
                 />
               </span>

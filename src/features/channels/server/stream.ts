@@ -2,18 +2,14 @@ import {
   CHANNEL_LEAD_PROFILE,
   type ChannelCatalog,
   type ChannelState,
-  type ChannelObservationEvent,
+  type ChannelSubscriptionEvent,
 } from "@channels/model";
-import { channelAgentPresence } from "@channels/model/presence";
-import { reduceChannelRoster } from "@channels/model/reducer";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import type { WorkspaceEvent, WorkspaceEvents } from "@workspace/model/events";
 import { getSessionActivity } from "@sessions/server/state/activity";
 import { getStateDatabase } from "@/server/database";
 import { ChannelDatabase } from "./database";
-import { replayChannelEvents, subscribeChannelEvents } from "./events";
-
-type Roster = Pick<ChannelState, "lead" | "members">;
+import { replayChannelEvents, subscribeChannelEvents } from "./eventLog";
 
 /**
  * Bootstrap once, then forward ordered changes without rereading durable state. The bootstrap
@@ -21,9 +17,9 @@ type Roster = Pick<ChannelState, "lead" | "members">;
  * after it and live events continue its revision. Any other revision means that order broke, so
  * the stream closes.
  */
-export function streamChannel(
+export function subscribeToChannel(
   channelId: string,
-  send: (event: ChannelObservationEvent) => void,
+  send: (event: ChannelSubscriptionEvent) => void,
   close: VoidFunction,
   afterRevision?: number,
 ): VoidFunction {
@@ -43,48 +39,24 @@ export function streamChannel(
     close();
   }
 
-  function follow(revision: number, roster: Roster, presence: ChannelState["presence"]) {
-    const live = { revision, roster, presence };
+  function subscribeAfter(revision: number) {
+    let live = revision;
     const unsubscribeDetail = subscribeChannelEvents(channelId, (event) => {
       if (stopped) return;
-      if (event.revision !== live.revision + 1) {
+      if (event.revision !== live + 1) {
         stop();
         return close();
       }
-      const previousRoster = live.roster;
-      live.revision = event.revision;
-      live.roster = reduceChannelRoster(previousRoster, event);
+      live = event.revision;
       send(event);
-      if (live.roster !== previousRoster) publishPresence();
     });
     const unsubscribeWorkspace = subscribeWorkspaceEvents((event) => {
-      if (event.type === "channel.deleted" && event.channelId === channelId) {
-        deleted();
-      } else if (
-        (event.type === "session.running" ||
-          event.type === "session.waiting" ||
-          event.type === "session.background" ||
-          event.type === "session.idle" ||
-          event.type === "session.unread" ||
-          event.type === "session.deleted") &&
-        Object.hasOwn(live.presence, event.sessionId)
-      ) {
-        publishPresence();
-      }
+      if (event.type === "channel.deleted" && event.channelId === channelId) deleted();
     });
     unsubscribe = () => {
       unsubscribeDetail();
       unsubscribeWorkspace();
     };
-
-    function publishPresence() {
-      const next = currentPresence(live.roster);
-      const changed = Object.fromEntries(
-        Object.entries(next).filter(([id, value]) => !Bun.deepEquals(live.presence[id], value)),
-      );
-      live.presence = next;
-      if (Object.keys(changed).length) send({ type: "presence", presence: changed });
-    }
   }
 
   async function establish() {
@@ -94,20 +66,15 @@ export function streamChannel(
       if (!roster) return deleted();
       const replay = replayChannelEvents(channelId, afterRevision, roster.revision);
       if (replay) {
-        const presence = currentPresence(roster);
-        follow(roster.revision, roster, presence);
+        subscribeAfter(roster.revision);
         for (const event of replay) send(event);
-        return send({ type: "resumed", presence });
+        return send({ type: "resumed" });
       }
     }
     const snapshot = await getChannelSnapshot(channelId);
     if (stopped) return;
     if (!snapshot) return deleted();
-    follow(
-      snapshot.revision,
-      { lead: snapshot.lead, members: snapshot.members },
-      snapshot.presence,
-    );
+    subscribeAfter(snapshot.revision);
     send({ type: "snapshot", state: snapshot });
   }
 
@@ -120,22 +87,12 @@ export function streamChannel(
   return stop;
 }
 
-/** Reads one atomic durable view, enriched with public presence. */
+/** Reads one atomic durable view. */
 export async function getChannelSnapshot(channelId: string): Promise<ChannelState | null> {
-  const snapshot = await new ChannelDatabase(await getStateDatabase()).getSnapshot(channelId, 100);
-  return snapshot && { ...snapshot, presence: currentPresence(snapshot) };
+  return new ChannelDatabase(await getStateDatabase()).getSnapshot(channelId, 100);
 }
 
-function currentPresence({ lead, members }: Roster): ChannelState["presence"] {
-  return Object.fromEntries(
-    [lead, ...members].map((agent) => [
-      agent.id,
-      channelAgentPresence(agent, getSessionActivity(agent.id)?.status === "running"),
-    ]),
-  );
-}
-
-export type ChannelCatalogEvent =
+export type ChannelCatalogSubscriptionEvent =
   | { type: "snapshot"; catalog: ChannelCatalog }
   | { type: "working"; working: string[] }
   | WorkspaceEvents["channels"];
@@ -153,8 +110,8 @@ export async function getChannelCatalog(): Promise<ChannelCatalog> {
 /** Opens with the catalog, then forwards Channel changes in commit order and reports who is
  *  working. It subscribes in the read's continuation with no I/O or timer between, so no change
  *  is missed or repeated. */
-export async function streamChannelCatalog(
-  send: (event: ChannelCatalogEvent) => void,
+export async function subscribeToChannelCatalog(
+  send: (event: ChannelCatalogSubscriptionEvent) => void,
 ): Promise<VoidFunction> {
   const catalog = await getChannelCatalog();
   const agents = new Map([

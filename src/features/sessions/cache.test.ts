@@ -314,7 +314,7 @@ describe("session replacement and deletion cache boundary", () => {
         artifacts: [{ path: "old.md", updatedAt: 1 }],
         model: { provider: "copilot", name: "previous-model" },
       }),
-      lastSeenEventId: 100,
+      revision: 100,
     };
     client.setQueryData(queryKey, previous);
     const history = Promise.withResolvers<typeof previous>();
@@ -334,7 +334,7 @@ describe("session replacement and deletion cache boundary", () => {
     expect(retired.messages).toEqual([]);
     expect(retired.artifacts).toEqual([]);
     expect(retired.model).toBeUndefined();
-    expect(retired.lastSeenEventId).toBeUndefined();
+    expect(retired.revision).toBe(0);
     expect(readState(client).sessions).toEqual([
       {
         id: sessionId,

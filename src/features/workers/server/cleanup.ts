@@ -4,8 +4,7 @@ import {
   getWorkerSessionIdsForApp,
   getWorkerSessionIdsForParent,
 } from "./database";
-import { cancelAdmittedWorker } from "./admission";
-import { getRegisteredWorker, getWorkers } from "./registry";
+import { cancelWorker, getRegisteredWorker, getWorkers } from "./registry";
 import { workerParentSessionId, type Worker } from "../model";
 
 /** Remove every worker owned by a deleted session, including file workers. */
@@ -47,7 +46,7 @@ export async function deleteWorker(sessionId: string, type?: Worker["type"]): Pr
   }
   const errors: unknown[] = [];
   try {
-    await cancelAdmittedWorker(sessionId);
+    await cancelWorker(sessionId);
   } catch (error) {
     errors.push(error);
   }

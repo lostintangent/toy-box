@@ -3,6 +3,8 @@
 //
 // Providers decide whether their durable history still matches a captured
 // snapshot; the cache owns retention and lifetime, not native persistence timing.
+// Each rebuild takes a fresh revision, so a client holding an older one is
+// brought current with a snapshot rather than a replay.
 //
 // Retained sessions keep their slot through rotation, so a session the
 // workspace has declared interest in survives ordinary churn.
@@ -10,6 +12,7 @@
 import { isHistoryCurrent, readSessionHistory } from "../providers";
 import { listSessionArtifacts } from "../artifacts";
 import { replaySessionHistory } from "@sessions/model/reducer";
+import { nextRevision } from "../runtime/eventLog";
 import { sharedMap, sharedSet } from "@/shared/server/processState";
 import type { SessionState } from "@sessions/model";
 
@@ -35,6 +38,7 @@ export async function loadSessionSnapshot(sessionId: string): Promise<SessionSta
     ...replaySessionHistory(events),
     artifacts,
     ...(contextUsage ? { contextUsage } : {}),
+    revision: nextRevision(),
   };
 
   cacheSnapshot(sessionId, snapshot);

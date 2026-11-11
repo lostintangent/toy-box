@@ -1,3 +1,13 @@
+## 📅 v0.3.9 (unreleased)
+
+- If you reconnect to a running session (e.g. your laptop wakes up), it now picks up exactly where it left off, instead of occasionally missing part of a reply or a queued message
+- Opening sessions is lighter: reopening one you've already loaded no longer re-downloads its transcript, and opening a running session takes one request instead of three
+- When you stop a session, every other tab and device watching it now shows the same result
+- Codex sessions no longer briefly hide the message you just sent, and sending to an idle Codex session no longer replays its whole history first
+- Channels now send less while agents work, since each client works out who's working and waiting from the agents' live sessions
+- **Breaking (apps):** `useChannel` now returns `presence` next to `state` (instead of `state.presence`), `useChannels` agents have `isWorking` instead of `isRunning`, and `cancelWorker` returns `false` if the worker is already being canceled
+- **Breaking (`/api/v1`):** channel streams no longer send `presence` (in `snapshot`, `resumed`, or as its own event). Clients derive it from the channel list's `working` and each agent's status.
+
 ## 📅 v0.3.8 (11/10/26)
 
 - The Toy Box web client now loads faster, especially on your phone.

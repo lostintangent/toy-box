@@ -9,40 +9,43 @@ import {
   test,
 } from "bun:test";
 import { openTestDatabase } from "@/server/testFixtures";
+import type { SessionCompletion } from "@sessions/model";
 import * as sessionRuntimeModule from "@sessions/server/runtime";
-import * as supervisorModule from "./supervisor";
 import { sessionFile } from "@files/model";
+import type { Worker } from "../model";
 
 const realSessionRuntimeModule = { ...sessionRuntimeModule };
-const realSupervisorModule = { ...supervisorModule };
 
-const abortWorkerMock = mock(async (_sessionId: string) => false);
+const abortSessionMock = mock(async (_sessionId: string) => false);
 const deleteSessionIfExistsMock = mock(async (_sessionId: string) => true);
 
-mock.module("@workers/server/supervisor", () => ({
-  ...realSupervisorModule,
-  abortWorker: abortWorkerMock,
-}));
 mock.module("@sessions/server/runtime", () => ({
   ...realSessionRuntimeModule,
+  abortSession: abortSessionMock,
   deleteSessionIfExists: deleteSessionIfExistsMock,
 }));
 
 const { deleteWorkersForApp, deleteWorkersForSession } = await import("./cleanup");
 const { registerWorkerSession } = await import("./database");
-const { finishWorker, hasWorker, startWorker } = await import("./registry");
+const { hasWorker, startWorkerRun } = await import("./registry");
 
 afterAll(() => {
-  mock.module("@workers/server/supervisor", () => realSupervisorModule);
   mock.module("@sessions/server/runtime", () => realSessionRuntimeModule);
 });
 
 beforeEach(() => {
-  abortWorkerMock.mockClear();
-  abortWorkerMock.mockImplementation(async () => false);
+  abortSessionMock.mockClear();
+  abortSessionMock.mockImplementation(async () => false);
   deleteSessionIfExistsMock.mockClear();
   deleteSessionIfExistsMock.mockImplementation(async () => true);
 });
+
+/** Runs a worker until its test finishes, ignoring cancellation like a stalled execution. */
+function startRun(worker: Worker): void {
+  const execution = Promise.withResolvers<SessionCompletion>();
+  void startWorkerRun(worker, () => execution.promise).catch(() => {});
+  onTestFinished(() => execution.resolve({ status: "completed" }));
+}
 
 describe("worker cleanup", () => {
   test("deletes direct session children without treating its own worker as a child", async () => {
@@ -74,9 +77,8 @@ describe("worker cleanup", () => {
       },
     ];
     for (const worker of workers) {
-      startWorker(worker);
+      startRun(worker);
       await registerWorkerSession(worker);
-      onTestFinished(() => finishWorker(worker.sessionId));
     }
 
     await deleteWorkersForSession(parent);
@@ -84,7 +86,7 @@ describe("worker cleanup", () => {
     expect(hasWorker(parent)).toBe(true);
     expect(hasWorker(sessionChild)).toBe(false);
     expect(hasWorker(fileChild)).toBe(false);
-    expect(abortWorkerMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
+    expect(abortSessionMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
       fileChild,
       sessionChild,
     ]);
@@ -101,14 +103,13 @@ describe("worker cleanup", () => {
     const queued = "queued-app-worker";
     const abandoned = "abandoned-app-worker";
     for (const sessionId of [active, queued]) {
-      startWorker({
+      startRun({
         createdAt: new Date(0).toISOString(),
         type: "app",
         sessionId,
         appId,
         ephemeral: true,
       });
-      onTestFinished(() => finishWorker(sessionId));
     }
     await registerWorkerSession({
       createdAt: new Date(0).toISOString(),
@@ -129,8 +130,7 @@ describe("worker cleanup", () => {
 
     expect(hasWorker(active)).toBe(false);
     expect(hasWorker(queued)).toBe(false);
-    expect(abortWorkerMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
-      abandoned,
+    expect(abortSessionMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
       active,
       queued,
     ]);
@@ -143,13 +143,15 @@ describe("worker cleanup", () => {
 
   test("attempts every independent cleanup", async () => {
     await openTestDatabase();
-    await registerWorkerSession({
+    const failing = {
       createdAt: new Date(0).toISOString(),
-      type: "app",
+      type: "app" as const,
       sessionId: "failed-cleanup",
       appId: "app-a",
       ephemeral: false,
-    });
+    };
+    startRun(failing);
+    await registerWorkerSession(failing);
     await registerWorkerSession({
       createdAt: new Date(0).toISOString(),
       type: "app",
@@ -157,16 +159,15 @@ describe("worker cleanup", () => {
       appId: "app-a",
       ephemeral: true,
     });
-    abortWorkerMock.mockImplementation(async (sessionId) => {
-      if (sessionId === "failed-cleanup") throw new Error("cancel failed");
-      return false;
+    abortSessionMock.mockImplementation(async () => {
+      throw new Error("cancel failed");
     });
     const log = spyOn(console, "error").mockImplementation(() => {});
     onTestFinished(() => log.mockRestore());
 
     await deleteWorkersForApp("app-a");
 
-    expect(abortWorkerMock).toHaveBeenCalledTimes(2);
+    expect(abortSessionMock).toHaveBeenCalledTimes(1);
     expect(deleteSessionIfExistsMock).toHaveBeenCalledTimes(2);
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("failed-cleanup");
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("successful-cleanup");

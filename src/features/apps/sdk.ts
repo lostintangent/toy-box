@@ -33,11 +33,13 @@ import type {
   PostChannelMessageInput,
   channelStatus,
 } from "@channels/model";
+import type { ChannelAgentPresence } from "@channels/model/presence";
 
 export type {
   AppInstance,
   AppShare,
   Channel,
+  ChannelAgentPresence,
   ChannelMessage,
   ChannelState,
   ContextTier,
@@ -208,19 +210,21 @@ export declare function AppSharePicker(props: {
 
 export declare function useWorkspace<T>(selector: (workspace: AppWorkspace) => T): T;
 
-/** The shared channel catalog, including each team's running agents and unread/reply status. */
+/** The shared channel catalog, including each team's working agents and unread/reply status. */
 export declare function useChannels(): {
   channel: Omit<Channel, "tasks">;
-  agents: (ChannelAgent & { isRunning: boolean })[];
+  agents: (ChannelAgent & { isWorking: boolean })[];
   status: ReturnType<typeof channelStatus>;
 }[];
 
-/** Observe one channel through the same cached stream as the channel pane. */
+/** Subscribes to one channel through the same cached stream as the channel pane. */
 export declare function useChannel(
   channelId: string,
   options?: { visible?: boolean; mode?: "active" | "passive" },
 ): {
   state: ChannelState | undefined;
+  /** Each agent's presence, keyed by agent ID. */
+  presence: Record<string, ChannelAgentPresence>;
   unreadAfter: number | null | undefined;
   loadPrevious(throughSequence?: number): Promise<void>;
   postMessage(

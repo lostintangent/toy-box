@@ -1,7 +1,7 @@
 import { expect, onTestFinished, spyOn, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
 import { channelLead, type ChannelConversationMessage } from "./model";
-import type { ChannelObservationEvent, ChannelState } from "./model";
+import type { ChannelSubscriptionEvent, ChannelState } from "./model";
 import { channelQueries, type ChannelQueryData } from "./queries";
 import { channelMutations } from "./mutations";
 import { mergeChannelMessages } from "./model/reducer";
@@ -33,7 +33,6 @@ const snapshot: ChannelState = {
   routines: [],
   request: null,
   bookmarks: [],
-  presence: {},
 };
 
 test.each([undefined, 0])(
@@ -91,7 +90,7 @@ test("replayed reads establish arrival only at the resumption and retain paging 
   connection.send({ type: "read", revision: 103, seenThrough: 102 });
   await stream.waitFor((view) => view?.revision === 103);
   expect(stream.view()!.arrival).toEqual(arrival);
-  connection.send({ type: "resumed", presence: {} });
+  connection.send({ type: "resumed" });
   await stream.waitFor((view) => view?.arrival.id !== arrival.id);
   expect(stream.view()!.arrival.unreadAfter).toBeNull();
   expect(stream.view()!.messages.map(({ id }) => id)).toEqual([
@@ -100,13 +99,9 @@ test("replayed reads establish arrival only at the resumption and retain paging 
     "message-102",
     "optimistic",
   ]);
-  const arrived = stream.view()!.arrival;
-  connection.send({ type: "presence", presence: { channel: { state: "working" } } });
-  await stream.waitFor((view) => view?.presence.channel?.state === "working");
-  expect(stream.view()!.arrival).toEqual(arrived);
 });
 
-test("deletion before bootstrap completes observation", async () => {
+test("deletion before bootstrap completes the subscription", async () => {
   const stream = openStream();
   const connection = await stream.nextConnection();
   connection.send({ type: "deleted", channelId: snapshot.channel.id });
@@ -127,7 +122,7 @@ test("unexpected EOF reconnects from the last applied revision", async () => {
 
 type Connection = {
   url: string;
-  send(event: ChannelObservationEvent): void;
+  send(event: ChannelSubscriptionEvent): void;
   end(): void;
 };
 
@@ -152,7 +147,7 @@ function openStream(cached?: ChannelQueryData) {
       signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
       const connection = {
         url: typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
-        send(event: ChannelObservationEvent) {
+        send(event: ChannelSubscriptionEvent) {
           controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
         },
         end() {

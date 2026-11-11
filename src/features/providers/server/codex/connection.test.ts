@@ -444,8 +444,7 @@ test("Codex live text, snapshot resume, and native history preserve message boun
   const live = sessionState(events);
   const replay = history.reduce(applySessionEvent, createInitialSessionState());
   expect(live.messages).toEqual(replay.messages);
-  const { lastSeenEventId: _lastSeenEventId, ...resumeState } = snapshot;
-  const resumed = events.slice(resumeFrom).reduce(applySessionEvent, resumeState);
+  const resumed = events.slice(resumeFrom).reduce(applySessionEvent, snapshot);
   expect(resumed.messages).toEqual(live.messages);
   expect(live.messages.map((message) => message.content)).toEqual([
     "Hello",

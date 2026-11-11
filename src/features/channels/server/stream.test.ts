@@ -1,18 +1,18 @@
 import { expect, onTestFinished, spyOn, test } from "bun:test";
 import { homedir } from "node:os";
-import type { ChannelMessage, ChannelObservationEvent } from "@channels/model";
+import type { ChannelMessage, ChannelSubscriptionEvent } from "@channels/model";
 import { broadcast } from "@workspace/server/events";
 import { deleteSessionActivity, setSessionActivity } from "@sessions/server/state/activity";
 import * as database from "@/server/database";
 import { ChannelDatabase, catalogEntry, type ChannelChange } from "./database";
-import { publishChannelEvent, releaseChannelEvents } from "./events";
+import { publishChannelEvent, releaseChannelEvents } from "./eventLog";
 import { publishChannelChange } from "./index";
 import {
   getChannelCatalog,
   getChannelSnapshot,
-  streamChannel,
-  streamChannelCatalog,
-  type ChannelCatalogEvent,
+  subscribeToChannel,
+  subscribeToChannelCatalog,
+  type ChannelCatalogSubscriptionEvent,
 } from "./stream";
 import { channelAgent, openChannel } from "./testFixtures";
 
@@ -34,10 +34,10 @@ function eventQueue<T>() {
   };
 }
 
-function observe(channelId: string, afterRevision?: number) {
-  const queue = eventQueue<ChannelObservationEvent>();
+function subscribe(channelId: string, afterRevision?: number) {
+  const queue = eventQueue<ChannelSubscriptionEvent>();
   let closed = false;
-  const stop = streamChannel(channelId, queue.send, () => (closed = true), afterRevision);
+  const stop = subscribeToChannel(channelId, queue.send, () => (closed = true), afterRevision);
   onTestFinished(stop);
   return {
     ...queue,
@@ -48,19 +48,17 @@ function observe(channelId: string, afterRevision?: number) {
   };
 }
 
-async function observeCatalog() {
-  const queue = eventQueue<ChannelCatalogEvent>();
-  onTestFinished(await streamChannelCatalog(queue.send));
+async function subscribeToCatalog() {
+  const queue = eventQueue<ChannelCatalogSubscriptionEvent>();
+  onTestFinished(await subscribeToChannelCatalog(queue.send));
   return queue;
 }
 
-test("snapshots combine public Channel facts with live presence without exposing private worker metadata", async () => {
+test("snapshots expose public Channel facts without private worker metadata", async () => {
   const { channel, channels } = await openChannel();
   const worker = channelAgent(channel.id, "reviewer", "Reviewer");
   worker.metadata = { seenThrough: 72 };
   const { member } = await channels.createMember(worker);
-  onTestFinished(() => deleteSessionActivity(member.id));
-  setSessionActivity(channel.id, "running");
 
   const file = { kind: "session" as const, sessionId: channel.id, path: "docs/Project plan.md" };
   await channels.shareArtifact({
@@ -102,7 +100,6 @@ test("snapshots combine public Channel facts with live presence without exposing
   expect(snapshot).toMatchObject({
     channel: { id: channel.id, name: "Studio" },
     members: [{ id: member.id, name: "Reviewer" }],
-    presence: { [channel.id]: { state: "working" }, [member.id]: { state: "idle" } },
   });
   expect(snapshot?.members[0]).not.toHaveProperty("seenThrough");
   expect(snapshot?.members[0]).not.toHaveProperty("sessionId");
@@ -149,7 +146,7 @@ test("a reply committed after the durable read cannot advance the snapshot beyon
   });
 });
 
-test("cached reconnects replay before presence; an expired cursor replaces history", async () => {
+test("cached reconnects replay then resume; an expired cursor replaces history", async () => {
   const { channel, channels } = await openChannel();
   const changed = await channels.updateChannel(channel.id, {
     tasks: [{ id: "work", title: "Work added while disconnected", status: "pending" }],
@@ -157,21 +154,18 @@ test("cached reconnects replay before presence; an expired cursor replaces histo
   for (const event of changed.events) publishChannelEvent(channel.id, event);
   const reads = spyOn(ChannelDatabase.prototype, "getSnapshot");
   onTestFinished(() => reads.mockRestore());
-  const client = observe(channel.id, 0);
+  const client = subscribe(channel.id, 0);
   expect(await client.next()).toEqual(changed.events[0]!);
-  expect(await client.next()).toEqual({
-    type: "resumed",
-    presence: { [channel.id]: { state: "idle" } },
-  });
+  expect(await client.next()).toEqual({ type: "resumed" });
   client.stop();
-  const current = observe(channel.id, changed.events[0]!.revision);
+  const current = subscribe(channel.id, changed.events[0]!.revision);
   expect(await current.next()).toMatchObject({ type: "resumed" });
   expect(reads).not.toHaveBeenCalled();
   current.stop();
   releaseChannelEvents(channel.id);
   // The snapshot carries the revision and request at its top level, so its Channel is the bare metadata.
   const { revision: _revision, request: _request, ...metadata } = changed.channel!;
-  const expired = observe(channel.id, 0);
+  const expired = subscribe(channel.id, 0);
   expect(await expired.next()).toMatchObject({
     type: "snapshot",
     state: { channel: metadata },
@@ -179,9 +173,9 @@ test("cached reconnects replay before presence; an expired cursor replaces histo
   expect(reads).toHaveBeenCalledTimes(1);
 });
 
-test("live events and presence send only changed facts without rereading durable state", async () => {
+test("live events send only changed facts without rereading durable state", async () => {
   const { channel, channels } = await openChannel();
-  const client = observe(channel.id, 0);
+  const client = subscribe(channel.id, 0);
   expect(await client.next()).toMatchObject({ type: "resumed" });
   const snapshots = spyOn(ChannelDatabase.prototype, "getSnapshot");
   const rosters = spyOn(ChannelDatabase.prototype, "getRoster");
@@ -192,30 +186,6 @@ test("live events and presence send only changed facts without rereading durable
   const status = await channels.setAgentStatus(channel.id, { state: "waiting", text: "A reply" });
   publishChannelEvent(channel.id, status!.events[0]!);
   expect(await client.next()).toMatchObject({ type: "status" });
-  expect(await client.next()).toEqual({
-    type: "presence",
-    presence: { [channel.id]: { state: "waiting", text: "A reply" } },
-  });
-  setSessionActivity(channel.id, "running");
-  expect(await client.next()).toEqual({
-    type: "presence",
-    presence: { [channel.id]: { state: "working" } },
-  });
-  setSessionActivity(channel.id, "background");
-  expect(await client.next()).toEqual({
-    type: "presence",
-    presence: { [channel.id]: { state: "waiting", text: "A reply" } },
-  });
-  setSessionActivity(channel.id, "running");
-  expect(await client.next()).toEqual({
-    type: "presence",
-    presence: { [channel.id]: { state: "working" } },
-  });
-  setSessionActivity(channel.id, "idle");
-  expect(await client.next()).toEqual({
-    type: "presence",
-    presence: { [channel.id]: { state: "waiting", text: "A reply" } },
-  });
   broadcast({ type: "channel.upserted", channel });
   await Bun.sleep(0);
   expect(client.events).toEqual([]);
@@ -256,9 +226,9 @@ test("streams opened during concurrent commits continue their initial view in re
     }
   });
   await opening.promise;
-  const fresh = observe(channel.id);
-  const resumed = observe(channel.id, 0);
-  const catalog = await observeCatalog();
+  const fresh = subscribe(channel.id);
+  const resumed = subscribe(channel.id, 0);
+  const catalog = await subscribeToCatalog();
   await Promise.all(writers);
   const revision = (await getChannelSnapshot(channel.id))!.revision;
 
@@ -291,7 +261,7 @@ test("streams opened during concurrent commits continue their initial view in re
 
 test("a live revision gap closes the stream instead of forwarding an incomplete transcript", async () => {
   const { channel } = await openChannel();
-  const client = observe(channel.id);
+  const client = subscribe(channel.id);
   const opened = await client.next();
   if (opened.type !== "snapshot") throw new Error("Expected a snapshot");
   publishChannelEvent(channel.id, {
@@ -322,8 +292,8 @@ test("disconnecting during a snapshot suppresses its result and later events", a
     release.resolve();
     reads.mockRestore();
   });
-  const events: ChannelObservationEvent[] = [];
-  const stop = streamChannel(
+  const events: ChannelSubscriptionEvent[] = [];
+  const stop = subscribeToChannel(
     channel.id,
     (event) => events.push(event),
     () => {},
@@ -339,7 +309,7 @@ test("disconnecting during a snapshot suppresses its result and later events", a
   expect(events).toEqual([]);
 });
 
-test("snapshot failures terminate observation without exposing private errors", async () => {
+test("snapshot failures end the subscription without exposing private errors", async () => {
   const { channel } = await openChannel();
   const reads = spyOn(ChannelDatabase.prototype, "getSnapshot").mockRejectedValue(
     new Error("Private database details"),
@@ -350,8 +320,8 @@ test("snapshot failures terminate observation without exposing private errors", 
     errors.mockRestore();
   });
   const closed = Promise.withResolvers<void>();
-  const events: ChannelObservationEvent[] = [];
-  const stop = streamChannel(channel.id, (event) => events.push(event), closed.resolve);
+  const events: ChannelSubscriptionEvent[] = [];
+  const stop = subscribeToChannel(channel.id, (event) => events.push(event), closed.resolve);
   onTestFinished(stop);
   await closed.promise;
   broadcast({ type: "channel.upserted", channel });
@@ -360,10 +330,10 @@ test("snapshot failures terminate observation without exposing private errors", 
   expect(events).toEqual([]);
 });
 
-test("a missing Channel ends observation as deleted, with or without a cursor", async () => {
+test("a missing Channel ends the subscription as deleted, with or without a cursor", async () => {
   await openChannel();
   for (const after of [undefined, 0]) {
-    const client = observe("missing", after);
+    const client = subscribe("missing", after);
     expect(await client.next()).toEqual({ type: "deleted", channelId: "missing" });
     expect(client.closed).toBe(true);
   }
@@ -385,9 +355,9 @@ test("the catalog names working agents the way Channel presence does, without ta
   expect(catalog.channels[0]).not.toHaveProperty("tasks");
 });
 
-test("the catalog stream opens with the catalog, then forwards Channel changes and follows who is working", async () => {
+test("the catalog stream opens with the catalog, then forwards Channel changes and tracks who is working", async () => {
   const { channel, channels } = await openChannel();
-  const catalog = await observeCatalog();
+  const catalog = await subscribeToCatalog();
   expect(await catalog.next()).toEqual({ type: "snapshot", catalog: await getChannelCatalog() });
 
   const { member } = await channels.createMember(channelAgent(channel.id, "joiner", "Joiner"));

@@ -19,17 +19,18 @@ export type ChannelActivityState = {
   ending?: "completed" | "channelDeleted" | "tasksRemoved";
 };
 
-/** Matches ChannelKit: direct-root progress, intrinsic lead first, and actual public presence. */
+/** Matches ChannelKit: direct-root progress, intrinsic lead first, and running agents. */
 export function channelActivityState(
-  state: Pick<ChannelState, "lead" | "members" | "presence"> & {
+  state: Pick<ChannelState, "lead" | "members"> & {
     channel: Pick<Channel, "tasks" | "requestSequence">;
   },
+  running: (agentId: string) => boolean,
 ): ChannelActivityState {
   const tasksTotal = state.channel.tasks.length;
   const tasksDone = state.channel.tasks.filter((task) => task.status === "done").length;
   return {
     workingAgents: [state.lead, ...state.members]
-      .filter((agent) => state.presence[agent.id]?.state === "working")
+      .filter((agent) => running(agent.id))
       .map(({ id, name, avatar }) => ({ id, name, ...(avatar ? { avatar } : {}) })),
     tasksDone,
     tasksTotal,

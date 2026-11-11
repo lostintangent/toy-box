@@ -86,9 +86,6 @@ export async function detachManagedSession(sessionId: string): Promise<void> {
     const { detachChannelAgentSession } = await import("@channels/server");
     await detachChannelAgentSession(sessionId);
   } else if (worker) await unregisterWorkerSession(sessionId);
-  // Pending work registered for or under the session ends with it.
-  const { finishWorkersForSession } = await import("@workers/server/registry");
-  finishWorkersForSession(sessionId);
 }
 
 async function readSessionOwnership(): Promise<SessionsState["ownership"]> {

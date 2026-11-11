@@ -283,12 +283,11 @@ test("resumed threads apply the current workspace, model, and session skills", a
   });
 });
 
-test("second-precision native timestamps cannot hide edits made during snapshot capture", async () => {
-  let updatedAt = 100;
+test("a snapshot captured in its last write's second stays current until a later write", async () => {
   const rpc = new transport.CodexTransport((line) => {
     const { id } = JSON.parse(line);
     queueMicrotask(() =>
-      rpc.receive(JSON.stringify({ id, result: { thread: { updatedAt } } }) + "\n"),
+      rpc.receive(JSON.stringify({ id, result: { thread: { updatedAt: 100 } } }) + "\n"),
     );
   });
   spyOn(transport, "startCodexClient").mockResolvedValue(rpc);
@@ -296,10 +295,9 @@ test("second-precision native timestamps cannot hide edits made during snapshot 
     mock.restore();
     rpc.close();
   });
-  expect(await codexProvider.isHistoryCurrent("native", 100_500)).toBe(false);
-  expect(await codexProvider.isHistoryCurrent("native", 101_000)).toBe(true);
-  updatedAt = 101;
-  expect(await codexProvider.isHistoryCurrent("native", 101_000)).toBe(false);
+  expect(await codexProvider.isHistoryCurrent("native", 100_000)).toBe(true);
+  expect(await codexProvider.isHistoryCurrent("native", 100_999)).toBe(true);
+  expect(await codexProvider.isHistoryCurrent("native", 99_999)).toBe(false);
 });
 
 test("deleting a thread that is already gone resolves, and other failures propagate", async () => {

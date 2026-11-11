@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { editChannelInputSchema } from "@channels/model";
 import { deleteChannel, editChannel } from "@channels/server";
 import { noContent, notFound, readInput, respond } from "@channels/server/http";
-import { streamChannel } from "@channels/server/stream";
+import { subscribeToChannel } from "@channels/server/stream";
 import { createSseResponse } from "@/shared/server/sse";
 
 export const Route = createFileRoute("/api/v1/channels/$channelId")({
@@ -13,7 +13,7 @@ export const Route = createFileRoute("/api/v1/channels/$channelId")({
         const after = Number(new URL(request.url).searchParams.get("after")?.trim() || NaN);
         const revision = Number.isSafeInteger(after) && after >= 0 ? after : undefined;
         return createSseResponse(request, (send, close) =>
-          streamChannel(params.channelId, send, close, revision),
+          subscribeToChannel(params.channelId, send, close, revision),
         );
       },
       PATCH: ({ params, request }) =>

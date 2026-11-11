@@ -5,7 +5,7 @@ import {
   skipToken,
 } from "@tanstack/react-query";
 import { reducedQuery } from "@/shared/query";
-import type { SessionState, SessionsState } from "./model";
+import type { SessionState, SessionsState, SessionSubscriptionEvent } from "./model";
 import { reduceSessionsActivity } from "./model/activity";
 import { applySessionEvent, createInitialSessionState } from "./model/reducer";
 import { reduceSessionsState } from "./model/catalog";
@@ -14,11 +14,10 @@ import {
   getSessionsActivity,
   getSessionsState,
   listSkills,
-  querySession,
   querySessionMessages,
   resolveSessionContext,
 } from "./server/functions";
-import { streamSession, type SessionObservation } from "./stream";
+import { streamSession } from "./stream";
 
 export const sessionQueries = {
   all: () => ["sessions"] as const,
@@ -51,29 +50,23 @@ export const sessionQueries = {
 
   details: () => [...sessionQueries.all(), "detail"] as const,
 
-  // A session's reduced state, observed while an enabled observer watches it. Nothing
+  // A session's reduced state, subscribed while an enabled observer watches it. Nothing
   // awaits its fetch, which lasts until the last watcher leaves.
   detail: (sessionId: string) =>
     queryOptions({
       queryKey: [...sessionQueries.details(), sessionId] as const,
-      queryFn: streamedQuery<SessionObservation, SessionState>({
+      queryFn: streamedQuery<SessionSubscriptionEvent[], SessionState>({
         initialValue: createInitialSessionState(),
         refetchMode: "append",
         streamFn: (context) =>
-          streamSession(context, {
-            sessionId,
-            activityKey: sessionQueries.activity.queryKey,
-            readSnapshot: (signal) => querySession({ data: { sessionId }, signal }),
-          }),
-        reducer: (state, observation) =>
-          observation.type === "snapshot"
-            ? adoptSessionSnapshot(state, observation.state)
-            : observation.events.reduce(applySessionEvent, state),
+          streamSession(context, { sessionId, activityKey: sessionQueries.activity.queryKey }),
+        reducer: (state, events) => events.reduce(applySubscriptionEvent, state),
       }),
-      staleTime: 0, // Every watch reopens with a snapshot of the latest messages.
+      staleTime: 0, // Every watch resubscribes from its revision.
       refetchOnWindowFocus: "always",
       refetchOnReconnect: "always",
-      retry: false, // Don't retry on "session not found" errors
+      // The stream resubscribes itself, and a failed open, such as a missing session, is final.
+      retry: false,
       // Every write keeps the previous pages already loaded.
       structuralSharing: (previous: unknown, next: unknown) =>
         replaceEqualDeep(
@@ -98,6 +91,18 @@ export function adoptSessionSnapshot(
   snapshot: SessionState,
 ): SessionState {
   return snapshot.model || !current?.model ? snapshot : { ...snapshot, model: current.model };
+}
+
+function applySubscriptionEvent(state: SessionState, event: SessionSubscriptionEvent) {
+  switch (event.type) {
+    case "snapshot":
+      return adoptSessionSnapshot(state, event.state);
+    case "resumed":
+    case "deleted":
+      return state;
+    default:
+      return applySessionEvent(state, event);
+  }
 }
 
 export function createEmptySessionsState(): SessionsState {

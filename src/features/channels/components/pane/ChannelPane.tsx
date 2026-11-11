@@ -49,7 +49,7 @@ function ChannelContent({
   isVisible: boolean;
   variant: PaneVariant;
 }) {
-  const { state, unreadAfter, loadPrevious, postMessage } = useChannel(channelId, {
+  const { state, presence, unreadAfter, loadPrevious, postMessage } = useChannel(channelId, {
     visible: isVisible,
   });
   const transcriptRef = useRef<ChannelTranscriptHandle>(null);
@@ -72,7 +72,7 @@ function ChannelContent({
         members,
         agents,
         agent: (id) => channelAgentIdentity(agents, id),
-        presence: state?.presence ?? {},
+        presence,
         bookmarks: state?.bookmarks ?? [],
         bookmark: (sequence, bookmarked) => bookmark({ channelId, sequence, bookmarked }),
         reply: (agent) => composerRef.current?.reply(agent),

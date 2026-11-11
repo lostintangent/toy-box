@@ -290,22 +290,23 @@ return channels.map(({ channel, agents, status }) => (
   <div key={channel.id}>
     {channel.name} · {status ?? "Read"}
     {agents
-      .filter((agent) => agent.isRunning)
+      .filter((agent) => agent.isWorking)
       .map((agent) => agent.name)
       .join(", ")}
   </div>
 ));
 ```
 
-Each result contains `channel`, `agents` (identities plus `isRunning`), and
+Each result contains `channel`, `agents` (identities plus `isWorking`), and
 `status`: `"waiting"` for a pending user reply, otherwise `"finished"` for unread task
 completion, `"unread"` for other unread messages, or `null`. Opening an app does not mark
 channels read. The hook shares the host's catalog and workspace caches and uses Suspense
 while loading; errors reach the app's error boundary. It does not open channel detail
-streams, so `channel` has no `tasks`. Read them from `useChannel`. Store selected channel
-IDs in app state rather than copying catalog entries.
+streams, so `channel` has no `tasks` and agents have no waiting or status text. Read
+them from `useChannel`. Store selected channel IDs in app state rather than copying
+catalog entries.
 
-`useChannel(channelId, { visible = true, mode = "active" } = {})` observes one
+`useChannel(channelId, { visible = true, mode = "active" } = {})` subscribes to one
 channel using the same Query cache, stream, reducer, history, and post mutation as
 the native channel pane. Mount it in a child keyed by the selected channel ID:
 
@@ -323,10 +324,10 @@ function Office({ channelId }: { channelId: string }) {
 ```
 
 `state` is the canonical `ChannelState`: channel metadata and tasks, lead, members,
-messages, pending `request`, artifacts, routines, and authoritative `presence`.
-Use presence to place agents in working, waiting, or idle areas; waiting includes
-optional `wakeAt`. Avatars contain a hex `color` and SVG path `mark` in a 24×24
-viewBox. Artifact `file`s work with `useFile` and `actions.openFile`.
+messages, pending `request`, artifacts, and routines. `presence` maps each agent ID
+to its live presence. Use it to place agents in working, waiting, or idle areas;
+working and waiting may include `text`, and waiting includes optional `wakeAt`.
+Avatars contain a hex `color` and SVG path `mark` in a 24×24 viewBox. Artifact `file`s work with `useFile` and `actions.openFile`.
 A task's `artifactId` is the `id` of its artifact in `state.artifacts`. `channelTasksDiff(tasks)`
 sums their direct and reported descendant diffs, or returns `undefined` when none are reported;
 pass `[task]` for one subtree. It reuses the Channels logic.
@@ -334,7 +335,7 @@ pass `[task]` for one subtree. It reuses the Channels logic.
 `postMessage({ content, attachments? })` shows the message right away and resolves with the stored
 message. If the send fails, it removes that copy and rejects, so clear a draft only after it resolves.
 
-Observation is active by default and marks visible content read. Set `mode: "passive"`
+The default `mode: "active"` marks visible content read. Set `mode: "passive"`
 for previews and visualizations. `unreadAfter` is the reader's stable unread divider.
 Set `visible: false` when the surface
 is hidden. Page visibility is handled automatically. Query keeps one stream per

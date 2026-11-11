@@ -54,7 +54,9 @@ The provider owns no Toy Box database tables.
 Codex allocates its own thread IDs. Sessions durably binds these to public IDs reserved
 before creation. Always use `Thread.id`; `sessionId` can describe a shared fork family.
 Threads use Codex's default paginated history, read through full turn pages and
-rewound with thread/revert.
+rewound with thread/revert. Codex persists a turn before it emits `turn/completed`, and only
+turn content moves the second-precision `Thread.updatedAt`, so a snapshot captured at completion
+stays current until a write lands in a later second.
 Conversation rewind only targets the first input of a turn, so steered inputs are
 marked non-rewindable. Deletion uses thread/delete, not archival.
 

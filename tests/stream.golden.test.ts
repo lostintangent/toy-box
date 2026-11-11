@@ -2,7 +2,7 @@ import { connectCopilotSession, holdNativeEvents } from "@providers/server/copil
 import type { CopilotSession, SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { WorkspaceEvent } from "@workspace/model/events";
-import type { SessionEvent, SessionState } from "@sessions/model";
+import type { SessionState, SessionSubscriptionEvent } from "@sessions/model";
 import { loadSessionFixture } from "./helpers";
 import * as realSessionRegistry from "@sessions/server/state/registry";
 import * as realBroadcast from "@workspace/server/events";
@@ -14,7 +14,7 @@ import * as realBroadcast from "@workspace/server/events";
 // this locks the runtime around it: event sequencing, client ID correlation,
 // buffering, global broadcast ordering, and teardown.
 //
-// Nondeterministic Date.now-seeded eventIds are normalized to stable ordinals
+// Nondeterministic Date.now-seeded revisions are normalized to stable ordinals
 // before asserting.
 //
 // Module mocks cover each module's full surface and are restored after this
@@ -97,12 +97,12 @@ const SESSION_ID = "golden-stream";
 describe("stream golden replay", () => {
   test("two-turn lifetime: fixture replay, queue drain, and finish", async () => {
     // ── Normalization for nondeterministic ids ─────────────────────────
-    let baseEventId: number | undefined;
-    const normalize = (event: SessionEvent): unknown => {
+    let baseRevision: number | undefined;
+    const normalize = (event: SessionSubscriptionEvent): unknown => {
       const e = { ...event } as Record<string, unknown>;
-      if (typeof e.eventId === "number") {
-        baseEventId ??= e.eventId;
-        e.eventId = e.eventId - baseEventId;
+      if (typeof e.revision === "number") {
+        baseRevision ??= e.revision;
+        e.revision = e.revision - baseRevision;
       }
       return e;
     };
@@ -130,13 +130,15 @@ describe("stream golden replay", () => {
       },
     );
     const received: unknown[] = [];
-    const events = execution.subscribe();
-    const collector = (async () => {
-      for await (const event of events) {
-        received.push(normalize(event));
-      }
-      received.push("<<SUBSCRIPTION-DONE>>");
-    })();
+    const subscriptionDone = Promise.withResolvers<void>();
+    execution.subscribe(
+      (event) => void received.push(normalize(event)),
+      () => {
+        received.push("<<SUBSCRIPTION-DONE>>");
+        subscriptionDone.resolve();
+      },
+      0,
+    );
 
     // Turn 1: explicit start + full fixture replay through the SDK listener.
     await execution.deliver({ clientId: "client-1", role: "user", content: INITIAL_PROMPT });
@@ -172,7 +174,7 @@ describe("stream golden replay", () => {
     sideEffects.push("--- pre-finish ---");
     sdkHandler!(sdkEvent({ type: "session.idle", data: {} }));
     await settle();
-    await collector;
+    await subscriptionDone.promise;
 
     // ── Invariants ─────────────────────────────────────────────────────
     // Each turn sent exactly its prompt to the SDK: the explicit start,
@@ -221,10 +223,10 @@ describe("stream golden replay", () => {
     expect({ received, sideEffects }).toMatchSnapshot();
     expect({
       ...state,
-      lastSeenEventId:
-        state.lastSeenEventId !== undefined && baseEventId !== undefined
-          ? state.lastSeenEventId - baseEventId
-          : state.lastSeenEventId,
+      revision:
+        state.revision !== undefined && baseRevision !== undefined
+          ? state.revision - baseRevision
+          : state.revision,
     }).toMatchSnapshot();
   });
 
@@ -300,7 +302,7 @@ describe("stream golden replay", () => {
 
     const comparable = (state: SessionState): unknown => ({
       ...state,
-      lastSeenEventId: undefined,
+      revision: undefined,
     });
 
     // Road 1: both turns on one uninterrupted execution.
@@ -316,7 +318,7 @@ describe("stream golden replay", () => {
     expect(SessionExecution.isRunning("golden-interrupted")).toBe(false);
 
     const capturedSnapshot = interrupted.execution.getSessionState();
-    const { lastSeenEventId: _lastSeenEventId, ...capturedState } = capturedSnapshot;
+    const { revision: _revision, ...capturedState } = capturedSnapshot;
 
     // A new execution for the same session, seeded from the snapshot exactly as
     // delivery acquisition does on a cache hit, runs turn 2.

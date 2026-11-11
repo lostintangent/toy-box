@@ -4,9 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { loadChannelHistory } from "./cache";
 import { channelMutations } from "./mutations";
 import { channelQueries, type ChannelQueryData } from "./queries";
+import { useSessionsActivity } from "@sessions/useSessionActivity";
 import { usePageVisibility } from "@/shared/hooks/usePageVisibility";
 import { generateUUID } from "@/shared/utils";
 import { channelUnreadAfter, type Channel, type PostChannelMessageInput } from "./model";
+import { channelAgentPresence } from "./model/presence";
 
 /**
  * One visit's unread position. A visit that joins an active observer reads its cache at once;
@@ -43,7 +45,10 @@ export function nextChannelVisit(
   return visit;
 }
 
-/** Shared channel observation; passive observers leave unread state untouched. */
+/**
+ * Subscribes to a shared channel and derives its agents' presence. Passive callers leave unread
+ * state untouched.
+ */
 export function useChannel(
   channelId: string,
   { visible = true, mode = "active" }: { visible?: boolean; mode?: "active" | "passive" } = {},
@@ -67,6 +72,14 @@ export function useChannel(
     arrival: state?.arrival,
   });
   if (nextVisit !== visit) setVisit(nextVisit);
+  const presence = useSessionsActivity((activities) =>
+    Object.fromEntries(
+      (state ? [state.lead, ...state.members] : []).map((agent) => [
+        agent.id,
+        channelAgentPresence(agent, activities[agent.id]?.status === "running"),
+      ]),
+    ),
+  );
 
   const { mutate: markRead } = useMutation(channelMutations.markRead());
   const { mutateAsync: post } = useMutation(channelMutations.post());
@@ -96,5 +109,5 @@ export function useChannel(
   if (state === null) throw new Error("This channel has been deleted.");
   /** Where unread messages began on arrival; null means read, undefined awaits arrival. */
   const unreadAfter = visit.status === "reading" ? visit.unreadAfter : undefined;
-  return { state, unreadAfter, loadPrevious, postMessage };
+  return { state, presence, unreadAfter, loadPrevious, postMessage };
 }

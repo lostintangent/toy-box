@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import * as streamModule from "@sessions/server/runtime";
 import * as workerStateModule from "./database";
 import type { SessionCompletion, SessionState } from "@sessions/model";
@@ -77,14 +77,22 @@ mock.module("@workers/server/database", () => ({
   registerWorkerSession: registerWorkerSessionMock,
 }));
 
-const { abortWorker, superviseWorker, sweepAbandonedWorkers, WorkerCanceledError } =
-  await import("./supervisor");
-const { getProcessValue, sharedSet } = await import("@/shared/server/processState");
+const { superviseWorker, sweepAbandonedWorkers } = await import("./supervisor");
+const { cancelWorker, WorkerCanceledError } = await import("./registry");
+const { getProcessValue } = await import("@/shared/server/processState");
+const log = spyOn(console, "error").mockImplementation(() => {});
 
 afterAll(() => {
   mock.module("@sessions/server/runtime", () => realStreamModule);
   mock.module("@workers/server/database", () => realWorkerStateModule);
+  log.mockRestore();
 });
+
+/** Waits by ID, as the worker's callers do. */
+async function workerResult(): Promise<Completion> {
+  const [result] = await streamModule.waitForSessions(["toy-box-worker"]);
+  return result!;
+}
 
 beforeEach(() => {
   workerIsLive = false;
@@ -123,20 +131,19 @@ beforeEach(() => {
   });
   getProcessValue<{ promise?: Promise<void> }>("worker-startup-sweep", () => ({})).promise =
     undefined;
-  sharedSet<string>("active-workers").clear();
-  sharedSet<string>("canceling-workers").clear();
+  log.mockClear();
 });
 
 describe("superviseWorker", () => {
   test("inherits its parent's model and worktree directory and deletes after exact completion", async () => {
     const worker = { ...fileWorker, name: "Focused job" };
-    const receipt = await superviseWorker({
+    const admission = await superviseWorker({
       worker,
       retention: "ephemeral",
       message: { content: "Do one focused job." },
     });
 
-    expect(receipt.sessionId).toBe("toy-box-worker");
+    expect(admission.sessionId).toBe("toy-box-worker");
     expect(registerWorkerSessionMock).toHaveBeenCalledWith(worker);
     await waitFor(() => expect(createSessionMock).toHaveBeenCalledTimes(1));
     expect(createSessionMock).toHaveBeenCalledWith(
@@ -154,8 +161,7 @@ describe("superviseWorker", () => {
     expect(getSessionDirectoryMock).toHaveBeenCalledWith("toy-box-parent");
     expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
 
-    const completion = receipt.waitForCompletion();
-    expect(receipt.waitForCompletion()).toBe(completion);
+    const completion = workerResult();
     workerCompletion.resolve({ status: "completed", response: "Done." });
 
     await expect(completion).resolves.toEqual({ status: "completed", response: "Done." });
@@ -171,7 +177,7 @@ describe("superviseWorker", () => {
       await release.promise;
       return { disposition: "started", waitForCompletion: () => workerCompletion.promise };
     });
-    const receipt = await superviseWorker({
+    const admission = await superviseWorker({
       worker: sessionWorker,
       retention: "durable",
       message: { content: "Start work." },
@@ -180,12 +186,12 @@ describe("superviseWorker", () => {
         return { title: "Committed work" };
       },
     });
-    expect(receipt.value).toEqual({ title: "Committed work" });
+    expect(admission.value).toEqual({ title: "Committed work" });
     expect(registerWorkerSessionMock).toHaveBeenCalledWith(sessionWorker);
     await starting.promise;
     release.resolve();
     workerCompletion.resolve({ status: "completed" });
-    await receipt.waitForCompletion();
+    await workerResult();
   });
 
   test("rejects admission and cleans up when persistence fails", async () => {
@@ -217,7 +223,7 @@ describe("superviseWorker", () => {
       message: { content: "Start work." },
     });
     await persisting.promise;
-    await abortWorker(sessionWorker.sessionId);
+    await cancelWorker(sessionWorker.sessionId);
     release.resolve();
 
     await expect(spawning).rejects.toBeInstanceOf(WorkerCanceledError);
@@ -234,7 +240,7 @@ describe("superviseWorker", () => {
       message: { content: "Start work." },
     });
     await waitFor(() => expect(getSessionDirectoryMock).toHaveBeenCalledTimes(1));
-    await expect(abortWorker(sessionWorker.sessionId)).resolves.toBe(true);
+    await expect(cancelWorker(sessionWorker.sessionId)).resolves.toBe(true);
     directory.resolve(parentDirectory);
     await expect(spawning).rejects.toBeInstanceOf(WorkerCanceledError);
 
@@ -243,14 +249,14 @@ describe("superviseWorker", () => {
   });
 
   test("uses explicit model and directory overrides without reading parent state", async () => {
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: fileWorker,
       retention: "ephemeral",
       message: { content: "Do one focused job.", model: explicitModel },
       location: { directory: "/other" },
     });
     workerCompletion.resolve({ status: "completed" });
-    await receipt.waitForCompletion();
+    await workerResult();
 
     expect(getSessionDirectoryMock).not.toHaveBeenCalled();
     expect(getSessionSnapshotMock).not.toHaveBeenCalled();
@@ -261,13 +267,13 @@ describe("superviseWorker", () => {
   });
 
   test("runs app-owned workers without a parent and deletes them after completion", async () => {
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: appWorker,
       retention: "ephemeral",
       message: { content: "Generate a pattern.", model: explicitModel },
     });
     workerCompletion.resolve({ status: "completed" });
-    await receipt.waitForCompletion();
+    await workerResult();
 
     expect(getSessionDirectoryMock).not.toHaveBeenCalled();
     expect(getSessionSnapshotMock).not.toHaveBeenCalled();
@@ -284,22 +290,23 @@ describe("superviseWorker", () => {
   });
 
   test("deletes failed workers while preserving their completion result", async () => {
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: fileWorker,
       retention: "ephemeral",
       message: { content: "Fail this job." },
     });
     workerCompletion.resolve({ status: "failed", response: "Could not finish." });
 
-    await expect(receipt.waitForCompletion()).resolves.toEqual({
+    await expect(workerResult()).resolves.toEqual({
       status: "failed",
       response: "Could not finish.",
     });
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
+    expect(log).not.toHaveBeenCalled();
   });
 
   test("retains coordinated workers after completion", async () => {
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: sessionWorker,
       retention: "durable",
       message: { content: "Investigate in parallel." },
@@ -307,7 +314,7 @@ describe("superviseWorker", () => {
     });
     workerCompletion.resolve({ status: "completed", response: "Findings." });
 
-    await expect(receipt.waitForCompletion()).resolves.toEqual({
+    await expect(workerResult()).resolves.toEqual({
       status: "completed",
       response: "Findings.",
     });
@@ -320,19 +327,19 @@ describe("superviseWorker", () => {
 
   test("retains an app-owned worker when it is not ephemeral", async () => {
     const worker = { ...appWorker, ephemeral: false };
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker,
       retention: "durable",
       message: { content: "Remain available for follow-up." },
     });
     workerCompletion.resolve({ status: "completed" });
 
-    await receipt.waitForCompletion();
+    await workerResult();
     expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
   });
 
   test("cancels a running worker through its live execution", async () => {
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: fileWorker,
       retention: "ephemeral",
       message: { content: "Do one focused job." },
@@ -340,10 +347,11 @@ describe("superviseWorker", () => {
     await waitFor(() => expect(createSessionMock).toHaveBeenCalledTimes(1));
     workerIsLive = true;
 
-    await expect(abortWorker("toy-box-worker")).resolves.toBe(true);
+    await expect(cancelWorker("toy-box-worker")).resolves.toBe(true);
     expect(abortSessionMock).toHaveBeenCalledWith("toy-box-worker");
-    await expect(receipt.waitForCompletion()).rejects.toBeInstanceOf(WorkerCanceledError);
-    await expect(abortWorker("toy-box-worker")).resolves.toBe(false);
+    await expect(workerResult()).rejects.toBeInstanceOf(WorkerCanceledError);
+    await expect(cancelWorker("toy-box-worker")).resolves.toBe(false);
+    expect(log).not.toHaveBeenCalled();
   });
 
   test("cleans up a reserved worker id when session creation fails", async () => {
@@ -352,12 +360,12 @@ describe("superviseWorker", () => {
       throw creationError;
     });
 
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: fileWorker,
       retention: "ephemeral",
       message: { content: "Do one focused job." },
     });
-    await expect(receipt.waitForCompletion()).resolves.toEqual({
+    await expect(workerResult()).resolves.toEqual({
       status: "failed",
       error: creationError.message,
     });
@@ -376,12 +384,12 @@ describe("superviseWorker", () => {
   ] as const)("retains admitted $type ownership when provider startup fails", async (worker) => {
     const error = new Error("Provider unavailable");
     createSessionMock.mockRejectedValueOnce(error);
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker,
       retention: "durable",
       message: { content: "Keep my submission." },
     });
-    await expect(receipt.waitForCompletion()).resolves.toEqual({
+    await expect(workerResult()).resolves.toEqual({
       status: "failed",
       error: error.message,
     });
@@ -392,7 +400,7 @@ describe("superviseWorker", () => {
   test("retains an admitted durable Worker when inheritance fails", async () => {
     const error = new Error("Parent unavailable");
     getSessionSnapshotMock.mockRejectedValueOnce(error);
-    const receipt = await superviseWorker({
+    const admission = await superviseWorker({
       worker: sessionWorker,
       retention: "durable",
       message: { content: "Keep this." },
@@ -401,8 +409,8 @@ describe("superviseWorker", () => {
         return false;
       },
     });
-    expect(receipt.value).toBe(false);
-    await expect(receipt.waitForCompletion()).resolves.toEqual({
+    expect(admission.value).toBe(false);
+    await expect(workerResult()).resolves.toEqual({
       status: "failed",
       error: error.message,
     });
@@ -417,15 +425,15 @@ describe("superviseWorker", () => {
       await release.promise;
       throw new Error("Provider connection closed");
     });
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: sessionWorker,
       retention: "durable",
       message: { content: "Cancel me." },
     });
     await starting.promise;
-    await abortWorker(sessionWorker.sessionId);
+    await cancelWorker(sessionWorker.sessionId);
     release.resolve();
-    await expect(receipt.waitForCompletion()).rejects.toBeInstanceOf(WorkerCanceledError);
+    await expect(workerResult()).rejects.toBeInstanceOf(WorkerCanceledError);
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith(sessionWorker.sessionId);
   });
 
@@ -440,7 +448,7 @@ describe("superviseWorker", () => {
         waitForCompletion: () => workerCompletion.promise,
       };
     });
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: {
         type: "inbox",
         sessionId: "toy-box-worker",
@@ -451,11 +459,11 @@ describe("superviseWorker", () => {
       message: { content: "Start background work." },
     });
     await starting.promise;
-    await expect(abortWorker("toy-box-worker")).resolves.toBe(true);
+    await expect(cancelWorker("toy-box-worker")).resolves.toBe(true);
     release.resolve();
-    await expect(receipt.waitForCompletion()).rejects.toBeInstanceOf(WorkerCanceledError);
+    await expect(workerResult()).rejects.toBeInstanceOf(WorkerCanceledError);
     expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
-    expect(await abortWorker("toy-box-worker")).toBe(false);
+    expect(await cancelWorker("toy-box-worker")).toBe(false);
   });
 
   test("cleans up a reserved worker id when parent directory loading fails", async () => {
@@ -464,12 +472,12 @@ describe("superviseWorker", () => {
       throw directoryError;
     });
 
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: fileWorker,
       retention: "ephemeral",
       message: { content: "Do one focused job." },
     });
-    await expect(receipt.waitForCompletion()).resolves.toEqual({
+    await expect(workerResult()).resolves.toEqual({
       status: "failed",
       error: directoryError.message,
     });
@@ -496,14 +504,14 @@ describe("superviseWorker", () => {
     deleteSessionIfExistsMock.mockImplementationOnce(async () => {
       throw cleanupError;
     });
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: fileWorker,
       retention: "ephemeral",
       message: { content: "Do one focused job." },
     });
     workerCompletion.resolve({ status: "completed" });
 
-    await expect(receipt.waitForCompletion()).rejects.toBe(cleanupError);
+    await expect(workerResult()).rejects.toBe(cleanupError);
   });
 
   test.each([true, false])(
@@ -516,7 +524,7 @@ describe("superviseWorker", () => {
       const initial = { ...sessionWorker, metadata: { result: "Initial" } };
       const latest = { ...initial, metadata: { result: "Published" } };
       const result: SessionCompletion = { status: "completed", response: "Done" };
-      const receipt = await superviseWorker({
+      await superviseWorker({
         worker: initial,
         message: { content: "Publish a result" },
         retention: async (worker, completion) => {
@@ -536,7 +544,7 @@ describe("superviseWorker", () => {
       }
       storedWorker = latest;
       let completed = false;
-      const waiting = receipt.waitForCompletion().then((completion) => {
+      const waiting = workerResult().then((completion) => {
         completed = true;
         return completion;
       });
@@ -567,13 +575,13 @@ describe("superviseWorker", () => {
           waitForCompletion: () => Promise.reject(failure),
         });
       const retention = mock(() => true);
-      const receipt = await superviseWorker({
+      await superviseWorker({
         worker: sessionWorker,
         message: { content: "Keep my submission" },
         retention,
       });
       const result = { status: "failed", error: failure.message } satisfies SessionCompletion;
-      await expect(receipt.waitForCompletion()).resolves.toEqual(result);
+      await expect(workerResult()).resolves.toEqual(result);
       expect(retention).toHaveBeenCalledWith(sessionWorker, result);
       expect(storedWorker).toEqual(sessionWorker);
     },
@@ -581,7 +589,7 @@ describe("superviseWorker", () => {
 
   test("a retention exception preserves ownership and rejects completion", async () => {
     const error = new Error("Retention unavailable");
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: sessionWorker,
       message: { content: "Keep my result if the decision fails" },
       retention: () => {
@@ -589,24 +597,25 @@ describe("superviseWorker", () => {
       },
     });
     workerCompletion.resolve({ status: "completed" });
-    await expect(receipt.waitForCompletion()).rejects.toBe(error);
+    await expect(workerResult()).rejects.toBe(error);
     expect(storedWorker).toEqual(sessionWorker);
+    expect(log).toHaveBeenCalledWith("Worker failed:", error);
   });
 
   test.each(["canceled", "deleted"])("retention is skipped for %s work", async (action) => {
     const retention = mock(() => false);
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: sessionWorker,
       message: { content: "Stop this work" },
       retention,
     });
     await waitFor(() => expect(createSessionMock).toHaveBeenCalled());
-    if (action === "canceled") await abortWorker(sessionWorker.sessionId);
+    if (action === "canceled") await cancelWorker(sessionWorker.sessionId);
     else storedWorker = null;
     workerCompletion.resolve({ status: "completed" });
     if (action === "canceled")
-      await expect(receipt.waitForCompletion()).rejects.toBeInstanceOf(WorkerCanceledError);
-    else await expect(receipt.waitForCompletion()).resolves.toEqual({ status: "completed" });
+      await expect(workerResult()).rejects.toBeInstanceOf(WorkerCanceledError);
+    else await expect(workerResult()).resolves.toEqual({ status: "completed" });
     expect(retention).not.toHaveBeenCalled();
     expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
   });
@@ -614,7 +623,7 @@ describe("superviseWorker", () => {
   test("cancellation during retention takes precedence over automatic deletion", async () => {
     const deciding = Promise.withResolvers<void>();
     const decision = Promise.withResolvers<boolean>();
-    const receipt = await superviseWorker({
+    await superviseWorker({
       worker: sessionWorker,
       message: { content: "Stop while deciding" },
       retention: () => {
@@ -624,9 +633,9 @@ describe("superviseWorker", () => {
     });
     workerCompletion.resolve({ status: "completed" });
     await deciding.promise;
-    await abortWorker(sessionWorker.sessionId);
+    await cancelWorker(sessionWorker.sessionId);
     decision.resolve(false);
-    await expect(receipt.waitForCompletion()).rejects.toBeInstanceOf(WorkerCanceledError);
+    await expect(workerResult()).rejects.toBeInstanceOf(WorkerCanceledError);
     expect(storedWorker).toEqual(sessionWorker);
   });
 });

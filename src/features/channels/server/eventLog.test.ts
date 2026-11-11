@@ -5,7 +5,7 @@ import {
   releaseChannelEvents,
   replayChannelEvents,
   subscribeChannelEvents,
-} from "./events";
+} from "./eventLog";
 
 function update(revision: number): ChannelEvent {
   return {
@@ -33,7 +33,7 @@ test("Channel events provide live delivery or a complete revision replay", () =>
   expect(replayChannelEvents(channelId, 0, 3)).toBeUndefined();
 });
 
-test("the replay ring reports missing history instead of a partial range", () => {
+test("the event log reports missing history instead of a partial range", () => {
   const channelId = crypto.randomUUID();
   onTestFinished(() => releaseChannelEvents(channelId));
   publishChannelEvent(channelId, update(2));

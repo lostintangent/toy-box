@@ -31,7 +31,7 @@ owns `POST /api/v1/inbox`, the external JSON and multipart HTTP ingress used by 
 
 ## Managed-session lifecycle
 
-Worker spawning returns an admission receipt after persisting ownership and registering Session
+Worker spawning returns the Worker's session ID after persisting ownership and registering Session
 acquisition, without waiting for provider startup or execution. Inbox announces the committed change;
 publication does not promise to precede provider startup. Workers owns startup,
 cancellation, failure cleanup, and deletion; the ordinary session runtime owns execution and completion.

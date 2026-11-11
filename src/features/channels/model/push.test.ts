@@ -149,7 +149,7 @@ test("optional art can be omitted, but agents and progress cannot be truncated t
   ).toThrow("4096-byte");
 });
 
-test("projection counts only roots and uses actual presence rather than stored working status", () => {
+test("projection counts only roots and uses running agents rather than stored working status", () => {
   const done: Channel["tasks"][number] = {
     id: "one",
     title: "One",
@@ -163,9 +163,9 @@ test("projection counts only roots and uses actual presence rather than stored w
     },
     lead: channelLead("studio-demo", { state: "working", text: "Old status" }),
     members: [{ id: "member", channelId: "studio-demo", name: "Member" }],
-    presence: { "studio-demo": { state: "idle" }, member: { state: "working" } },
   } satisfies Parameters<typeof channelActivityState>[0];
-  const projected = channelActivityState(state);
+  const running = (agentId: string) => agentId === "member";
+  const projected = channelActivityState(state, running);
   expect(projected).toMatchObject({
     workingAgents: [{ id: "member", name: "Member" }],
     tasksDone: 1,
@@ -178,10 +178,10 @@ test("projection counts only roots and uses actual presence rather than stored w
     [[], "tasksRemoved"],
     [[done], "completed"],
   ] as const) {
-    const terminal = channelActivityState({
-      ...state,
-      channel: { ...state.channel, tasks: [...tasks] },
-    });
+    const terminal = channelActivityState(
+      { ...state, channel: { ...state.channel, tasks: [...tasks] } },
+      running,
+    );
     expect(terminal.ending).toBe(ending);
     expect(
       updatePayload(

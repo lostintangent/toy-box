@@ -104,7 +104,7 @@ Channel        name, purpose, directory, lead model, tasks, preview, user read p
   deleting one each append a typed system message that shows its title. Only the lead adds or changes
   routines. The user can run one immediately or delete it.
 - `ChannelState` is the canonical reduced detail: Channel metadata, lead, members, messages,
-  pending request, bookmarks in sequence order, artifacts, routines, presence, and revision. A
+  pending request, bookmarks in sequence order, artifacts, routines, and revision. A
   snapshot is a state value at one instant, not a separate type. Earlier messages page by sequence;
   revision is the durable replay cursor.
 
@@ -265,7 +265,7 @@ streaming, completion, and worktrees. Workspace owns pane placement and cross-fe
 
 Channels spawns the lead and members through Workers with durable retention. Its admission callback
 commits the Channel and lead together, or a member and its membership message together, before
-execution begins, and returns the committed Channel or member through the Worker receipt. Removing a
+execution begins, and returns the committed Channel or member as the spawn's `value`. Removing a
 member transactionally deletes its Worker record and appends a `member_left` message whose actor is
 the user or the removing lead, then tears down its Session, as Channel deletion does. Deleting a
 member's Session elsewhere, such as from the Sessions list, records the user.
@@ -297,16 +297,16 @@ Commits persist the reducer's tasks and its request and completion cursors along
 so a `tasks` event or an unlinking message is the only way tasks change. Reads select them
 directly. The snapshot retains request content by that sequence, while transcript
 presentation separately distinguishes each historical request's acknowledgement.
-A visible pane observes a `ChannelState` through one streamed Query: the first connection supplies
+A visible pane subscribes to a `ChannelState` through one streamed Query: the first connection supplies
 the snapshot, and later connections resume the cached revision. The server commits canonical rows
-and publishes transitions, reusing metadata and roster reducers without retaining a second aggregate.
+and publishes transitions, reusing the metadata reducer without retaining a second aggregate.
 The same catalog projection supplies list snapshots and existing `channel.upserted` events for
 messages, reads, and metadata edits. One publisher forwards committed detail events and their catalog
 projections. Member upserts/deletions patch identity-only catalog members (ID, Channel ID, name,
 avatar) without refetching the list. The sidebar gets activity from Session activity; descriptive
 status belongs to the detail stream. Attention needs no additional workspace event or detail state.
 `useChannels()` composes the catalog and Session activity into entries with a Channel, its agents
-and their `isRunning` flags, and a derived `status` (waiting for a reply, unread completion, or unread
+and their `isWorking` flags, and a derived `status` (waiting for a reply, unread completion, or unread
 messages). The sidebar and Apps SDK share this hook and the same caches. `channelAttention(channel,
 isOpen)` owns which marks an open channel hides: a request stays while it's open, and completion and
 unread messages clear. The sidebar and palette both read it. Badge text stays in the sidebar.
@@ -319,10 +319,9 @@ replay potentially older rows over live updates. Message and read cursors are no
 Message sequence is transcript order and the basis of paging and read positions. Revision is detail
 state order and advances for every durable public change, including tasks, model, shared reads,
 reactions, profiles, and statuses. Commits publish in revision order, so streams forward them
-without repair, and any other order closes the stream. A bounded replay ring serves a reconnecting
+without repair, and any other order closes the stream. A bounded event log serves a reconnecting
 client from its cursor, including reactions on older loaded messages. Browser and native clients
-reconnect that way, while push's Live Activity observer stops updating. Presence is transient and
-refreshed on arrival.
+reconnect that way, while push's Live Activity subscription stops updating.
 
 Agent reads move forward from private `seenThrough` and advance it. Passive Session reads page
 backward without changing read state. Agent-facing projections use `agentId` for both the lead and
@@ -335,7 +334,12 @@ Artifact shares and reads expose
 `artifactId` alongside the path and title, so the lead can attach the same file identity to a task.
 Task-edit receipts return only the targeted IDs.
 Presence governs working/waiting/idle for clients and tool projections; stored status supplies text
-and message targets only while its state matches that presence.
+and message targets only while its state matches that presence. `channelAgentPresence` derives it
+from stored status and whether the agent's Session is running, so no stream carries it: tools and
+push read server Session activity, the browser reads its Session activity, and native clients read
+the catalog's `working`. Each joins by agent ID alone, so every client relies on Agent IDs being
+server-wide: an agent's ID is its Session ID, unique across Channels, and each lead's ID is its
+Channel's ID.
 
 ### Shared client protocol
 
@@ -362,43 +366,43 @@ An avatar is `{ mark, color }`, where agents author both and clients stroke the 
 of black or white contrasts more with `color`. Toy Box's own profiles may add `ink`, a fixed mark
 color the lead uses for its gold star. Agent-authored avatars never carry it.
 
-`GET /api/v1/channels/:channelId` streams SSE for browser and native clients through `streamChannel`.
+`GET /api/v1/channels/:channelId` streams SSE for browser and native clients through `subscribeToChannel`.
 Its snapshot event carries a `ChannelState`; snapshots are part of the stream protocol.
-The snapshot includes the latest 100 public messages, roster, artifacts, routines, live presence,
-and the pending request even outside that message window. Its durable facts come from one
+The snapshot includes the latest 100 public messages, roster, artifacts, routines, and the pending
+request even outside that message window. Its durable facts come from one
 transaction. Reads never acknowledge the Channel or expose private Agent context. Artifacts carry
 the `id` that tasks reference as `artifactId` and a Files serving URL, so clients match task
 outcomes without knowing the file identity encoding. Each attachment is `{ name, url, mimeType }`
 with a Files serving URL. Agent tools map each one back to its absolute path.
 
-The stream establishes state and follows changes:
+The subscription establishes state and then delivers changes:
 
 - No cursor: send `{ type: "snapshot", state }` with one complete `ChannelState`.
-- `after` (including zero): replay contiguous durable events, then send current
-  `{ type: "resumed", presence }`, including explicit idle agents. An unavailable
-  replay becomes a replacement snapshot; clients discard older loaded history and can page it again.
-- Live durable events forward directly. The observer keeps only the roster needed to project
-  runtime presence; it does not reread metadata or history on each event. Presence updates send
-  only changed agents. Each read subscribes in its own continuation, with no I/O or timer between,
-  so live events continue its revision.
+- `after` (including zero): replay contiguous durable events, then send `{ type: "resumed" }`. An
+  unavailable replay becomes a replacement snapshot; clients discard older loaded history and can
+  page it again.
+- Live durable events forward directly. The subscription keeps only its revision; it does not
+  reread metadata or history on each event. Each read subscribes in its own continuation, with no
+  I/O or timer between, so live events continue its revision.
 - Deletion sends `{ type: "deleted", channelId }` and closes, including when the Channel is already
   absent on connection. Workspace deletion also removes closed panes.
 
 `reduceChannelState` applies the complete public protocol: messages derive metadata and attention,
-quiet events replace tasks/model/read state, and presence updates merge or replace the presence map.
+quiet events replace tasks/model/read state, and `resumed` leaves the state unchanged.
 The separately retained pending request follows replies and reactions even outside the message window.
 The post mutation appends a pending message with its client-generated ID after the transcript,
 leaving server cursors and attention alone, so the reducer takes only wire events. The committed echo
 replaces that message and applies its authoritative position and metadata but keeps its sender's
 local image URLs. A failed post removes its local copy unless the echo already replaced it. Older
 pages merge already-materialized messages without replaying their events.
-`useChannel()` exposes the live state, unread boundary, history paging, and `postMessage` bound to
-that Channel. Posting supplies the message ID and invokes the shared mutation; the composer owns
-only its draft and submission UI. The app SDK exports this same hook. Observation defaults to
+`useChannel()` exposes the live state, its agents' presence, unread boundary, history paging, and
+`postMessage` bound to that Channel. Posting supplies the message ID and invokes the shared mutation; the composer owns
+only its draft and submission UI. The app SDK exports this same hook. A visit defaults to
 `"active"`; visualizations use `mode: "passive"` to leave unread state untouched.
-The server reuses the metadata and roster reducers at their owning boundaries; SQLite remains its
-source of truth without a second live Channel aggregate. Its row decoders produce the public
-messages, artifacts, and requests that reads, snapshots, and live events all share.
+The server reuses the metadata reducer when it commits, and Push reduces followed topics with
+`reduceChannelState`; SQLite remains its source of truth without a second live Channel aggregate.
+Its row decoders produce the public messages, artifacts, and requests that reads, snapshots, and
+live events all share.
 
 TanStack Query owns the browser's cached view, stream request, cancellation, and retries through
 `streamedQuery` with append semantics. `stream.ts` adapts the same SSE endpoint Minecraft uses into
@@ -407,8 +411,8 @@ There is no separate browser snapshot RPC or alternate native-client protocol.
 
 The browser's `ChannelQueryData` adds an arrival record to the state: a connection identity and the
 unread boundary after its initial snapshot or post-replay `resumed` event. Replayed shared reads
-therefore arrive before the browser captures that boundary. Paging, optimism, and later sparse
-presence updates cannot masquerade as arrival. A terminal deleted event leaves a null detail value;
+therefore arrive before the browser captures that boundary. Paging, optimism, and later live events
+cannot masquerade as arrival. A terminal deleted event leaves a null detail value;
 Workspace deletion also retires the detail query. This browser metadata does not change the public
 protocol.
 
@@ -467,10 +471,11 @@ clients refresh authoritative state rather than automatically retrying writes.
 
 Channels lazily publishes committed request/completion milestones; the three-second unread check
 runs only for subscribed topics. `channel:<id>` opens one stream on first interest and closes it on
-last interest. Its initial snapshot includes the latest messages, but only metadata, roster and
-presence are retained for push. A workspace listener publishes the existing catalog's waiting count
-after channel upserts/deletions, covering replies and removals without opening streams for every
-channel. Reading does not close a request. No separate catalog cache or scheduler is added.
+last interest. Its initial snapshot includes the latest messages, but only metadata and roster are
+retained for push. A workspace listener publishes the existing catalog's waiting count after
+channel upserts/deletions, covering replies and removals without opening streams for every channel.
+The same listener republishes a topic from its retained state when a roster agent's Session
+activity changes, and Push drops unchanged values. Reading does not close a request. No separate catalog cache or scheduler is added.
 Delivery belongs to [Push](../push/AGENTS.md). Channel payloads live in `model/push.ts`, with four
 ChannelKit wire fixtures in `model/__fixtures__/push-*.apns`.
 After the unread check, alert text uses the current channel name, the Mac's 400-grapheme plain-text
@@ -482,14 +487,15 @@ Completion and removed-task endings retain their content for fifteen minutes.
 ## Presentation
 
 `ChannelPane` takes a Channel ID and owns one cached `ChannelState` for its transcript, overview,
-and composer. It does not read the workspace catalog or derive agent presence from Session state.
+and composer, plus the presence `useChannel` derives for its agents. It does not read the workspace
+catalog.
 The sidebar uses the catalog and Session activity independently; private Session previews and
 Files remain explicit integrations with their own capabilities. `ChannelPaneContext` shares one
 roster, presence, and the composer actions inside the pane. The roster exists from the first
 render, starting from the intrinsic lead, so the composer, transcript, and overview never derive
 their own.
 The composer shell and its intrinsic "To Lead" audience render during SSR. Hydration starts
-observation; the first snapshot populates the tray and roster and enables input.
+the subscription; the first snapshot populates the tray and roster and enables input.
 It uses the same shared composer shell and native `ComposerInput` as Sessions. Agent mentions remain plain `@handle`
 text, so audience resolution and delivery are unchanged. The draft is the Workspace saved draft
 `channel:<id>`, so it survives reloads and follows the user across clients; reply and mention
@@ -511,7 +517,7 @@ stream. `subscribed` detaches hidden views, and Query cancels when the last obse
 cached content and mounted drafts remain. On return, replay catches up that cache and establishes
 the unread boundary before read acknowledgement or initial unread scrolling. A reader joining an
 existing observer captures the current shared read cursor. Arrivals during reading do not move that boundary. A deleted event
-ends observation and reaches the pane's existing unavailable boundary.
+ends the subscription and reaches the pane's existing unavailable boundary.
 
 `ChannelUserMessage` adds mentions, reactions, and timeline timestamps to the shared
 [`UserMessage`](../../shared/messages/UserMessage.tsx); agent messages reuse the shared
@@ -610,7 +616,8 @@ presents one deleted identity everywhere.
 - `server/` owns authority. `schema.ts` and `database.ts` own tables and transactions. `index.ts`
   composes the algebra for RPC, tools, and wakes, and each verb takes its Channel and actor as
   parameters. `functions.ts` is browser RPC ingress, and
-  `stream.ts` composes public views and owns observation using `events.ts`'s detail replay ring.
+  `stream.ts` composes public views and owns subscriptions over `eventLog.ts`, each Channel's
+  bounded event log.
   Each `routes/v1/` file answers its `/api/v1/channels` requests in place, and `http.ts` reads
   their command bodies and maps domain failures to statuses. `attachments.ts` owns the files
   messages attach.

@@ -5,8 +5,15 @@ import * as realSessionRegistry from "@sessions/server/state/registry";
 import * as realSnapshotCache from "@sessions/server/state/snapshots";
 import * as realSessionActivity from "@sessions/server/state/activity";
 import * as realBroadcast from "@workspace/server/events";
-import type { SessionEvent, SessionMessage, SessionState } from "@sessions/model";
+import type {
+  SessionCompletion,
+  SessionEvent,
+  SessionMessage,
+  SessionState,
+  SessionSubscriptionEvent,
+} from "@sessions/model";
 import { createInitialSessionState } from "@sessions/model/reducer";
+import { latestMessages } from "@sessions/model/transcriptPages";
 
 const realSessionRegistryExports = { ...realSessionRegistry };
 const realSnapshotCacheExports = { ...realSnapshotCache };
@@ -42,24 +49,34 @@ function cleanUpExecutionAfterTest(sessionId: string): void {
   });
 }
 
-async function nextStreamEvent(iterator: AsyncIterator<SessionEvent>): Promise<SessionEvent> {
-  const result = await iterator.next();
-  expect(result.done).toBe(false);
-  return result.value!;
+/** One subscriber's frames. `closed` resolves with them once the subscription closes. */
+function recorder() {
+  const events: SessionSubscriptionEvent[] = [];
+  const closed = Promise.withResolvers<SessionSubscriptionEvent[]>();
+  return {
+    events,
+    closed: closed.promise,
+    send: (event: SessionSubscriptionEvent) => void events.push(event),
+    close: () => closed.resolve(events),
+  };
 }
 
-async function collectStreamEvents(
-  iterator: AsyncIterator<SessionEvent>,
-  limit = 20,
-): Promise<SessionEvent[]> {
-  const events: SessionEvent[] = [];
-  for (let i = 0; i < limit; i++) {
-    const result = await iterator.next();
-    if (result.done) return events;
-    events.push(result.value);
-  }
+/** A subscriber already current with the execution, unless it holds another cursor. */
+function recordStream(
+  execution: ReturnType<typeof SessionExecution.getOrCreate>,
+  after = execution.getSessionState().revision,
+) {
+  const stream = recorder();
+  return { ...stream, unsubscribe: execution.subscribe(stream.send, stream.close, after) };
+}
 
-  throw new Error("Stream iterator did not finish");
+/** A session's subscription as the SSE route opens it, resolved once it is subscribed. */
+async function sessionStream(sessionId: string, after?: number) {
+  const stream = recorder();
+  return {
+    ...stream,
+    unsubscribe: await subscribeToSession(sessionId, stream.send, stream.close, after),
+  };
 }
 
 /** A provider connection with inert operations unless the test supplies behavior. */
@@ -185,10 +202,9 @@ const {
   createSession,
   deliverSessionMessage,
   getSessionRuntimeStatus,
+  expectSessionCompletion,
   getSessionSnapshot,
-  registerPendingSessionCompletion,
-  rejectPendingSessionCompletion,
-  followSession,
+  subscribeToSession,
   rewindSession,
   waitForSessions,
 } = await import("./index");
@@ -202,7 +218,7 @@ describe("SessionExecution lifecycle", () => {
     mockRuntimeModules({ broadcast: { broadcast } });
     const { session, emit } = makeControllableSession();
     const execution = SessionExecution.getOrCreate(sessionId, session);
-    const received = collectStreamEvents(execution.subscribe());
+    const received = recordStream(execution).closed;
     await execution.deliver(userMessage("go"));
 
     emit({ type: "session_title_changed", title: "Shared title" });
@@ -222,7 +238,7 @@ describe("SessionExecution lifecycle", () => {
     mockRuntimeModules();
     const { session, emit } = makeControllableSession();
     const execution = SessionExecution.getOrCreate(sessionId, session);
-    const received = collectStreamEvents(execution.subscribe());
+    const received = recordStream(execution).closed;
     await execution.deliver(userMessage("go"));
 
     for (const [toolCallId, toolName, args] of [
@@ -249,19 +265,76 @@ describe("SessionExecution lifecycle", () => {
     const fakeSession = makeFakeSession();
 
     const execution = SessionExecution.getOrCreate("session-finish-semantics", fakeSession);
-    const events = execution.subscribe();
+    const events = recordStream(execution);
 
     await execution.deliver(userMessage("go"));
     await execution.deliver(userMessage("queued"));
     execution.finish();
 
-    expect((await collectStreamEvents(events)).map((event) => event.type)).toEqual([
+    expect((await events.closed).map((event) => event.type)).toEqual([
+      "resumed",
       "status",
       "message_queued",
       "end",
     ]);
     expect(execution.getSessionState().queuedMessages).toEqual([]);
     expect(SessionExecution.isRunning("session-finish-semantics")).toBe(false);
+  });
+
+  test("a subscription after finish brings its subscriber current, then closes", async () => {
+    cleanUpExecutionAfterTest("session-replay-after-finish");
+    const execution = SessionExecution.getOrCreate(
+      "session-replay-after-finish",
+      makeFakeSession(),
+    );
+    const live = recordStream(execution);
+    await execution.deliver(userMessage("go"));
+    execution.finish();
+    const [, ...run] = await live.closed;
+
+    expect(await recordStream(execution, 0).closed).toEqual([...run, { type: "resumed" }]);
+  });
+
+  test("a covered cursor replays what it has not seen, and any other gets a snapshot", async () => {
+    cleanUpExecutionAfterTest("session-reconnect-cursor");
+    const { session, emit } = makeControllableSession();
+    const execution = SessionExecution.getOrCreate("session-reconnect-cursor", session);
+    await execution.deliver(userMessage("go"));
+    emit({ type: "user_message", content: "go" });
+    emit({ type: "assistant_message", content: "Done." });
+    const run = recordStream(execution, 0).events.slice(0, -1) as SessionEvent[];
+    const resumeFrom = (after?: number) => {
+      const stream = recorder();
+      execution.subscribe(stream.send, stream.close, after);
+      return stream.events;
+    };
+    const snapshot: SessionSubscriptionEvent = {
+      type: "snapshot",
+      state: latestMessages(execution.getSessionState()),
+    };
+
+    expect(resumeFrom(0)).toEqual([...run, { type: "resumed" }]);
+    expect(resumeFrom(run[0]!.revision)).toEqual([...run.slice(1), { type: "resumed" }]);
+    // A cursor this run never issued, or none, may have missed events.
+    expect(resumeFrom(1)).toEqual([snapshot]);
+    expect(resumeFrom()).toEqual([snapshot]);
+  });
+
+  test("a seeded execution covers its seed's revision", async () => {
+    cleanUpExecutionAfterTest("session-seeded-cursor");
+    const seed = createInitialSessionState({ revision: 42 });
+    const execution = SessionExecution.getOrCreate(
+      "session-seeded-cursor",
+      makeFakeSession(),
+      seed,
+    );
+    await execution.deliver(userMessage("go"));
+
+    expect(recordStream(execution, 42).events.map(({ type }) => type)).toEqual([
+      "status",
+      "resumed",
+    ]);
+    expect(recordStream(execution, 0).events.map(({ type }) => type)).toEqual(["snapshot"]);
   });
 
   test("caches the canonical final state before publishing terminal status", async () => {
@@ -281,20 +354,20 @@ describe("SessionExecution lifecycle", () => {
     });
 
     const execution = SessionExecution.getOrCreate(sessionId, makeFakeSession());
-    const subscription = execution.subscribe();
+    const subscription = recordStream(execution);
     await execution.deliver(userMessage("go"));
     transitions.length = 0;
 
     execution.finish();
 
-    const events = await collectStreamEvents(subscription);
-    expect(events.map((event) => event.type)).toEqual(["status", "end"]);
+    const events = await subscription.closed;
+    expect(events.map((event) => event.type)).toEqual(["resumed", "status", "end"]);
     expect(cacheSnapshot).toHaveBeenCalledTimes(1);
     expect(cacheSnapshot).toHaveBeenCalledWith(
       sessionId,
       expect.objectContaining({
         status: "idle",
-        lastSeenEventId: events.at(-1)?.eventId,
+        revision: (events.at(-1) as { revision: number }).revision,
       }),
     );
     expect(transitions).toEqual(["cache:idle", "status:unread"]);
@@ -324,14 +397,14 @@ describe("SessionExecution lifecycle", () => {
     const { session, emit } = makeControllableSession();
 
     const execution = SessionExecution.getOrCreate("session-provider-error", session);
-    const events = execution.subscribe();
+    const events = recordStream(execution);
     await execution.deliver(userMessage("go"));
 
     const error = "You've hit your usage limit.";
     emit({ type: "end", reason: "error", error });
 
-    const emitted = await collectStreamEvents(events);
-    expect(emitted.map((event) => event.type)).toEqual(["status", "end"]);
+    const emitted = await events.closed;
+    expect(emitted.map((event) => event.type)).toEqual(["resumed", "status", "end"]);
     expect(emitted.at(-1)).toMatchObject({
       type: "end",
       reason: "error",
@@ -355,15 +428,20 @@ describe("SessionExecution lifecycle", () => {
     const fakeSession = makeFakeSession({ abort });
 
     const execution = SessionExecution.getOrCreate("session-remove-semantics", fakeSession);
-    const events = execution.subscribe();
+    const events = recordStream(execution);
     await execution.deliver(userMessage("go"));
     await execution.deliver(userMessage("queued"));
     setSessionActivity.mockClear();
 
     await SessionExecution.remove("session-remove-semantics");
 
-    const emittedEvents = await collectStreamEvents(events);
-    expect(emittedEvents.map((event) => event.type)).toEqual(["status", "message_queued", "end"]);
+    const emittedEvents = await events.closed;
+    expect(emittedEvents.map((event) => event.type)).toEqual([
+      "resumed",
+      "status",
+      "message_queued",
+      "end",
+    ]);
     expect(emittedEvents.at(-1)).toMatchObject({ type: "end", reason: "idle" });
     expect(execution.getSessionState().queuedMessages).toEqual([]);
     expect(SessionExecution.isRunning("session-remove-semantics")).toBe(false);
@@ -394,14 +472,16 @@ test("artifact refresh reconciles both clients and ignores updates after executi
   const execution = SessionExecution.getOrCreate(sessionId, makeFakeSession(), {
     artifacts: [{ path: "deleted.md", updatedAt: 1 }],
   });
-  const first = execution.subscribe();
-  const second = execution.subscribe();
+  const first = recordStream(execution);
+  const second = recordStream(execution);
   const created = { path: "created.html", updatedAt: 2 };
 
   execution.updateArtifacts([created]);
-  const event = await nextStreamEvent(first);
-  expect(event).toMatchObject({ type: "artifacts_changed", artifacts: [created] });
-  expect(await nextStreamEvent(second)).toEqual(event);
+  expect(first.events).toEqual([
+    { type: "resumed" },
+    expect.objectContaining({ type: "artifacts_changed", artifacts: [created] }),
+  ]);
+  expect(second.events).toEqual(first.events);
 
   execution.finish();
   execution.updateArtifacts([{ path: "after-finish.md", updatedAt: 3 }]);
@@ -510,9 +590,9 @@ describe("SessionExecution abort", () => {
       sessionId,
       makeFakeSession({ abort: abortProvider }),
     );
-    const events = execution.subscribe();
+    const events = recordStream(execution);
     await execution.deliver(userMessage("go"));
-    await events.return();
+    events.unsubscribe();
     await execution.abort();
 
     expect(abortProvider).toHaveBeenCalledTimes(1);
@@ -531,16 +611,13 @@ describe("SessionExecution abort", () => {
     });
 
     const execution = SessionExecution.getOrCreate("session-abort-failure", fakeSession);
-    const events = execution.subscribe();
+    const events = recordStream(execution);
     await execution.deliver(userMessage("go"));
 
     await expect(execution.abort()).rejects.toThrow("abort exploded");
 
     expect(calls).toEqual(["abort"]);
-    expect((await collectStreamEvents(events)).map((event) => event.type)).toEqual([
-      "status",
-      "end",
-    ]);
+    expect((await events.closed).map((event) => event.type)).toEqual(["resumed", "status", "end"]);
     expect(SessionExecution.isRunning("session-abort-failure")).toBe(false);
   });
 
@@ -656,7 +733,7 @@ describe("SessionExecution queued messages", () => {
       send: sendMock,
     });
     const execution = SessionExecution.getOrCreate("session-drain", session);
-    const received = collectStreamEvents(execution.subscribe());
+    const received = recordStream(execution).closed;
     await execution.deliver(userMessage("first turn", "opening-id"));
     await execution.deliver(userMessage("second turn", "q1"));
     emit({ type: "user_message", content: "first turn", clientId: "opening-id" });
@@ -956,7 +1033,7 @@ describe("SessionExecution queued messages", () => {
     });
 
     const execution = SessionExecution.getOrCreate("session-drain-failure", session);
-    const events = execution.subscribe();
+    const events = recordStream(execution);
     await execution.deliver(userMessage("first turn", "opening-id"));
     await execution.deliver(userMessage("doomed follow-up"));
     emit({ type: "user_message", content: "first turn", clientId: "opening-id" });
@@ -964,8 +1041,9 @@ describe("SessionExecution queued messages", () => {
     emit({ type: "end", reason: "idle" });
     await settle();
 
-    const drained = await collectStreamEvents(events);
+    const drained = await events.closed;
     expect(drained.map((event) => event.type)).toEqual([
+      "resumed",
       "status",
       "message_queued",
       "user_message",
@@ -996,7 +1074,7 @@ describe("SessionExecution model selection", () => {
     const execution = SessionExecution.getOrCreate("session-model-change", session, {
       model: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
     });
-    const events = execution.subscribe();
+    const events = recordStream(execution);
 
     const requested = { provider: "copilot", name: "gpt-5.5" };
     await execution.deliver({ ...userMessage("Switch"), model: requested });
@@ -1008,49 +1086,44 @@ describe("SessionExecution model selection", () => {
 
     expect(setModel.mock.calls).toEqual([[requested]]);
     expect(execution.getSessionState().model).toEqual(announced);
-    expect(
-      (await collectStreamEvents(events)).filter((event) => event.type === "model_changed"),
-    ).toEqual([expect.objectContaining({ type: "model_changed", model: announced })]);
+    expect((await events.closed).filter((event) => event.type === "model_changed")).toEqual([
+      expect.objectContaining({ type: "model_changed", model: announced }),
+    ]);
   });
 });
 
-describe("followSession", () => {
+describe("subscribeToSession", () => {
   test("reuses the active execution for reconnects without replaying provider history", async () => {
     cleanUpExecutionAfterTest("session-reconnect");
 
     const { session, emit } = makeControllableSession();
 
-    mockRuntimeModules();
+    const loadSessionSnapshot = mock(async () => createInitialSessionState());
+    mockRuntimeModules({ snapshotCache: { loadSessionSnapshot } });
 
     const execution = SessionExecution.getOrCreate("session-reconnect", session, {
       model: { provider: "copilot", name: "gpt-5" },
     });
     await execution.deliver(userMessage("Reconnect me", "client-1"));
 
-    const iterator = (await followSession("session-reconnect"))!;
-    expect(await nextStreamEvent(iterator)).toMatchObject({ type: "status", status: "thinking" });
-    let receivedCanonicalInput = false;
-    const firstEvent = iterator.next().then((result) => {
-      receivedCanonicalInput = true;
-      return result;
-    });
-    await settle();
-    expect(receivedCanonicalInput).toBe(false);
+    const stream = await sessionStream("session-reconnect");
+    expect(stream.events).toEqual([
+      { type: "snapshot", state: expect.objectContaining({ status: "thinking" }) },
+    ]);
 
     emit({ type: "user_message", content: "Reconnect me", clientId: "client-1" });
-    const first = await firstEvent;
-    await iterator.return?.(undefined);
+    stream.unsubscribe();
 
-    expect(first.done).toBe(false);
-    expect(first.value).toMatchObject({
+    expect(stream.events.at(-1)).toMatchObject({
       type: "user_message",
       content: "Reconnect me",
       clientId: "client-1",
     });
+    expect(loadSessionSnapshot).not.toHaveBeenCalled();
   });
 
-  test("a follow after delivery replays the turn it started", async () => {
-    const sessionId = "session-follow-after-delivery";
+  test("a subscription from the revision held before delivery replays the turn it started", async () => {
+    const sessionId = "session-subscribe-after-delivery";
     cleanUpExecutionAfterTest(sessionId);
 
     const { session, emit } = makeControllableSession({
@@ -1059,25 +1132,30 @@ describe("followSession", () => {
         emit({ type: "assistant_message", content: "France's capital is Paris." });
       },
     });
-    mockRuntimeModules({ sessionRegistry: { acquireSession: async () => session } });
+    const held = createInitialSessionState({ revision: 7 });
+    mockRuntimeModules({
+      sessionRegistry: { acquireSession: async () => session },
+      snapshotCache: { loadSessionSnapshot: async () => held },
+    });
 
     await deliverSessionMessage(sessionId, userMessage("What is France's capital?"));
-    const subscription = (await followSession(sessionId))!;
+    const stream = await sessionStream(sessionId, held.revision);
     emit({ type: "end", reason: "idle" });
 
-    expect(await collectStreamEvents(subscription)).toEqual([
+    expect(await stream.closed).toEqual([
       expect.objectContaining({ type: "status", status: "thinking" }),
       expect.objectContaining({ type: "user_message", content: "What is France's capital?" }),
       expect.objectContaining({
         type: "assistant_message",
         content: "France's capital is Paris.",
       }),
+      { type: "resumed" },
       expect.objectContaining({ type: "end", reason: "idle" }),
     ]);
   });
 
-  test("a turn that ends before its follow leaves nothing to follow and its outcome in the snapshot", async () => {
-    const sessionId = "session-follow-after-finish";
+  test("a turn that ends before its subscription leaves its outcome in the idle snapshot", async () => {
+    const sessionId = "session-subscribe-after-finish";
     cleanUpExecutionAfterTest(sessionId);
 
     const snapshots = new Map<string, SessionState>();
@@ -1098,11 +1176,48 @@ describe("followSession", () => {
 
     await deliverSessionMessage(sessionId, userMessage("What is France's capital?"));
 
-    expect(await followSession(sessionId)).toBeUndefined();
-    expect((await getSessionSnapshot(sessionId)).messages).toEqual([
-      expect.objectContaining({ role: "user", content: "What is France's capital?" }),
-      expect.objectContaining({ role: "assistant", content: "France's capital is Paris." }),
+    expect(await (await sessionStream(sessionId, 0)).closed).toEqual([
+      {
+        type: "snapshot",
+        state: expect.objectContaining({
+          messages: [
+            expect.objectContaining({ role: "user", content: "What is France's capital?" }),
+            expect.objectContaining({ role: "assistant", content: "France's capital is Paris." }),
+          ],
+        }),
+      },
     ]);
+  });
+
+  test("an idle session keeps a current subscriber's state and refreshes its artifacts", async () => {
+    const sessionId = "session-subscribe-idle";
+    const idle = createInitialSessionState({
+      revision: 9,
+      messages: [{ role: "assistant", content: "Done." }],
+      artifacts: [{ path: "report.md", updatedAt: 2 }],
+    });
+    mockRuntimeModules({ snapshotCache: { loadSessionSnapshot: async () => idle } });
+
+    expect(await (await sessionStream(sessionId, 9)).closed).toEqual([
+      { type: "artifacts_changed", artifacts: idle.artifacts },
+      { type: "resumed" },
+    ]);
+    expect(await (await sessionStream(sessionId, 8)).closed).toEqual([
+      { type: "snapshot", state: latestMessages(idle) },
+    ]);
+  });
+
+  test("a missing session says so, and any other failure fails the subscription", async () => {
+    const sessionId = "session-subscribe-missing";
+    const loadSessionSnapshot = mock(async (): Promise<SessionState> => {
+      throw new SessionNotFoundError(sessionId);
+    });
+    mockRuntimeModules({ snapshotCache: { loadSessionSnapshot } });
+
+    expect(await (await sessionStream(sessionId)).closed).toEqual([{ type: "deleted", sessionId }]);
+
+    loadSessionSnapshot.mockRejectedValue(new Error("History unavailable"));
+    await expect(sessionStream(sessionId)).rejects.toThrow("History unavailable");
   });
 });
 
@@ -1186,11 +1301,13 @@ describe("delivery receipts", () => {
   });
 
   test("waits for a resumed execution instead of a retained earlier completion", async () => {
-    const sessionId = "session-delivery-after-announced-completion";
+    const sessionId = "session-delivery-after-expected-completion";
     cleanUpExecutionAfterTest(sessionId);
 
-    const earlier = registerPendingSessionCompletion(sessionId);
-    earlier.resolve({ status: "completed", response: "Earlier result" });
+    expectSessionCompletion(
+      sessionId,
+      Promise.resolve({ status: "completed", response: "Earlier result" }),
+    );
 
     const fakeSession = makeFakeSession();
     mockRuntimeModules({
@@ -1206,10 +1323,6 @@ describe("delivery receipts", () => {
     SessionExecution.get(sessionId)!.finish();
 
     await expect(completion).resolves.toEqual([{ status: "completed" }]);
-    await expect(earlier.promise).resolves.toEqual({
-      status: "completed",
-      response: "Earlier result",
-    });
   });
 });
 
@@ -1372,16 +1485,18 @@ describe("createSession", () => {
 
     const created = createSession(sessionId, userMessage("Start"), {});
     const snapshot = getSessionSnapshot(sessionId);
-    const subscription = followSession(sessionId);
+    const subscribing = sessionStream(sessionId);
     expect(getSessionRuntimeStatus(sessionId).running).toBe(true);
 
     creating.resolve({ session: makeFakeSession() });
     await created;
 
     await expect(snapshot).resolves.toBeDefined();
-    const events = await subscription;
-    expect(events).toBeDefined();
-    await events!.return();
+    const stream = await subscribing;
+    stream.unsubscribe();
+    expect(stream.events).toEqual([
+      { type: "snapshot", state: expect.objectContaining({ status: "thinking" }) },
+    ]);
     expect(loadSessionSnapshot).not.toHaveBeenCalled();
   });
 
@@ -1701,11 +1816,17 @@ describe("SessionExecution.waitForCompletion", () => {
 });
 
 describe("waitForSessions", () => {
-  test("waits for announced sessions and preserves input order", async () => {
+  function expectCompletion(sessionId: string) {
+    const completion = Promise.withResolvers<SessionCompletion>();
+    expectSessionCompletion(sessionId, completion.promise);
+    return completion;
+  }
+
+  test("waits for expected sessions and preserves input order", async () => {
     const firstId = crypto.randomUUID();
     const secondId = crypto.randomUUID();
-    const first = registerPendingSessionCompletion(firstId);
-    const second = registerPendingSessionCompletion(secondId);
+    const first = expectCompletion(firstId);
+    const second = expectCompletion(secondId);
     const completion = waitForSessions([firstId, secondId]);
 
     second.resolve({ status: "completed", response: "Second result" });
@@ -1717,24 +1838,22 @@ describe("waitForSessions", () => {
     ]);
   });
 
-  test("retains an announced completion for a waiter that arrives after settlement", async () => {
+  test("retains an expected completion for a waiter that arrives after settlement", async () => {
     const sessionId = crypto.randomUUID();
-    const receipt = registerPendingSessionCompletion(sessionId);
     const result = { status: "completed" as const, response: "Fast result" };
-
-    receipt.resolve(result);
+    expectCompletion(sessionId).resolve(result);
 
     await expect(waitForSessions([sessionId])).resolves.toEqual([result]);
   });
 
-  test("times out one waiter without settling the announced session", async () => {
+  test("times out one waiter without settling the expected session", async () => {
     const sessionId = crypto.randomUUID();
-    const receipt = registerPendingSessionCompletion(sessionId);
+    const expected = expectCompletion(sessionId);
 
     await expect(waitForSessions([sessionId], 1)).resolves.toEqual([{ status: "timed_out" }]);
 
     const completion = waitForSessions([sessionId]);
-    receipt.resolve({ status: "completed", response: "Finished later" });
+    expected.resolve({ status: "completed", response: "Finished later" });
     await expect(completion).resolves.toEqual([
       {
         status: "completed",
@@ -1743,14 +1862,13 @@ describe("waitForSessions", () => {
     ]);
   });
 
-  test("rejects waiters when an announced session is canceled", async () => {
+  test("rejects waiters when an expected completion fails", async () => {
     const sessionId = crypto.randomUUID();
-    registerPendingSessionCompletion(sessionId);
+    const expected = expectCompletion(sessionId);
     const completion = waitForSessions([sessionId]);
     const error = new Error("Canceled");
 
-    expect(rejectPendingSessionCompletion(sessionId, error)).toBe(true);
+    expected.reject(error);
     await expect(completion).rejects.toBe(error);
-    expect(rejectPendingSessionCompletion(sessionId, error)).toBe(false);
   });
 });

@@ -8,7 +8,7 @@ import {
   getPersistedWorker,
   registerWorkerSession,
 } from "./database";
-import { getProcessValue, sharedSet } from "@/shared/server/processState";
+import { getProcessValue } from "@/shared/server/processState";
 import {
   abortSession,
   createSession,
@@ -16,6 +16,7 @@ import {
   getSessionSnapshot,
   getSessionDirectory,
 } from "@sessions/server/runtime";
+import { startWorkerRun, WorkerCanceledError } from "./registry";
 
 export type WorkerRetention =
   | "ephemeral"
@@ -28,57 +29,38 @@ type SuperviseWorkerInput<Value> = SessionLaunch & {
   admit?: () => Promise<Value>;
 };
 
-export type WorkerReceipt<Value = void> = {
-  sessionId: string;
-  value: Value;
-  waitForCompletion: () => Promise<SessionCompletion>;
-};
-
 const startupSweep = getProcessValue<{ promise?: Promise<void> }>(
   "worker-startup-sweep",
   () => ({}),
 );
-const activeWorkers = sharedSet<string>("active-workers");
-const cancelingWorkers = sharedSet<string>("canceling-workers");
 
-export class WorkerCanceledError extends Error {
-  constructor(sessionId: string) {
-    super(`Worker ${sessionId} was canceled.`);
-    this.name = "WorkerCanceledError";
-  }
-}
-
-/** Admit a durable Worker identity; its receipt observes startup, execution, and cleanup. */
+/** Admit a durable Worker identity, then run it through execution and cleanup. */
 export function superviseWorker<Value = void>(
   input: SuperviseWorkerInput<Value>,
-): Promise<WorkerReceipt<Value | void>> {
+): Promise<{ sessionId: string; value: Value | void }> {
   const { worker, message: inputMessage, location, retention } = input;
   const sessionId = worker.sessionId;
   const parentSessionId = workerParentSessionId(worker);
-  if (activeWorkers.has(sessionId)) {
-    return Promise.reject(new Error(`Worker ${sessionId} is already active.`));
-  }
-  activeWorkers.add(sessionId);
-
-  const admission = Promise.withResolvers<WorkerReceipt<Value | void>>();
-  const completion: Promise<SessionCompletion> = execute().finally(() => {
-    releaseWorker(sessionId);
-  });
+  const admission = Promise.withResolvers<{ sessionId: string; value: Value | void }>();
+  const completion = startWorkerRun(worker, execute);
   // Failures reject admission until it settles; afterward they belong to completion.
-  void completion.catch(admission.reject);
+  void completion.catch((error) => {
+    admission.reject(error);
+    if (!(error instanceof WorkerCanceledError)) console.error("Worker failed:", error);
+  });
   return admission.promise;
 
-  async function execute(): Promise<SessionCompletion> {
-    let admitted: WorkerReceipt<Value | void> | undefined;
+  async function execute(signal: AbortSignal): Promise<SessionCompletion> {
+    let admitted: { sessionId: string; value: Value | void } | undefined;
     let started = false;
     let result: SessionCompletion;
     try {
       await ensureWorkersSwept();
-      throwIfWorkerCanceled(sessionId);
+      signal.throwIfAborted();
       const value = await (input.admit ? input.admit() : registerWorkerSession(worker));
-      throwIfWorkerCanceled(sessionId);
+      signal.throwIfAborted();
 
-      admitted = { sessionId, value, waitForCompletion: () => completion };
+      admitted = { sessionId, value };
       const [parentDirectory, parentSnapshot] = await Promise.all([
         location?.directory === undefined && parentSessionId
           ? getSessionDirectory(parentSessionId)
@@ -87,7 +69,7 @@ export function superviseWorker<Value = void>(
           ? getSessionSnapshot(parentSessionId)
           : undefined,
       ]);
-      throwIfWorkerCanceled(sessionId);
+      signal.throwIfAborted();
       const message = {
         ...inputMessage,
         model: inputMessage.model ?? parentSnapshot?.model,
@@ -102,18 +84,17 @@ export function superviseWorker<Value = void>(
       // Session acquisition is registered synchronously: follow-ups can now join its mailbox.
       admission.resolve(admitted);
       const receipt = await starting;
-      if (cancelingWorkers.has(sessionId)) {
+      if (signal.aborted) {
         await abortSession(sessionId);
-        throw new WorkerCanceledError(sessionId);
+        throw signal.reason;
       }
       started = true;
       result = await receipt.waitForCompletion();
-      throwIfWorkerCanceled(sessionId);
+      signal.throwIfAborted();
     } catch (error) {
-      if (cancelingWorkers.has(sessionId) || error instanceof WorkerCanceledError) {
-        const canceled = new WorkerCanceledError(sessionId);
-        if (!started || worker.ephemeral) return cleanUpFailedSpawn(sessionId, canceled);
-        throw canceled;
+      if (signal.aborted) {
+        if (!started || worker.ephemeral) return cleanUpFailedSpawn(sessionId, signal.reason);
+        throw signal.reason;
       }
       if (!admitted) return cleanUpFailedSpawn(sessionId, error);
       admission.resolve(admitted);
@@ -121,18 +102,9 @@ export function superviseWorker<Value = void>(
     }
 
     // Retention and cleanup are part of completion, but their failures are not execution outcomes.
-    await applyRetention(sessionId, retention, result);
+    await applyRetention(sessionId, retention, result, signal);
     return result;
   }
-}
-
-/** Cancel a worker whether its session is still spawning or already running. */
-export async function abortWorker(sessionId: string): Promise<boolean> {
-  if (!activeWorkers.has(sessionId)) return false;
-
-  cancelingWorkers.add(sessionId);
-  await abortSession(sessionId);
-  return true;
 }
 
 /** Delete workers whose supervising process ended before their completion. */
@@ -154,15 +126,16 @@ async function applyRetention(
   sessionId: string,
   retention: WorkerRetention,
   completion: SessionCompletion,
+  signal: AbortSignal,
 ): Promise<void> {
   let retain = retention === "durable";
   if (typeof retention === "function") {
     const worker = await getPersistedWorker(sessionId);
-    throwIfWorkerCanceled(sessionId);
+    signal.throwIfAborted();
     if (!worker) return;
     retain = await retention(worker, completion);
   }
-  throwIfWorkerCanceled(sessionId);
+  signal.throwIfAborted();
   if (!retain) await deleteSessionIfExists(sessionId);
 }
 
@@ -176,13 +149,4 @@ async function cleanUpFailedSpawn(sessionId: string, spawnError: unknown): Promi
     );
   }
   throw spawnError;
-}
-
-function throwIfWorkerCanceled(sessionId: string): void {
-  if (cancelingWorkers.has(sessionId)) throw new WorkerCanceledError(sessionId);
-}
-
-function releaseWorker(sessionId: string): void {
-  activeWorkers.delete(sessionId);
-  cancelingWorkers.delete(sessionId);
 }

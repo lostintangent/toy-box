@@ -1,13 +1,4 @@
-import {
-  afterAll,
-  beforeEach,
-  describe,
-  expect,
-  mock,
-  onTestFinished,
-  spyOn,
-  test,
-} from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, onTestFinished, test } from "bun:test";
 import { join } from "node:path";
 import * as runtimeWorkersModule from "./supervisor";
 import { waitForSessions } from "@sessions/server/runtime";
@@ -22,22 +13,18 @@ const realRuntimeWorkersModule = { ...runtimeWorkersModule };
 const realFilePathsModule = { ...filePathsModule };
 
 let completions: Promise<SessionCompletion>[];
-const superviseWorkerMock = mock(
-  async (input: Parameters<typeof runtimeWorkersModule.superviseWorker>[0]) => {
-    const completion = completions.shift() ?? Promise.resolve({ status: "completed" as const });
-    return {
-      sessionId: input.worker.sessionId,
-      value: await input.admit?.(),
-      waitForCompletion: () => completion,
-    };
-  },
-);
-const abortWorkerMock = mock(async (_sessionId: string) => false);
+/** Supervises like the real supervisor: the run is registered at once and admission
+ *  resolves, while execution settles with the next queued completion. */
+async function supervise(input: Parameters<typeof runtimeWorkersModule.superviseWorker>[0]) {
+  const completion = completions.shift() ?? Promise.resolve({ status: "completed" as const });
+  void startWorkerRun(input.worker, () => completion).catch(() => {});
+  return { sessionId: input.worker.sessionId, value: await input.admit?.() };
+}
+const superviseWorkerMock = mock(supervise);
 
 mock.module("@workers/server/supervisor", () => ({
   ...realRuntimeWorkersModule,
   superviseWorker: superviseWorkerMock,
-  abortWorker: abortWorkerMock,
 }));
 mock.module("@files/server/paths", () => ({
   ...realFilePathsModule,
@@ -47,9 +34,9 @@ mock.module("@files/server/paths", () => ({
       : import.meta.path,
 }));
 
-const { spawnWorkerFromRequest, spawnWorker, buildWorkerPrompt, cancelWorker } =
+const { spawnWorkerFromRequest, spawnWorker, buildWorkerPrompt, cancelWorkerFromRequest } =
   await import("./admission");
-const { finishWorker, hasWorker } = await import("./registry");
+const { hasWorker, startWorkerRun } = await import("./registry");
 const { subscribeWorkspaceEvents } = await import("@workspace/server/events");
 
 afterAll(() => {
@@ -60,16 +47,7 @@ afterAll(() => {
 beforeEach(() => {
   completions = [];
   superviseWorkerMock.mockClear();
-  superviseWorkerMock.mockImplementation(async (input) => {
-    const completion = completions.shift() ?? Promise.resolve({ status: "completed" as const });
-    return {
-      sessionId: input.worker.sessionId,
-      value: await input.admit?.(),
-      waitForCompletion: () => completion,
-    };
-  });
-  abortWorkerMock.mockClear();
-  abortWorkerMock.mockImplementation(async () => false);
+  superviseWorkerMock.mockImplementation(supervise);
 });
 
 const file = sessionFile("toy-box-parent", "report.csv");
@@ -94,7 +72,6 @@ describe("workers", () => {
       });
       const admission =
         Promise.withResolvers<Awaited<ReturnType<typeof runtimeWorkersModule.superviseWorker>>>();
-      const completion = Promise.withResolvers<SessionCompletion>();
       superviseWorkerMock.mockImplementationOnce(() => admission.promise);
       const spawning =
         owner === "file"
@@ -120,18 +97,8 @@ describe("workers", () => {
       expect(returned).toBe(false);
 
       const sessionId = superviseWorkerMock.mock.calls[0]![0].worker.sessionId;
-      onTestFinished(() => finishWorker(sessionId));
-      admission.resolve({
-        sessionId,
-        value: undefined,
-        waitForCompletion: () => completion.promise,
-      });
+      admission.resolve({ sessionId, value: undefined });
       expect((await spawning).sessionId).toBe(sessionId);
-      expect(hasWorker(sessionId)).toBe(true);
-
-      const waiting = waitForSessions([sessionId]);
-      completion.resolve({ status: "completed" });
-      await expect(waiting).resolves.toEqual([{ status: "completed" }]);
     },
   );
 
@@ -150,7 +117,6 @@ describe("workers", () => {
     onTestFinished(unsubscribe);
 
     const { sessionId } = await spawnWorkerFromRequest(input);
-    onTestFinished(() => finishWorker(sessionId));
 
     expect(hasWorker(sessionId)).toBe(true);
     expect(events).toEqual([
@@ -191,23 +157,6 @@ describe("workers", () => {
     expect(events.at(-1)).toEqual({ type: "worker.finished", sessionId });
   });
 
-  test("shares an admitted worker's session completion with every waiter", async () => {
-    const completion = Promise.withResolvers<SessionCompletion>();
-    completions.push(completion.promise);
-    const worker = await spawnWorkerFromRequest(input);
-    onTestFinished(() => finishWorker(worker.sessionId));
-
-    const firstObserver = waitForSessions([worker.sessionId]);
-    const secondObserver = waitForSessions([worker.sessionId]);
-
-    completion.resolve({ status: "completed", response: "The row was appended." });
-    await expect(Promise.all([firstObserver, secondObserver])).resolves.toEqual([
-      [{ status: "completed", response: "The row was appended." }],
-      [{ status: "completed", response: "The row was appended." }],
-    ]);
-    await waitFor(() => expect(hasWorker(worker.sessionId)).toBe(false));
-  });
-
   test("adds the scoped app state contract to an existing app's task", async () => {
     const db = await openTestDatabase();
     const app = await new AppDatabase(db).create({
@@ -228,7 +177,6 @@ describe("workers", () => {
       },
       location: { directory: "/repo", useWorktree: true },
     });
-    onTestFinished(() => finishWorker(worker.sessionId));
 
     await waitFor(() => expect(superviseWorkerMock).toHaveBeenCalledTimes(1));
     expect(superviseWorkerMock.mock.calls[0]![0]).toMatchObject({
@@ -276,8 +224,6 @@ describe("workers", () => {
       ephemeral: false,
       message: { content: "Second task." },
     });
-    onTestFinished(() => finishWorker(firstWorker.sessionId));
-    onTestFinished(() => finishWorker(secondWorker.sessionId));
 
     await waitFor(() => expect(superviseWorkerMock).toHaveBeenCalledTimes(2));
     expect(
@@ -316,8 +262,6 @@ describe("workers", () => {
         message: { content: "Generate a pattern." },
       }),
     ).rejects.toThrow("The app was deleted before its worker started.");
-    const sessionId = superviseWorkerMock.mock.calls[0]![0].worker.sessionId;
-    await waitFor(() => expect(hasWorker(sessionId)).toBe(false));
   });
 
   test("rejects workers for missing apps", async () => {
@@ -343,16 +287,13 @@ describe("workers", () => {
       ...input,
       metadata: { placeholderId: "row-b" },
     });
-    onTestFinished(() => finishWorker(firstWorker.sessionId));
-    onTestFinished(() => finishWorker(secondWorker.sessionId));
     await waitFor(() => expect(superviseWorkerMock).toHaveBeenCalledTimes(2));
 
     await expect(
-      cancelWorker({ type: "file", file, workerSessionId: firstWorker.sessionId }),
+      cancelWorkerFromRequest({ type: "file", file, workerSessionId: firstWorker.sessionId }),
     ).resolves.toBe(true);
     expect(hasWorker(firstWorker.sessionId)).toBe(false);
     expect(hasWorker(secondWorker.sessionId)).toBe(true);
-    expect(abortWorkerMock).toHaveBeenCalledWith(firstWorker.sessionId);
 
     first.resolve({ status: "completed" });
     second.resolve({ status: "completed" });
@@ -363,47 +304,24 @@ describe("workers", () => {
     const completion = Promise.withResolvers<SessionCompletion>();
     completions.push(completion.promise);
     const worker = await spawnWorkerFromRequest(input);
-    onTestFinished(() => finishWorker(worker.sessionId));
 
     await expect(
-      cancelWorker({
+      cancelWorkerFromRequest({
         type: "file",
         file: sessionFile("toy-box-parent", "other.csv"),
         workerSessionId: worker.sessionId,
       }),
     ).resolves.toBe(false);
     expect(hasWorker(worker.sessionId)).toBe(true);
-    expect(abortWorkerMock).not.toHaveBeenCalled();
 
-    completion.resolve({ status: "completed" });
-  });
-
-  test("rejects completion waiters when their worker is canceled", async () => {
-    const completion = Promise.withResolvers<SessionCompletion>();
-    completions.push(completion.promise);
-    const worker = await spawnWorkerFromRequest(input);
-    onTestFinished(() => finishWorker(worker.sessionId));
-    const request = { type: "file" as const, file, workerSessionId: worker.sessionId };
-    const completionWait = waitForSessions([worker.sessionId]);
-    void completionWait.catch(() => {});
-
-    await expect(cancelWorker(request)).resolves.toBe(true);
-    await expect(completionWait).rejects.toBeInstanceOf(
-      realRuntimeWorkersModule.WorkerCanceledError,
-    );
     completion.resolve({ status: "completed" });
   });
 
   test("rejects failed admission without interrupting an active sibling", async () => {
-    const log = spyOn(console, "error").mockImplementation(() => {});
-    onTestFinished(() => log.mockRestore());
     const completion = Promise.withResolvers<SessionCompletion>();
     completions.push(completion.promise);
     const sibling = await spawnWorkerFromRequest(input);
-    onTestFinished(() => {
-      completion.resolve({ status: "completed" });
-      finishWorker(sibling.sessionId);
-    });
+    onTestFinished(() => completion.resolve({ status: "completed" }));
     expect(hasWorker(sibling.sessionId)).toBe(true);
 
     superviseWorkerMock.mockRejectedValueOnce(new Error("Unable to spawn."));
@@ -413,29 +331,13 @@ describe("workers", () => {
         metadata: { placeholderId: "row-b" },
       }),
     ).rejects.toThrow("Unable to spawn.");
-    const failedWorker = superviseWorkerMock.mock.calls[1]![0].worker;
-    onTestFinished(() => finishWorker(failedWorker.sessionId));
-    await waitFor(() => expect(hasWorker(failedWorker.sessionId)).toBe(false));
     expect(hasWorker(sibling.sessionId)).toBe(true);
-    await waitFor(() => expect(log).toHaveBeenCalled());
 
     completion.resolve({ status: "completed", response: "Sibling result" });
     await expect(waitForSessions([sibling.sessionId])).resolves.toEqual([
       { status: "completed", response: "Sibling result" },
     ]);
     expect(hasWorker(sibling.sessionId)).toBe(false);
-  });
-
-  test("finishes unsuccessful work without reporting its outcome as a supervision error", async () => {
-    const log = spyOn(console, "error").mockImplementation(() => {});
-    onTestFinished(() => log.mockRestore());
-    completions.push(Promise.resolve({ status: "failed" }));
-
-    const { sessionId } = await spawnWorkerFromRequest(input);
-    onTestFinished(() => finishWorker(sessionId));
-    await waitFor(() => expect(hasWorker(sessionId)).toBe(false));
-
-    expect(log).not.toHaveBeenCalled();
   });
 });
 

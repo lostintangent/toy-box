@@ -160,9 +160,10 @@ export const codexProvider: SessionProvider = {
     const { thread } = await (
       await startCodexClient()
     ).request("thread/read", { threadId: nativeId });
-    // Native timestamps have second precision. A snapshot captured during
-    // that second must be replayed before we can trust it as a cache.
-    return (thread.updatedAt + 1) * 1000 <= capturedAt;
+    // Codex persists a turn before announcing its completion, so its own writes
+    // precede the capture. Native timestamps have second precision, so only a
+    // write in a later second is known to follow it.
+    return thread.updatedAt * 1000 <= capturedAt;
   },
   async delete(nativeId) {
     const rpc = await startCodexClient();

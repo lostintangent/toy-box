@@ -37,7 +37,7 @@ import { readSession } from "@sessions/server/state/sessions";
 import { deleteWorker, spawnWorker } from "@workers/server";
 import { ChannelDatabase, ChannelInputError, catalogEntry, type ChannelChange } from "./database";
 import { deleteChannelFiles, storeChannelAttachments } from "./attachments";
-import { publishChannelEvent, releaseChannelEvents } from "./events";
+import { publishChannelEvent, releaseChannelEvents } from "./eventLog";
 import { publishChannelNotification } from "./push";
 
 const CHANNEL_MESSAGE_LIMIT = 100;

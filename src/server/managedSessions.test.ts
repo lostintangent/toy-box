@@ -306,30 +306,3 @@ test("detaching a Channel Agent removes its Worker and records the user's remova
     { type: "member_left", actor: { type: "user" }, member },
   ]);
 });
-
-test("detaching a deleted session ends pending work registered for or under it", async () => {
-  await openTestDatabase();
-  const { finishWorker, getRegisteredWorker, startWorker } =
-    await import("@workers/server/registry");
-  const sessionId = crypto.randomUUID();
-  const createdAt = new Date(0).toISOString();
-  const own = { type: "inbox" as const, sessionId, createdAt, ephemeral: false };
-  const child = {
-    type: "session" as const,
-    parentSessionId: sessionId,
-    sessionId: crypto.randomUUID(),
-    createdAt,
-    ephemeral: true,
-  };
-  const unrelated = { ...child, parentSessionId: "other", sessionId: crypto.randomUUID() };
-  for (const worker of [own, child, unrelated]) {
-    startWorker(worker);
-    onTestFinished(() => finishWorker(worker.sessionId));
-  }
-
-  await detachManagedSession(sessionId);
-
-  expect(getRegisteredWorker(own.sessionId)).toBeUndefined();
-  expect(getRegisteredWorker(child.sessionId)).toBeUndefined();
-  expect(getRegisteredWorker(unrelated.sessionId)).toEqual(unrelated);
-});

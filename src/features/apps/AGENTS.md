@@ -155,11 +155,12 @@ The SDK exposes:
 - `useWorkspace(selector)`, which projects ordinary sessions and child-session
   trees, saved apps, models, published panes, and workers owned by the app.
 - `useChannels()`, the same catalog hook used by the Channels sidebar. It composes
-  the channel list and Session activity caches into channel, agent identity/running,
+  the channel list and Session activity caches into channel, agent identity/working,
   and unread/reply status entries without opening detail streams or marking read.
 - `useChannel(channelId, options?)`, a direct export of the channel pane hook.
-  It shares the detail cache, stream, paging, and post mutation. Observation is active
-  by default; `mode: "passive"` leaves unread state untouched. Key the observer by channel ID when switching.
+  It shares the detail cache, stream, paging, post mutation, and derived agent presence.
+  It marks read by default; `mode: "passive"` leaves unread state untouched. Key the
+  consuming component by channel ID when switching.
 - `channelTasksDiff`, a direct export from Channels, for displaying derived diff totals without
   duplicating domain logic. Artifacts carry the `id` that tasks reference as `artifactId`.
 - `useFile`, which reuses the live file lifecycle from editor panes, including

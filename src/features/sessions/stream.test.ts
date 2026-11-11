@@ -1,159 +1,167 @@
 import { expect, onTestFinished, spyOn, test } from "bun:test";
-import {
-  experimental_streamedQuery as streamedQuery,
-  MutationObserver,
-  QueryClient,
-  QueryObserver,
-} from "@tanstack/react-query";
-import type { SessionEvent, SessionState } from "./model";
+import { MutationObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
+import type { SessionState, SessionSubscriptionEvent } from "./model";
 import type { SessionActivity, SessionsActivity } from "./model/activity";
-import { applySessionEvent, createInitialSessionState } from "./model/reducer";
-import { adoptSessionSnapshot, sessionQueries } from "./queries";
-import { streamSession, type SessionObservation } from "./stream";
+import { createInitialSessionState } from "./model/reducer";
+import { sessionQueries } from "./queries";
 
-const snapshot = (lastSeenEventId: number, content: string): SessionState =>
-  createInitialSessionState({ lastSeenEventId, messages: [{ role: "user", content }] });
+const snapshot = (revision: number, content: string): SessionSubscriptionEvent => ({
+  type: "snapshot",
+  state: createInitialSessionState({ revision, messages: [{ role: "user", content }] }),
+});
 
-test("opens with a snapshot, follows each announced run from its cursor, and heals once it ends", async () => {
-  const session = observeSession();
+/** Watches the detail and brings it current with an idle session's snapshot. */
+async function openIdle(session: ReturnType<typeof watchSession>, revision = 4) {
+  const unwatch = session.watch();
+  const open = await session.connections.next();
+  open.send(snapshot(revision, "Hello"));
+  open.end();
+  await session.waitFor((state) => state?.revision === revision);
+  return unwatch;
+}
+
+test("opens with a subscription, and subscribes to each announced run from its revision", async () => {
+  const session = watchSession();
   session.watch();
-  (await session.snapshots.next()).resolve(snapshot(4, "Hello"));
-  await session.waitFor((state) => state?.lastSeenEventId === 4);
+  const open = await session.connections.next();
+  expect(open.url).toBe("/api/sessions/session");
+  open.send(snapshot(4, "Hello"));
+  open.end();
+  await session.waitFor((state) => state?.revision === 4);
 
   session.setActivity({ status: "running", since: 1 });
   const run = await session.connections.next();
   expect(run.url).toBe("/api/sessions/session?after=4");
-  expect(session.view()?.status).toBe("thinking");
-  run.send({ type: "assistant_message", content: "Hi", eventId: 5 });
-  run.send({ type: "end", reason: "idle", eventId: 6 });
+  run.send({ type: "resumed" });
+  run.send({ type: "assistant_message", content: "Hi", revision: 5 });
+  run.send({ type: "end", reason: "idle", revision: 6 });
   run.end();
-  (await session.snapshots.next()).resolve(snapshot(6, "Healed"));
-  await session.waitFor((state) => state?.messages[0]?.content === "Healed");
+  await session.waitFor((state) => state?.revision === 6);
+  expect(session.view()?.messages.map(({ content }) => content)).toEqual(["Hello", "Hi"]);
 
-  // The followed run finishing doesn't heal again, and the next run follows the new cursor.
+  // The subscribed run finishing needs nothing more, and the next run subscribes from the new revision.
   session.setActivity({ status: "unread" });
   session.setActivity({ status: "running", since: 2 });
   expect((await session.connections.next()).url).toBe("/api/sessions/session?after=6");
-  expect(session.snapshots.count).toBe(2);
+  expect(session.connections.count).toBe(3);
 });
 
-test("heals a run that finished unseen with one snapshot", async () => {
-  const session = observeSession();
-  session.watch();
-  (await session.snapshots.next()).resolve(snapshot(4, "Hello"));
-  await session.waitFor((state) => state?.lastSeenEventId === 4);
+test("subscribes once to a run that finished unseen", async () => {
+  const session = watchSession();
+  await openIdle(session);
 
   session.setActivity({ status: "unread" });
-  (await session.snapshots.next()).resolve(snapshot(9, "Finished"));
-  await session.waitFor((state) => state?.lastSeenEventId === 9);
+  const caughtUp = await session.connections.next();
+  expect(caughtUp.url).toBe("/api/sessions/session?after=4");
+  caughtUp.send(snapshot(9, "Finished"));
+  caughtUp.end();
+  await session.waitFor((state) => state?.revision === 9);
   session.setActivity(undefined);
   await settle();
 
-  expect(session.snapshots.count).toBe(2);
-  expect(session.connections.count).toBe(0);
+  expect(session.connections.count).toBe(2);
 });
 
-test("joins a run in progress, resumes a dropped follow from its cursor, and heals an event-less failure", async () => {
+test("subscribes again when a followed run is stopped, since its history can keep less", async () => {
+  const session = watchSession();
+  await openIdle(session);
+  session.setActivity({ status: "running", since: 1 });
+  const run = await session.connections.next();
+  run.send({ type: "resumed" });
+  run.send({ type: "assistant_message", content: "Partial", revision: 5 });
+  run.send({ type: "end", reason: "idle", revision: 6 });
+  run.end();
+  await session.waitFor((state) => state?.revision === 6);
+
+  session.setActivity(undefined);
+  const stopped = await session.connections.next();
+  expect(stopped.url).toBe("/api/sessions/session?after=6");
+  stopped.send(snapshot(9, "Hello"));
+  stopped.end();
+  await session.waitFor((state) => state?.revision === 9);
+  expect(session.view()?.messages.map(({ content }) => content)).toEqual(["Hello"]);
+});
+
+test("joins a run in progress, and resubscribes from its revision after a dropped subscription", async () => {
   const errors = spyOn(console, "error").mockImplementation(() => {});
   onTestFinished(() => errors.mockRestore());
-  const session = observeSession({ status: "running", since: 1 });
+  const session = watchSession({ status: "running", since: 1 });
   session.watch();
-  (await session.snapshots.next()).resolve(snapshot(4, "Hello"));
 
   const first = await session.connections.next();
-  expect(first.url).toBe("/api/sessions/session?after=4");
-  first.send({ type: "assistant_message", content: "Hi", eventId: 5 });
-  await session.waitFor((state) => state?.lastSeenEventId === 5);
+  first.send(snapshot(4, "Hello"));
+  first.send({ type: "assistant_message", content: "Hi", revision: 5 });
+  await session.waitFor((state) => state?.revision === 5);
   first.fail();
 
   const second = await session.connections.next();
   expect(second.url).toBe("/api/sessions/session?after=5");
-  second.fail();
-  (await session.snapshots.next()).resolve(snapshot(7, "Healed"));
-  await session.waitFor((state) => state?.lastSeenEventId === 7);
-  expect(session.connections.count).toBe(2);
+  second.send({ type: "resumed" });
+  second.send({ type: "end", reason: "idle", revision: 6 });
+  second.end();
+  await session.waitFor((state) => state?.status === "idle" && state.revision === 6);
 });
 
-test("never reads a snapshot during this client's delivery and drops one that returns during it", async () => {
-  const session = observeSession();
+test("fails the detail when its opening subscription finds no session", async () => {
+  const session = watchSession();
   session.watch();
-  (await session.snapshots.next()).resolve(snapshot(4, "Hello"));
-  await session.waitFor((state) => state?.lastSeenEventId === 4);
-
-  session.setActivity({ status: "unread" });
-  const heal = await session.snapshots.next();
-  session.setActivity({ status: "running", since: 2 });
-  const delivery = session.deliver();
+  const open = await session.connections.next();
+  open.send({ type: "deleted", sessionId: "session" });
+  open.end();
   await settle();
-  delivery.resolve();
-  await settle();
-  heal.resolve(snapshot(5, "Stale"));
 
-  const run = await session.connections.next();
-  expect(run.url).toBe("/api/sessions/session?after=4");
-  expect(session.view()).toMatchObject({ status: "thinking", messages: [{ content: "Hello" }] });
-  expect(session.snapshots.count).toBe(2);
-
-  // A follow-up delivered while the run ends defers its heal to the run it starts.
-  const followUp = session.deliver();
-  run.send({ type: "end", reason: "idle", eventId: 6 });
-  run.end();
-  await settle();
-  expect(session.snapshots.count).toBe(2);
-  session.setActivity({ status: "running", since: 3 });
-  followUp.resolve();
-  const next = await session.connections.next();
-  expect(next.url).toBe("/api/sessions/session?after=6");
-  next.end();
-  (await session.snapshots.next()).resolve(snapshot(8, "Answered"));
-  await session.waitFor((state) => state?.messages[0]?.content === "Answered");
+  expect(session.query().state.status).toBe("error");
+  expect(session.query().state.error?.message).toContain("Session not found");
 });
 
-test("rereads the snapshot after a failed delivery", async () => {
-  const session = observeSession();
-  session.watch();
-  (await session.snapshots.next()).resolve(snapshot(4, "Hello"));
-  await session.waitFor((state) => state?.lastSeenEventId === 4);
-
-  session.setActivity({ status: "running", since: 1 });
-  const delivery = session.deliver();
-  session.setActivity(undefined);
-  delivery.reject(new Error("Unable to send."));
-  (await session.snapshots.next()).resolve(snapshot(4, "Restored"));
-  await session.waitFor((state) => state?.messages[0]?.content === "Restored");
-  expect(session.connections.count).toBe(0);
-});
-
-test("a failed heal ends the observation quietly and keeps the session's state", async () => {
+test("a later subscription that fails before any event ends quietly and keeps the session's state", async () => {
   const errors = spyOn(console, "error").mockImplementation(() => {});
   onTestFinished(() => errors.mockRestore());
-  const session = observeSession();
-  session.watch();
-  (await session.snapshots.next()).resolve(snapshot(4, "Hello"));
-  await session.waitFor((state) => state?.lastSeenEventId === 4);
+  const session = watchSession();
+  await openIdle(session);
 
-  session.setActivity({ status: "unread" });
-  (await session.snapshots.next()).reject(new Error("The server restarted."));
+  session.setActivity({ status: "running", since: 1 });
+  (await session.connections.next()).fail();
   await settle();
   expect(session.query().state).toMatchObject({
     status: "success",
     fetchStatus: "idle",
     error: null,
-    data: { lastSeenEventId: 4 },
+    data: { revision: 4 },
   });
 
   session.setActivity({ status: "running", since: 2 });
   await settle();
-  expect(session.connections.count).toBe(0);
-  expect(session.snapshots.count).toBe(2);
+  expect(session.connections.count).toBe(2);
 });
 
-test("ends the observation and its follow when the last watcher leaves, even while a pin retains it", async () => {
-  const session = observeSession();
-  const unwatch = session.watch();
+test("waits for this client's delivery, and drops a snapshot that one started during", async () => {
+  const session = watchSession();
+  await openIdle(session);
+
+  const delivery = session.deliver();
+  session.setActivity({ status: "running", since: 1 });
+  await settle();
+  expect(session.connections.count).toBe(1);
+  delivery.resolve();
+  const run = await session.connections.next();
+  expect(run.url).toBe("/api/sessions/session?after=4");
+
+  // A follow-up starts before the subscription brings the detail current.
+  const followUp = session.deliver();
+  run.send(snapshot(5, "Stale"));
+  await settle();
+  expect(run.signal.aborted).toBe(true);
+  expect(session.view()?.messages[0]?.content).toBe("Hello");
+
+  followUp.resolve();
+  expect((await session.connections.next()).url).toBe("/api/sessions/session?after=4");
+});
+
+test("ends the subscription when the last watcher leaves, even while a pin retains it", async () => {
+  const session = watchSession();
   session.pin();
-  (await session.snapshots.next()).resolve(snapshot(4, "Hello"));
-  await session.waitFor((state) => state?.lastSeenEventId === 4);
+  const unwatch = await openIdle(session);
   session.setActivity({ status: "running", since: 1 });
   const run = await session.connections.next();
 
@@ -161,20 +169,17 @@ test("ends the observation and its follow when the last watcher leaves, even whi
   await settle();
   expect(run.signal.aborted).toBe(true);
   expect(session.query().state.fetchStatus).toBe("idle");
-  expect(session.view()?.lastSeenEventId).toBe(4);
+  expect(session.view()?.revision).toBe(4);
 
   session.setActivity({ status: "running", since: 2 });
   await settle();
-  expect(session.connections.count).toBe(1);
-  expect(session.snapshots.count).toBe(1);
+  expect(session.connections.count).toBe(2);
 });
 
-test("a watcher that remounts mid-run while a pin retains the detail keeps following", async () => {
-  const session = observeSession();
-  const unwatch = session.watch();
+test("a watcher that remounts mid-run while a pin retains the detail resubscribes", async () => {
+  const session = watchSession();
   session.pin();
-  (await session.snapshots.next()).resolve(snapshot(4, "Hello"));
-  await session.waitFor((state) => state?.lastSeenEventId === 4);
+  const unwatch = await openIdle(session);
   session.setActivity({ status: "running", since: 1 });
   const run = await session.connections.next();
 
@@ -183,32 +188,32 @@ test("a watcher that remounts mid-run while a pin retains the detail keeps follo
   session.watch();
   await settle();
   expect(run.signal.aborted).toBe(true);
-  expect(session.snapshots.count).toBe(2);
-  (await session.snapshots.next()).resolve(snapshot(5, "Hello"));
-  expect((await session.connections.next()).url).toBe("/api/sessions/session?after=5");
+  expect((await session.connections.next()).url).toBe("/api/sessions/session?after=4");
 });
 
-test("a watcher that remounts before the observation starts reads one snapshot", async () => {
-  const session = observeSession();
+test("a watcher that remounts before the subscription opens subscribes once", async () => {
+  const session = watchSession();
   // StrictMode and keyed remounts leave and rewatch the detail in one render.
   session.watch()();
   session.watch();
   await settle();
-  expect(session.snapshots.count).toBe(1);
+  expect(session.connections.count).toBe(1);
 
-  (await session.snapshots.next()).resolve(snapshot(4, "Hello"));
-  await session.waitFor((state) => state?.lastSeenEventId === 4);
+  (await session.connections.next()).send(snapshot(4, "Hello"));
+  await session.waitFor((state) => state?.revision === 4);
 });
 
-test("a prefetch reads only the snapshot, even while the session runs", async () => {
-  const session = observeSession({ status: "running", since: 1 });
+test("a prefetch closes its subscription once the detail is current, even while the session runs", async () => {
+  const session = watchSession({ status: "running", since: 1 });
   const prefetched = session.client.prefetchQuery(session.options);
-  (await session.snapshots.next()).resolve(snapshot(4, "Pinned"));
+  const open = await session.connections.next();
+  open.send(snapshot(4, "Pinned"));
   await prefetched;
 
+  expect(open.signal.aborted).toBe(true);
   expect(session.view()?.messages[0]?.content).toBe("Pinned");
   expect(session.query().state.fetchStatus).toBe("idle");
-  expect(session.connections.count).toBe(0);
+  expect(session.connections.count).toBe(1);
 });
 
 test("writes deltas once per frame, and any other event flushes the batch with it", async () => {
@@ -219,44 +224,40 @@ test("writes deltas once per frame, and any other event flushes the batch with i
   onTestFinished(() => {
     delete (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame;
   });
-  const session = observeSession({ status: "running", since: 1 });
+  const session = watchSession({ status: "running", since: 1 });
   session.watch();
-  (await session.snapshots.next()).resolve(snapshot(4, "Hello"));
   const run = await session.connections.next();
+  run.send(snapshot(4, "Hello"));
+  await session.waitFor((state) => state?.revision === 4);
   const writes = session.countWrites();
 
-  run.send({ type: "delta", content: "Hel", eventId: 5 });
-  run.send({ type: "delta", content: "lo", eventId: 6 });
+  run.send({ type: "delta", content: "Hel", revision: 5 });
+  run.send({ type: "delta", content: "lo", revision: 6 });
   await settle();
   expect(writes()).toBe(0);
   frames.splice(0).forEach((frame) => frame());
-  await session.waitFor((state) => state?.lastSeenEventId === 6);
+  await session.waitFor((state) => state?.revision === 6);
   expect(writes()).toBe(1);
   expect(session.view()?.messages.at(-1)).toMatchObject({ role: "assistant", content: "Hello" });
 
-  run.send({ type: "delta", content: "!", eventId: 7 });
-  run.send({ type: "assistant_message", content: "Hello!", eventId: 8 });
-  await session.waitFor((state) => state?.lastSeenEventId === 8);
+  run.send({ type: "delta", content: "!", revision: 7 });
+  run.send({ type: "assistant_message", content: "Hello!", revision: 8 });
+  await session.waitFor((state) => state?.revision === 8);
   await settle();
   expect(writes()).toBe(2);
   expect(session.view()?.messages.at(-1)).toMatchObject({ role: "assistant", content: "Hello!" });
 });
 
-type SnapshotRead = {
-  resolve(state: SessionState): void;
-  reject(error: Error): void;
-};
-
 type Connection = {
   url: string;
   signal: AbortSignal;
-  send(event: SessionEvent): void;
+  send(event: SessionSubscriptionEvent): void;
   end(): void;
   fail(): void;
 };
 
-/** One session's detail, observed with scripted snapshot reads and event streams. */
-function observeSession(activity?: SessionActivity) {
+/** One session's detail, watched with scripted subscriptions. */
+function watchSession(activity?: SessionActivity) {
   const sessionId = "session";
   const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
   const activityKey = sessionQueries.activity.queryKey;
@@ -264,29 +265,7 @@ function observeSession(activity?: SessionActivity) {
     client.setQueryData<SessionsActivity>(activityKey, next ? { [sessionId]: next } : {});
   setActivity(activity);
 
-  const snapshots = queue<SnapshotRead>();
-  const options = {
-    ...sessionQueries.detail(sessionId),
-    queryFn: streamedQuery<SessionObservation, SessionState>({
-      initialValue: createInitialSessionState(),
-      refetchMode: "append",
-      streamFn: (context) =>
-        streamSession(context, {
-          sessionId,
-          activityKey,
-          readSnapshot: (signal) => {
-            signal.throwIfAborted();
-            const read = Promise.withResolvers<SessionState>();
-            snapshots.push(read);
-            return read.promise;
-          },
-        }),
-      reducer: (state, observation) =>
-        observation.type === "snapshot"
-          ? adoptSessionSnapshot(state, observation.state)
-          : observation.events.reduce(applySessionEvent, state),
-    }),
-  };
+  const options = sessionQueries.detail(sessionId);
   const key = options.queryKey;
 
   const connections = queue<Connection>();
@@ -326,7 +305,6 @@ function observeSession(activity?: SessionActivity) {
   return {
     client,
     options,
-    snapshots,
     connections,
     setActivity,
     view,
@@ -350,7 +328,7 @@ function observeSession(activity?: SessionActivity) {
       void observer.mutate().catch(() => {});
       return sent;
     },
-    /** Counts the observation's writes to the detail from now on. */
+    /** Counts the subscription's writes to the detail from now on. */
     countWrites() {
       let writes = 0;
       const { queryHash } = query();

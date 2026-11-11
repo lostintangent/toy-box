@@ -8,7 +8,7 @@ import { useWorkspaceSelector } from "@workspace/hooks/state";
 import { sessionQueries } from "./queries";
 
 /** Retains a pinned session's cached snapshot. It never watches the session, so it
- *  never keeps the session's observation running. */
+ *  never keeps the session's subscription running. */
 export function warmSessionSnapshotQuery(sessionId: string) {
   return { ...sessionQueries.detail(sessionId), enabled: false };
 }
@@ -27,7 +27,7 @@ export function useWarmSessionSnapshots(): void {
   });
 
   // Only desktop reads a pinned snapshot before its pane opens. With nothing
-  // watching the session, its observation ends after that one snapshot.
+  // watching the session, its subscription ends once it brings the snapshot current.
   useEffect(() => {
     if (!isDesktop) return;
     for (const sessionId of pinnedSessionIds) {

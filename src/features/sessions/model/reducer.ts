@@ -54,6 +54,7 @@ export function createInitialSessionState(initial: Partial<SessionState> = {}): 
     status: "idle",
     reasoningContent: "",
     model: undefined,
+    revision: 0,
     ...initial,
   };
 }
@@ -79,16 +80,7 @@ export function applySessionEvent(state: SessionState, event: SessionEvent): Ses
 // ============================================================================
 
 function applySessionEventCore(state: SessionState, event: SessionEvent): void {
-  // Replayed buffer events that are already incorporated in a snapshot
-  // can race with detail refetches; skip stale events before mutating state.
-  if (
-    event.eventId !== undefined &&
-    state.lastSeenEventId !== undefined &&
-    event.eventId <= state.lastSeenEventId
-  ) {
-    return;
-  }
-  if (event.eventId !== undefined) state.lastSeenEventId = event.eventId;
+  if (event.revision !== undefined) state.revision = event.revision;
 
   switch (event.type) {
     // ── Messages ──────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { expect, onTestFinished, spyOn, test } from "bun:test";
 import type { AnyRoute } from "@tanstack/react-router";
 import { ChannelDatabase } from "@channels/server/database";
-import { releaseChannelEvents } from "@channels/server/events";
+import { releaseChannelEvents } from "@channels/server/eventLog";
 import { getChannelCatalog, getChannelSnapshot } from "@channels/server/stream";
 import { channelAgent, createStoredChannel, openChannel } from "@channels/server/testFixtures";
 import { machineFile, workspaceFileId } from "@files/model";

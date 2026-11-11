@@ -10,7 +10,8 @@ import { ChannelDatabase, catalogEntry } from "./database";
 import { createStoredChannel } from "./testFixtures";
 import { publishChannelNotification, startChannelPush } from "./push";
 import { broadcast } from "@workspace/server/events";
-import type { ChannelObservationEvent } from "@channels/model";
+import { deleteSessionActivity, setSessionActivity } from "@sessions/server/state/activity";
+import type { ChannelSubscriptionEvent } from "@channels/model";
 
 test("the unread check builds current channel text and the lead's Reply handle on the server", async () => {
   const db = await openTestDatabase();
@@ -54,7 +55,7 @@ test("the unread check builds current channel text and the lead's Reply handle o
   expect((await channels.getChannel(channel.id))?.requestSequence).toBe(change.message.sequence);
 });
 
-test("workspace changes update badges from the catalog, and replacing or stopping the observer removes it", async () => {
+test("workspace changes update badges from the catalog, and replacing or stopping channel push removes its subscription", async () => {
   const db = await openTestDatabase();
   const channels = new ChannelDatabase(db);
   const changes = [];
@@ -131,7 +132,7 @@ test("workspace changes update badges from the catalog, and replacing or stoppin
   expect(publishing).not.toHaveBeenCalled();
 });
 
-test("Follow observes only interested channels and promptly dismisses deleted content", async () => {
+test("Follow subscribes only to followed channels and promptly dismisses deleted content", async () => {
   const db = await openTestDatabase();
   const channels = new ChannelDatabase(db);
   const channel = await createStoredChannel(channels, {
@@ -151,14 +152,14 @@ test("Follow observes only interested channels and promptly dismisses deleted co
   };
   access.mockClear();
   let interest: (topic: string, active: boolean) => void = () => {};
-  let emit: (event: ChannelObservationEvent) => void = () => {};
+  let emit: (event: ChannelSubscriptionEvent) => void = () => {};
   let closeStream: VoidFunction = () => {};
   let closed = 0;
   const observing = spyOn(push, "observeTopics").mockImplementation((listener) => {
     interest = listener;
     return () => {};
   });
-  const opening = spyOn(stream, "streamChannel").mockImplementation((_, send, close) => {
+  const opening = spyOn(stream, "subscribeToChannel").mockImplementation((_, send, close) => {
     emit = send;
     closeStream = close;
     return () => {
@@ -182,15 +183,19 @@ test("Follow observes only interested channels and promptly dismisses deleted co
   expect(opening).not.toHaveBeenCalled();
   interest(`channel:${channel.id}`, true);
   emit({ type: "snapshot", state: followed });
-  emit({ type: "presence", presence: { [channel.id]: { state: "working" } } });
+  emit({ type: "status", revision: followed.revision + 1, agentId: channel.id });
   expect(reducing.mock.calls[1]?.[0].messages).toEqual([]);
+  // Only a roster agent's activity republishes, from the state the topic already holds.
+  onTestFinished(() => ["elsewhere", channel.id].forEach(deleteSessionActivity));
+  setSessionActivity("elsewhere", "running");
+  setSessionActivity(channel.id, "running");
   const event = publishing.mock.calls.at(-1)?.[1];
   if (!event || typeof event === "function" || event.type !== "update")
     throw new Error("Missing state publication.");
   expect(event.value).toMatchObject({ workingAgents: [{ id: channel.id }], tasksTotal: 1 });
   expect(Object.keys(event.value)).not.toContain("messages");
   expect(event.value).not.toHaveProperty("updatedAt");
-  expect(publishing.mock.calls).toHaveLength(2);
+  expect(publishing.mock.calls).toHaveLength(3);
   for (const [, publication] of publishing.mock.calls) {
     if (!publication || typeof publication === "function" || publication.type !== "update")
       throw new Error("Missing request attention publication.");
@@ -241,7 +246,16 @@ test("Follow observes only interested channels and promptly dismisses deleted co
     },
   });
   expect(await store.subscriptions()).toEqual([]);
-
+  // Neither an ended nor a released topic republishes.
+  publishing.mockClear();
+  setSessionActivity(channel.id, "idle");
+  expect(publishing).not.toHaveBeenCalled();
   interest(`channel:${channel.id}`, false);
-  expect(closed).toBe(1);
+  interest(`channel:${channel.id}`, true);
+  emit({ type: "snapshot", state: followed });
+  interest(`channel:${channel.id}`, false);
+  expect(closed).toBe(2);
+  publishing.mockClear();
+  setSessionActivity(channel.id, "running");
+  expect(publishing).not.toHaveBeenCalled();
 });

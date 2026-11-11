@@ -134,7 +134,9 @@ export type SessionState = {
   preview?: Preview;
   artifacts: SessionArtifact[];
   openedFiles: WorkspaceFile[];
-  lastSeenEventId?: number;
+  /** The point in history this state reflects: its last reduced event's revision, or the
+   *  one stamped when it was rebuilt, and 0 before any. */
+  revision: number;
   status: SessionStatus;
   reasoningContent: string;
 };
@@ -299,8 +301,16 @@ export type SessionEvent = (
   | { type: "file_closed"; file: WorkspaceFile }
   | { type: "end"; reason: "idle" | "error"; error?: string }
 ) & {
-  eventId?: number;
+  revision?: number;
 };
+
+/** A subscription brings its subscriber current, with a replay after its cursor and then
+ *  `resumed` or with a `snapshot`, then sends live events until `end`. */
+export type SessionSubscriptionEvent =
+  | { type: "snapshot"; state: SessionState }
+  | { type: "resumed" }
+  | SessionEvent
+  | { type: "deleted"; sessionId: string };
 
 export type SessionUpdate = Pick<Session, "id"> &
   Partial<Omit<Session, "id" | "createdAt" | "updatedAt">> & {

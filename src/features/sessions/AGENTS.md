@@ -130,15 +130,17 @@ with a different `createdAt` does the same and starts fresh catalog metadata. A 
 still a draft shows the empty state it leaves until its first turn.
 The public ID and mounted workspace pane remain stable.
 
-A session's detail query is its one browser state. `stream.ts` observes the session for as long
-as an enabled observer watches the detail: it opens with a snapshot, follows each run the shared
-activity announces from the cached cursor, and heals with one snapshot when the run ends, including
-a run that finished unseen. It batches text and tool output deltas to animation frames. A preview
-and a pane share one observation, and a pin retains the detail without watching it. Nothing awaits
-or returns the detail's fetch, which lasts until the last watcher leaves; restarts go through
-`refetchQueries` with `type: "active"`. Ending an observation never stops server work; abort is a
-separate operation. `cache.ts` resumes an ended observation on the session's activity hints and on
-refresh, and leaves a running one alone.
+A session's detail query is its one browser state. `stream.ts` subscribes to the session for as long
+as an enabled observer watches the detail. Each subscription sends the detail's `revision`, and the
+server brings it current with a replay of what it missed followed by `resumed`, or with one
+`snapshot`, then streams the live run until `end`. The detail subscribes when it opens and again for
+each run the shared activity announces, including a run that finished unseen, and for each run that
+stops, since history can keep less than the run showed. It batches text and tool output deltas to
+animation frames. A preview and a pane share one subscription, and a pin retains the detail without
+watching it. Nothing awaits or returns the detail's fetch, which lasts until the last watcher
+leaves; restarts go through `refetchQueries` with `type: "active"`. Ending a subscription never
+stops server work; abort is a separate operation. `cache.ts` resumes an ended subscription on the
+session's activity hints and on refresh, and leaves a running one alone.
 
 `useSession.ts` derives one pane's view from the detail and shared activity, applies its commands
 optimistically to the detail, and acknowledges a finished run while an active pane shows it.
@@ -151,23 +153,23 @@ joins every write with the pages already loaded while the seam still matches, so
 and stream ends keep the reader's place; a mismatch keeps only the newer page. Agent tools and
 Workers read complete snapshots in process.
 
-The browser sends one way and follows one way. A send posts `deliverMessage`, keyed by the detail's
-query key, and the observation waits for this client's deliveries before following from the cursor
-it held before sending, so the follow replays the whole turn even when it started first. While a
-delivery is pending, the observation neither reads a snapshot nor adopts one that returns during it,
-since that snapshot could hide the optimistic turn. A draft's first send carries its location, which
-creates the session with that message, and `sessionMutations.startSession()` does the same for a new
-ID without mounting a pane. A follow reads `GET /api/sessions/$sessionId` with `after` through the
-shared `readEventStream`, which Channels also uses. It ends at once when nothing is live, and the
-heal's snapshot then holds the outcome.
+The browser sends one way and subscribes one way. A send posts `deliverMessage`, keyed by the
+detail's query key, and the detail waits for this client's deliveries before subscribing from the
+revision it held before sending, so the replay carries the whole turn even when it started first.
+A snapshot could hide the optimistic turn, so one that opens a subscription after a delivery started
+is dropped, and the detail resubscribes once the delivery settles. A draft's first send carries its
+location, which creates the session with that message, and `sessionMutations.startSession()` does
+the same for a new ID without mounting a pane. A subscription reads `GET /api/sessions/$sessionId`
+with `after` through the shared `readEventStream`, which Channels also uses. When nothing is live, it
+brings the detail current and closes.
 
-A follow that fails after delivering events, such as when its replay backlog overflows the
-transport, resumes from its cursor; one that fails before any event goes straight to the heal. Only
-the opening snapshot fails the detail; a failed heal ends the observation quietly with its state
-kept, and the next activity hint or refresh resumes it. A rejected send counts as never taken:
-`useSession` restores the session's pre-send state and rejects, so the composer puts the message
-back, and the observation then rereads the snapshot. Once the send is accepted the server owns the
-turn, and failures while following it take the rules above.
+A subscription that fails after receiving events, such as when its replay backlog overflows the
+transport, resubscribes from the last revision it received. Only the opening subscription fails the
+detail, and a session the server reports `deleted` fails it as not found. A later failure ends the
+subscription quietly with its state kept, and the next activity hint or refresh resumes it. A
+rejected send counts as never taken: `useSession` restores the session's pre-send state and rejects,
+so the composer puts the message back, and the detail then resubscribes from that state. Once the
+send is accepted the server owns the turn, and failures while subscribed take the rules above.
 
 Ordinary Sessions remain unbranded coordinators. Their Channel tools can create Channels with an
 intrinsic lead, create channel-specific members, discover available model configurations, read
@@ -178,13 +180,13 @@ member work. Collaboration identity and `@mention` delivery belong to Channels.
 draft session. Unsent composer text is a Workspace saved draft keyed `session:<id>`. First submission in
 `useSession.ts` adds the provider and context to the existing catalog entry and transitions the
 same ID to running, so its timestamp and directory appear before provider creation completes.
-A failed first submission ends the draft's observation and repairs the catalog and session activity
+A failed first submission ends the draft's subscription and repairs the catalog and session activity
 from the server, since creation may have failed before or after the provider recorded the session.
-When the repaired catalog shows the server created it, its observation resumes and follows or heals
-any run the send started.
+When the repaired catalog shows the server created it, its subscription resumes and brings it current
+with any run the send started.
 Providers' `useModels.ts` composes the model catalog with the workspace default. `useWarmSessionSnapshots.ts`
 retains explicitly pinned snapshots without creating UI output or a second cache. Desktop reads each
-pinned snapshot once; a pin never watches its session, so it never keeps an observation running.
+pinned snapshot once; a pin never watches its session, so it never keeps a subscription running.
 
 ## Presentation
 
@@ -201,7 +203,7 @@ and the activity indicator stay visible. `components/transcript/transcriptView.t
 visible messages without changing session state; filtering precedes transcript windowing.
 The window bounds rendered messages by transcript position, so a previous page loads beneath it
 without moving the reader, and revealing past the first loaded message loads the next page.
-Switching views lands the transcript afresh without restarting the session or its observation.
+Switching views lands the transcript afresh without restarting the session or its subscription.
 The pane's override is neither persisted nor synchronized across clients. Changing the workspace
 default does not change already-open panes; overlays and passive previews keep the full view.
 

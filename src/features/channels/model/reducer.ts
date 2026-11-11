@@ -4,7 +4,7 @@ import type {
   ChannelArtifact,
   ChannelEvent,
   ChannelMessage,
-  ChannelObservationEvent,
+  ChannelSubscriptionEvent,
   ChannelRoutine,
   ChannelState,
 } from ".";
@@ -12,17 +12,10 @@ import { workspaceFileId } from "@files/model";
 
 export function reduceChannelState(
   previous: ChannelState,
-  event: Exclude<ChannelObservationEvent, { type: "deleted" }>,
+  event: Exclude<ChannelSubscriptionEvent, { type: "deleted" }>,
 ): ChannelState {
   if (event.type === "snapshot") return event.state;
-  if (event.type === "presence" || event.type === "resumed") {
-    return {
-      ...previous,
-      presence:
-        event.type === "resumed" ? event.presence : { ...previous.presence, ...event.presence },
-    };
-  }
-  if (event.revision <= previous.revision) return previous;
+  if (event.type === "resumed" || event.revision <= previous.revision) return previous;
   const state = {
     ...reduceChannelRoster(previous, event),
     channel: reduceChannel(previous.channel, event),
@@ -38,10 +31,6 @@ export function reduceChannelState(
     state.messages = upsertMessage(state.messages, keepSentImages(state.messages, message));
     const content = isChannelSystemMessage(message) ? message.content : undefined;
     switch (content?.type) {
-      case "member_left":
-        state.presence = { ...state.presence };
-        delete state.presence[content.member.id];
-        break;
       case "artifact_shared":
         state.artifacts = shareArtifact(state.artifacts, content.artifact, message.timestamp);
         break;
@@ -123,8 +112,7 @@ export function reduceChannel(channel: Channel, event: ChannelEvent): Channel {
   }
 }
 
-/** The public roster used by detail clients and server presence projection. */
-export function reduceChannelRoster<Roster extends Pick<ChannelState, "lead" | "members">>(
+function reduceChannelRoster<Roster extends Pick<ChannelState, "lead" | "members">>(
   roster: Roster,
   event: ChannelEvent,
 ): Roster {

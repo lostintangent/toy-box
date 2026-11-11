@@ -2,7 +2,7 @@
  * Client facade for one session's live state.
  *
  * The session's detail query holds its one reduced state, and that query's
- * observation follows live work while a visible pane watches it (see `stream.ts`).
+ * subscription streams live work while a visible pane watches it (see `stream.ts`).
  * The hook derives what the pane shows from that cache and shared activity, and
  * applies the user's commands to it optimistically.
  *
@@ -76,7 +76,7 @@ export function useSession(
         : {},
     ),
   );
-  // A hidden pane stops watching, which ends the observation once nothing else watches.
+  // A hidden pane stops watching, which ends the subscription once nothing else watches.
   const { data, error } = useQuery({ ...sessionQuery, enabled: !isDraft, subscribed: isVisible });
   const state = data ?? draftState;
   const hasLoadedSessionState = isDraft || data !== undefined;
@@ -99,7 +99,7 @@ export function useSession(
   const { mutate: abort } = useMutation({
     ...sessionMutations.abortSession(sessionId),
     onMutate: async () => {
-      // Ending the observation first keeps its follow from replaying the stopped run.
+      // Ending the subscription first keeps it from streaming the stopped run.
       await queryClient.cancelQueries({ queryKey, exact: true });
       applyEvent({ type: "end", reason: "idle" });
       applyWorkspaceEvent(queryClient, { type: "session.idle", sessionId });
@@ -130,7 +130,7 @@ export function useSession(
   const unsentTurn = useRef<UnsentTurn>(undefined);
   const { mutateAsync: deliver } = useMutation({
     ...sessionMutations.deliverMessage(sessionId),
-    // Query runs this before the delivery settles, so the session's observation
+    // Query runs this before the delivery settles, so the session's subscription
     // resumes on the rolled-back state.
     onError: (error, { message }) => {
       const turn = unsentTurn.current;
@@ -220,8 +220,7 @@ export function useSession(
   // ---------------------------------------------------------------------------
   // Pane lifecycle
   // ---------------------------------------------------------------------------
-  // Opening a finished run acknowledges it. The observation already healed the
-  // transcript when the run ended.
+  // Opening a finished run acknowledges it once the detail has loaded.
   const isUnread = activityStatus === "unread";
   useEffect(() => {
     if (mode !== "passive" && isVisible && isUnread && hasLoadedSessionState) markRead();

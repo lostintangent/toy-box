@@ -110,7 +110,7 @@ export const sessionMutations = {
       onError: (_error, _variables, _context, { client }) => sessionQueries.activity.repair(client),
     }),
 
-  // The session's observation waits for this client's deliveries by sharing its detail's key.
+  // The session's subscription waits for this client's deliveries by sharing its detail's key.
   deliverMessage: (sessionId: string) =>
     mutationOptions({
       mutationKey: sessionQueries.detail(sessionId).queryKey,
@@ -127,7 +127,7 @@ export const sessionMutations = {
   abortSession: (sessionId: string) =>
     mutationOptions({
       mutationFn: () => abortSession({ data: { sessionId } }),
-      // Restarts the observation the abort ended. Its fetch lasts while the detail is
+      // Restarts the subscription the abort ended. Its fetch lasts while the detail is
       // watched, so the mutation must not wait for it.
       onSettled: (_result, _error, _variables, _onMutateResult, { client }) => {
         void client.invalidateQueries({ queryKey: sessionQueries.detail(sessionId).queryKey });

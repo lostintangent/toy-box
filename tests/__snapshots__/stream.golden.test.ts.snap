@@ -4,17 +4,20 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
 {
   "received": [
     {
-      "eventId": 0,
+      "type": "resumed",
+    },
+    {
+      "revision": 0,
       "status": "thinking",
       "type": "status",
     },
     {
-      "eventId": 1,
       "model": {
         "name": "gpt-5.5",
         "provider": "copilot",
         "reasoningEffort": "xhigh",
       },
+      "revision": 1,
       "type": "model_changed",
     },
     {
@@ -25,26 +28,26 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
           2168,
         ],
       },
-      "eventId": 2,
+      "revision": 2,
       "toolCallId": "call_M1QBw3fDmRrrXoYP9bt4edOd",
       "toolName": "read",
       "type": "tool_start",
     },
     {
       "details": undefined,
-      "eventId": 3,
       "result": "Path does not exist",
+      "revision": 3,
       "success": false,
       "toolCallId": "call_M1QBw3fDmRrrXoYP9bt4edOd",
       "type": "tool_end",
     },
     {
-      "eventId": 4,
+      "revision": 4,
       "status": "compacting",
       "type": "status",
     },
     {
-      "eventId": 5,
+      "revision": 5,
       "status": "thinking",
       "type": "status",
     },
@@ -52,26 +55,26 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
       "attachments": undefined,
       "clientId": "client-1",
       "content": "What’s your thoughts on this change now? Maybe kick off a code review and a half dozen sub agents to go review different aspects of this change and see how they feel about itne2e",
-      "eventId": 6,
+      "revision": 6,
       "timestamp": "2026-06-11T02:19:11.607Z",
       "type": "user_message",
     },
     {
-      "eventId": 7,
+      "revision": 7,
       "status": "thinking",
       "type": "status",
     },
     {
       "content": "My quick take: the shape is much cleaner now, but I’ll get independent reviews on the main risk areas before making a stronger call.",
-      "eventId": 8,
       "messageId": "572c6c64-a4a2-495b-aa4c-535d1cc4abdc",
+      "revision": 8,
       "type": "assistant_message",
     },
     {
       "arguments": {
         "intent": "Launching reviews",
       },
-      "eventId": 9,
+      "revision": 9,
       "toolCallId": "call_RxF3q3DxvPVDWX1mvsjqs9iq",
       "toolName": "report_intent",
       "type": "tool_start",
@@ -84,7 +87,7 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
         "name": "full-diff-review",
         "prompt": "You are reviewing the current uncommitted changes in /Users/lostintangent/Desktop/toy-box. Do not modify files. Focus only on high-signal correctness, security, regression, type-safety, and maintainability issues. Ignore formatting/style un…",
       },
-      "eventId": 10,
+      "revision": 10,
       "toolCallId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
       "toolName": "agent",
       "type": "tool_start",
@@ -102,7 +105,7 @@ Intended behavior:
 - Client/UI…"
 ,
       },
-      "eventId": 11,
+      "revision": 11,
       "toolCallId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
       "toolName": "agent",
       "type": "tool_start",
@@ -120,7 +123,7 @@ Intended behavior:
 - SessionEvent shapes remain unchanged/protocol-like: tool_start uses toolCallId/toolName; t…"
 ,
       },
-      "eventId": 12,
+      "revision": 12,
       "toolCallId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
       "toolName": "agent",
       "type": "tool_start",
@@ -138,7 +141,7 @@ Intended behavior:
 - Patch tool start args are not parsed into FileDiff[]; raw apply_patch text displays whil…"
 ,
       },
-      "eventId": 13,
+      "revision": 13,
       "toolCallId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
       "toolName": "agent",
       "type": "tool_start",
@@ -156,7 +159,7 @@ Focus areas:
 - Active stream state vs persisted history reconstruction a…"
 ,
       },
-      "eventId": 14,
+      "revision": 14,
       "toolCallId": "call_7CE08h3s8nNulW1GHoiNsWeu",
       "toolName": "agent",
       "type": "tool_start",
@@ -173,7 +176,7 @@ Focus areas:
 Context: Changes include SDK blob attachments, semantic Attachment type, semantic ToolCall i…"
 ,
       },
-      "eventId": 15,
+      "revision": 15,
       "toolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "toolName": "agent",
       "type": "tool_start",
@@ -191,80 +194,80 @@ Evaluate the overall design decisions:
 - Se…"
 ,
       },
-      "eventId": 16,
+      "revision": 16,
       "toolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "toolName": "agent",
       "type": "tool_start",
     },
     {
-      "eventId": 17,
       "model": {
         "name": "gpt-5.5",
         "provider": "copilot",
       },
       "parentToolCallId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
+      "revision": 17,
       "type": "model_changed",
     },
     {
       "details": "Launching reviews",
-      "eventId": 18,
       "result": "Intent logged",
+      "revision": 18,
       "success": true,
       "toolCallId": "call_RxF3q3DxvPVDWX1mvsjqs9iq",
       "type": "tool_end",
     },
     {
-      "eventId": 19,
       "model": {
         "name": "claude-opus-4.8",
         "provider": "copilot",
       },
       "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "revision": 19,
       "type": "model_changed",
     },
     {
-      "eventId": 20,
       "model": {
         "name": "claude-haiku-4.5",
         "provider": "copilot",
       },
       "parentToolCallId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
+      "revision": 20,
       "type": "model_changed",
     },
     {
-      "eventId": 21,
       "model": {
         "name": "claude-haiku-4.5",
         "provider": "copilot",
       },
       "parentToolCallId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
+      "revision": 21,
       "type": "model_changed",
     },
     {
-      "eventId": 22,
       "model": {
         "name": "claude-haiku-4.5",
         "provider": "copilot",
       },
       "parentToolCallId": "call_7CE08h3s8nNulW1GHoiNsWeu",
+      "revision": 22,
       "type": "model_changed",
     },
     {
-      "eventId": 23,
       "model": {
         "name": "claude-haiku-4.5",
         "provider": "copilot",
       },
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "revision": 23,
       "type": "model_changed",
     },
     {
-      "eventId": 24,
       "model": {
         "name": "claude-haiku-4.5",
         "provider": "copilot",
       },
       "parentToolCallId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
+      "revision": 24,
       "type": "model_changed",
     },
     {
@@ -275,14 +278,14 @@ Evaluate the overall design decisions:
 3. Compare the test coverage against the changed behavior
 4. Identify important missing tests, brittle tests, or over…"
 ,
-      "eventId": 25,
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "revision": 25,
       "type": "reasoning",
     },
     {
       "content": "",
-      "eventId": 26,
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "revision": 26,
       "type": "assistant_message",
     },
     {
@@ -290,8 +293,8 @@ Evaluate the overall design decisions:
         "command": "cd /Users/lostintangent/Desktop/toy-box && git status",
         "description": "Check git status to see uncommitted changes",
       },
-      "eventId": 27,
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "revision": 27,
       "toolCallId": "toolu_bdrk_01Bc16CL9HSZ6uwrBHBTraGR",
       "toolName": "bash",
       "type": "tool_start",
@@ -301,8 +304,8 @@ Evaluate the overall design decisions:
         "command": "cd /Users/lostintangent/Desktop/toy-box && git diff --name-only",
         "description": "List modified files",
       },
-      "eventId": 28,
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "revision": 28,
       "toolCallId": "toolu_bdrk_01WYvdnAft499BoKhWbhRnnF",
       "toolName": "bash",
       "type": "tool_start",
@@ -312,15 +315,14 @@ Evaluate the overall design decisions:
         "command": "cd /Users/lostintangent/Desktop/toy-box && git status --porcelain",
         "description": "Get full status with untracked files",
       },
-      "eventId": 29,
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "revision": 29,
       "toolCallId": "toolu_bdrk_01CpyvLNVaTKQDdQt31piuC6",
       "toolName": "bash",
       "type": "tool_start",
     },
     {
       "details": undefined,
-      "eventId": 30,
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "result": 
 "On branch main
@@ -330,13 +332,13 @@ Changes not staged for commit:
 	modified:   src/components/session/SessionView.tsx
 	modif…"
 ,
+      "revision": 30,
       "success": true,
       "toolCallId": "toolu_bdrk_01Bc16CL9HSZ6uwrBHBTraGR",
       "type": "tool_end",
     },
     {
       "details": undefined,
-      "eventId": 31,
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "result": 
 "src/components/session/SessionView.tsx
@@ -346,13 +348,13 @@ src/components/session/messages/AssistantMessage.tsx
 src/components/session/messages/tools/AgentToolCall.tsx
 src…"
 ,
+      "revision": 31,
       "success": true,
       "toolCallId": "toolu_bdrk_01WYvdnAft499BoKhWbhRnnF",
       "type": "tool_end",
     },
     {
       "details": undefined,
-      "eventId": 32,
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "result": 
 "M src/components/session/SessionView.tsx
@@ -361,28 +363,29 @@ src…"
  M src/components/session/messages/AssistantMessage.tsx
  M src/components/session/messages/tools/AgentTo…"
 ,
+      "revision": 32,
       "success": true,
       "toolCallId": "toolu_bdrk_01CpyvLNVaTKQDdQt31piuC6",
       "type": "tool_end",
     },
     {
       "content": "I'm starting by examining the uncommitted changes in the repository to understand what design decisions are being made.",
-      "eventId": 33,
       "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "revision": 33,
       "type": "reasoning",
     },
     {
       "content": "I'll start by examining the uncommitted changes to understand the design context.",
-      "eventId": 34,
       "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "revision": 34,
       "type": "assistant_message",
     },
     {
       "arguments": {
         "intent": "Examining uncommitted changes",
       },
-      "eventId": 35,
       "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "revision": 35,
       "toolCallId": "toolu_01U7w1ymeBtK62owAFb7pxSA",
       "toolName": "report_intent",
       "type": "tool_start",
@@ -392,24 +395,23 @@ src…"
         "command": "cd /Users/lostintangent/Desktop/toy-box && git --no-pager status && echo "===DIFFSTAT===" && git --no-pager diff --stat",
         "description": "Show git status and diff stat",
       },
-      "eventId": 36,
       "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "revision": 36,
       "toolCallId": "toolu_01AaNM5wZ1QXPthiuEr4vzZW",
       "toolName": "bash",
       "type": "tool_start",
     },
     {
       "details": "Examining uncommitted changes",
-      "eventId": 37,
       "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "result": "Intent logged",
+      "revision": 37,
       "success": true,
       "toolCallId": "toolu_01U7w1ymeBtK62owAFb7pxSA",
       "type": "tool_end",
     },
     {
       "details": undefined,
-      "eventId": 38,
       "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "result": 
 "On branch main
@@ -419,6 +421,7 @@ Changes not staged for commit:
 	modified:   src/components/session/SessionView.tsx
 	modif…"
 ,
+      "revision": 38,
       "success": true,
       "toolCallId": "toolu_01AaNM5wZ1QXPthiuEr4vzZW",
       "type": "tool_end",
@@ -427,8 +430,8 @@ Changes not staged for commit:
       "arguments": {
         "path": "/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.test.ts",
       },
-      "eventId": 39,
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
+      "revision": 39,
       "toolCallId": "toolu_bdrk_01DuKi1hYw5i5feiz5KeWwaC",
       "toolName": "read",
       "type": "tool_start",
@@ -440,7 +443,6 @@ diff --git a/Users/lostintangent/Desktop/toy-box/src/functions/sdk/sessionState.
 index 0000000..0000000 100644
 --- a/Users/lostintangent/Desktop/toy-box/sr…"
 ,
-      "eventId": 40,
       "parentToolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "result": 
 "1. import { describe, expect, test } from "bun:test";
@@ -449,6 +451,7 @@ index 0000000..0000000 100644
 4. 
 5. describe("initializeSessionStateFromSdkHistory", (…"
 ,
+      "revision": 40,
       "success": true,
       "toolCallId": "toolu_bdrk_01DuKi1hYw5i5feiz5KeWwaC",
       "type": "tool_end",
@@ -458,15 +461,14 @@ index 0000000..0000000 100644
         "command": "cd /Users/lostintangent/Desktop/toy-box && git --no-pager diff src/types.ts",
         "description": "Show diff of types.ts",
       },
-      "eventId": 41,
       "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
+      "revision": 41,
       "toolCallId": "toolu_01TorsDVgPrQe3waDFEWnQvD",
       "toolName": "bash",
       "type": "tool_start",
     },
     {
       "details": undefined,
-      "eventId": 42,
       "parentToolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "result": 
 "diff --git a/src/types.ts b/src/types.ts
@@ -478,89 +480,90 @@ index 375b1b8..9db9a3a 100644
  
  export…"
 ,
+      "revision": 42,
       "success": true,
       "toolCallId": "toolu_01TorsDVgPrQe3waDFEWnQvD",
       "type": "tool_end",
     },
     {
-      "eventId": 43,
+      "revision": 43,
       "success": true,
       "toolCallId": "call_usVTJ9nbQ4JEHxemVMpSWjl8",
       "type": "tool_end",
     },
     {
-      "eventId": 44,
+      "revision": 44,
       "success": true,
       "toolCallId": "call_ke5vKoctnsDXbmKPSj1cQ0xI",
       "type": "tool_end",
     },
     {
-      "eventId": 45,
+      "revision": 45,
       "success": true,
       "toolCallId": "call_FEzfqGxQde7PZN4D2gB4MjYF",
       "type": "tool_end",
     },
     {
-      "eventId": 46,
+      "revision": 46,
       "success": true,
       "toolCallId": "call_6Jaw3UuYJyWaSJPruwIeJOql",
       "type": "tool_end",
     },
     {
-      "eventId": 47,
+      "revision": 47,
       "success": true,
       "toolCallId": "call_aIs3ubnSXyt6yavyLbThBQZk",
       "type": "tool_end",
     },
     {
-      "eventId": 48,
+      "revision": 48,
       "success": true,
       "toolCallId": "call_7CE08h3s8nNulW1GHoiNsWeu",
       "type": "tool_end",
     },
     {
-      "eventId": 49,
+      "revision": 49,
       "success": true,
       "toolCallId": "call_ZVrK5S62TXjHNZC1IpjTc4bM",
       "type": "tool_end",
     },
     {
       "content": "Wrapping up.",
-      "eventId": 50,
+      "revision": 50,
       "type": "delta",
     },
     {
-      "eventId": 51,
       "message": {
         "clientId": "queued-1",
         "content": "now fix the findings",
         "role": "user",
       },
+      "revision": 51,
       "type": "message_queued",
     },
     {
-      "eventId": 52,
       "message": {
         "clientId": "queued-1",
         "content": "now fix the findings",
         "role": "user",
       },
+      "revision": 52,
       "type": "message_queued",
     },
     {
       "clientId": "queued-1",
-      "eventId": 53,
+      "revision": 53,
       "status": "submitting",
       "type": "message_status_changed",
     },
     {
-      "eventId": 54,
+      "revision": 54,
       "status": "thinking",
       "type": "status",
     },
     {
       "clientId": "queued-1",
-      "eventId": 55,
+      "revision": 55,
       "status": "submitted",
       "type": "message_status_changed",
     },
@@ -568,23 +571,23 @@ index 375b1b8..9db9a3a 100644
       "attachments": undefined,
       "clientId": "queued-1",
       "content": "now fix the findings",
-      "eventId": 56,
+      "revision": 56,
       "timestamp": undefined,
       "type": "user_message",
     },
     {
-      "eventId": 57,
+      "revision": 57,
       "status": "thinking",
       "type": "status",
     },
     {
       "content": "On it.",
-      "eventId": 58,
+      "revision": 58,
       "type": "delta",
     },
     {
-      "eventId": 59,
       "reason": "idle",
+      "revision": 59,
       "type": "end",
     },
     "<<SUBSCRIPTION-DONE>>",
@@ -602,7 +605,6 @@ exports[`stream golden replay two-turn lifetime: fixture replay, queue drain, an
 {
   "artifacts": [],
   "canvases": [],
-  "lastSeenEventId": 59,
   "linkedSessionIds": [],
   "messages": [
     {
@@ -1010,6 +1012,7 @@ index 375b1b8..9db9a3a 100644
   "openedFiles": [],
   "queuedMessages": [],
   "reasoningContent": "",
+  "revision": 59,
   "status": "idle",
   "todos": [],
 }

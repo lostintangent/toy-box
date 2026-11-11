@@ -12,10 +12,11 @@ import {
 } from "@channels/model/push";
 import { observeTopics, publish, publishBadge } from "@push/server";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
+import { getSessionActivity } from "@sessions/server/state/activity";
 import { getStateDatabase } from "@/server/database";
 import { getProcessValue } from "@/shared/server/processState";
 import { ChannelDatabase } from "./database";
-import { streamChannel } from "./stream";
+import { subscribeToChannel } from "./stream";
 
 const lifecycle = getProcessValue<{ stop?: VoidFunction }>("channels.push", () => ({}));
 
@@ -39,10 +40,10 @@ export function publishChannelNotification(channel: Channel, message: ChannelMes
   });
 }
 
-/** The stream bootstraps a full snapshot, then retains only metadata, roster and presence. */
+/** The stream bootstraps a full snapshot, then retains only metadata and roster. */
 export function startChannelPush(): VoidFunction {
   lifecycle.stop?.();
-  const streams = new Map<string, VoidFunction>();
+  const subscriptions = new Map<string, VoidFunction>();
   const refreshBadge = () =>
     void publishBadge(["requests", "completions"], async () => {
       const channels = new ChannelDatabase(await getStateDatabase());
@@ -54,55 +55,67 @@ export function startChannelPush(): VoidFunction {
   refreshBadge();
   const unobserve = observeTopics((topic, active) => {
     if (!topic.startsWith("channel:")) return;
-    streams.get(topic)?.();
-    streams.delete(topic);
+    subscriptions.get(topic)?.();
+    subscriptions.delete(topic);
     if (!active) return;
     let state: ChannelState | undefined;
     let healthy = true,
       ended = false;
-    streams.set(
-      topic,
-      streamChannel(
-        topic.slice("channel:".length),
-        (event) => {
-          let value: ChannelActivityState;
-          if (event.type === "deleted") {
-            ended = true;
-            value = {
-              workingAgents: [],
-              tasksDone: 0,
-              tasksTotal: 0,
-              ending: "channelDeleted",
-            };
-          } else {
-            const previous = state ?? (event.type === "snapshot" ? event.state : undefined);
-            if (!previous) return;
-            state = { ...reduceChannelState(previous, event), messages: [] };
-            value = channelActivityState(state);
-          }
-          void publish(topic, {
-            type: "update",
-            value,
-            attention: value.waitingRequestSequence,
-            ending: !!value.ending,
-            dismissImmediately: ended,
-            render: (at, limit) =>
-              healthy || ended ? channelActivityContent(value, at, limit) : undefined,
+    const update = (value: ChannelActivityState) =>
+      void publish(topic, {
+        type: "update",
+        value,
+        attention: value.waitingRequestSequence,
+        ending: !!value.ending,
+        dismissImmediately: ended,
+        render: (at, limit) =>
+          healthy || ended ? channelActivityContent(value, at, limit) : undefined,
+      });
+    const unsubscribe = subscribeToChannel(
+      topic.slice("channel:".length),
+      (event) => {
+        if (event.type === "deleted") {
+          ended = true;
+          return update({
+            workingAgents: [],
+            tasksDone: 0,
+            tasksTotal: 0,
+            ending: "channelDeleted",
           });
-        },
-        () => {
-          healthy = false;
-        },
-      ),
+        }
+        const previous = state ?? (event.type === "snapshot" ? event.state : undefined);
+        if (!previous) return;
+        state = { ...reduceChannelState(previous, event), messages: [] };
+        update(channelActivityState(state, isRunning));
+      },
+      () => {
+        healthy = false;
+      },
     );
+    // A roster agent's activity can change who is working; Push drops unchanged values.
+    const unsubscribeActivity = subscribeWorkspaceEvents((event) => {
+      if (
+        !ended &&
+        state &&
+        "sessionId" in event &&
+        [state.lead, ...state.members].some(({ id }) => id === event.sessionId)
+      )
+        update(channelActivityState(state, isRunning));
+    });
+    subscriptions.set(topic, () => {
+      unsubscribe();
+      unsubscribeActivity();
+    });
   });
   const stop = () => {
     unsubscribeBadge();
     unobserve();
-    for (const close of streams.values()) close();
-    streams.clear();
+    for (const unsubscribe of subscriptions.values()) unsubscribe();
+    subscriptions.clear();
     if (lifecycle.stop === stop) delete lifecycle.stop;
   };
   lifecycle.stop = stop;
   return stop;
 }
+
+const isRunning = (agentId: string) => getSessionActivity(agentId)?.status === "running";

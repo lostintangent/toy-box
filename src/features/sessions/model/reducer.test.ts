@@ -50,7 +50,7 @@ describe("session reducer", () => {
 
   test("creates one normalized state shape", () => {
     const messages = [{ role: "user" as const, content: "hello" }];
-    const state = createInitialSessionState({ messages, lastSeenEventId: 4 });
+    const state = createInitialSessionState({ messages, revision: 4 });
 
     expect(state).toEqual({
       messages,
@@ -63,7 +63,7 @@ describe("session reducer", () => {
       status: "idle",
       reasoningContent: "",
       model: undefined,
-      lastSeenEventId: 4,
+      revision: 4,
     });
   });
 
@@ -622,7 +622,7 @@ describe("session reducer", () => {
           type: "user_message",
           clientId: "message-2",
           content: "canonical second",
-          eventId: 10,
+          revision: 10,
         },
       ]);
 
@@ -735,35 +735,6 @@ describe("session reducer", () => {
       expect(retried.messages[1]).toBe(failed.messages[1]);
       expect(assistantAt(retried, 2)).toMatchObject({ content: "Recovered" });
       expect(assistantAt(retried, 2).error).toBeUndefined();
-    });
-
-    test("event cursors reject stale replay without rejecting local optimistic events", () => {
-      let state = createInitialSessionState({
-        messages: [{ role: "user", content: "already synced" }],
-        lastSeenEventId: 20,
-      });
-      state = applySessionEvent(state, {
-        type: "assistant_message",
-        content: "stale",
-        eventId: 19,
-      });
-      state = applySessionEvent(state, {
-        type: "user_message",
-        clientId: "local-1",
-        content: "optimistic",
-      });
-      state = applySessionEvent(state, {
-        type: "assistant_message",
-        content: "new",
-        eventId: 21,
-      });
-
-      expect(state.messages.map((message) => message.content)).toEqual([
-        "already synced",
-        "optimistic",
-        "new",
-      ]);
-      expect(state.lastSeenEventId).toBe(21);
     });
 
     test("history replay always settles transient state to idle", () => {

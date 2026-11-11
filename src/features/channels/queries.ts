@@ -2,7 +2,7 @@ import { reduceChannelState } from "./model/reducer";
 import { experimental_streamedQuery as streamedQuery, queryOptions } from "@tanstack/react-query";
 import {
   channelUnreadAfter,
-  type ChannelObservationEvent,
+  type ChannelSubscriptionEvent,
   type ChannelState,
   type ChannelMessage,
 } from "./model";
@@ -26,7 +26,7 @@ export const channelQueries = {
   detail: (channelId: string) =>
     queryOptions({
       queryKey: ["channels", "detail", channelId] as const,
-      queryFn: streamedQuery<ChannelObservationEvent, ChannelQueryData | null>({
+      queryFn: streamedQuery<ChannelSubscriptionEvent, ChannelQueryData | null>({
         initialValue: null,
         refetchMode: "append",
         streamFn: ({ client, queryKey, signal }) =>

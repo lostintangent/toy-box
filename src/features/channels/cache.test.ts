@@ -35,7 +35,6 @@ const snapshot: ChannelQueryData = {
   channel: { ...channel, tasks: [], latestSequence: message.sequence },
   request: null,
   bookmarks: [],
-  presence: {},
   revision: 101,
   lead: channelLead(channel.id),
   members: [],

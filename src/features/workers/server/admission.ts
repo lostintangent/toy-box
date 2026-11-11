@@ -2,14 +2,9 @@
 // and hand execution to the runtime supervisor.
 
 import type { CancelWorkerInput, SpawnWorkerInput, Worker, WorkerOwner } from "../model";
-import {
-  registerPendingSessionCompletion,
-  rejectPendingSessionCompletion,
-} from "@sessions/server/runtime";
 import * as supervisor from "./supervisor";
-import { WorkerCanceledError } from "./supervisor";
-import type { WorkerReceipt, WorkerRetention } from "./supervisor";
-import { finishWorker, getRegisteredWorker, startWorker } from "./registry";
+import type { WorkerRetention } from "./supervisor";
+import { cancelWorker, getRegisteredWorker } from "./registry";
 import { createWorker, registerWorkerSession } from "./database";
 import { getStateDatabase } from "@/server/database";
 import { AppDatabase } from "@apps/server/database";
@@ -76,11 +71,11 @@ export async function spawnWorkerFromRequest(
 /** Start trusted owner-supplied work through the same admission and completion lifecycle. */
 export function spawnWorker<Owner extends WorkerOwner, Value>(
   input: WorkerSpawn<Owner, Value> & Required<Pick<WorkerSpawn<Owner, Value>, "admit">>,
-): Promise<WorkerReceipt<Value>>;
-export function spawnWorker(input: WorkerSpawn): Promise<WorkerReceipt>;
+): Promise<{ sessionId: string; value: Value }>;
+export function spawnWorker(input: WorkerSpawn): Promise<{ sessionId: string; value: void }>;
 export function spawnWorker<Owner extends WorkerOwner, Value>(
   input: WorkerSpawn<Owner, Value>,
-): Promise<WorkerReceipt<Value | void>> {
+): Promise<{ sessionId: string; value: Value | void }> {
   const { admit } = input;
   const worker = createWorker(
     {
@@ -91,55 +86,18 @@ export function spawnWorker<Owner extends WorkerOwner, Value>(
     },
     input.sessionId,
   );
-  const receipt = registerPendingSessionCompletion(worker.sessionId);
-  const workerSession = supervisor.superviseWorker({
+  return supervisor.superviseWorker({
     worker,
     message: input.message,
     location: input.location,
     retention: input.retention,
     admit: admit ? () => admit(worker) : undefined,
   });
-  // Publish only after waiting by ID is safe and supervision observes cancellation.
-  // Workspace observers can react synchronously to worker.started before the backing Session exists.
-  startWorker(worker);
-  void completeAdmittedWorker(worker.sessionId, receipt, workerSession).catch(reportWorkerError);
-  return workerSession;
 }
 
-export async function cancelWorker(input: CancelWorkerInput): Promise<boolean> {
+export async function cancelWorkerFromRequest(input: CancelWorkerInput): Promise<boolean> {
   if (!getRequestedWorker(input)) return false;
-
-  await cancelAdmittedWorker(input.workerSessionId);
-  return true;
-}
-
-/** Cancel trusted work after its owner has already been resolved. */
-export async function cancelAdmittedWorker(sessionId: string): Promise<boolean> {
-  // Clear owner progress immediately, including while the supervisor is still
-  // preparing the worker's runtime.
-  finishWorker(sessionId);
-  rejectWorkerCompletion(sessionId);
-  return supervisor.abortWorker(sessionId);
-}
-
-async function completeAdmittedWorker(
-  sessionId: string,
-  receipt: ReturnType<typeof registerPendingSessionCompletion>,
-  workerSession: Promise<WorkerReceipt<unknown>>,
-): Promise<void> {
-  try {
-    const completion = await (await workerSession).waitForCompletion();
-    receipt.resolve(completion);
-  } catch (error) {
-    receipt.reject(error);
-    if (!(error instanceof WorkerCanceledError)) throw error;
-  } finally {
-    finishWorker(sessionId);
-  }
-}
-
-function reportWorkerError(error: unknown): void {
-  console.error("Worker failed:", error);
+  return cancelWorker(input.workerSessionId);
 }
 
 function getRequestedWorker(input: CancelWorkerInput): Worker | undefined {
@@ -151,10 +109,6 @@ function getRequestedWorker(input: CancelWorkerInput): Worker | undefined {
   if (worker.type === "app" && input.type === "app") {
     return worker.appId === input.appId ? worker : undefined;
   }
-}
-
-function rejectWorkerCompletion(sessionId: string): void {
-  rejectPendingSessionCompletion(sessionId, new WorkerCanceledError(sessionId));
 }
 
 export function buildWorkerPrompt(

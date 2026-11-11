@@ -31,8 +31,8 @@ Trusted spawning takes one `retention` policy: `"ephemeral"`, `"durable"`, or a 
 latest persisted Worker and its `SessionCompletion`. An ephemeral Worker's Session is deleted after
 its current execution. A durable Worker survives for follow-up until explicit or owner deletion.
 A callback returns true to retain or false to delete and may perform asynchronous owner-specific
-finalization. Workers awaits that decision and cleanup before completing the receipt or clearing
-active work. Cancellation and missing ownership bypass the callback; a callback exception retains
+finalization. Workers awaits that decision and cleanup before the run completes and leaves active
+work. Cancellation and missing ownership bypass the callback; a callback exception retains
 ownership and rejects completion.
 
 The persisted `ephemeral` flag is derived from that policy. Callback-based work is stored as durable;
@@ -53,8 +53,9 @@ Workers owns lifecycle and owner-scoped storage capabilities:
 - **Spawn** validates or injects an owner, assigns identity and creation time, publishes active work,
   persists admission, and creates the backing Session. An optional trusted `admit` callback can
   compose Worker persistence with an owner's atomic domain changes before execution starts;
-  its return value becomes the receipt's typed `value`.
-- **Cancel** verifies ownership, clears active work, and stops startup or execution.
+  its return value becomes the admission's typed `value`.
+- **Cancel** verifies ownership, removes the run from active work at once, and stops startup or
+  execution.
 - **Delete** removes the backing Session and its durable ownership record.
 - **Read/update** lists retained Workers by type or exact owner, resolves an owned Worker, and
   updates name/metadata by Worker ID without changing ownership, identity, creation time, or lifetime.
@@ -70,11 +71,11 @@ Session creation with inheritance, cancellation, exact completion, and retention
 supervisors use the public `spawnWorker` with a complete `SessionLaunch`, `owner`, optional `name`
 and `metadata`, and a required `retention` policy. Workers assigns the Session ID and creation time;
 callers supply intent rather than constructing a persisted Worker. Supervisors apply their admission
-policy before spawning. They receive the admission receipt once ownership is persisted and Session acquisition has been
+policy before spawning. Spawning resolves with `{ sessionId, value }` once ownership is persisted and Session acquisition has been
 registered, without waiting for provider startup or the first turn to finish. Follow-ups then join
 Sessions’ existing acquisition and mailbox. Preparation failures remain failed completion data.
-An owner can return its committed domain value directly from `admit` and receive it as `receipt.value`,
-without capturing mutable outer state or re-reading storage. Its `waitForCompletion`
+An owner can return its committed domain value directly from `admit` and receive it as `value`,
+without capturing mutable outer state or re-reading storage. Waiting for the Worker's Session by ID
 covers configuration inheritance, provider startup, execution, retention, and lifetime cleanup.
 Admission failures reject spawning; retention and cleanup exceptions reject completion. File, App,
 and Session tool ingress await the same admission boundary and return the serializable Session ID.
@@ -82,9 +83,12 @@ Inbox and Channels use this path for creation. Channel admission commits the lea
 or a member with its membership message, before execution begins. Later mentions use Session delivery;
 Channels has no separate activation operation or startup queue.
 
-Waiting remains a Session operation. Admission registers completion and starts supervision before
-publishing `worker.started`, so fast ephemeral work cannot disappear before `waitForSessions`
-observes it, and every cancellation reaches the supervisor's one check.
+Waiting remains a Session operation. Each in-flight Worker has one `WorkerRun`, and an ID has at most
+one at a time. Starting a run registers it, hands its completion to Sessions with
+`expectSessionCompletion`, and then publishes `worker.started`, so fast ephemeral work cannot
+disappear before `waitForSessions` observes it. `cancelWorker` aborts the run's signal, which removes
+it from active work and publishes `worker.finished` at once, then stops its Session. Supervision checks
+that signal at each step, and the run releases its ID when its completion settles.
 Unsuccessful execution outcomes remain data, including startup exceptions. Active Workers are
 available through the public read API so owners can distinguish current supervision from retained
 ownership.
@@ -96,11 +100,12 @@ ownership.
   classify, recover, and delete a Worker.
 - Application composition projects those records into Sessions' typed ownership index, including
   parent relationships, so generic consumers need no separate Worker-classification cache.
-- `server/registry.ts` contains only currently admitted background work and publishes
+- `server/registry.ts` holds the run of each in-flight Worker, starts and cancels it, and publishes
   `worker.started` and `worker.finished`. Durable Channel membership is not active work.
   [`queries.ts`](queries.ts) reads it, [`model/active.ts`](model/active.ts) reduces those events and
   session and app deletion into that list, and [`cache.ts`](cache.ts) applies them. Shared Session
-  teardown finishes a deleted session's own and child registrations.
+  teardown cancels a deleted session's child runs, and a run whose own Session is deleted finishes
+  with its execution.
 - `components/WorkersMenu.tsx` presents active background work. Files and Apps select the Workers they
   own. Channels presents its durable Workers as the lead and members.
 - Sessions owns execution, history, streaming, completion, provider configuration, and worktrees.

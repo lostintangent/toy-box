@@ -4,7 +4,7 @@ import { deleteSessionActivity } from "@sessions/server/state/activity";
 import type { Worker } from "@workers/model";
 import { openTestDatabase } from "@/server/testFixtures";
 import { ChannelDatabase } from "./database";
-import { releaseChannelEvents } from "./events";
+import { releaseChannelEvents } from "./eventLog";
 
 export function channelAgent(
   channelId: string,

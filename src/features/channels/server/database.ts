@@ -196,7 +196,7 @@ export class ChannelDatabase {
     });
   }
 
-  /** An atomic replay position and presence inputs, without reading public history. */
+  /** An atomic replay position and the public roster, without reading public history. */
   async getRoster(channelId: string) {
     return inStateTransaction(this.db, async (db) => {
       const [channel] = await db<{ revision: number }[]>`

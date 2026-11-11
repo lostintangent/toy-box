@@ -5,7 +5,6 @@ import { attachmentsSchema, type AttachmentReference } from "@/shared/attachment
 import { cronSchema } from "@/shared/cron";
 import { createPane } from "@workspace/model/panes";
 import { previewSchema, type Preview } from "@/shared/preview";
-import type { ChannelAgentPresence } from "./presence";
 import { hasChanges } from "./changes";
 import { channelTasksSchema, type ChannelTask } from "./tasks";
 import {
@@ -393,7 +392,6 @@ export type ChannelState = {
   artifacts: ChannelArtifact[];
   /** Oldest first. */
   routines: ChannelRoutine[];
-  presence: Record<string, ChannelAgentPresence>;
 };
 
 export type ChannelEvent = (
@@ -416,10 +414,9 @@ export type ChannelEvent = (
 ) & { revision: number };
 
 /** Cached clients replay ordered details; only a new client or expired cursor needs a snapshot. */
-export type ChannelObservationEvent =
+export type ChannelSubscriptionEvent =
   | { type: "snapshot"; state: ChannelState }
-  | { type: "resumed"; presence: Record<string, ChannelAgentPresence> }
-  | { type: "presence"; presence: Record<string, ChannelAgentPresence> }
+  | { type: "resumed" }
   | ChannelEvent
   | { type: "deleted"; channelId: string };
 

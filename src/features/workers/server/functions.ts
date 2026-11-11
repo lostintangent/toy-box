@@ -17,4 +17,4 @@ export const spawnWorker = createServerFn({ method: "POST" })
 /** Cancel a queued or running worker through its exact owner. */
 export const cancelWorker = createServerFn({ method: "POST" })
   .validator(cancelWorkerInputSchema)
-  .handler(({ data }): Promise<boolean> => workers.cancelWorker(data));
+  .handler(({ data }): Promise<boolean> => workers.cancelWorkerFromRequest(data));
