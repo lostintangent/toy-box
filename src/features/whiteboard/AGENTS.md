@@ -75,8 +75,8 @@ The viewport store value contains the pane size, zoom, pan, and whether it is fi
 
 ## Folder story
 
-- `store/` is the editor's semantic center: `types` introduces its nouns, `store` implements their actions, and `viewport` contains pure navigation transitions.
-- `document/` owns the durable native SVG boundary: source parsing, the live document, node construction, styles, and reversible DOM entries.
+- `store/` is the editor's semantic center: `types` introduces the editor's own nouns, `store` implements their actions, and `viewport` contains pure navigation transitions.
+- `document/` owns the durable native SVG boundary: source parsing, the live document, node construction, styles, and reversible DOM entries. It also owns the nouns it shares with the editor: geometry, fills and style changes, and history entries.
 - `Whiteboard` binds the host-neutral content contract to one document and store and projects semantic actions through an optional render callback.
 - `editor/Editor` is the composition root. Its subfolders own document mounting and keyboard input, drawing, gestures, images, selection, and viewport presentation.
 - `toolbar/` projects store state into the floating in-editor toolbar.

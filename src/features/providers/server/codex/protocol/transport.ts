@@ -2,6 +2,7 @@
 // issue their own RPC, and blocking the read loop would deadlock that response.
 import { homedir } from "node:os";
 import { sharedMap } from "@/shared/server/processState";
+import { stopProcess } from "@/shared/server/stopProcess";
 import type { CodexMethods, CodexNotifications, CodexServerRequests } from ".";
 import {
   SessionConnectionUnavailableError,
@@ -38,7 +39,7 @@ export class CodexTransport {
 
   constructor(
     private readonly write: (line: string) => void,
-    private readonly terminate: () => void = () => {},
+    private readonly terminate: () => Promise<void> = async () => {},
   ) {}
 
   request<K extends keyof CodexMethods>(
@@ -59,7 +60,7 @@ export class CodexTransport {
       try {
         this.write(JSON.stringify({ id, method, params }) + "\n");
       } catch (error) {
-        this.close(error instanceof Error ? error : new Error(String(error)));
+        void this.close(error instanceof Error ? error : new Error(String(error)));
       }
     }).catch((error: Error) => {
       throw threadId && missingThread.test(error.message)
@@ -139,13 +140,13 @@ export class CodexTransport {
           } else pending.resolve(message.result);
         }
       } catch (error) {
-        this.close(error instanceof Error ? error : new Error(String(error)));
+        void this.close(error instanceof Error ? error : new Error(String(error)));
         return;
       }
     }
   }
 
-  close(error = new Error("Codex app-server disconnected.")): void {
+  async close(error = new Error("Codex app-server disconnected.")): Promise<void> {
     if (this.#failure) return;
     this.#failure = error;
     this.#fragments = [];
@@ -158,7 +159,7 @@ export class CodexTransport {
     this.#notifications.clear();
     this.#requests.clear();
     this.#closed.clear();
-    this.terminate();
+    await this.terminate();
   }
 }
 
@@ -190,7 +191,7 @@ async function openCodexClient(): Promise<CodexTransport> {
       void Promise.resolve(child.stdin.write(line)).catch((error) => transport.close(error));
       void Promise.resolve(child.stdin.flush()).catch((error) => transport.close(error));
     },
-    () => child.kill(),
+    () => stopProcess(child),
   );
   let stderr = "";
   void (async () => {
@@ -202,9 +203,9 @@ async function openCodexClient(): Promise<CodexTransport> {
       for await (const chunk of child.stdout.pipeThrough(new TextDecoderStream()))
         transport.receive(chunk);
       const code = await child.exited;
-      transport.close(new Error(`Codex app-server exited (${code}). ${stderr.trim()}`));
+      void transport.close(new Error(`Codex app-server exited (${code}). ${stderr.trim()}`));
     } catch (error) {
-      transport.close(error instanceof Error ? error : new Error(String(error)));
+      void transport.close(error instanceof Error ? error : new Error(String(error)));
     }
   })();
   transport.onClose(() => {
@@ -218,7 +219,7 @@ async function openCodexClient(): Promise<CodexTransport> {
     transport.notify("initialized");
     return transport;
   } catch (error) {
-    transport.close();
+    void transport.close();
     throw error;
   }
 }
@@ -226,5 +227,5 @@ async function openCodexClient(): Promise<CodexTransport> {
 export async function stopCodexClient(): Promise<void> {
   const pending = clients.get("shared");
   clients.delete("shared");
-  if (pending) (await pending).close();
+  if (pending) await (await pending).close();
 }

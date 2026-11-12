@@ -7,6 +7,7 @@ import { constants } from "node:zlib";
 import compression from "compression";
 import tailwindcss from "@tailwindcss/vite";
 import { removeUncompressedAssets } from "./src/cli/build/publicAssets.ts";
+import { allowedHosts } from "./src/server/middleware/origin.ts";
 import { socketDevelopment } from "./src/server/socketDevelopment.ts";
 
 export default defineConfig(({ mode }) => {
@@ -14,8 +15,8 @@ export default defineConfig(({ mode }) => {
 
   return {
     server: {
-      host: "::",
-      allowedHosts: [".ts.net"],
+      host: "127.0.0.1",
+      allowedHosts,
     },
 
     // These libraries are only used on the server, and therefore,

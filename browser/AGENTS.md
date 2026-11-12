@@ -34,6 +34,7 @@ The toolbar, keyboard shortcut, and custom context-menu action open the popup. Q
 - Send browser context only after an explicit toolbar, shortcut, or context-menu action. Avoid persistent page injection or broader host permissions without a concrete product requirement.
 - Keep custom server access optional. Request only the configured HTTP or HTTPS host from a direct options-page user action, and release the previous optional host when the setting changes.
 - Keep `inbox.js` aligned with the `/api/v1/inbox` contract: JSON contains a non-empty `prompt` and optional base64 `attachments`.
+- Send to Toy Box only from extension pages, never from an injected script. Toy Box trusts an extension's origin, but an injected script's request carries the page's, which it refuses.
 - Keep popup state transitions explicit, keyboard-accessible, and compatible with light, dark, forced-color, and reduced-motion preferences.
 - Request the narrowest browser permissions that support the current behavior. `activeTab` is preferable to persistent access to every page.
 

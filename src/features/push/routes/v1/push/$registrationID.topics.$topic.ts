@@ -1,25 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { pushRegistrationIdSchema, pushSubscriptionSchema } from "@push/model";
 import { subscribeInstall, unsubscribeInstall } from "@push/server";
-
-const invalid = () => Response.json({ error: "Invalid push registration." }, { status: 400 });
+import { invalidRequest, NotFoundError, readInput, respond } from "@/shared/server/http";
 
 export const Route = createFileRoute("/api/v1/push/$registrationID/topics/$topic")({
   server: {
     handlers: {
-      PUT: async ({ params: { registrationID, topic }, request }) => {
-        const input = pushSubscriptionSchema.safeParse(await request.json().catch(() => undefined));
-        if (!input.success || !pushRegistrationIdSchema.safeParse(registrationID).success)
-          return invalid();
-        if (!(await subscribeInstall({ registrationID, ...input.data }, topic)))
-          return Response.json({ error: "Push registration not found." }, { status: 404 });
-        return new Response(null, { status: 204 });
-      },
-      DELETE: async ({ params: { registrationID, topic } }) => {
-        if (!pushRegistrationIdSchema.safeParse(registrationID).success) return invalid();
-        await unsubscribeInstall(registrationID, topic);
-        return new Response(null, { status: 204 });
-      },
+      PUT: ({ params: { registrationID, topic }, request }) =>
+        respond(`subscribe to ${topic}`, async () => {
+          const input = await readInput(request, pushSubscriptionSchema);
+          if (!pushRegistrationIdSchema.safeParse(registrationID).success) throw invalidRequest();
+          if (!(await subscribeInstall({ registrationID, ...input }, topic)))
+            throw new NotFoundError("Push registration");
+        }),
+      DELETE: ({ params: { registrationID, topic } }) =>
+        respond(`unsubscribe from ${topic}`, async () => {
+          if (!pushRegistrationIdSchema.safeParse(registrationID).success) throw invalidRequest();
+          await unsubscribeInstall(registrationID, topic);
+        }),
     },
   },
 });

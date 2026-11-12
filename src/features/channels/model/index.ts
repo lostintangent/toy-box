@@ -30,6 +30,11 @@ const channelDirectorySchema = channelPathSchema.startsWith(
 );
 const channelMessageTextSchema = z.string().trim().max(12_000);
 export const channelMessageContentSchema = channelMessageTextSchema.min(1);
+/** Agents' messages, which leave durable long-form work to shared artifacts. */
+export const conciseChannelMessageSchema = channelMessageContentSchema.max(
+  3_000,
+  "Channel messages must be at most 3,000 characters. Put durable long-form work in a shared artifact and send a concise summary. Do not split a document across messages.",
+);
 export const channelRepliesSchema = z.array(z.string().trim().min(1).max(80)).min(2).max(4);
 export const channelReactionKindSchema = z.enum(["done", "agree", "celebrate", "love", "laugh"]);
 
@@ -43,6 +48,7 @@ const channelReactionSchema = z
 export type Channel = {
   id: string;
   name: string;
+  avatar?: ChannelAvatar;
   purpose?: string;
   directory?: string;
   model: ModelConfiguration;
@@ -289,6 +295,24 @@ export const channelArtifactIdentitySchema = z
   .object({ channelId: durableIdSchema, artifactId: z.string().min(1) })
   .strict();
 
+/** A mark, or the project's own icon. In tool input an image is a file, and on a Channel it is the
+ *  server-relative URL of the Channel's stored copy, as it is in the message announcing it. */
+export const channelAvatarSchema = z.union([
+  agentAvatarSchema.extend({
+    color: agentAvatarSchema.shape.color.describe(
+      "A six-digit hex background color, distinct from the other channels' colors.",
+    ),
+  }),
+  z
+    .object({
+      image: channelPathSchema.describe(
+        "A square PNG, JPEG, or WebP of at most 256 KB, relative to your working directory.",
+      ),
+    })
+    .strict(),
+]);
+export type ChannelAvatar = z.output<typeof channelAvatarSchema>;
+
 export const channelSystemMessageContentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tasks_completed") }).strict(),
   z.object({ type: z.literal("member_joined"), member: channelMemberSchema }).strict(),
@@ -304,6 +328,13 @@ export const channelSystemMessageContentSchema = z.discriminatedUnion("type", [
       type: z.literal("channel_renamed"),
       actor: channelMessageActorSchema,
       name: channelNameSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("channel_avatar_changed"),
+      actor: channelMessageActorSchema,
+      avatar: channelAvatarSchema,
     })
     .strict(),
   z
@@ -460,6 +491,11 @@ const channelChangesSchema = z
       .describe(
         "The current runnable preview: a URL or an existing screenId, or null to clear it.",
       ),
+    avatar: channelAvatarSchema
+      .optional()
+      .describe(
+        "The channel's avatar, drawn in a rounded square. Prefer the project's own icon, converted or cropped with sips when needed. Otherwise design a mark. Set it once the purpose is clear, and change it only when the purpose changes what the channel is about or the user asks.",
+      ),
   })
   .strict();
 export type ChannelChanges = z.output<typeof channelChangesSchema>;
@@ -475,7 +511,8 @@ export const editChannelInputSchema = channelChangesSchema
 export const updateChannelInputSchema = channelChangesSchema
   .omit({ model: true })
   .refine(hasChanges, {
-    message: "Update the name, purpose, directory, tasks, preview, or any combination of them.",
+    message:
+      "Update the name, purpose, directory, tasks, preview, avatar, or any combination of them.",
   });
 
 export const postChannelMessageInputSchema = z

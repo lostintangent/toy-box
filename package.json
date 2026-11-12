@@ -1,7 +1,7 @@
 {
   "name": "@lostintangent/toy-box",
-  "version": "0.3.8",
-  "description": "Your personal coding agent server",
+  "version": "0.4.0",
+  "description": "Your personal agent server",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/lostintangent/toy-box.git"
@@ -92,7 +92,6 @@
     "react-dom": "^19.3.1",
     "react-resizable-panels": "^2.1.9",
     "shadcn": "^4.23.0",
-    "shiki": "latest",
     "streamdown": "^2.7.1",
     "tailwind-merge": "^3.7.0",
     "tailwindcss": "^4.3.5",

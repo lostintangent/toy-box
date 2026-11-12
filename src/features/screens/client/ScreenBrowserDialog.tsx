@@ -118,7 +118,7 @@ function ScreenSection({
 }) {
   return (
     <section aria-label={title} className="flex flex-col gap-2">
-      <SectionHeading title={title} count={count ?? "…"} />
+      <SectionHeading title={title} badge={count ?? "…"} />
       <div className={cn("grid gap-3", className)}>{children}</div>
     </section>
   );

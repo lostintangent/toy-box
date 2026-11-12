@@ -30,7 +30,7 @@ those compressed assets; the server's executable code and SSR bundles are separa
 
 ## Process startup
 
-`src/cli/index.ts` is the entry point when the binary runs. It reads the HTTP host and port, then turns off Bun's HTTP idle timeout so long-lived streams are not dropped. The Copilot SDK sometimes re-invokes this same binary as a subprocess with a file path as the first argument, so the launcher treats that argument as a working directory only when it is actually a directory. It imports the built Nitro server and, for an interactive run, opens the browser unless the user opted out. Nitro owns application startup and shutdown rather than the launcher: `src/server/plugins/startup.ts` installs bundled skills and runs each feature's `server/startup.ts`, such as the terminal runtime, scheduler, and worker cleanup, and calls the cleanup each one returns when the server closes.
+`src/cli/index.ts` is the entry point when the binary runs. It hands Nitro its port and host. The host defaults to `127.0.0.1`, so only this machine reaches the server directly, and phones and linked servers come through `tailscale serve`. `--host` overrides it, such as `--host 0.0.0.0` for direct LAN access. The Copilot SDK sometimes re-invokes this same binary as a subprocess with a file path as the first argument, so the launcher treats that argument as a working directory only when it is actually a directory. It registers a relaunch on the process registry, which replaces this process with a given command through `process.execve`, passing this run's `--port` and `--host` plus `--no-open`. It then imports the built Nitro server and, for an interactive run, opens the browser unless the user opted out. Nitro owns application startup and shutdown rather than the launcher: `src/server/plugins/startup.ts` installs bundled skills and runs each feature's `server/startup.ts`, such as the terminal runtime, scheduler, and worker cleanup, and calls the cleanup each one returns when the server closes.
 
 ## Socket gateway
 
@@ -40,7 +40,7 @@ it upgrades, to the hooks of the `SocketService` that feature's
 connection. A service reads what the socket's URL names, so its hooks close over
 their subject for the connection's lifetime. Terminal and Screens use it, on
 independent physical connections that the client's `connectSocket` keeps open. The
-gateway validates Origin; features own their protocols and lifetimes. In
+gateway refuses cross-site browsers (see below); features own their protocols and lifetimes. In
 production, Nitro serves it. In development, Nitro's in-process runner
 upgrades through crossws's Node adapter, which refuses to run on Bun, so
 `src/server/socketDevelopment.ts` serves it from a Bun listener in Vite's process,
@@ -49,16 +49,41 @@ Vite and expands its feature glob itself. That listener uses `Bun.serve` rather 
 srvx, whose default SIGINT handler would close only the listener and keep Vite
 running.
 
+## Cross-site requests
+
+Browsers let any page POST a form to any host and open a WebSocket to any host, so a site open in the owner's browser could otherwise start agents or drive their terminal. A site could also rebind its own name's DNS to this machine and then read Toy Box as its own origin. `src/server/middleware/origin.ts` refuses every request whose `Host` isn't localhost, an IP literal, or a name in `allowedHosts` (Tailscale Serve's `*.ts.net`), the list Vite's dev server also uses. That stops rebinding, because a rebound page still sends the attacker's name, and rebinding needs a name rather than an IP. It also refuses every write (any method but GET, HEAD, or OPTIONS) unless `isTrustedOrigin` admits its `Origin`, and the socket gateway applies both rules to upgrades, which are GETs and, in development, never pass Nitro's middleware. The origin check trusts Toy Box's own host, any browser extension, and a request with no `Origin`, which only non-browser clients send. Server functions pass through it too, and TanStack Start's default CSRF check still guards them.
+
 ## Shutdown
 
 Ctrl+C or SIGTERM runs Nitro's `close` hooks, which release long-lived resources
 such as provider processes, PTYs and the Screens helper, so the process can exit. In
-production, srvx stops accepting connections and waits up to 5 seconds for open
-ones, such as sockets and streams, before Nitro runs them; a second Ctrl+C skips the
-wait. In development, Nitro closes Vite and then runs them; this currently takes 5
+production, srvx first stops accepting connections. Nitro's `shutdown` hooks then
+abort the process-wide `shutdown` signal (`src/shared/server/shutdown.ts`), which
+ends every open stream and closes every gateway socket with 1001, so clients
+reconnect to whichever server answers next. srvx waits up to 5 seconds for requests
+still in flight before Nitro runs the `close` hooks; a second Ctrl+C skips the wait.
+In development, Nitro closes Vite and then runs them; this currently takes 5
 seconds, because Nitro waits for a shutdown reply that its in-process runner never
 sends. Nitro also runs them when Vite restarts, such as after a config edit, so
-process-wide runtimes start again on their next use.
+process-wide runtimes start again on their next use. The startup plugin isolates each
+feature's cleanup as it does its startup, because Nitro chains `close` hooks and one
+rejection would skip every later one.
+
+## Restart
+
+A restart is that shutdown ending in an exec of the installed release instead of an
+exit, so the process keeps its ID, terminal, working directory and environment, and
+no supervisor has to bring it back. `restartServer` in
+[`installation.ts`](../features/workspace/server/installation.ts) refuses unless the
+launcher registered a relaunch and the installed `toy-box` runs, so `bun dev` keeps
+running. A 15 second deadline relaunches anyway when a cleanup hangs, so no feature
+bounds its cleanup for restart's sake.
+
+A cleanup that signals a child waits for it to exit through
+[`stopProcess`](../shared/server/stopProcess.ts), with a SIGKILL after 2 seconds. A child
+still running at the exec becomes a zombie of the new image, which never reaps it. Claude's
+SDK exposes nothing to wait on, so a restart can leave one zombie per loaded Claude
+session until the server exits.
 
 ## Invariants
 
@@ -67,4 +92,5 @@ process-wide runtimes start again on their next use.
 - Keep Nitro's `output.publicDir` and Bun's public asset path aligned at `.output/server/public`, and keep `serveStatic` enabled for production. The non-default nesting is intentional: Bun flattens the compiled server to its virtual root, so Nitro's default sibling `../public` path would escape that root.
 - Preserve `app-type-library` as the packaged type-library basename: the standalone compiler resolves it below Bun's `import.meta.dir` virtual root.
 - Keep feature sockets on Nitro's origin.
-- Keep launcher policy limited to process configuration and loading Nitro. Application lifecycle belongs to server plugins and subsystems.
+- Keep every GET free of side effects. Every request needs a trusted host, but only writes need a trusted origin.
+- Keep launcher policy limited to process configuration, loading Nitro, and relaunching with its own flags. Application lifecycle belongs to server plugins and subsystems.

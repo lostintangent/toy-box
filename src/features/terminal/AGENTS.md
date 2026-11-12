@@ -36,6 +36,8 @@ Creation binds the configured shell, working directory, environment, dimensions,
 
 A socket disconnect is not an explicit close. The server keeps the PTY for a 30-second orphan window so a refresh can reconnect. A client `close`, an expired orphan window, or process exit releases it. A shell that is attached but quiet stays alive, since Bun's socket pings close a vanished client's socket and start its orphan window. The runtime also caps concurrent PTYs to protect the single-user server process.
 
+Closing a PTY hangs up and signals its shell, and kills it if it's still running after 2 seconds. Server shutdown closes every PTY and waits for their shells to exit, so the server reaps them.
+
 The terminal identity and reconnect contract deliberately differ from agent sessions: a terminal belongs to one tab-scoped client ID, accepts one current socket, and replays terminal display state rather than domain events.
 
 ## Mode-aware scrollback

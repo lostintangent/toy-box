@@ -1,4 +1,3 @@
-import type { PointerEvent as ReactPointerEvent } from "react";
 import type { SvgDocument } from "../../document";
 import { resolveActiveTool, styleColor, type EditorStore } from "../../store";
 import { startDrawingGesture } from "../gestures/drawing";
@@ -13,9 +12,8 @@ export function createDrawingGestureSource({
   document: SvgDocument;
   store: EditorStore;
   themeForegroundColor: string;
-}): GestureSource<ReactPointerEvent<HTMLDivElement>> {
+}): GestureSource {
   return {
-    owner: "drawing",
     claim(event) {
       event.preventDefault();
       const tool = resolveActiveTool(store.state);

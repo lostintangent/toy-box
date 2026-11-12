@@ -52,6 +52,8 @@ class FakePTYProcess {
   public writes: Array<string | Uint8Array> = [];
   public terminalClosed = false;
   public killed = false;
+  /** A shell that outlives being closed. */
+  public lingers = false;
   public exited: Promise<number>;
 
   private resolveExited!: (code: number) => void;
@@ -76,6 +78,7 @@ class FakePTYProcess {
 
   kill() {
     this.killed = true;
+    if (!this.lingers) this.resolveExit();
   }
 
   emitOutput(text: string) {
@@ -208,6 +211,24 @@ describe("TerminalRuntime", () => {
 
       expect(processes).toHaveLength(2);
       expect(ws2.controlMessages[0]).toEqual({ type: "ready", resumed: false });
+    });
+
+    test("shuts down once every shell has exited", async () => {
+      const { manager, processes, createWs } = createHarness();
+      manager.attach(toTerminalPeer(createWs(1)), "client-1");
+      manager.attach(toTerminalPeer(createWs(2)), "client-2");
+      processes[1].lingers = true;
+
+      let disposed = false;
+      void manager.dispose().then(() => {
+        disposed = true;
+      });
+      await Bun.sleep(0);
+      expect(disposed).toBe(false);
+
+      processes[1].resolveExit();
+      await Bun.sleep(0);
+      expect(disposed).toBe(true);
     });
 
     test("forwards binary input chunks directly to PTY writes", () => {

@@ -1,4 +1,10 @@
-import { channelAgent, createStoredChannel } from "@channels/server/testFixtures";
+import {
+  channelAgent,
+  createStoredChannel,
+  linkServers,
+  serveLinkedServer,
+  toyBoxServer,
+} from "@channels/server/testFixtures";
 import {
   afterAll,
   beforeEach,
@@ -34,12 +40,13 @@ afterAll(() => {
 });
 
 const { detachManagedSession } = await import("@/server/managedSessions");
+const { RefusalError } = await import("@/shared/server/http");
 const { getPersistedWorker } = await import("@workers/server/database");
 const { setSessionProvider } = await import("@sessions/server/state/sessions");
 const { deleteSessionActivity, setSessionActivity } =
   await import("@sessions/server/state/activity");
 const workspaceEvents = await import("@workspace/server/events");
-const { ChannelDatabase, ChannelInputError } = await import("./database");
+const { ChannelDatabase } = await import("./database");
 const {
   createChannel,
   deleteChannel,
@@ -336,7 +343,7 @@ test("a user's uploads become Channel files that clients resolve", async () => {
       { id, channelId, content: "", attachments: [upload, upload] },
       { type: "user" },
     );
-  await expect(post("../escape")).rejects.toThrow(ChannelInputError);
+  await expect(post("../escape")).rejects.toThrow(RefusalError);
   await expect(post("lost", "missing")).rejects.toThrow("Channel not found.");
   await expect(stat(channelFolder("missing"))).rejects.toThrow();
 
@@ -434,6 +441,22 @@ test("a Channel lead edits and removes only its own members, by ID or mention", 
     type: "member_left",
     actor: { type: "agent", agentId: channel.id },
     agentId: designer!.id,
+  });
+});
+
+test("leads also list the channels on linked servers", async () => {
+  const channels = await openChannels();
+  const lead = await createStoredChannel(channels, { name: "Core", ...CHANNEL_DEFAULTS });
+  onTestFinished(() => releaseChannelEvents(lead.id));
+  const studio = serveLinkedServer(toyBoxServer("Studio", [{ id: "apple", name: "Apple" }]));
+  await linkServers(studio.href, "http://127.0.0.1:1");
+  const own = await invokeTool("list_channels", {}, lead.id);
+  expect(await invokeTool("list_channels", {}, lead.id, true)).toEqual({
+    channels: [
+      ...own.channels,
+      { channelId: "apple", name: "Apple", server: "Studio", link: studio.origin },
+    ],
+    unavailable: [{ link: "http://127.0.0.1:1", error: expect.any(String) }],
   });
 });
 
@@ -852,6 +875,30 @@ test("a lead directory assignment only saves metadata and publishes real changes
   expect(updates).toEqual([nextDirectory, ""]);
 });
 
+test("a lead is nudged toward an avatar until it sets one", async () => {
+  const channels = await openChannels();
+  const channel = await createStoredChannel(channels, { name: "Avatars", ...CHANNEL_DEFAULTS });
+  onTestFinished(() => deleteChannelFiles(channel.id));
+  const directory = await mkdtemp(join(tmpdir(), "toy-box-channel-avatar-"));
+  onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  runtime.getSessionDirectory.mockResolvedValue(directory);
+  const { getChannelAgentConfiguration } = await import("./agent");
+  const nudged = async (channelId: string, sessionId = channelId) =>
+    (
+      await getChannelAgentConfiguration(channelAgent(channelId, sessionId, "Builder"))
+    ).additionalInstructions.includes("give this channel an avatar");
+  const unstated = await createStoredChannel(channels, {
+    name: "Unstated",
+    model: CHANNEL_DEFAULTS.model,
+  });
+  expect([await nudged(channel.id), await nudged(channel.id, "member")]).toEqual([true, false]);
+  expect(await nudged(unstated.id)).toBe(false);
+
+  await Bun.write(join(directory, "icon.png"), "icon");
+  await invokeTool("update_channel", { avatar: { image: "icon.png" } }, channel.id);
+  expect(await nudged(channel.id)).toBe(false);
+});
+
 test("editing member metadata publishes a roster change only when something changed", async () => {
   const channels = await openChannels();
   const channel = await createStoredChannel(channels, { name: "Review", ...CHANNEL_DEFAULTS });
@@ -1207,6 +1254,36 @@ test("a lead privately wakes another channel's lead and only a channel's lead", 
   ]);
   expect((await channels.getChannel(sender.id))?.latestSequence).toBe(sender.latestSequence);
   expect((await channels.getChannel(target.id))?.latestSequence).toBe(target.latestSequence);
+});
+
+test("a lead's message to a channel this server doesn't hold goes once to its linked server, and a failure says why", async () => {
+  const channels = await openChannels();
+  const sender = await createStoredChannel(channels, { name: "Core", ...CHANNEL_DEFAULTS });
+  const deliveries: unknown[] = [];
+  const studio = serveLinkedServer(
+    toyBoxServer("Studio", [{ id: "apple", name: "Apple" }], async (request) => {
+      deliveries.push({ path: new URL(request.url).pathname, body: await request.json() });
+      return deliveries.length === 1
+        ? new Response(null, { status: 204 })
+        : Response.json({ error: "Unknown sender." }, { status: 422 });
+    }),
+  );
+  await linkServers(studio.href, "http://127.0.0.1:1");
+  const deliver = spyOnDelivery();
+  const message = (channelId: string, content: string) =>
+    messageChannelLead(sender.id, { channelId, content });
+
+  await message("apple", "Which build?");
+  await expect(message("apple", "Still there?")).rejects.toThrow("Studio: Unknown sender.");
+  await expect(message("pear", "Hi")).rejects.toThrow(
+    /^Channel not found\. Unavailable: http:\/\/127\.0\.0\.1:1 \(ECONNREFUSED/,
+  );
+  const path = "/api/v1/channels/apple/lead-messages";
+  expect(deliveries).toEqual([
+    { path, body: { from: sender.id, content: "Which build?" } },
+    { path, body: { from: sender.id, content: "Still there?" } },
+  ]);
+  expect(deliver).not.toHaveBeenCalled();
 });
 
 test("running a routine wakes its lead now and leaves its schedule alone", async () => {

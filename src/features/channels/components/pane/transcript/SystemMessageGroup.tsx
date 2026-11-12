@@ -4,6 +4,7 @@ import {
   FileMinus,
   FileUp,
   Folder,
+  ImageIcon,
   MonitorPlay,
   Pencil,
   UserMinus,
@@ -20,6 +21,7 @@ import type { WorkspaceFile } from "@files/model";
 import { useRevealFile } from "@files/useRevealFile";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { DoneIndicator } from "@/shared/ui/done-indicator";
+import { ChannelAvatar } from "@channels/components/ChannelAvatar";
 import { useChannelPane } from "../ChannelPaneContext";
 import { WorkspacePreview } from "@sessions/components/outputs/WorkspacePreview";
 
@@ -105,6 +107,16 @@ const SYSTEM_MESSAGES: {
       content: (
         <>
           Channel renamed: <Value text={name} />
+        </>
+      ),
+    }),
+  },
+  channel_avatar_changed: {
+    icon: <ImageIcon className="size-3.5 shrink-0" />,
+    present: ([{ avatar }]) => ({
+      content: (
+        <>
+          Avatar updated: <ChannelAvatar avatar={avatar} className="size-4 align-top" />
         </>
       ),
     }),

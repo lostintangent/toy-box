@@ -1,17 +1,12 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
-import {
-  toDocumentPoint,
-  type EditorStore,
-  type Gesture,
-  type Point,
-  type Tool,
-} from "../../store";
+import type { Point } from "../../document";
+import { toDocumentPoint, type EditorStore, type Gesture, type Tool } from "../../store";
 
 export type GestureOwner = "viewport" | "drawing" | "selection";
 export type GestureOutcome = "commit" | "cancel";
 
 /** Owns every pointer update after a gesture source claims pointer-down. */
-export type GestureController<Event> = {
+export type GestureController<Event = ReactPointerEvent<HTMLDivElement>> = {
   update: (event: Event) => void;
   finish: (outcome: GestureOutcome) => void;
 };
@@ -19,12 +14,10 @@ export type GestureController<Event> = {
 export type TouchPointPair = readonly [Point, Point];
 
 /** Offers pointer-down to one editor capability and optionally claims it with a controller. */
-export type GestureSource<Event> = {
-  owner: GestureOwner;
-  claim: (event: Event) => GestureController<Event> | null;
-  claimTouchPair?: (points: TouchPointPair) => GestureController<TouchPointPair> | null;
+export type GestureSource = {
+  claim: (event: ReactPointerEvent<HTMLDivElement>) => GestureController | null;
   hover?: {
-    update: (event: Event) => void;
+    update: (event: ReactPointerEvent<HTMLDivElement>) => void;
     leave: () => void;
   };
 };
@@ -77,9 +70,7 @@ export function gestureOwnerForTool(activeTool: Tool): GestureOwner {
   return activeTool === "select" ? "selection" : "drawing";
 }
 
-/** Recovers ownership from the semantic gesture exposed through editor state. */
-export function gestureOwnerForState(gesture: Gesture): GestureOwner {
-  if (gesture.type === "pan" || gesture.type === "pinch") return "viewport";
-  if (gesture.type === "draw" || gesture.type === "insert-text") return "drawing";
-  return "selection";
+/** Whether the gesture only moves the viewport, leaving the document untouched. */
+export function isNavigating(gesture: Gesture | null): boolean {
+  return gesture?.type === "pan" || gesture?.type === "pinch";
 }

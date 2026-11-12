@@ -1,4 +1,5 @@
 import { getProcessValue } from "@/shared/server/processState";
+import { stopProcess } from "@/shared/server/stopProcess";
 import { Debouncer } from "@tanstack/pacer/debouncer";
 import type { Subprocess } from "bun";
 import type { Peer } from "crossws";
@@ -93,12 +94,10 @@ export class TerminalRuntime {
     session.orphanClose.cancel();
     session.peer?.close();
 
-    try {
+    void stopProcess(session.proc, () => {
       session.proc.terminal?.close();
       session.proc.kill();
-    } catch (error) {
-      console.error("[terminal] Error killing PTY:", error);
-    }
+    });
   }
 
   /** A socket went away. Unless a newer socket replaced it, its shell enters the orphan window. */
@@ -110,9 +109,14 @@ export class TerminalRuntime {
     session.orphanClose.maybeExecute();
   }
 
-  /** Ends every shell as the server shuts down. Their sockets close, so clients reconnect. */
-  dispose() {
+  /**
+   * Ends every shell as the server shuts down, resolving once they've exited so the server
+   * reaps them. Their sockets close, so clients reconnect.
+   */
+  async dispose() {
+    const exits = [...this.#sessions.values()].map(({ proc }) => proc.exited);
     for (const clientId of this.#sessions.keys()) this.close(clientId);
+    await Promise.all(exits);
   }
 
   #start(

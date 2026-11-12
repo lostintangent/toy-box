@@ -9,6 +9,8 @@ export function StatusIndicator({ status }: { status: SessionStatus }) {
     switch (status) {
       case "thinking":
         return "Thinking";
+      case "retrying":
+        return "Retrying";
       case "compacting":
         return "Compacting";
       case "reasoning":

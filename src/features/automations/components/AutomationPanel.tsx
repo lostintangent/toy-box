@@ -47,7 +47,7 @@ export function AutomationPanel({ isExpanded, onExpandedChange }: AutomationPane
           <Plus className="h-4 w-4" />
         </CommandButton>
       }
-      emptyMessage="Automations run sessions on a schedule."
+      emptyMessage="Automations allow running prompts on a schedule. Click the + button or ask an agent to create one."
     >
       {automations.map((automation) => {
         const isSelected = isOpen(createSessionPane(automation.id));

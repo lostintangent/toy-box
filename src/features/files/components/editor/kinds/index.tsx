@@ -3,6 +3,7 @@ import {
   Braces,
   BookOpen,
   Code2,
+  FileCode,
   FileText,
   Film,
   ImageIcon,
@@ -25,6 +26,7 @@ import { appIcon } from "@apps/components/runtime/icons";
 import type { WorkspaceFileState } from "../../../useFile";
 import type { WorkspaceFileMode } from "../../../model";
 import { fileExtension, fileName, getPathBasename } from "../../../model/paths";
+import { CodeViewer } from "./code/CodeViewer";
 import { HtmlEditor } from "./html/HtmlEditor";
 import { ImageViewer, VideoViewer } from "./media/MediaViewer";
 
@@ -85,16 +87,22 @@ const ARTIFACT_APP_EDITOR_KIND: EditorKind = {
   editable: false,
 };
 
-const MARKDOWN_EDITOR_KIND: EditorKind = {
-  id: "markdown",
-  extensions: ["md", "markdown"],
-  Renderer: MarkdownEditor,
-  icon: FileText,
-  fileIcons: { "plan.md": ListTodo },
+const CODE_VIEWER_KIND: EditorKind = {
+  id: "code",
+  extensions: [],
+  Renderer: CodeViewer,
+  icon: FileCode,
+  editable: false,
 };
 
 const BUILTIN_EDITOR_KINDS: EditorKind[] = [
-  MARKDOWN_EDITOR_KIND,
+  {
+    id: "markdown",
+    extensions: ["md", "markdown"],
+    Renderer: MarkdownEditor,
+    icon: FileText,
+    fileIcons: { "plan.md": ListTodo },
+  },
   {
     id: "html",
     extensions: ["html", "htm"],
@@ -135,7 +143,7 @@ const BUILTIN_EDITOR_KINDS: EditorKind[] = [
   },
 ];
 
-/** Session `.toy` files run as apps, built-ins win extension conflicts, then installed definitions, and unclaimed files render as Markdown. */
+/** Session `.toy` files run as apps, built-ins win extension conflicts, then installed definitions, and unclaimed files render read-only as code. */
 export function resolveEditorKind(file: WorkspaceFile, definitions: AppDefinition[]): EditorKind {
   const extension = fileExtension(file.path);
   if (file.kind === "session" && ARTIFACT_APP_EDITOR_KIND.extensions.includes(extension)) {
@@ -145,7 +153,7 @@ export function resolveEditorKind(file: WorkspaceFile, definitions: AppDefinitio
     if (kind.extensions.includes(extension)) return kind;
   }
   const definition = definitionOpening(definitions, extension);
-  if (!definition) return MARKDOWN_EDITOR_KIND;
+  if (!definition) return CODE_VIEWER_KIND;
   return {
     id: `${definition.id}:${definition.revision}`,
     extensions: definition.opens,

@@ -6,7 +6,7 @@ import type { GestureController } from "./gesture";
 export function startPanGesture(
   store: EditorStore,
   event: ReactPointerEvent<HTMLDivElement>,
-): GestureController<ReactPointerEvent<HTMLDivElement>> | null {
+): GestureController | null {
   event.preventDefault();
   if (!store.actions.beginGesture({ type: "pan" })) return null;
   let previous = { x: event.clientX, y: event.clientY };

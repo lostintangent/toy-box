@@ -6,6 +6,7 @@ const updateSettingsTool = defineTool("update_settings", {
     "Updates one or more Toy Box user settings. " +
     "Only supplied fields change. Omitted settings are preserved. " +
     "Use a six-digit hexadecimal value such as '#facc15' for accentColor, and an executable path or an empty string for terminalShell. " +
+    "serverName names this server for every client and linked server, and an empty string names it after its computer. " +
     "Returns the complete authoritative settings value.",
   parameters: settingsUpdateSchema.omit({ hyperSessionId: true }),
   handler: async (update) => {

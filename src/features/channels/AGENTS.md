@@ -37,7 +37,7 @@ accountable for the purpose and for the quality of every member's outcome.
 ## Domain model
 
 ```text
-Channel        name, purpose, directory, lead model, tasks, preview, user read position
+Channel        name, avatar, purpose, directory, lead model, tasks, preview, user read position
 ├─ Team        the Channel's agents
 │  ├─ Lead     intrinsic and fixed; its Worker and Session ID is the Channel ID
 │  └─ Members  created on demand; editable and removable
@@ -50,6 +50,13 @@ Channel        name, purpose, directory, lead model, tasks, preview, user read p
   tasks, optional URL-or-screen preview, human read position, latest message sequence, and updated time.
   Its `requestSequence` and `completedSequence` refer to transcript milestones. Completion is unread
   when it follows `seenThrough`; a request remains pending until a user reply clears its sequence.
+- `ChannelAvatar` is a mark the lead designs or the project's own icon, drawn in a rounded square.
+  Until the lead sets one with `update_channel`, every surface draws the cyan `#` mark. The lead
+  can replace an avatar but not clear it. An image is a PNG, JPEG, or WebP of at most 256 KB, which
+  the Channel keeps at `~/.toy-box/channels/<channelId>/avatar-<hash>.<ext>`, so a new image gets a
+  new URL. The row and the `channel_avatar_changed` message announcing it store only that name, and
+  clients receive its server-relative URL. Like an attachment, an image stays until its Channel is
+  deleted, so each announcement keeps showing the avatar it set.
 - `ChannelTask` has a short, stable, channel-unique ID such as `t12`, title, status, optional owner
   and subtasks. Its optional `artifactId` is a shared artifact's `id`; file metadata
   stays with the artifact. Its optional `diff: DiffStats` uses `shared/diffStats.ts`, like Session
@@ -138,8 +145,9 @@ projections for persistence and runtime configuration; private read positions st
 - Let ordinary Sessions create and staff Channels, then read, post, share, and wait for the lead or
   members on the user's behalf. Let the lead create peers within its own Channel, then edit their
   name, role, or model with `update_channel_member` and remove them with `remove_channel_member`, as
-  the user can. The lead lists Channels with the same `list_channels` to find related work, and
-  privately messages another Channel's lead with `message_channel_lead`.
+  the user can. The lead lists Channels with the same `list_channels` to find related work, including
+  Channels on the owner's linked servers, and privately messages another Channel's lead with
+  `message_channel_lead`.
 
 Selecting an unknown mention creates a member in that Channel and immediately starts its private
 Worker Session for onboarding. The member reads context and establishes missing profile details, then
@@ -193,7 +201,8 @@ inspect the same model catalog as the client before creating peers. Member profi
 directory changes apply between executions without mutating provider history. The lead receives its
 fixed identity and responsibilities from the Channel rather than editable Worker metadata. Among
 Channel agents, it alone creates, edits, and removes members and updates the directory, public
-purpose, tasks, and preview.
+purpose, tasks, preview, and avatar. A lead whose Channel has a purpose but no avatar is asked to
+set one before finishing.
 
 A lead coordinates with another Channel through that Channel's lead, never its transcript.
 `message_channel_lead` delivers a `channel_lead_message` naming the sender's Channel to the target
@@ -201,6 +210,33 @@ lead's Session, which replies the same way. The exchange stays in the two leads'
 target must be an existing Channel because delivery accepts any Session. Like a routine run, the
 wake clears the receiving lead's `waiting` status, so its roster shows it working. That is the
 exchange's only trace in either Channel.
+
+Leads also reach Channels on the owner's linked servers, the other Toy Box servers the owner links
+in Settings or through `/api/v1/server/links`. `POST { address }` links one and `DELETE ?address=`
+unlinks one, and each answers the whole server, as `GET /api/v1/server` does, with its `links` in
+link order. A link is its server's `http` or `https` origin, where a bare host means `https`.
+Linking reads the server's `/api/v1/server`, refuses one whose `id` is this server's, and asks it to
+link this one back at the address the request reached, honoring `X-Forwarded-Proto`. The link is
+saved only once that server agrees, and while it's asked, its link back answers at once, so both
+ends finish. Unlinking removes the link, then asks the server to unlink this one, and a server that
+doesn't answer keeps its link. A request on loopback names no address another server reaches, so it
+changes only this end, and Settings says so on localhost. A pair linked on one end is repaired by
+linking from the server that's missing the link, or unlinking from the one that still has it.
+Linking or unlinking twice changes nothing, and re-linking answers without reaching the server, so
+it holds even while that server sleeps. Links are the workspace setting `serverLinks`, so every tab
+follows them through `settings.changed`, but only these verbs change them, since the settings update
+schema omits them.
+
+A lead's `list_channels` adds each linked server's Channels with that server's `name` as `server`
+and its `link`, since two servers can share a name, and lists the links that don't answer as
+`unavailable`. Messaging one posts `{ from, content }` once to its server's
+`POST /api/v1/channels/:channelId/lead-messages`, which answers 204 once that lead has accepted it,
+not once it replies. Any other answer, or a timeout, fails the tool with the reason. The receiver
+refuses a sender it can't find among its own linked servers' Channels, so messages flow only
+between servers that link each other, and names the sender's server as that server names itself.
+Only words cross servers, so `message_channel_lead`'s description tells leads to share work as
+pushed branches or in the message itself. Linked servers trust each other the way a server trusts
+its clients, on the owner's private network, without authentication.
 
 Channel tools are always loaded, so each tool's description and schema own its purpose and
 mechanics. The instructions own the collaboration protocol: how the lead frames, staffs, delegates,
@@ -276,8 +312,9 @@ the Channel's files. Those
 teardowns cannot produce member departures for the deleted Channel. Name, purpose, and directory
 changes update Channel metadata and append a separate typed system message for each changed property
 in one transaction, advancing sequence and revision for each; a user purpose change also wakes the lead
-to read the new direction. Preview changes append `preview_changed`; tasks and lead-model changes
-have their own revisioned events without a transcript entry. Human read-position advances also
+to read the new direction. Preview and avatar changes append `preview_changed` and
+`channel_avatar_changed`; tasks and lead-model changes have their own revisioned events without a
+transcript entry. Human read-position advances also
 have a revisioned event carrying only the committed cursor, and a bookmark change one `bookmarks`
 event that replaces the list, as `tasks` does.
 Private Agent read-position changes update only Worker metadata. Message, reaction, and artifact tables continue
@@ -425,7 +462,7 @@ bookmark.
 `POST /api/v1/channels/:channelId/messages` accepts `{ id, content, attachments? }`, uses the normal
 user-message schema and delivery policy, and returns HTTP 201 with the message.
 Attachments are image uploads `{ mimeType, base64 }`. Retrying an ID the Channel already has returns
-its stored message without delivering again, and an ID from another Channel returns 409.
+its stored message without delivering again, and an ID from another Channel returns 422.
 `POST …/read` accepts `{ sequence }`, uses
 the same monotonic read operation as the browser, and returns `{ seenThrough }`.
 Reading acknowledges completion but never answers a request. `PUT` and `DELETE
@@ -460,12 +497,11 @@ editor, mention completion, and routine actions:
   normalized workspace default that the browser's model pickers offer. Providers owns this route,
   its response, and the projection reused by the member-scoped endpoint.
 
-Bodies cannot name the identities in their route. Malformed requests return 400. Otherwise a path
-ID that names no Channel, member, routine, or artifact returns 404, and the Channel stream sends
-`deleted` instead. Domain rejections such as a taken mention return 422 with the same message the
-browser shows. Unexpected management failures are logged server-side and return 500 with a generic
-`{ error }`, never an internal exception message. A failure can follow a committed change, so
-clients refresh authoritative state rather than automatically retrying writes.
+These routes answer like every [`/api/v1` route](../workspace/AGENTS.md#ownership-and-extension).
+Bodies cannot name the identities in their route. A path ID that names no Channel, member, routine,
+or artifact returns 404, and the Channel stream sends `deleted` instead. Domain refusals such as a
+taken mention return 422 with the same message the browser shows. A failure can follow a committed
+change, so clients refresh authoritative state rather than automatically retrying writes.
 
 ## Native push delivery
 
@@ -569,7 +605,8 @@ presents one deleted identity everywhere.
   action; opening it loads history through the oldest, so placeholders fill in, and selecting one
   scrolls to its message the same way.
 - The overview opens as a sheet or pins beside the transcript, which the workspace layout remembers.
-  Both presentations use the shared vertical scroll fade.
+  Both presentations share a header with the Channel's avatar and name, and the shared vertical
+  scroll fade.
   It shows the purpose, directory, and preview, then the team with its presence, the shared
   artifacts newest first by when each was shared, the tasks, and any routines by title with their
   next run, each expanding to its prompt and offering Run routine and Delete routine. Each artifact
@@ -618,9 +655,9 @@ presents one deleted identity everywhere.
   parameters. `functions.ts` is browser RPC ingress, and
   `stream.ts` composes public views and owns subscriptions over `eventLog.ts`, each Channel's
   bounded event log.
-  Each `routes/v1/` file answers its `/api/v1/channels` requests in place, and `http.ts` reads
-  their command bodies and maps domain failures to statuses. `attachments.ts` owns the files
-  messages attach.
+  Each `routes/v1/` file answers its `/api/v1/channels` requests in place. `attachments.ts` owns
+  the files messages attach and the avatar image. `links.ts` owns the network boundary to the
+  owner's linked servers: their links, listing their Channels, and delivering a lead's message once.
   `tools.ts` owns agent-facing projections and the Session, lead, and member tool sets. It translates
   the calling Session into its Channel, actor, and workspace-relative paths. Receiving the lead tool
   set is a lead's authority, since a lead's Session ID is its Channel's ID. `agent.ts` composes each agent's
@@ -632,7 +669,7 @@ presents one deleted identity everywhere.
 - `components/pane/` holds the pane, composer, and shared pane context, with `transcript/` and
   `overview/` beneath it. `components/agents/` holds avatars, mention Markdown, the mention
   source and menu, the member editor, and working agents. `components/sidebar/` holds the Channels panel and its
-  attention priority. `components/`'s top level holds the create/edit dialog.
+  attention priority. `components/`'s top level holds the create/edit dialog and `ChannelAvatar`.
 - Outside this folder, [Workers](../workers/AGENTS.md) owns agent identity and lifetime.
   [`sessionConfiguration.ts`](../../server/sessionConfiguration.ts) grants ordinary Sessions the
   Channel tools and resolves agent configuration, and

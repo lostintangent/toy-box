@@ -81,6 +81,8 @@ export function reduceChannel(channel: Channel, event: ChannelEvent): Channel {
       switch (content.type) {
         case "channel_renamed":
           return { ...next, name: content.name };
+        case "channel_avatar_changed":
+          return { ...next, avatar: content.avatar };
         case "channel_purpose_changed":
           return { ...next, purpose: content.purpose ?? undefined };
         case "channel_directory_changed":

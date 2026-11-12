@@ -1,5 +1,5 @@
-import type { CSSProperties } from "react";
-import { Hash, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
+import { ChannelAvatar } from "@channels/components/ChannelAvatar";
 import { WorkingAgents } from "@channels/components/agents/WorkingAgents";
 import { channelCommands } from "@channels/commands";
 import { channelAttention, createChannelPane } from "@channels/model";
@@ -12,9 +12,6 @@ import { RelativeTime } from "@/shared/ui/relative-time";
 import { SessionMetadataBadges } from "@sessions/components/location/SessionMetadataBadges";
 import { useWorkspaceRoots } from "@workspace/hooks/layout/roots";
 import { channelSidebarStatus } from "./status";
-
-/** The channel icon's identity fill, cyan in both appearances. */
-const CHANNEL_ICON_STYLE: CSSProperties & { "--identity": string } = { "--identity": "#0891b2" };
 
 export function ChannelsPanel({
   isExpanded,
@@ -65,14 +62,7 @@ export function ChannelsPanel({
                 />
               </span>
             }
-            icon={
-              <span
-                className="identity-fill flex size-7 shrink-0 items-center justify-center rounded-full text-white"
-                style={CHANNEL_ICON_STYLE}
-              >
-                <Hash className="size-4" strokeWidth={2.5} />
-              </span>
-            }
+            icon={<ChannelAvatar avatar={channel.avatar} className="size-7" />}
             time={<RelativeTime date={channel.updatedAt} />}
             badge={directory ? <SessionMetadataBadges cwd={directory} /> : undefined}
             menuItems={<CommandMenuItems commands={channelCommands(channel)} />}

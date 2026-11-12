@@ -1,18 +1,16 @@
 import { createStore } from "@tanstack/store";
-import { topLevelElements, type SvgDocument } from "../document";
+import {
+  topLevelElements,
+  type HistoryEntry,
+  type Point,
+  type Rect,
+  type Size,
+  type StyleChange,
+  type SvgDocument,
+} from "../document";
 import { recordHistoryEntry, redoHistory, undoHistory } from "../document/history";
 import { styleElements } from "../document/style";
-import type {
-  EditorState,
-  Gesture,
-  HistoryEntry,
-  Point,
-  Rect,
-  Size,
-  StyleChange,
-  Tool,
-  Viewport,
-} from "./types";
+import type { EditorState, Gesture, Tool, Viewport } from "./types";
 import {
   DEFAULT_VIEWPORT,
   fitViewport,

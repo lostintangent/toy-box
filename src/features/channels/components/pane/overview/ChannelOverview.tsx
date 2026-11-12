@@ -4,6 +4,7 @@ import * as m from "motion/react-m";
 import { Hash, MoreHorizontal, PanelRightClose, Pin, PinOff } from "lucide-react";
 import { channelCommands } from "@channels/commands";
 import { AgentEditor } from "@channels/components/agents/AgentEditor";
+import { ChannelAvatar } from "@channels/components/ChannelAvatar";
 import type { Channel, ChannelArtifact, ChannelMember, ChannelRoutine } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import { useLayoutPref } from "@workspace/hooks/layout/layoutPrefs";
@@ -166,6 +167,7 @@ export function ChannelOverview({
                 className="w-[92%] gap-0 overflow-hidden p-0 sm:max-w-md"
               >
                 <OverviewHeader
+                  avatar={channel.avatar}
                   title={<SheetTitle>{channel.name}</SheetTitle>}
                   menu={channelMenu}
                   canPin={canPin}
@@ -196,6 +198,7 @@ export function ChannelOverview({
                 style={{ width: OVERVIEW_WIDTH }}
               >
                 <OverviewHeader
+                  avatar={channel.avatar}
                   title={<h2 className="font-semibold text-foreground">{channel.name}</h2>}
                   menu={channelMenu}
                   canPin={canPin}
@@ -214,12 +217,14 @@ export function ChannelOverview({
 
 /** The title and actions, the same whether the overview is a sheet or pinned. */
 function OverviewHeader({
+  avatar,
   title,
   menu,
   canPin,
   isPinned,
   onPresent,
 }: {
+  avatar: Channel["avatar"];
   title: ReactNode;
   menu: ReactNode;
   canPin: boolean;
@@ -230,6 +235,7 @@ function OverviewHeader({
 
   return (
     <div className="flex items-center gap-2 border-b px-2.5 py-3">
+      <ChannelAvatar avatar={avatar} className="size-6" />
       <div className="min-w-0 flex-1">{title}</div>
       <div className="flex shrink-0 items-center">
         {menu}

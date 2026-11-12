@@ -3,7 +3,7 @@
 import { createMiddleware, createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import type { RealtimeToken } from "@tanstack/ai";
-import type { ServerRequest } from "nitro/types";
+import { disableIdleTimeout } from "@/shared/server/http";
 import {
   findSessions,
   listSessions as listProviderSessions,
@@ -125,8 +125,7 @@ export const deliverMessage = createServerFn({ method: "POST" })
   .validator(deliverMessageInputSchema)
   .handler(async ({ data: { sessionId, message, location } }): Promise<void> => {
     // Provider creation or resumption can outlast Bun's idle request timeout.
-    const request = getRequest() as ServerRequest;
-    request.runtime?.bun?.server.timeout(request, 0);
+    disableIdleTimeout(getRequest());
     if (location) await createRuntimeSession(sessionId, message, location);
     else await deliverSessionMessage(sessionId, message);
   });

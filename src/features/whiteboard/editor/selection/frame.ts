@@ -1,5 +1,5 @@
 import { matrixFromDom, transformPoint, type Matrix2D } from "./transform";
-import type { Point, Rect } from "../../store";
+import type { Point, Rect } from "../../document";
 
 /** The screen-space manipulation frame for one or more selected native SVG elements. */
 export type SelectionFrame = {
@@ -184,7 +184,7 @@ function readLineEndpoints(
   };
 }
 
-function midpoint(left: Point, right: Point): Point {
+export function midpoint(left: Point, right: Point): Point {
   return { x: (left.x + right.x) / 2, y: (left.y + right.y) / 2 };
 }
 

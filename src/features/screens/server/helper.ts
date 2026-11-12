@@ -1,6 +1,8 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { RefusalError } from "@/shared/server/http";
+import { stopProcess } from "@/shared/server/stopProcess";
 import type { FrameSize, ScreenFrame, ScreenInput, ScreenList, ScreenStatus } from "../model";
 import { ScreenPacketReader } from "../model/protocol";
 import {
@@ -53,8 +55,6 @@ export type StartScreenHelper = (
 ) => Promise<ScreenHelper>;
 
 const REQUEST_TIMEOUT_MS = 60_000;
-/** How long a closed helper gets to exit before it's killed. */
-const CLOSE_TIMEOUT_MS = 2000;
 
 /**
  * Starts the helper: requests go to its stdin as JSON lines, and replies and capture
@@ -104,7 +104,7 @@ export const startScreenHelper: StartScreenHelper = async (onEvent, onFailure, o
     pending.delete(reply.requestId);
     clearTimeout(request.timer);
     if (reply.ok) request.resolve(reply.value);
-    else request.reject(new Error(reply.error));
+    else request.reject(new RefusalError(reply.error));
   }
 
   /**
@@ -159,10 +159,7 @@ export const startScreenHelper: StartScreenHelper = async (onEvent, onFailure, o
     async close() {
       if (failure) return;
       failure = new Error("Screen helper closed.");
-      const kill = setTimeout(() => helper.kill(), CLOSE_TIMEOUT_MS);
-      await helper.stdin.end();
-      await helper.exited;
-      clearTimeout(kill);
+      await stopProcess(helper, () => helper.stdin.end());
       rejectPending(failure); // Only if it was killed before answering.
     },
   };

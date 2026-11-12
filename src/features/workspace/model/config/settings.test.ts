@@ -21,6 +21,9 @@ describe("settings", () => {
       disabledProviders: ["claude"],
       pinnedSessionIds: ["session-a", "session-b"],
       hyperSessionId: "session-c",
+      serverName: "Studio",
+      serverId: "6f1c2a4e-0b7d-4c3a-9e58-2d41f0a7b9c3",
+      serverLinks: ["https://studio.ts.net", "http://127.0.0.1:3100"],
     };
 
     expect(normalizeSettings(settings)).toEqual(settings);
@@ -33,6 +36,11 @@ describe("settings", () => {
     ).toMatchObject({
       pinnedSessionIds: ["session-a", "session-b"],
     });
+  });
+
+  test("keeps each server link once, in the order it was linked", () => {
+    const [a, b] = ["https://a.ts.net", "https://b.ts.net"];
+    expect(normalizeSettings({ serverLinks: [b, a, b] }).serverLinks).toEqual([b, a]);
   });
 
   test("defaults invalid persisted fields independently", () => {
@@ -67,6 +75,23 @@ describe("settings", () => {
     expect(settingsUpdateSchema.safeParse({ defaultSessionView: "all" }).success).toBe(true);
     expect(settingsUpdateSchema.safeParse({ defaultSessionView: "responses" }).success).toBe(true);
     expect(settingsUpdateSchema.safeParse({ defaultSessionView: "quiet" }).success).toBe(false);
+  });
+
+  test("an update can't change the server's id or links, which only the server and linking write", () => {
+    const update = {
+      serverName: "Studio",
+      serverId: "other",
+      serverLinks: ["https://studio.ts.net"],
+    };
+    expect(settingsUpdateSchema.parse(update)).toEqual({ serverName: "Studio" });
+  });
+
+  test("an update trims the server's name and refuses one over 64 characters", () => {
+    expect(settingsUpdateSchema.parse({ serverName: "  Studio  " })).toEqual({
+      serverName: "Studio",
+    });
+    expect(settingsUpdateSchema.parse({ serverName: "   " })).toEqual({ serverName: "" });
+    expect(settingsUpdateSchema.safeParse({ serverName: "x".repeat(65) }).success).toBe(false);
   });
 
   test("validates complete settings at the transport boundary", () => {

@@ -1,11 +1,14 @@
-// Validated remote ingress for shared workspace state.
+// Validated remote ingress for shared workspace state and the server resource.
 
 import { createServerFn } from "@tanstack/react-start";
+import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
+import { disableIdleTimeout } from "@/shared/server/http";
 import { settingsUpdateSchema } from "../model/config/settings";
 import { draftKeySchema, savedDraftSchema } from "../model/state/drafts";
 import * as workspace from "./state";
 import * as connections from "./connections";
+import * as installation from "./installation";
 
 export const getWorkspaceState = createServerFn({ method: "GET" }).handler(() =>
   workspace.getWorkspaceState(),
@@ -23,3 +26,14 @@ export const updateSettings = createServerFn({ method: "POST" })
 export const releaseLease = createServerFn({ method: "POST" })
   .validator(z.object({ connection: z.string(), lease: z.string() }))
   .handler(({ data }) => connections.releaseLease(data.connection, data.lease));
+
+export const getServer = createServerFn({ method: "GET" }).handler(() => installation.getServer());
+
+export const updateServer = createServerFn({ method: "POST" }).handler(() => {
+  disableIdleTimeout(getRequest());
+  return installation.updateServer();
+});
+
+export const restartServer = createServerFn({ method: "POST" }).handler(() =>
+  installation.restartServer(),
+);

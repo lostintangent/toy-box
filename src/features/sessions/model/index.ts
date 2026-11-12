@@ -76,6 +76,7 @@ export type TodoItemPatch =
 export type SessionStatus =
   | "idle"
   | "thinking"
+  | "retrying"
   | "compacting"
   | "reasoning"
   | "responding"

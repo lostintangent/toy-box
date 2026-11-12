@@ -1,12 +1,13 @@
 import { Fragment, useEffect, useState } from "react";
 import { useIsMutating, useMutation, useMutationState, useQuery } from "@tanstack/react-query";
 import type { MutationState } from "@tanstack/react-query";
-import { Check, ChevronRight, Clock3, Loader2, Minus, RefreshCw, X } from "lucide-react";
+import { Check, ChevronRight, Clock3, Cpu, Loader2, Minus, RefreshCw, X } from "lucide-react";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
 import { ProgressBar } from "@/shared/ui/progress-bar";
 import { RelativeTime } from "@/shared/ui/relative-time";
+import { CollapsibleSection } from "@/shared/ui/section-heading";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/utils";
@@ -29,16 +30,16 @@ export function ProviderSettings() {
   }, [updateStatus, resetUpdate]);
 
   return (
-    <fieldset className="grid gap-3">
-      <legend className="mb-3 w-full">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">Model Providers</span>
-          <Badge variant="count">{providers.length}</Badge>
+    <CollapsibleSection
+      title="Model Providers"
+      icon={Cpu}
+      badge={providers.length}
+      detail={
+        <>
           <Button
             type="button"
             variant="outline"
             size="xs"
-            className="ml-auto"
             aria-expanded={isShowingUsage}
             onClick={() => setIsShowingUsage(!isShowingUsage)}
           >
@@ -57,42 +58,45 @@ export function ProviderSettings() {
             {isUpdating ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             Update all
           </Button>
-        </div>
-      </legend>
-      {providers.map(({ id, name, status, enabled }) => (
-        <div key={id} className="grid gap-1">
-          <div className="flex min-h-6 items-center gap-2 text-sm">
-            <label className="flex items-center gap-2">
-              <Checkbox
-                checked={enabled}
-                disabled={status === "unavailable"}
-                onCheckedChange={(checked) => setEnabled(id, checked)}
-              />
-              <span className={status === "ready" ? undefined : "text-muted-foreground"}>
-                {name}
-              </span>
-            </label>
-            {status === "unavailable" && (
-              <span className="ml-auto text-xs text-muted-foreground">Not installed</span>
-            )}
-            {status !== "unavailable" && <ProviderVersion id={id} />}
-            {status === "signedOut" && (
-              <span className="text-xs text-muted-foreground">Signed out</span>
-            )}
-            {status === "ready" && enabled && <ProviderPlan id={id} />}
-            {status !== "unavailable" && (
-              <ProviderUpdate
-                id={id}
-                name={name}
-                disabled={!enabled}
-                onUpdate={() => updateProvider(id)}
-              />
-            )}
+        </>
+      }
+    >
+      <div className="grid gap-3">
+        {providers.map(({ id, name, status, enabled }) => (
+          <div key={id} className="grid gap-1">
+            <div className="flex min-h-6 items-center gap-2 text-sm">
+              <label className="flex items-center gap-2">
+                <Checkbox
+                  checked={enabled}
+                  disabled={status === "unavailable"}
+                  onCheckedChange={(checked) => setEnabled(id, checked)}
+                />
+                <span className={status === "ready" ? undefined : "text-muted-foreground"}>
+                  {name}
+                </span>
+              </label>
+              {status === "unavailable" && (
+                <span className="ml-auto text-xs text-muted-foreground">Not installed</span>
+              )}
+              {status !== "unavailable" && <ProviderVersion id={id} />}
+              {status === "signedOut" && (
+                <span className="text-xs text-muted-foreground">Signed out</span>
+              )}
+              {status === "ready" && enabled && <ProviderPlan id={id} />}
+              {status !== "unavailable" && (
+                <ProviderUpdate
+                  id={id}
+                  name={name}
+                  disabled={!enabled}
+                  onUpdate={() => updateProvider(id)}
+                />
+              )}
+            </div>
+            {isShowingUsage && status === "ready" && enabled && <ProviderPlanLimits id={id} />}
           </div>
-          {isShowingUsage && status === "ready" && enabled && <ProviderPlanLimits id={id} />}
-        </div>
-      ))}
-    </fieldset>
+        ))}
+      </div>
+    </CollapsibleSection>
   );
 }
 

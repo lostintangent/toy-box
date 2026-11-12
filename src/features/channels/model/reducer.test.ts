@@ -104,11 +104,13 @@ test("quiet tasks and model changes advance the cursor without creating transcri
 
 test("metadata messages update the public channel alongside transcript activity", () => {
   const actor = { type: "user" as const };
+  const avatar = { image: "/api/serve/machine/channels/channel/avatar-0123.png" };
   const events = [
     system(102, { type: "channel_renamed", actor, name: "Release" }),
     system(103, { type: "channel_purpose_changed", actor, purpose: "Ship it" }),
     system(104, { type: "channel_directory_changed", actor, directory: "/work" }),
     system(105, { type: "preview_changed", actor, preview: { kind: "url", url: "/preview" } }),
+    system(106, { type: "channel_avatar_changed", actor, avatar }),
   ];
   const changed = events.reduce(reduceChannelState, snapshot());
   expect(changed.channel).toMatchObject({
@@ -116,21 +118,22 @@ test("metadata messages update the public channel alongside transcript activity"
     purpose: "Ship it",
     directory: "/work",
     preview: { kind: "url", url: "/preview" },
-    latestSequence: 105,
+    avatar,
+    latestSequence: 106,
     updatedAt: events[0]!.message.timestamp,
   });
   const cleared = [
-    system(106, { type: "channel_purpose_changed", actor, purpose: null }),
-    system(107, { type: "channel_directory_changed", actor, directory: null }),
-    system(108, { type: "preview_changed", actor, preview: null }),
+    system(107, { type: "channel_purpose_changed", actor, purpose: null }),
+    system(108, { type: "channel_directory_changed", actor, directory: null }),
+    system(109, { type: "preview_changed", actor, preview: null }),
   ].reduce(reduceChannelState, changed);
   expect([cleared.channel.purpose, cleared.channel.directory, cleared.channel.preview]).toEqual([
     undefined,
     undefined,
     undefined,
   ]);
-  expect(cleared.messages.slice(-7).map(({ sequence }) => sequence)).toEqual([
-    102, 103, 104, 105, 106, 107, 108,
+  expect(cleared.messages.slice(-8).map(({ sequence }) => sequence)).toEqual([
+    102, 103, 104, 105, 106, 107, 108, 109,
   ]);
 });
 

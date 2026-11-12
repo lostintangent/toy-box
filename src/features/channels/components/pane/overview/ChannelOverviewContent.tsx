@@ -1,4 +1,4 @@
-import { useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   ChevronRight,
@@ -33,7 +33,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { SectionHeading } from "@/shared/ui/section-heading";
+import { CollapsibleSection } from "@/shared/ui/section-heading";
 import { RelativeTime } from "@/shared/ui/relative-time";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { ShowMore, useShowMore } from "@/shared/ui/show-more";
@@ -85,7 +85,7 @@ export function ChannelOverviewContent({
 
   return (
     <ScrollableFade axis="vertical" rootClassName="min-h-0 flex-1 bg-panel">
-      <div className="space-y-6 p-4">
+      <div className="space-y-6 p-4 [&>section+section]:border-t [&>section+section]:pt-6">
         <div className="space-y-3">
           {channel.purpose ? (
             <ChannelPurpose purpose={channel.purpose} />
@@ -109,10 +109,10 @@ export function ChannelOverviewContent({
           )}
         </div>
 
-        <OverviewSection
+        <CollapsibleSection
           title="Team members"
-          count={agents.length}
-          countToggle={{
+          badge={agents.length}
+          badgeToggle={{
             label: `Show only working agents (${agents.length} total)`,
             pressed: workingOnly,
             onToggle: () => setWorkingOnly((current) => !current),
@@ -155,13 +155,13 @@ export function ChannelOverviewContent({
             </span>
             Add an agent
           </button>
-        </OverviewSection>
+        </CollapsibleSection>
 
-        <OverviewSection
+        <CollapsibleSection
           title="Task list"
-          count={`${completedCount}/${channel.tasks.length}`}
+          badge={`${completedCount}/${channel.tasks.length}`}
           detail={diff && <TaskDiff diff={diff} />}
-          countToggle={{
+          badgeToggle={{
             label: `Show only in-progress tasks (${completedCount} of ${channel.tasks.length} complete)`,
             pressed: inProgressOnly,
             onToggle: () => setInProgressOnly((current) => !current),
@@ -173,9 +173,9 @@ export function ChannelOverviewContent({
             className="text-sm"
             emptyMessage={inProgressOnly ? "No tasks in progress." : "No tasks yet."}
           />
-        </OverviewSection>
+        </CollapsibleSection>
 
-        <OverviewSection title="Artifacts" count={artifacts.length}>
+        <CollapsibleSection title="Artifacts" badge={artifacts.length}>
           {artifacts.length > 0 ? (
             <div role="list" aria-label={`Artifacts in #${channel.name}`} className="space-y-2">
               {channelArtifactsNewestFirst(artifacts).map((artifact) => (
@@ -203,9 +203,9 @@ export function ChannelOverviewContent({
           ) : (
             <p className="text-sm text-muted-foreground italic">No artifacts shared yet.</p>
           )}
-        </OverviewSection>
+        </CollapsibleSection>
 
-        <OverviewSection title="Routines" count={routines.length}>
+        <CollapsibleSection title="Routines" badge={routines.length}>
           {routines.length > 0 ? (
             <div role="list" aria-label={`Routines in #${channel.name}`} className="space-y-2">
               {routines.map((routine) => (
@@ -215,7 +215,7 @@ export function ChannelOverviewContent({
           ) : (
             <p className="text-sm text-muted-foreground italic">No routines scheduled yet.</p>
           )}
-        </OverviewSection>
+        </CollapsibleSection>
       </div>
     </ScrollableFade>
   );
@@ -304,36 +304,5 @@ function RowMenu({ name, children }: { name: string; children?: ReactNode }) {
       </DropdownMenuTrigger>
       {children && <DropdownMenuContent align="end">{children}</DropdownMenuContent>}
     </DropdownMenu>
-  );
-}
-
-function OverviewSection({
-  detail,
-  children,
-  ...heading
-}: ComponentProps<typeof SectionHeading> & {
-  children: ReactNode;
-}) {
-  return (
-    <details
-      open
-      className="group/overview-section not-first-of-type:border-t not-first-of-type:pt-6"
-    >
-      <summary className="cursor-pointer list-none rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-        <SectionHeading
-          {...heading}
-          detail={
-            <>
-              {detail}
-              <ChevronRight
-                aria-hidden
-                className="size-3.5 text-muted-foreground transition-transform group-open/overview-section:rotate-90 motion-reduce:transition-none"
-              />
-            </>
-          }
-        />
-      </summary>
-      <div className="mt-3">{children}</div>
-    </details>
   );
 }

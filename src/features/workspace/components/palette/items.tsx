@@ -5,7 +5,6 @@ import {
   FileText,
   Folder,
   FolderGit2,
-  Hash,
   MessageSquare,
   Plus,
   Shapes,
@@ -19,6 +18,7 @@ import { createAppPane, type AppDefinition, type AppInstance } from "@apps/model
 import { automationCommands } from "@automations/commands";
 import type { Automation } from "@automations/model";
 import { channelCommands } from "@channels/commands";
+import { ChannelAvatar } from "@channels/components/ChannelAvatar";
 import { channelAttention, createChannelPane, type Channel } from "@channels/model";
 import { machineFile } from "@files/model";
 import { createEditorPane } from "@files/model/panes";
@@ -142,7 +142,7 @@ export function channelItem(
     id: pane.id,
     title: channel.name,
     group: "Channels",
-    icon: Hash,
+    icon: <ChannelAvatar avatar={channel.avatar} className="size-4" />,
     accessory: attention ? (
       <Status kind={attention}>{attention === "waiting" ? "Waiting for you" : updated}</Status>
     ) : (

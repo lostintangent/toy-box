@@ -1,6 +1,7 @@
 import { startTransition, useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
-import type { ThemedToken } from "shiki/core";
+import type { HighlightToken } from "streamdown";
+import { HighlightedTokens, highlightCode } from "@/shared/syntaxHighlight";
 import type { ToolCallProps } from "./types";
 import { useCurrentSession } from "../../../CurrentSessionContext";
 import {
@@ -9,14 +10,14 @@ import {
   type DiffHunk,
   type FileDiff,
 } from "../../../../model/fileDiffs";
-import { toRelativePath } from "@files/model/paths";
+import { fileExtension, toRelativePath } from "@files/model/paths";
 import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";
 
 type DiffLine = {
   type: DiffHunk["lines"][number]["type"];
   content: string;
-  tokens?: ThemedToken[];
+  tokens?: HighlightToken[];
 };
 
 interface DiffRenderSource {
@@ -73,25 +74,20 @@ function createDiffRenderSource(hunk: DiffHunk, path: string): DiffRenderSource 
   };
 }
 
-function renderTokens(tokens: ThemedToken[] | undefined, fallback: string) {
+function renderTokens(tokens: HighlightToken[] | undefined, fallback: string) {
   if (!tokens) return fallback || "\u00A0";
   if (tokens.length === 0) return "\u00A0";
 
-  return tokens.map((token, i) => (
-    // eslint-disable-next-line react/no-array-index-key -- tokens have no stable ID
-    <span key={i} style={{ color: token.color }}>
-      {token.content}
-    </span>
-  ));
+  return <HighlightedTokens tokens={tokens} />;
 }
 
 function stripTokensIndent(
-  tokens: ThemedToken[] | undefined,
+  tokens: HighlightToken[] | undefined,
   indent: number,
-): ThemedToken[] | undefined {
+): HighlightToken[] | undefined {
   if (!tokens || indent === 0) return tokens;
 
-  const result: ThemedToken[] = [];
+  const result: HighlightToken[] = [];
   let remaining = indent;
 
   for (const token of tokens) {
@@ -134,18 +130,17 @@ async function highlightDiffLines(
   path: string,
   minIndent: number,
 ): Promise<DiffLine[]> {
-  const { getLangFromPath, highlightCode } = await import("@/shared/syntaxHighlight");
-  const lang = getLangFromPath(path);
+  const language = fileExtension(path);
   const [oldHighlighted, newHighlighted] = await Promise.all([
-    highlightCode(oldText, lang),
-    highlightCode(newText, lang),
+    highlightCode(oldText, language),
+    highlightCode(newText, language),
   ]);
   let oldLineIndex = 0;
   let newLineIndex = 0;
 
   return diffLines.map((line): DiffLine => {
-    const oldTokens = stripTokensIndent(oldHighlighted?.[oldLineIndex]?.tokens, minIndent);
-    const newTokens = stripTokensIndent(newHighlighted?.[newLineIndex]?.tokens, minIndent);
+    const oldTokens = stripTokensIndent(oldHighlighted[oldLineIndex], minIndent);
+    const newTokens = stripTokensIndent(newHighlighted[newLineIndex], minIndent);
 
     switch (line.type) {
       case "context":

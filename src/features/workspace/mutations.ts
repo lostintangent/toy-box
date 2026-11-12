@@ -1,12 +1,31 @@
-import type { QueryClient } from "@tanstack/react-query";
+import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import {
+  restartServer,
   updateDraft as requestDraftUpdate,
+  updateServer,
   updateSettings as requestSettingsUpdate,
 } from "./server/functions";
 import { areSettingsEqual, CATALOG_SETTINGS, type Settings } from "./model/config/settings";
 import type { DraftKey } from "./model/state/drafts";
 import { workspaceQueries } from "./queries";
 import { applyWorkspaceEvent } from "./sync";
+
+// The default gcTime keeps a finished run's error or "Restarting…" for a reopened Settings.
+export const workspaceMutations = {
+  updateServer: () =>
+    mutationOptions({
+      mutationKey: ["workspace", "server", "update"],
+      mutationFn: () => updateServer(),
+      onSuccess: (server, _variables, _context, { client }) => {
+        client.setQueryData(workspaceQueries.server.queryKey, server);
+      },
+    }),
+  restartServer: () =>
+    mutationOptions({
+      mutationKey: ["workspace", "server", "restart"],
+      mutationFn: () => restartServer(),
+    }),
+};
 
 export function updateDraft(
   queryClient: QueryClient,

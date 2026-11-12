@@ -12,7 +12,7 @@ import { createDrawingGestureSource } from "./drawing/source";
 import { TextInsertion } from "./drawing/TextInsertion";
 import { insertImageFile, SVG_RASTER_IMAGE_TYPES } from "./images/images";
 import { ImageDropLayer } from "./images/ImageDropLayer";
-import { activeToolForGesture } from "./gestures/gesture";
+import { activeToolForGesture, isNavigating } from "./gestures/gesture";
 import { useGesture } from "./gestures/useGesture";
 import { SelectionLayer } from "./selection/SelectionLayer";
 import { useSelection } from "./selection/useSelection";
@@ -80,12 +80,16 @@ export function Editor({
   const gesture = useGesture({
     store,
     activeTool: effectiveTool,
-    sources: [viewportGestureSource, drawingGestureSource, selection.gestureSource],
+    sources: {
+      viewport: viewportGestureSource,
+      drawing: drawingGestureSource,
+      selection: selection.gestureSource,
+    },
     focusEditor,
   });
 
   const cancelEditing = useEffectEvent(() => {
-    if (!gesture.isOwnedBy("viewport")) gesture.cancel();
+    if (!isNavigating(store.state.gesture)) gesture.cancel();
 
     gesture.leaveHover();
   });
@@ -113,7 +117,7 @@ export function Editor({
   }
 
   function cancelCurrentAction() {
-    if (gesture.isActive()) gesture.cancel();
+    if (store.state.gesture) gesture.cancel();
     else store.actions.select([]);
   }
 

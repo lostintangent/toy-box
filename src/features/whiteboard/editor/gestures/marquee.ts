@@ -1,6 +1,5 @@
-import type { PointerEvent as ReactPointerEvent } from "react";
-import type { SvgDocument } from "../../document";
-import type { EditorStore, Point, Rect } from "../../store";
+import type { Point, Rect, SvgDocument } from "../../document";
+import type { EditorStore } from "../../store";
 import { measureElementFrame, selectionFrameBounds } from "../selection/frame";
 import type { GestureController } from "./gesture";
 
@@ -17,7 +16,7 @@ export function startMarqueeGesture({
   start: Point;
   additiveSelection: readonly SVGGraphicsElement[];
   select: (elements: readonly SVGGraphicsElement[]) => void;
-}): GestureController<ReactPointerEvent<HTMLDivElement>> | null {
+}): GestureController | null {
   if (!store.actions.beginGesture({ type: "marquee", rect: { ...start, width: 0, height: 0 } })) {
     return null;
   }

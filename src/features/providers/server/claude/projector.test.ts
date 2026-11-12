@@ -221,6 +221,19 @@ test("a recoverable API error neither fails nor interrupts its turn", () => {
     ]);
 });
 
+test("an API retry shows while the CLI backs off", () => {
+  const retry = native({
+    type: "system",
+    subtype: "api_retry",
+    attempt: 1,
+    max_retries: 10,
+    retry_delay_ms: 1000,
+    error_status: 429,
+    error: "rate_limit",
+  });
+  expect(createClaudeProjector()(retry)).toEqual([{ type: "status", status: "retrying" }]);
+});
+
 test("CLI-authored messages are neither output nor a model change, unlike real model switches", () => {
   const reply = (model: string, reasoningEffort: string) =>
     native({

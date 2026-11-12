@@ -1,4 +1,5 @@
 import {
+  channelAvatarSchema,
   agentHandleFromName,
   channelAgentMetadataSchema,
   isChannelSystemMessage,
@@ -43,6 +44,7 @@ import { createFileServeUrl } from "@files/model/paths";
 import { modelConfigurationSchema } from "@providers/model";
 import { inStateTransaction } from "@/server/database";
 import { nextCronOccurrence } from "@/shared/cron";
+import { NotFoundError, RefusalError } from "@/shared/server/http";
 import type { Worker } from "@workers/model";
 import { WorkerDatabase } from "@workers/server/database";
 import {
@@ -52,7 +54,7 @@ import {
   channelRoster,
   isChannelLead,
 } from "@channels/model/worker";
-import { channelAttachment } from "./attachments";
+import { channelAttachment, channelAvatar } from "./attachments";
 
 import { z } from "zod";
 
@@ -68,8 +70,6 @@ export type StoredChannel = Channel & {
 export function catalogEntry({ tasks: _tasks, ...entry }: StoredChannel): ChannelCatalogEntry {
   return entry;
 }
-
-export class ChannelInputError extends Error {}
 
 /** A committed public change; catalog metadata is present only when it changed. */
 export type ChannelChange = {
@@ -392,11 +392,12 @@ export class ChannelDatabase {
     }
     return inStateTransaction(this.db, async (db) => {
       const channel = await requireChannel(db, channelId);
+      // Message IDs are unique across Channels.
       const [row] = await db<ChannelMessageRow[]>`
-        SELECT * FROM channel_messages
-        WHERE channel_id = ${channelId} AND id = ${message.id}
+        SELECT * FROM channel_messages WHERE id = ${message.id}
       `;
       if (row) {
+        if (row.channel_id !== channelId) throw new RefusalError("Message ID already exists.");
         const replay = await recordChannelChange(db, channel, []);
         return { ...replay, message: messageFromRow(row, []), acknowledgedRequest: false };
       }
@@ -474,7 +475,7 @@ export class ChannelDatabase {
       const [row] = await db<Pick<ChannelRow, "bookmarks">[]>`
         SELECT bookmarks FROM channels WHERE id = ${channelId}
       `;
-      if (!row) throw new Error("Channel not found.");
+      if (!row) throw new NotFoundError("Channel");
       const current = channelBookmarksSchema.parse(JSON.parse(row.bookmarks));
       if (current.includes(sequence) === bookmarked) return null;
       if (bookmarked) {
@@ -482,8 +483,7 @@ export class ChannelDatabase {
           SELECT 1 FROM channel_messages
           WHERE channel_id = ${channelId} AND sequence = ${sequence} AND sender_type <> 'system'
         `;
-        if (!message)
-          throw new ChannelInputError("Bookmark a user or agent message in this Channel.");
+        if (!message) throw new RefusalError("Bookmark a user or agent message in this Channel.");
       }
       const bookmarks = bookmarked
         ? [...current, sequence].sort((left, right) => left - right)
@@ -710,7 +710,7 @@ async function advanceRevision(db: Bun.SQL, channelId: string): Promise<number> 
   const [channel] = await db<Pick<ChannelRow, "revision">[]>`
     UPDATE channels SET revision = revision + 1 WHERE id = ${channelId} RETURNING revision
   `;
-  if (!channel) throw new Error("Channel not found.");
+  if (!channel) throw new NotFoundError("Channel");
   return channel.revision;
 }
 
@@ -738,7 +738,7 @@ async function recordChannelChange<Event extends ChannelEvent>(
   const [row] = await db<Pick<ChannelRow, "revision">[]>`
     SELECT revision FROM channels WHERE id = ${channel.id}
   `;
-  if (!row) throw new Error("Channel not found.");
+  if (!row) throw new NotFoundError("Channel");
   return {
     channelId: channel.id,
     events,
@@ -753,11 +753,13 @@ async function updateChannelFields(
   actor: ChannelMessageActor,
 ) {
   if (changes.model && changes.model.provider !== current.model.provider) {
-    throw new ChannelInputError(
-      "The lead's provider cannot change without losing its session history.",
-    );
+    throw new RefusalError("The lead's provider cannot change without losing its session history.");
   }
-  const next = applyPatch(current, changes);
+  // A stored image is a name in the Channel's folder, which clients reach by its URL.
+  const next = applyPatch(current, {
+    ...changes,
+    avatar: changes.avatar && channelAvatar(current.id, changes.avatar),
+  });
   if (changes.tasks) {
     next.tasks = reconcileChannelTaskTiming(current.tasks, changes.tasks, new Date().toISOString());
   }
@@ -771,6 +773,9 @@ async function updateChannelFields(
     updates.push({ type: "channel_purpose_changed", actor, purpose: next.purpose ?? null });
   if (next.directory !== current.directory)
     updates.push({ type: "channel_directory_changed", actor, directory: next.directory ?? null });
+  // Like the Channel's row, the message records the stored name, and reading it serves the URL.
+  if (changes.avatar && !Bun.deepEquals(next.avatar, current.avatar))
+    updates.push({ type: "channel_avatar_changed", actor, avatar: changes.avatar });
   if (!Bun.deepEquals(next.preview, current.preview))
     updates.push({ type: "preview_changed", actor, preview: next.preview ?? null });
   if (!channelTasksComplete(current.tasks) && channelTasksComplete(next.tasks))
@@ -780,6 +785,7 @@ async function updateChannelFields(
   await db`
     UPDATE channels SET ${db({
       ...channelColumns(next),
+      ...(changes.avatar ? { avatar: JSON.stringify(changes.avatar) } : {}),
       updated_at: updatedAt,
     })}
     WHERE id = ${current.id}
@@ -846,7 +852,7 @@ async function appendMessage(
     WHERE id = ${channelId}
     RETURNING latest_sequence, revision
   `;
-  if (!channel) throw new Error("Channel not found.");
+  if (!channel) throw new NotFoundError("Channel");
   const message = build({
     sequence: channel.latest_sequence,
     timestamp: now,
@@ -1008,6 +1014,7 @@ async function listRoutines(db: Bun.SQL, channelId: string): Promise<ChannelRout
 type ChannelRow = {
   id: string;
   name: string;
+  avatar: string | null;
   purpose: string | null;
   directory: string | null;
   model: string;
@@ -1067,6 +1074,9 @@ function channelMetadataFromRow(row: ChannelRow): Omit<Channel, "tasks"> {
   return {
     id: row.id,
     name: row.name,
+    ...(row.avatar
+      ? { avatar: channelAvatar(row.id, channelAvatarSchema.parse(JSON.parse(row.avatar))) }
+      : {}),
     ...(row.purpose ? { purpose: row.purpose } : {}),
     ...(row.directory ? { directory: row.directory } : {}),
     model: modelConfigurationSchema.parse(JSON.parse(row.model)),
@@ -1099,7 +1109,7 @@ async function requireChannelMemberWorker(
 
 async function requireChannel(db: Bun.SQL, channelId: string): Promise<Channel> {
   const [row] = await readChannelRows(db, channelId);
-  if (!row) throw new Error("Channel not found.");
+  if (!row) throw new NotFoundError("Channel");
   return channelFromRow(row);
 }
 
@@ -1112,7 +1122,7 @@ async function assertMemberNameAvailable(
   if (!name) throw new Error("Channel members require a name.");
   const handle = agentHandleFromName(name);
   if (handle === agentHandleFromName(CHANNEL_LEAD_PROFILE.name)) {
-    throw new ChannelInputError(`The intrinsic lead already uses the @${handle} mention.`);
+    throw new RefusalError(`The intrinsic lead already uses the @${handle} mention.`);
   }
   const workers = await new WorkerDatabase(db).list({ type: "channel", channelId });
   const conflict = workers.find(
@@ -1122,8 +1132,7 @@ async function assertMemberNameAvailable(
       worker.name &&
       agentHandleFromName(worker.name) === handle,
   );
-  if (conflict)
-    throw new ChannelInputError(`${conflict.name} already uses the @${handle} mention.`);
+  if (conflict) throw new RefusalError(`${conflict.name} already uses the @${handle} mention.`);
 }
 
 function artifactFromRow(row: ChannelArtifactRow): ChannelArtifact {
@@ -1146,6 +1155,10 @@ function messageFromRow(row: ChannelMessageRow, reactions: ChannelReaction[]): C
   };
   if (row.sender_type === "system") {
     const content = channelSystemMessageContentSchema.parse(JSON.parse(row.content));
+    if (content.type === "channel_avatar_changed") {
+      const avatar = channelAvatar(row.channel_id, content.avatar);
+      return { ...common, sender: { type: "system" }, content: { ...content, avatar } };
+    }
     if (!("artifact" in content)) return { ...common, sender: { type: "system" }, content };
     const { file } = content.artifact;
     const address = { id: workspaceFileId(file), url: createFileServeUrl(file) };

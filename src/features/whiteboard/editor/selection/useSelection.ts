@@ -217,7 +217,6 @@ export function useSelection({
   }
 
   const gestureSource = {
-    owner: "selection",
     claim: claimSelectionGesture,
     hover: {
       update: updateHoveredHandle,
@@ -225,7 +224,7 @@ export function useSelection({
         setHoveredHandle(null);
       },
     },
-  } satisfies GestureSource<ReactPointerEvent<HTMLDivElement>>;
+  } satisfies GestureSource;
 
   return {
     cursor: selectionCursor(cursorGesture, hoveredHandle),

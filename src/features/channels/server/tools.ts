@@ -6,7 +6,7 @@ import {
   channelAgentIdentity,
   channelTaskElapsedMinutes,
   channelIdentitySchema,
-  channelMessageContentSchema,
+  conciseChannelMessageSchema,
   channelPathSchema,
   channelRepliesSchema,
   channelReactionKindSchema,
@@ -33,13 +33,10 @@ import {
 import { workspaceFileId } from "@files/model";
 import { resolveWorkspaceFile } from "@files/server/paths";
 import { channelAttachmentPath } from "./attachments";
+import { listLinkedChannels } from "./links";
 import { channelAgentPresence } from "@channels/model/presence";
 import { getSessionActivity } from "@sessions/server/state/activity";
 
-const conciseChannelMessageSchema = channelMessageContentSchema.max(
-  3_000,
-  "Channel messages must be at most 3,000 characters. Put durable long-form work in a shared artifact and send a concise summary. Do not split a document across messages.",
-);
 const agentReferenceSchema = durableIdSchema.describe("An agent ID or @mention.");
 const channelMemberCreationSchema = createChannelMemberInputSchema.omit({ channelId: true });
 const channelMemberCreationsSchema = z.array(channelMemberCreationSchema).min(1);
@@ -52,13 +49,26 @@ const shareChannelArtifactInputSchema = z
 
 const listChannelsTool = defineTool("list_channels", {
   description:
-    "Lists channels with their stable IDs, names, purposes, lead models, and working directories.",
+    "Lists channels with their stable IDs, names, avatars, purposes, lead models, and working directories.",
   parameters: z.object({}).strict(),
   handler: async () => {
     const { listChannels } = await import("@channels/server");
     return { channels: (await listChannels()).channels.map(channelForTool) };
   },
 });
+
+/** Leads also find the channels on the owner's linked servers, whose leads they can message. */
+const listLeadChannelsTool: typeof listChannelsTool = {
+  ...listChannelsTool,
+  handler: async () => {
+    const { listChannels } = await import("@channels/server");
+    const [local, linked] = await Promise.all([listChannels(), listLinkedChannels()]);
+    return {
+      channels: [...local.channels.map(channelForTool), ...linked.channels],
+      ...(linked.unavailable.length ? { unavailable: linked.unavailable } : {}),
+    };
+  },
+};
 
 const createChannelTool = defineTool("create_channel", {
   description:
@@ -241,11 +251,17 @@ const setChannelStatusTool = defineTool("set_agent_status", {
 
 const updateChannelTool = defineTool("update_channel", {
   description:
-    "Updates this channel's name, purpose, working directory, tasks, or preview. Only the lead can update it. Use an existing absolute directory, which applies to all agents at their next execution. Supply tasks only for initial planning or intentional whole-list replacement after read_channel with detail:'tasks' or 'full'; never replace the tree from unfinishedTasks. Use edit_channel_tasks for progress updates. Set preview to {kind:'url',url} or {kind:'screen',screenId} from list_screens. A screen reference opens an existing host display or window; it does not launch an app. Preserve root-relative preview URLs. Share file artifacts instead of using them as previews. Set purpose, directory, or preview to null to clear it.",
+    "Updates this channel's name, purpose, working directory, tasks, preview, or avatar. Only the lead can update it. Use an existing absolute directory, which applies to all agents at their next execution. Supply tasks only for initial planning or intentional whole-list replacement after read_channel with detail:'tasks' or 'full'; never replace the tree from unfinishedTasks. Use edit_channel_tasks for progress updates. Set preview to {kind:'url',url} or {kind:'screen',screenId} from list_screens. A screen reference opens an existing host display or window; it does not launch an app. Preserve root-relative preview URLs. Share file artifacts instead of using them as previews. Set purpose, directory, or preview to null to clear it.",
   parameters: updateChannelInputSchema,
   handler: async (args, sessionId) => {
     const { updateChannel } = await import("@channels/server");
-    return channelContextForTool(await updateChannel(sessionId, args));
+    const image = args.avatar && "image" in args.avatar && args.avatar.image;
+    const avatar = image
+      ? { image: (await resolveSessionPaths(sessionId, [image]))[0]! }
+      : undefined;
+    return channelContextForTool(
+      await updateChannel(sessionId, avatar ? { ...args, avatar } : args),
+    );
   },
 });
 
@@ -349,7 +365,7 @@ const removeArtifactTool = defineTool("remove_channel_artifact", {
 
 const messageChannelLeadTool = defineTool("message_channel_lead", {
   description:
-    "Privately messages another channel's lead, found with list_channels, and wakes it. Use it to ask for information or to coordinate overlapping work, not to hand off this channel's work. The exchange stays in the two leads' sessions, so post in your own channel when it changes this channel's work. Replies arrive as private messages naming the sender's channel.",
+    "Privately messages another channel's lead, found with list_channels, and wakes it. Use it to ask for information or to coordinate overlapping work, not to hand off this channel's work. The exchange stays in the two leads' sessions, so post in your own channel when it changes this channel's work. Replies arrive as private messages naming the sender's channel. A channel with a `server` is on another of the owner's Toy Box servers, where only your words arrive, so share work as pushed branches or in the message itself, never as paths, local URLs or artifacts.",
   parameters: channelIdentitySchema.extend({ content: conciseChannelMessageSchema }),
   handler: async (input, sessionId) => {
     const { messageChannelLead } = await import("@channels/server");
@@ -572,6 +588,7 @@ function artifactForTool({ file, title }: Pick<ChannelArtifact, "file" | "title"
 function channelForTool({
   id: channelId,
   name,
+  avatar,
   purpose,
   directory,
   model,
@@ -579,6 +596,7 @@ function channelForTool({
   return {
     channelId,
     name,
+    ...(avatar ? { avatar } : {}),
     ...(purpose ? { purpose } : {}),
     directory,
     model,
@@ -621,7 +639,7 @@ export const channelLeadTools = [
   setRoutineTool,
   deleteRoutineTool,
   removeArtifactTool,
-  listChannelsTool,
+  listLeadChannelsTool,
   messageChannelLeadTool,
 ];
 export const channelMemberTools = [

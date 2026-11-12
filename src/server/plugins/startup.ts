@@ -1,8 +1,10 @@
 // Boot-time server state: the work this process does once, independently of any
-// client connecting. Each task is isolated so one failure cannot skip the rest.
+// client connecting, and its cleanup when the server closes. Each task is isolated
+// so one failure cannot skip the rest.
 
 import { installBundledSkills } from "@sessions/server/bundledSkills";
 import { definePlugin } from "nitro";
+import { shutdown } from "@/shared/server/shutdown";
 
 const featureSkillFiles = import.meta.glob<string>("../../features/*/server/skills/**/*", {
   eager: true,
@@ -17,19 +19,21 @@ const featureStartups = import.meta.glob<() => void | VoidFunction | Promise<voi
 
 export default definePlugin((nitroApp) => {
   // Keep Toy Box-owned skills and their bundled resources current on disk.
-  void start("install bundled skills", () => installBundledSkills(featureSkillFiles));
+  void attempt("install bundled skills", () => installBundledSkills(featureSkillFiles));
 
   for (const [path, run] of Object.entries(featureStartups)) {
-    const started = start(`run ${path}`, run);
-    nitroApp.hooks.hook("close", async () => (await started)?.());
+    const started = attempt(`start ${path}`, run);
+    nitroApp.hooks.hook("close", () => attempt(`stop ${path}`, async () => (await started)?.()));
   }
+
+  // Ends open streams and sockets as a production server shuts down. Not on `close`,
+  // which development also runs whenever Vite restarts.
+  nitroApp.hooks.hook("shutdown", () => shutdown.abort());
 });
 
-function start<Result>(
+function attempt<Result>(
   description: string,
   run: () => Result | Promise<Result>,
 ): Promise<Result | void> {
-  return (async () => run())().catch((error) =>
-    console.error(`Unable to ${description} on startup:`, error),
-  );
+  return (async () => run())().catch((error) => console.error(`Unable to ${description}:`, error));
 }

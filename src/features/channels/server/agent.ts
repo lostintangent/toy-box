@@ -30,7 +30,9 @@ function buildChannelAgentInstructions(agent: ChannelAgentContext, channel: Chan
       ? `${agent.avatar.color} self-authored mark`
       : "Not chosen yet.";
   const onboardingProcess = agent.isLead
-    ? undefined
+    ? channel.purpose && !channel.avatar
+      ? "Before finishing, use update_channel to give this channel an avatar that reflects its purpose. Use list_channels to keep it distinct from the other channels' avatars."
+      : undefined
     : !agent.role && !agent.avatar
       ? "This is your first engagement. Before finishing, use update_member once to define your role: what you are accountable for, your bar, and judgment specific to your work. Then design a distinctive avatar that reflects how you contribute."
       : !agent.role

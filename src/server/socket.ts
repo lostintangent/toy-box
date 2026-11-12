@@ -1,5 +1,7 @@
 import type { Hooks } from "crossws";
 import { byFeature } from "@/shared/features";
+import { shutdown } from "@/shared/server/shutdown";
+import { isTrustedOrigin } from "./middleware/origin";
 
 /** A feature's socket service: the hooks serving one connection, bound to what its URL names. */
 export type SocketService = (request: Request) => Partial<Hooks> | Promise<Partial<Hooks>>;
@@ -17,34 +19,34 @@ export async function socketHooks(request: Request): Promise<Partial<Hooks>> {
   if (service === null || !Object.hasOwn(services, service))
     return refuse(400, "Unknown WebSocket service.");
 
-  if (!isSocketOrigin(request)) return refuse(403, "Socket connections must be same-origin.");
+  // Upgrades are GETs, which the origin middleware passes, and any page may open a socket to any host.
+  if (!isTrustedOrigin(request)) return refuse(403, "Cross-site sockets are refused.");
 
-  return (await (loaded[service] ??= services[service]()))(request);
+  const connect = await (loaded[service] ??= services[service]());
+  return closedAtShutdown(await connect(request));
+}
+
+/** A connection's hooks, closing it as the server shuts down so clients reconnect to the next one. */
+function closedAtShutdown(hooks: Partial<Hooks>): Partial<Hooks> {
+  let unlisten = () => {};
+  return {
+    ...hooks,
+    open(peer) {
+      const leave = () => peer.close(1001, "The server is shutting down.");
+      shutdown.signal.addEventListener("abort", leave, { once: true });
+      unlisten = () => shutdown.signal.removeEventListener("abort", leave);
+      const opened = hooks.open?.(peer);
+      if (shutdown.signal.aborted) leave();
+      return opened;
+    },
+    close(peer, details) {
+      unlisten();
+      return hooks.close?.(peer, details);
+    },
+  };
 }
 
 /** Hooks that turn a socket away before it opens. */
 export function refuse(status: number, reason: string): Partial<Hooks> {
   return { upgrade: () => new Response(reason, { status }) };
-}
-
-/**
- * Whether a socket may connect. Browsers let any page open a WebSocket to any host, with no CORS,
- * so a site open in the owner's own browser could otherwise drive their terminal or watch their
- * screens. Tailscale and localhost can't stop that, but a page can't forge its `Origin`, so a
- * browser connects only from this server's own origin.
- */
-export function isSocketOrigin(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  // Browsers always send one, so a request without is a native client, trusted like `/api`.
-  if (!origin) return true;
-
-  try {
-    const source = new URL(origin);
-    return (
-      (source.protocol === "http:" || source.protocol === "https:") &&
-      source.host === new URL(request.url).host
-    );
-  } catch {
-    return false;
-  }
 }

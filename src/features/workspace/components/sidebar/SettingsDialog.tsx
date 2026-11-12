@@ -1,12 +1,13 @@
-import type { ReactNode } from "react";
 import { Checkbox } from "@/shared/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { Separator } from "@/shared/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
-import { isHexColor } from "@/shared/utils";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
+import { LinkedServerSettings } from "@channels/components/LinkedServerSettings";
 import { ProviderSettings } from "@providers/components/ProviderSettings";
+import { ServerSettings } from "./ServerSettings";
+import { SettingField } from "./SettingField";
 
 const AUTO_FOCUS_ARTIFACT_OPTIONS = {
   always: "Always",
@@ -29,12 +30,11 @@ export function SettingsDialog({
 }) {
   const settings = useWorkspaceSelector((workspace) => workspace.settings);
   const updateSetting = useUpdateWorkspaceSetting();
-  const { accentColor, terminalShell, useWorktree, autoFocusArtifacts, defaultSessionView } =
-    settings;
+  const { terminalShell, useWorktree, autoFocusArtifacts, defaultSessionView } = settings;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[min(50rem,calc(100vh-2rem))] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
@@ -76,25 +76,6 @@ export function SettingsDialog({
                 </SelectContent>
               </Select>
             </SettingField>
-            <SettingField label="Accent color" htmlFor="accent-color">
-              <div className="relative flex h-9 items-center gap-2 rounded-md border border-input bg-transparent px-3 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
-                <span
-                  aria-hidden="true"
-                  className="size-4 shrink-0 rounded-full border border-black/10 bg-accent"
-                />
-                <code className="text-xs text-muted-foreground uppercase">{accentColor}</code>
-                <input
-                  id="accent-color"
-                  type="color"
-                  value={accentColor}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    if (isHexColor(value)) updateSetting("accentColor", value);
-                  }}
-                  className="absolute inset-0 size-full cursor-pointer opacity-0"
-                />
-              </div>
-            </SettingField>
             <SettingField label="Terminal shell" htmlFor="terminal-shell">
               <Input
                 key={terminalShell}
@@ -109,42 +90,26 @@ export function SettingsDialog({
                 spellCheck={false}
               />
             </SettingField>
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="use-worktree"
-              checked={useWorktree}
-              onCheckedChange={(checked) => {
-                updateSetting("useWorktree", checked);
-              }}
-            />
-            <label htmlFor="use-worktree" className="text-sm font-medium text-foreground">
-              Start new sessions in a worktree
-            </label>
+            <SettingField label="Start new sessions in a worktree" htmlFor="use-worktree">
+              <div className="flex h-9 items-center">
+                <Checkbox
+                  id="use-worktree"
+                  checked={useWorktree}
+                  onCheckedChange={(checked) => {
+                    updateSetting("useWorktree", checked);
+                  }}
+                />
+              </div>
+            </SettingField>
           </div>
           <Separator />
+          <ServerSettings />
+          <Separator />
           <ProviderSettings />
+          <Separator />
+          <LinkedServerSettings />
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function SettingField({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="grid gap-2">
-      <label htmlFor={htmlFor} className="text-sm font-medium text-foreground">
-        {label}
-      </label>
-      {children}
-    </div>
   );
 }

@@ -53,4 +53,23 @@ describe("history pipeline golden replay", () => {
     expect(state.status).toBe("idle");
     expect(state).toMatchSnapshot();
   });
+
+  test("a rate-limited subagent fails its agent call without ending the root turn", async () => {
+    const state = await replayCopilotHistory(
+      "history-golden-subagent-rate-limit",
+      await loadSessionFixture("subagentRateLimit"),
+    );
+
+    // The subagent's rate limit surfaces on its agent call...
+    const agents = agentToolCalls(state);
+    expect(agents).toHaveLength(1);
+    expect(agents[0].result).toMatchObject({ success: false });
+    expect(agents[0].result?.content).toContain("rate-limited (user_model_rate_limited)");
+
+    // ...rather than as the root turn's error, so the root's answer that follows it survives.
+    expect(state.messages.filter((m) => m.role === "assistant" && m.error)).toEqual([]);
+    expect(state.messages.at(-1)?.content).toContain("The subagent failed due to rate limiting");
+    expect(state.status).toBe("idle");
+    expect(state).toMatchSnapshot();
+  });
 });

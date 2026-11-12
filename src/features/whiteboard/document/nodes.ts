@@ -1,6 +1,11 @@
-import type { Fill, Point, Rect, ShapeTool, Size } from "../store";
+import { SVG_NAMESPACE } from "./source";
+import type { Fill } from "./style";
 
-const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+export type Point = { x: number; y: number };
+export type Size = { width: number; height: number };
+export type Rect = Point & Size;
+
+export type ShapeTool = "rectangle" | "ellipse" | "line" | "arrow";
 
 export type CreatedSvgShape = {
   element: SVGGraphicsElement;

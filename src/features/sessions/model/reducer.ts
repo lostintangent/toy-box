@@ -109,6 +109,7 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
       // its streamed preview; unidentified completions match the active reply.
       const reconcileLiveMessage =
         state.status === "thinking" ||
+        state.status === "retrying" ||
         state.status === "reasoning" ||
         state.status === "responding";
 
@@ -189,6 +190,8 @@ function applySessionEventCore(state: SessionState, event: SessionEvent): void {
         return;
       }
 
+      // A root call is the model's output, so the retry before it succeeded.
+      if (state.status === "retrying") state.status = "thinking";
       ensureAssistantMessage(state);
       upsertToolCallOnLastAssistant(state, {
         id: event.toolCallId,

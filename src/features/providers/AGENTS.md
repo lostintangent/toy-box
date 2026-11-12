@@ -70,9 +70,9 @@ Sessions owns public IDs, draft records, native identity, role policy, tools, in
 skill installation, artifact locations, connection retention, queues,
 completion, and broadcasts. It supplies providers with prepared skill directories,
 image inputs, question policy, and tools on creation and resume. Each tool arrives bound to
-the public session, validating its arguments and answering with text, so implementations only
-register it. Providers must not reach into the Sessions registry, runtime, persistence, or
-resource layout.
+the public session, validating its arguments and answering with text. Implementations register
+it and report a rejection as a native failed call that gives the model the error's message.
+Providers must not reach into the Sessions registry, runtime, persistence, or resource layout.
 
 Channel-owned Worker sessions receive composed Agent identity instructions and Channel tools like
 any other Session configuration. Providers receive no Agent-specific protocol or metadata.
@@ -85,8 +85,12 @@ supplies complete message text, and `reasoning` replaces the current reasoning t
 assembly belongs in each projector; canonical text never mixes incremental and cumulative semantics.
 `context_usage_changed` reports the root conversation's context occupancy against its model's window;
 subagent usage is not the parent's and is dropped.
-A provider's `end` notification ends native work; the session runtime drains its queue
-before publishing completion. Disconnecting a browser never disconnects the provider.
+The `retrying` status reports that a root model request failed and the provider is backing off to
+retry it, until the root's next output or the turn's end. A subagent's retries stay off the root,
+except Claude's CLI reports a background agent's usage-limit wait there.
+A provider's `end` notification ends the root's native work, and a subagent's failure surfaces on its
+agent call. The session runtime drains its queue before publishing completion. Disconnecting a
+browser never disconnects the provider.
 
 `ModelConfiguration.provider` and `Session.provider.id` select the provider;
 these shared value fields also distinguish models with the same name across catalogs.

@@ -31,13 +31,15 @@ import { deliverSessionMessage, waitForSessions } from "@sessions/server/runtime
 import type { SessionSystemMessage } from "@sessions/model";
 import type { Attachment } from "@/shared/attachments/model";
 import { getStateDatabase } from "@/server/database";
+import { NotFoundError, RefusalError } from "@/shared/server/http";
 import { broadcast } from "@workspace/server/events";
 import { deleteSavedDraft } from "@workspace/server/state/drafts";
 import { readSession } from "@sessions/server/state/sessions";
 import { deleteWorker, spawnWorker } from "@workers/server";
-import { ChannelDatabase, ChannelInputError, catalogEntry, type ChannelChange } from "./database";
-import { deleteChannelFiles, storeChannelAttachments } from "./attachments";
+import { ChannelDatabase, catalogEntry, type ChannelChange } from "./database";
+import { deleteChannelFiles, storeChannelAttachments, storeChannelAvatar } from "./attachments";
 import { publishChannelEvent, releaseChannelEvents } from "./eventLog";
+import { listLinkedChannels, messageLinkedChannelLead, type LinkedLeadMessageInput } from "./links";
 import { publishChannelNotification } from "./push";
 
 const CHANNEL_MESSAGE_LIMIT = 100;
@@ -89,7 +91,7 @@ export async function updateChannelMember(
   if (update.model) {
     const provider = (await readSession(agentId))?.provider?.id;
     if (provider && update.model.provider !== provider) {
-      throw new ChannelInputError(
+      throw new RefusalError(
         "A member's provider cannot change without losing its session history.",
       );
     }
@@ -108,9 +110,13 @@ export async function resolveChannelMember(channelId: string, reference: string)
 }
 
 /** The lead's update, recorded as its own. The user edits with `editChannel`. */
-export async function updateChannel(channelId: string, input: UpdateChannelInput) {
+export async function updateChannel(channelId: string, { avatar, ...input }: UpdateChannelInput) {
+  const stored =
+    avatar && "image" in avatar
+      ? { image: await storeChannelAvatar(channelId, avatar.image) }
+      : avatar;
   const database = new ChannelDatabase(await getStateDatabase());
-  const change = await database.updateChannel(channelId, input);
+  const change = await database.updateChannel(channelId, { ...input, avatar: stored });
   publishChannelChange(change);
   return change.channel;
 }
@@ -230,9 +236,9 @@ export async function postChannelMessage(
   const members = await database.listMembers(channelId);
   // Its ID and the message's become a folder path, so check them before writing files.
   if (sources?.length) {
-    if (!(await database.getChannel(channelId))) throw new Error("Channel not found.");
+    if (!(await database.getChannel(channelId))) throw new NotFoundError("Channel");
     if (input.id !== basename(input.id) || input.id === "." || input.id === "..") {
-      throw new ChannelInputError("A message with attachments needs an ID without slashes.");
+      throw new RefusalError("A message with attachments needs an ID without slashes.");
     }
   }
   const attachments = sources?.length
@@ -263,7 +269,7 @@ export async function postChannelMessage(
 export async function readChannel(channelId: string, beforeSequence?: number) {
   const database = new ChannelDatabase(await getStateDatabase());
   const channel = await database.getChannel(channelId);
-  if (!channel) throw new Error("Channel not found.");
+  if (!channel) throw new NotFoundError("Channel");
   const messages = await database.listMessagesBefore(
     channel.id,
     beforeSequence,
@@ -292,7 +298,7 @@ export async function readChannelUnread(agentId: string) {
   const database = new ChannelDatabase(await getStateDatabase());
   const agent = await requireChannelAgent(agentId);
   const channel = await database.getChannel(agent.channelId);
-  if (!channel) throw new Error("Channel not found.");
+  if (!channel) throw new NotFoundError("Channel");
   const messages = await database.listMessagesAfter(
     channel.id,
     agent.seenThrough,
@@ -320,7 +326,7 @@ async function assembleChannelRead(
     database.listArtifacts(channel.id),
     database.listRoutines(channel.id),
   ]);
-  if (!roster) throw new Error("Channel not found.");
+  if (!roster) throw new NotFoundError("Channel");
   const { lead, members } = roster;
   return {
     channel,
@@ -446,7 +452,8 @@ export async function wakeDueChannelAgents(now = new Date()): Promise<void> {
   }
 }
 
-/** Privately wakes another Channel's lead with a message that names the sender's Channel. */
+/** Privately wakes another Channel's lead with a message that names the sender's Channel. A Channel
+ *  this server doesn't hold is looked up on its linked servers. */
 export async function messageChannelLead(
   fromChannelId: string,
   { channelId, content }: { channelId: string; content: string },
@@ -458,11 +465,35 @@ export async function messageChannelLead(
     database.getChannel(fromChannelId),
     database.getChannel(channelId),
   ]);
-  if (!sender || !target) throw new Error("Channel not found.");
+  if (!sender) throw new NotFoundError("Channel");
+  if (!target) return messageLinkedChannelLead(sender.id, { channelId, content });
   await wakeChannelAgent(channelId, {
     type: "channel_lead_message",
     channelId: sender.id,
     channelName: sender.name,
+    content,
+  });
+}
+
+/** Wakes a lead with a message from a lead on a linked server. The sender must be a channel this
+ *  server finds on its own linked servers, so it's named as this server's owner configured it. */
+export async function receiveChannelLeadMessage({
+  channelId,
+  from,
+  content,
+}: LinkedLeadMessageInput): Promise<void> {
+  const target = await new ChannelDatabase(await getStateDatabase()).getChannel(channelId);
+  if (!target) throw new NotFoundError("Channel");
+  const sender = (await listLinkedChannels()).channels.find(
+    (channel) => channel.channelId === from,
+  );
+  if (!sender)
+    throw new RefusalError("This server can't find the sending channel on its linked servers.");
+  await wakeChannelAgent(channelId, {
+    type: "channel_lead_message",
+    channelId: sender.channelId,
+    channelName: sender.name,
+    server: sender.server,
     content,
   });
 }
@@ -502,7 +533,7 @@ export async function shareChannelArtifact(
 ) {
   const database = new ChannelDatabase(await getStateDatabase());
   const channel = await database.getChannel(channelId);
-  if (!channel) throw new Error("Channel not found.");
+  if (!channel) throw new NotFoundError("Channel");
   const absolutePath = isAbsolute(path)
     ? resolve(path)
     : channel.directory

@@ -179,6 +179,9 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       );
       return parentToolCallId ? [{ type: "reasoning", content: "", parentToolCallId }] : [];
     }
+    case "model.call_failure":
+      // The CLI backs off and retries a failed root call, or ends the turn with session.error.
+      return event.data.source === "top_level" ? [{ type: "status", status: "retrying" }] : [];
     case "assistant.idle":
       return event.agentId ? [] : [{ type: "status", status: "background" }];
     case "session.compaction_complete":
@@ -192,7 +195,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         : [{ type: "context_usage_changed", usage: { tokens, tokenWindow } }];
     }
     case "session.error":
-      return [{ type: "end", reason: "error", error: event.data.message }];
+      return event.agentId ? [] : [{ type: "end", reason: "error", error: event.data.message }];
     case "session.start":
     case "session.resume":
       return projectModel(

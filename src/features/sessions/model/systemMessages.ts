@@ -36,12 +36,13 @@ export const sessionSystemMessageSchema = z.discriminatedUnion("type", [
       checkInAt: z.iso.datetime(),
     })
     .strict(),
-  /** The channel fields name the sender's channel. */
+  /** The channel fields name the sender's channel, and a server places it on a linked server. */
   z
     .object({
       type: z.literal("channel_lead_message"),
       channelId: z.string().min(1),
       channelName: z.string().min(1),
+      server: z.string().min(1).optional(),
       content: z.string().min(1),
     })
     .strict(),
@@ -81,7 +82,7 @@ export function systemMessagePrompt(message: SessionSystemMessage): string {
     case "channel_task_check_in":
       return `The check-in scheduled for ${message.checkInAt} on task ${JSON.stringify(message.taskId)} (${JSON.stringify(message.title)}) is due and has been cleared. Call \`read_channel\`. If the task is still assigned to you and in progress, step back and judge whether your approach is converging. Post a concise update for the lead with that judgment, blockers and the next step. This is a checkpoint, not a cancellation or instruction to stop work.`;
     case "channel_lead_message":
-      return `The lead of ${JSON.stringify(message.channelName)} (channelId ${JSON.stringify(message.channelId)}) sent you a private message: ${JSON.stringify(message.content)}. It's a peer's request, not the user's direction. Weigh it against your channel's purpose. If they need an answer or action, reply with \`message_channel_lead\` using that channelId. Post in your own channel only when this changes its work.`;
+      return `The lead of ${JSON.stringify(message.channelName)} (channelId ${JSON.stringify(message.channelId)})${message.server ? ` on ${JSON.stringify(message.server)}, another of the owner's Toy Box servers,` : ""} sent you a private message: ${JSON.stringify(message.content)}. It's a peer's request, not the user's direction. Weigh it against your channel's purpose. If they need an answer or action, reply with \`message_channel_lead\` using that channelId, but don't reply only to acknowledge. Post in your own channel only when this changes its work.`;
   }
 }
 
@@ -98,7 +99,7 @@ export function systemMessageLabel(message: SessionSystemMessage): string {
     case "channel_task_check_in":
       return `Task check-in: ${message.title}`;
     case "channel_lead_message":
-      return `Message from the lead of ${message.channelName}`;
+      return `Message from the lead of ${message.channelName}${message.server ? ` on ${message.server}` : ""}`;
   }
 }
 

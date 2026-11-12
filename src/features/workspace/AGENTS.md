@@ -1,10 +1,12 @@
 # Workspace
 
-Workspace is Toy Box's application composition feature. It owns two sibling capabilities:
+Workspace is Toy Box's application composition feature. It owns three sibling capabilities:
 
 - the shared projection and update plane: workspace's own shared facts, plus the update stream
   and sync that carry every feature's events to that feature's caches without Workspace becoming
-  another source of truth; and
+  another source of truth;
+- the server resource: its identity and name, the release it runs, and updating and restarting
+  into a newer one; and
 - the browser-local shell that composes feature-owned panes into the desktop, mobile, and Hyper
   layouts.
 
@@ -52,6 +54,11 @@ Each server value has one owning cache; cross-feature consumers compose those ca
 Provider availability and pin changes are published after persistence, then invalidate session
 catalog membership on every client. Provider changes also invalidate the provider catalog.
 Other preferences retain their existing optimistic updates.
+The update schema omits `serverId` and `serverLinks`. Only Channels' link verbs write links, after
+checking that the server answers, through `updateSettings`' function form, which derives the change
+from the current settings inside the settings queue, so concurrent links aren't lost.
+`serverName` is trimmed and at most 64 characters. Its rule, like `accentColor`'s, sits on the
+field, so Settings, `update_settings` and `PATCH /api/v1/server` share it.
 `defaultSessionView` seeds each newly opened active session pane, including historical sessions,
 without changing the view in already-mounted panes. It defaults to All messages; each pane can
 independently switch to Responses without writing the preference.
@@ -87,8 +94,10 @@ before its SSR loaders run. The stream's opening message checks that revision wi
 request: an unchanged initial connection reuses the hydrated queries, while a mismatch refreshes
 the aggregate snapshot and every feature's caches in the background. Reconnects always refresh, including after page visibility changes, so native history
 changed outside Toy Box is rediscovered. Subsequent events update their owning Query caches. The revision survives HMR,
-changes after a server restart, and requires no event buffer. Events announce accepted changes;
-they are synchronization hints, not durable truth or a replay log.
+changes after a server restart, and requires no event buffer. The opening message also carries
+the server's release, and a tab built from another release reloads onto it. That happens only when
+the server restarts onto a different release, because HMR keeps both in step during development.
+Events announce accepted changes; they are synchronization hints, not durable truth or a replay log.
 
 Each stream is also the tab's **connection**. Its opening message carries a connection id, which
 [`sync.ts`](sync.ts) keeps as `workspaceConnection`. A feature attaches a server resource the tab
@@ -97,8 +106,8 @@ and hands the tab a lease; the tab ends it early with the `releaseLease` RPC, an
 when the stream does. Reconnecting yields a new id, and holders attach again.
 
 [`server/functions.ts`](server/functions.ts) validates remote ingress for hydration, shared
-workspace actions, and settings updates, then delegates to the plain operations in
-[`server/state/`](server/state). That module assembles the cross-feature snapshot and owns only
+workspace actions, settings updates, and the server's release, then delegates to plain operations.
+[`server/state/`](server/state) assembles the cross-feature snapshot and owns only
 workspace-wide coordination: drafts, settings, and environment capabilities.
 [`server/tools.ts`](server/tools.ts) exposes Workspace-owned settings updates to model sessions.
 [`server/events.ts`](server/events.ts) owns the process-local fan-out behind the shared
@@ -111,6 +120,41 @@ so readers simply await `getStateDatabase()`. Tests serve their own with `openTe
 
 Browser-local pane topology, focus, layout, and client identity are deliberately absent from the
 server projection.
+
+## The server
+
+[`server/installation.ts`](server/installation.ts) owns the server resource. `getServer` answers
+`{ id, name, accentColor, version, installedVersion, links }`: the id, accent color and links come
+from settings, and the name is `serverName` or else the environment's `computerName`, macOS's
+Computer Name read once at startup. Workspace's startup makes the id, so reading the server has no
+side effects.
+
+The module also owns the release this server runs and the one installed on disk. `version` is
+`package.json`'s. `installedVersion` is what the `toy-box` command on the server's PATH prints for
+`--version`, and `null` when that command doesn't run or no package manager owns this install. It's
+read once and again after each update, so a release installed from a terminal shows after the next
+update or restart. `updateCommand` decides ownership from the binary's real location, so `bun dev`,
+npx and bunx runs, project dependencies, and downloaded binaries have none.
+**A restart is pending exactly while `installedVersion` is set and differs from `version`.** Every
+client applies that rule, and nothing else records it.
+
+`updateServer` runs the owning manager, and concurrent requests share one run. A failure reports
+the manager's own error lines. `restartServer` hands off to the shutdown described in the
+[CLI guide](../../cli/AGENTS.md#restart).
+
+Native clients use the `/api/v1/server` resource: `GET` answers it,
+`PATCH { name?, accentColor? }` changes only the details it names and answers it, `POST /update`
+answers it once the install finishes, and `POST /restart` answers 202 before the server goes down.
+Its `/links` belong to Channels and are described with linked servers in the
+[Channels guide](../channels/AGENTS.md). The web app reaches the same operations through server
+functions.
+[`components/sidebar/ServerSettings.tsx`](components/sidebar/ServerSettings.tsx) is Settings' Server
+Details: its Name and Accent color fields edit `serverName` and `accentColor` from the workspace
+settings, with `computerName` as the name's placeholder, so either change shows live in every tab.
+The heading's version badge comes from `workspaceQueries.server`, read only while Settings is open.
+Its one button updates, or restarts while a restart is pending, so Restart appears on every device
+whichever one updated. Both requests are `workspaceMutations` in the query client's mutation cache,
+so closing Settings doesn't lose one in flight, and reopening shows its progress or error.
 
 ## Pane model
 
@@ -264,7 +308,12 @@ Inbox Send does, then opens the running session's pane; "Run in Inbox" dispatche
 
 - [`router.tsx`](router.tsx) constructs the TanStack Start router, while [`routes.ts`](routes.ts)
   assembles the application route tree from Workspace's routes and every feature's `routes/`
-  folder, which it discovers and mounts under `/api`.
+  folder, which it discovers and mounts under `/api`. Every `/api/v1` handler that isn't a stream
+  answers through `respond` in [`src/shared/server/http.ts`](../../shared/server/http.ts): a value
+  as `no-store` JSON, nothing as 204, and a `Response` as itself. A malformed request answers 400
+  "Invalid request.", a `NotFoundError` 404, and any other `RefusalError` 422, each as `{ error }`
+  in words a client can show. Anything else is logged and answers 500 "Unable to …", never an
+  internal message.
 - [`routes/__root.tsx`](routes/__root.tsx) owns the document shell, global presentation providers,
   and initial Workspace hydration. Its stylesheet is co-located in the same route boundary.
 - [`routes/index.tsx`](routes/index.tsx) is the main composition root. It derives root panes

@@ -1,11 +1,22 @@
-import type { Fill, HistoryEntry, StyleChange } from "../store";
 import type { SvgDocument, SvgDocumentSnapshot } from "./document";
 import {
   createAttributesHistoryEntry,
   createCompoundHistoryEntry,
   snapshotAttribute,
+  type HistoryEntry,
 } from "./history";
 import { resolveSvgFillPattern } from "./nodes";
+
+export type Fill = {
+  color: string;
+  style: "solid" | "diagonal" | "cross" | "dots";
+};
+
+export type StyleChange =
+  | { property: "color"; value: string }
+  | { property: "strokeWidth"; value: number }
+  | { property: "fill"; value: Fill | null }
+  | { property: "fontSize"; value: number };
 
 type ElementStyle = {
   colorElements: readonly SVGGraphicsElement[];

@@ -26,6 +26,7 @@ const unions = {
   ],
   ServerRequest: ["item/tool/call", "item/tool/requestUserInput"],
   ServerNotification: [
+    "error",
     "thread/started",
     "thread/closed",
     "thread/name/updated",

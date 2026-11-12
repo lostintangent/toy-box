@@ -1,6 +1,6 @@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/shared/ui/dropdown-menu";
 import { cn } from "@/shared/utils";
-import type { Fill } from "../store";
+import type { Fill } from "../document";
 import { ChevronDown } from "lucide-react";
 
 type FillPickerProps = {

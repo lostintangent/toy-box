@@ -1,3 +1,5 @@
+import { shutdown } from "./shutdown";
+
 type SseStart<T> = (
   send: (event: T) => void,
   close: () => void,
@@ -9,6 +11,8 @@ const HEARTBEAT_CHUNK = encoder.encode(": keepalive\n\n");
 const RETRY_CHUNK = encoder.encode("retry: 1000\n\n");
 
 export function createSseResponse<T>(request: Request, start: SseStart<T>): Response {
+  // A stream ends when its client disconnects or the server shuts down.
+  const signal = AbortSignal.any([request.signal, shutdown.signal]);
   let dispose = () => {};
 
   const stream = new ReadableStream<Uint8Array>({
@@ -23,7 +27,7 @@ export function createSseResponse<T>(request: Request, start: SseStart<T>): Resp
 
         cleanup();
         if (heartbeatTimer) clearInterval(heartbeatTimer);
-        request.signal.removeEventListener("abort", onAbort);
+        signal.removeEventListener("abort", onAbort);
 
         if (closeController) {
           try {
@@ -43,8 +47,8 @@ export function createSseResponse<T>(request: Request, start: SseStart<T>): Resp
       // Install cancellation before route setup runs; setup may await imports or
       // resources, and the client can disconnect during that window.
       dispose = () => close(false);
-      request.signal.addEventListener("abort", onAbort, { once: true });
-      if (request.signal.aborted) {
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) {
         close(true);
         return;
       }

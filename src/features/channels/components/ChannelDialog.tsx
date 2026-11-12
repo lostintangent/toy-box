@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Hash, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import {
   createChannelInputSchema,
   createChannelPane,
   editChannelInputSchema,
   type Channel,
 } from "@channels/model";
+import { ChannelAvatar } from "@channels/components/ChannelAvatar";
 import { channelMutations } from "@channels/mutations";
 import { ModelConfigurationPicker } from "@providers/components/ModelPicker";
 import { areModelConfigurationsEqual, type ModelConfiguration } from "@providers/model";
@@ -91,7 +92,7 @@ export function ChannelDialog({ channel, open, onOpenChange }: ChannelDialogProp
       <DialogContent className="max-h-[min(50rem,calc(100vh-2rem))] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Hash className="size-5 text-cyan-600" />{" "}
+            <ChannelAvatar avatar={initialChannel?.avatar} className="size-5" />{" "}
             {initialChannel ? "Edit channel" : "New channel"}
           </DialogTitle>
           <DialogDescription>

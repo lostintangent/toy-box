@@ -10,13 +10,12 @@ import { cn } from "@/shared/utils";
 import { useState, useSyncExternalStore } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { shallow } from "@tanstack/store";
-import { readElementStyle, type SvgDocument } from "../document";
+import { readElementStyle, type ShapeTool, type SvgDocument } from "../document";
 import {
   canEditDocument,
   resolveActiveTool,
   styleColor,
   type EditorStore,
-  type ShapeTool,
   type Tool,
 } from "../store";
 import {

@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { usePageVisibility } from "@/shared/hooks/usePageVisibility";
 import { applyWorkspaceEvent, refreshWorkspace, workspaceConnection } from "@workspace/sync";
 import type { WorkspaceEvent } from "@workspace/model/events";
+import { version } from "../../../../package.json";
 
 /** Keeps shared Query projections aligned with the workspace update stream. */
 export function useWorkspaceSync(ssrRevision?: string): void {
@@ -27,6 +28,8 @@ export function useWorkspaceSync(ssrRevision?: string): void {
       try {
         const event = JSON.parse(message.data) as WorkspaceEvent;
         if (event.type === "workspace.connected") {
+          // A server that restarted onto another release serves a different client.
+          if (event.version !== version) return location.reload();
           workspaceConnection.set(event.connection);
           const unchanged = initialRevision.current === event.revision;
           // Only the initial connection may trust SSR. Reconnects also discover

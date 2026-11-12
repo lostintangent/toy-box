@@ -1,5 +1,10 @@
 import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
-import type { CopilotClient, SessionEvent as SdkEvent } from "@github/copilot-sdk";
+import type {
+  CopilotClient,
+  SessionConfig,
+  SessionEvent as SdkEvent,
+  ToolInvocation,
+} from "@github/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
 import * as client from "./client";
 import { copilotProvider, toSubscription } from "./provider";
@@ -184,6 +189,40 @@ test("resume requests the configured model and tool loading from the native sess
       onEvent: expect.any(Function),
     }),
   );
+});
+
+test("a rejected tool call fails natively with its reason, and a successful one returns its text", async () => {
+  const resumeSession = mock(async (_id: string, _configuration: SessionConfig) => ({
+    sessionId: "native",
+  }));
+  const start = spyOn(client, "startCopilotClient").mockResolvedValue({
+    resumeSession,
+  } as unknown as CopilotClient);
+  onTestFinished(() => start.mockRestore());
+
+  await copilotProvider.resume("native", {
+    directory: "/repo",
+    allowUserQuestions: false,
+    tools: [
+      {
+        name: "refuses",
+        handler: async () => {
+          throw new Error("The lead is offline.");
+        },
+      },
+      { name: "answers", handler: async () => "Sent." },
+    ],
+    instructions: "",
+    skillDirectories: [],
+  });
+
+  const [refuses, answers] = resumeSession.mock.calls[0][1].tools!;
+  const invocation = {} as ToolInvocation;
+  expect(await refuses.handler!({}, invocation)).toEqual({
+    textResultForLlm: "The lead is offline.",
+    resultType: "failure",
+  });
+  expect(await answers.handler!({}, invocation)).toBe("Sent.");
 });
 
 test("read-only history preserves attachments and projector state across native pages", async () => {

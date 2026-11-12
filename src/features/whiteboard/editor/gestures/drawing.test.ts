@@ -48,7 +48,7 @@ function pointer(x: number, y: number) {
 
 function finish(
   store: ReturnType<typeof createEditorStore>,
-  gesture: GestureController<React.PointerEvent<HTMLDivElement>>,
+  gesture: GestureController,
   outcome: GestureOutcome,
 ) {
   gesture.finish(outcome);

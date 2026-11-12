@@ -1,7 +1,7 @@
 // Preserves native element transforms while applying screen-space selection gestures.
 
 import { createAttributesHistoryEntry, snapshotAttribute } from "../../document/history";
-import type { HistoryEntry, Point } from "../../store";
+import type { HistoryEntry, Point } from "../../document";
 import type { SelectionFrame, SelectionHandle } from "./frame";
 
 export type Matrix2D = {

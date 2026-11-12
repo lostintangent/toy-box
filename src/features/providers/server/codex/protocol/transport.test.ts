@@ -27,7 +27,7 @@ describe("Codex bidirectional transport", () => {
 
     rpc.receive('rted","params":{"threadId":"large"}}\n');
     expect(notifications).toEqual([{ method: "turn/started", params: { threadId: "large" } }]);
-    rpc.close();
+    void rpc.close();
   });
 
   test("host callbacks can issue RPC without blocking incoming responses", async () => {
@@ -45,7 +45,7 @@ describe("Codex bidirectional transport", () => {
     rpc.receive('{"id":1,"result":{}}\n');
     await callback;
     expect(JSON.parse(written[1]!)).toEqual({ id: "host-call", result: { success: true } });
-    rpc.close();
+    void rpc.close();
   });
 
   test("request failures are isolated and a closed process rejects all pending work", async () => {
@@ -54,7 +54,7 @@ describe("Codex bidirectional transport", () => {
     const second = rpc.request("thread/read", { threadId: "present" });
     rpc.receive('{"id":1,"error":{"code":-32000,"message":"thread not found"}}\n');
     await expect(first).rejects.toBeInstanceOf(SessionNotFoundError);
-    rpc.close(new Error("Process exited"));
+    void rpc.close(new Error("Process exited"));
     await expect(second).rejects.toThrow("Process exited");
     // An interrupted submission is ambiguous. Only subsequent, unsubmitted
     // operations are safe for the shared runtime to retry on a new connection.
@@ -72,6 +72,6 @@ describe("Codex bidirectional transport", () => {
     const rpc = new CodexTransport((line) => written.push(line));
     rpc.receive('{"id":7,"method":"future/interactiveRequest","params":{}}\n');
     expect(JSON.parse(written[0]!)).toMatchObject({ id: 7, error: { code: -32601 } });
-    rpc.close();
+    void rpc.close();
   });
 });

@@ -1,11 +1,12 @@
 import { startTransition, useEffect, useState } from "react";
 import { Check, Copy, TriangleAlert } from "lucide-react";
-import { highlightCode, type HighlightedLine } from "@/shared/syntaxHighlight";
+import type { HighlightToken } from "streamdown";
+import { HighlightedTokens, highlightCode } from "@/shared/syntaxHighlight";
 import { cn } from "@/shared/utils";
 
 type HighlightedSource = {
   key: string;
-  lines: HighlightedLine[] | null;
+  lines: HighlightToken[][];
 };
 
 /** Render authored pseudocode without implying production implementation. */
@@ -27,15 +28,10 @@ export function PseudocodeBlock({
 
   useEffect(() => {
     let cancelled = false;
-    void highlightCode(content, language ?? "text")
-      .then((nextLines) => {
-        if (cancelled) return;
-        startTransition(() => setHighlighted({ key: sourceKey, lines: nextLines }));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        startTransition(() => setHighlighted({ key: sourceKey, lines: null }));
-      });
+    void highlightCode(content, language ?? "text").then((nextLines) => {
+      if (cancelled) return;
+      startTransition(() => setHighlighted({ key: sourceKey, lines: nextLines }));
+    });
     return () => {
       cancelled = true;
     };
@@ -97,21 +93,13 @@ export function PseudocodeBlock({
   );
 }
 
-function HighlightedLines({ lines }: { lines: HighlightedLine[] }) {
-  return lines.map((line, lineIndex) => (
+function HighlightedLines({ lines }: { lines: HighlightToken[][] }) {
+  return lines.map((tokens, lineIndex) => (
     <span
       // eslint-disable-next-line react/no-array-index-key -- highlighted rows preserve exact source order
       key={lineIndex}
     >
-      {line.tokens.map((token, tokenIndex) => (
-        <span
-          // eslint-disable-next-line react/no-array-index-key -- Shiki tokens have no stable identity
-          key={tokenIndex}
-          style={{ color: token.color }}
-        >
-          {token.content}
-        </span>
-      ))}
+      <HighlightedTokens tokens={tokens} />
       {lineIndex < lines.length - 1 ? "\n" : null}
     </span>
   ));

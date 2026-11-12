@@ -9,7 +9,8 @@ here. No additional OpenAI npm SDK or Toy Box login is required.
 
 - `protocol/transport.ts` owns JSONL JSON-RPC framing, correlated responses, independent native
   requests/notifications, process failure, and shutdown. It must continue reading while
-  a host tool or user question waits for a response.
+  a host tool or user question waits for a response. Closing resolves once the app-server has
+  exited, so shutdown leaves no zombie.
 - `history.ts` reads full native history without resuming or acquiring a writer. The provider
   projects it for snapshots; the connection also uses it to resolve rewind boundaries.
 - `connection.ts` owns one native thread attachment, model selection, turn identity,

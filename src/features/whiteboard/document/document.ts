@@ -1,7 +1,17 @@
 import { parseSvgDocument, serializeSvgDocument, SVG_NAMESPACE, validateSvgRoot } from "./source";
-import { createChildrenHistoryEntry, createCompoundHistoryEntry } from "./history";
-import { createSvgImage, createSvgText, type SvgEraserNodes } from "./nodes";
-import type { HistoryEntry, Point, Rect, Size } from "../store";
+import {
+  createChildrenHistoryEntry,
+  createCompoundHistoryEntry,
+  type HistoryEntry,
+} from "./history";
+import {
+  createSvgImage,
+  createSvgText,
+  type Point,
+  type Rect,
+  type Size,
+  type SvgEraserNodes,
+} from "./nodes";
 
 const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 const DEFAULT_PAGE: Rect = { x: 0, y: 0, width: 800, height: 600 };

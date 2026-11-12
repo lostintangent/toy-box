@@ -44,6 +44,9 @@ export function createCodexProjector(threadId: string) {
         turn = params.turn;
         itemIndex = 0;
         return [{ type: "status", status: "thinking" }];
+      case "error":
+        // A failure that won't retry ends the turn through turn/completed.
+        return params.willRetry ? [{ type: "status", status: "retrying" }] : [];
       case "turn/completed": {
         const { turn } = params;
         for (const [index, item] of turn.items.entries())

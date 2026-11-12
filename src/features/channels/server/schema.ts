@@ -106,4 +106,7 @@ export default [
   `
     DROP INDEX IF EXISTS idx_channel_messages_sender;
   `,
+  `
+    ALTER TABLE channels ADD COLUMN avatar TEXT CHECK (avatar IS NULL OR json_valid(avatar));
+  `,
 ];

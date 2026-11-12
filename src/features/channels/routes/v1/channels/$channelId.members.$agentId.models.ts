@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getChannelMemberProvider } from "@channels/server";
-import { notFound, respond } from "@channels/server/http";
 import { getModelChoices } from "@providers/server";
+import { NotFoundError, respond } from "@/shared/server/http";
 
 /** Model choices stay within the member's provider; a null default does not forbid inheritance. */
 export const Route = createFileRoute("/api/v1/channels/$channelId/members/$agentId/models")({
@@ -10,11 +10,8 @@ export const Route = createFileRoute("/api/v1/channels/$channelId/members/$agent
       GET: ({ params: { channelId, agentId } }) =>
         respond(`list models for member ${agentId}`, async () => {
           const provider = await getChannelMemberProvider(channelId, agentId);
-          if (provider === undefined) return notFound("Channel member");
-          return Response.json(
-            { provider, ...(await getModelChoices(provider ?? undefined)) },
-            { headers: { "Cache-Control": "no-store" } },
-          );
+          if (provider === undefined) throw new NotFoundError("Channel member");
+          return { provider, ...(await getModelChoices(provider ?? undefined)) };
         }),
     },
   },

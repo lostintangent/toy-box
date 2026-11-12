@@ -1,11 +1,11 @@
-import type { PointerEvent as ReactPointerEvent } from "react";
 import {
   applyHistoryEntry,
   createAttributesHistoryEntry,
   snapshotAttribute,
   type AttributeSnapshot,
 } from "../../document/history";
-import type { EditorStore, Point } from "../../store";
+import type { Point } from "../../document";
+import type { EditorStore } from "../../store";
 import type { SelectionFrame, SelectionHandle } from "../selection/frame";
 import {
   applyScreenTransform,
@@ -51,7 +51,7 @@ type TransformState =
 export function startTransformGesture(
   store: EditorStore,
   initialState: TransformState,
-): GestureController<ReactPointerEvent<HTMLDivElement>> | null {
+): GestureController | null {
   if (
     !store.actions.beginGesture(
       initialState.mode === "pending-move"
@@ -102,7 +102,7 @@ export function startLineEndpointGesture({
   endpoint: "start" | "end";
   screenInverse: Matrix2D;
   before: readonly AttributeSnapshot[];
-}): GestureController<ReactPointerEvent<HTMLDivElement>> | null {
+}): GestureController | null {
   if (!store.actions.beginGesture({ type: "line-endpoint" })) return null;
   const prefix = endpoint === "start" ? "1" : "2";
 

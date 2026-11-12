@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import type { Command } from "@/shared/commands/command";
 import type { SearchMatch } from "@/shared/commands/search";
 import type { ModelConfiguration } from "@providers/model";
@@ -24,7 +25,9 @@ export type PalettePageKind =
 export type PalettePage = PalettePageKind & { query: string; selected?: string };
 
 /** A row of the palette: a command, or a link to a page. */
-export type PaletteItem = Omit<Command, "run" | "actions"> & {
+export type PaletteItem = Omit<Command, "run" | "actions" | "icon"> & {
+  /** A glyph, or an element that draws its own 16px picture. */
+  icon?: LucideIcon | ReactElement;
   run?: Command["run"];
   page?: PalettePageKind;
   /** An option for new work, which choosing sets and returns to the page beneath. */

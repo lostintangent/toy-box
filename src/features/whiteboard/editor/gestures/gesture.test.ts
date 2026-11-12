@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  activeToolForGesture,
-  gestureOwnerForPointer,
-  gestureOwnerForState,
-  gestureOwnerForTool,
-} from "./gesture";
+import { activeToolForGesture, gestureOwnerForPointer, gestureOwnerForTool } from "./gesture";
 
 describe("SVG editor gesture ownership", () => {
   test("routes each active tool to its gesture source", () => {
@@ -14,23 +9,6 @@ describe("SVG editor gesture ownership", () => {
     expect(gestureOwnerForTool("eraser")).toBe("drawing");
     expect(gestureOwnerForTool("text")).toBe("drawing");
     expect(gestureOwnerForTool("rectangle")).toBe("drawing");
-  });
-
-  test("retains source ownership in semantic editor gesture state", () => {
-    expect(gestureOwnerForState({ type: "pan" })).toBe("viewport");
-    expect(gestureOwnerForState({ type: "pinch" })).toBe("viewport");
-    expect(gestureOwnerForState({ type: "draw" })).toBe("drawing");
-    expect(
-      gestureOwnerForState({
-        type: "insert-text",
-        documentPoint: { x: 0, y: 0 },
-        viewportPoint: { x: 0, y: 0 },
-      }),
-    ).toBe("drawing");
-    expect(gestureOwnerForState({ type: "transform", mode: "move" })).toBe("selection");
-    expect(
-      gestureOwnerForState({ type: "marquee", rect: { x: 0, y: 0, width: 0, height: 0 } }),
-    ).toBe("selection");
   });
 
   test("temporarily toggles editable gestures between selection and navigation", () => {

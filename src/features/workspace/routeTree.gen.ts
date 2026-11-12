@@ -19,6 +19,11 @@ import { Route as ApiV1ChannelsDotindexRouteImport } from './../channels/routes/
 import { Route as ApiV1ChannelsChannelIdRouteImport } from './../channels/routes/v1/channels/$channelId'
 import { Route as ApiV1PushRegistrationIDRouteImport } from './../push/routes/v1/push/$registrationID'
 import { Route as ApiV1ScreensDotindexRouteImport } from './../screens/routes/v1/screens.index'
+import { Route as ApiV1ServerDotindexRouteImport } from './routes/api/v1/server.index'
+import { Route as ApiV1ServerDotlinksRouteImport } from './../channels/routes/v1/server.links'
+import { Route as ApiV1ServerDotrestartRouteImport } from './routes/api/v1/server.restart'
+import { Route as ApiV1ServerDotupdateRouteImport } from './routes/api/v1/server.update'
+import { Route as ApiV1ChannelsChannelIdDotleadMessagesRouteImport } from './../channels/routes/v1/channels/$channelId.lead-messages'
 import { Route as ApiV1ChannelsChannelIdDotmembersRouteImport } from './../channels/routes/v1/channels/$channelId.members'
 import { Route as ApiV1ChannelsChannelIdDotmessagesRouteImport } from './../channels/routes/v1/channels/$channelId.messages'
 import { Route as ApiV1ChannelsChannelIdDotreadRouteImport } from './../channels/routes/v1/channels/$channelId.read'
@@ -81,6 +86,32 @@ const ApiV1ScreensDotindexRoute = ApiV1ScreensDotindexRouteImport.update({
   path: '/api/v1/screens/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1ServerDotindexRoute = ApiV1ServerDotindexRouteImport.update({
+  id: '/api/v1/server/',
+  path: '/api/v1/server/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1ServerDotlinksRoute = ApiV1ServerDotlinksRouteImport.update({
+  id: '/api/v1/server/links',
+  path: '/api/v1/server/links',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1ServerDotrestartRoute = ApiV1ServerDotrestartRouteImport.update({
+  id: '/api/v1/server/restart',
+  path: '/api/v1/server/restart',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1ServerDotupdateRoute = ApiV1ServerDotupdateRouteImport.update({
+  id: '/api/v1/server/update',
+  path: '/api/v1/server/update',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1ChannelsChannelIdDotleadMessagesRoute =
+  ApiV1ChannelsChannelIdDotleadMessagesRouteImport.update({
+    id: '/lead-messages',
+    path: '/lead-messages',
+    getParentRoute: () => ApiV1ChannelsChannelIdRoute,
+  } as any)
 const ApiV1ChannelsChannelIdDotmembersRoute =
   ApiV1ChannelsChannelIdDotmembersRouteImport.update({
     id: '/members',
@@ -157,8 +188,13 @@ export interface FileRoutesByFullPath {
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/v1/channels/$channelId': typeof ApiV1ChannelsChannelIdRouteWithChildren
   '/api/v1/push/$registrationID': typeof ApiV1PushRegistrationIDRouteWithChildren
+  '/api/v1/server/links': typeof ApiV1ServerDotlinksRoute
+  '/api/v1/server/restart': typeof ApiV1ServerDotrestartRoute
+  '/api/v1/server/update': typeof ApiV1ServerDotupdateRoute
   '/api/v1/channels/': typeof ApiV1ChannelsDotindexRoute
   '/api/v1/screens/': typeof ApiV1ScreensDotindexRoute
+  '/api/v1/server/': typeof ApiV1ServerDotindexRoute
+  '/api/v1/channels/$channelId/lead-messages': typeof ApiV1ChannelsChannelIdDotleadMessagesRoute
   '/api/v1/channels/$channelId/members': typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   '/api/v1/channels/$channelId/messages': typeof ApiV1ChannelsChannelIdDotmessagesRoute
   '/api/v1/channels/$channelId/read': typeof ApiV1ChannelsChannelIdDotreadRoute
@@ -180,8 +216,13 @@ export interface FileRoutesByTo {
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/v1/channels/$channelId': typeof ApiV1ChannelsChannelIdRouteWithChildren
   '/api/v1/push/$registrationID': typeof ApiV1PushRegistrationIDRouteWithChildren
+  '/api/v1/server/links': typeof ApiV1ServerDotlinksRoute
+  '/api/v1/server/restart': typeof ApiV1ServerDotrestartRoute
+  '/api/v1/server/update': typeof ApiV1ServerDotupdateRoute
   '/api/v1/channels': typeof ApiV1ChannelsDotindexRoute
   '/api/v1/screens': typeof ApiV1ScreensDotindexRoute
+  '/api/v1/server': typeof ApiV1ServerDotindexRoute
+  '/api/v1/channels/$channelId/lead-messages': typeof ApiV1ChannelsChannelIdDotleadMessagesRoute
   '/api/v1/channels/$channelId/members': typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   '/api/v1/channels/$channelId/messages': typeof ApiV1ChannelsChannelIdDotmessagesRoute
   '/api/v1/channels/$channelId/read': typeof ApiV1ChannelsChannelIdDotreadRoute
@@ -204,8 +245,13 @@ export interface FileRoutesById {
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/v1/channels/$channelId': typeof ApiV1ChannelsChannelIdRouteWithChildren
   '/api/v1/push/$registrationID': typeof ApiV1PushRegistrationIDRouteWithChildren
+  '/api/v1/server/links': typeof ApiV1ServerDotlinksRoute
+  '/api/v1/server/restart': typeof ApiV1ServerDotrestartRoute
+  '/api/v1/server/update': typeof ApiV1ServerDotupdateRoute
   '/api/v1/channels/': typeof ApiV1ChannelsDotindexRoute
   '/api/v1/screens/': typeof ApiV1ScreensDotindexRoute
+  '/api/v1/server/': typeof ApiV1ServerDotindexRoute
+  '/api/v1/channels/$channelId/lead-messages': typeof ApiV1ChannelsChannelIdDotleadMessagesRoute
   '/api/v1/channels/$channelId/members': typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   '/api/v1/channels/$channelId/messages': typeof ApiV1ChannelsChannelIdDotmessagesRoute
   '/api/v1/channels/$channelId/read': typeof ApiV1ChannelsChannelIdDotreadRoute
@@ -229,8 +275,13 @@ export interface FileRouteTypes {
     | '/api/serve/$scope/$'
     | '/api/v1/channels/$channelId'
     | '/api/v1/push/$registrationID'
+    | '/api/v1/server/links'
+    | '/api/v1/server/restart'
+    | '/api/v1/server/update'
     | '/api/v1/channels/'
     | '/api/v1/screens/'
+    | '/api/v1/server/'
+    | '/api/v1/channels/$channelId/lead-messages'
     | '/api/v1/channels/$channelId/members'
     | '/api/v1/channels/$channelId/messages'
     | '/api/v1/channels/$channelId/read'
@@ -252,8 +303,13 @@ export interface FileRouteTypes {
     | '/api/serve/$scope/$'
     | '/api/v1/channels/$channelId'
     | '/api/v1/push/$registrationID'
+    | '/api/v1/server/links'
+    | '/api/v1/server/restart'
+    | '/api/v1/server/update'
     | '/api/v1/channels'
     | '/api/v1/screens'
+    | '/api/v1/server'
+    | '/api/v1/channels/$channelId/lead-messages'
     | '/api/v1/channels/$channelId/members'
     | '/api/v1/channels/$channelId/messages'
     | '/api/v1/channels/$channelId/read'
@@ -275,8 +331,13 @@ export interface FileRouteTypes {
     | '/api/serve/$scope/$'
     | '/api/v1/channels/$channelId'
     | '/api/v1/push/$registrationID'
+    | '/api/v1/server/links'
+    | '/api/v1/server/restart'
+    | '/api/v1/server/update'
     | '/api/v1/channels/'
     | '/api/v1/screens/'
+    | '/api/v1/server/'
+    | '/api/v1/channels/$channelId/lead-messages'
     | '/api/v1/channels/$channelId/members'
     | '/api/v1/channels/$channelId/messages'
     | '/api/v1/channels/$channelId/read'
@@ -299,8 +360,12 @@ export interface RootRouteChildren {
   ApiServeScopeSplatRoute: typeof ApiServeScopeSplatRoute
   ApiV1ChannelsChannelIdRoute: typeof ApiV1ChannelsChannelIdRouteWithChildren
   ApiV1PushRegistrationIDRoute: typeof ApiV1PushRegistrationIDRouteWithChildren
+  ApiV1ServerDotlinksRoute: typeof ApiV1ServerDotlinksRoute
+  ApiV1ServerDotrestartRoute: typeof ApiV1ServerDotrestartRoute
+  ApiV1ServerDotupdateRoute: typeof ApiV1ServerDotupdateRoute
   ApiV1ChannelsDotindexRoute: typeof ApiV1ChannelsDotindexRoute
   ApiV1ScreensDotindexRoute: typeof ApiV1ScreensDotindexRoute
+  ApiV1ServerDotindexRoute: typeof ApiV1ServerDotindexRoute
   ApiV1ScreensScreenIdDotthumbnailRoute: typeof ApiV1ScreensScreenIdDotthumbnailRoute
 }
 
@@ -375,6 +440,41 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/v1/screens/'
       preLoaderRoute: typeof ApiV1ScreensDotindexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/server/': {
+      id: '/api/v1/server/'
+      path: '/api/v1/server'
+      fullPath: '/api/v1/server/'
+      preLoaderRoute: typeof ApiV1ServerDotindexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/server/links': {
+      id: '/api/v1/server/links'
+      path: '/api/v1/server/links'
+      fullPath: '/api/v1/server/links'
+      preLoaderRoute: typeof ApiV1ServerDotlinksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/server/restart': {
+      id: '/api/v1/server/restart'
+      path: '/api/v1/server/restart'
+      fullPath: '/api/v1/server/restart'
+      preLoaderRoute: typeof ApiV1ServerDotrestartRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/server/update': {
+      id: '/api/v1/server/update'
+      path: '/api/v1/server/update'
+      fullPath: '/api/v1/server/update'
+      preLoaderRoute: typeof ApiV1ServerDotupdateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/channels/$channelId/lead-messages': {
+      id: '/api/v1/channels/$channelId/lead-messages'
+      path: '/lead-messages'
+      fullPath: '/api/v1/channels/$channelId/lead-messages'
+      preLoaderRoute: typeof ApiV1ChannelsChannelIdDotleadMessagesRouteImport
+      parentRoute: typeof ApiV1ChannelsChannelIdRoute
     }
     '/api/v1/channels/$channelId/members': {
       id: '/api/v1/channels/$channelId/members'
@@ -502,6 +602,7 @@ const ApiV1ChannelsChannelIdDotroutinesDotroutineIdRouteWithChildren =
   )
 
 interface ApiV1ChannelsChannelIdRouteChildren {
+  ApiV1ChannelsChannelIdDotleadMessagesRoute: typeof ApiV1ChannelsChannelIdDotleadMessagesRoute
   ApiV1ChannelsChannelIdDotmembersRoute: typeof ApiV1ChannelsChannelIdDotmembersRouteWithChildren
   ApiV1ChannelsChannelIdDotmessagesRoute: typeof ApiV1ChannelsChannelIdDotmessagesRoute
   ApiV1ChannelsChannelIdDotreadRoute: typeof ApiV1ChannelsChannelIdDotreadRoute
@@ -512,6 +613,8 @@ interface ApiV1ChannelsChannelIdRouteChildren {
 
 const ApiV1ChannelsChannelIdRouteChildren: ApiV1ChannelsChannelIdRouteChildren =
   {
+    ApiV1ChannelsChannelIdDotleadMessagesRoute:
+      ApiV1ChannelsChannelIdDotleadMessagesRoute,
     ApiV1ChannelsChannelIdDotmembersRoute:
       ApiV1ChannelsChannelIdDotmembersRouteWithChildren,
     ApiV1ChannelsChannelIdDotmessagesRoute:
@@ -554,8 +657,12 @@ const rootRouteChildren: RootRouteChildren = {
   ApiServeScopeSplatRoute: ApiServeScopeSplatRoute,
   ApiV1ChannelsChannelIdRoute: ApiV1ChannelsChannelIdRouteWithChildren,
   ApiV1PushRegistrationIDRoute: ApiV1PushRegistrationIDRouteWithChildren,
+  ApiV1ServerDotlinksRoute: ApiV1ServerDotlinksRoute,
+  ApiV1ServerDotrestartRoute: ApiV1ServerDotrestartRoute,
+  ApiV1ServerDotupdateRoute: ApiV1ServerDotupdateRoute,
   ApiV1ChannelsDotindexRoute: ApiV1ChannelsDotindexRoute,
   ApiV1ScreensDotindexRoute: ApiV1ScreensDotindexRoute,
+  ApiV1ServerDotindexRoute: ApiV1ServerDotindexRoute,
   ApiV1ScreensScreenIdDotthumbnailRoute: ApiV1ScreensScreenIdDotthumbnailRoute,
 }
 export const routeTree = rootRouteImport

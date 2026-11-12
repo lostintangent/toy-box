@@ -1,9 +1,13 @@
 import { channelAgent, createStoredChannel } from "@channels/server/testFixtures";
 import { describe, expect, onTestFinished, setSystemTime, test } from "bun:test";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ChannelConversationMessage, ChannelTask } from "@channels/model";
 import { machineFile, sessionFile, workspaceFileId } from "@files/model";
+import { createFileServeUrl } from "@files/model/paths";
 import { createTestDatabase } from "@/server/database";
-import { ChannelDatabase, ChannelInputError } from "./database";
+import { RefusalError } from "@/shared/server/http";
+import { ChannelDatabase } from "./database";
 
 const CHANNEL_DEFAULTS = {
   purpose: "Coordinate the work to a useful result.",
@@ -566,8 +570,8 @@ describe("channel database", () => {
 
     test("only a user's or agent's message in the Channel can be bookmarked", async () => {
       const { bookmark } = await setup();
-      await expect(bookmark(2)).rejects.toThrow(ChannelInputError);
-      await expect(bookmark(9)).rejects.toThrow(ChannelInputError);
+      await expect(bookmark(2)).rejects.toThrow(RefusalError);
+      await expect(bookmark(9)).rejects.toThrow(RefusalError);
       await expect(bookmark(1, true, "missing")).rejects.toThrow("Channel not found.");
     });
   });
@@ -801,6 +805,27 @@ describe("channel database", () => {
     });
     expect(replaced.channel.preview).toEqual({ kind: "url", url: "/app" });
     expect((await channels.listMessagesAfter(channel.id))[0]?.content).toMatchObject({ preview });
+  });
+
+  test("an avatar change is announced, and an image is stored by name and served by URL", async () => {
+    const channels = await openChannels();
+    const channel = await createStoredChannel(channels, { name: "Studio", ...CHANNEL_DEFAULTS });
+    const actor = { type: "agent", agentId: channel.id } as const;
+    const mark = { mark: "M5 12h14M12 5v14", color: "#7c3aed" };
+    const image = { image: "avatar-0123456789abcdef.png" };
+    const avatar = {
+      image: createFileServeUrl(
+        machineFile(join(homedir(), ".toy-box", "channels", channel.id, image.image)),
+      ),
+    };
+    await channels.updateChannel(channel.id, { avatar: mark });
+    const replaced = await channels.updateChannel(channel.id, { avatar: image });
+    expect(await channels.getChannel(channel.id)).toEqual(replaced.channel);
+    expect((await channels.listMessagesAfter(channel.id)).map(({ content }) => content)).toEqual([
+      { type: "channel_avatar_changed", actor, avatar: mark },
+      { type: "channel_avatar_changed", actor, avatar },
+    ]);
+    expect((await channels.updateChannel(channel.id, { avatar: { ...image } })).events).toEqual([]);
   });
 
   test("rejecting a provider change leaves all channel fields unchanged", async () => {

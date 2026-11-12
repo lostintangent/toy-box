@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useSyncExternalStore, type HTMLAttributes } from "react";
 import type { SvgDocument } from "../../document";
 import type { EditorStore } from "../../store";
+import { isNavigating } from "../gestures/gesture";
 
 /** Mounts the native SVG DOM, projects its viewport, and presents load errors. */
 export function DocumentLayer({
@@ -37,7 +38,7 @@ export function DocumentLayer({
     const renderViewport = () => {
       const { viewport, gesture } = store.state;
       const page = document.page;
-      const navigating = gesture?.type === "pan" || gesture?.type === "pinch";
+      const navigating = isNavigating(gesture);
       previousViewport = viewport;
       previousNavigation = navigating;
       host.toggleAttribute("data-whiteboard-navigating", navigating);
@@ -53,7 +54,7 @@ export function DocumentLayer({
 
     renderViewport();
     const subscription = store.subscribe((state) => {
-      const navigating = state.gesture?.type === "pan" || state.gesture?.type === "pinch";
+      const navigating = isNavigating(state.gesture);
       if (state.viewport === previousViewport && navigating === previousNavigation) return;
       renderViewport();
     });

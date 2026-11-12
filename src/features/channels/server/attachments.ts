@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Attachment, AttachmentReference } from "@/shared/attachments/model";
+import type { ChannelAvatar } from "@channels/model";
 import { machineFile } from "@files/model";
 import { createFileServeUrl } from "@files/model/paths";
 
@@ -60,6 +61,30 @@ export function uniqueAttachmentNames(names: readonly string[]): string[] {
     taken.add(unique.toLowerCase());
     return unique;
   });
+}
+
+const AVATAR_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+const AVATAR_MAX_BYTES = 256 * 1024;
+
+/** Keeps the lead's chosen image in its Channel under a name its content fixes, so a new image gets
+ *  a new URL. Returns the name. */
+export async function storeChannelAvatar(channelId: string, path: string): Promise<string> {
+  const extension = extname(path).toLowerCase();
+  if (!AVATAR_EXTENSIONS.has(extension)) throw new Error("Use a PNG, JPEG, or WebP image.");
+  const source = Bun.file(path);
+  if (source.size > AVATAR_MAX_BYTES) throw new Error("Use an image of at most 256 KB.");
+  const bytes = await source.bytes();
+  const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex").slice(0, 16);
+  const name = `avatar-${hash}${extension}`;
+  await Bun.write(join(channelDirectory(channelId), name), bytes);
+  return name;
+}
+
+/** A Channel's avatar as clients draw it: a mark as chosen, or its stored image's URL. */
+export function channelAvatar(channelId: string, avatar: ChannelAvatar): ChannelAvatar {
+  return "image" in avatar
+    ? { image: createFileServeUrl(machineFile(join(channelDirectory(channelId), avatar.image))) }
+    : avatar;
 }
 
 export async function deleteChannelFiles(channelId: string) {

@@ -1,4 +1,5 @@
-import type { EditorStore, Point } from "../../store";
+import type { Point } from "../../document";
+import type { EditorStore } from "../../store";
 import type { GestureController, TouchPointPair } from "./gesture";
 
 type PinchGeometry = {

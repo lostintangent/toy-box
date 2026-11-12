@@ -1,5 +1,4 @@
-import type { PointerEvent as ReactPointerEvent } from "react";
-import type { SvgDocument } from "../../document";
+import type { Fill, HistoryEntry, Point, ShapeTool, SvgDocument } from "../../document";
 import { applyHistoryEntry } from "../../document/history";
 import {
   createSvgEraserNodes,
@@ -8,7 +7,7 @@ import {
   pointsToPathData,
   updateSvgShape,
 } from "../../document/nodes";
-import type { EditorStore, Fill, HistoryEntry, Point, ShapeTool, Tool } from "../../store";
+import type { EditorStore, Tool } from "../../store";
 import { pointerCoordinates, type GestureController } from "./gesture";
 
 const MIN_DRAWING_GESTURE_PX = 5;
@@ -26,7 +25,7 @@ export function startDrawingGesture({
   tool: Exclude<Tool, "hand" | "select" | "text">;
   start: { document: Point; viewport: Point };
   style: { color: string; width: number; fill?: Fill };
-}): GestureController<ReactPointerEvent<HTMLDivElement>> | null {
+}): GestureController | null {
   if (!store.actions.beginGesture({ type: "draw" })) return null;
   if (tool === "pen") return startPathGesture(document, store, start.document, style);
   if (tool === "eraser") {
@@ -103,7 +102,7 @@ function drawingGesture(
   entry: HistoryEntry,
   update: (point: { document: Point; viewport: Point }) => void,
   isComplete: () => boolean,
-): GestureController<ReactPointerEvent<HTMLDivElement>> {
+): GestureController {
   return {
     update(event) {
       update(pointerCoordinates(store, event));

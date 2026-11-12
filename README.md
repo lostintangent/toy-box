@@ -1,6 +1,6 @@
 # 🧸 Toy Box
 
-Toy Box is a self-hosted agent server for running agentic tasks from anywhere. It includes an easy-to-use web app for starting, observing, and controlling sessions from both your desktop and phone while keeping all connected clients synchronized.
+Toy Box is a self-hosted agent server for running agentic tasks from anywhere, across multiple machines. It includes an easy-to-use web app for starting, observing, and controlling sessions from both your desktop and phone while keeping all connected clients synchronized.
 
 Beyond simple session management, Toy Box provides several helpful workflows that make everyday tasks simpler: group agent channels, scheduled automations, editable artifacts, child session orchestration, generative apps, and an [inbox for asynchronous tasks](#inbox-webhook).
 
@@ -12,15 +12,21 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
 
 - **Live, multi-device sessions:** Start or resume work from desktop or mobile, watch and steer it from every connected client, answer agent questions, manage queued follow-ups, and pin important sessions.
 
+- **Mac and iPhone apps:** Native clients for your channels, with push notifications, Lock Screen replies, a Needs You widget, and Live Activities, all connected to your own servers.
+
 - **Rich composer:** Choose the model and reasoning effort, attach images, invoke skills, dictate by voice, and start sessions in a working directory or isolated Git worktree.
 
 - **Multi-pane workspace:** Open up to four sessions, local files, artifacts, apps, terminals, or agent-provided canvases together, with live previews and an adaptive mobile layout.
+
+- **Screen sharing:** View and control the host's displays and windows from any client, and let agents put a running app in front of you as a channel's preview.
 
 - **Multi-agent orchestration:** Delegate parallel work to child sessions and use the floating Hyper workspace for a dedicated orchestration thread.
 
 - **Agent channels:** Create channel-specific teammates with distinct roles, then collaborate through messages, reactions, statuses, screenshots, and shared artifacts.
 
-- **Collaborative artifacts:** Browse and edit Markdown, HTML, JSON, and SVG alongside the agent, or use structured briefs to review and launch consequential work.
+- **Linked servers:** Link your other Toy Box machines once, from either side, and the channel leads on any two linked servers can find and message each other. Each server has its own name, editable from any client.
+
+- **Collaborative artifacts:** Browse and edit code, Markdown, HTML, JSON, and SVG alongside the agent, or use structured briefs to review and launch consequential work.
 
 - **Toy Box apps:** Build session-scoped `.toy` React artifacts or install reusable, stateful apps from trusted GitHub Gists. Apps can compose sessions, files, panes, workers, and shared content.
 
@@ -36,11 +42,11 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
    - [Claude Code](https://code.claude.com/docs/en/setup)
 1. Install Toy Box: `npm install -g @lostintangent/toy-box`
 1. Start the agent server: `toy-box`
-1. Open `http://localhost:3000` in your browser
+1. Open `http://localhost:3000` in your browser. To reach it from your phone or other machines, see [Access From Anywhere](#access-from-anywhere).
 
 ## Access From Anywhere
 
-In order to access Toy Box from your phone (or other machines), simply configure [Tailscale](https://tailscale.com/) on the desired devices, enable MagicDNS and HTTPS for your tailnet, start Toy Box (`toy-box`), then run:
+Toy Box listens only on this machine (`127.0.0.1`), so reach it from your phone, other machines and linked servers through [Tailscale](https://tailscale.com/) Serve. Configure Tailscale on the desired devices, enable MagicDNS and HTTPS for your tailnet, start Toy Box (`toy-box`), then run:
 
 ```sh
 tailscale serve --bg http://127.0.0.1:3000
@@ -48,7 +54,7 @@ tailscale serve --bg http://127.0.0.1:3000
 
 Open the provided `https://<machine>.<tailnet>.ts.net/` URL from any device on the same tailnet as the Toy Box server.
 
-Alternatively, use [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/create-local-tunnel/) with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/) for browser access without installing Tailscale on your devices. Run `cloudflared` on the Toy Box machine and map an HTTPS hostname on your domain to `http://127.0.0.1:3000`. Before publishing the route, protect the hostname with Access, allowing only your chosen email addresses to sign in with GitHub or an email one-time PIN. Use a named tunnel; temporary Quick Tunnels do not support Toy Box's SSE streams.
+For a trusted LAN without Tailscale, `toy-box --host 0.0.0.0` serves Toy Box over plain HTTP at the machine's IP address. Browser features that need a secure context, such as the clipboard, won't work there.
 
 After opening your HTTPS URL in a mobile browser, you can add Toy Box to your home screen:
 
@@ -57,11 +63,15 @@ After opening your HTTPS URL in a mobile browser, you can add Toy Box to your ho
 | iOS (iPhone / iPad) | Use Safari's Share → Add to Home Screen        |
 | Android             | Use Chrome's Install app or Add to Home screen |
 
-> ⚠️ Toy Box has no app-level authentication. Keep it behind Tailscale Serve and tailnet access controls or Cloudflare Access; do not expose it through an unprotected public tunnel.
+> ⚠️ Toy Box has no app-level authentication. Keep it behind Tailscale Serve and tailnet access controls.
+
+## Updating the Server
+
+Open `Settings` and press **Update** under `Server Details`. It installs the latest release with the package manager you installed Toy Box with, and running sessions carry on undisturbed. Once a newer release is installed, every connected device shows **Restart**, including the iOS/macOS clients. Restarting stops the server as Ctrl+C would, ending turns and terminals in progress, then starts the new release on the same port, and open tabs reload onto it.
 
 ## Inbox Webhook
 
-With that protected HTTPS URL in place, Toy Box's inbox can accept external tasks by means of simply sending a `POST` to the following URL: `https://<toy-box-host>/api/v1/inbox`. For automated webhook calls through Cloudflare Access, configure [service-token headers and a Service Auth policy](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/).
+With that protected HTTPS URL in place, Toy Box's inbox can accept external tasks by means of simply sending a `POST` to the following URL: `https://<toy-box-host>/api/v1/inbox`.
 
 ```sh
 curl -X POST "https://<toy-box-host>/api/v1/inbox" \

@@ -10,16 +10,18 @@ export type WorkspaceState = {
   environment: WorkspaceEnvironment;
 };
 
-/** Passive capabilities configured by the server process. */
+/** Passive facts about the server process, fixed for its lifetime. */
 export type WorkspaceEnvironment = {
   voiceEnabled: boolean;
+  /** The machine's name, which this server is named after until it's renamed. */
+  computerName: string;
 };
 
 export function createEmptyWorkspaceState(): WorkspaceState {
   return {
     settings: DEFAULT_SETTINGS,
     drafts: {},
-    environment: { voiceEnabled: false },
+    environment: { voiceEnabled: false, computerName: "" },
   };
 }
 

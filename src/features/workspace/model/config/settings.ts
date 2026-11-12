@@ -13,9 +13,18 @@ export const settingsSchema = z.object({
   disabledProviders: z.array(z.string()),
   pinnedSessionIds: z.array(z.string()),
   hyperSessionId: z.string().nullable(),
+  /** This server's name for its clients and linked servers. Empty means the computer's name. */
+  serverName: z.string().trim().max(64),
+  /** This server's identity, made when it first starts and never written again. */
+  serverId: z.string(),
+  /** The owner's other servers, by origin in the order they were linked. Only Channels' link
+   *  verbs change them, because linking checks that the server answers. */
+  serverLinks: z.array(z.string()),
 });
 
-export const settingsUpdateSchema = settingsSchema.partial();
+export const settingsUpdateSchema = settingsSchema
+  .omit({ serverId: true, serverLinks: true })
+  .partial();
 export type Settings = z.infer<typeof settingsSchema>;
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -28,6 +37,9 @@ export const DEFAULT_SETTINGS: Settings = {
   disabledProviders: ["claude"],
   pinnedSessionIds: [],
   hyperSessionId: null,
+  serverName: "",
+  serverId: "",
+  serverLinks: [],
 };
 
 const SETTINGS_KEYS = settingsSchema.keyof().options;
@@ -44,6 +56,7 @@ export function normalizeSettings(value: unknown): Settings {
   ) as Settings;
   settings.pinnedSessionIds = [...new Set(settings.pinnedSessionIds)].sort();
   settings.disabledProviders = [...new Set(settings.disabledProviders)].sort();
+  settings.serverLinks = [...new Set(settings.serverLinks)];
   return settings;
 }
 
@@ -64,6 +77,7 @@ export function isSettingEqual(key: keyof Settings, left: Settings, right: Setti
   if (key === "pinnedSessionIds" || key === "disabledProviders") {
     return shallow(new Set(left[key]), new Set(right[key]));
   }
+  if (key === "serverLinks") return shallow(left.serverLinks, right.serverLinks);
   return Object.is(left[key], right[key]);
 }
 

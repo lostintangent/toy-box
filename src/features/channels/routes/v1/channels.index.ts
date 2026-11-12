@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createChannelInputSchema } from "@channels/model";
 import { createChannel } from "@channels/server";
-import { readInput, respond } from "@channels/server/http";
 import { getChannelCatalog, subscribeToChannelCatalog } from "@channels/server/stream";
+import { readInput, respond } from "@/shared/server/http";
 import { createSseResponse } from "@/shared/server/sse";
 
 export const Route = createFileRoute("/api/v1/channels/")({
@@ -12,7 +12,7 @@ export const Route = createFileRoute("/api/v1/channels/")({
       GET: async ({ request }) => {
         const response = request.headers.get("accept")?.includes("text/event-stream")
           ? createSseResponse(request, subscribeToChannelCatalog)
-          : Response.json(await getChannelCatalog(), { headers: { "Cache-Control": "no-store" } });
+          : await respond("list Channels", getChannelCatalog);
         response.headers.set("Vary", "Accept");
         return response;
       },

@@ -10,6 +10,7 @@ const registration = { token: "1122", environment: "sandbox" };
 const request = (method: string, body?: object | string) =>
   new Request("http://127.0.0.1", {
     method,
+    headers: { "Content-Type": "application/json" },
     body: typeof body === "object" ? JSON.stringify(body) : body,
   });
 const register = (body: object | string) =>
@@ -60,7 +61,7 @@ for (const [kind, write] of [
     for (const body of ["", "{", "["]) {
       const response = await write(body);
       expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({ error: "Invalid push registration." });
+      expect(await response.json()).toEqual({ error: "Invalid request." });
     }
     expect(access).not.toHaveBeenCalled();
   });

@@ -1017,6 +1017,25 @@ describe("projector", () => {
         project(sdkEvent({ type: "assistant.turn_start", agentId: "call-agent-1", data: {} })),
       ).toEqual([]);
 
+      const failure = {
+        model: "claude-haiku-4.5",
+        statusCode: 429,
+        retryAttempt: 0,
+        failureKind: "api",
+        source: "top_level",
+      };
+      const callFailure = { type: "model.call_failure", ephemeral: true, data: failure };
+      expect(project(sdkEvent(callFailure))).toEqual([{ type: "status", status: "retrying" }]);
+      expect(
+        project(
+          sdkEvent({
+            ...callFailure,
+            agentId: "call-agent-1",
+            data: { ...failure, initiator: "sub-agent", source: "subagent" },
+          }),
+        ),
+      ).toEqual([]);
+
       expect(project(sdkEvent({ type: "session.compaction_start", data: {} }))).toEqual([
         { type: "status", status: "compacting" },
       ]);

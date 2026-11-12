@@ -5,6 +5,7 @@ import type {
   SessionConfig,
   SessionMetadata,
   Tool as CopilotTool,
+  ToolResultObject,
 } from "@github/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
 import type { ProviderSubscription } from "@providers/model";
@@ -167,6 +168,12 @@ async function connect(
 function nativeConfiguration(configuration: SessionConfiguration): SessionConfig {
   const tools: CopilotTool<any>[] = configuration.tools.map((tool) => ({
     ...tool,
+    // The CLI hides a thrown error's message from the model; a failure result carries it.
+    handler: (args: unknown) =>
+      tool.handler(args).catch((error): ToolResultObject => ({
+        textResultForLlm: error instanceof Error ? error.message : String(error),
+        resultType: "failure",
+      })),
     skipPermission: true,
     defer: tool.alwaysLoad ? "never" : "auto",
   }));

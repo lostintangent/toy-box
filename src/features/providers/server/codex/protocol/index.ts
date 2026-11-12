@@ -2298,6 +2298,13 @@ export type ToolRequestUserInputResponse = {
  */
 export type ToolRequestUserInputAnswer = { answers: Array<string> };
 
+export type ErrorNotification = {
+  error: TurnError;
+  willRetry: boolean;
+  threadId: string;
+  turnId: string;
+};
+
 export type ThreadStartedNotification = { thread: Thread };
 
 export type ThreadClosedNotification = { threadId: string };
@@ -2433,6 +2440,7 @@ export type CodexServerRequests = {
 };
 
 export type CodexNotifications = {
+  error: ErrorNotification;
   "thread/started": ThreadStartedNotification;
   "thread/closed": ThreadClosedNotification;
   "thread/name/updated": ThreadNameUpdatedNotification;

@@ -1,10 +1,9 @@
-import { useLayoutEffect, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useLayoutEffect, type RefObject } from "react";
 import type { EditorStore } from "../../store";
 import { viewportPoint, type GestureSource } from "../gestures/gesture";
 import { startPanGesture } from "../gestures/pan";
-import { startPinchGesture } from "../gestures/pinch";
 
-/** Owns viewport measurement and wheel input, and offers pan and pinch gestures. */
+/** Owns viewport measurement and wheel input, and offers pan gestures. */
 export function useViewport({
   store,
   viewportRef,
@@ -42,8 +41,6 @@ export function useViewport({
   }, [store, viewportRef]);
 
   return {
-    owner: "viewport",
     claim: (event) => startPanGesture(store, event),
-    claimTouchPair: (points) => startPinchGesture(store, points),
-  } satisfies GestureSource<ReactPointerEvent<HTMLDivElement>>;
+  } satisfies GestureSource;
 }

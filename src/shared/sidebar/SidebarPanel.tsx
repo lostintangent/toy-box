@@ -49,7 +49,7 @@ export function SidebarPanel({
             )}
           />
           <span className="section-heading">{title}</span>
-          {count > 0 && <Badge variant="count">{count}</Badge>}
+          <Badge variant="count">{count}</Badge>
         </button>
 
         {status ? (
@@ -81,7 +81,7 @@ export function SidebarPanel({
               className="h-auto max-h-56 px-3 py-2"
               emptyState={
                 emptyMessage && (
-                  <p className="px-2 py-3 text-xs text-muted-foreground">{emptyMessage}</p>
+                  <p className="px-2 py-3 text-sm text-muted-foreground italic">{emptyMessage}</p>
                 )
               }
             >

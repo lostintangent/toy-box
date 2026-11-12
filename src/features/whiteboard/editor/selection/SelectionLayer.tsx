@@ -8,16 +8,16 @@ import {
 } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { shallow } from "@tanstack/store";
-import type { SvgDocument } from "../../document";
-import type { EditorStore, Point } from "../../store";
+import type { Point, SvgDocument } from "../../document";
+import { SVG_NAMESPACE } from "../../document/source";
+import type { EditorStore } from "../../store";
 import {
   combineSelectionFrames,
   HANDLE_RADIUS,
   measureElementFrame,
+  midpoint,
   positionSelectionHandles,
 } from "./frame";
-
-const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 /** Paints transient selection chrome and the marquee over the native SVG document. */
 export function SelectionLayer({
@@ -167,8 +167,4 @@ function appendHandle(overlay: SVGSVGElement, point: Point): void {
   circle.setAttribute("stroke", "var(--accent)");
   circle.setAttribute("stroke-width", "1.5");
   overlay.appendChild(circle);
-}
-
-function midpoint(left: Point, right: Point): Point {
-  return { x: (left.x + right.x) / 2, y: (left.y + right.y) / 2 };
 }

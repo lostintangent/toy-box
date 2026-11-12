@@ -82,6 +82,22 @@ test("subscribes again when a followed run is stopped, since its history can kee
   expect(session.view()?.messages.map(({ content }) => content)).toEqual(["Hello"]);
 });
 
+test("a run's subscription that closes without the run's end waits, then catches up once the run is gone", async () => {
+  const session = watchSession();
+  await openIdle(session);
+  session.setActivity({ status: "running", since: 1 });
+  const run = await session.connections.next();
+  run.send({ type: "resumed" });
+  run.send({ type: "status", status: "thinking", revision: 5 });
+  // A shutting-down server closes cleanly, so nothing reconnects to it.
+  run.end();
+  await settle();
+  expect(session.connections.count).toBe(2);
+
+  session.setActivity(undefined);
+  expect((await session.connections.next()).url).toBe("/api/sessions/session?after=5");
+});
+
 test("joins a run in progress, and resubscribes from its revision after a dropped subscription", async () => {
   const errors = spyOn(console, "error").mockImplementation(() => {});
   onTestFinished(() => errors.mockRestore());

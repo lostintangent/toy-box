@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createChannelMemberInputSchema } from "@channels/model";
 import { createChannelMember } from "@channels/server";
-import { readInput, respond } from "@channels/server/http";
+import { readInput, respond } from "@/shared/server/http";
 
 export const Route = createFileRoute("/api/v1/channels/$channelId/members")({
   server: {

@@ -4,6 +4,7 @@ import { defineCommand, runMain } from "citty";
 import open from "open";
 
 import { version } from "../../package.json";
+import { getProcessValue } from "../shared/server/processState";
 
 async function isDirectory(path: string): Promise<boolean> {
   try {
@@ -34,7 +35,7 @@ const main = defineCommand({
     host: {
       type: "string",
       alias: "H",
-      default: "0.0.0.0",
+      default: "127.0.0.1",
       description: "Host to bind to",
     },
     "no-open": {
@@ -54,6 +55,11 @@ const main = defineCommand({
     if (args.cwd && (await isDirectory(args.cwd))) {
       process.chdir(args.cwd);
     }
+
+    // Lets the server restart into another release of this command, with this run's flags.
+    const flags = ["--port", args.port, "--host", args.host, "--no-open"];
+    const relaunch = (command: string) => process.execve!(command, [command, ...flags]);
+    getProcessValue("relaunch", () => relaunch);
 
     // Start the Nitro server.
     // @ts-expect-error - built output has no types

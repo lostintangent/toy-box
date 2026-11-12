@@ -46,7 +46,7 @@ export function ChecklistPopup({
         <div className="border-b px-3 py-2">
           <SectionHeading
             title={label}
-            count={`${completedCount}/${items.length}`}
+            badge={`${completedCount}/${items.length}`}
             detail={headerDetail}
           />
         </div>

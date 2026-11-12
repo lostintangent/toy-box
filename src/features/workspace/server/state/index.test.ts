@@ -24,6 +24,7 @@ describe("workspace state", () => {
       defaultModel: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
       terminalShell: "/bin/zsh",
       pinnedSessionIds: ["session-a"],
+      serverLinks: ["https://studio.ts.net"],
     };
     await updateSettings(initial);
 
@@ -44,17 +45,22 @@ describe("workspace state", () => {
     expect(events).toEqual([{ type: "settings.changed", settings }]);
   });
 
-  test("serializes concurrent settings updates", async () => {
+  test("serializes concurrent settings updates, and a function update sees the ones before it", async () => {
     await openTestDatabase();
+    const link = (server: string) =>
+      updateSettings(({ serverLinks }) => ({ serverLinks: [...serverLinks, server] }));
 
     await Promise.all([
       updateSettings({ accentColor: "#123abc" }),
       updateSettings({ terminalShell: "/bin/fish" }),
+      link("https://studio.ts.net"),
+      link("http://127.0.0.1:3100"),
     ]);
 
     expect((await getWorkspaceState()).settings).toMatchObject({
       accentColor: "#123abc",
       terminalShell: "/bin/fish",
+      serverLinks: ["https://studio.ts.net", "http://127.0.0.1:3100"],
     });
   });
 

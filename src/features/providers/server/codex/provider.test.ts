@@ -91,7 +91,7 @@ test("catalog metadata retains the native repository display fields", async () =
   const start = spyOn(transport, "startCodexClient").mockResolvedValue(rpc);
   onTestFinished(() => {
     start.mockRestore();
-    rpc.close();
+    void rpc.close();
   });
 
   expect(await codexProvider.listSessions()).toEqual([
@@ -153,7 +153,7 @@ test("history reads every stored turn page without acquiring the thread's writer
   const start = spyOn(transport, "startCodexClient").mockResolvedValue(rpc);
   onTestFinished(() => {
     start.mockRestore();
-    rpc.close();
+    void rpc.close();
   });
   const events = await codexProvider.readHistory("native");
   expect(
@@ -193,7 +193,7 @@ test("resumed threads apply the current workspace, model, and session skills", a
   spyOn(transport, "startCodexClient").mockResolvedValue(rpc);
   onTestFinished(async () => {
     for (const connection of connections) await connection.disconnect();
-    rpc.close();
+    void rpc.close();
     mock.restore();
     await rm(root, { recursive: true, force: true });
   });
@@ -293,7 +293,7 @@ test("a snapshot captured in its last write's second stays current until a later
   spyOn(transport, "startCodexClient").mockResolvedValue(rpc);
   onTestFinished(() => {
     mock.restore();
-    rpc.close();
+    void rpc.close();
   });
   expect(await codexProvider.isHistoryCurrent("native", 100_000)).toBe(true);
   expect(await codexProvider.isHistoryCurrent("native", 100_999)).toBe(true);
@@ -317,7 +317,7 @@ test("deleting a thread that is already gone resolves, and other failures propag
   const start = spyOn(transport, "startCodexClient").mockResolvedValue(rpc);
   onTestFinished(() => {
     start.mockRestore();
-    rpc.close();
+    void rpc.close();
   });
 
   await codexProvider.delete("native");

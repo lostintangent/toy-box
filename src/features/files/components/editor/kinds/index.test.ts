@@ -56,9 +56,12 @@ describe("resolveEditorKind", () => {
     },
   );
 
-  test("an unclaimed extension falls back to Markdown", () => {
-    expect(resolveEditorKind(machine("notes.txt"), [httpClient])).toBe(markdown);
-    expect(resolveEditorKind(machine("Makefile"), [httpClient])).toBe(markdown);
+  test("an unclaimed file falls back to the read-only code viewer", () => {
+    const viewer = resolveEditorKind(machine("main.swift"), [httpClient]);
+
+    expect(viewer.editable).toBe(false);
+    expect(resolveEditorKind(machine("notes.txt"), [httpClient])).toBe(viewer);
+    expect(resolveEditorKind(machine("Makefile"), [httpClient])).toBe(viewer);
   });
 
   test("runs .toy files only when they belong to a session", () => {

@@ -4,8 +4,9 @@ import {
   type HTMLAttributes,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import type { Point } from "../../document";
+import type { EditorStore, Tool } from "../../store";
 import {
-  gestureOwnerForState,
   gestureOwnerForPointer,
   gestureOwnerForTool,
   type GestureController,
@@ -15,12 +16,9 @@ import {
   type TouchPointPair,
   viewportPoint,
 } from "./gesture";
-import type { EditorStore, Point, Tool } from "../../store";
+import { startPinchGesture } from "./pinch";
 
-type CapturedGesture = {
-  update: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  finish: (outcome: GestureOutcome) => void;
-  owner: GestureOwner;
+type CapturedGesture = GestureController & {
   captureTarget: HTMLDivElement;
   pointerIds: readonly number[];
 };
@@ -35,12 +33,6 @@ function releasePointerCapture(
     if (gesture.captureTarget.hasPointerCapture(pointerId)) {
       gesture.captureTarget.releasePointerCapture(pointerId);
     }
-  }
-}
-
-function capturePointers(gesture: CapturedGesture) {
-  for (const pointerId of gesture.pointerIds) {
-    gesture.captureTarget.setPointerCapture(pointerId);
   }
 }
 
@@ -70,15 +62,11 @@ export function useGesture({
 }: {
   store: EditorStore;
   activeTool: Tool;
-  sources: readonly GestureSource<ReactPointerEvent<HTMLDivElement>>[];
+  sources: Record<GestureOwner, GestureSource>;
   focusEditor: () => void;
 }) {
   const capturedGestureRef = useRef<CapturedGesture | null>(null);
   const activeTouchesRef = useRef(new Map<number, Point>());
-
-  function sourceFor(owner: GestureOwner) {
-    return sources.find((source) => source.owner === owner);
-  }
 
   function finish(outcome: GestureOutcome) {
     const gesture = capturedGestureRef.current;
@@ -93,7 +81,27 @@ export function useGesture({
   }
 
   function leaveHover() {
-    sourceFor(gestureOwnerForTool(activeTool))?.hover?.leave();
+    sources[gestureOwnerForTool(activeTool)].hover?.leave();
+  }
+
+  /** Captures the claimed gesture's pointers, or rolls back a claim that throws. */
+  function capture(
+    target: HTMLDivElement,
+    pointerIds: readonly number[],
+    claim: () => GestureController | null,
+  ): boolean {
+    let controller: GestureController | null = null;
+    try {
+      controller = claim();
+      if (!controller) return false;
+      capturedGestureRef.current = { ...controller, captureTarget: target, pointerIds };
+      for (const pointerId of pointerIds) target.setPointerCapture(pointerId);
+      return true;
+    } catch (error) {
+      if (controller) finish("cancel");
+      else store.actions.endGesture();
+      throw error;
+    }
   }
 
   useLayoutEffect(() => {
@@ -128,37 +136,22 @@ export function useGesture({
     activeTouches.set(event.pointerId, viewportPoint(event, event.currentTarget));
     const points = touchPointPair(activeTouches);
     if (!points) return false;
-    const viewportSource = sourceFor("viewport");
-    if (!viewportSource?.claimTouchPair) return false;
 
     event.preventDefault();
     leaveHover();
     finish("cancel");
-
-    let controller: GestureController<TouchPointPair> | null = null;
-    try {
-      controller = viewportSource.claimTouchPair(points);
-      if (!controller) return false;
-
-      const claimedController = controller;
-      const gesture: CapturedGesture = {
-        update: () => {
-          const nextPoints = touchPointPair(activeTouches);
-          if (nextPoints) claimedController.update(nextPoints);
-        },
-        finish: (outcome) => claimedController.finish(outcome),
-        owner: "viewport",
-        captureTarget: event.currentTarget,
-        pointerIds: [...activeTouches.keys()],
-      };
-      capturedGestureRef.current = gesture;
-      capturePointers(gesture);
-      return true;
-    } catch (error) {
-      if (controller) finish("cancel");
-      else store.actions.endGesture();
-      throw error;
-    }
+    return capture(event.currentTarget, [...activeTouches.keys()], () => {
+      const pinch = startPinchGesture(store, points);
+      return (
+        pinch && {
+          update: () => {
+            const nextPoints = touchPointPair(activeTouches);
+            if (nextPoints) pinch.update(nextPoints);
+          },
+          finish: pinch.finish,
+        }
+      );
+    });
   }
 
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -167,30 +160,10 @@ export function useGesture({
     if (store.state.gesture) return;
     const owner = gestureOwnerForPointer({ button: event.button, activeTool });
     if (!owner) return;
-    const source = sourceFor(owner);
-    if (!source) return;
 
     const passiveOwner = gestureOwnerForTool(activeTool);
-    if (passiveOwner !== owner) sourceFor(passiveOwner)?.hover?.leave();
-    let controller: GestureController<ReactPointerEvent<HTMLDivElement>> | null = null;
-    try {
-      controller = source.claim(event);
-      if (!controller) return;
-      const claimedController = controller;
-      const gesture: CapturedGesture = {
-        update: (nextEvent) => claimedController.update(nextEvent),
-        finish: (outcome) => claimedController.finish(outcome),
-        owner,
-        captureTarget: event.currentTarget,
-        pointerIds: [event.pointerId],
-      };
-      capturedGestureRef.current = gesture;
-      capturePointers(gesture);
-    } catch (error) {
-      if (controller) finish("cancel");
-      else store.actions.endGesture();
-      throw error;
-    }
+    if (passiveOwner !== owner) sources[passiveOwner].hover?.leave();
+    capture(event.currentTarget, [event.pointerId], () => sources[owner].claim(event));
   }
 
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
@@ -200,7 +173,7 @@ export function useGesture({
     const gesture = capturedGestureRef.current;
     if (gesture?.pointerIds.includes(event.pointerId)) gesture.update(event);
     else if (!store.state.gesture) {
-      sourceFor(gestureOwnerForTool(activeTool))?.hover?.update(event);
+      sources[gestureOwnerForTool(activeTool)].hover?.update(event);
     }
   }
 
@@ -220,12 +193,6 @@ export function useGesture({
     } satisfies HTMLAttributes<HTMLDivElement>,
     finish,
     cancel: () => finish("cancel"),
-    isActive: () => capturedGestureRef.current !== null || store.state.gesture !== null,
-    isOwnedBy(owner: GestureOwner) {
-      const gesture = capturedGestureRef.current;
-      if (gesture) return gesture.owner === owner;
-      return store.state.gesture ? gestureOwnerForState(store.state.gesture) === owner : false;
-    },
     leaveHover,
   };
 }

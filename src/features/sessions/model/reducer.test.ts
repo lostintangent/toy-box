@@ -224,6 +224,43 @@ describe("session reducer", () => {
       expect(assistantAt(state, 0).content).toBe("Answer");
     });
 
+    test("a retry lasts until the root model's next output, including a tool call", () => {
+      const retrying = reduceEvents([
+        { type: "user_message", content: "go" },
+        { type: "tool_start", toolCallId: "agent-1", toolName: "agent", arguments: {} },
+        { type: "status", status: "retrying" },
+        {
+          type: "tool_start",
+          toolCallId: "read-1",
+          toolName: "read",
+          arguments: {},
+          parentToolCallId: "agent-1",
+        },
+      ]);
+      expect(retrying.status).toBe("retrying");
+
+      const resumed = applySessionEvent(retrying, {
+        type: "tool_start",
+        toolCallId: "edit-1",
+        toolName: "edit",
+        arguments: {},
+      });
+      expect(resumed.status).toBe("thinking");
+    });
+
+    test.each(["thinking", "retrying"] as const)(
+      "a committed reply replaces the unidentified preview before it (%s)",
+      (status) => {
+        const state = reduceEvents([
+          { type: "delta", content: "Partial" },
+          { type: "status", status },
+          { type: "assistant_message", content: "Full answer" },
+        ]);
+
+        expect(state.messages.map((message) => message.content)).toEqual(["Full answer"]);
+      },
+    );
+
     test("empty deltas do not create a boundary or lose a tool completion", () => {
       const state = reduceEvents([
         { type: "user_message", content: "go" },

@@ -1,4 +1,5 @@
-import type { Point, Rect, Size, Viewport } from "./types";
+import type { Point, Rect, Size } from "../document";
+import type { Viewport } from "./types";
 
 const MIN_ZOOM = 0.01;
 const MAX_ZOOM = 10;

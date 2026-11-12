@@ -9,7 +9,7 @@ import type { DraftKey, SavedDraft } from "./state/drafts";
 export interface WorkspaceEvents {
   workspace:
     | { type: "draft.changed"; key: DraftKey; draft: SavedDraft }
-    | { type: "workspace.connected"; revision: string; connection: string }
+    | { type: "workspace.connected"; revision: string; connection: string; version: string }
     | { type: "settings.changed"; settings: Settings };
 }
 

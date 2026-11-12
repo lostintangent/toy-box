@@ -1,4 +1,5 @@
 import {
+  isValidElement,
   useId,
   useLayoutEffect,
   useRef,
@@ -171,6 +172,8 @@ function PaletteRow({
       >
         {pending ? (
           <LoaderCircle className="size-4 animate-spin" />
+        ) : isValidElement(Icon) ? (
+          Icon
         ) : (
           Icon && <Icon className="size-4" />
         )}

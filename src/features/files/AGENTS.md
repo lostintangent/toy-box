@@ -97,7 +97,8 @@ Pending describes worker lifecycle, not whether every intermediate file effect i
 - Brief files delegate to the [Briefs feature](../briefs/AGENTS.md). The file-kind adapter supplies content revisions, persistence, relative-resource resolution, and worker-backed actions without owning the brief model or presentation.
 - Images and videos render read-only from the file's serve URL and reload for each external revision. These binary kinds mount without text, while any other kind shows that a file isn't text instead of mounting.
 - A session `.toy` file compiles as a stateless artifact app and mounts through the shared app runtime. It remains an editor pane and file-owned artifact; machine `.toy` files never execute.
-- An installed app definition renders the extensions its manifest `opens`. Built-in editors keep priority, the first definition in catalog order wins a shared extension, and unclaimed extensions fall back to Markdown.
+- An installed app definition renders the extensions its manifest `opens`. Built-in editors keep priority, the first definition in catalog order wins a shared extension, and unclaimed files fall back to the read-only code viewer.
+- Any other text file renders read-only as numbered lines, colored by the same highlighter as transcript code, and re-highlights with each external revision.
 
 File-kind adapters live in their own kind directories. `.svg` delegates to the
 Whiteboard feature, `.brief` delegates to the Briefs feature, and `.toy` files

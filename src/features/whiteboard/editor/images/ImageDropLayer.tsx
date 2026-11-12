@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import { useSelector } from "@tanstack/react-store";
 import type { EditorStore } from "../../store";
 import { insertImageFile } from "./images";
@@ -13,7 +13,8 @@ export function ImageDropLayer({
   const readOnly = useSelector(store, (state) => state.readOnly);
   const [draggingImage, setDraggingImage] = useState(false);
 
-  useLayoutEffect(() => {
+  // Passive, because the parent viewport's ref attaches after this child's layout effects.
+  useEffect(() => {
     if (readOnly) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -67,7 +68,7 @@ function hasImageFile(dataTransfer: DataTransfer | null): boolean {
   return Boolean(
     dataTransfer &&
     Array.from(dataTransfer.items).some(
-      (item) => item.kind === "editor" && item.type.startsWith("image/"),
+      (item) => item.kind === "file" && item.type.startsWith("image/"),
     ),
   );
 }

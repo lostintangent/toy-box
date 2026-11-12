@@ -1,4 +1,13 @@
-import type { History, HistoryEntry } from "../store";
+/** Undo and redo stacks of reversible native-DOM edits. */
+export type History = {
+  undoStack: readonly HistoryEntry[];
+  redoStack: readonly HistoryEntry[];
+};
+
+export type HistoryEntry =
+  | { type: "attributes"; transitions: readonly AttributeTransition[] }
+  | { type: "children"; parent: Element; before: readonly Node[]; after: readonly Node[] }
+  | { type: "compound"; entries: readonly HistoryEntry[] };
 
 export type AttributeSnapshot = {
   readonly namespace: string | null;

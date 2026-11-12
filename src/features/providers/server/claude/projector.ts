@@ -85,6 +85,8 @@ export function createClaudeProjector(): (message: SDKMessage) => SessionEvent[]
                 status: message.status === "compacting" ? "compacting" : "thinking",
               },
             ];
+          case "api_retry":
+            return [{ type: "status", status: "retrying" }];
           case "session_state_changed":
             return message.state === "idle" ? [{ type: "end", reason: "idle" }] : [];
           case "task_started":

@@ -114,7 +114,7 @@ function setup(tools: SessionConfiguration["tools"] = []) {
     );
   onTestFinished(async () => {
     await connection.disconnect();
-    rpc.close();
+    void rpc.close();
     startClient.mockRestore();
   });
   return {
@@ -487,16 +487,15 @@ test.each([null, "You've hit your usage limit."])(
   },
 );
 
-test("Codex retries and interruptions do not create transcript errors", () => {
+test("Codex retries show while backing off and interruptions do not create transcript errors", () => {
   const { notify, events } = setup();
   notify("turn/started", { turn });
   notify("item/completed", { turnId: turn.id, item: userItem });
-  notify("error", {
-    turnId: turn.id,
-    willRetry: true,
-    error: { message: "Reconnecting", codexErrorInfo: "serverOverloaded" },
-  });
+  const error = { message: "Reconnecting", codexErrorInfo: "serverOverloaded" };
+  notify("error", { turnId: turn.id, willRetry: false, error });
   expect(sessionState(events).status).toBe("thinking");
+  notify("error", { turnId: turn.id, willRetry: true, error });
+  expect(sessionState(events).status).toBe("retrying");
   expect(sessionState(events).messages).toHaveLength(1);
   notify("turn/completed", { turn: { ...turn, status: "interrupted" } });
   expect(sessionState(events).messages).toHaveLength(1);

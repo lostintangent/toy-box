@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { editChannelInputSchema } from "@channels/model";
 import { deleteChannel, editChannel } from "@channels/server";
-import { noContent, notFound, readInput, respond } from "@channels/server/http";
 import { subscribeToChannel } from "@channels/server/stream";
+import { NotFoundError, readInput, respond } from "@/shared/server/http";
 import { createSseResponse } from "@/shared/server/sse";
 
 export const Route = createFileRoute("/api/v1/channels/$channelId")({
@@ -19,12 +19,12 @@ export const Route = createFileRoute("/api/v1/channels/$channelId")({
       PATCH: ({ params, request }) =>
         respond(`edit Channel ${params.channelId}`, async () => {
           const input = await readInput(request, editChannelInputSchema, params);
-          return Response.json(await editChannel(input));
+          return editChannel(input);
         }),
       DELETE: ({ params }) =>
-        respond(`delete Channel ${params.channelId}`, async () =>
-          (await deleteChannel(params.channelId)) ? noContent() : notFound("Channel"),
-        ),
+        respond(`delete Channel ${params.channelId}`, async () => {
+          if (!(await deleteChannel(params.channelId))) throw new NotFoundError("Channel");
+        }),
     },
   },
 });

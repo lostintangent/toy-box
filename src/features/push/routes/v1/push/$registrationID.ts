@@ -1,24 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { pushRegistrationIdSchema, pushRegistrationSchema } from "@push/model";
 import { registerInstall, removeInstall } from "@push/server";
-
-const invalid = () => Response.json({ error: "Invalid push registration." }, { status: 400 });
+import { invalidRequest, readInput, respond } from "@/shared/server/http";
 
 export const Route = createFileRoute("/api/v1/push/$registrationID")({
   server: {
     handlers: {
-      PUT: async ({ params: { registrationID }, request }) => {
-        const input = pushRegistrationSchema.safeParse(await request.json().catch(() => undefined));
-        if (!input.success || !pushRegistrationIdSchema.safeParse(registrationID).success)
-          return invalid();
-        const created = await registerInstall({ registrationID, ...input.data });
-        return new Response(null, { status: created ? 201 : 204 });
-      },
-      DELETE: async ({ params: { registrationID } }) => {
-        if (!pushRegistrationIdSchema.safeParse(registrationID).success) return invalid();
-        await removeInstall(registrationID);
-        return new Response(null, { status: 204 });
-      },
+      PUT: ({ params: { registrationID }, request }) =>
+        respond("register an install", async () => {
+          const input = await readInput(request, pushRegistrationSchema);
+          if (!pushRegistrationIdSchema.safeParse(registrationID).success) throw invalidRequest();
+          const created = await registerInstall({ registrationID, ...input });
+          return new Response(null, { status: created ? 201 : 204 });
+        }),
+      DELETE: ({ params: { registrationID } }) =>
+        respond("remove an install", async () => {
+          if (!pushRegistrationIdSchema.safeParse(registrationID).success) throw invalidRequest();
+          await removeInstall(registrationID);
+        }),
     },
   },
 });
