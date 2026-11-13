@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect } from "react";
 import { useIsMutating, useMutation, useMutationState, useQuery } from "@tanstack/react-query";
 import type { MutationState } from "@tanstack/react-query";
-import { Check, ChevronRight, Clock3, Cpu, Loader2, Minus, RefreshCw, X } from "lucide-react";
+import { Check, Clock3, Cpu, Loader2, Minus, RefreshCw, X } from "lucide-react";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
@@ -10,15 +10,12 @@ import { RelativeTime } from "@/shared/ui/relative-time";
 import { CollapsibleSection } from "@/shared/ui/section-heading";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { cn } from "@/shared/utils";
 import { providerMutations, providerQueries, type ProviderUpdateResult } from "../queries";
 import { useProviders } from "../useProviders";
 
 export function ProviderSettings() {
   const { providers, setEnabled } = useProviders();
   const updateableProviderIds = providers.flatMap(({ id, enabled }) => (enabled ? [id] : []));
-  // Limits stay collapsed so the provider list reads at a glance.
-  const [isShowingUsage, setIsShowingUsage] = useState(false);
   const {
     mutate: updateProvider,
     status: updateStatus,
@@ -34,31 +31,20 @@ export function ProviderSettings() {
       title="Model Providers"
       icon={Cpu}
       badge={providers.length}
+      defaultOpen={false}
       detail={
-        <>
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            aria-expanded={isShowingUsage}
-            onClick={() => setIsShowingUsage(!isShowingUsage)}
-          >
-            <ChevronRight className={cn("transition-transform", isShowingUsage && "rotate-90")} />
-            Usage
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            disabled={updateableProviderIds.length === 0 || isUpdating}
-            onClick={() => {
-              for (const id of updateableProviderIds) updateProvider(id);
-            }}
-          >
-            {isUpdating ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            Update all
-          </Button>
-        </>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          disabled={updateableProviderIds.length === 0 || isUpdating}
+          onClick={() => {
+            for (const id of updateableProviderIds) updateProvider(id);
+          }}
+        >
+          {isUpdating ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          Update
+        </Button>
       }
     >
       <div className="grid gap-3">
@@ -92,7 +78,7 @@ export function ProviderSettings() {
                 />
               )}
             </div>
-            {isShowingUsage && status === "ready" && enabled && <ProviderPlanLimits id={id} />}
+            {status === "ready" && enabled && <ProviderPlanLimits id={id} />}
           </div>
         ))}
       </div>

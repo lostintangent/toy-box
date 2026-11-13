@@ -3,22 +3,13 @@ import type { AnyRoute } from "@tanstack/react-router";
 import { ChannelDatabase } from "@channels/server/database";
 import { releaseChannelEvents } from "@channels/server/eventLog";
 import { getChannelCatalog, getChannelSnapshot } from "@channels/server/stream";
-import {
-  channelAgent,
-  createStoredChannel,
-  linkServers,
-  openChannel,
-  serveLinkedServer,
-  toyBoxServer,
-} from "@channels/server/testFixtures";
+import { channelAgent, createStoredChannel, openChannel } from "@channels/server/testFixtures";
 import { machineFile, workspaceFileId } from "@files/model";
 import * as providers from "@providers/server";
 import * as sessionRuntime from "@sessions/server/runtime";
 import { deleteSessionActivity } from "@sessions/server/state/activity";
 import { detachManagedSession } from "@/server/managedSessions";
-import { invokeRoute, openTestDatabase } from "@/server/testFixtures";
-import { getServer } from "@workspace/server/installation";
-import startWorkspace from "@workspace/server/startup";
+import { invokeRoute } from "@/server/testFixtures";
 import { Route as CatalogRoute } from "./channels.index";
 import { Route as ChannelRoute } from "./channels/$channelId";
 import { Route as ArtifactRoute } from "./channels/$channelId.artifacts.$artifactId";
@@ -30,7 +21,6 @@ import { Route as MessagesRoute } from "./channels/$channelId.messages";
 import { Route as ReadRoute } from "./channels/$channelId.read";
 import { Route as RoutineRunRoute } from "./channels/$channelId.routines.$routineId.run";
 import { Route as RoutineRoute } from "./channels/$channelId.routines.$routineId";
-import { Route as ServerLinksRoute } from "./server.links";
 
 type Params = Record<string, string>;
 type Call = [route: AnyRoute, params: Params, init?: RequestInit, query?: string];
@@ -192,7 +182,11 @@ test("missing Channels and resources, the lead, and other Channels' members answ
     [ChannelRoute, missing, json("PATCH", { name: "Gone" })],
     [ChannelRoute, missing, { method: "DELETE" }],
     [RoutineRunRoute, { channelId: channel.id, routineId: "missing" }, { method: "POST" }],
-    [LeadMessagesRoute, missing, json("POST", { from: "apple", content: "Hi" })],
+    [
+      LeadMessagesRoute,
+      missing,
+      json("POST", { from: "apple", channelName: "Apple", server: "Studio", content: "Hi" }),
+    ],
     // The intrinsic lead is never a member, so it cannot be edited, removed, or modeled as one.
     [MemberRoute, lead, json("PATCH", { role: "X" })],
     [MemberRoute, lead, { method: "DELETE" }],
@@ -299,25 +293,21 @@ test("domain refusals keep their meaning on the wire", async () => {
   expect(await conflict.json()).toEqual({ error: "Message ID already exists." });
 });
 
-test("a linked lead's message wakes the lead only when this server finds the sender", async () => {
+test("a linked lead's message wakes the lead, naming the sender's channel and server", async () => {
   const { channel } = await openChannel();
-  const studio = serveLinkedServer(toyBoxServer("Studio", [{ id: "apple", name: "Apple" }]));
-  await linkServers(studio.href);
   const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockResolvedValue({
     disposition: "started",
     waitForCompletion: async () => ({ status: "completed" }),
   });
   onTestFinished(() => deliver.mockRestore());
-  const message = (from: string) => json("POST", { from, content: "Which branch?" });
-
-  expect((await call(LeadMessagesRoute, { channelId: channel.id }, message("apple"))).status).toBe(
-    204,
-  );
-  const unknownSender = await call(LeadMessagesRoute, { channelId: channel.id }, message("pear"));
-  expect(unknownSender.status).toBe(422);
-  expect(await unknownSender.json()).toEqual({
-    error: "This server can't find the sending channel on its linked servers.",
+  const message = json("POST", {
+    from: "apple",
+    channelName: "Apple",
+    server: "Studio",
+    content: "Which branch?",
   });
+
+  expect((await call(LeadMessagesRoute, { channelId: channel.id }, message)).status).toBe(204);
   expect(deliver.mock.calls).toEqual([
     [
       channel.id,
@@ -333,127 +323,6 @@ test("a linked lead's message wakes the lead only when this server finds the sen
       },
     ],
   ]);
-});
-
-// Route requests reach this server as http://toy-box.test, which a linked server can link back to.
-function serverLinks(init?: RequestInit, query = "", origin = "http://toy-box.test") {
-  return invokeRoute(ServerLinksRoute, new Request(`${origin}/api/v1/server/links${query}`, init));
-}
-const link = (address: string, origin?: string) =>
-  serverLinks(json("POST", { address }), "", origin);
-const unlink = (address: string, origin?: string) =>
-  serverLinks({ method: "DELETE" }, `?address=${encodeURIComponent(address)}`, origin);
-const links = async (answer: Response | Promise<Response>) => (await (await answer).json()).links;
-
-/** A linked server that links and unlinks this one back through this server's route, as a real
- *  one would, and records what it was asked. */
-function serveLinkingServer(name: string) {
-  const asked: string[] = [];
-  const server = serveLinkedServer(
-    toyBoxServer(name, [], async (request) => {
-      const url = new URL(request.url);
-      if (url.pathname !== "/api/v1/server/links") return new Response(null, { status: 404 });
-      if (request.method === "POST") {
-        const { address } = await request.json();
-        asked.push(`link ${address}`);
-        return link(url.origin, address);
-      }
-      const address = url.searchParams.get("address")!;
-      asked.push(`unlink ${address}`);
-      return unlink(url.origin, address);
-    }),
-  );
-  return Object.assign(server, { asked });
-}
-
-test("linking and unlinking change both ends once however an address is typed, and answer the server", async () => {
-  await openTestDatabase();
-  const studio = serveLinkingServer("Studio");
-  const laptop = serveLinkingServer("Laptop");
-  // Linked last, the laptop sorts first, so only link order puts it second.
-  const laptopLink = `http://127.0.0.1:${laptop.port}`;
-
-  const linked = await link(` ${studio.href} `);
-  expect(await linked.json()).toEqual({ ...(await getServer()), links: [studio.origin] });
-  expect(await links(link(`${laptopLink}//?tab=1#top`))).toEqual([studio.origin, laptopLink]);
-  expect(await links(link(studio.origin))).toEqual([studio.origin, laptopLink]);
-  expect(await links(unlink(studio.href))).toEqual([laptopLink]);
-  expect(await links(unlink(studio.href))).toEqual([laptopLink]);
-  expect(studio.asked).toEqual(["link http://toy-box.test", "unlink http://toy-box.test"]);
-  expect(laptop.asked).toEqual(["link http://toy-box.test"]);
-
-  // A server that's already linked answers without being reached, even while it sleeps.
-  await linkServers(laptopLink, "http://127.0.0.1:1");
-  expect(await links(link("http://127.0.0.1:1/"))).toEqual([laptopLink, "http://127.0.0.1:1"]);
-  // One that doesn't answer an unlink stays linked to this one until it's unlinked there.
-  expect(await links(unlink("http://127.0.0.1:1"))).toEqual([laptopLink]);
-});
-
-test("a request that reaches this server on loopback links and unlinks only this end", async () => {
-  await openTestDatabase();
-  const studio = serveLinkingServer("Studio");
-
-  for (const origin of ["http://localhost:3100", "http://127.0.0.1:3100", "http://[::1]:3100"]) {
-    expect(await links(link(studio.href, origin))).toEqual([studio.origin]);
-    expect(await links(unlink(studio.href, origin))).toEqual([]);
-  }
-  expect(studio.asked).toEqual([]);
-});
-
-test("a server that links this one back over a proxy is asked at the proxy's address", async () => {
-  await openTestDatabase();
-  const studio = serveLinkingServer("Studio");
-
-  const proxied = new Request("http://mac-mini.ts.net/api/v1/server/links", {
-    ...json("POST", { address: studio.href }),
-    headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https, http" },
-  });
-  expect((await invokeRoute(ServerLinksRoute, proxied)).status).toBe(200);
-  expect(studio.asked).toEqual(["link https://mac-mini.ts.net"]);
-});
-
-test("an address that isn't another reachable, current Toy Box server that links back is refused with why, and nothing changes", async () => {
-  await openTestDatabase();
-  await startWorkspace();
-  const page = serveLinkedServer(() => new Response("<html></html>"));
-  const older = serveLinkedServer(() => new Response("Not found", { status: 404 }));
-  const itself = serveLinkedServer(async () => Response.json(await getServer()));
-  let refusals = 0;
-  const refusing = serveLinkedServer(
-    toyBoxServer("Studio", [], () => {
-      refusals += 1;
-      return Response.json(
-        { error: "This server can't reach http://toy-box.test." },
-        { status: 422 },
-      );
-    }),
-  );
-
-  for (const [address, error] of [
-    ["ftp://studio", "Enter a host like mac-mini.tail1234.ts.net, or an http:// address."],
-    [page.href, `This server can't reach ${page.origin} (Not a Toy Box server).`],
-    // A bare host means https, which this plain-HTTP page can't speak.
-    [page.host, expect.stringContaining(`can't reach https://${page.host} (EPROTO`)],
-    [older.href, `Update Toy Box on ${older.origin}, then link it again.`],
-    [itself.href, "That's this server."],
-    [
-      refusing.href,
-      `${refusing.origin} didn't link back: This server can't reach http://toy-box.test.`,
-    ],
-    // A refused link isn't left linking, so trying again asks again.
-    [
-      refusing.href,
-      `${refusing.origin} didn't link back: This server can't reach http://toy-box.test.`,
-    ],
-  ] as const) {
-    const refused = await link(address);
-    expect(refused.status).toBe(422);
-    expect(await refused.json()).toEqual({ error });
-  }
-  expect(refusals).toBe(2);
-  expect((await unlink("ftp://studio")).status).toBe(422);
-  expect((await serverLinks({ method: "DELETE" })).status).toBe(400);
-  expect((await getServer()).links).toEqual([]);
 });
 
 test.each([new Error("Private database details"), "Private non-Error failure"])(

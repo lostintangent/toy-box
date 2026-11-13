@@ -38,11 +38,6 @@ describe("settings", () => {
     });
   });
 
-  test("keeps each server link once, in the order it was linked", () => {
-    const [a, b] = ["https://a.ts.net", "https://b.ts.net"];
-    expect(normalizeSettings({ serverLinks: [b, a, b] }).serverLinks).toEqual([b, a]);
-  });
-
   test("defaults invalid persisted fields independently", () => {
     const defaults = normalizeSettings({});
 

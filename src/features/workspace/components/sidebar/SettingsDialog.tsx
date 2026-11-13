@@ -4,8 +4,8 @@ import { Input } from "@/shared/ui/input";
 import { Separator } from "@/shared/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
-import { LinkedServerSettings } from "@channels/components/LinkedServerSettings";
 import { ProviderSettings } from "@providers/components/ProviderSettings";
+import { LinkedServerSettings } from "./LinkedServerSettings";
 import { ServerSettings } from "./ServerSettings";
 import { SettingField } from "./SettingField";
 

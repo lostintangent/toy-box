@@ -3,7 +3,7 @@ import type { CreateChannelInput } from "@channels/model";
 import { deleteSessionActivity } from "@sessions/server/state/activity";
 import type { Worker } from "@workers/model";
 import { openTestDatabase } from "@/server/testFixtures";
-import { updateSettings } from "@workspace/server/state";
+import type { Handler } from "@workspace/server/testFixtures";
 import { ChannelDatabase } from "./database";
 import { releaseChannelEvents } from "./eventLog";
 
@@ -43,32 +43,14 @@ export async function openChannel() {
   return { channel, channels };
 }
 
-/** Links the test's state database to the given base URLs, in order, without reaching them. */
-export async function linkServers(...urls: string[]) {
-  await updateSettings({ serverLinks: urls.map((url) => new URL(url).origin) });
-}
-
-type Handler = (request: Request) => Response | Promise<Response>;
-
-/** A fake linked server for one test, which answers every request with the handler. */
-export function serveLinkedServer(fetch: Handler): URL {
-  const server = Bun.serve({ port: 0, fetch });
-  onTestFinished(() => server.stop(true));
-  return server.url;
-}
-
-/** Answers as a Toy Box server named `name` with these channels, and hands every request other
- *  than those two reads to `handle`. */
-export function toyBoxServer(
-  name: string,
+/** Answers a linked server's channel catalog with these channels, and hands every other request
+ *  to `handle`. */
+export function channelCatalog(
   channels: { id: string; name: string; purpose?: string | null }[],
   handle: Handler = () => new Response("Not found", { status: 404 }),
 ): Handler {
-  const id = crypto.randomUUID();
-  return (request) => {
-    const read = request.method === "GET" && new URL(request.url).pathname;
-    if (read === "/api/v1/server") return Response.json({ id, name, links: [] });
-    if (read === "/api/v1/channels") return Response.json({ channels, members: [] });
-    return handle(request);
-  };
+  return (request) =>
+    request.method === "GET" && new URL(request.url).pathname === "/api/v1/channels"
+      ? Response.json({ channels, members: [] })
+      : handle(request);
 }

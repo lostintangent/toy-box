@@ -17,13 +17,11 @@ import {
   deleteChannel,
   deleteChannelRoutine,
   editChannel,
-  linkServer,
   markChannelRead,
   postChannelMessage,
   removeChannelArtifact,
   removeChannelMember,
   runChannelRoutine,
-  unlinkServer,
   updateChannelMember,
 } from "@channels/server/functions";
 
@@ -78,14 +76,6 @@ export const channelMutations = {
   bookmark: () =>
     mutationOptions({
       mutationFn: (input: BookmarkChannelMessageInput) => bookmarkChannelMessage({ data: input }),
-    }),
-  linkServer: () =>
-    mutationOptions({
-      mutationFn: (address: string) => linkServer({ data: { address } }),
-    }),
-  unlinkServer: () =>
-    mutationOptions({
-      mutationFn: (address: string) => unlinkServer({ data: { address } }),
     }),
   post: () =>
     mutationOptions({

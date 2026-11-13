@@ -20,7 +20,7 @@ import { Route as ApiV1ChannelsChannelIdRouteImport } from './../channels/routes
 import { Route as ApiV1PushRegistrationIDRouteImport } from './../push/routes/v1/push/$registrationID'
 import { Route as ApiV1ScreensDotindexRouteImport } from './../screens/routes/v1/screens.index'
 import { Route as ApiV1ServerDotindexRouteImport } from './routes/api/v1/server.index'
-import { Route as ApiV1ServerDotlinksRouteImport } from './../channels/routes/v1/server.links'
+import { Route as ApiV1ServerDotlinksRouteImport } from './routes/api/v1/server.links'
 import { Route as ApiV1ServerDotrestartRouteImport } from './routes/api/v1/server.restart'
 import { Route as ApiV1ServerDotupdateRouteImport } from './routes/api/v1/server.update'
 import { Route as ApiV1ChannelsChannelIdDotleadMessagesRouteImport } from './../channels/routes/v1/channels/$channelId.lead-messages'

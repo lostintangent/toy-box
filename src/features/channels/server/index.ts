@@ -39,7 +39,7 @@ import { deleteWorker, spawnWorker } from "@workers/server";
 import { ChannelDatabase, catalogEntry, type ChannelChange } from "./database";
 import { deleteChannelFiles, storeChannelAttachments, storeChannelAvatar } from "./attachments";
 import { publishChannelEvent, releaseChannelEvents } from "./eventLog";
-import { listLinkedChannels, messageLinkedChannelLead, type LinkedLeadMessageInput } from "./links";
+import { messageLinkedChannelLead, type LinkedLeadMessageInput } from "./links";
 import { publishChannelNotification } from "./push";
 
 const CHANNEL_MESSAGE_LIMIT = 100;
@@ -466,7 +466,7 @@ export async function messageChannelLead(
     database.getChannel(channelId),
   ]);
   if (!sender) throw new NotFoundError("Channel");
-  if (!target) return messageLinkedChannelLead(sender.id, { channelId, content });
+  if (!target) return messageLinkedChannelLead(sender, { channelId, content });
   await wakeChannelAgent(channelId, {
     type: "channel_lead_message",
     channelId: sender.id,
@@ -475,25 +475,22 @@ export async function messageChannelLead(
   });
 }
 
-/** Wakes a lead with a message from a lead on a linked server. The sender must be a channel this
- *  server finds on its own linked servers, so it's named as this server's owner configured it. */
+/** Wakes a lead with a message from a lead on a linked server, named as its channel and server
+ *  name themselves. */
 export async function receiveChannelLeadMessage({
   channelId,
   from,
+  channelName,
+  server,
   content,
 }: LinkedLeadMessageInput): Promise<void> {
   const target = await new ChannelDatabase(await getStateDatabase()).getChannel(channelId);
   if (!target) throw new NotFoundError("Channel");
-  const sender = (await listLinkedChannels()).channels.find(
-    (channel) => channel.channelId === from,
-  );
-  if (!sender)
-    throw new RefusalError("This server can't find the sending channel on its linked servers.");
   await wakeChannelAgent(channelId, {
     type: "channel_lead_message",
-    channelId: sender.channelId,
-    channelName: sender.name,
-    server: sender.server,
+    channelId: from,
+    channelName,
+    server,
     content,
   });
 }

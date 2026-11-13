@@ -1,10 +1,4 @@
-import {
-  channelAgent,
-  createStoredChannel,
-  linkServers,
-  serveLinkedServer,
-  toyBoxServer,
-} from "@channels/server/testFixtures";
+import { channelAgent, channelCatalog, createStoredChannel } from "@channels/server/testFixtures";
 import {
   afterAll,
   beforeEach,
@@ -23,6 +17,8 @@ import { machineFile, workspaceFileId } from "@files/model";
 import { createFileServeUrl } from "@files/model/paths";
 import { reduceChannelState } from "@channels/model/reducer";
 import { openTestDatabase } from "@/server/testFixtures";
+import { getServer } from "@workspace/server/installation";
+import { linkServers, serveLinkedServer, toyBoxServer } from "@workspace/server/testFixtures";
 import { toolResultText, type Tool } from "@sessions/server/tools/definition";
 
 // Mock first, then import everything the test exercises or inspects, so the test and the
@@ -448,15 +444,13 @@ test("leads also list the channels on linked servers", async () => {
   const channels = await openChannels();
   const lead = await createStoredChannel(channels, { name: "Core", ...CHANNEL_DEFAULTS });
   onTestFinished(() => releaseChannelEvents(lead.id));
-  const studio = serveLinkedServer(toyBoxServer("Studio", [{ id: "apple", name: "Apple" }]));
-  await linkServers(studio.href, "http://127.0.0.1:1");
+  const studio = serveLinkedServer(
+    toyBoxServer("Studio", channelCatalog([{ id: "apple", name: "Apple" }])),
+  );
+  await linkServers(studio.href);
   const own = await invokeTool("list_channels", {}, lead.id);
   expect(await invokeTool("list_channels", {}, lead.id, true)).toEqual({
-    channels: [
-      ...own.channels,
-      { channelId: "apple", name: "Apple", server: "Studio", link: studio.origin },
-    ],
-    unavailable: [{ link: "http://127.0.0.1:1", error: expect.any(String) }],
+    channels: [...own.channels, { channelId: "apple", name: "Apple", server: "Studio" }],
   });
 });
 
@@ -1256,32 +1250,32 @@ test("a lead privately wakes another channel's lead and only a channel's lead", 
   expect((await channels.getChannel(target.id))?.latestSequence).toBe(target.latestSequence);
 });
 
-test("a lead's message to a channel this server doesn't hold goes once to its linked server, and a failure says why", async () => {
+test("a lead's message to a channel this server doesn't hold goes once to its linked server, naming the sender's channel and server", async () => {
   const channels = await openChannels();
   const sender = await createStoredChannel(channels, { name: "Core", ...CHANNEL_DEFAULTS });
   const deliveries: unknown[] = [];
   const studio = serveLinkedServer(
-    toyBoxServer("Studio", [{ id: "apple", name: "Apple" }], async (request) => {
-      deliveries.push({ path: new URL(request.url).pathname, body: await request.json() });
-      return deliveries.length === 1
-        ? new Response(null, { status: 204 })
-        : Response.json({ error: "Unknown sender." }, { status: 422 });
-    }),
+    toyBoxServer(
+      "Studio",
+      channelCatalog([{ id: "apple", name: "Apple" }], async (request) => {
+        deliveries.push({ path: new URL(request.url).pathname, body: await request.json() });
+        return new Response(null, { status: deliveries.length === 1 ? 204 : 422 });
+      }),
+    ),
   );
-  await linkServers(studio.href, "http://127.0.0.1:1");
+  await linkServers(studio.href);
   const deliver = spyOnDelivery();
   const message = (channelId: string, content: string) =>
     messageChannelLead(sender.id, { channelId, content });
 
   await message("apple", "Which build?");
-  await expect(message("apple", "Still there?")).rejects.toThrow("Studio: Unknown sender.");
-  await expect(message("pear", "Hi")).rejects.toThrow(
-    /^Channel not found\. Unavailable: http:\/\/127\.0\.0\.1:1 \(ECONNREFUSED/,
-  );
+  await expect(message("apple", "Still there?")).rejects.toThrow("Couldn't deliver to Studio.");
+  await expect(message("pear", "Hi")).rejects.toThrow("Channel not found.");
   const path = "/api/v1/channels/apple/lead-messages";
+  const from = { from: sender.id, channelName: "Core", server: (await getServer()).name };
   expect(deliveries).toEqual([
-    { path, body: { from: sender.id, content: "Which build?" } },
-    { path, body: { from: sender.id, content: "Still there?" } },
+    { path, body: { ...from, content: "Which build?" } },
+    { path, body: { ...from, content: "Still there?" } },
   ]);
   expect(deliver).not.toHaveBeenCalled();
 });

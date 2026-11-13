@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getRequest } from "@tanstack/react-start/server";
 import type { ChannelCatalogEntry, ChannelList, ChannelMessage } from "@channels/model";
 import {
   bookmarkChannelMessageInputSchema,
@@ -15,7 +14,6 @@ import {
   updateChannelMemberInputSchema,
 } from "@channels/model";
 import * as channels from ".";
-import * as links from "./links";
 export const listChannels = createServerFn({ method: "GET" }).handler((): Promise<ChannelList> =>
   channels.listChannels(),
 );
@@ -77,11 +75,3 @@ export const postChannelMessage = createServerFn({ method: "POST" })
   .handler(({ data }): Promise<ChannelMessage> =>
     channels.postChannelMessage(data, { type: "user" }),
   );
-
-export const linkServer = createServerFn({ method: "POST" })
-  .validator(links.linkInputSchema)
-  .handler(({ data }) => links.linkServer(data.address, links.requestLink(getRequest())));
-
-export const unlinkServer = createServerFn({ method: "POST" })
-  .validator(links.linkInputSchema)
-  .handler(({ data }) => links.unlinkServer(data.address, links.requestLink(getRequest())));

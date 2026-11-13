@@ -63,10 +63,7 @@ const listLeadChannelsTool: typeof listChannelsTool = {
   handler: async () => {
     const { listChannels } = await import("@channels/server");
     const [local, linked] = await Promise.all([listChannels(), listLinkedChannels()]);
-    return {
-      channels: [...local.channels.map(channelForTool), ...linked.channels],
-      ...(linked.unavailable.length ? { unavailable: linked.unavailable } : {}),
-    };
+    return { channels: [...local.channels.map(channelForTool), ...linked] };
   },
 };
 

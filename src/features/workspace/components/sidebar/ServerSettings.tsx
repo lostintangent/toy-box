@@ -41,6 +41,7 @@ export function ServerSettings() {
       title="Server Details"
       icon={Server}
       badge={server?.version}
+      defaultOpen={false}
       detail={
         hasPendingRestart ? (
           <Button

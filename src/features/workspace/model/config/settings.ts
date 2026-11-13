@@ -17,8 +17,8 @@ export const settingsSchema = z.object({
   serverName: z.string().trim().max(64),
   /** This server's identity, made when it first starts and never written again. */
   serverId: z.string(),
-  /** The owner's other servers, by origin in the order they were linked. Only Channels' link
-   *  verbs change them, because linking checks that the server answers. */
+  /** The owner's other servers, by origin in the order they were linked. Only the link verbs
+   *  change them, because linking checks that the server answers. */
   serverLinks: z.array(z.string()),
 });
 
@@ -56,7 +56,6 @@ export function normalizeSettings(value: unknown): Settings {
   ) as Settings;
   settings.pinnedSessionIds = [...new Set(settings.pinnedSessionIds)].sort();
   settings.disabledProviders = [...new Set(settings.disabledProviders)].sort();
-  settings.serverLinks = [...new Set(settings.serverLinks)];
   return settings;
 }
 

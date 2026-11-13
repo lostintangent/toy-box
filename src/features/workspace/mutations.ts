@@ -1,6 +1,8 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import {
+  linkServer,
   restartServer,
+  unlinkServer,
   updateDraft as requestDraftUpdate,
   updateServer,
   updateSettings as requestSettingsUpdate,
@@ -24,6 +26,14 @@ export const workspaceMutations = {
     mutationOptions({
       mutationKey: ["workspace", "server", "restart"],
       mutationFn: () => restartServer(),
+    }),
+  linkServer: () =>
+    mutationOptions({
+      mutationFn: (address: string) => linkServer({ data: { address } }),
+    }),
+  unlinkServer: () =>
+    mutationOptions({
+      mutationFn: (address: string) => unlinkServer({ data: { address } }),
     }),
 };
 

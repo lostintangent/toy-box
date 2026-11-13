@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { linkInputSchema, linkServer, requestLink, unlinkServer } from "@channels/server/links";
+import { linkInputSchema, linkServer, requestLink, unlinkServer } from "@workspace/server/links";
 import { invalidRequest, readInput, respond } from "@/shared/server/http";
 import { getServer } from "@workspace/server/installation";
 

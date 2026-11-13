@@ -54,7 +54,7 @@ Each server value has one owning cache; cross-feature consumers compose those ca
 Provider availability and pin changes are published after persistence, then invalidate session
 catalog membership on every client. Provider changes also invalidate the provider catalog.
 Other preferences retain their existing optimistic updates.
-The update schema omits `serverId` and `serverLinks`. Only Channels' link verbs write links, after
+The update schema omits `serverId` and `serverLinks`. Only the link verbs write links, after
 checking that the server answers, through `updateSettings`' function form, which derives the change
 from the current settings inside the settings queue, so concurrent links aren't lost.
 `serverName` is trimmed and at most 64 characters. Its rule, like `accentColor`'s, sits on the
@@ -106,7 +106,7 @@ and hands the tab a lease; the tab ends it early with the `releaseLease` RPC, an
 when the stream does. Reconnecting yields a new id, and holders attach again.
 
 [`server/functions.ts`](server/functions.ts) validates remote ingress for hydration, shared
-workspace actions, settings updates, and the server's release, then delegates to plain operations.
+workspace actions, settings updates, and the server's release and links, then delegates to plain operations.
 [`server/state/`](server/state) assembles the cross-feature snapshot and owns only
 workspace-wide coordination: drafts, settings, and environment capabilities.
 [`server/tools.ts`](server/tools.ts) exposes Workspace-owned settings updates to model sessions.
@@ -145,9 +145,7 @@ the manager's own error lines. `restartServer` hands off to the shutdown describ
 Native clients use the `/api/v1/server` resource: `GET` answers it,
 `PATCH { name?, accentColor? }` changes only the details it names and answers it, `POST /update`
 answers it once the install finishes, and `POST /restart` answers 202 before the server goes down.
-Its `/links` belong to Channels and are described with linked servers in the
-[Channels guide](../channels/AGENTS.md). The web app reaches the same operations through server
-functions.
+The web app reaches the same operations through server functions.
 [`components/sidebar/ServerSettings.tsx`](components/sidebar/ServerSettings.tsx) is Settings' Server
 Details: its Name and Accent color fields edit `serverName` and `accentColor` from the workspace
 settings, with `computerName` as the name's placeholder, so either change shows live in every tab.
@@ -155,6 +153,16 @@ The heading's version badge comes from `workspaceQueries.server`, read only whil
 Its one button updates, or restarts while a restart is pending, so Restart appears on every device
 whichever one updated. Both requests are `workspaceMutations` in the query client's mutation cache,
 so closing Settings doesn't lose one in flight, and reopening shows its progress or error.
+
+[`server/links.ts`](server/links.ts) owns links, the owner's other Toy Box servers, as origins in
+the `serverLinks` setting that only its verbs write. `POST { address }` and `DELETE ?address=` on
+`/api/v1/server/links` link and unlink both ends, but a request on loopback changes only this one,
+and a server that doesn't answer an unlink keeps its link. A link is saved only once the other
+server links this one back, and repeating either verb changes nothing. Settings' [Linked
+Servers](components/sidebar/LinkedServerSettings.tsx) reads each one's name and release through
+`getLinkedServer`, which reads only a linked server, and each row opens that server's own web app,
+where it updates and restarts. Features reach linked servers through the module's bounded
+`readServer`, `read` and `post`.
 
 ## Pane model
 

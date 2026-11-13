@@ -211,32 +211,18 @@ target must be an existing Channel because delivery accepts any Session. Like a 
 wake clears the receiving lead's `waiting` status, so its roster shows it working. That is the
 exchange's only trace in either Channel.
 
-Leads also reach Channels on the owner's linked servers, the other Toy Box servers the owner links
-in Settings or through `/api/v1/server/links`. `POST { address }` links one and `DELETE ?address=`
-unlinks one, and each answers the whole server, as `GET /api/v1/server` does, with its `links` in
-link order. A link is its server's `http` or `https` origin, where a bare host means `https`.
-Linking reads the server's `/api/v1/server`, refuses one whose `id` is this server's, and asks it to
-link this one back at the address the request reached, honoring `X-Forwarded-Proto`. The link is
-saved only once that server agrees, and while it's asked, its link back answers at once, so both
-ends finish. Unlinking removes the link, then asks the server to unlink this one, and a server that
-doesn't answer keeps its link. A request on loopback names no address another server reaches, so it
-changes only this end, and Settings says so on localhost. A pair linked on one end is repaired by
-linking from the server that's missing the link, or unlinking from the one that still has it.
-Linking or unlinking twice changes nothing, and re-linking answers without reaching the server, so
-it holds even while that server sleeps. Links are the workspace setting `serverLinks`, so every tab
-follows them through `settings.changed`, but only these verbs change them, since the settings update
-schema omits them.
-
-A lead's `list_channels` adds each linked server's Channels with that server's `name` as `server`
-and its `link`, since two servers can share a name, and lists the links that don't answer as
-`unavailable`. Messaging one posts `{ from, content }` once to its server's
-`POST /api/v1/channels/:channelId/lead-messages`, which answers 204 once that lead has accepted it,
-not once it replies. Any other answer, or a timeout, fails the tool with the reason. The receiver
-refuses a sender it can't find among its own linked servers' Channels, so messages flow only
-between servers that link each other, and names the sender's server as that server names itself.
-Only words cross servers, so `message_channel_lead`'s description tells leads to share work as
-pushed branches or in the message itself. Linked servers trust each other the way a server trusts
-its clients, on the owner's private network, without authentication.
+Leads also reach Channels on the owner's linked servers, which
+[Workspace links](../workspace/AGENTS.md#the-server).
+A lead's `list_channels` adds each answering linked server's Channels with that server's `name` as
+`server`, so a server that's asleep just lists none. Messaging one posts
+`{ from, channelName, server, content }` once to its server's
+`POST /api/v1/channels/:channelId/lead-messages`, naming the sender's Channel and server as they name
+themselves. It answers 204 once that lead has accepted the message, not once it replies. Any other
+answer, or a timeout, fails the tool. The receiver wakes its lead without looking the sender up, so a
+reply reaches the sender only when the receiving server links it too. Only words cross servers, so
+`message_channel_lead`'s description tells leads to share work as pushed branches or in the message
+itself. Linked servers trust each other the way a server trusts its clients, on the owner's private
+network, without authentication.
 
 Channel tools are always loaded, so each tool's description and schema own its purpose and
 mechanics. The instructions own the collaboration protocol: how the lead frames, staffs, delegates,
@@ -656,8 +642,8 @@ presents one deleted identity everywhere.
   `stream.ts` composes public views and owns subscriptions over `eventLog.ts`, each Channel's
   bounded event log.
   Each `routes/v1/` file answers its `/api/v1/channels` requests in place. `attachments.ts` owns
-  the files messages attach and the avatar image. `links.ts` owns the network boundary to the
-  owner's linked servers: their links, listing their Channels, and delivering a lead's message once.
+  the files messages attach and the avatar image. `links.ts` lists the Channels on the
+  owner's linked servers and delivers a lead's message to one once, through Workspace's links.
   `tools.ts` owns agent-facing projections and the Session, lead, and member tool sets. It translates
   the calling Session into its Channel, actor, and workspace-relative paths. Receiving the lead tool
   set is a lead's authority, since a lead's Session ID is its Channel's ID. `agent.ts` composes each agent's

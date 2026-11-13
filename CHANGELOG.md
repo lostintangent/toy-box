@@ -1,3 +1,7 @@
+## 📅 v0.4.1 (11/12/26)
+
+- Linked servers now show their name and version in the `Settings` dialog
+
 ## 📅 v0.4.0 (11/12/26)
 
 - You can now link servers together, which allows channel leads to discover and message each other across machines
