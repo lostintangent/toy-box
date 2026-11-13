@@ -140,7 +140,7 @@ client applies that rule, and nothing else records it.
 
 `updateServer` runs the owning manager, and concurrent requests share one run. A failure reports
 the manager's own error lines. `restartServer` hands off to the shutdown described in the
-[CLI guide](../../cli/AGENTS.md#restart).
+[CLI guide](../../cli/AGENTS.md#restart) and answers with the release it restarts into.
 
 Native clients use the `/api/v1/server` resource: `GET` answers it,
 `PATCH { name?, accentColor? }` changes only the details it names and answers it, `POST /update`
@@ -150,9 +150,11 @@ The web app reaches the same operations through server functions.
 Details: its Name and Accent color fields edit `serverName` and `accentColor` from the workspace
 settings, with `computerName` as the name's placeholder, so either change shows live in every tab.
 The heading's version badge comes from `workspaceQueries.server`, read only while Settings is open.
-Its one button updates, or restarts while a restart is pending, so Restart appears on every device
-whichever one updated. Both requests are `workspaceMutations` in the query client's mutation cache,
-so closing Settings doesn't lose one in flight, and reopening shows its progress or error.
+Its split button leads with Update and keeps Restart in its menu, and while a restart is pending it
+leads with Restart and keeps Update, so Restart appears on every device whichever one updated. A
+restart into the running release ends when its request answers, and one into another release ends
+when the tab reloads onto it. Both requests are `workspaceMutations` in the query client's mutation
+cache, so closing Settings doesn't lose one in flight, and reopening shows its progress or error.
 
 [`server/links.ts`](server/links.ts) owns links, the owner's other Toy Box servers, as origins in
 the `serverLinks` setting that only its verbs write. `POST { address }` and `DELETE ?address=` on

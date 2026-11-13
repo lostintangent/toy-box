@@ -22,12 +22,6 @@ export function startCopilotClient(): Promise<CopilotClient> {
   const promise = (async () => {
     const client = new CopilotClient({
       connection: RuntimeConnection.forStdio({ path: resolveCopilotCliPath() }),
-      // Make a compiled Bun executable behave like the Bun CLI when the SDK
-      // uses process.execPath for child JavaScript entrypoints.
-      env: {
-        ...process.env,
-        BUN_BE_BUN: "1",
-      },
     });
     await client.start();
     await registerComputerUse(client).catch((error) =>

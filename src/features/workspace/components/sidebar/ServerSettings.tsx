@@ -1,6 +1,12 @@
 import { useMutation, useMutationState, useQuery } from "@tanstack/react-query";
-import { Loader2, RefreshCw, RotateCcw, Server } from "lucide-react";
+import { ChevronDown, Loader2, RefreshCw, RotateCcw, Server } from "lucide-react";
 import { Button } from "@/shared/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/shared/ui/dropdown-menu";
 import { Input } from "@/shared/ui/input";
 import { CollapsibleSection } from "@/shared/ui/section-heading";
 import { isHexColor } from "@/shared/utils";
@@ -10,7 +16,7 @@ import { workspaceQueries } from "../../queries";
 import { SettingField } from "./SettingField";
 
 /** This server's name, accent color and release: renaming and recoloring it, installing the newest
- *  release, and restarting into it. */
+ *  release, and restarting, into it or onto the same one. */
 export function ServerSettings() {
   const serverName = useWorkspaceSelector((workspace) => workspace.settings.serverName);
   const accentColor = useWorkspaceSelector((workspace) => workspace.settings.accentColor);
@@ -28,13 +34,27 @@ export function ServerSettings() {
     filters: { mutationKey: workspaceMutations.restartServer().mutationKey },
   }).at(-1);
   const isUpdating = updateState?.status === "pending";
-  // A restart ends when the workspace stream reconnects to the new release and reloads this tab.
-  const isRestarting = restartState?.status === "pending" || restartState?.status === "success";
+  // A restart answers with the release it restarts into. When that's another one, the restart ends
+  // as the workspace stream reconnects to it and reloads this tab.
+  const isRestarting =
+    restartState?.status === "pending" ||
+    (restartState?.status === "success" && restartState.data !== server?.version);
 
   // No installed release means no package manager owns this run, as in `bun dev`.
   const installedVersion = server?.installedVersion;
   const hasPendingRestart = installedVersion != null && installedVersion !== server?.version;
   const error = (updateState?.error ?? restartState?.error)?.message.split("\n")[0];
+
+  // A pending restart leads, and Update stays in the menu to check for an even newer release.
+  const updateAction = { icon: RefreshCw, label: "Update", run: () => update() };
+  const restartAction = {
+    icon: RotateCcw,
+    label: hasPendingRestart ? `Restart (${installedVersion})` : "Restart",
+    run: () => restart(),
+  };
+  const [primary, secondary] = hasPendingRestart
+    ? [restartAction, updateAction]
+    : [updateAction, restartAction];
 
   return (
     <CollapsibleSection
@@ -43,28 +63,44 @@ export function ServerSettings() {
       badge={server?.version}
       defaultOpen={false}
       detail={
-        hasPendingRestart ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            disabled={isRestarting}
-            onClick={() => restart()}
-          >
-            {isRestarting ? <Loader2 className="animate-spin" /> : <RotateCcw />}
-            {isRestarting ? "Restarting…" : `Restart (${installedVersion})`}
+        !installedVersion || isUpdating || isRestarting ? (
+          <Button type="button" variant="outline" size="xs" disabled>
+            {isUpdating || isRestarting ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {isRestarting ? "Restarting…" : "Update"}
           </Button>
         ) : (
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            disabled={!installedVersion || isUpdating}
-            onClick={() => update()}
-          >
-            {isUpdating ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            Update
-          </Button>
+          <span className="flex">
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              className="rounded-r-none"
+              onClick={primary.run}
+            >
+              <primary.icon />
+              {primary.label}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon-xs"
+                    aria-label="More server actions"
+                    className="w-5 rounded-l-none border-l-0"
+                  />
+                }
+              >
+                <ChevronDown />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={secondary.run}>
+                  <secondary.icon />
+                  {secondary.label}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </span>
         )
       }
     >

@@ -1,3 +1,7 @@
+## 📅 v0.4.2 (11/13/26)
+
+- Servers can now be restarted even if there isn't an available update
+
 ## 📅 v0.4.1 (11/12/26)
 
 - Linked servers now show their name and version in the `Settings` dialog

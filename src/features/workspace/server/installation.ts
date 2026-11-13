@@ -91,7 +91,8 @@ type Relaunch = (command: string) => never;
 /** Relaunches even when a feature's cleanup hangs. */
 const RESTART_DEADLINE_MS = 15_000;
 
-/** Shuts down as Ctrl+C does, then becomes the installed release. Refuses when it couldn't come back. */
+/** Shuts down as Ctrl+C does, then becomes the installed release, which it answers with. Refuses
+ *  when it couldn't come back. */
 export async function restartServer() {
   const relaunch = getProcessValue<Relaunch | undefined>("relaunch", () => undefined);
   if (!relaunch)
@@ -105,6 +106,7 @@ export async function restartServer() {
   useNitroHooks().hook("close", restart);
   setTimeout(restart, RESTART_DEADLINE_MS);
   process.kill(process.pid, "SIGTERM");
+  return installed.version;
 }
 
 // Run the command on PATH rather than `process.execPath`, which pnpm and Vite+ move

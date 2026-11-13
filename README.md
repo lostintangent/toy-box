@@ -67,7 +67,7 @@ After opening your HTTPS URL in a mobile browser, you can add Toy Box to your ho
 
 ## Updating the Server
 
-Open `Settings` and press **Update** under `Server Details`. It installs the latest release with the package manager you installed Toy Box with, and running sessions carry on undisturbed. Once a newer release is installed, every connected device shows **Restart**, including the iOS/macOS clients. Restarting stops the server as Ctrl+C would, ending turns and terminals in progress, then starts the new release on the same port, and open tabs reload onto it.
+Open `Settings` and press **Update** under `Server Details`. It installs the latest release with the package manager you installed Toy Box with, and running sessions carry on undisturbed. Once a newer release is installed, every connected device shows **Restart**, including the iOS/macOS clients. Restarting stops the server as Ctrl+C would, ending turns and terminals in progress, then starts the new release on the same port, and open tabs reload onto it. Without a pending restart, the button's menu restarts the server onto the release it already runs.
 
 ## Inbox Webhook
 
