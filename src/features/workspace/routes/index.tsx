@@ -6,7 +6,7 @@ import { useSessions } from "@sessions/useSessions";
 import { useHyperSession } from "@workspace/hooks/layout/useHyperSession";
 import { useWarmSessionSnapshots } from "@sessions/useWarmSessionSnapshots";
 import { useWorkspaceSync } from "@workspace/hooks/useWorkspaceSync";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
+import { useRestartPending, useWorkspaceSelector } from "@workspace/hooks/state";
 import { useViewport } from "@/shared/hooks/useViewport";
 import { CommandProvider } from "@/shared/commands/CommandProvider";
 import { DialogHost } from "@/shared/dialogs/DialogHost";
@@ -132,6 +132,7 @@ function WorkspacePage() {
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
 
   const hasModels = useHasModels();
+  const restartPending = useRestartPending();
   const { data: channelList } = useQuery(channelQueries.list);
   const channels = channelList?.channels;
   const { data: automations } = useSuspenseQuery(automationQueries.list);
@@ -254,6 +255,7 @@ function WorkspacePage() {
     hyper: { isOpen: isHyperOpen, toggle: toggleHyper },
     inbox: { isOpen: isInboxOpen, open: handleOpenInbox },
     hasModels,
+    restartPending,
     createSession: handleCreateSession,
   });
 

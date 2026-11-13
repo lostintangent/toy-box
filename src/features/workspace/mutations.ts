@@ -18,9 +18,6 @@ export const workspaceMutations = {
     mutationOptions({
       mutationKey: ["workspace", "server", "update"],
       mutationFn: () => updateServer(),
-      onSuccess: (server, _variables, _context, { client }) => {
-        client.setQueryData(workspaceQueries.server.queryKey, server);
-      },
     }),
   restartServer: () =>
     mutationOptions({

@@ -1,3 +1,8 @@
+## 📅 v0.4.3 (11/13/26)
+
+- When collapsed, the sidebar now shows running/waiting/finished channels
+- The server now automatically updates itself and then displays a dot in the settings icon when a restart is available.
+
 ## 📅 v0.4.2 (11/13/26)
 
 - Servers can now be restarted even if there isn't an available update

@@ -1,4 +1,4 @@
-import { useMutation, useMutationState, useQuery } from "@tanstack/react-query";
+import { useMutation, useMutationState } from "@tanstack/react-query";
 import { ChevronDown, Loader2, RefreshCw, RotateCcw, Server } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import {
@@ -10,9 +10,13 @@ import {
 import { Input } from "@/shared/ui/input";
 import { CollapsibleSection } from "@/shared/ui/section-heading";
 import { isHexColor } from "@/shared/utils";
-import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "../../hooks/state";
+import { version } from "../../../../../package.json";
+import {
+  useRestartPending,
+  useUpdateWorkspaceSetting,
+  useWorkspaceSelector,
+} from "../../hooks/state";
 import { workspaceMutations } from "../../mutations";
-import { workspaceQueries } from "../../queries";
 import { SettingField } from "./SettingField";
 
 /** This server's name, accent color and release: renaming and recoloring it, installing the newest
@@ -21,8 +25,10 @@ export function ServerSettings() {
   const serverName = useWorkspaceSelector((workspace) => workspace.settings.serverName);
   const accentColor = useWorkspaceSelector((workspace) => workspace.settings.accentColor);
   const computerName = useWorkspaceSelector((workspace) => workspace.environment.computerName);
+  // No installed release means no package manager owns this run, as in `bun dev`.
+  const installedVersion = useWorkspaceSelector((workspace) => workspace.installedVersion);
+  const hasPendingRestart = useRestartPending();
   const updateSetting = useUpdateWorkspaceSetting();
-  const { data: server } = useQuery(workspaceQueries.server);
   const { mutate: update } = useMutation(workspaceMutations.updateServer());
   const { mutate: restart } = useMutation(workspaceMutations.restartServer());
 
@@ -38,11 +44,7 @@ export function ServerSettings() {
   // as the workspace stream reconnects to it and reloads this tab.
   const isRestarting =
     restartState?.status === "pending" ||
-    (restartState?.status === "success" && restartState.data !== server?.version);
-
-  // No installed release means no package manager owns this run, as in `bun dev`.
-  const installedVersion = server?.installedVersion;
-  const hasPendingRestart = installedVersion != null && installedVersion !== server?.version;
+    (restartState?.status === "success" && restartState.data !== version);
   const error = (updateState?.error ?? restartState?.error)?.message.split("\n")[0];
 
   // A pending restart leads, and Update stays in the menu to check for an even newer release.
@@ -60,7 +62,7 @@ export function ServerSettings() {
     <CollapsibleSection
       title="Server Details"
       icon={Server}
-      badge={server?.version}
+      badge={version}
       defaultOpen={false}
       detail={
         !installedVersion || isUpdating || isRestarting ? (

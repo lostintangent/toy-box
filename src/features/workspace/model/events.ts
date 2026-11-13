@@ -10,7 +10,8 @@ export interface WorkspaceEvents {
   workspace:
     | { type: "draft.changed"; key: DraftKey; draft: SavedDraft }
     | { type: "workspace.connected"; revision: string; connection: string; version: string }
-    | { type: "settings.changed"; settings: Settings };
+    | { type: "settings.changed"; settings: Settings }
+    | { type: "server.updated"; installedVersion: string };
 }
 
 /** One shared update broadcast from the server to every connected workspace. */

@@ -23,9 +23,9 @@ and surface; those reusable capabilities never import a feature.
 
 `WorkspaceState` is the aggregate read model delivered during SSR and refreshed after reconnects.
 It holds only the facts Workspace owns: settings, including the `hyperSessionId` that names the
-Hyper session, drafts, and environment capabilities. Every other feature's shared state,
-including Sessions' activity, Workers' active workers, and Apps' installed definitions, lives in
-that feature's own Query cache.
+Hyper session, drafts, environment capabilities, and the installed release. Every other feature's
+shared state, including Sessions' activity, Workers' active workers, and Apps' installed
+definitions, lives in that feature's own Query cache.
 Sessions, Channels, Automations, Inbox, Apps, Providers, and Workers have independent Query
 catalogs, each preloaded for the first render by its own cache. The session catalog supplies durable ownership for generic session
 classification; feature catalogs supply the records needed by their own surfaces.
@@ -135,12 +135,16 @@ The module also owns the release this server runs and the one installed on disk.
 read once and again after each update, so a release installed from a terminal shows after the next
 update or restart. `updateCommand` decides ownership from the binary's real location, so `bun dev`,
 npx and bunx runs, project dependencies, and downloaded binaries have none.
-**A restart is pending exactly while `installedVersion` is set and differs from `version`.** Every
-client applies that rule, and nothing else records it.
+**A restart is pending exactly while `installedVersion` is set and differs from `version`.** The
+workspace snapshot carries `installedVersion`, and `useRestartPending` applies that rule, so the
+settings action's blue dot and its "update available" label show in every tab from the first paint.
 
 `updateServer` runs the owning manager, and concurrent requests share one run. A failure reports
-the manager's own error lines. `restartServer` hands off to the shutdown described in the
-[CLI guide](../../cli/AGENTS.md#restart) and answers with the release it restarts into.
+the manager's own error lines. An install that changes the installed release broadcasts
+`server.updated`, which every tab reduces into its snapshot. Workspace's startup updates at boot and
+every six hours, and an install no manager owns refuses without spawning anything. Nothing restarts
+on its own. `restartServer` waits for an install in flight, hands off to the shutdown described in
+the [CLI guide](../../cli/AGENTS.md#restart), and answers with the release it restarts into.
 
 Native clients use the `/api/v1/server` resource: `GET` answers it,
 `PATCH { name?, accentColor? }` changes only the details it names and answers it, `POST /update`
@@ -149,7 +153,8 @@ The web app reaches the same operations through server functions.
 [`components/sidebar/ServerSettings.tsx`](components/sidebar/ServerSettings.tsx) is Settings' Server
 Details: its Name and Accent color fields edit `serverName` and `accentColor` from the workspace
 settings, with `computerName` as the name's placeholder, so either change shows live in every tab.
-The heading's version badge comes from `workspaceQueries.server`, read only while Settings is open.
+The heading's version badge is the release bundled into the page, which the workspace stream
+reloads whenever the server runs another one.
 Its split button leads with Update and keeps Restart in its menu, and while a restart is pending it
 leads with Restart and keeps Update, so Restart appears on every device whichever one updated. A
 restart into the running release ends when its request answers, and one into another release ends

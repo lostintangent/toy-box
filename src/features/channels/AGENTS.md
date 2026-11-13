@@ -626,6 +626,9 @@ presents one deleted identity everywhere.
   appears only in the desktop composer-tray pill.
 - Sidebar priority is waiting, unread completion, ordinary unread, then live lead/member activity;
   open channels suppress completion like unread, but never suppress an unanswered request.
+- The collapsed sidebar's rail lists each Channel that is waiting, has an unread completion, or has
+  a working agent, by its avatar with that mark, three at a time before it scrolls, and opens it
+  without expanding the sidebar.
 
 ## Code map
 
@@ -654,8 +657,8 @@ presents one deleted identity everywhere.
   `commands.tsx` defines a Channel's commands.
 - `components/pane/` holds the pane, composer, and shared pane context, with `transcript/` and
   `overview/` beneath it. `components/agents/` holds avatars, mention Markdown, the mention
-  source and menu, the member editor, and working agents. `components/sidebar/` holds the Channels panel and its
-  attention priority. `components/`'s top level holds the create/edit dialog and `ChannelAvatar`.
+  source and menu, the member editor, and working agents. `components/sidebar/` holds the Channels panel, the rail, and
+  their attention priority. `components/`'s top level holds the create/edit dialog and `ChannelAvatar`.
 - Outside this folder, [Workers](../workers/AGENTS.md) owns agent identity and lifetime.
   [`sessionConfiguration.ts`](../../server/sessionConfiguration.ts) grants ordinary Sessions the
   Channel tools and resolves agent configuration, and

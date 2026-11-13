@@ -1,6 +1,6 @@
 # 🧸 Toy Box
 
-Toy Box is a self-hosted agent server for running agentic tasks from anywhere, across multiple machines. It includes an easy-to-use web app for starting, observing, and controlling sessions from both your desktop and phone while keeping all connected clients synchronized.
+Toy Box is a self-hosted agent server for running agentic tasks from anywhere. It includes an easy-to-use web app for starting, observing, and controlling sessions from both your desktop and phone while keeping all connected clients synchronized.
 
 Beyond simple session management, Toy Box provides several helpful workflows that make everyday tasks simpler: group agent channels, scheduled automations, editable artifacts, child session orchestration, generative apps, and an [inbox for asynchronous tasks](#inbox-webhook).
 
@@ -40,21 +40,25 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
    - [GitHub Copilot CLI](https://github.com/github/copilot)
    - [Codex CLI](https://developers.openai.com/codex/cli/)
    - [Claude Code](https://code.claude.com/docs/en/setup)
-1. Install Toy Box: `npm install -g @lostintangent/toy-box`
-1. Start the agent server: `toy-box`
-1. Open `http://localhost:3000` in your browser. To reach it from your phone or other machines, see [Access From Anywhere](#access-from-anywhere).
+1. Install Toy Box: `npm install -g @lostintangent/toy-box` (or `bun ...`, etc.)
+1. Start the agent server: `toy-box`, which will open the web client in your browser
+1. Run `caffeinate` (or `caffeinate -d`) to keep your agents running
+
+Optional, but recommended:
+
+1. Install and sign in to the `gh` CLI so that your agents can clone repos, watch Actions, co-ordinate via gists, etc.
+
+1. If you want to be able to access screens, then enable the app running Toy Box (for example Terminal or Conduit) in `System Settings` > `Privacy & Security` > `Screen & System Audio Recording`
 
 ## Access From Anywhere
 
-Toy Box listens only on this machine (`127.0.0.1`), so reach it from your phone, other machines and linked servers through [Tailscale](https://tailscale.com/) Serve. Configure Tailscale on the desired devices, enable MagicDNS and HTTPS for your tailnet, start Toy Box (`toy-box`), then run:
+Toy Box listens only on this machine (`127.0.0.1`), so to reach it from your phone (or other machines), you need to setup [Tailscale](https://tailscale.com/) Serve. Configure Tailscale on the desired devices, enable MagicDNS and HTTPS for your tailnet, start Toy Box (`toy-box`), then run:
 
 ```sh
-tailscale serve --bg http://127.0.0.1:3000
+tailscale serve --bg 3000
 ```
 
 Open the provided `https://<machine>.<tailnet>.ts.net/` URL from any device on the same tailnet as the Toy Box server.
-
-For a trusted LAN without Tailscale, `toy-box --host 0.0.0.0` serves Toy Box over plain HTTP at the machine's IP address. Browser features that need a secure context, such as the clipboard, won't work there.
 
 After opening your HTTPS URL in a mobile browser, you can add Toy Box to your home screen:
 
@@ -63,11 +67,9 @@ After opening your HTTPS URL in a mobile browser, you can add Toy Box to your ho
 | iOS (iPhone / iPad) | Use Safari's Share → Add to Home Screen        |
 | Android             | Use Chrome's Install app or Add to Home screen |
 
-> ⚠️ Toy Box has no app-level authentication. Keep it behind Tailscale Serve and tailnet access controls.
-
 ## Updating the Server
 
-Open `Settings` and press **Update** under `Server Details`. It installs the latest release with the package manager you installed Toy Box with, and running sessions carry on undisturbed. Once a newer release is installed, every connected device shows **Restart**, including the iOS/macOS clients. Restarting stops the server as Ctrl+C would, ending turns and terminals in progress, then starts the new release on the same port, and open tabs reload onto it. Without a pending restart, the button's menu restarts the server onto the release it already runs.
+The server will automatically detect and install updates, and then display a blue dot in the settings icon when an update is available to apply (via a restart). Additionally, you can also open `Settings` and manually check for updates by pressing **Update** under `Server Details`.
 
 ## Inbox Webhook
 
@@ -93,9 +95,3 @@ The same endpoint works with several ready-made integrations:
 - **Pebble Index 01:** In CoreApp, open **Index Settings → Webhook**, use the full Inbox URL, and choose **Transcription only**. Toy Box accepts CoreApp's `transcription` field directly.
 
 - **QuickCast Hook:** Install it from the [App Store](https://apps.apple.com/us/app/quickcast-hook/id6756369952), then create a `POST` multipart webhook using the full Inbox URL. Enable on-device transcription, name its field `transcription`, and use `attachments` as the file field when sending audio or images.
-
-## Developing
-
-1. Clone this repo
-1. Run `bun install`
-1. Run `bun dev`

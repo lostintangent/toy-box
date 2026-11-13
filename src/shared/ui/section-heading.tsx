@@ -89,7 +89,7 @@ export function CollapsibleSection({
   ...heading
 }: SectionHeadingProps & { defaultOpen?: boolean; children: ReactNode }) {
   return (
-    <Collapsible defaultOpen={defaultOpen} render={<section />} className="grid gap-3">
+    <Collapsible defaultOpen={defaultOpen} render={<section />} className="grid grid-cols-1 gap-3">
       <SectionHeading {...heading} collapsible />
       <CollapsibleContent>{children}</CollapsibleContent>
     </Collapsible>

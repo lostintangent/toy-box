@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { reducedQuery } from "@/shared/query";
-import { getLinkedServer, getServer, getWorkspaceState } from "./server/functions";
+import { getLinkedServer, getWorkspaceState } from "./server/functions";
 import { reduceWorkspaceState } from "./model/state/reducer";
 
 export const workspaceQueries = {
@@ -12,8 +12,6 @@ export const workspaceQueries = {
     fetch: () => getWorkspaceState(),
     reduce: reduceWorkspaceState,
   }),
-  // The server resource, read while Settings is open for the release it runs and the one installed.
-  server: queryOptions({ queryKey: ["workspace", "server"], queryFn: () => getServer() }),
   // A linked server's name and release, read through this server since a browser can't read
   // another origin. A read is already bounded, so one attempt shows a sleeping server at once.
   linkedServer: (link: string) =>

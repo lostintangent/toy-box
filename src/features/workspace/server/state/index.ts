@@ -6,6 +6,7 @@ import type { DraftKey } from "../../model/state/drafts";
 import type { WorkspaceState } from "../../model/state/reducer";
 import { SerialTaskQueue } from "@/shared/serialTaskQueue";
 import { broadcast } from "@workspace/server/events";
+import { getInstalledVersion } from "../installation";
 import { getEnvironment } from "./environment";
 import { deleteSavedDraft, getSavedDrafts, saveDraft } from "./drafts";
 import { getSettings, saveSettings } from "./settings";
@@ -16,6 +17,7 @@ export async function getWorkspaceState(): Promise<WorkspaceState> {
     settings: await getSettings(),
     drafts: getSavedDrafts(),
     environment: getEnvironment(),
+    installedVersion: await getInstalledVersion(),
   };
 }
 

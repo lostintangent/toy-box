@@ -5,6 +5,7 @@ import {
   MessageCirclePlus,
   PanelLeft,
   PanelLeftClose,
+  Settings,
 } from "lucide-react";
 import { executeCommand } from "@/shared/commands/command";
 import { CommandButton } from "@/shared/commands/CommandButton";
@@ -18,14 +19,19 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
+import { Separator } from "@/shared/ui/separator";
 import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useSessionActivity } from "@sessions/useSessionActivity";
-import { useWorkspaceSelector } from "@workspace/hooks/state";
+import { useRestartPending, useWorkspaceSelector } from "@workspace/hooks/state";
 import { cn } from "@/shared/utils";
 
 /** The box every sidebar action occupies, which is also what the rail is one of across. */
-const SIDEBAR_ACTION_SIZE = "size-6";
+const SIDEBAR_ACTION_SIZE = "size-6 shrink-0";
+
+/** A status dot in an action's top-right corner. */
+const ACTION_DOT =
+  "absolute right-px top-px size-2.5 rounded-full ring-2 ring-inset ring-background";
 
 /** One command's icon action, shared by the expanded rows and collapsed rail. */
 function SidebarAction({
@@ -59,7 +65,12 @@ function SidebarAction({
  * one of these where each lands.
  */
 export function ActionSpacer({ className }: { className?: string }) {
-  return <div className={cn("shrink-0", SIDEBAR_ACTION_SIZE, className)} aria-hidden />;
+  return <div className={cn(SIDEBAR_ACTION_SIZE, className)} aria-hidden />;
+}
+
+/** The rail's separators are the footer's vertical rule turned on its side. */
+export function RailSeparator({ className }: { className?: string }) {
+  return <Separator className={cn("my-1.5 h-px! w-4! bg-muted-foreground/50!", className)} />;
 }
 
 export function CollapseToggle() {
@@ -243,7 +254,14 @@ export function TerminalToggle() {
 }
 
 export function SettingsButton() {
-  return <SidebarAction command="workspace.settings" />;
+  const restartPending = useRestartPending();
+
+  return (
+    <SidebarAction command="workspace.settings" className="relative">
+      <Settings />
+      {restartPending && <span className={cn(ACTION_DOT, "bg-unread")} />}
+    </SidebarAction>
+  );
 }
 
 function HyperSessionStatus({ sessionId, isOpen }: { sessionId: string; isOpen: boolean }) {
@@ -256,9 +274,7 @@ function HyperSessionStatus({ sessionId, isOpen }: { sessionId: string; isOpen: 
       ) : (
         <MessageCirclePlus />
       )}
-      {!running && !waiting && !isOpen && (
-        <span className="absolute right-px top-px h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-inset ring-background" />
-      )}
+      {!running && !waiting && !isOpen && <span className={cn(ACTION_DOT, "bg-accent")} />}
     </>
   );
 }

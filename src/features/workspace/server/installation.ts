@@ -7,6 +7,7 @@ import { useNitroHooks } from "nitro/app";
 import { getProcessValue } from "@/shared/server/processState";
 import { RefusalError } from "@/shared/server/http";
 import { bin, name, version } from "../../../../package.json";
+import { broadcast } from "./events";
 import { computerName } from "./state/environment";
 import { getSettings } from "./state/settings";
 
@@ -34,8 +35,12 @@ export function updateCommand(execPath: string): string | undefined {
 }
 
 // The installation on disk, read once and again after each update, since running its command
-// takes about a third of a second.
-let installation: ReturnType<typeof readInstalled> | undefined;
+// takes about a third of a second, and the update in flight, which concurrent calls share.
+// Workspace's startup loads this module in another bundle than its routes, so both live in the process.
+const store = getProcessValue("workspace.installation", () => ({
+  installation: undefined as ReturnType<typeof readInstalled> | undefined,
+  updating: undefined as Promise<void> | undefined,
+}));
 
 /** This server as its clients and linked servers see it. */
 export async function getServer() {
@@ -45,25 +50,27 @@ export async function getServer() {
     name: serverName || computerName,
     accentColor,
     version,
-    installedVersion: (await (installation ??= readInstalled()))?.version ?? null,
+    installedVersion: await getInstalledVersion(),
     links: serverLinks,
   };
 }
 
-// Only routes and server functions update, and they share this module.
-let updating: Promise<void> | undefined;
+/** The release a restart would run, or null when no package manager owns this install. */
+export async function getInstalledVersion() {
+  return (await (store.installation ??= readInstalled()))?.version ?? null;
+}
 
 /** Installs the newest release with the package manager that owns this install. Concurrent calls share one run. */
 export async function updateServer() {
-  updating ??= install().finally(() => {
-    updating = undefined;
+  store.updating ??= install().finally(() => {
+    store.updating = undefined;
   });
-  await updating;
+  await store.updating;
   return getServer();
 }
 
 async function install() {
-  const installed = await (installation ??= readInstalled());
+  const installed = await (store.installation ??= readInstalled());
   if (!installed) throw new RefusalError(`No package manager owns this ${commandName} install.`);
 
   // The manager beside the command is the one that installed it. Managers cache `latest` for
@@ -75,7 +82,11 @@ async function install() {
       .nothrow()
       .quiet();
   if (result.exitCode === 0) {
-    installation = readInstalled();
+    store.installation = readInstalled();
+    const installedVersion = await getInstalledVersion();
+    if (installedVersion && installedVersion !== installed.version) {
+      broadcast({ type: "server.updated", installedVersion });
+    }
     return;
   }
 
@@ -98,7 +109,9 @@ export async function restartServer() {
   if (!relaunch)
     throw new RefusalError(`Only a server started with \`${commandName}\` can restart.`);
 
-  const installed = await (installation ??= readInstalled());
+  // An install in flight finishes first, so the relaunch never runs a half-written release.
+  await store.updating?.catch(() => {});
+  const installed = await (store.installation ??= readInstalled());
   if (!installed) throw new RefusalError(`No package manager owns this ${commandName} install.`);
 
   // Every feature registered its close hook at boot, so this one relaunches after their cleanup.

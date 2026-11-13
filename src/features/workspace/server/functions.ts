@@ -28,16 +28,15 @@ export const releaseLease = createServerFn({ method: "POST" })
   .validator(z.object({ connection: z.string(), lease: z.string() }))
   .handler(({ data }) => connections.releaseLease(data.connection, data.lease));
 
-export const getServer = createServerFn({ method: "GET" }).handler(() => installation.getServer());
-
 export const updateServer = createServerFn({ method: "POST" }).handler(() => {
   disableIdleTimeout(getRequest());
   return installation.updateServer();
 });
 
-export const restartServer = createServerFn({ method: "POST" }).handler(() =>
-  installation.restartServer(),
-);
+export const restartServer = createServerFn({ method: "POST" }).handler(() => {
+  disableIdleTimeout(getRequest());
+  return installation.restartServer();
+});
 
 export const getLinkedServer = createServerFn({ method: "GET" })
   .validator(z.string())

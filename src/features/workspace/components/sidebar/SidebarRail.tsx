@@ -1,21 +1,20 @@
-import { Separator } from "@/shared/ui/separator";
+import { ChannelsRail } from "@channels/components/sidebar/ChannelsRail";
 import {
   ActionSpacer,
   BrowseMenu,
   HyperMenu,
+  RailSeparator,
   SidebarSplitButton,
   TerminalToggle,
 } from "./SidebarActions";
 import { SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_FRAME } from "./SidebarResizer";
 import { cn } from "@/shared/utils";
 
-/** The rail's separators are the footer's vertical rule turned on its side. */
-const SEPARATOR = "my-1.5 h-px! w-4! bg-muted-foreground/50!";
-
 /**
  * The collapsed desktop sidebar: the header and footer rows turned on their side
- * inside a bar one action wide, so the session list gives up its space without
- * taking the sidebar's common actions with it.
+ * inside a bar one action wide, with the Channels at work between them, so the
+ * session list gives up its space without taking the sidebar's common actions
+ * with it.
  *
  * `Sidebar` pins the collapse toggle and settings actions outside both layouts,
  * so this stack opens and closes with the shapes those actions occupy when
@@ -41,15 +40,15 @@ export function SidebarRail({ collapsed, className }: { collapsed: boolean; clas
         itself, exactly as the foot does above the settings hole.
       */}
       <ActionSpacer className="mt-1" />
-      <Separator className={SEPARATOR} />
+      <RailSeparator />
       <SidebarSplitButton variant="rail" />
 
-      <div className="min-h-0 flex-1" />
+      <ChannelsRail />
 
       <HyperMenu side="right" />
       <BrowseMenu side="right" />
       <TerminalToggle />
-      <Separator className={SEPARATOR} />
+      <RailSeparator />
       <ActionSpacer />
     </div>
   );

@@ -39,6 +39,7 @@ export function workspaceCommands({
   hyper,
   inbox,
   hasModels,
+  restartPending,
   createSession,
 }: {
   togglePalette: () => void;
@@ -48,6 +49,8 @@ export function workspaceCommands({
   hyper: Toggle;
   inbox: { isOpen: boolean; open: () => void };
   hasModels: boolean;
+  /** A newer release is installed, so restarting would update this server. */
+  restartPending: boolean;
   createSession: (options?: SessionCreationOptions) => void;
 }): Command[] {
   const createArtifact = (path: string, content = "") =>
@@ -172,7 +175,7 @@ export function workspaceCommands({
     },
     {
       id: "workspace.settings",
-      title: "Open settings",
+      title: restartPending ? "Open settings (update available)" : "Open settings",
       group: "Workspace",
       icon: Settings,
       run: () => openDialog(SettingsDialog),

@@ -8,6 +8,8 @@ export type WorkspaceState = {
   /** Each composer's unsent text, shared across clients. */
   drafts: SavedDrafts;
   environment: WorkspaceEnvironment;
+  /** The release a restart would run, or null when no package manager owns this install. */
+  installedVersion: string | null;
 };
 
 /** Passive facts about the server process, fixed for its lifetime. */
@@ -22,6 +24,7 @@ export function createEmptyWorkspaceState(): WorkspaceState {
     settings: DEFAULT_SETTINGS,
     drafts: {},
     environment: { voiceEnabled: false, computerName: "" },
+    installedVersion: null,
   };
 }
 
@@ -35,6 +38,10 @@ export function reduceWorkspaceState(state: WorkspaceState, event: WorkspaceEven
       return removeDraft(state, `session:${event.sessionId}`);
     case "channel.deleted":
       return removeDraft(state, `channel:${event.channelId}`);
+    case "server.updated":
+      return state.installedVersion === event.installedVersion
+        ? state
+        : { ...state, installedVersion: event.installedVersion };
     case "draft.changed":
       return sameSavedDraft(state.drafts[event.key], event.draft)
         ? state

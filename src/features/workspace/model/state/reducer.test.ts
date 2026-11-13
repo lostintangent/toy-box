@@ -65,6 +65,14 @@ describe("workspace state reducer", () => {
     ).toBe(state);
   });
 
+  test("records a newly installed release and ignores an equal echo", () => {
+    const event: WorkspaceEvent = { type: "server.updated", installedVersion: "0.5.0" };
+    const state = reduceWorkspaceState(createEmptyWorkspaceState(), event);
+
+    expect(state.installedVersion).toBe("0.5.0");
+    expect(reduceWorkspaceState(state, { ...event })).toBe(state);
+  });
+
   test("projects Hyper membership from catalog creation idempotently", () => {
     let state = createEmptyWorkspaceState();
     const event: WorkspaceEvent = {

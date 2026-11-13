@@ -10,10 +10,12 @@ const fadeClassName =
 type ScrollableFadeProps = ComponentPropsWithoutRef<"div"> & {
   axis?: ScrollableFadeAxis;
   rootClassName?: string;
+  /** Whether the vertical axis shows its overlay scrollbar while hovered or scrolled. */
+  scrollbar?: boolean;
 };
 
 export const ScrollableFade = forwardRef<HTMLElement, ScrollableFadeProps>(function ScrollableFade(
-  { axis = "horizontal", className, rootClassName, children, style, ...props },
+  { axis = "horizontal", className, rootClassName, scrollbar = true, children, style, ...props },
   forwardedRef,
 ) {
   const horizontal = axis === "horizontal";
@@ -61,15 +63,17 @@ export const ScrollableFade = forwardRef<HTMLElement, ScrollableFadeProps>(funct
           {children}
         </ScrollArea.Content>
       </ScrollArea.Viewport>
-      <ScrollArea.Scrollbar
-        data-slot="scrollable-fade-scrollbar"
-        className="pointer-events-none w-2.5 touch-none border-l border-l-transparent p-px opacity-0 transition-[color,opacity] select-none data-[hovering]:pointer-events-auto data-[hovering]:opacity-100 data-[scrolling]:opacity-100"
-      >
-        <ScrollArea.Thumb
-          data-slot="scrollable-fade-thumb"
-          className="bg-border relative block w-full rounded-full"
-        />
-      </ScrollArea.Scrollbar>
+      {scrollbar && (
+        <ScrollArea.Scrollbar
+          data-slot="scrollable-fade-scrollbar"
+          className="pointer-events-none w-2.5 touch-none border-l border-l-transparent p-px opacity-0 transition-[color,opacity] select-none data-[hovering]:pointer-events-auto data-[hovering]:opacity-100 data-[scrolling]:opacity-100"
+        >
+          <ScrollArea.Thumb
+            data-slot="scrollable-fade-thumb"
+            className="bg-border relative block w-full rounded-full"
+          />
+        </ScrollArea.Scrollbar>
+      )}
     </ScrollArea.Root>
   );
 });
