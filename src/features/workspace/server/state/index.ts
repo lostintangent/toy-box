@@ -24,16 +24,12 @@ export async function getWorkspaceState(): Promise<WorkspaceState> {
 // The settings aggregate is persisted with a read-merge-write operation, so patches must not race.
 const settingsChangeQueue = new SerialTaskQueue();
 
-/** Patches settings, or derives the patch from the current settings inside the queue. */
-export function updateSettings(update: SettingsUpdate): Promise<Settings> {
-  return settingsChangeQueue.enqueue(() => commitSettingsChange(update));
+export function updateSettings(patch: Partial<Settings>): Promise<Settings> {
+  return settingsChangeQueue.enqueue(() => commitSettingsChange(patch));
 }
 
-type SettingsUpdate = Partial<Settings> | ((current: Settings) => Partial<Settings>);
-
-async function commitSettingsChange(update: SettingsUpdate): Promise<Settings> {
+async function commitSettingsChange(patch: Partial<Settings>): Promise<Settings> {
   const current = await getSettings();
-  const patch = typeof update === "function" ? update(current) : update;
   const settings = normalizeSettings({ ...current, ...patch });
   if (!areSettingsEqual(current, settings)) {
     await saveSettings(settings);

@@ -43,7 +43,7 @@ export async function openChannel() {
   return { channel, channels };
 }
 
-/** Answers a linked server's channel catalog with these channels, and hands every other request
+/** Answers a peer server's channel catalog with these channels, and hands every other request
  *  to `handle`. */
 export function channelCatalog(
   channels: { id: string; name: string; purpose?: string | null }[],

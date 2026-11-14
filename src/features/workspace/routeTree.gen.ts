@@ -20,7 +20,6 @@ import { Route as ApiV1ChannelsChannelIdRouteImport } from './../channels/routes
 import { Route as ApiV1PushRegistrationIDRouteImport } from './../push/routes/v1/push/$registrationID'
 import { Route as ApiV1ScreensDotindexRouteImport } from './../screens/routes/v1/screens.index'
 import { Route as ApiV1ServerDotindexRouteImport } from './routes/api/v1/server.index'
-import { Route as ApiV1ServerDotlinksRouteImport } from './routes/api/v1/server.links'
 import { Route as ApiV1ServerDotrestartRouteImport } from './routes/api/v1/server.restart'
 import { Route as ApiV1ServerDotupdateRouteImport } from './routes/api/v1/server.update'
 import { Route as ApiV1ChannelsChannelIdDotleadMessagesRouteImport } from './../channels/routes/v1/channels/$channelId.lead-messages'
@@ -89,11 +88,6 @@ const ApiV1ScreensDotindexRoute = ApiV1ScreensDotindexRouteImport.update({
 const ApiV1ServerDotindexRoute = ApiV1ServerDotindexRouteImport.update({
   id: '/api/v1/server/',
   path: '/api/v1/server/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiV1ServerDotlinksRoute = ApiV1ServerDotlinksRouteImport.update({
-  id: '/api/v1/server/links',
-  path: '/api/v1/server/links',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiV1ServerDotrestartRoute = ApiV1ServerDotrestartRouteImport.update({
@@ -188,7 +182,6 @@ export interface FileRoutesByFullPath {
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/v1/channels/$channelId': typeof ApiV1ChannelsChannelIdRouteWithChildren
   '/api/v1/push/$registrationID': typeof ApiV1PushRegistrationIDRouteWithChildren
-  '/api/v1/server/links': typeof ApiV1ServerDotlinksRoute
   '/api/v1/server/restart': typeof ApiV1ServerDotrestartRoute
   '/api/v1/server/update': typeof ApiV1ServerDotupdateRoute
   '/api/v1/channels/': typeof ApiV1ChannelsDotindexRoute
@@ -216,7 +209,6 @@ export interface FileRoutesByTo {
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/v1/channels/$channelId': typeof ApiV1ChannelsChannelIdRouteWithChildren
   '/api/v1/push/$registrationID': typeof ApiV1PushRegistrationIDRouteWithChildren
-  '/api/v1/server/links': typeof ApiV1ServerDotlinksRoute
   '/api/v1/server/restart': typeof ApiV1ServerDotrestartRoute
   '/api/v1/server/update': typeof ApiV1ServerDotupdateRoute
   '/api/v1/channels': typeof ApiV1ChannelsDotindexRoute
@@ -245,7 +237,6 @@ export interface FileRoutesById {
   '/api/serve/$scope/$': typeof ApiServeScopeSplatRoute
   '/api/v1/channels/$channelId': typeof ApiV1ChannelsChannelIdRouteWithChildren
   '/api/v1/push/$registrationID': typeof ApiV1PushRegistrationIDRouteWithChildren
-  '/api/v1/server/links': typeof ApiV1ServerDotlinksRoute
   '/api/v1/server/restart': typeof ApiV1ServerDotrestartRoute
   '/api/v1/server/update': typeof ApiV1ServerDotupdateRoute
   '/api/v1/channels/': typeof ApiV1ChannelsDotindexRoute
@@ -275,7 +266,6 @@ export interface FileRouteTypes {
     | '/api/serve/$scope/$'
     | '/api/v1/channels/$channelId'
     | '/api/v1/push/$registrationID'
-    | '/api/v1/server/links'
     | '/api/v1/server/restart'
     | '/api/v1/server/update'
     | '/api/v1/channels/'
@@ -303,7 +293,6 @@ export interface FileRouteTypes {
     | '/api/serve/$scope/$'
     | '/api/v1/channels/$channelId'
     | '/api/v1/push/$registrationID'
-    | '/api/v1/server/links'
     | '/api/v1/server/restart'
     | '/api/v1/server/update'
     | '/api/v1/channels'
@@ -331,7 +320,6 @@ export interface FileRouteTypes {
     | '/api/serve/$scope/$'
     | '/api/v1/channels/$channelId'
     | '/api/v1/push/$registrationID'
-    | '/api/v1/server/links'
     | '/api/v1/server/restart'
     | '/api/v1/server/update'
     | '/api/v1/channels/'
@@ -360,7 +348,6 @@ export interface RootRouteChildren {
   ApiServeScopeSplatRoute: typeof ApiServeScopeSplatRoute
   ApiV1ChannelsChannelIdRoute: typeof ApiV1ChannelsChannelIdRouteWithChildren
   ApiV1PushRegistrationIDRoute: typeof ApiV1PushRegistrationIDRouteWithChildren
-  ApiV1ServerDotlinksRoute: typeof ApiV1ServerDotlinksRoute
   ApiV1ServerDotrestartRoute: typeof ApiV1ServerDotrestartRoute
   ApiV1ServerDotupdateRoute: typeof ApiV1ServerDotupdateRoute
   ApiV1ChannelsDotindexRoute: typeof ApiV1ChannelsDotindexRoute
@@ -446,13 +433,6 @@ declare module '@tanstack/react-router' {
       path: '/api/v1/server'
       fullPath: '/api/v1/server/'
       preLoaderRoute: typeof ApiV1ServerDotindexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/v1/server/links': {
-      id: '/api/v1/server/links'
-      path: '/api/v1/server/links'
-      fullPath: '/api/v1/server/links'
-      preLoaderRoute: typeof ApiV1ServerDotlinksRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/v1/server/restart': {
@@ -657,7 +637,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiServeScopeSplatRoute: ApiServeScopeSplatRoute,
   ApiV1ChannelsChannelIdRoute: ApiV1ChannelsChannelIdRouteWithChildren,
   ApiV1PushRegistrationIDRoute: ApiV1PushRegistrationIDRouteWithChildren,
-  ApiV1ServerDotlinksRoute: ApiV1ServerDotlinksRoute,
   ApiV1ServerDotrestartRoute: ApiV1ServerDotrestartRoute,
   ApiV1ServerDotupdateRoute: ApiV1ServerDotupdateRoute,
   ApiV1ChannelsDotindexRoute: ApiV1ChannelsDotindexRoute,

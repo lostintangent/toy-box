@@ -9,7 +9,7 @@ import { draftKeySchema, savedDraftSchema } from "../model/state/drafts";
 import * as workspace from "./state";
 import * as connections from "./connections";
 import * as installation from "./installation";
-import * as links from "./links";
+import * as peers from "./peers";
 
 export const getWorkspaceState = createServerFn({ method: "GET" }).handler(() =>
   workspace.getWorkspaceState(),
@@ -38,14 +38,6 @@ export const restartServer = createServerFn({ method: "POST" }).handler(() => {
   return installation.restartServer();
 });
 
-export const getLinkedServer = createServerFn({ method: "GET" })
-  .validator(z.string())
-  .handler(({ data }) => links.getLinkedServer(data));
-
-export const linkServer = createServerFn({ method: "POST" })
-  .validator(links.linkInputSchema)
-  .handler(({ data }) => links.linkServer(data.address, links.requestLink(getRequest())));
-
-export const unlinkServer = createServerFn({ method: "POST" })
-  .validator(links.linkInputSchema)
-  .handler(({ data }) => links.unlinkServer(data.address, links.requestLink(getRequest())));
+export const getPeerServers = createServerFn({ method: "GET" }).handler(() =>
+  peers.getPeerServers(),
+);

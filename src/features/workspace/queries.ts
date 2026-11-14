@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { reducedQuery } from "@/shared/query";
-import { getLinkedServer, getWorkspaceState } from "./server/functions";
+import { getPeerServers, getWorkspaceState } from "./server/functions";
 import { reduceWorkspaceState } from "./model/state/reducer";
 
 export const workspaceQueries = {
@@ -12,12 +12,9 @@ export const workspaceQueries = {
     fetch: () => getWorkspaceState(),
     reduce: reduceWorkspaceState,
   }),
-  // A linked server's name and release, read through this server since a browser can't read
-  // another origin. A read is already bounded, so one attempt shows a sleeping server at once.
-  linkedServer: (link: string) =>
-    queryOptions({
-      queryKey: ["workspace", "linkedServer", link],
-      queryFn: () => getLinkedServer({ data: link }),
-      retry: false,
-    }),
+  // The peers that answer, read through this server since a browser can't read another origin.
+  peerServers: queryOptions({
+    queryKey: ["workspace", "peerServers"],
+    queryFn: () => getPeerServers(),
+  }),
 };

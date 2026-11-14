@@ -33,7 +33,7 @@ import {
 import { workspaceFileId } from "@files/model";
 import { resolveWorkspaceFile } from "@files/server/paths";
 import { channelAttachmentPath } from "./attachments";
-import { listLinkedChannels } from "./links";
+import { listPeerChannels } from "./peers";
 import { channelAgentPresence } from "@channels/model/presence";
 import { getSessionActivity } from "@sessions/server/state/activity";
 
@@ -57,13 +57,13 @@ const listChannelsTool = defineTool("list_channels", {
   },
 });
 
-/** Leads also find the channels on the owner's linked servers, whose leads they can message. */
+/** Leads also find the channels on the owner's peer servers, whose leads they can message. */
 const listLeadChannelsTool: typeof listChannelsTool = {
   ...listChannelsTool,
   handler: async () => {
     const { listChannels } = await import("@channels/server");
-    const [local, linked] = await Promise.all([listChannels(), listLinkedChannels()]);
-    return { channels: [...local.channels.map(channelForTool), ...linked] };
+    const [local, peers] = await Promise.all([listChannels(), listPeerChannels()]);
+    return { channels: [...local.channels.map(channelForTool), ...peers] };
   },
 };
 

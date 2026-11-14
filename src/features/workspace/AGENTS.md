@@ -54,9 +54,7 @@ Each server value has one owning cache; cross-feature consumers compose those ca
 Provider availability and pin changes are published after persistence, then invalidate session
 catalog membership on every client. Provider changes also invalidate the provider catalog.
 Other preferences retain their existing optimistic updates.
-The update schema omits `serverId` and `serverLinks`. Only the link verbs write links, after
-checking that the server answers, through `updateSettings`' function form, which derives the change
-from the current settings inside the settings queue, so concurrent links aren't lost.
+The update schema omits `serverId`, which only Workspace's startup writes.
 `serverName` is trimmed and at most 64 characters. Its rule, like `accentColor`'s, sits on the
 field, so Settings, `update_settings` and `PATCH /api/v1/server` share it.
 `defaultSessionView` seeds each newly opened active session pane, including historical sessions,
@@ -106,7 +104,7 @@ and hands the tab a lease; the tab ends it early with the `releaseLease` RPC, an
 when the stream does. Reconnecting yields a new id, and holders attach again.
 
 [`server/functions.ts`](server/functions.ts) validates remote ingress for hydration, shared
-workspace actions, settings updates, and the server's release and links, then delegates to plain operations.
+workspace actions, settings updates, and the server's release and peers, then delegates to plain operations.
 [`server/state/`](server/state) assembles the cross-feature snapshot and owns only
 workspace-wide coordination: drafts, settings, and environment capabilities.
 [`server/tools.ts`](server/tools.ts) exposes Workspace-owned settings updates to model sessions.
@@ -124,10 +122,10 @@ server projection.
 ## The server
 
 [`server/installation.ts`](server/installation.ts) owns the server resource. `getServer` answers
-`{ id, name, accentColor, version, installedVersion, links }`: the id, accent color and links come
-from settings, and the name is `serverName` or else the environment's `computerName`, macOS's
-Computer Name read once at startup. Workspace's startup makes the id, so reading the server has no
-side effects.
+`{ id, name, accentColor, version, installedVersion, peers }`: the id and accent color come from
+settings, the peers from the tailnet, and the name is `serverName` or else the environment's
+`computerName`, macOS's Computer Name read once at startup. Workspace's startup makes the id, so
+reading the server has no side effects.
 
 The module also owns the release this server runs and the one installed on disk. `version` is
 `package.json`'s. `installedVersion` is what the `toy-box` command on the server's PATH prints for
@@ -161,15 +159,17 @@ restart into the running release ends when its request answers, and one into ano
 when the tab reloads onto it. Both requests are `workspaceMutations` in the query client's mutation
 cache, so closing Settings doesn't lose one in flight, and reopening shows its progress or error.
 
-[`server/links.ts`](server/links.ts) owns links, the owner's other Toy Box servers, as origins in
-the `serverLinks` setting that only its verbs write. `POST { address }` and `DELETE ?address=` on
-`/api/v1/server/links` link and unlink both ends, but a request on loopback changes only this one,
-and a server that doesn't answer an unlink keeps its link. A link is saved only once the other
-server links this one back, and repeating either verb changes nothing. Settings' [Linked
-Servers](components/sidebar/LinkedServerSettings.tsx) reads each one's name and release through
-`getLinkedServer`, which reads only a linked server, and each row opens that server's own web app,
-where it updates and restarts. Features reach linked servers through the module's bounded
-`readServer`, `read` and `post`.
+[`server/peers.ts`](server/peers.ts) owns peers, the owner's other Macs on this server's tailnet.
+`listPeers` asks `tailscale status` on every read and answers the online macOS nodes signed in as
+this one's user, as `https://` origins, so nothing is stored and nobody links anything. Peers are
+candidate servers, not confirmed ones: a Mac that doesn't serve Toy Box through `tailscale serve` is
+listed too, and readers keep the ones that answer. Concurrent reads share one run, and a missing or
+failing `tailscale` means no peers. It runs the CLI with `TAILSCALE_BE_CLI=1` and falls back to the
+app's own binary when `tailscale` isn't on PATH, as under launchd. Reading the server never calls
+another server, so peers can't cycle. Settings'
+[Peer Servers](components/sidebar/PeerServerSettings.tsx) reads each one's name and release through
+`getPeerServers`, and each row opens that server's own web app, where it updates and restarts.
+Features reach peers through the module's bounded `readServer`, `read` and `post`.
 
 ## Pane model
 

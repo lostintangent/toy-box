@@ -143,10 +143,10 @@ projections for persistence and runtime configuration; private read positions st
   planning or restructuring, preserving retained IDs and outcomes.
 - Create, edit, start, finish, and remove Channel members through their owned Workers.
 - Let ordinary Sessions create and staff Channels, then read, post, share, and wait for the lead or
-  members on the user's behalf. Let the lead create peers within its own Channel, then edit their
+  members on the user's behalf. Let the lead create members in its own Channel, then edit their
   name, role, or model with `update_channel_member` and remove them with `remove_channel_member`, as
   the user can. The lead lists Channels with the same `list_channels` to find related work, including
-  Channels on the owner's linked servers, and privately messages another Channel's lead with
+  Channels on the owner's peer servers, and privately messages another Channel's lead with
   `message_channel_lead`.
 
 Selecting an unknown mention creates a member in that Channel and immediately starts its private
@@ -171,7 +171,7 @@ lead exists for the Channel's lifetime, is addressed as `@lead`, and its agent I
 
 ### Status and reading
 
-- Set or clear one member status without moving the Channel list or waking peers.
+- Set or clear one member status without moving the Channel list or waking anyone.
 - Advance human and Agent read positions monotonically.
 
 ### Attention and completion
@@ -197,7 +197,7 @@ lead exists for the Channel's lifetime, is addressed as `@lead`, and its agent I
 instructions, explicit model, and tools whenever a private Session starts an execution. Application
 configuration composition resolves workspace model defaults while preserving an existing provider.
 Sessions owns directory fallback and applying configuration between executions. The lead can
-inspect the same model catalog as the client before creating peers. Member profile and Channel
+inspect the same model catalog as the client before creating members. Member profile and Channel
 directory changes apply between executions without mutating provider history. The lead receives its
 fixed identity and responsibilities from the Channel rather than editable Worker metadata. Among
 Channel agents, it alone creates, edits, and removes members and updates the directory, public
@@ -211,17 +211,17 @@ target must be an existing Channel because delivery accepts any Session. Like a 
 wake clears the receiving lead's `waiting` status, so its roster shows it working. That is the
 exchange's only trace in either Channel.
 
-Leads also reach Channels on the owner's linked servers, which
-[Workspace links](../workspace/AGENTS.md#the-server).
-A lead's `list_channels` adds each answering linked server's Channels with that server's `name` as
-`server`, so a server that's asleep just lists none. Messaging one posts
+Leads also reach Channels on the owner's peer servers, the other Toy Box Macs on its tailnet, which
+[Workspace lists](../workspace/AGENTS.md#the-server).
+A lead's `list_channels` adds each answering peer's Channels with that server's `name` as
+`server`, so a Mac that's asleep or doesn't run Toy Box just lists none. Messaging one posts
 `{ from, channelName, server, content }` once to its server's
 `POST /api/v1/channels/:channelId/lead-messages`, naming the sender's Channel and server as they name
 themselves. It answers 204 once that lead has accepted the message, not once it replies. Any other
-answer, or a timeout, fails the tool. The receiver wakes its lead without looking the sender up, so a
-reply reaches the sender only when the receiving server links it too. Only words cross servers, so
+answer, or a timeout, fails the tool. The receiver wakes its lead without looking the sender up, and
+that lead replies through its own peers. Only words cross servers, so
 `message_channel_lead`'s description tells leads to share work as pushed branches or in the message
-itself. Linked servers trust each other the way a server trusts its clients, on the owner's private
+itself. Peer servers trust each other the way a server trusts its clients, on the owner's private
 network, without authentication.
 
 Channel tools are always loaded, so each tool's description and schema own its purpose and
@@ -245,7 +245,7 @@ roster roles and models, artifacts, and routines for reorientation, planning, an
 review or replace it without loading the roster. Never replace the task tree from `unfinishedTasks`.
 Every view uses the same forward read cursor and absolute attachment paths, whoever sent them;
 passive Session reads retain their full context and backward paging. Public messages, reactions,
-statuses, artifacts, and attachments are the only peer communication contract. Private transcripts
+statuses, artifacts, and attachments are the only agent communication contract. Private transcripts
 and tool logs never enter the Channel. Model-facing message tools cap posts at 3,000 characters so
 durable long-form work stays in canonical shared artifacts; browser messages retain the Channel
 model's 12,000-character limit.
@@ -645,8 +645,8 @@ presents one deleted identity everywhere.
   `stream.ts` composes public views and owns subscriptions over `eventLog.ts`, each Channel's
   bounded event log.
   Each `routes/v1/` file answers its `/api/v1/channels` requests in place. `attachments.ts` owns
-  the files messages attach and the avatar image. `links.ts` lists the Channels on the
-  owner's linked servers and delivers a lead's message to one once, through Workspace's links.
+  the files messages attach and the avatar image. `peers.ts` lists the Channels on the
+  owner's peer servers and delivers a lead's message to one once, through Workspace's peers.
   `tools.ts` owns agent-facing projections and the Session, lead, and member tool sets. It translates
   the calling Session into its Channel, actor, and workspace-relative paths. Receiving the lead tool
   set is a lead's authority, since a lead's Session ID is its Channel's ID. `agent.ts` composes each agent's

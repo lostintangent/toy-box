@@ -35,8 +35,3 @@ export function generateUUID(): string {
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-
-/** Whether a URL hostname names this machine, which no other machine reaches it by. */
-export function isLoopbackHostname(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
-}

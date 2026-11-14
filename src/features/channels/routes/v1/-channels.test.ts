@@ -293,7 +293,7 @@ test("domain refusals keep their meaning on the wire", async () => {
   expect(await conflict.json()).toEqual({ error: "Message ID already exists." });
 });
 
-test("a linked lead's message wakes the lead, naming the sender's channel and server", async () => {
+test("a peer lead's message wakes the lead, naming the sender's channel and server", async () => {
   const { channel } = await openChannel();
   const deliver = spyOn(sessionRuntime, "deliverSessionMessage").mockResolvedValue({
     disposition: "started",

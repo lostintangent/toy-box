@@ -1,15 +1,19 @@
-import { onTestFinished } from "bun:test";
-import { updateSettings } from "./state";
+import { onTestFinished, spyOn } from "bun:test";
+import * as peers from "./peers";
 
-/** Links the test's state database to the given base URLs, in order, without reaching them. */
-export async function linkServers(...urls: string[]) {
-  await updateSettings({ serverLinks: urls.map((url) => new URL(url).origin) });
+/** Makes the given base URLs' origins this test's peers, in order, without asking Tailscale or
+ *  reaching them. With none, the test has no peers. */
+export function setPeers(...urls: string[]) {
+  const listPeers = spyOn(peers, "listPeers").mockResolvedValue(
+    urls.map((url) => new URL(url).origin),
+  );
+  onTestFinished(() => listPeers.mockRestore());
 }
 
 export type Handler = (request: Request) => Response | Promise<Response>;
 
-/** A fake linked server for one test, which answers every request with the handler. */
-export function serveLinkedServer(fetch: Handler): URL {
+/** A fake peer for one test, which answers every request with the handler. */
+export function servePeer(fetch: Handler): URL {
   const server = Bun.serve({ port: 0, fetch });
   onTestFinished(() => server.stop(true));
   return server.url;
@@ -24,6 +28,6 @@ export function toyBoxServer(
   const id = crypto.randomUUID();
   return (request) =>
     request.method === "GET" && new URL(request.url).pathname === "/api/v1/server"
-      ? Response.json({ id, name, version: "0.4.0", links: [] })
+      ? Response.json({ id, name, version: "0.4.0", peers: [] })
       : handle(request);
 }

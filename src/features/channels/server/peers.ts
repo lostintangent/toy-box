@@ -2,16 +2,15 @@ import { z } from "zod";
 import { conciseChannelMessageSchema, durableIdSchema } from "@channels/model";
 import { NotFoundError } from "@/shared/server/http";
 import { getServer } from "@workspace/server/installation";
-import { post, read, readServer } from "@workspace/server/links";
-import { getSettings } from "@workspace/server/state/settings";
+import { listPeers, post, read, readServer } from "@workspace/server/peers";
 
-// Leads reach the Channels on the owner's linked servers, which Workspace links. Each linked
-// server lists its Channels under the name it gives itself, and takes messages to their leads at
-// its link.
+// Leads reach the Channels on the owner's peer servers, the other Toy Box Macs on its tailnet,
+// which Workspace lists. Each peer server lists its Channels under the name it gives itself, and
+// takes messages to their leads at its origin.
 
-/** A linked server's lead delivers its message here, naming its channel and server as they name
+/** A peer server's lead delivers its message here, naming its channel and server as they name
  *  themselves. */
-export const linkedLeadMessageInputSchema = z
+export const peerLeadMessageInputSchema = z
   .object({
     channelId: durableIdSchema,
     from: durableIdSchema,
@@ -20,29 +19,30 @@ export const linkedLeadMessageInputSchema = z
     content: conciseChannelMessageSchema,
   })
   .strict();
-export type LinkedLeadMessageInput = z.infer<typeof linkedLeadMessageInputSchema>;
+export type PeerLeadMessageInput = z.infer<typeof peerLeadMessageInputSchema>;
 
-/** Every answering linked server's channels, which a lead can message but not open, with that
+/** Every answering peer server's channels, which a lead can message but not open, with that
  *  server's name as `server`. */
-export async function listLinkedChannels() {
-  return (await readLinkedServers()).flatMap(({ server, channels }) =>
+export async function listPeerChannels() {
+  return (await readPeerServers()).flatMap(({ server, channels }) =>
     channels.map((channel) => ({ ...channel, server })),
   );
 }
 
-/** Delivers a lead's message to a channel on a linked server, once. The peer answers when its
+/** Delivers a lead's message to a channel on a peer server, once. The peer answers when its
  *  lead accepts the message, which can wait on a cold start, so the bound is generous and a
  *  message that may have landed is never resent. */
-export async function messageLinkedChannelLead(
+export async function messagePeerChannelLead(
   sender: { id: string; name: string },
   { channelId, content }: { channelId: string; content: string },
 ): Promise<void> {
-  const target = (await readLinkedServers()).find(({ channels }) =>
+  // Reading this server alongside its peers shares one tailnet status read.
+  const [peers, { name: server }] = await Promise.all([readPeerServers(), getServer()]);
+  const target = peers.find(({ channels }) =>
     channels.some((channel) => channel.channelId === channelId),
   );
   if (!target) throw new NotFoundError("Channel");
-  const url = `${target.link}/api/v1/channels/${encodeURIComponent(channelId)}/lead-messages`;
-  const { name: server } = await getServer();
+  const url = `${target.origin}/api/v1/channels/${encodeURIComponent(channelId)}/lead-messages`;
   const message = { from: sender.id, channelName: sender.name, server, content };
   await post(url, message, 60_000).catch(() => {
     throw new Error(`Couldn't deliver to ${target.server}.`);
@@ -53,20 +53,20 @@ const catalogSchema = z.object({
   channels: z.array(z.object({ id: z.string(), name: z.string(), purpose: z.string().nullish() })),
 });
 
-/** Every answering linked server with its channels. One that doesn't answer within the bound lists
+/** Every answering peer server with its channels. One that doesn't answer within the bound lists
  *  none, so one sleeping machine never hides the others. */
-async function readLinkedServers() {
-  const answers = await Promise.allSettled((await getSettings()).serverLinks.map(readLinkedServer));
+async function readPeerServers() {
+  const answers = await Promise.allSettled((await listPeers()).map(readPeerServer));
   return answers.flatMap((answer) => (answer.status === "fulfilled" ? [answer.value] : []));
 }
 
-async function readLinkedServer(link: string) {
+async function readPeerServer(origin: string) {
   const [server, { channels }] = await Promise.all([
-    readServer(link),
-    read(`${link}/api/v1/channels`, catalogSchema),
+    readServer(origin),
+    read(`${origin}/api/v1/channels`, catalogSchema),
   ]);
   return {
-    link,
+    origin,
     server: server.name,
     channels: channels.map(({ id, name, purpose }) => ({
       channelId: id,

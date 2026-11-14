@@ -18,7 +18,7 @@ import { createFileServeUrl } from "@files/model/paths";
 import { reduceChannelState } from "@channels/model/reducer";
 import { openTestDatabase } from "@/server/testFixtures";
 import { getServer } from "@workspace/server/installation";
-import { linkServers, serveLinkedServer, toyBoxServer } from "@workspace/server/testFixtures";
+import { servePeer, setPeers, toyBoxServer } from "@workspace/server/testFixtures";
 import { toolResultText, type Tool } from "@sessions/server/tools/definition";
 
 // Mock first, then import everything the test exercises or inspects, so the test and the
@@ -96,6 +96,7 @@ function channelFolder(channelId: string) {
 }
 
 async function openChannels() {
+  setPeers();
   return new ChannelDatabase(await openTestDatabase());
 }
 
@@ -440,14 +441,14 @@ test("a Channel lead edits and removes only its own members, by ID or mention", 
   });
 });
 
-test("leads also list the channels on linked servers", async () => {
+test("leads also list the channels on peer servers", async () => {
   const channels = await openChannels();
   const lead = await createStoredChannel(channels, { name: "Core", ...CHANNEL_DEFAULTS });
   onTestFinished(() => releaseChannelEvents(lead.id));
-  const studio = serveLinkedServer(
+  const studio = servePeer(
     toyBoxServer("Studio", channelCatalog([{ id: "apple", name: "Apple" }])),
   );
-  await linkServers(studio.href);
+  setPeers(studio.href);
   const own = await invokeTool("list_channels", {}, lead.id);
   expect(await invokeTool("list_channels", {}, lead.id, true)).toEqual({
     channels: [...own.channels, { channelId: "apple", name: "Apple", server: "Studio" }],
@@ -1250,11 +1251,11 @@ test("a lead privately wakes another channel's lead and only a channel's lead", 
   expect((await channels.getChannel(target.id))?.latestSequence).toBe(target.latestSequence);
 });
 
-test("a lead's message to a channel this server doesn't hold goes once to its linked server, naming the sender's channel and server", async () => {
+test("a lead's message to a channel this server doesn't hold goes once to its peer server, naming the sender's channel and server", async () => {
   const channels = await openChannels();
   const sender = await createStoredChannel(channels, { name: "Core", ...CHANNEL_DEFAULTS });
   const deliveries: unknown[] = [];
-  const studio = serveLinkedServer(
+  const studio = servePeer(
     toyBoxServer(
       "Studio",
       channelCatalog([{ id: "apple", name: "Apple" }], async (request) => {
@@ -1263,7 +1264,7 @@ test("a lead's message to a channel this server doesn't hold goes once to its li
       }),
     ),
   );
-  await linkServers(studio.href);
+  setPeers(studio.href);
   const deliver = spyOnDelivery();
   const message = (channelId: string, content: string) =>
     messageChannelLead(sender.id, { channelId, content });

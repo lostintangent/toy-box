@@ -24,7 +24,7 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
 
 - **Agent channels:** Create channel-specific teammates with distinct roles, then collaborate through messages, reactions, statuses, screenshots, and shared artifacts.
 
-- **Linked servers:** Link your other Toy Box machines once, from either side, and the channel leads on any two linked servers can find and message each other. Each server has its own name, editable from any client.
+- **Peer servers:** Your other Toy Box Macs on the same tailnet find each other automatically, and the channel leads on any two can find and message each other. Each server has its own name, editable from any client.
 
 - **Collaborative artifacts:** Browse and edit code, Markdown, HTML, JSON, and SVG alongside the agent, or use structured briefs to review and launch consequential work.
 

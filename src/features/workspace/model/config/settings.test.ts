@@ -23,7 +23,6 @@ describe("settings", () => {
       hyperSessionId: "session-c",
       serverName: "Studio",
       serverId: "6f1c2a4e-0b7d-4c3a-9e58-2d41f0a7b9c3",
-      serverLinks: ["https://studio.ts.net", "http://127.0.0.1:3100"],
     };
 
     expect(normalizeSettings(settings)).toEqual(settings);
@@ -72,12 +71,8 @@ describe("settings", () => {
     expect(settingsUpdateSchema.safeParse({ defaultSessionView: "quiet" }).success).toBe(false);
   });
 
-  test("an update can't change the server's id or links, which only the server and linking write", () => {
-    const update = {
-      serverName: "Studio",
-      serverId: "other",
-      serverLinks: ["https://studio.ts.net"],
-    };
+  test("an update can't change the server's id, which only the server writes", () => {
+    const update = { serverName: "Studio", serverId: "other" };
     expect(settingsUpdateSchema.parse(update)).toEqual({ serverName: "Studio" });
   });
 

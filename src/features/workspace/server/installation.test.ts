@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { openTestDatabase } from "@/server/testFixtures";
 import { getServer, updateCommand } from "./installation";
 import startWorkspace from "./startup";
+import { setPeers } from "./testFixtures";
 
 const toyBox = "node_modules/@lostintangent/toy-box/toy-box";
 
@@ -33,6 +34,7 @@ test.each([
 
 test("the server makes its id when it first starts and keeps it across restarts", async () => {
   await openTestDatabase();
+  setPeers();
   await startWorkspace();
   const { id } = await getServer();
 

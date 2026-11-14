@@ -39,7 +39,7 @@ import { deleteWorker, spawnWorker } from "@workers/server";
 import { ChannelDatabase, catalogEntry, type ChannelChange } from "./database";
 import { deleteChannelFiles, storeChannelAttachments, storeChannelAvatar } from "./attachments";
 import { publishChannelEvent, releaseChannelEvents } from "./eventLog";
-import { messageLinkedChannelLead, type LinkedLeadMessageInput } from "./links";
+import { messagePeerChannelLead, type PeerLeadMessageInput } from "./peers";
 import { publishChannelNotification } from "./push";
 
 const CHANNEL_MESSAGE_LIMIT = 100;
@@ -453,7 +453,7 @@ export async function wakeDueChannelAgents(now = new Date()): Promise<void> {
 }
 
 /** Privately wakes another Channel's lead with a message that names the sender's Channel. A Channel
- *  this server doesn't hold is looked up on its linked servers. */
+ *  this server doesn't hold is looked up on its peer servers. */
 export async function messageChannelLead(
   fromChannelId: string,
   { channelId, content }: { channelId: string; content: string },
@@ -466,7 +466,7 @@ export async function messageChannelLead(
     database.getChannel(channelId),
   ]);
   if (!sender) throw new NotFoundError("Channel");
-  if (!target) return messageLinkedChannelLead(sender, { channelId, content });
+  if (!target) return messagePeerChannelLead(sender, { channelId, content });
   await wakeChannelAgent(channelId, {
     type: "channel_lead_message",
     channelId: sender.id,
@@ -475,7 +475,7 @@ export async function messageChannelLead(
   });
 }
 
-/** Wakes a lead with a message from a lead on a linked server, named as its channel and server
+/** Wakes a lead with a message from a lead on a peer server, named as its channel and server
  *  name themselves. */
 export async function receiveChannelLeadMessage({
   channelId,
@@ -483,7 +483,7 @@ export async function receiveChannelLeadMessage({
   channelName,
   server,
   content,
-}: LinkedLeadMessageInput): Promise<void> {
+}: PeerLeadMessageInput): Promise<void> {
   const target = await new ChannelDatabase(await getStateDatabase()).getChannel(channelId);
   if (!target) throw new NotFoundError("Channel");
   await wakeChannelAgent(channelId, {

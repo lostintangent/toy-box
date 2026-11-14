@@ -1,4 +1,4 @@
-// The server resource clients read: this server's identity, name, accent color and links, the
+// The server resource clients read: this server's identity, name, accent color and peers, the
 // release it runs and the one installed on disk, and updating and restarting into a newer one.
 
 import { homedir } from "node:os";
@@ -8,6 +8,7 @@ import { getProcessValue } from "@/shared/server/processState";
 import { RefusalError } from "@/shared/server/http";
 import { bin, name, version } from "../../../../package.json";
 import { broadcast } from "./events";
+import { listPeers } from "./peers";
 import { computerName } from "./state/environment";
 import { getSettings } from "./state/settings";
 
@@ -42,16 +43,20 @@ const store = getProcessValue("workspace.installation", () => ({
   updating: undefined as Promise<void> | undefined,
 }));
 
-/** This server as its clients and linked servers see it. */
+/** This server as its clients and peers see it. */
 export async function getServer() {
-  const { serverId, serverName, accentColor, serverLinks } = await getSettings();
+  const [{ serverId, serverName, accentColor }, installedVersion, peers] = await Promise.all([
+    getSettings(),
+    getInstalledVersion(),
+    listPeers(),
+  ]);
   return {
     id: serverId,
     name: serverName || computerName,
     accentColor,
     version,
-    installedVersion: await getInstalledVersion(),
-    links: serverLinks,
+    installedVersion,
+    peers,
   };
 }
 

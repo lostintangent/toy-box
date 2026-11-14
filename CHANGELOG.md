@@ -1,3 +1,7 @@
+## 📅 v0.4.4 (11/13/26)
+
+- Server discovery is now built on top of Tailscale directly, as opposed to via a seperate linked/peer server system. Tailscale is still optional, but it's now required for multi-server setups (along with `tailscale serve`).
+
 ## 📅 v0.4.3 (11/13/26)
 
 - When collapsed, the sidebar now shows running/waiting/finished channels
