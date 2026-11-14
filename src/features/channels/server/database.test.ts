@@ -144,6 +144,13 @@ describe("channel attention", () => {
     ).toEqual([done]);
   });
 
+  test("your message reads the channel through itself", async () => {
+    const { channels, channel, post } = await setup();
+    await post("Found a regression.");
+    const reply = await post("Thanks.", { type: "user" });
+    expect((await channels.getChannel(channel.id))?.seenThrough).toBe(reply.message.sequence);
+  });
+
   test("the catalog carries a pending request, without reactions, until the user replies", async () => {
     const { channels, channel, post, ask } = await setup();
     const question = await ask("Which color?");
@@ -585,7 +592,7 @@ describe("channel database", () => {
     await channels.appendMessage({
       id: "message-1",
       channelId: channel.id,
-      sender: { type: "user" },
+      sender: { type: "agent", agentId: channel.id },
       content: "Start with the risks.",
     });
 

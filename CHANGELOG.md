@@ -1,3 +1,8 @@
+## 📅 v0.4.5 (11/13/26)
+
+- When you check for updates or restart the server, it applies to every peer server as well.
+- When you hover over a channel that has a pending request, you now see a popover with the text and replies, so you can view and answer without needing to change contexts.
+
 ## 📅 v0.4.4 (11/13/26)
 
 - Server discovery is now built on top of Tailscale directly, as opposed to via a seperate linked/peer server system. Tailscale is still optional, but it's now required for multi-server setups (along with `tailscale serve`).

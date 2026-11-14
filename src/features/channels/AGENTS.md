@@ -50,6 +50,8 @@ Channel        name, avatar, purpose, directory, lead model, tasks, preview, use
   tasks, optional URL-or-screen preview, human read position, latest message sequence, and updated time.
   Its `requestSequence` and `completedSequence` refer to transcript milestones. Completion is unread
   when it follows `seenThrough`; a request remains pending until a user reply clears its sequence.
+  Sending a user message reads the Channel through it, as opening the Channel would, so a reply
+  from the sidebar or a notification never leaves it unread.
 - `ChannelAvatar` is a mark the lead designs or the project's own icon, drawn in a rounded square.
   Until the lead sets one with `update_channel`, every surface draws the cyan `#` mark. The lead
   can replace an avatar but not clear it. An image is a PNG, JPEG, or WebP of at most 256 KB, which
@@ -446,7 +448,8 @@ continues through the target sequence when revealing a message, such as the pend
 bookmark.
 
 `POST /api/v1/channels/:channelId/messages` accepts `{ id, content, attachments? }`, uses the normal
-user-message schema and delivery policy, and returns HTTP 201 with the message.
+user-message schema and delivery policy, and returns HTTP 201 with the message. Like every user
+message, it reads the Channel through itself, which the catalog event carries.
 Attachments are image uploads `{ mimeType, base64 }`. Retrying an ID the Channel already has returns
 its stored message without delivering again, and an ID from another Channel returns 422.
 `POST …/read` accepts `{ sequence }`, uses
@@ -579,8 +582,8 @@ presents one deleted identity everywhere.
   private agent Session. Tray, overview and historical preview messages share
   Workspace's preview presentation. Opening never takes input control.
   While the Channel reports a pending request, it asks for a reply. The request's `replies` appear
-  as buttons under the question; tapping one posts its label as the user's message directly, with no
-  draft. The buttons leave with the request once the user replies.
+  as buttons inside the question's bubble; tapping one posts its label as the user's message
+  directly, with no draft. The buttons leave with the request once the user replies.
   An "Input needed" button beside the composer's audience stays visible
   until the user replies. Hover previews `state.request`; clicking loads
   any older pages needed and scrolls to the question. Scrolling never changes the composer height.
@@ -629,6 +632,9 @@ presents one deleted identity everywhere.
 - The collapsed sidebar's rail lists each Channel that is waiting, has an unread completion, or has
   a working agent, by its avatar with that mark, three at a time before it scrolls, and opens it
   without expanding the sidebar.
+- Hovering a waiting Channel's row or rail avatar previews the catalog's pending request with its
+  reply buttons instead of a status tooltip, so the user can answer without opening it. Touch only
+  opens the Channel.
 
 ## Code map
 
@@ -657,8 +663,9 @@ presents one deleted identity everywhere.
   `commands.tsx` defines a Channel's commands.
 - `components/pane/` holds the pane, composer, and shared pane context, with `transcript/` and
   `overview/` beneath it. `components/agents/` holds avatars, mention Markdown, the mention
-  source and menu, the member editor, and working agents. `components/sidebar/` holds the Channels panel, the rail, and
-  their attention priority. `components/`'s top level holds the create/edit dialog and `ChannelAvatar`.
+  source and menu, the member editor, and working agents. `components/sidebar/` holds the Channels panel, the rail,
+  their attention priority, and the request preview. `components/`'s top level holds the create/edit
+  dialog, `ChannelAvatar`, and the request's reply buttons shared by the transcript and preview.
 - Outside this folder, [Workers](../workers/AGENTS.md) owns agent identity and lifetime.
   [`sessionConfiguration.ts`](../../server/sessionConfiguration.ts) grants ordinary Sessions the
   Channel tools and resolves agent configuration, and

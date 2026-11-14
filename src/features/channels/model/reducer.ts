@@ -74,7 +74,14 @@ export function reduceChannel(channel: Channel, event: ChannelEvent): Channel {
         updatedAt: message.timestamp,
       };
       if (!isChannelSystemMessage(message)) {
-        if (message.sender.type === "user") return { ...next, requestSequence: null };
+        if (message.sender.type === "user") {
+          // Sending reads the Channel, wherever you send from, as opening it would.
+          return {
+            ...next,
+            requestSequence: null,
+            seenThrough: Math.max(channel.seenThrough, message.sequence),
+          };
+        }
         return message.request ? { ...next, requestSequence: message.sequence } : next;
       }
       const content = message.content;

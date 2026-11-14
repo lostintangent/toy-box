@@ -8,6 +8,6 @@ test("lists only the peers that answer as Toy Box servers, with their names and 
   setPeers(studio.href, other.href, "http://127.0.0.1:1");
 
   expect(await getPeerServers()).toEqual([
-    { origin: studio.origin, name: "Studio", version: "0.4.0" },
+    { origin: studio.origin, name: "Studio", version: "0.4.0", installedVersion: null },
   ]);
 });

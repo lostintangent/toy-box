@@ -12,6 +12,7 @@ import { RelativeTime } from "@/shared/ui/relative-time";
 import { SessionMetadataBadges } from "@sessions/components/location/SessionMetadataBadges";
 import { useWorkspaceRoots } from "@workspace/hooks/layout/roots";
 import { channelSidebarStatus } from "./status";
+import { ChannelRequestPreview } from "./ChannelRequestPreview";
 
 export function ChannelsPanel({
   isExpanded,
@@ -47,9 +48,8 @@ export function ChannelsPanel({
       emptyMessage="Channels keep a team of agents working together."
     >
       {rows.map(({ channel, agents, status }) => {
-        const { directory } = channel;
-
-        return (
+        const { directory, request } = channel;
+        const row = (
           <SidebarListItem
             key={channel.id}
             title={channel.name}
@@ -72,6 +72,13 @@ export function ChannelsPanel({
               selectRoot(createChannelPane(channel.id), event.metaKey || event.ctrlKey)
             }
           />
+        );
+        return request ? (
+          <ChannelRequestPreview key={channel.id} channelId={channel.id} request={request}>
+            <div>{row}</div>
+          </ChannelRequestPreview>
+        ) : (
+          row
         );
       })}
     </SidebarPanel>

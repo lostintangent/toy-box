@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import { openTestDatabase } from "@/server/testFixtures";
-import { getServer, updateCommand } from "./installation";
+import { version } from "../../../../package.json";
+import { getServer, restartServers, updateCommand } from "./installation";
 import startWorkspace from "./startup";
-import { setPeers } from "./testFixtures";
+import { servePeer, setPeers, toyBoxServer } from "./testFixtures";
 
 const toyBox = "node_modules/@lostintangent/toy-box/toy-box";
 
@@ -41,4 +42,33 @@ test("the server makes its id when it first starts and keeps it across restarts"
   await startWorkspace();
   expect(id).not.toBe("");
   expect((await getServer()).id).toBe(id);
+});
+
+test("restarts exactly the servers with a pending restart", async () => {
+  const restarted: string[] = [];
+  const peer = (name: string, running: string, installedVersion: string | null) => {
+    let version = running;
+    return servePeer((request) => {
+      if (request.method !== "POST") return Response.json({ name, version, installedVersion });
+      restarted.push(name);
+      version = installedVersion ?? version;
+      return new Response(null, { status: 202 });
+    }).href;
+  };
+  setPeers(
+    peer("Studio", "0.4.0", "0.4.1"),
+    peer("Mini", "0.4.1", "0.4.1"),
+    peer("Dev", "0.4.1", null),
+  );
+
+  // This server runs from source here, so it has nothing pending and keeps its release.
+  expect(await restartServers()).toBe(version);
+  expect(restarted).toEqual(["Studio"]);
+});
+
+test("with nothing pending, restarts this server onto its release", async () => {
+  setPeers(servePeer(toyBoxServer("Mini")).href);
+
+  // This server runs from source here, so its own restart refuses, which shows it was asked.
+  await expect(restartServers()).rejects.toThrow("can restart");
 });

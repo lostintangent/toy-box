@@ -3,6 +3,7 @@ import { workspaceQueries } from "@workspace/queries";
 import { updateWorkspaceSetting } from "@workspace/mutations";
 import type { WorkspaceState } from "@workspace/model/state/reducer";
 import type { Settings } from "../model/config/settings";
+import { isRestartPending } from "../model/server";
 import { version } from "../../../../package.json";
 
 type WorkspaceSelector<T> = (workspace: WorkspaceState) => T;
@@ -13,8 +14,8 @@ export function useWorkspaceSelector<T>(select: WorkspaceSelector<T>): T {
 
 /** Whether a newer release is installed, so restarting would update this server. */
 export function useRestartPending() {
-  return useWorkspaceSelector(
-    ({ installedVersion }) => installedVersion != null && installedVersion !== version,
+  return useWorkspaceSelector(({ installedVersion }) =>
+    isRestartPending({ version, installedVersion }),
   );
 }
 

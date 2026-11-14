@@ -3,6 +3,7 @@ import { Check, Reply } from "lucide-react";
 import { AgentAvatar } from "@channels/components/agents/AgentAvatar";
 import { AgentMentionMarkdown } from "@channels/components/agents/AgentMentionMarkdown";
 import type { ChannelAgentIdentity } from "@channels/model";
+import { RequestReplies } from "@channels/components/RequestReplies";
 import { CopyControl } from "@/shared/messages/CopyControl";
 import { AttachmentGallery } from "@/shared/attachments/AttachmentGallery";
 import { Button } from "@/shared/ui/button";
@@ -92,6 +93,9 @@ function AgentMessage({
             {toggle && (
               <ShowMore {...toggle} className={cn(clamped && "absolute bottom-2 left-3.5 mt-0")} />
             )}
+            {request === "pending" && message.replies && (
+              <RequestReplies replies={message.replies} onReply={answer} />
+            )}
           </div>
           <div
             className={cn(
@@ -121,15 +125,6 @@ function AgentMessage({
             <Separator orientation="vertical" className={cn("mx-0.5 h-4!", onHover)} />
             <BookmarkToggle sequence={message.sequence} />
           </div>
-        </div>
-      )}
-      {request === "pending" && message.replies && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {message.replies.map((label) => (
-            <Button key={label} variant="outline" size="sm" onClick={() => answer(label)}>
-              {label}
-            </Button>
-          ))}
         </div>
       )}
       {attachments.length > 0 && (

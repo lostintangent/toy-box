@@ -20,16 +20,10 @@ const statusSchema = z.object({
     .nullish(),
 });
 
-let listing: Promise<string[]> | undefined;
-
 /** The origins of the owner's other Macs online on this tailnet, sorted, or none when Tailscale
- *  can't say. Concurrent reads share one call. */
+ *  can't say. */
 export function listPeers(): Promise<string[]> {
-  return (listing ??= readPeers()
-    .catch(() => [])
-    .finally(() => {
-      listing = undefined;
-    }));
+  return readPeers().catch(() => []);
 }
 
 async function readPeers() {
@@ -46,7 +40,8 @@ function readStatus(cli: string) {
   return Bun.$`TAILSCALE_BE_CLI=1 ${cli} status --json`.quiet().json();
 }
 
-/** The peers that answer as Toy Box servers, each with the name it gives itself and its release. */
+/** The peers that answer as Toy Box servers, each with the name it gives itself, the release it runs
+ *  and the one it has installed. */
 export async function getPeerServers() {
   const servers = await Promise.allSettled(
     (await listPeers()).map(async (origin) => ({ origin, ...(await readServer(origin)) })),
@@ -57,9 +52,10 @@ export async function getPeerServers() {
 const serverSchema = z.object({
   name: z.string().min(1),
   version: z.string().min(1),
+  installedVersion: z.string().nullable(),
 });
 
-/** The name a peer gives itself and the release it runs. */
+/** The name a peer gives itself, the release it runs and the one it has installed. */
 export function readServer(origin: string) {
   return read(`${origin}/api/v1/server`, serverSchema);
 }

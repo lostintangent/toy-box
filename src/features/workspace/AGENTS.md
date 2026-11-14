@@ -133,9 +133,11 @@ The module also owns the release this server runs and the one installed on disk.
 read once and again after each update, so a release installed from a terminal shows after the next
 update or restart. `updateCommand` decides ownership from the binary's real location, so `bun dev`,
 npx and bunx runs, project dependencies, and downloaded binaries have none.
-**A restart is pending exactly while `installedVersion` is set and differs from `version`.** The
-workspace snapshot carries `installedVersion`, and `useRestartPending` applies that rule, so the
-settings action's blue dot and its "update available" label show in every tab from the first paint.
+**A restart is pending exactly while `installedVersion` is set and differs from `version`**, as
+[`model/server.ts`](model/server.ts)'s `isRestartPending` decides for any server. The workspace
+snapshot carries `installedVersion`, and `useRestartPending` applies that rule to this server, so
+the settings action's blue dot and its "update available" label show in every tab from the first
+paint.
 
 `updateServer` runs the owning manager, and concurrent requests share one run. A failure reports
 the manager's own error lines. An install that changes the installed release broadcasts
@@ -143,33 +145,43 @@ the manager's own error lines. An install that changes the installed release bro
 every six hours, and an install no manager owns refuses without spawning anything. Nothing restarts
 on its own. `restartServer` waits for an install in flight, hands off to the shutdown described in
 the [CLI guide](../../cli/AGENTS.md#restart), and answers with the release it restarts into.
+`updateServers` and `restartServers` reach peers too. `updateServers` updates this server when a
+manager owns it and posts an update to every peer that answers, whose own update refuses when none
+owns it, so a server that can't update is skipped silently. `restartServers` restarts each peer
+with a pending restart, waiting up to 30 seconds until it runs its new release, and then this one,
+unless only peers were pending.
 
 Native clients use the `/api/v1/server` resource: `GET` answers it,
 `PATCH { name?, accentColor? }` changes only the details it names and answers it, `POST /update`
 answers it once the install finishes, and `POST /restart` answers 202 before the server goes down.
-The web app reaches the same operations through server functions.
+The web app reaches the same operations through server functions, and only it reaches peers, so
+each server's own update and restart stay local and no request bounces between servers.
 [`components/sidebar/ServerSettings.tsx`](components/sidebar/ServerSettings.tsx) is Settings' Server
 Details: its Name and Accent color fields edit `serverName` and `accentColor` from the workspace
 settings, with `computerName` as the name's placeholder, so either change shows live in every tab.
 The heading's version badge is the release bundled into the page, which the workspace stream
 reloads whenever the server runs another one.
-Its split button leads with Update and keeps Restart in its menu, and while a restart is pending it
-leads with Restart and keeps Update, so Restart appears on every device whichever one updated. A
-restart into the running release ends when its request answers, and one into another release ends
-when the tab reloads onto it. Both requests are `workspaceMutations` in the query client's mutation
-cache, so closing Settings doesn't lose one in flight, and reopening shows its progress or error.
+Opening Settings reads the peers, since the heading's actions cover them, and the expanded section
+lists each one's name, release, and origin, which opens its own web app. Update is enabled while
+any server has an installed release. While any server has a pending restart, the split button leads
+with Restart, which restarts exactly those, and keeps Update in its menu, so Restart appears on
+every device whichever one updated. Otherwise it leads with Update and keeps a Restart of this
+server alone in its menu, which a server with no installed release, as under `bun dev`, doesn't
+show. A restart into the running release ends when its request answers, and one into another
+release ends when the tab reloads onto it. Both requests are `workspaceMutations` in the query
+client's mutation cache, so closing Settings doesn't lose one in flight, and reopening shows its
+progress or error. Each rereads the peers once it settles.
 
 [`server/peers.ts`](server/peers.ts) owns peers, the owner's other Macs on this server's tailnet.
 `listPeers` asks `tailscale status` on every read and answers the online macOS nodes signed in as
 this one's user, as `https://` origins, so nothing is stored and nobody links anything. Peers are
 candidate servers, not confirmed ones: a Mac that doesn't serve Toy Box through `tailscale serve` is
-listed too, and readers keep the ones that answer. Concurrent reads share one run, and a missing or
-failing `tailscale` means no peers. It runs the CLI with `TAILSCALE_BE_CLI=1` and falls back to the
-app's own binary when `tailscale` isn't on PATH, as under launchd. Reading the server never calls
-another server, so peers can't cycle. Settings'
-[Peer Servers](components/sidebar/PeerServerSettings.tsx) reads each one's name and release through
-`getPeerServers`, and each row opens that server's own web app, where it updates and restarts.
-Features reach peers through the module's bounded `readServer`, `read` and `post`.
+listed too, and readers keep the ones that answer. A missing or failing `tailscale` means no peers.
+It runs the CLI with `TAILSCALE_BE_CLI=1` and falls back to the app's own binary when `tailscale`
+isn't on PATH, as under launchd. Reading the server never calls another server, so peers can't
+cycle. `getPeerServers` keeps the ones that answer, with the name, release, and installed release
+each reads for itself. Features reach peers through the module's bounded `readServer`, `read` and
+`post`.
 
 ## Pane model
 

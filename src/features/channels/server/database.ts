@@ -723,13 +723,15 @@ async function recordChannelChange<Event extends ChannelEvent>(
 ) {
   const channel = events.reduce(reduceChannel, previous);
   if (
+    channel.seenThrough !== previous.seenThrough ||
     channel.requestSequence !== previous.requestSequence ||
     channel.completedSequence !== previous.completedSequence ||
     !Bun.deepEquals(channel.tasks, previous.tasks)
   ) {
     await db`
       UPDATE channels
-      SET request_sequence = ${channel.requestSequence},
+      SET seen_through = ${channel.seenThrough},
+        request_sequence = ${channel.requestSequence},
         completed_sequence = ${channel.completedSequence},
         tasks = ${JSON.stringify(channel.tasks)}
       WHERE id = ${channel.id}

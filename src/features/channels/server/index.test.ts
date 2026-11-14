@@ -568,7 +568,7 @@ test("a Session can seed and passively read Channel context", async () => {
     hasMore: false,
   });
   expect(result.artifacts).toEqual([artifact]);
-  expect((await channels.getChannel(channel.id))?.seenThrough).toBe(0);
+  expect((await channels.getChannel(channel.id))?.seenThrough).toBe(message.sequence);
   expect(deliver).toHaveBeenCalledWith(channel.id, {
     systemMessage: { type: "channel_message", senderName: "the user" },
     immediate: true,

@@ -36,7 +36,6 @@ export async function messagePeerChannelLead(
   sender: { id: string; name: string },
   { channelId, content }: { channelId: string; content: string },
 ): Promise<void> {
-  // Reading this server alongside its peers shares one tailnet status read.
   const [peers, { name: server }] = await Promise.all([readPeerServers(), getServer()]);
   const target = peers.find(({ channels }) =>
     channels.some((channel) => channel.channelId === channelId),

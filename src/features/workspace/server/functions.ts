@@ -28,14 +28,14 @@ export const releaseLease = createServerFn({ method: "POST" })
   .validator(z.object({ connection: z.string(), lease: z.string() }))
   .handler(({ data }) => connections.releaseLease(data.connection, data.lease));
 
-export const updateServer = createServerFn({ method: "POST" }).handler(() => {
+export const updateServers = createServerFn({ method: "POST" }).handler(() => {
   disableIdleTimeout(getRequest());
-  return installation.updateServer();
+  return installation.updateServers();
 });
 
-export const restartServer = createServerFn({ method: "POST" }).handler(() => {
+export const restartServers = createServerFn({ method: "POST" }).handler(() => {
   disableIdleTimeout(getRequest());
-  return installation.restartServer();
+  return installation.restartServers();
 });
 
 export const getPeerServers = createServerFn({ method: "GET" }).handler(() =>

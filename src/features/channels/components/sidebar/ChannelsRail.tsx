@@ -8,6 +8,7 @@ import { RailSeparator } from "@workspace/components/sidebar/SidebarActions";
 import { useWorkspaceRoots } from "@workspace/hooks/layout/roots";
 import { cn } from "@/shared/utils";
 import { channelSidebarStatus } from "./status";
+import { ChannelRequestPreview } from "./ChannelRequestPreview";
 
 /** The collapsed sidebar's Channels that are working, waiting on you, or newly finished, each by
  *  its avatar above a divider, so one opens without expanding the sidebar. */
@@ -39,31 +40,40 @@ export function ChannelsRail() {
         listClassName="grow items-center justify-end gap-4.5"
         scrollbar={false}
       >
-        {channels.map(({ channel, pane, open, status }) => (
-          <Tooltip key={channel.id}>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label={status.ariaLabel}
-                  className={cn(
-                    "relative flex rounded-[26%] outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                    open && "ring-2 ring-foreground/25 ring-offset-2 ring-offset-background",
-                  )}
-                  onClick={(event) => selectRoot(pane, event.metaKey || event.ctrlKey)}
-                >
-                  <ChannelAvatar avatar={channel.avatar} className="size-6" />
-                  <span className="absolute -right-1.5 -bottom-1.5 flex size-4 items-center justify-center overflow-hidden rounded-full bg-background *:size-3.5">
-                    <SidebarStatusMark kind={status.kind} />
-                  </span>
-                </button>
-              }
-            />
-            <TooltipContent side="right" sideOffset={6}>
-              {channel.name} · {status.tooltip}
-            </TooltipContent>
-          </Tooltip>
-        ))}
+        {channels.map(({ channel, pane, open, status }) => {
+          const avatar = (
+            <button
+              type="button"
+              aria-label={status.ariaLabel}
+              className={cn(
+                "relative flex rounded-[26%] outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                open && "ring-2 ring-foreground/25 ring-offset-2 ring-offset-background",
+              )}
+              onClick={(event) => selectRoot(pane, event.metaKey || event.ctrlKey)}
+            >
+              <ChannelAvatar avatar={channel.avatar} className="size-6" />
+              <span className="absolute -right-1.5 -bottom-1.5 flex size-4 items-center justify-center overflow-hidden rounded-full bg-background *:size-3.5">
+                <SidebarStatusMark kind={status.kind} />
+              </span>
+            </button>
+          );
+          return channel.request ? (
+            <ChannelRequestPreview
+              key={channel.id}
+              channelId={channel.id}
+              request={channel.request}
+            >
+              {avatar}
+            </ChannelRequestPreview>
+          ) : (
+            <Tooltip key={channel.id}>
+              <TooltipTrigger render={avatar} />
+              <TooltipContent side="right" sideOffset={6}>
+                {channel.name} · {status.tooltip}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
       </SidebarList>
       <RailSeparator
         className={cn("transition-opacity duration-300", channels.length === 0 && "opacity-0")}

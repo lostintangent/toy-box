@@ -1,8 +1,8 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import {
-  restartServer,
+  restartServers,
   updateDraft as requestDraftUpdate,
-  updateServer,
+  updateServers,
   updateSettings as requestSettingsUpdate,
 } from "./server/functions";
 import { areSettingsEqual, CATALOG_SETTINGS, type Settings } from "./model/config/settings";
@@ -10,17 +10,22 @@ import type { DraftKey } from "./model/state/drafts";
 import { workspaceQueries } from "./queries";
 import { applyWorkspaceEvent } from "./sync";
 
-// The default gcTime keeps a finished run's error or "Restarting…" for a reopened Settings.
+// The default gcTime keeps a finished run's error or "Restarting…" for a reopened Settings. Each
+// rereads the peers once it settles, so their rows show what they run and have installed.
 export const workspaceMutations = {
-  updateServer: () =>
+  updateServers: () =>
     mutationOptions({
       mutationKey: ["workspace", "server", "update"],
-      mutationFn: () => updateServer(),
+      mutationFn: () => updateServers(),
+      onSettled: (_data, _error, _variables, _context, { client }) =>
+        client.invalidateQueries({ queryKey: workspaceQueries.peerServers.queryKey }),
     }),
-  restartServer: () =>
+  restartServers: () =>
     mutationOptions({
       mutationKey: ["workspace", "server", "restart"],
-      mutationFn: () => restartServer(),
+      mutationFn: () => restartServers(),
+      onSettled: (_data, _error, _variables, _context, { client }) =>
+        client.invalidateQueries({ queryKey: workspaceQueries.peerServers.queryKey }),
     }),
 };
 

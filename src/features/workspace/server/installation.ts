@@ -1,5 +1,6 @@
 // The server resource clients read: this server's identity, name, accent color and peers, the
-// release it runs and the one installed on disk, and updating and restarting into a newer one.
+// release it runs and the one installed on disk, and updating and restarting into a newer one, on
+// this server alone or across it and its peers.
 
 import { homedir } from "node:os";
 import { delimiter, dirname } from "node:path";
@@ -7,8 +8,9 @@ import { useNitroHooks } from "nitro/app";
 import { getProcessValue } from "@/shared/server/processState";
 import { RefusalError } from "@/shared/server/http";
 import { bin, name, version } from "../../../../package.json";
+import { isRestartPending } from "../model/server";
 import { broadcast } from "./events";
-import { listPeers } from "./peers";
+import { getPeerServers, listPeers, post, readServer } from "./peers";
 import { computerName } from "./state/environment";
 import { getSettings } from "./state/settings";
 
@@ -125,6 +127,42 @@ export async function restartServer() {
   setTimeout(restart, RESTART_DEADLINE_MS);
   process.kill(process.pid, "SIGTERM");
   return installed.version;
+}
+
+/** Installs the newest release on this server, when a package manager owns its install, and on
+ *  every peer server, whose own update refuses when none does. Peers fail silently, since each one's
+ *  auto-update catches up. Only the web calls this, and each server's own update stays local, so no
+ *  request bounces between servers. */
+export async function updateServers() {
+  const [update] = await Promise.allSettled([
+    getInstalledVersion().then((installed) => (installed ? updateServer() : undefined)),
+    getPeerServers().then((servers) =>
+      Promise.allSettled(
+        servers.map(({ origin }) => post(`${origin}/api/v1/server/update`, {}, 120_000)),
+      ),
+    ),
+  ]);
+  if (update.status === "rejected") throw update.reason;
+}
+
+/** Restarts the servers with a pending restart: each such peer, waiting until it runs its new
+ *  release so a refresh finds it back, and then this one. With none pending, restarts this one onto
+ *  the release it runs. Answers with the release this server runs once it returns. */
+export async function restartServers() {
+  const deadline = Date.now() + 30_000;
+  const peers = (await getPeerServers()).filter(isRestartPending);
+  await Promise.allSettled(
+    peers.map(async ({ origin, installedVersion }) => {
+      await post(`${origin}/api/v1/server/restart`, {}, deadline - Date.now());
+      while ((await readServer(origin).catch(() => undefined))?.version !== installedVersion) {
+        if (Date.now() > deadline) return;
+        await Bun.sleep(1_000);
+      }
+    }),
+  );
+  if (peers.length && !isRestartPending({ version, installedVersion: await getInstalledVersion() }))
+    return version;
+  return restartServer();
 }
 
 // Run the command on PATH rather than `process.execPath`, which pnpm and Vite+ move

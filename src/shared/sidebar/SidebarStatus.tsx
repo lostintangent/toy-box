@@ -9,7 +9,9 @@ import { cn } from "@/shared/utils";
 export type SidebarStatus = {
   kind: "waiting" | "running" | "background" | "finished" | "unread" | "draft";
   ariaLabel: string;
-  tooltip: string;
+  /** Shown on hover, unless the surface explains the status itself, as a Channel's request
+   *  preview does. */
+  tooltip?: string;
 };
 
 export function SidebarStatus({
@@ -19,19 +21,19 @@ export function SidebarStatus({
   status: SidebarStatus;
   className?: string;
 }) {
+  const mark = (
+    <div
+      role="status"
+      className={cn("flex shrink-0 items-center justify-center", className)}
+      aria-label={status.ariaLabel}
+    >
+      <SidebarStatusMark kind={status.kind} />
+    </div>
+  );
+  if (!status.tooltip) return mark;
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <div
-            role="status"
-            className={cn("flex shrink-0 items-center justify-center", className)}
-            aria-label={status.ariaLabel}
-          >
-            <SidebarStatusMark kind={status.kind} />
-          </div>
-        }
-      />
+      <TooltipTrigger render={mark} />
       <TooltipContent sideOffset={6}>{status.tooltip}</TooltipContent>
     </Tooltip>
   );

@@ -5,7 +5,6 @@ import { Separator } from "@/shared/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { useUpdateWorkspaceSetting, useWorkspaceSelector } from "@workspace/hooks/state";
 import { ProviderSettings } from "@providers/components/ProviderSettings";
-import { PeerServerSettings } from "./PeerServerSettings";
 import { ServerSettings } from "./ServerSettings";
 import { SettingField } from "./SettingField";
 
@@ -106,8 +105,6 @@ export function SettingsDialog({
           <ServerSettings />
           <Separator />
           <ProviderSettings />
-          <Separator />
-          <PeerServerSettings />
         </div>
       </DialogContent>
     </Dialog>

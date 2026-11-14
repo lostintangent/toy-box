@@ -19,8 +19,8 @@ export function servePeer(fetch: Handler): URL {
   return server.url;
 }
 
-/** Answers as a Toy Box server named `name` running 0.4.0, and hands every request other than
- *  that read to `handle`. */
+/** Answers as a Toy Box server named `name` running 0.4.0, with no installed release, and hands
+ *  every request other than that read to `handle`. */
 export function toyBoxServer(
   name: string,
   handle: Handler = () => new Response("Not found", { status: 404 }),
@@ -28,6 +28,6 @@ export function toyBoxServer(
   const id = crypto.randomUUID();
   return (request) =>
     request.method === "GET" && new URL(request.url).pathname === "/api/v1/server"
-      ? Response.json({ id, name, version: "0.4.0", peers: [] })
+      ? Response.json({ id, name, version: "0.4.0", installedVersion: null, peers: [] })
       : handle(request);
 }
