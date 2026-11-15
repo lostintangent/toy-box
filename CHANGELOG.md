@@ -1,3 +1,7 @@
+## 📅 v0.4.6 (11/15/26)
+
+- You can now be assigned to channel tasks
+
 ## 📅 v0.4.5 (11/13/26)
 
 - When you check for updates or restart the server, it applies to every peer server as well.

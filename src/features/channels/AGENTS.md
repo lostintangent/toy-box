@@ -60,9 +60,10 @@ Channel        name, avatar, purpose, directory, lead model, tasks, preview, use
   clients receive its server-relative URL. Like an attachment, an image stays until its Channel is
   deleted, so each announcement keeps showing the avatar it set.
 - `ChannelTask` has a short, stable, channel-unique ID such as `t12`, title, status, optional owner
-  and subtasks. Its optional `artifactId` is a shared artifact's `id`; file metadata
-  stays with the artifact. Its optional `diff: DiffStats` uses `shared/diffStats.ts`, like Session
-  diffs, and measures directly attributed work. `channelTasksDiff` derives totals from direct
+  and subtasks. The owner is the lead, a current member, or `user` for a task that waits on the
+  user, which checklists show as You. Its optional `artifactId` is a shared artifact's `id`; file
+  metadata stays with the artifact. Its optional `diff: DiffStats` uses `shared/diffStats.ts`, like
+  Session diffs, and measures directly attributed work. `channelTasksDiff` derives totals from direct
   and descendant diffs, never storing aggregates. Unreported work differs from a measured zero;
   totals summarize reported work, not necessarily the net repository diff.
 - Task timing belongs to the committed tree: server-owned `startedAt` begins on entry to
@@ -70,8 +71,8 @@ Channel        name, avatar, purpose, directory, lead model, tasks, preview, use
   and clears when it leaves, so resuming starts a fresh timer. Clients derive age from this
   timestamp; compact agent reads expose derived `elapsedMinutes` instead of the timestamp.
   The lead may independently set an optional UTC `checkInAt`. The existing minute wake check
-  atomically clears due check-ins on assigned, in-progress tasks, then privately asks each owner
-  for progress. Pending and blocked tasks do not dispatch check-ins. Task age continues; another
+  atomically clears due check-ins on assigned, in-progress tasks, then privately asks each agent
+  owner for progress. Pending and blocked tasks do not dispatch check-ins. Task age continues; another
   check-in requires another timestamp. Completion clears it; null cancels it. Checklists retain
   `X / Y`: elapsed minutes / minutes until check-in, then elapsed only once consumed.
   Wakes use the existing best-effort delivery guarantee, not a durable notification outbox.
@@ -255,7 +256,8 @@ model's 12,000-character limit.
 The built-in lead role establishes the purpose with the user when needed, scales planning to the
 work, keeps a lightweight task list with reviewable outcomes, creates each member only when their
 work is actionable, drives quality through review and iteration, keeps the public progress
-surfaces current, and tracks each open ask of the user as a blocked task until it is resolved.
+surfaces current, and tracks each open ask of the user as a pending task the user owns until it is
+resolved.
 Each sibling list is capped at 50 tasks; use ID-based moves to regroup growing lists into milestones without discarding
 useful outcomes or copying child counts into a parent's direct diff.
 Routines serve the purpose, so setting one never rewrites the purpose or adds tasks.

@@ -272,11 +272,11 @@ describe("channel task edits", () => {
       tasks: [
         {
           ...task,
-          children: ids.map((id) => ({
+          children: [...ids, "yours"].map((id) => ({
             id,
             title: id,
             status: "in_progress",
-            ownerId: channel.id,
+            ownerId: id === "yours" ? "user" : channel.id,
             checkInAt: id === "later" ? "2026-10-23T15:10:00.000Z" : checkInAt,
           })),
         },
@@ -304,6 +304,7 @@ describe("channel task edits", () => {
       { agentId: channel.id, taskId: "due", title: "due", checkInAt },
     ]);
     const after = (await channels.getChannel(channel.id))!;
+    expect(after.tasks[0]!.children!.at(-1)).not.toHaveProperty("checkInAt");
     expect(after.tasks[0]!.children![0]).toEqual({
       id: "due",
       title: "due",
@@ -346,7 +347,7 @@ describe("channel task edits", () => {
     }
   });
 
-  test("task owners named by mention are stored by agent ID", async () => {
+  test("task owners named by mention are stored by agent ID, and the user as user", async () => {
     const { channels, channel } = await setup();
     const { member } = await channels.createMember(
       channelAgent(channel.id, "designer-id", "Designer"),
@@ -356,12 +357,13 @@ describe("channel task edits", () => {
         { type: "add", task: { id: "t2", title: "Mock", status: "pending", ownerId: "@designer" } },
         { type: "add", parentId: "t2", task: { id: "t3", title: "Check", status: "pending" } },
         { type: "update", taskId: "t3", patch: { ownerId: "@lead" } },
+        { type: "add", task: { id: "t4", title: "Approve", status: "pending", ownerId: "user" } },
       ],
     });
-    expect((await channels.getChannel(channel.id))?.tasks.at(-1)).toMatchObject({
-      ownerId: member.id,
-      children: [{ ownerId: channel.id }],
-    });
+    expect((await channels.getChannel(channel.id))?.tasks.slice(-2)).toMatchObject([
+      { ownerId: member.id, children: [{ ownerId: channel.id }] },
+      { ownerId: "user" },
+    ]);
   });
 });
 

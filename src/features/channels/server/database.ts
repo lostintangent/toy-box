@@ -672,12 +672,13 @@ export class ChannelDatabase {
               Date.parse(task.checkInAt) > now.getTime()
             )
               return next;
-            checkIns.push({
-              agentId: task.ownerId,
-              taskId: task.id,
-              title: task.title,
-              checkInAt: task.checkInAt,
-            });
+            if (task.ownerId !== "user")
+              checkIns.push({
+                agentId: task.ownerId,
+                taskId: task.id,
+                title: task.title,
+                checkInAt: task.checkInAt,
+              });
             return applyPatch(next, { checkInAt: null });
           });
         const tasks = claim(channel.tasks);
@@ -1202,7 +1203,8 @@ function reactionsByMessage(rows: ChannelReactionRow[]): Map<number, ChannelReac
   return reactions;
 }
 
-/** Owners may be named by mention, so they resolve to the IDs that are stored. */
+/** Owners may be named by mention, so they resolve to the IDs that are stored. `user` is kept as is,
+ *  for tasks that wait on the user. */
 async function resolveTaskReferences(
   db: Bun.SQL,
   channelId: string,
@@ -1216,9 +1218,12 @@ async function resolveTaskReferences(
   const artifactIds = new Set(artifacts.map(({ id }) => id));
   const resolve = (tasks: readonly ChannelTask[]): ChannelTask[] =>
     tasks.map((task) => {
-      const ownerId = task.ownerId && resolveChannelAgentId(agents, task.ownerId);
+      const ownerId =
+        task.ownerId === "user"
+          ? "user"
+          : task.ownerId && resolveChannelAgentId(agents, task.ownerId);
       if (task.ownerId && !ownerId) {
-        throw new Error("Task owners must be the channel lead or a current member.");
+        throw new Error("Task owners must be the user, the channel lead, or a current member.");
       }
       if (task.artifactId && !artifactIds.has(task.artifactId)) {
         throw new Error(`Task "${task.id}" must reference an artifact shared in this channel.`);

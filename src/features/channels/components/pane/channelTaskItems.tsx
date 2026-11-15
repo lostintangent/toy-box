@@ -1,4 +1,4 @@
-import { Clock3, FileText } from "lucide-react";
+import { Clock3, FileText, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AgentAvatar } from "@channels/components/agents/AgentAvatar";
 import {
@@ -6,7 +6,6 @@ import {
   channelTaskElapsedMinutes,
   channelTasksDiff,
   type ChannelAgent,
-  type ChannelAgentIdentity,
   type ChannelArtifact,
   type ChannelTask,
 } from "@channels/model";
@@ -94,7 +93,7 @@ export function channelTaskItems(
                 closeOnOpen={closeOnArtifactOpen}
               />
             )}
-            {task.ownerId && <TaskOwner owner={channelAgentIdentity(owners, task.ownerId)} />}
+            {task.ownerId && <TaskOwner ownerId={task.ownerId} owners={owners} />}
           </span>
         ) : undefined,
       children:
@@ -159,13 +158,20 @@ function TaskArtifact({
   return closeOnOpen ? <PopoverClose render={button} /> : button;
 }
 
-function TaskOwner({ owner }: { owner: ChannelAgentIdentity }) {
+/** A task's owner: an agent by its avatar, or the user as You. */
+function TaskOwner({ ownerId, owners }: { ownerId: string; owners: readonly ChannelAgent[] }) {
+  const owner = ownerId === "user" ? undefined : channelAgentIdentity(owners, ownerId);
+  const name = owner?.name ?? "You";
   return (
     <Tooltip>
-      <TooltipTrigger render={<span role="img" aria-label={owner.name} className="inline-flex" />}>
-        <AgentAvatar agent={owner} className="size-4 in-data-[slot=checklist-popup]:size-3.5" />
+      <TooltipTrigger render={<span role="img" aria-label={name} className="inline-flex" />}>
+        {owner ? (
+          <AgentAvatar agent={owner} className="size-4 in-data-[slot=checklist-popup]:size-3.5" />
+        ) : (
+          <UserRound className="size-4 text-muted-foreground in-data-[slot=checklist-popup]:size-3.5" />
+        )}
       </TooltipTrigger>
-      <TooltipContent sideOffset={4}>{owner.name}</TooltipContent>
+      <TooltipContent sideOffset={4}>{name}</TooltipContent>
     </Tooltip>
   );
 }

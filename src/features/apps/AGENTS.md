@@ -30,7 +30,7 @@ The feature is organized by responsibility:
   modules adapt Toy Box capabilities to a mounted app; `runtime/` implements the
   authored SDK in the browser.
 - `sdk.ts` is the complete public authoring contract for `@toy-box/sdk`, while
-  `runtime.ts` defines the versioned compiler-to-host module bridge.
+  `runtime.ts` defines the compiler-to-host module bridge.
 - `server/functions.ts` is the validated RPC ingress. `server/index.ts` owns
   artifact bundle access and installed lifecycle orchestration over the definition registry,
   SQLite store, compiler, and Gist installer. Agent tools and authoring guidance
