@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { diffStatsSchema, type DiffStats } from "@/shared/diffStats";
+import { channelActorSchema, type ChannelActor } from "./agent";
 import { applyPatch, hasChanges } from "./changes";
 
 const taskIdSchema = z.string().trim().min(1).max(255);
@@ -11,27 +12,15 @@ export const channelTaskSchema = z
     ),
     title: z.string().trim().min(1).max(240).describe("A concise outcome or next step."),
     status: z.enum(["pending", "in_progress", "blocked", "done"]),
-    startedAt: z.iso
-      .datetime()
-      .optional()
-      .describe(
-        "Server-owned start time, set when the task enters in_progress and cleared when it leaves. Do not set it.",
-      ),
+    /** Set while the task is in_progress, by the server alone. */
+    startedAt: z.iso.datetime().optional(),
     checkInAt: z.iso
       .datetime()
       .optional()
       .describe(
-        "Optional UTC check-in time that keeps in-progress work on track, independent of startedAt and checked once a minute. Only the lead sets it. When due, the owner is privately prompted to report whether the work is converging, and the check-in is cleared.",
+        "Optional UTC check-in time that keeps in-progress work on track, checked once a minute. Only the lead sets it. When due, the owner is privately prompted to report whether the work is converging, and the check-in is cleared.",
       ),
-    ownerId: z
-      .string()
-      .trim()
-      .min(1)
-      .max(255)
-      .optional()
-      .describe(
-        "The channel lead or a current member responsible for the task, by agent ID or @mention, or `user` when the task waits on the user.",
-      ),
+    owner: channelActorSchema.optional(),
     artifactId: z
       .string()
       .min(1)
@@ -51,6 +40,36 @@ export const channelTaskSchema = z
   .strict();
 
 export type ChannelTask = z.output<typeof channelTaskSchema>;
+
+/** A task as tools write and read it: its owner is a handle, and its start time stays on the server. */
+export const channelTaskInputSchema = channelTaskSchema.omit({ startedAt: true }).extend({
+  owner: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .optional()
+    .describe(
+      "The lead or a current member responsible for the task, by @mention, or @user when the task waits on the user.",
+    ),
+  get children() {
+    return z.array(channelTaskInputSchema).max(50).optional().describe("Optional subtasks.");
+  },
+});
+
+export type ChannelTaskInput = z.output<typeof channelTaskInputSchema>;
+
+/** Write each owner back as a reference, for tools to read or for edits to apply to. */
+export function nameChannelTaskOwners(
+  tasks: readonly ChannelTask[],
+  name: (owner: ChannelActor) => string | undefined,
+): ChannelTaskInput[] {
+  return tasks.map(({ owner, startedAt: _startedAt, children, ...task }) => ({
+    ...task,
+    ...(owner && { owner: name(owner) }),
+    ...(children && { children: nameChannelTaskOwners(children, name) }),
+  }));
+}
 
 /** Reconcile server-owned timing by stable ID against the last committed tree. */
 export function reconcileChannelTaskTiming(
@@ -87,12 +106,12 @@ export function channelTaskElapsedMinutes(
   return startedAt ? Math.max(0, Math.floor((now - Date.parse(startedAt)) / 60_000)) : undefined;
 }
 
-export const channelTasksSchema = z
-  .array(channelTaskSchema)
+export const channelTasksInputSchema = z
+  .array(channelTaskInputSchema)
   .max(50)
   .superRefine((tasks, context) => {
     const ids = new Set<string>();
-    const visit = (tasks: readonly ChannelTask[], path: (string | number)[]) => {
+    const visit = (tasks: readonly ChannelTaskInput[], path: (string | number)[]) => {
       tasks.forEach((task, index) => {
         if (ids.has(task.id)) {
           context.addIssue({
@@ -121,11 +140,11 @@ export function channelTasksDiff(tasks: readonly ChannelTask[]): DiffStats | und
     }, undefined);
 }
 
-const taskPatchSchema = channelTaskSchema
-  .omit({ id: true, children: true, startedAt: true })
+const taskPatchSchema = channelTaskInputSchema
+  .omit({ id: true, children: true })
   .partial()
   .extend({
-    ownerId: channelTaskSchema.shape.ownerId.nullable(),
+    owner: channelTaskInputSchema.shape.owner.nullable(),
     artifactId: channelTaskSchema.shape.artifactId.nullable(),
     diff: channelTaskSchema.shape.diff.nullable(),
     checkInAt: channelTaskSchema.shape.checkInAt.nullable(),
@@ -141,7 +160,7 @@ export const editChannelTasksInputSchema = z
             .object({
               type: z.literal("add"),
               parentId: taskIdSchema.optional().describe("Omit to append a top-level task."),
-              task: channelTaskSchema,
+              task: channelTaskInputSchema,
             })
             .strict(),
           z
@@ -175,10 +194,10 @@ export type EditChannelTasksInput = z.output<typeof editChannelTasksInputSchema>
 
 /** Each operation preserves a valid tree; the caller commits only the final result. */
 export function applyChannelTaskEdits(
-  tasks: readonly ChannelTask[],
+  tasks: readonly ChannelTaskInput[],
   operations: EditChannelTasksInput["operations"],
-): ChannelTask[] {
-  return operations.reduce<ChannelTask[]>(
+): ChannelTaskInput[] {
+  return operations.reduce<ChannelTaskInput[]>(
     (current, operation) => {
       switch (operation.type) {
         case "add":
@@ -192,7 +211,7 @@ export function applyChannelTaskEdits(
                   return null;
                 })
               : current;
-          return channelTasksSchema.parse(
+          return channelTasksInputSchema.parse(
             operation.parentId
               ? changeTask(remaining, operation.parentId, (parent) => ({
                   ...parent,
@@ -212,12 +231,12 @@ export function applyChannelTaskEdits(
 }
 
 function changeTask(
-  tasks: readonly ChannelTask[],
+  tasks: readonly ChannelTaskInput[],
   taskId: string,
-  change: (task: ChannelTask) => ChannelTask | null,
-): ChannelTask[] {
+  change: (task: ChannelTaskInput) => ChannelTaskInput | null,
+): ChannelTaskInput[] {
   let found = false;
-  const visit = (tasks: readonly ChannelTask[]): ChannelTask[] =>
+  const visit = (tasks: readonly ChannelTaskInput[]): ChannelTaskInput[] =>
     tasks.flatMap((task) => {
       if (task.id === taskId) {
         found = true;
@@ -234,14 +253,15 @@ function changeTask(
 /** Clears the `link` that names `id` at every depth, such as an agent's ownership or an artifact's link. */
 export function unlinkChannelTasks(
   tasks: readonly ChannelTask[],
-  link: "ownerId" | "artifactId",
+  link: "owner" | "artifactId",
   id: string,
 ): ChannelTask[] {
-  return tasks.map((task) => {
-    const { [link]: linked, children, ...rest } = task;
+  return tasks.map(({ children, ...task }) => {
+    const { [link]: linked, ...rest } = task;
+    const linkedId =
+      typeof linked === "object" && linked.type === "agent" ? linked.agentId : linked;
     return {
-      ...rest,
-      ...(linked && linked !== id ? { [link]: linked } : {}),
+      ...(linkedId === id ? rest : task),
       ...(children ? { children: unlinkChannelTasks(children, link, id) } : {}),
     };
   });

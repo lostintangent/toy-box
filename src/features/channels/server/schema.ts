@@ -109,4 +109,30 @@ export default [
   `
     ALTER TABLE channels ADD COLUMN avatar TEXT CHECK (avatar IS NULL OR json_valid(avatar));
   `,
+  // Task owners become actors: each nested ownerId, one at a time, turns into the user or an agent.
+  `
+    WITH RECURSIVE
+      owners AS (
+        SELECT channels.id, tree.path, tree.fullkey, tree.atom,
+          row_number() OVER (PARTITION BY channels.id ORDER BY tree.id) AS step
+        FROM channels, json_tree(channels.tasks) AS tree
+        WHERE tree.key = 'ownerId'
+      ),
+      rewritten (id, step, tasks) AS (
+        SELECT id, 0, tasks FROM channels WHERE id IN (SELECT id FROM owners)
+        UNION ALL
+        SELECT rewritten.id, owners.step, json_remove(
+          json_set(rewritten.tasks, owners.path || '.owner', CASE owners.atom
+            WHEN 'user' THEN json_object('type', 'user')
+            ELSE json_object('type', 'agent', 'agentId', owners.atom) END),
+          owners.fullkey)
+        FROM rewritten
+        JOIN owners ON owners.id = rewritten.id AND owners.step = rewritten.step + 1
+      )
+    UPDATE channels
+    SET tasks = (
+      SELECT tasks FROM rewritten WHERE rewritten.id = channels.id ORDER BY step DESC LIMIT 1
+    )
+    WHERE id IN (SELECT id FROM owners);
+  `,
 ];

@@ -108,9 +108,8 @@ async function invokeTool(name: string, input = {}, sessionId = "coordinator", a
     ...channelLeadTools,
   ].find((tool) => tool.name === name) as Tool | undefined;
   if (!tool) throw new Error(`Tool not found: ${name}`);
-  return JSON.parse(
-    toolResultText(await tool.handler(tool.parameters?.parse(input) ?? input, sessionId)),
-  );
+  const result = await tool.handler(tool.parameters?.parse(input) ?? input, sessionId);
+  return typeof result === "string" ? result : JSON.parse(toolResultText(result));
 }
 
 test("attention uses normal messages and upserts, and a user reply also wakes the lead", async () => {
@@ -415,29 +414,31 @@ test("a Channel lead edits and removes only its own members, by ID or mention", 
     channelAgent(other.id, "scout", "Scout"),
   );
 
-  const [designer] = await createChannelMembers(channel.id, [{ name: "Designer" }]);
+  await createChannelMembers(channel.id, [{ name: "Designer" }]);
   const model = { provider: "claude", name: "opus" };
-  await invokeTool("update_channel_member", { agentId: "@designer", model }, channel.id);
-  expect(await invokeTool("read_channel", { detail: "full" }, channel.id, true)).toMatchObject({
-    members: [{ agentId: designer!.id, model }],
+  const renamed = { agent: "@designer", name: "Art Director", model };
+  expect(await invokeTool("update_channel_member", renamed, channel.id)).toEqual({
+    agent: "@art-director",
   });
-  for (const agentId of [outsider.id, "@scout", channel.id, "@lead"]) {
-    await expect(
-      invokeTool("update_channel_member", { agentId, model }, channel.id),
-    ).rejects.toThrow("Member not found in this channel.");
-    await expect(invokeTool("remove_channel_member", { agentId }, channel.id)).rejects.toThrow(
+  expect(await invokeTool("read_channel", { detail: "full" }, channel.id, true)).toMatchObject({
+    members: [{ agent: "@art-director", model }],
+  });
+  for (const agent of [outsider.id, "@scout", channel.id, "@lead"]) {
+    await expect(invokeTool("update_channel_member", { agent, model }, channel.id)).rejects.toThrow(
+      "Member not found in this channel.",
+    );
+    await expect(invokeTool("remove_channel_member", { agent }, channel.id)).rejects.toThrow(
       "Member not found in this channel.",
     );
   }
-  const removeMember = channelLeadTools.find(
-    ({ name }) => name === "remove_channel_member",
-  ) as Tool;
-  expect(await removeMember.handler({ agentId: "@designer" }, channel.id)).toBe("Removed.");
+  expect(await invokeTool("remove_channel_member", { agent: "@art-director" }, channel.id)).toBe(
+    "Done",
+  );
   const { messages } = await invokeTool("read_channel", {}, channel.id, true);
-  expect(messages.at(-1).content).toMatchObject({
+  expect(messages.at(-1).content).toEqual({
     type: "member_left",
-    actor: { type: "agent", agentId: channel.id },
-    agentId: designer!.id,
+    actor: "@lead",
+    member: "@art-director",
   });
 });
 
@@ -455,7 +456,7 @@ test("leads also list the channels on peer servers", async () => {
   });
 });
 
-test("channel tools identify every agent by agentId", async () => {
+test("Sessions identify agents by agentId, while channel agents see only handles", async () => {
   await openChannels();
 
   const { channel } = await invokeTool("create_channel", { name: "Identity", ...CHANNEL_DEFAULTS });
@@ -467,13 +468,8 @@ test("channel tools identify every agent by agentId", async () => {
     members: [member],
   } = await invokeTool("create_channel_members", { channelId, members: [{ name: "Reviewer" }] });
   expect(member).toEqual({ agentId: expect.any(String), mention: "@reviewer" });
-  const profile = await invokeTool(
-    "update_member",
-    { role: "Review the outcome." },
-    member.agentId,
-  );
-  expect(profile.agentId).toBe(member.agentId);
-  expect(profile).not.toHaveProperty("id");
+  const role = "Review the outcome.";
+  expect(await invokeTool("update_member", { role }, member.agentId)).toBe("Done");
 
   const context = await invokeTool("read_channel", { channelId });
   expect(context.lead.agentId).toBe(channelId);
@@ -490,6 +486,12 @@ test("channel tools identify every agent by agentId", async () => {
       { agentId: member.agentId, status: "completed" },
     ],
   });
+
+  const read = await invokeTool("read_channel", {}, member.agentId, true);
+  expect(read.members).toMatchObject([{ agent: "@reviewer", role }]);
+  expect(read.messages[0].content).toEqual({ type: "member_joined", member: "@reviewer" });
+  expect(JSON.stringify(read)).not.toContain(member.agentId);
+  expect(JSON.stringify(read)).not.toContain(`"${channelId}"`);
 });
 
 test("a Session can seed and passively read Channel context", async () => {
@@ -530,20 +532,27 @@ test("a Session can seed and passively read Channel context", async () => {
     preview: { kind: "url", url: "http://127.0.0.1:3000" },
   });
   const outcome = { artifactId: artifact.artifactId, diff: { added: 32, removed: 8 } };
+  const patch = { ...outcome, owner: "@user" };
   expect(
     await invokeTool(
       "edit_channel_tasks",
-      { operations: [{ type: "update", taskId: "synthesize", patch: outcome }] },
+      { operations: [{ type: "update", taskId: "synthesize", patch }] },
       channel.id,
     ),
-  ).toEqual({ taskIds: ["synthesize"] });
+  ).toBe("Done");
 
   const result = await invokeTool("read_channel", { channelId: channel.id });
   expect(result).toMatchObject({
     channel: {
       purpose: "Turn the evidence into a useful recommendation.",
       tasks: [
-        { id: "synthesize", title: "Synthesize the evidence", status: "in_progress", ...outcome },
+        {
+          id: "synthesize",
+          title: "Synthesize the evidence",
+          status: "in_progress",
+          ...outcome,
+          owner: "@user",
+        },
       ],
       preview: { kind: "url", url: "http://127.0.0.1:3000" },
     },
@@ -618,14 +627,10 @@ test("compact reads scope tasks and live statuses without losing idle authors or
   );
   await channels.updateMember(builder.id, { role: "Build. ".repeat(1_000) });
   await channels.updateMember(reviewer.id, { role: "Review. ".repeat(1_000) });
-  const mine = {
-    id: "mine",
-    title: "Build",
-    status: "in_progress",
-    ownerId: builder.id,
-  } as const;
-  const other = { id: "other", title: "Review", status: "blocked", ownerId: reviewer.id } as const;
-  const unassigned = { id: "next", title: "Next", status: "pending" } as const;
+  const mine = { id: "mine", title: "Build", status: "in_progress", owner: "@builder" } as const;
+  const other = { id: "other", title: "Review", status: "blocked", owner: "@reviewer" } as const;
+  const ask = { id: "ask", title: "Decide", status: "pending", owner: "@user" } as const;
+  const done = { id: "done", title: "Done", status: "done" } as const;
   const tasks = [
     {
       id: "archive",
@@ -641,19 +646,28 @@ test("compact reads scope tasks and live statuses without losing idle authors or
       id: "milestone",
       title: "Ship",
       status: "in_progress" as const,
-      ownerId: channel.id,
+      owner: "@lead",
       children: [
         { ...mine, checkInAt: "2026-10-23T15:05:00.000Z" },
-        other,
-        unassigned,
-        { id: "done", title: "Done", status: "done" as const },
+        { ...other, owner: reviewer.id },
+        ask,
+        done,
       ],
     },
   ];
-  await channels.updateChannel(channel.id, { tasks });
+  await invokeTool("update_channel", { tasks }, channel.id, true);
+  onTestFinished(() => releaseChannelEvents(channel.id));
   setSystemTime(new Date("2026-10-23T15:12:00.000Z"));
   await channels.claimDueWakes(new Date());
-  const canonicalTasks = (await channels.getChannel(channel.id))!.tasks;
+  expect((await channels.getChannel(channel.id))!.tasks[1]).toMatchObject({
+    owner: { type: "agent", agentId: channel.id },
+    children: [
+      { owner: { type: "agent", agentId: builder.id } },
+      { owner: { type: "agent", agentId: reviewer.id } },
+      { owner: { type: "user" } },
+      done,
+    ],
+  });
   expect(await invokeTool("read_channel", { detail: "compact" }, builder.id, true)).toHaveProperty(
     "channel",
   );
@@ -663,6 +677,12 @@ test("compact reads scope tasks and live statuses without losing idle authors or
     id: "handoff",
     sender: { type: "agent", agentId: reviewer.id },
     content: "The review is ready.",
+  });
+  await channels.setMessageReaction({
+    channelId: channel.id,
+    sequence: message.sequence,
+    agentId: builder.id,
+    reaction: "agree",
   });
   const wait = {
     state: "waiting" as const,
@@ -685,36 +705,33 @@ test("compact reads scope tasks and live statuses without losing idle authors or
     { ...tasks[1], elapsedMinutes: 12, children: [{ ...mine, elapsedMinutes: 12 }] },
   ]);
   expect(compact.agents).toEqual([
-    { agentId: channel.id, name: "Lead", mention: "@lead", status: wait },
+    { agent: "@lead", status: wait },
     {
-      agentId: builder.id,
-      name: builder.name,
-      mention: "@builder",
+      agent: "@builder",
       status: { state: "working", text: "Building", workingOn: message.sequence },
     },
   ]);
   expect(compact.messages).toMatchObject([
     {
       sequence: message.sequence,
-      sender: { type: "agent", agentId: reviewer.id, name: reviewer.name, mention: "@reviewer" },
+      sender: "@reviewer",
       content: message.content,
+      reactions: [{ agent: "@builder", reaction: "agree" }],
     },
   ]);
   expect((await invokeTool("read_channel", {}, channel.id, true)).unfinishedTasks).toEqual([
     {
       ...tasks[1],
       elapsedMinutes: 12,
-      children: [{ ...mine, elapsedMinutes: 12 }, other, unassigned],
+      children: [{ ...mine, elapsedMinutes: 12 }, other, ask],
     },
   ]);
   const full = await invokeTool("read_channel", { detail: "full" }, builder.id, true);
-  expect(full).toEqual(
-    await invokeTool("read_channel", { channelId: channel.id, beforeSequence: 1 }),
-  );
   expect(Buffer.byteLength(JSON.stringify(compact))).toBeLessThan(20_000);
-  expect(full.channel.tasks).toEqual(canonicalTasks);
+  const readTasks = [tasks[0], { ...tasks[1], children: [mine, other, ask, done] }];
+  expect(full.channel.tasks).toEqual(readTasks);
   expect(await invokeTool("read_channel", { detail: "tasks" }, builder.id, true)).toEqual({
-    tasks: canonicalTasks,
+    tasks: readTasks,
     messages: [],
     hasMore: false,
   });
@@ -745,11 +762,10 @@ test("compact and full reads share paging and keep agent attachments as paths", 
   expect(compact.messages).toHaveLength(100);
   expect(compact.hasMore).toBe(true);
   expect(compact.messages[0]).toMatchObject({
-    sender: { type: "agent", agentId: "removed", name: "Deleted agent" },
     content: "Evidence from a former member.",
     attachments: [join(evidence, "evidence.png"), join(evidence, "evidence.mp4")],
   });
-  expect(compact.messages[0].sender).not.toHaveProperty("mention");
+  expect(compact.messages[0]).not.toHaveProperty("sender");
   expect(await invokeTool("read_channel", { detail: "full" }, member.id, true)).toMatchObject({
     channel: { name: channel.name },
     messages: [{ content: "Message 99" }],
@@ -1082,7 +1098,7 @@ test("check-ins privately notify the assignee per task and publish the consumed 
   await editChannelTasks(channel.id, {
     operations: ["build", "verify"].map((id) => ({
       type: "add" as const,
-      task: { id, title: id, status: "in_progress", ownerId: member.id, checkInAt },
+      task: { id, title: id, status: "in_progress", owner: member.id, checkInAt },
     })),
   });
   const before = await getChannelSnapshot(channel.id);

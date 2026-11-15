@@ -3,7 +3,6 @@ import { defineTool } from "@sessions/server/tools/definition";
 import { z } from "zod";
 import {
   agentHandleFromName,
-  channelAgentIdentity,
   channelTaskElapsedMinutes,
   channelIdentitySchema,
   conciseChannelMessageSchema,
@@ -15,20 +14,20 @@ import {
   editChannelTasksInputSchema,
   durableIdSchema,
   isChannelSystemMessage,
+  nameChannelTaskOwners,
   channelArtifactIdentitySchema,
   channelRoutineIdentitySchema,
+  channelMemberUpdateSchema,
   selfUpdateChannelMemberInputSchema,
   setChannelAgentStatusInputSchema,
   setChannelRoutineInputSchema,
   updateChannelInputSchema,
-  updateChannelMemberInputSchema,
-  removeChannelMemberInputSchema,
   type Channel,
+  type ChannelMessageSender,
   type ChannelAgent,
-  type ChannelAgentIdentity,
   type ChannelArtifact,
-  type ChannelMember,
   type ChannelTask,
+  type ChannelTaskInput,
 } from "@channels/model";
 import { workspaceFileId } from "@files/model";
 import { resolveWorkspaceFile } from "@files/server/paths";
@@ -37,7 +36,7 @@ import { listPeerChannels } from "./peers";
 import { channelAgentPresence } from "@channels/model/presence";
 import { getSessionActivity } from "@sessions/server/state/activity";
 
-const agentReferenceSchema = durableIdSchema.describe("An agent ID or @mention.");
+const agentReferenceSchema = durableIdSchema.describe("A member's @mention.");
 const channelMemberCreationSchema = createChannelMemberInputSchema.omit({ channelId: true });
 const channelMemberCreationsSchema = z.array(channelMemberCreationSchema).min(1);
 const shareChannelArtifactInputSchema = z
@@ -93,7 +92,8 @@ const createCurrentChannelMembersTool = defineTool("create_channel_members", {
   parameters: z.object({ members: channelMemberCreationsSchema }).strict(),
   handler: async ({ members }, sessionId) => {
     const { createChannelMembers } = await import("@channels/server");
-    return createdChannelMembers(await createChannelMembers(sessionId, members));
+    const created = await createChannelMembers(sessionId, members);
+    return { members: created.map(({ name }) => mention(name)) };
   },
 });
 
@@ -229,8 +229,8 @@ const reactToChannelMessageTool = defineTool("react_to_channel_message", {
   }),
   handler: async (args, sessionId) => {
     const { setChannelMessageReaction } = await import("@channels/server");
-    const reaction = await setChannelMessageReaction(sessionId, args);
-    return { reaction };
+    await setChannelMessageReaction(sessionId, args);
+    return "Done";
   },
 });
 
@@ -240,9 +240,8 @@ const setChannelStatusTool = defineTool("set_agent_status", {
   parameters: setChannelAgentStatusInputSchema,
   handler: async (args, sessionId) => {
     const { setChannelAgentStatus } = await import("@channels/server");
-    return {
-      status: await setChannelAgentStatus(sessionId, args),
-    };
+    await setChannelAgentStatus(sessionId, args);
+    return "Done";
   },
 });
 
@@ -256,28 +255,19 @@ const updateChannelTool = defineTool("update_channel", {
     const avatar = image
       ? { image: (await resolveSessionPaths(sessionId, [image]))[0]! }
       : undefined;
-    return channelContextForTool(
-      await updateChannel(sessionId, avatar ? { ...args, avatar } : args),
-    );
+    await updateChannel(sessionId, avatar ? { ...args, avatar } : args);
+    return "Done";
   },
 });
 
 const editChannelTasksTool = defineTool("edit_channel_tasks", {
   description:
-    "Adds, updates, removes, or moves this channel's tasks by stable ID in one atomic batch. Returns targeted task IDs without repeating the tree.",
+    "Adds, updates, removes, or moves this channel's tasks by stable ID in one atomic batch.",
   parameters: editChannelTasksInputSchema,
   handler: async (input, sessionId) => {
     const { editChannelTasks } = await import("@channels/server");
     await editChannelTasks(sessionId, input);
-    return {
-      taskIds: [
-        ...new Set(
-          input.operations.map((operation) =>
-            operation.type === "add" ? operation.task.id : operation.taskId,
-          ),
-        ),
-      ],
-    };
+    return "Done";
   },
 });
 
@@ -318,7 +308,7 @@ const finishChannelAgentTurnTool = defineTool("finish_agent_turn", {
   handler: async ({ waitingFor, wakeAfterMinutes }, sessionId) => {
     const { finishChannelAgentTurn } = await import("@channels/server");
     await finishChannelAgentTurn(sessionId, waitingFor, wakeAfterMinutes);
-    return "Done.";
+    return "Done";
   },
 });
 
@@ -341,7 +331,7 @@ const deleteRoutineTool = defineTool("delete_routine", {
     if (!(await deleteChannelRoutine(sessionId, routineId))) {
       throw new Error("Routine not found in this channel.");
     }
-    return "Removed.";
+    return "Done";
   },
 });
 
@@ -356,7 +346,7 @@ const removeArtifactTool = defineTool("remove_channel_artifact", {
     ) {
       throw new Error("Artifact not found in this channel.");
     }
-    return "Removed.";
+    return "Done";
   },
 });
 
@@ -367,7 +357,7 @@ const messageChannelLeadTool = defineTool("message_channel_lead", {
   handler: async (input, sessionId) => {
     const { messageChannelLead } = await import("@channels/server");
     await messageChannelLead(sessionId, input);
-    return "Sent.";
+    return "Done";
   },
 });
 
@@ -376,30 +366,31 @@ const updateMemberTool = defineTool("update_member", {
   parameters: selfUpdateChannelMemberInputSchema,
   handler: async (args, sessionId) => {
     const { updateChannelMember } = await import("@channels/server");
-    return memberForTool(await updateChannelMember({ agentId: sessionId, ...args }));
+    await updateChannelMember({ agentId: sessionId, ...args });
+    return "Done";
   },
 });
 
 const updateChannelMemberTool = defineTool("update_channel_member", {
   description:
     "Updates a member's name, role, or model from its next turn. A started member keeps its provider. Use list_models to resolve supported model options.",
-  parameters: updateChannelMemberInputSchema.safeExtend({ agentId: agentReferenceSchema }),
-  handler: async (input, sessionId) => {
+  parameters: channelMemberUpdateSchema.safeExtend({ agent: agentReferenceSchema }),
+  handler: async ({ agent, ...changes }, sessionId) => {
     const { resolveChannelMember, updateChannelMember } = await import("@channels/server");
-    const agentId = await resolveChannelMember(sessionId, input.agentId);
-    return memberForTool(await updateChannelMember({ ...input, agentId }));
+    const agentId = await resolveChannelMember(sessionId, agent);
+    return { agent: mention((await updateChannelMember({ ...changes, agentId })).name) };
   },
 });
 
 const removeChannelMemberTool = defineTool("remove_channel_member", {
   description:
     "Removes a member from this channel and posts a system message. Its session ends, and the tasks it owned lose their owner.",
-  parameters: removeChannelMemberInputSchema.extend({ agentId: agentReferenceSchema }),
-  handler: async ({ agentId }, sessionId) => {
+  parameters: z.object({ agent: agentReferenceSchema }).strict(),
+  handler: async ({ agent }, sessionId) => {
     const { removeChannelMember, resolveChannelMember } = await import("@channels/server");
-    const memberId = await resolveChannelMember(sessionId, agentId);
+    const memberId = await resolveChannelMember(sessionId, agent);
     await removeChannelMember(memberId, { type: "agent", agentId: sessionId });
-    return "Removed.";
+    return "Done";
   },
 });
 
@@ -424,12 +415,11 @@ const shareChannelArtifactFromAgentTool = defineTool("share_channel_artifact", {
     const { requireChannelAgent, shareChannelArtifact } = await import("@channels/server");
     const { channelId } = await requireChannelAgent(sessionId);
     const [workspacePath] = await resolveSessionPaths(sessionId, [path]);
-    return artifactForTool(
-      await shareChannelArtifact(
-        { channelId, path: workspacePath!, title },
-        { type: "agent", agentId: sessionId },
-      ),
+    const artifact = await shareChannelArtifact(
+      { channelId, path: workspacePath!, title },
+      { type: "agent", agentId: sessionId },
     );
+    return { artifactId: workspaceFileId(artifact.file) };
   },
 });
 
@@ -446,36 +436,41 @@ function channelReadForTool(
   detail: ChannelReadDetail = "full",
   agentId?: string,
 ) {
-  const agents = [result.lead, ...result.members];
-  const identifyAgents = detail !== "full";
+  // Channel agents read who acts by handle, and Sessions the stored identities their tools take.
+  const handle = actorHandles([result.lead, ...result.members]);
+  const who = (actor: ChannelMessageSender) => (agentId ? handle(actor) : actor);
   const messages = result.messages.map((message) => {
-    const sender =
-      identifyAgents && message.sender.type === "agent"
-        ? {
-            type: "agent" as const,
-            ...agentIdentityForTool(channelAgentIdentity(agents, message.sender.agentId)),
-          }
-        : message.sender;
+    const sender = who(message.sender);
     if (isChannelSystemMessage(message)) {
       const { id: _id, content, ...rest } = message;
+      const actor = "actor" in content && { actor: who(content.actor) };
       if ("member" in content) {
         const { member, ...change } = content;
-        const agent = identifyAgents ? agentIdentityForTool(member) : { agentId: member.id };
-        return { ...rest, sender, content: { ...change, ...agent } };
+        // Membership notices name the member as it was then, even once it has left.
+        const agent = agentId ? { member: mention(member.name) } : { agentId: member.id };
+        return { ...rest, sender, content: { ...change, ...actor, ...agent } };
       }
       return {
         ...rest,
         sender,
-        content:
-          "artifact" in content
-            ? { ...content, artifact: artifactForTool(content.artifact) }
-            : content,
+        content: {
+          ...content,
+          ...actor,
+          ...("artifact" in content && { artifact: artifactForTool(content.artifact) }),
+        },
       };
     }
     const { id, ...rest } = message;
     return {
       ...rest,
       sender,
+      ...(agentId &&
+        rest.reactions && {
+          reactions: rest.reactions.map(({ agentId, reaction }) => ({
+            agent: handle({ type: "agent", agentId }),
+            reaction,
+          })),
+        }),
       ...(rest.attachments && {
         attachments: rest.attachments.map(({ name }) =>
           channelAttachmentPath(result.channel.id, id, name),
@@ -484,7 +479,7 @@ function channelReadForTool(
     };
   });
   return {
-    ...channelReadContextForTool(result, detail, agentId),
+    ...channelReadContextForTool(result, detail, handle, agentId),
     messages,
     hasMore: result.hasMore,
   };
@@ -493,6 +488,7 @@ function channelReadForTool(
 function channelReadContextForTool(
   result: ChannelRead,
   detail: ChannelReadDetail,
+  handle: ActorHandle,
   agentId?: string,
 ) {
   switch (detail) {
@@ -500,22 +496,23 @@ function channelReadContextForTool(
       return {
         unfinishedTasks: unfinishedTasksForTool(
           result.channel.tasks,
-          agentId === result.lead.id ? undefined : agentId,
+          handle,
+          !agentId || agentId === result.lead.id ? undefined : handle({ type: "agent", agentId }),
           Date.now(),
         ),
         agents: [result.lead, ...result.members]
-          .map(agentForTool)
+          .map((agent) => agentForTool(agent, true))
           .filter((agent) => agent.status)
           .map(({ role: _role, ...agent }) => agent),
       };
     case "tasks":
-      return { tasks: result.channel.tasks };
+      return { tasks: nameChannelTaskOwners(result.channel.tasks, handle) };
     case "full":
       return {
-        channel: channelContextForTool(result.channel),
-        lead: agentForTool(result.lead),
+        channel: channelContextForTool(result.channel, handle),
+        lead: agentForTool(result.lead, !!agentId),
         members: result.members.map((member) => ({
-          ...agentForTool(member),
+          ...agentForTool(member, !!agentId),
           model: member.model,
         })),
         artifacts: result.artifacts.map(artifactForTool),
@@ -527,31 +524,49 @@ function channelReadContextForTool(
   }
 }
 
-function channelContextForTool({ name, purpose, directory, tasks, preview }: Channel) {
-  return { name, purpose, directory, tasks, preview };
+function channelContextForTool(
+  { name, purpose, directory, tasks, preview }: Channel,
+  handle: ActorHandle,
+) {
+  return { name, purpose, directory, tasks: nameChannelTaskOwners(tasks, handle), preview };
 }
 
-type UnfinishedTask = Omit<ChannelTask, "children" | "startedAt"> & {
+/** A handle is @user or a current agent's mention. A removed agent, like the system, has none. */
+function actorHandles(agents: readonly ChannelAgent[]) {
+  const mentions = new Map(agents.map(({ id, name }) => [id, mention(name)]));
+  return (actor: ChannelMessageSender) =>
+    actor.type === "user"
+      ? "@user"
+      : actor.type === "agent"
+        ? mentions.get(actor.agentId)
+        : undefined;
+}
+type ActorHandle = ReturnType<typeof actorHandles>;
+
+type UnfinishedTask = Omit<ChannelTaskInput, "children"> & {
   elapsedMinutes?: number;
   children?: UnfinishedTask[];
 };
 
 function unfinishedTasksForTool(
   tasks: readonly ChannelTask[],
-  ownerId: string | undefined,
+  handle: ActorHandle,
+  owner: string | undefined,
   now: number,
 ): UnfinishedTask[] {
-  return tasks.flatMap(({ children, startedAt, ...task }) => {
-    const unfinishedChildren = unfinishedTasksForTool(children ?? [], ownerId, now);
+  return tasks.flatMap(({ owner: actor, startedAt, children, ...task }) => {
+    const taskOwner = actor && handle(actor);
+    const unfinishedChildren = unfinishedTasksForTool(children ?? [], handle, owner, now);
     if (
       !unfinishedChildren.length &&
-      (task.status === "done" || (ownerId !== undefined && task.ownerId !== ownerId))
+      (task.status === "done" || (owner !== undefined && taskOwner !== owner))
     ) {
       return [];
     }
     return [
       {
         ...task,
+        ...(taskOwner && { owner: taskOwner }),
         elapsedMinutes: channelTaskElapsedMinutes({ startedAt }, now),
         ...(unfinishedChildren.length ? { children: unfinishedChildren } : {}),
       },
@@ -559,18 +574,15 @@ function unfinishedTasksForTool(
   });
 }
 
-function agentIdentityForTool(agent: ChannelAgentIdentity) {
-  return {
-    agentId: agent.id,
-    name: agent.name,
-    ...(!agent.deleted ? { mention: `@${agentHandleFromName(agent.name)}` } : {}),
-  };
+function mention(name: string) {
+  return `@${agentHandleFromName(name)}`;
 }
 
-function agentForTool(agent: ChannelAgent) {
+function agentForTool(agent: ChannelAgent, byHandle: boolean) {
   const presence = channelAgentPresence(agent, getSessionActivity(agent.id)?.status === "running");
+  const handle = mention(agent.name);
   return {
-    ...agentIdentityForTool(agent),
+    ...(byHandle ? { agent: handle } : { agentId: agent.id, name: agent.name, mention: handle }),
     role: agent.role,
     ...(presence.state !== "idle"
       ? { status: { ...(agent.status?.state === presence.state ? agent.status : {}), ...presence } }
@@ -607,10 +619,6 @@ function createdChannelMembers(members: { id: string; name: string }[]) {
       mention: `@${agentHandleFromName(member.name)}`,
     })),
   };
-}
-
-function memberForTool({ id: agentId, ...member }: ChannelMember) {
-  return { agentId, ...member };
 }
 
 const commonChannelAgentTools = [

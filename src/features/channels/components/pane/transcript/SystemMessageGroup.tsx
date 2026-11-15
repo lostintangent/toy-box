@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import type {
   ChannelAgentIdentity,
-  ChannelMessageActor,
+  ChannelActor,
   ChannelRoutine,
   ChannelSystemMessage,
   ChannelSystemMessageContent,
@@ -248,7 +248,7 @@ function Value({
   );
 }
 
-function actorName(actor: ChannelMessageActor, agent: PresentationContext["agent"]): string {
+function actorName(actor: ChannelActor, agent: PresentationContext["agent"]): string {
   return actor.type === "user" ? "You" : agent(actor.agentId).name;
 }
 

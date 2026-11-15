@@ -50,6 +50,14 @@ export const CHANNEL_LEAD_PROFILE = {
   },
 } as const satisfies { name: string; role: string; avatar: AgentAvatar };
 
+/** Who acts in a Channel: the user, or an agent on the team. It names a message's sender, a
+ *  change's actor, and a task's owner. */
+export const channelActorSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("user") }).strict(),
+  z.object({ type: z.literal("agent"), agentId: durableIdSchema }).strict(),
+]);
+export type ChannelActor = z.output<typeof channelActorSchema>;
+
 /** The name shown for an agent that has since been removed from its Channel. */
 export const DELETED_AGENT_NAME = "Deleted agent";
 
@@ -83,12 +91,16 @@ const channelMemberChangesSchema = z
   .strict();
 export type ChannelMemberChanges = z.output<typeof channelMemberChangesSchema>;
 
-export const updateChannelMemberInputSchema = channelMemberChangesSchema
+/** A member edit without the member, which callers name in their own terms. */
+export const channelMemberUpdateSchema = channelMemberChangesSchema
   .omit({ avatar: true })
-  .extend({ agentId: durableIdSchema })
-  .refine(({ agentId: _agentId, ...changes }) => hasChanges(changes), {
+  .refine(({ name, role, model }) => hasChanges({ name, role, model }), {
     message: "At least one member field must be updated.",
   });
+
+export const updateChannelMemberInputSchema = channelMemberUpdateSchema.safeExtend({
+  agentId: durableIdSchema,
+});
 
 export const selfUpdateChannelMemberInputSchema = channelMemberChangesSchema
   .pick({ role: true, avatar: true })
@@ -121,7 +133,7 @@ export function agentHandleFromName(name: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 48)
     .replace(/-+$/g, "");
-  return normalized === "everyone" ? "everyone-agent" : normalized || "teammate";
+  return normalized || "teammate";
 }
 
 /** Tools name an agent by its ID or its mention, and both resolve to the ID that is stored. */

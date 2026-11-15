@@ -3,8 +3,9 @@ import {
   agentHandleFromName,
   channelAgentMetadataSchema,
   isChannelSystemMessage,
-  channelTasksSchema,
+  channelTaskSchema,
   applyChannelTaskEdits,
+  nameChannelTaskOwners,
   channelTasksComplete,
   reconcileChannelTaskTiming,
   channelSystemMessageContentSchema,
@@ -15,7 +16,7 @@ import {
   type ChannelCatalogEntry,
   type ChannelEvent,
   type ChannelChanges,
-  type ChannelMessageActor,
+  type ChannelActor,
   type ChannelMemberChanges,
   type ChannelAgentStatus,
   type ChannelArtifact,
@@ -28,6 +29,7 @@ import {
   type ChannelMessageSender,
   type ChannelSystemMessageContent,
   type ChannelTask,
+  type ChannelTaskInput,
   type ChannelRoutine,
   type BookmarkChannelMessageInput,
   type CreateChannelInput,
@@ -291,26 +293,31 @@ export class ChannelDatabase {
     return inStateTransaction(this.db, async (db) => {
       const channel = await requireChannel(db, channelId);
       const tasks = input.tasks && (await resolveTaskReferences(db, channel.id, input.tasks));
-      return updateChannelFields(db, channel, tasks ? { ...input, tasks } : input, {
-        type: "agent",
-        agentId: channelId,
-      });
+      return updateChannelFields(
+        db,
+        channel,
+        { ...input, tasks },
+        { type: "agent", agentId: channelId },
+      );
     });
   }
 
   async editTasks(channelId: string, { operations }: EditChannelTasksInput) {
     return inStateTransaction(this.db, async (db) => {
       const channel = await requireChannel(db, channelId);
+      const written = nameChannelTaskOwners(channel.tasks, (owner) =>
+        owner.type === "user" ? "@user" : owner.agentId,
+      );
       const tasks = await resolveTaskReferences(
         db,
         channel.id,
-        applyChannelTaskEdits(channel.tasks, operations),
+        applyChannelTaskEdits(written, operations),
       );
       return updateChannelFields(db, channel, { tasks }, { type: "agent", agentId: channelId });
     });
   }
 
-  async deleteMember(agentId: string, actor: ChannelMessageActor) {
+  async deleteMember(agentId: string, actor: ChannelActor) {
     return inStateTransaction(this.db, async (db) => {
       const workers = new WorkerDatabase(db);
       const worker = await workers.get(agentId, "channel");
@@ -505,7 +512,7 @@ export class ChannelDatabase {
     channelId: string;
     file: ChannelArtifact["file"];
     title: string;
-    actor: ChannelMessageActor;
+    actor: ChannelActor;
   }) {
     return inStateTransaction(this.db, async (db) => {
       const [row] = await db<ChannelArtifactRow[]>`
@@ -539,7 +546,7 @@ export class ChannelDatabase {
 
   /** Unshares an artifact, or returns null when it's already gone. The message's reducer unlinks
    *  task references to it, and the file stays on disk. */
-  async removeArtifact(channelId: string, artifactId: string, actor: ChannelMessageActor) {
+  async removeArtifact(channelId: string, artifactId: string, actor: ChannelActor) {
     return inStateTransaction(this.db, async (db) => {
       const artifact = (await listArtifacts(db, channelId)).find(({ id }) => id === artifactId);
       if (!artifact) return null;
@@ -667,14 +674,14 @@ export class ChannelDatabase {
             const next = task.children ? { ...task, children: claim(task.children) } : task;
             if (
               task.status !== "in_progress" ||
-              !task.ownerId ||
+              !task.owner ||
               !task.checkInAt ||
               Date.parse(task.checkInAt) > now.getTime()
             )
               return next;
-            if (task.ownerId !== "user")
+            if (task.owner.type === "agent")
               checkIns.push({
-                agentId: task.ownerId,
+                agentId: task.owner.agentId,
                 taskId: task.id,
                 title: task.title,
                 checkInAt: task.checkInAt,
@@ -753,7 +760,7 @@ async function updateChannelFields(
   db: Bun.SQL,
   current: Channel,
   changes: ChannelChanges,
-  actor: ChannelMessageActor,
+  actor: ChannelActor,
 ) {
   if (changes.model && changes.model.provider !== current.model.provider) {
     throw new RefusalError("The lead's provider cannot change without losing its session history.");
@@ -1068,7 +1075,7 @@ async function readChannelRows(db: Bun.SQL, channelId?: string) {
 function channelFromRow(row: ChannelRow): Channel {
   return {
     ...channelMetadataFromRow(row),
-    tasks: channelTasksSchema.parse(JSON.parse(row.tasks)),
+    tasks: channelTaskSchema.array().parse(JSON.parse(row.tasks)),
   };
 }
 
@@ -1126,6 +1133,9 @@ async function assertMemberNameAvailable(
   const handle = agentHandleFromName(name);
   if (handle === agentHandleFromName(CHANNEL_LEAD_PROFILE.name)) {
     throw new RefusalError(`The intrinsic lead already uses the @${handle} mention.`);
+  }
+  if (handle === "user" || handle === "everyone") {
+    throw new RefusalError(`The @${handle} mention is reserved.`);
   }
   const workers = await new WorkerDatabase(db).list({ type: "channel", channelId });
   const conflict = workers.find(
@@ -1203,12 +1213,11 @@ function reactionsByMessage(rows: ChannelReactionRow[]): Map<number, ChannelReac
   return reactions;
 }
 
-/** Owners may be named by mention, so they resolve to the IDs that are stored. `user` is kept as is,
- *  for tasks that wait on the user. */
+/** Owners are written as @user or an agent's ID or mention, and stored as actors. */
 async function resolveTaskReferences(
   db: Bun.SQL,
   channelId: string,
-  tasks: readonly ChannelTask[],
+  tasks: readonly ChannelTaskInput[],
 ): Promise<ChannelTask[]> {
   const [workers, artifacts] = await Promise.all([
     new WorkerDatabase(db).list({ type: "channel", channelId }),
@@ -1216,13 +1225,11 @@ async function resolveTaskReferences(
   ]);
   const agents = workers.map(channelAgentFromWorker);
   const artifactIds = new Set(artifacts.map(({ id }) => id));
-  const resolve = (tasks: readonly ChannelTask[]): ChannelTask[] =>
-    tasks.map((task) => {
-      const ownerId =
-        task.ownerId === "user"
-          ? "user"
-          : task.ownerId && resolveChannelAgentId(agents, task.ownerId);
-      if (task.ownerId && !ownerId) {
+  const resolve = (tasks: readonly ChannelTaskInput[]): ChannelTask[] =>
+    tasks.map(({ owner, children, ...task }) => {
+      const agentId =
+        owner && !USER_OWNER.test(owner) ? resolveChannelAgentId(agents, owner) : null;
+      if (agentId === undefined) {
         throw new Error("Task owners must be the user, the channel lead, or a current member.");
       }
       if (task.artifactId && !artifactIds.has(task.artifactId)) {
@@ -1230,9 +1237,11 @@ async function resolveTaskReferences(
       }
       return {
         ...task,
-        ...(ownerId ? { ownerId } : {}),
-        ...(task.children ? { children: resolve(task.children) } : {}),
+        ...(owner && { owner: agentId ? { type: "agent", agentId } : { type: "user" } }),
+        ...(children && { children: resolve(children) }),
       };
     });
   return resolve(tasks);
 }
+
+const USER_OWNER = /^@?user$/i;

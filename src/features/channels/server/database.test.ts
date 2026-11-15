@@ -2,17 +2,20 @@ import { channelAgent, createStoredChannel } from "@channels/server/testFixtures
 import { describe, expect, onTestFinished, setSystemTime, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ChannelConversationMessage, ChannelTask } from "@channels/model";
+import type { ChannelConversationMessage, ChannelTaskInput } from "@channels/model";
 import { machineFile, sessionFile, workspaceFileId } from "@files/model";
 import { createFileServeUrl } from "@files/model/paths";
 import { createTestDatabase } from "@/server/database";
 import { RefusalError } from "@/shared/server/http";
 import { ChannelDatabase } from "./database";
+import schema from "./schema";
 
 const CHANNEL_DEFAULTS = {
   purpose: "Coordinate the work to a useful result.",
   model: { provider: "copilot", name: "gpt-5.5" },
 } as const;
+
+const agent = (agentId: string) => ({ type: "agent", agentId }) as const;
 
 async function openChannels() {
   const database = await createTestDatabase();
@@ -64,7 +67,7 @@ describe("channel attention", () => {
 
   test("rewriting a complete list never repeats completion; reopening a task does", async () => {
     const { channels, channel } = await setup();
-    const update = async (tasks: ChannelTask[]) =>
+    const update = async (tasks: ChannelTaskInput[]) =>
       (await channels.updateChannel(channel.id, { tasks })).events.filter(
         (event) => event.type === "message",
       ).length;
@@ -276,7 +279,7 @@ describe("channel task edits", () => {
             id,
             title: id,
             status: "in_progress",
-            ownerId: id === "yours" ? "user" : channel.id,
+            owner: id === "yours" ? "@user" : channel.id,
             checkInAt: id === "later" ? "2026-10-23T15:10:00.000Z" : checkInAt,
           })),
         },
@@ -288,7 +291,7 @@ describe("channel task edits", () => {
         { type: "update", taskId: "done", patch: { status: "done" } },
         { type: "update", taskId: "pending", patch: { status: "pending" } },
         { type: "remove", taskId: "removed" },
-        { type: "update", taskId: "unassigned", patch: { ownerId: null } },
+        { type: "update", taskId: "unassigned", patch: { owner: null } },
         { type: "update", taskId: "cleared", patch: { checkInAt: null } },
       ],
     });
@@ -309,7 +312,7 @@ describe("channel task edits", () => {
       id: "due",
       title: "due",
       status: "in_progress",
-      ownerId: channel.id,
+      owner: agent(channel.id),
       startedAt: "2026-10-23T15:00:00.000Z",
     });
     expect((await channels.claimDueWakes(new Date("2026-10-23T15:06:00.000Z"))).checkIns).toEqual(
@@ -331,7 +334,7 @@ describe("channel task edits", () => {
     const channel = await createStoredChannel(channels, { name: "Other", ...CHANNEL_DEFAULTS });
     await channels.updateChannel(channel.id, { tasks: [task] });
     const before = await channels.getSnapshot(channel.id, 100);
-    for (const patch of [{ artifactId }, { ownerId: other.id }]) {
+    for (const patch of [{ artifactId }, { owner: other.id }]) {
       await expect(
         channels.updateChannel(channel.id, { tasks: [{ ...task, ...patch }] }),
       ).rejects.toThrow();
@@ -354,15 +357,40 @@ describe("channel task edits", () => {
     );
     await channels.editTasks(channel.id, {
       operations: [
-        { type: "add", task: { id: "t2", title: "Mock", status: "pending", ownerId: "@designer" } },
+        { type: "add", task: { id: "t2", title: "Mock", status: "pending", owner: "@designer" } },
         { type: "add", parentId: "t2", task: { id: "t3", title: "Check", status: "pending" } },
-        { type: "update", taskId: "t3", patch: { ownerId: "@lead" } },
-        { type: "add", task: { id: "t4", title: "Approve", status: "pending", ownerId: "user" } },
+        { type: "update", taskId: "t3", patch: { owner: "@lead" } },
+        { type: "add", task: { id: "t4", title: "Approve", status: "pending", owner: "@user" } },
       ],
     });
     expect((await channels.getChannel(channel.id))?.tasks.slice(-2)).toMatchObject([
-      { ownerId: member.id, children: [{ ownerId: channel.id }] },
-      { ownerId: "user" },
+      { owner: agent(member.id), children: [{ owner: agent(channel.id) }] },
+      { owner: { type: "user" } },
+    ]);
+  });
+
+  test("stored owner IDs become user or agent owners at every depth", async () => {
+    const database = await createTestDatabase();
+    onTestFinished(() => database.close());
+    const channels = new ChannelDatabase(database);
+    const channel = await createStoredChannel(channels, { name: "Owners", ...CHANNEL_DEFAULTS });
+    const ship = { id: "ship", title: "Ship", status: "in_progress" } as const;
+    const review = { id: "review", title: "Review", status: "pending" } as const;
+    const verify = { id: "verify", title: "Verify", status: "pending" } as const;
+    const approve = { id: "approve", title: "Approve", status: "pending" } as const;
+    const stored = [
+      { ...ship, ownerId: channel.id, children: [{ ...review, ownerId: "reviewer" }, verify] },
+      { ...approve, ownerId: "user" },
+    ];
+    await database`UPDATE channels SET tasks = ${JSON.stringify(stored)} WHERE id = ${channel.id}`;
+    await database.unsafe(schema[5]!);
+    expect((await channels.getChannel(channel.id))?.tasks).toEqual([
+      {
+        ...ship,
+        owner: agent(channel.id),
+        children: [{ ...review, owner: agent("reviewer") }, verify],
+      },
+      { ...approve, owner: { type: "user" } },
     ]);
   });
 });
@@ -689,6 +717,12 @@ describe("channel database", () => {
     await expect(channels.updateMember(member.id, { name: "Lead" })).rejects.toThrow(
       "The intrinsic lead already uses the @lead mention.",
     );
+    await expect(channels.updateMember(member.id, { name: "User" })).rejects.toThrow(
+      "The @user mention is reserved.",
+    );
+    await expect(channels.updateMember(member.id, { name: "Everyone" })).rejects.toThrow(
+      "The @everyone mention is reserved.",
+    );
 
     expect(await channels.getSnapshot(channel.id, 100)).toEqual(before);
   });
@@ -737,7 +771,7 @@ describe("channel database", () => {
           id: "build",
           title: "Build the product",
           status: "in_progress",
-          ownerId: member.id,
+          owner: member.id,
           children: [{ id: "verify", title: "Verify the preview", status: "pending" }],
         },
       ],

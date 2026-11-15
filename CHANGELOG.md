@@ -1,3 +1,7 @@
+## 📅 v0.4.7 (11/15/26)
+
+- Agents now see channel members by @handle, and their tool definitions are about 20% smaller.
+
 ## 📅 v0.4.6 (11/15/26)
 
 - You can now be assigned to channel tasks

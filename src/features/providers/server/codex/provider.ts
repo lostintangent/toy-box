@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   SessionNotFoundError,
+  toolInputSchema,
   type SessionConfiguration,
   type SessionProvider,
 } from "@providers/server/provider";
@@ -115,10 +116,7 @@ export const codexProvider: SessionProvider = {
             type: "function",
             name: tool.name,
             description: tool.description ?? "",
-            inputSchema: (tool.parameters?.toJSONSchema() ?? {
-              type: "object",
-              properties: {},
-            }) as JsonValue,
+            inputSchema: toolInputSchema(tool.parameters) as JsonValue,
             deferLoading: !tool.alwaysLoad,
           })),
         },

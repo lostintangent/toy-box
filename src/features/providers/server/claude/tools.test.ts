@@ -2,16 +2,18 @@ import { expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
+import { toolInputSchema } from "../provider";
 import { createClaudeTools } from "./tools";
 
-test("SDK tools preserve recursive schemas, validation, loading, and terminal results", async () => {
+test("SDK tools list shared schemas and report rejections, loading, and terminal results", async () => {
+  const parameters = z
+    .object({ value: z.json(), allowed: z.boolean() })
+    .refine((args) => args.allowed, "Not allowed");
   const server = createClaudeTools([
     {
       name: "echo",
-      parameters: z
-        .object({ value: z.json(), allowed: z.boolean() })
-        .refine((args) => args.allowed),
-      handler: async (args) => JSON.stringify((args as { value: unknown }).value),
+      parameters,
+      handler: async (args) => JSON.stringify(parameters.parse(args).value),
     },
     { name: "finish", isTerminal: true, alwaysLoad: true, handler: async () => "Done" },
   ]);
@@ -19,9 +21,15 @@ test("SDK tools preserve recursive schemas, validation, loading, and terminal re
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   try {
     await Promise.all([server.instance.connect(serverTransport), client.connect(clientTransport)]);
-    expect((await client.listTools()).tools.map(({ name, _meta }) => ({ name, _meta }))).toEqual([
-      { name: "echo", _meta: undefined },
-      { name: "finish", _meta: { "anthropic/alwaysLoad": true } },
+    expect<unknown>(
+      (await client.listTools()).tools.map(({ name, inputSchema, _meta }) => ({
+        name,
+        inputSchema,
+        _meta,
+      })),
+    ).toEqual([
+      { name: "echo", inputSchema: toolInputSchema(parameters), _meta: undefined },
+      { name: "finish", inputSchema: toolInputSchema(), _meta: { "anthropic/alwaysLoad": true } },
     ]);
     const args = { value: { nested: ["value", null] }, allowed: true };
     expect(await client.callTool({ name: "echo", arguments: args })).toMatchObject({
@@ -29,7 +37,7 @@ test("SDK tools preserve recursive schemas, validation, loading, and terminal re
     });
     expect(
       await client.callTool({ name: "echo", arguments: { ...args, allowed: false } }),
-    ).toMatchObject({ isError: true });
+    ).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Not allowed") }] });
     expect(await client.callTool({ name: "finish", arguments: {} })).toMatchObject({
       content: [{ type: "text", text: "Done" }],
       _meta: { "claude/endTurn": true },

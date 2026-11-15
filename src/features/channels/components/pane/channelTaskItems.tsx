@@ -5,6 +5,7 @@ import {
   channelAgentIdentity,
   channelTaskElapsedMinutes,
   channelTasksDiff,
+  type ChannelActor,
   type ChannelAgent,
   type ChannelArtifact,
   type ChannelTask,
@@ -71,7 +72,7 @@ export function channelTaskItems(
       title: task.title,
       status: task.status,
       detail:
-        diff || task.ownerId || task.artifactId || elapsed !== undefined ? (
+        diff || task.owner || task.artifactId || elapsed !== undefined ? (
           <span className="inline-flex items-center gap-[9px]">
             {elapsed !== undefined && (
               <time
@@ -93,7 +94,7 @@ export function channelTaskItems(
                 closeOnOpen={closeOnArtifactOpen}
               />
             )}
-            {task.ownerId && <TaskOwner ownerId={task.ownerId} owners={owners} />}
+            {task.owner && <TaskOwner owner={task.owner} owners={owners} />}
           </span>
         ) : undefined,
       children:
@@ -159,14 +160,14 @@ function TaskArtifact({
 }
 
 /** A task's owner: an agent by its avatar, or the user as You. */
-function TaskOwner({ ownerId, owners }: { ownerId: string; owners: readonly ChannelAgent[] }) {
-  const owner = ownerId === "user" ? undefined : channelAgentIdentity(owners, ownerId);
-  const name = owner?.name ?? "You";
+function TaskOwner({ owner, owners }: { owner: ChannelActor; owners: readonly ChannelAgent[] }) {
+  const agent = owner.type === "agent" ? channelAgentIdentity(owners, owner.agentId) : undefined;
+  const name = agent?.name ?? "You";
   return (
     <Tooltip>
       <TooltipTrigger render={<span role="img" aria-label={name} className="inline-flex" />}>
-        {owner ? (
-          <AgentAvatar agent={owner} className="size-4 in-data-[slot=checklist-popup]:size-3.5" />
+        {agent ? (
+          <AgentAvatar agent={agent} className="size-4 in-data-[slot=checklist-popup]:size-3.5" />
         ) : (
           <UserRound className="size-4 text-muted-foreground in-data-[slot=checklist-popup]:size-3.5" />
         )}

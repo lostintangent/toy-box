@@ -99,7 +99,7 @@ export function reduceChannel(channel: Channel, event: ChannelEvent): Channel {
         case "member_left":
           return {
             ...next,
-            tasks: unlinkChannelTasks(channel.tasks, "ownerId", content.member.id),
+            tasks: unlinkChannelTasks(channel.tasks, "owner", content.member.id),
           };
         case "artifact_removed":
           return {

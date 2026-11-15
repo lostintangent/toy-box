@@ -60,7 +60,7 @@ Channel        name, avatar, purpose, directory, lead model, tasks, preview, use
   clients receive its server-relative URL. Like an attachment, an image stays until its Channel is
   deleted, so each announcement keeps showing the avatar it set.
 - `ChannelTask` has a short, stable, channel-unique ID such as `t12`, title, status, optional owner
-  and subtasks. The owner is the lead, a current member, or `user` for a task that waits on the
+  and subtasks. Its owner is a `ChannelActor`: an agent, or the user for a task that waits on the
   user, which checklists show as You. Its optional `artifactId` is a shared artifact's `id`; file
   metadata stays with the artifact. Its optional `diff: DiffStats` uses `shared/diffStats.ts`, like
   Session diffs, and measures directly attributed work. `channelTasksDiff` derives totals from direct
@@ -69,13 +69,15 @@ Channel        name, avatar, purpose, directory, lead model, tasks, preview, use
 - Task timing belongs to the committed tree: server-owned `startedAt` begins on entry to
   `in_progress`, survives edits, moves, and replacements by ID while the task stays in progress,
   and clears when it leaves, so resuming starts a fresh timer. Clients derive age from this
-  timestamp; compact agent reads expose derived `elapsedMinutes` instead of the timestamp.
+  timestamp. No tool output carries it, and compact agent reads expose derived `elapsedMinutes`.
   The lead may independently set an optional UTC `checkInAt`. The existing minute wake check
   atomically clears due check-ins on assigned, in-progress tasks, then privately asks each agent
   owner for progress. Pending and blocked tasks do not dispatch check-ins. Task age continues; another
   check-in requires another timestamp. Completion clears it; null cancels it. Checklists retain
   `X / Y`: elapsed minutes / minutes until check-in, then elapsed only once consumed.
   Wakes use the existing best-effort delivery guarantee, not a durable notification outbox.
+- `ChannelActor` is who acts in a Channel: the user, or an agent on the team by ID. It names a
+  message's sender, a change's actor, and a task's owner. Only a sender may also be the system.
 - `ChannelAgent` is the shared public identity of anyone on the team, the lead or a member: ID,
   name, role, avatar, and status. A Channel's agents, lead first, form its team, which the overview
   presents as Team members.
@@ -158,6 +160,7 @@ works on any assignment already received or finishes quietly. Idle membership is
 Mentioning a current member delivers instructions through the ordinary Session mailbox. Removing the member deletes that Session and Worker.
 Members never exist outside their Channel and cannot be invited from a global pool. The intrinsic
 lead exists for the Channel's lifetime, is addressed as `@lead`, and its agent ID is the Channel ID.
+`@user` and `@everyone` are reserved, so no member can take either name.
 
 ### Messages
 
@@ -241,7 +244,7 @@ it what changed, how it was verified, and what was not, mention members whose wa
 finish every turn explicitly. Agent `read_channel` defaults to
 unread messages, `unfinishedTasks` assigned to the caller (all unfinished tasks for the lead), and
 working or waiting agents. Task ancestors retain assignment context; idle message authors remain
-identified by name and mention. With a zero read cursor it always returns full context, whatever
+identified by handle. With a zero read cursor it always returns full context, whatever
 detail is requested. `detail: "full"` also includes Channel metadata, the complete task tree,
 roster roles and models, artifacts, and routines for reorientation, planning, and final review.
 `detail: "tasks"` swaps unfinished tasks and agents for just the complete task tree, so a lead can
@@ -351,15 +354,19 @@ client from its cursor, including reactions on older loaded messages. Browser an
 reconnect that way, while push's Live Activity subscription stops updating.
 
 Agent reads move forward from private `seenThrough` and advance it. Passive Session reads page
-backward without changing read state. Agent-facing projections use `agentId` for both the lead and
-members, matching message senders, reactions, and waiting. These projections expose exact mentions,
-roles, and effective statuses, never separate private Session IDs or another member's read position.
-Tool inputs that name an agent, such as task owners, member edits and removals, and waits, accept
-its `agentId` or its mention. `resolveChannelAgentId` maps either to the ID, which is all that is
-stored, published, or served.
-Artifact shares and reads expose
-`artifactId` alongside the path and title, so the lead can attach the same file identity to a task.
-Task-edit receipts return only the targeted IDs.
+backward without changing read state. Channel agents see and name every agent by handle, `@user` or
+an agent's mention, never an agent ID: senders, actors, membership notices, and task owners are
+handles, and reactions, rosters, and member edits key one as `agent`. A removed agent has no handle,
+so the field is absent, and system messages carry no sender. Rosters carry roles and effective
+statuses, never another member's read position. Tool inputs that name an agent, `agent` and task
+owners, take its mention, and a task owner also takes `@user`. Every reader, Sessions included, sees
+one task tree whose owners are handles. Otherwise Session tools keep agent IDs: rosters, created
+members, and waits carry each `agentId`, reads carry stored senders and actors, and waits accept an
+ID or a mention. `resolveChannelAgentId` maps either to the ID, which is all that
+is stored, published, or served. Artifact shares and reads expose `artifactId` alongside the path and
+title, so the lead can attach the same file identity to a task. Channel agents' write results carry
+only what the call didn't already know: a share returns its `artifactId`, created members their
+handles, a member edit its handle, and other writes a word.
 Presence governs working/waiting/idle for clients and tool projections; stored status supplies text
 and message targets only while its state matches that presence. `channelAgentPresence` derives it
 from stored status and whether the agent's Session is running, so no stream carries it: tools and

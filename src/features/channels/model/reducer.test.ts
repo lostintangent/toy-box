@@ -237,8 +237,11 @@ test("a resume confirms the replayed state without replacing it", () => {
   expect(reduceChannelState(previous, { type: "resumed" })).toBe(previous);
 });
 
-test("member departure recursively releases task ownership", () => {
+test("member departure recursively releases its task ownership and nobody else's", () => {
   const member = { channelId: "channel", id: "reviewer", name: "Reviewer" };
+  const owner = { type: "agent", agentId: member.id } as const;
+  const lead = { type: "agent", agentId: "channel" } as const;
+  const user = { type: "user" } as const;
   const outcome = { artifactId: "session:reviewer:review.md", diff: { added: 12, removed: 3 } };
   const previous = snapshot();
   previous.members = [member];
@@ -247,10 +250,11 @@ test("member departure recursively releases task ownership", () => {
       id: "release",
       title: "Release",
       status: "in_progress",
-      ownerId: member.id,
+      owner,
       children: [
-        { id: "review", title: "Review", status: "pending", ownerId: member.id, ...outcome },
-        { id: "ship", title: "Ship", status: "pending", ownerId: "channel" },
+        { id: "review", title: "Review", status: "pending", owner, ...outcome },
+        { id: "ship", title: "Ship", status: "pending", owner: lead },
+        { id: "approve", title: "Approve", status: "pending", owner: user },
       ],
     },
   ];
@@ -266,11 +270,12 @@ test("member departure recursively releases task ownership", () => {
       status: "in_progress",
       children: [
         { id: "review", title: "Review", status: "pending", ...outcome },
-        { id: "ship", title: "Ship", status: "pending", ownerId: "channel" },
+        { id: "ship", title: "Ship", status: "pending", owner: lead },
+        { id: "approve", title: "Approve", status: "pending", owner: user },
       ],
     },
   ]);
-  expect(previous.channel.tasks[0]!.ownerId).toBe(member.id);
+  expect(previous.channel.tasks[0]!.owner).toBe(owner);
 });
 
 test("a pending post's echo replaces it by identity across interleaved commits", () => {

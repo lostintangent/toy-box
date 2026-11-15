@@ -9,10 +9,11 @@ import type {
 } from "@github/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
 import type { ProviderSubscription } from "@providers/model";
-import type {
-  NativeSession,
-  SessionConfiguration,
-  SessionProvider,
+import {
+  toolInputSchema,
+  type NativeSession,
+  type SessionConfiguration,
+  type SessionProvider,
 } from "@providers/server/provider";
 import { startCopilotClient, stopCopilotClient } from "./client";
 import { connectCopilotSession, holdNativeEvents, toSdkSetModelOptions } from "./connection";
@@ -168,6 +169,7 @@ async function connect(
 function nativeConfiguration(configuration: SessionConfiguration): SessionConfig {
   const tools: CopilotTool<any>[] = configuration.tools.map((tool) => ({
     ...tool,
+    parameters: toolInputSchema(tool.parameters),
     // The CLI hides a thrown error's message from the model; a failure result carries it.
     handler: (args: unknown) =>
       tool.handler(args).catch((error): ToolResultObject => ({

@@ -155,7 +155,6 @@ describe("channel audience labels", () => {
 describe("channel agent mentions", () => {
   test("derives safe handles", () => {
     expect(agentHandleFromName("Design Critic")).toBe("design-critic");
-    expect(agentHandleFromName("Everyone")).toBe("everyone-agent");
   });
 
   test("splits visible mentions without treating email addresses as mentions", () => {

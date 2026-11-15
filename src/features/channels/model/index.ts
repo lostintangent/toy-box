@@ -6,15 +6,17 @@ import { cronSchema } from "@/shared/cron";
 import { createPane } from "@workspace/model/panes";
 import { previewSchema, type Preview } from "@/shared/preview";
 import { hasChanges } from "./changes";
-import { channelTasksSchema, type ChannelTask } from "./tasks";
+import { channelTaskSchema, channelTasksInputSchema, type ChannelTask } from "./tasks";
 import {
   agentAvatarSchema,
   agentHandleFromName,
   agentNameSchema,
   agentRoleSchema,
   CHANNEL_LEAD_PROFILE,
+  channelActorSchema,
   extractAgentMentionHandles,
   type AgentAvatar,
+  type ChannelActor,
 } from "./agent";
 
 export * from "./agent";
@@ -227,7 +229,7 @@ export function channelLead(id: string, status?: ChannelAgentStatus): ChannelLea
   };
 }
 
-export type ChannelMessageSender = ChannelMessageActor | { type: "system" };
+export type ChannelMessageSender = ChannelActor | { type: "system" };
 
 export type ChannelReaction = z.output<typeof channelReactionSchema>;
 
@@ -253,11 +255,6 @@ export function channelArtifactsNewestFirst(
     (left, right) => Date.parse(right.sharedAt) - Date.parse(left.sharedAt),
   );
 }
-
-const channelMessageActorSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("user") }).strict(),
-  z.object({ type: z.literal("agent"), agentId: durableIdSchema }).strict(),
-]);
 
 /** A titled, recurring prompt that privately wakes the lead. Only the lead adds or changes one. */
 export const channelRoutineInputSchema = z
@@ -319,49 +316,49 @@ export const channelSystemMessageContentSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("member_left"),
-      actor: channelMessageActorSchema,
+      actor: channelActorSchema,
       member: channelMemberSchema,
     })
     .strict(),
   z
     .object({
       type: z.literal("channel_renamed"),
-      actor: channelMessageActorSchema,
+      actor: channelActorSchema,
       name: channelNameSchema,
     })
     .strict(),
   z
     .object({
       type: z.literal("channel_avatar_changed"),
-      actor: channelMessageActorSchema,
+      actor: channelActorSchema,
       avatar: channelAvatarSchema,
     })
     .strict(),
   z
     .object({
       type: z.literal("channel_purpose_changed"),
-      actor: channelMessageActorSchema,
+      actor: channelActorSchema,
       purpose: channelPurposeSchema.nullable(),
     })
     .strict(),
   z
     .object({
       type: z.literal("channel_directory_changed"),
-      actor: channelMessageActorSchema,
+      actor: channelActorSchema,
       directory: channelPathSchema.nullable(),
     })
     .strict(),
   z
     .object({
       type: z.literal("preview_changed"),
-      actor: channelMessageActorSchema,
+      actor: channelActorSchema,
       preview: previewSchema.nullable(),
     })
     .strict(),
   z
     .object({
       type: z.enum(["artifact_shared", "artifact_removed"]),
-      actor: channelMessageActorSchema,
+      actor: channelActorSchema,
       // The message's own timestamp records when the file was shared or removed.
       artifact: channelArtifactSchema.omit({ sharedAt: true }),
     })
@@ -382,7 +379,7 @@ type ChannelMessageBase = {
 };
 
 export type ChannelConversationMessage = ChannelMessageBase & {
-  sender: ChannelMessageActor;
+  sender: ChannelActor;
   content: string;
   /** The lead asks for the user's response; a later user message acknowledges it. */
   request?: true;
@@ -480,11 +477,7 @@ const channelChangesSchema = z
       .describe(
         "The working directory for all channel agents on their next execution, or null to clear it.",
       ),
-    tasks: channelTasksSchema
-      .optional()
-      .describe(
-        "The complete task list for initial planning or intentional replacement. Preserve retained task IDs and outcomes; use edit_channel_tasks for progress updates.",
-      ),
+    tasks: channelTaskSchema.array().optional(),
     preview: previewSchema
       .nullable()
       .optional()
@@ -499,7 +492,6 @@ const channelChangesSchema = z
   })
   .strict();
 export type ChannelChanges = z.output<typeof channelChangesSchema>;
-export type ChannelMessageActor = z.output<typeof channelMessageActorSchema>;
 
 export const editChannelInputSchema = channelChangesSchema
   .pick({ name: true, purpose: true, model: true })
@@ -510,6 +502,13 @@ export const editChannelInputSchema = channelChangesSchema
 
 export const updateChannelInputSchema = channelChangesSchema
   .omit({ model: true })
+  .extend({
+    tasks: channelTasksInputSchema
+      .optional()
+      .describe(
+        "The complete task list for initial planning or intentional replacement. Preserve retained task IDs and outcomes; use edit_channel_tasks for progress updates.",
+      ),
+  })
   .refine(hasChanges, {
     message:
       "Update the name, purpose, directory, tasks, preview, avatar, or any combination of them.",
@@ -568,7 +567,7 @@ export function resolveChannelAudience({
   acknowledgedRequest = false,
 }: {
   content: string;
-  sender: ChannelMessageActor;
+  sender: ChannelActor;
   lead: ChannelAgent;
   members: readonly ChannelAgent[];
   /** Persistence established that this user reply acknowledged a pending request. */

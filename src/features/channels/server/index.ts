@@ -6,7 +6,7 @@ import type {
   ChannelList,
   ChannelMember,
   ChannelMessage,
-  ChannelMessageActor,
+  ChannelActor,
   ChannelReaction,
   ChannelRoutine,
   CreateChannelMemberInput,
@@ -181,7 +181,7 @@ export async function deleteChannel(channelId: string): Promise<boolean> {
 }
 
 /** Records the removal before tearing down the Session, whose detach would record the user. */
-export async function removeChannelMember(agentId: string, actor: ChannelMessageActor) {
+export async function removeChannelMember(agentId: string, actor: ChannelActor) {
   const change = await new ChannelDatabase(await getStateDatabase()).deleteMember(agentId, actor);
   if (!change) return;
   publishChannelChange(change);
@@ -228,7 +228,7 @@ export async function postChannelMessage(
   }: Omit<Parameters<ChannelDatabase["appendMessage"]>[0], "attachments" | "sender"> & {
     attachments?: readonly (Attachment | string)[];
   },
-  sender: ChannelMessageActor,
+  sender: ChannelActor,
 ): Promise<ChannelMessage> {
   const { channelId, content } = input;
   await Promise.all(sources?.filter((source) => typeof source === "string").map(assertMedia) ?? []);
@@ -415,7 +415,7 @@ export async function deleteChannelRoutine(channelId: string, routineId: string)
 export async function removeChannelArtifact(
   channelId: string,
   artifactId: string,
-  actor: ChannelMessageActor,
+  actor: ChannelActor,
 ): Promise<boolean> {
   const change = await new ChannelDatabase(await getStateDatabase()).removeArtifact(
     channelId,
@@ -526,7 +526,7 @@ async function assertMedia(path: string): Promise<void> {
 /** A relative path resolves against the Channel's directory. */
 export async function shareChannelArtifact(
   { channelId, path, title }: { channelId: string; path: string; title: string },
-  actor: ChannelMessageActor,
+  actor: ChannelActor,
 ) {
   const database = new ChannelDatabase(await getStateDatabase());
   const channel = await database.getChannel(channelId);

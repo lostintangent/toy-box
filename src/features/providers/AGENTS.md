@@ -71,7 +71,9 @@ skill installation, artifact locations, connection retention, queues,
 completion, and broadcasts. It supplies providers with prepared skill directories,
 image inputs, question policy, and tools on creation and resume. Each tool arrives bound to
 the public session, validating its arguments and answering with text. Implementations register
-it and report a rejection as a native failed call that gives the model the error's message.
+it with `toolInputSchema`, the one JSON Schema every provider sends, which omits what only that
+validation needs, and report a rejection as a native failed call that gives the model the
+error's message.
 Providers must not reach into the Sessions registry, runtime, persistence, or resource layout.
 
 Channel-owned Worker sessions receive composed Agent identity instructions and Channel tools like

@@ -5,6 +5,7 @@ import type { ModelConfiguration, ModelInfo, ProviderSubscription } from "@provi
 import type { SessionEvent, SessionMessage, Session, SessionSkill } from "@sessions/model";
 import type { SessionQuestionAnswer } from "@sessions/model/protocol";
 import type { Tool } from "@sessions/server/tools/definition";
+import { z } from "zod";
 
 /** The operation was not submitted; reacquiring the connection is safe. */
 export class SessionConnectionUnavailableError extends Error {}
@@ -26,6 +27,25 @@ export type SessionConfiguration = {
   skillDirectories: string[];
   disableMemory?: boolean;
 };
+
+/** What the model reads for a tool's arguments, without constraints only Zod's validation needs. */
+export function toolInputSchema(
+  parameters: z.ZodType = z.object({}),
+): z.core.JSONSchema.ObjectSchema {
+  const { $schema: _, ...schema } = z.toJSONSchema(parameters, {
+    io: "input",
+    override: ({ jsonSchema }) => {
+      if (jsonSchema.format === "date-time") delete jsonSchema.pattern;
+      if (jsonSchema.minimum === Number.MIN_SAFE_INTEGER) delete jsonSchema.minimum;
+      if (jsonSchema.maximum === Number.MAX_SAFE_INTEGER) delete jsonSchema.maximum;
+      if (jsonSchema.exclusiveMinimum === 0) delete jsonSchema.exclusiveMinimum;
+      if (jsonSchema.minLength === 1) delete jsonSchema.minLength;
+      if (JSON.stringify(jsonSchema.propertyNames) === '{"type":"string"}')
+        delete jsonSchema.propertyNames;
+    },
+  });
+  return schema as z.core.JSONSchema.ObjectSchema;
+}
 
 /** A native history's metadata, addressed by the provider's own ID. */
 export type NativeSession = Pick<Session, "title" | "createdAt" | "updatedAt" | "context"> & {

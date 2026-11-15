@@ -10,7 +10,7 @@ import {
   type EditChannelTasksInput,
 } from "./tasks";
 
-const task = (id: string): ChannelTask => ({ id, title: id, status: "pending" });
+const task = (id: string) => ({ id, title: id, status: "pending" as const });
 
 test("task timing follows stable IDs through rewrites, not supplied timestamps", () => {
   const start = "2026-10-23T15:00:00.000Z";
@@ -50,7 +50,7 @@ test.each([
 
 test("elapsed minutes are derived, optional, floored, and nonnegative", () => {
   const now = "2026-10-23T15:20:00.000Z";
-  expect(channelTaskElapsedMinutes(task("t1"), Date.parse(now))).toBeUndefined();
+  expect(channelTaskElapsedMinutes({}, Date.parse(now))).toBeUndefined();
   const started = { startedAt: "2026-10-23T15:00:00.000Z" };
   expect(channelTaskElapsedMinutes(started, Date.parse("2026-10-23T15:12:59.999Z"))).toBe(12);
   expect(channelTaskElapsedMinutes(started, Date.parse("2026-10-23T14:59:00.000Z"))).toBe(0);
@@ -63,7 +63,7 @@ test("ordered edits target IDs, preserve omitted outcomes and descendants, and c
       children: [
         {
           ...task("t2"),
-          ownerId: "critic",
+          owner: "critic",
           artifactId: "session:critic:review.md",
           diff: { added: 12, removed: 3 },
           children: [task("t3")],
@@ -78,7 +78,7 @@ test("ordered edits target IDs, preserve omitted outcomes and descendants, and c
       {
         type: "update",
         taskId: "t2",
-        patch: { title: "Revised review", ownerId: null, diff: null },
+        patch: { title: "Revised review", owner: null, diff: null },
       },
       { type: "add", parentId: "t2", task: task("t5") },
       { type: "remove", taskId: "t4" },

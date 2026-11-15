@@ -56,12 +56,12 @@ A turn's result reports the context its latest request sent. A compaction's own 
 system prompt and tools, so a turn that ends on one, such as `/compact`, or before any request is
 measured with the CLI's token-count API before native idle ends it.
 
-`tools.ts` registers the supplied tools with the official MCP SDK in process, passing that
-instance to the Agent SDK. There is no HTTP server or custom transport. Full Zod schemas
-preserve refinements and recursive JSON fields; use the app's MCP/Zod dependencies because
-the Agent SDK's bundled schema converter cannot serialize the current recursive schemas.
-Native tool context supplies cancellation and call identity; successful terminal tools use
-`claude/endTurn`. Native ToolSearch discovers deferred tools.
+`tools.ts` serves the supplied tools from the official MCP SDK in process, passing that
+instance to the Agent SDK. There is no HTTP server or custom transport. It lists each tool's
+`toolInputSchema` rather than the MCP SDK's own conversion, and calls the bound handler, so a
+rejection returns as an error result carrying its message. Native tool context supplies
+cancellation and call identity; successful terminal tools use `claude/endTurn`. Native
+ToolSearch discovers deferred tools.
 
 The supplied skill directories are native local plugins; standalone `SKILL.md` roots need
 no copied files or generated manifests. Claude itself discovers only `.claude/skills`, so a
