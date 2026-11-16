@@ -131,8 +131,8 @@ test("attention uses normal messages and upserts, and a user reply also wakes th
     { id: "request", channelId: channel.id, content: "Choose the next task.", request: true },
     { type: "agent", agentId: channel.id },
   );
-  await updateChannel(channel.id, {
-    tasks: [{ id: "ship", title: "Ship", status: "done" }],
+  await editChannelTasks(channel.id, {
+    operations: [{ type: "add", task: { id: "ship", title: "Ship", status: "done" } }],
   });
   expect(
     events.filter((event) => event.type === "message").map(({ message }) => message.content),
@@ -528,8 +528,15 @@ test("a Session can seed and passively read Channel context", async () => {
   );
   await updateChannel(channel.id, {
     purpose: "Turn the evidence into a useful recommendation.",
-    tasks: [{ id: "synthesize", title: "Synthesize the evidence", status: "in_progress" }],
     preview: { kind: "url", url: "http://127.0.0.1:3000" },
+  });
+  await editChannelTasks(channel.id, {
+    operations: [
+      {
+        type: "add",
+        task: { id: "synthesize", title: "Synthesize the evidence", status: "in_progress" },
+      },
+    ],
   });
   const outcome = { artifactId: artifact.artifactId, diff: { added: 32, removed: 8 } };
   const patch = { ...outcome, owner: "@user" };
@@ -655,7 +662,12 @@ test("compact reads scope tasks and live statuses without losing idle authors or
       ],
     },
   ];
-  await invokeTool("update_channel", { tasks }, channel.id, true);
+  await invokeTool(
+    "edit_channel_tasks",
+    { operations: tasks.map((task) => ({ type: "add", task })) },
+    channel.id,
+    true,
+  );
   onTestFinished(() => releaseChannelEvents(channel.id));
   setSystemTime(new Date("2026-10-23T15:12:00.000Z"));
   await channels.claimDueWakes(new Date());
@@ -835,7 +847,6 @@ test("committed edits and reads replay to the durable view and only a new purpos
   await markChannelRead(channel.id, 100);
   expect((await markChannelRead(channel.id, 1))?.seenThrough).toBe(4);
   await updateChannel(channel.id, {
-    tasks: [...tasks],
     preview: { kind: "url", url: "http://localhost:3000" },
   });
   await editChannel({ channelId: channel.id, model });

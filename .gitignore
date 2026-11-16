@@ -22,4 +22,7 @@ toy-box
 # Codex scratch output
 .codex-tmp/
 
+# Eval patches stay local, so an experiment is committed only when every arm is a ref
+evals/**/*.patch
+
 .swp

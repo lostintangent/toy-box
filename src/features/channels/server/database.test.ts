@@ -2,7 +2,7 @@ import { channelAgent, createStoredChannel } from "@channels/server/testFixtures
 import { describe, expect, onTestFinished, setSystemTime, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ChannelConversationMessage, ChannelTaskInput } from "@channels/model";
+import type { ChannelConversationMessage, EditChannelTasksInput } from "@channels/model";
 import { machineFile, sessionFile, workspaceFileId } from "@files/model";
 import { createFileServeUrl } from "@files/model/paths";
 import { createTestDatabase } from "@/server/database";
@@ -40,13 +40,10 @@ describe("channel attention", () => {
         sender,
         content,
       });
-    /** Reopens one task, then completes the list, returning the completion message. */
-    const complete = async (title = "Release") => {
-      await channels.updateChannel(channel.id, {
-        tasks: [{ id: "release", title, status: "pending" }],
-      });
-      const { events } = await channels.updateChannel(channel.id, {
-        tasks: [{ id: "release", title, status: "done" }],
+    /** Completes the list with one done task, returning the completion message. */
+    const complete = async () => {
+      const { events } = await channels.editTasks(channel.id, {
+        operations: [{ type: "add", task: { id: "release", title: "Release", status: "done" } }],
       });
       return events.find((event) => event.type === "message")!.message;
     };
@@ -65,19 +62,22 @@ describe("channel attention", () => {
     return { channels, channel, post, complete, ask };
   }
 
-  test("rewriting a complete list never repeats completion; reopening a task does", async () => {
+  test("editing a complete list never repeats completion; reopening a task does", async () => {
     const { channels, channel } = await setup();
-    const update = async (tasks: ChannelTaskInput[]) =>
-      (await channels.updateChannel(channel.id, { tasks })).events.filter(
+    const edit = async (operations: EditChannelTasksInput["operations"]) =>
+      (await channels.editTasks(channel.id, { operations })).events.filter(
         (event) => event.type === "message",
       ).length;
-    const release = { id: "release", title: "Release", status: "done" } as const;
-    expect(await update([release])).toBe(1);
+    const add = (id: string, status: "pending" | "done") =>
+      ({ type: "add", task: { id, title: id, status } }) as const;
+    expect(await edit([add("release", "done")])).toBe(1);
     expect((await channels.getChannel(channel.id))?.completedSequence).toBe(1);
-    expect(await update([release, { id: "notes", title: "Notes", status: "done" }])).toBe(0);
-    expect(await update([release, { id: "ship", title: "Ship", status: "pending" }])).toBe(0);
-    expect(await update([release, { id: "ship", title: "Ship", status: "done" }])).toBe(1);
-    expect(await update([])).toBe(0);
+    expect(await edit([add("notes", "done")])).toBe(0);
+    expect(await edit([add("ship", "pending")])).toBe(0);
+    expect(await edit([{ type: "update", taskId: "ship", patch: { status: "done" } }])).toBe(1);
+    expect(
+      await edit(["release", "notes", "ship"].map((taskId) => ({ type: "remove", taskId }))),
+    ).toBe(0);
   });
 
   test("a request persists on the lead message without an extra transcript entry", async () => {
@@ -230,7 +230,7 @@ describe("channel task edits", () => {
       title: "Review findings",
       actor: { type: "agent", agentId: channel.id },
     });
-    await channels.updateChannel(channel.id, { tasks: [task] });
+    await channels.editTasks(channel.id, { operations: [{ type: "add", task }] });
     return { channels, channel, task, artifactId: workspaceFileId(file) };
   }
 
@@ -271,19 +271,18 @@ describe("channel task edits", () => {
     const checkInAt = "2026-10-23T15:05:00.000Z";
     const nextCheckInAt = "2026-10-23T15:08:00.000Z";
     const ids = ["due", "later", "blocked", "done", "pending", "removed", "unassigned", "cleared"];
-    await channels.updateChannel(channel.id, {
-      tasks: [
-        {
-          ...task,
-          children: [...ids, "yours"].map((id) => ({
-            id,
-            title: id,
-            status: "in_progress",
-            owner: id === "yours" ? "@user" : channel.id,
-            checkInAt: id === "later" ? "2026-10-23T15:10:00.000Z" : checkInAt,
-          })),
+    await channels.editTasks(channel.id, {
+      operations: [...ids, "yours"].map((id) => ({
+        type: "add",
+        parentId: task.id,
+        task: {
+          id,
+          title: id,
+          status: "in_progress",
+          owner: id === "yours" ? "@user" : channel.id,
+          checkInAt: id === "later" ? "2026-10-23T15:10:00.000Z" : checkInAt,
         },
-      ],
+      })),
     });
     await channels.editTasks(channel.id, {
       operations: [
@@ -329,14 +328,16 @@ describe("channel task edits", () => {
     ]);
   });
 
-  test("out-of-channel references reject replacements and roll back entire edit batches", async () => {
+  test("out-of-channel references reject added tasks and roll back entire edit batches", async () => {
     const { channels, channel: other, task, artifactId } = await setup();
     const channel = await createStoredChannel(channels, { name: "Other", ...CHANNEL_DEFAULTS });
-    await channels.updateChannel(channel.id, { tasks: [task] });
+    await channels.editTasks(channel.id, { operations: [{ type: "add", task }] });
     const before = await channels.getSnapshot(channel.id, 100);
     for (const patch of [{ artifactId }, { owner: other.id }]) {
       await expect(
-        channels.updateChannel(channel.id, { tasks: [{ ...task, ...patch }] }),
+        channels.editTasks(channel.id, {
+          operations: [{ type: "add", task: { ...task, id: "added", ...patch } }],
+        }),
       ).rejects.toThrow();
       await expect(
         channels.editTasks(channel.id, {
@@ -762,19 +763,27 @@ describe("channel database", () => {
     );
     const revision = (await channels.getRoster(channel.id))?.revision;
 
+    const edit = await channels.editTasks(channel.id, {
+      operations: [
+        {
+          type: "add",
+          task: {
+            id: "build",
+            title: "Build the product",
+            status: "in_progress",
+            owner: member.id,
+            children: [{ id: "verify", title: "Verify the preview", status: "pending" }],
+          },
+        },
+      ],
+    });
+    expect(edit.events).toEqual([
+      { type: "tasks", revision: revision! + 1, tasks: edit.channel.tasks },
+    ]);
     const update = await channels.updateChannel(channel.id, {
       name: "Delivery room",
       purpose: "Ship and validate the product.",
       directory: "/workspace/delivery",
-      tasks: [
-        {
-          id: "build",
-          title: "Build the product",
-          status: "in_progress",
-          owner: member.id,
-          children: [{ id: "verify", title: "Verify the preview", status: "pending" }],
-        },
-      ],
       preview: { kind: "url", url: "http://127.0.0.1:3000" },
     });
 
@@ -787,11 +796,6 @@ describe("channel database", () => {
       { type: "preview_changed", actor, preview: { kind: "url", url: "http://127.0.0.1:3000" } },
     ]);
     expect(messages.map(({ message }) => message.sequence)).toEqual([2, 3, 4, 5]);
-    expect(update.events[0]).toEqual({
-      type: "tasks",
-      revision: revision! + 1,
-      tasks: update.channel.tasks,
-    });
     expect(messages.map(({ revision }) => revision)).toEqual(
       [2, 3, 4, 5].map((offset) => revision! + offset),
     );
@@ -969,10 +973,13 @@ describe("channel database", () => {
       await channels.shareArtifact({ channelId: channel.id, file, title, actor: { type: "user" } });
     const planId = workspaceFileId(plan);
     const designId = workspaceFileId(design);
-    await channels.updateChannel(channel.id, {
-      tasks: [
-        { id: "draft", title: "Draft", status: "done", artifactId: planId },
-        { id: "review", title: "Review", status: "pending", artifactId: designId },
+    await channels.editTasks(channel.id, {
+      operations: [
+        { type: "add", task: { id: "draft", title: "Draft", status: "done", artifactId: planId } },
+        {
+          type: "add",
+          task: { id: "review", title: "Review", status: "pending", artifactId: designId },
+        },
       ],
     });
 

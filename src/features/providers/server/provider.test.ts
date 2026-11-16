@@ -30,3 +30,26 @@ test("tool input schemas drop validation-only noise and keep real constraints", 
     required: ["count", "index", "color", "path", "tag", "name", "sequence"],
   });
 });
+
+test("tool input schemas express tagged unions with anyOf and enum", () => {
+  const parameters = z.object({
+    target: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("url"), url: z.string() }),
+      z.object({ kind: z.literal("screen"), screenId: z.string() }),
+    ]),
+  });
+  expect(toolInputSchema(parameters).properties?.target).toEqual({
+    anyOf: [
+      {
+        type: "object",
+        properties: { kind: { type: "string", enum: ["url"] }, url: { type: "string" } },
+        required: ["kind", "url"],
+      },
+      {
+        type: "object",
+        properties: { kind: { type: "string", enum: ["screen"] }, screenId: { type: "string" } },
+        required: ["kind", "screenId"],
+      },
+    ],
+  });
+});

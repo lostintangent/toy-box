@@ -1,3 +1,8 @@
+## 📅 v0.4.8 (11/16/26)
+
+- Channel leads are now given guidance about when to retire tasks and artifacts, and their insturctions/tools have been optimized for leaner context windows
+- Introduced our initial eval for channels, so we can more confidently run experiments
+
 ## 📅 v0.4.7 (11/15/26)
 
 - Agents now see channel members by @handle, and their tool definitions are about 20% smaller.

@@ -148,8 +148,13 @@ test("a reply committed after the durable read cannot advance the snapshot beyon
 
 test("cached reconnects replay then resume; an expired cursor replaces history", async () => {
   const { channel, channels } = await openChannel();
-  const changed = await channels.updateChannel(channel.id, {
-    tasks: [{ id: "work", title: "Work added while disconnected", status: "pending" }],
+  const changed = await channels.editTasks(channel.id, {
+    operations: [
+      {
+        type: "add",
+        task: { id: "work", title: "Work added while disconnected", status: "pending" },
+      },
+    ],
   });
   for (const event of changed.events) publishChannelEvent(channel.id, event);
   const reads = spyOn(ChannelDatabase.prototype, "getSnapshot");
@@ -210,8 +215,8 @@ test("streams opened during concurrent commits continue their initial view in re
       }),
     (step: string) => channels.setAgentStatus(channel.id, { state: "working", text: step }),
     (step: string) =>
-      channels.updateChannel(channel.id, {
-        tasks: [{ id: "work", title: step, status: "pending" }],
+      channels.editTasks(channel.id, {
+        operations: [{ type: "add", task: { id: step, title: step, status: "pending" } }],
       }),
   ];
   const opening = Promise.withResolvers<void>();
@@ -341,8 +346,8 @@ test("a missing Channel ends the subscription as deleted, with or without a curs
 
 test("the catalog names working agents the way Channel presence does, without tasks", async () => {
   const { channel, channels } = await openChannel();
-  await channels.updateChannel(channel.id, {
-    tasks: [{ id: "ship", title: "Ship", status: "pending" }],
+  await channels.editTasks(channel.id, {
+    operations: [{ type: "add", task: { id: "ship", title: "Ship", status: "pending" } }],
   });
   await channels.createMember(channelAgent(channel.id, "idle", "Idle"));
   const { member: busy } = await channels.createMember(channelAgent(channel.id, "busy", "Busy"));

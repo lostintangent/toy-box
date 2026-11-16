@@ -6,7 +6,7 @@ import { cronSchema } from "@/shared/cron";
 import { createPane } from "@workspace/model/panes";
 import { previewSchema, type Preview } from "@/shared/preview";
 import { hasChanges } from "./changes";
-import { channelTaskSchema, channelTasksInputSchema, type ChannelTask } from "./tasks";
+import { channelTaskSchema, type ChannelTask } from "./tasks";
 import {
   agentAvatarSchema,
   agentHandleFromName,
@@ -272,7 +272,9 @@ export const channelRoutineInputSchema = z
       .trim()
       .min(1)
       .max(2_000)
-      .describe("What to check or do each time the routine wakes you."),
+      .describe(
+        "A self-contained prompt saying what to check or do each time the routine wakes you.",
+      ),
   })
   .strict();
 
@@ -487,7 +489,7 @@ const channelChangesSchema = z
     avatar: channelAvatarSchema
       .optional()
       .describe(
-        "The channel's avatar, drawn in a rounded square. Prefer the project's own icon, converted or cropped with sips when needed. Otherwise design a mark. Set it once the purpose is clear, and change it only when the purpose changes what the channel is about or the user asks.",
+        "The channel's avatar, drawn in a rounded square. Prefer the project's own icon, converted or cropped with sips when needed. Otherwise design a mark.",
       ),
   })
   .strict();
@@ -501,17 +503,9 @@ export const editChannelInputSchema = channelChangesSchema
   });
 
 export const updateChannelInputSchema = channelChangesSchema
-  .omit({ model: true })
-  .extend({
-    tasks: channelTasksInputSchema
-      .optional()
-      .describe(
-        "The complete task list for initial planning or intentional replacement. Preserve retained task IDs and outcomes; use edit_channel_tasks for progress updates.",
-      ),
-  })
+  .omit({ model: true, tasks: true })
   .refine(hasChanges, {
-    message:
-      "Update the name, purpose, directory, tasks, preview, avatar, or any combination of them.",
+    message: "Update the name, purpose, directory, preview, avatar, or any combination of them.",
   });
 
 export const postChannelMessageInputSchema = z

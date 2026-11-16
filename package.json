@@ -1,6 +1,6 @@
 {
   "name": "@lostintangent/toy-box",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Your personal agent server",
   "repository": {
     "type": "git",
@@ -28,6 +28,7 @@
     "build:cli": "bun run build && bun run src/cli/build/index.ts",
     "check": "bun fmt --check && bun lint && bun check",
     "test": "bun test --parallel",
+    "eval": "bun evals/harness/cli.ts",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "dependencies": {},

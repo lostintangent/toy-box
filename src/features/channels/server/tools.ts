@@ -78,7 +78,7 @@ const createChannelTool = defineTool("create_channel", {
 
 export const createChannelMembersTool = defineTool("create_channel_members", {
   description:
-    "Creates one or more members in a channel with unique names, optional roles, and optional models. A role states what the member is accountable for, the quality bar, and judgment specific to that work. Leave shared rules, paths, commands, and product behavior to the purpose, repository instructions, or spec, and task context to assignments. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
+    "Creates one or more members in a channel with unique names, optional roles, and optional models. A role states what the member is accountable for, the quality bar, and judgment specific to that work. Leave paths, commands, product behavior, and rules for anyone in the repository to its instructions or the spec, agreements specific to this team to the purpose, and task context to assignments. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
   parameters: channelIdentitySchema.extend({ members: channelMemberCreationsSchema }),
   handler: async ({ channelId, members }) => {
     const { createChannelMembers } = await import("@channels/server");
@@ -88,7 +88,7 @@ export const createChannelMembersTool = defineTool("create_channel_members", {
 
 const createCurrentChannelMembersTool = defineTool("create_channel_members", {
   description:
-    "Creates one or more members in this channel with unique names, optional roles, and optional models. A role states what the member is accountable for, the quality bar, and judgment specific to that work. Leave shared rules, paths, commands, and product behavior to the purpose, repository instructions, or spec, and task context to assignments. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
+    "Creates one or more members in this channel with unique names, optional roles, and optional models. Use list_models to resolve supported model options. Members begin onboarding immediately.",
   parameters: z.object({ members: channelMemberCreationsSchema }).strict(),
   handler: async ({ members }, sessionId) => {
     const { createChannelMembers } = await import("@channels/server");
@@ -196,7 +196,7 @@ const sendLeadMessageParameters = sendChannelMessageParameters
 
 const sendChannelMessageTool = defineTool("send_channel_message", {
   description:
-    "Publishes a Markdown channel message without ending the turn. Pass screenshot, image, and video paths in attachments. Name-derived @mentions wake the addressed agents. @everyone wakes the lead and all members. Without mentions, member messages wake the lead and lead messages wake nobody.",
+    "Publishes a Markdown channel message without ending the turn. Pass screenshot, image, and video paths in attachments, including a generated image's saved file path. Name-derived @mentions wake the addressed agents. @everyone wakes the lead and all members. Without mentions, member messages wake the lead and lead messages wake nobody.",
   parameters: sendChannelMessageParameters,
   handler: async (
     { attachments, ...input }: z.output<typeof sendLeadMessageParameters>,
@@ -247,7 +247,7 @@ const setChannelStatusTool = defineTool("set_agent_status", {
 
 const updateChannelTool = defineTool("update_channel", {
   description:
-    "Updates this channel's name, purpose, working directory, tasks, preview, or avatar. Only the lead can update it. Use an existing absolute directory, which applies to all agents at their next execution. Supply tasks only for initial planning or intentional whole-list replacement after read_channel with detail:'tasks' or 'full'; never replace the tree from unfinishedTasks. Use edit_channel_tasks for progress updates. Set preview to {kind:'url',url} or {kind:'screen',screenId} from list_screens. A screen reference opens an existing host display or window; it does not launch an app. Preserve root-relative preview URLs. Share file artifacts instead of using them as previews. Set purpose, directory, or preview to null to clear it.",
+    "Updates this channel's name, purpose, working directory, preview, or avatar. Use an existing absolute directory. Set preview to {kind:'url',url} or {kind:'screen',screenId} from list_screens. A screen reference opens an existing host display or window; it does not launch an app. Preserve root-relative preview URLs.",
   parameters: updateChannelInputSchema,
   handler: async (args, sessionId) => {
     const { updateChannel } = await import("@channels/server");
@@ -302,7 +302,7 @@ const finishChannelAgentTurnParameters = z
 
 const finishChannelAgentTurnTool = defineTool("finish_agent_turn", {
   description:
-    "Ends this private agent turn and clears its active channel status. waitingFor leaves a brief waiting status. Add wakeAfterMinutes to check back unless something wakes you first.",
+    "Ends this private agent turn and clears its active channel status. waitingFor leaves a brief waiting status.",
   parameters: finishChannelAgentTurnParameters,
   // TODO: Restore isTerminal after https://github.com/github/copilot-cli/issues/4755 is fixed.
   handler: async ({ waitingFor, wakeAfterMinutes }, sessionId) => {
@@ -352,7 +352,7 @@ const removeArtifactTool = defineTool("remove_channel_artifact", {
 
 const messageChannelLeadTool = defineTool("message_channel_lead", {
   description:
-    "Privately messages another channel's lead, found with list_channels, and wakes it. Use it to ask for information or to coordinate overlapping work, not to hand off this channel's work. The exchange stays in the two leads' sessions, so post in your own channel when it changes this channel's work. Replies arrive as private messages naming the sender's channel. A channel with a `server` is on another of the owner's Toy Box servers, where only your words arrive, so share work as pushed branches or in the message itself, never as paths, local URLs or artifacts.",
+    "Privately messages another channel's lead, found with list_channels, and wakes it. The exchange stays in the two leads' sessions. Replies arrive as private messages naming the sender's channel. A channel with a `server` is on another of the owner's Toy Box servers, where only your words arrive, so share work as pushed branches or in the message itself, never as paths, local URLs or artifacts.",
   parameters: channelIdentitySchema.extend({ content: conciseChannelMessageSchema }),
   handler: async (input, sessionId) => {
     const { messageChannelLead } = await import("@channels/server");

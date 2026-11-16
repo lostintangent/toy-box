@@ -28,13 +28,25 @@ export type SessionConfiguration = {
   disableMemory?: boolean;
 };
 
-/** What the model reads for a tool's arguments, without constraints only Zod's validation needs. */
+/**
+ * What the model reads for a tool's arguments, without constraints only Zod's validation needs,
+ * in keywords every provider's models receive.
+ */
 export function toolInputSchema(
   parameters: z.ZodType = z.object({}),
 ): z.core.JSONSchema.ObjectSchema {
   const { $schema: _, ...schema } = z.toJSONSchema(parameters, {
     io: "input",
     override: ({ jsonSchema }) => {
+      // Copilot's Gemini models receive `oneOf` and `const` empty; these equivalents survive.
+      if (jsonSchema.oneOf) {
+        jsonSchema.anyOf = jsonSchema.oneOf;
+        delete jsonSchema.oneOf;
+      }
+      if (jsonSchema.const !== undefined) {
+        jsonSchema.enum = [jsonSchema.const];
+        delete jsonSchema.const;
+      }
       if (jsonSchema.format === "date-time") delete jsonSchema.pattern;
       if (jsonSchema.minimum === Number.MIN_SAFE_INTEGER) delete jsonSchema.minimum;
       if (jsonSchema.maximum === Number.MAX_SAFE_INTEGER) delete jsonSchema.maximum;

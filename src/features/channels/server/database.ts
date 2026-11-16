@@ -290,16 +290,12 @@ export class ChannelDatabase {
 
   /** The lead's update, whose ID is its Channel's. */
   async updateChannel(channelId: string, input: UpdateChannelInput) {
-    return inStateTransaction(this.db, async (db) => {
-      const channel = await requireChannel(db, channelId);
-      const tasks = input.tasks && (await resolveTaskReferences(db, channel.id, input.tasks));
-      return updateChannelFields(
-        db,
-        channel,
-        { ...input, tasks },
-        { type: "agent", agentId: channelId },
-      );
-    });
+    return inStateTransaction(this.db, async (db) =>
+      updateChannelFields(db, await requireChannel(db, channelId), input, {
+        type: "agent",
+        agentId: channelId,
+      }),
+    );
   }
 
   async editTasks(channelId: string, { operations }: EditChannelTasksInput) {

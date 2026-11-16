@@ -7,10 +7,13 @@ const taskIdSchema = z.string().trim().min(1).max(255);
 
 export const channelTaskSchema = z
   .object({
-    id: taskIdSchema.describe(
-      "A short stable ID unique within the channel, such as t1 or t12. Preserve it when editing.",
-    ),
-    title: z.string().trim().min(1).max(240).describe("A concise outcome or next step."),
+    id: taskIdSchema.describe("A short stable ID unique within the channel, such as t1 or t12."),
+    title: z
+      .string()
+      .trim()
+      .min(1)
+      .max(240)
+      .describe("A concise outcome or next step, without commit hashes or measurements."),
     status: z.enum(["pending", "in_progress", "blocked", "done"]),
     /** Set while the task is in_progress, by the server alone. */
     startedAt: z.iso.datetime().optional(),
@@ -18,7 +21,7 @@ export const channelTaskSchema = z
       .datetime()
       .optional()
       .describe(
-        "Optional UTC check-in time that keeps in-progress work on track, checked once a minute. Only the lead sets it. When due, the owner is privately prompted to report whether the work is converging, and the check-in is cleared.",
+        "Optional UTC check-in time, checked once a minute. When due, the owner is privately prompted to report whether the work is converging, and the check-in is cleared.",
       ),
     owner: channelActorSchema.optional(),
     artifactId: z
@@ -106,7 +109,7 @@ export function channelTaskElapsedMinutes(
   return startedAt ? Math.max(0, Math.floor((now - Date.parse(startedAt)) / 60_000)) : undefined;
 }
 
-export const channelTasksInputSchema = z
+const channelTasksInputSchema = z
   .array(channelTaskInputSchema)
   .max(50)
   .superRefine((tasks, context) => {
@@ -186,7 +189,7 @@ export const editChannelTasksInputSchema = z
         ]),
       )
       .min(1)
-      .describe("Applied in order as one atomic edit. Removing a task removes its subtree."),
+      .describe("Applied in order. Removing a task removes its subtree."),
   })
   .strict();
 
