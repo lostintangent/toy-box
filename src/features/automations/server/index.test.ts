@@ -203,7 +203,7 @@ async function setup() {
     disposition: "started",
     waitForCompletion: () => completion.promise,
   });
-  const release = spyOn(sessions, "releaseIdleSession").mockImplementation(async (sessionId) => {
+  const release = spyOn(sessions, "releaseIdleConnection").mockImplementation(async (sessionId) => {
     released.resolve(sessionId);
   });
   const events: WorkspaceEvent[] = [];

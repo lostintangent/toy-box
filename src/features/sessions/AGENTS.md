@@ -92,7 +92,8 @@ pane, including when replaying older spawn results.
 An explicit `open_session` call still publishes the child through the ordinary session pane path.
 
 `Session.context` carries its execution `directory` and available native catalog Git fields.
-Sessions start in the home directory when none was chosen, so one there outside Git has no `directory`.
+A session with no chosen directory works in its own artifacts folder and has no `directory`, like one started at home outside Git.
+Resuming without a configured directory runs where its native history ran, even such a hidden home, while its instructions name only the shown `directory`.
 Session IDs, including automation IDs, are plain UUIDs. Imported histories use `provider:nativeId`, which
 the sidebar uses to distinguish external sessions without inspecting provider-native namespaces.
 Sidebar badges, pane pickers, and derived recent directories use those fields for immediate
@@ -106,10 +107,8 @@ directory and worktree choice; worktrees retain their own state.
 `queries.ts` is the declarative read API for the durable session list, one transcript snapshot,
 and directory-, role-, and provider-scoped skills. `mutations.ts` is the request/response operation API for
 creation, first-turn launch, delivery, queue control, abort, rewind, rename, deletion, and worktree actions. It
-owns only the cache transitions that make those operations immediate, and a failed rename or
-deletion repairs the catalog from the server. Deletion hides the session in the catalog alone,
-applying `session.deleted` directly to the catalog's `reducedQuery` rather than through
-`applyWorkspaceEvent`, so every other workspace cache waits for the confirmed event.
+owns only the cache transitions that make those operations immediate, and a failed rename
+repairs the catalog from the server. Deletion is an `optimisticMutation` of `session.deleted`.
 
 `cache.ts` applies shared workspace session events to session-owned queries. The catalog and
 activity are each a [`reducedQuery`](../../shared/query.ts), with the catalog's pure
@@ -148,9 +147,10 @@ optimistically to the detail, and acknowledges a finished run while an active pa
 A client snapshot carries the transcript's latest page, about 1 MiB of messages, and `messageOffset`
 counts the messages before it. Everything else in the snapshot, including the composer's diff, is
 reduced over the whole transcript. `model/transcriptPages.ts` pages backward from `messageOffset`,
-ending each page with the first loaded message as its seam. The detail query's structural sharing
-joins every write with the pages already loaded while the seam still matches, so refetches, rewinds,
-and stream ends keep the reader's place; a mismatch keeps only the newer page. Agent tools and
+ending each page with the first loaded message as its seam. Live events write the reducer's result
+directly, since it keeps every message an event leaves alone. Adopting a snapshot joins it with the
+pages already loaded while the seam still matches, so refetches, rewinds, and stream ends keep the
+reader's place; a mismatch keeps only the newer page. Agent tools and
 Workers read complete snapshots in process.
 
 The browser sends one way and subscribes one way. A send posts `deliverMessage`, keyed by the
@@ -377,7 +377,7 @@ does not own session data or streaming behavior.
   It batches notifications by session ID; the runtime refreshes only affected active sessions.
   Artifact membership and modification times come from the filesystem; idle snapshots read the
   current directory.
-- [`state/`](server/state/AGENTS.md) owns cached provider connections, snapshots, session records, worktrees, and complete
+- [`state/`](server/state/AGENTS.md) owns cached provider connections, snapshots, session records, worktrees, and session
   resource teardown.
 - `tools.ts` defines the model-facing operations that belong to Sessions. Application-level modules
   in `src/server/sessionConfiguration.ts` and `src/server/managedSessions.ts` compose feature-owned Session

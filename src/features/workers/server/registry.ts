@@ -7,22 +7,18 @@ import { sharedMap } from "@/shared/server/processState";
 import { broadcast } from "@workspace/server/events";
 import type { Worker } from "../model";
 
-/** A canceled run leaves the listing at once and stays registered until it settles. */
+/** A canceled run stops being active at once and holds its ID until it settles. */
 type WorkerRun = { worker: Worker; cancel: AbortController };
 
 const runs = sharedMap<WorkerRun>("worker-runs");
 
-export function getWorkers(): Worker[] {
-  return [...runs.values()].filter(isListed).map(({ worker }) => worker);
+export function getActiveWorkers(): Worker[] {
+  return [...runs.values()].filter(isActive).map(({ worker }) => worker);
 }
 
-export function hasWorker(sessionId: string): boolean {
-  return getRegisteredWorker(sessionId) !== undefined;
-}
-
-export function getRegisteredWorker(sessionId: string): Worker | undefined {
+export function getActiveWorker(sessionId: string): Worker | undefined {
   const run = runs.get(sessionId);
-  return run && isListed(run) ? run.worker : undefined;
+  return run && isActive(run) ? run.worker : undefined;
 }
 
 /** Run a worker that has none in flight. It is waitable by ID before it is announced. */
@@ -31,7 +27,7 @@ export function startWorkerRun(
   execute: (signal: AbortSignal) => Promise<SessionCompletion>,
 ): Promise<SessionCompletion> {
   const { sessionId } = worker;
-  if (runs.has(sessionId)) throw new Error(`Worker ${sessionId} is already active.`);
+  if (runs.has(sessionId)) throw new Error(`Worker ${sessionId} already has a run.`);
   const run = { worker, cancel: new AbortController() };
   runs.set(sessionId, run);
   const completion = execute(run.cancel.signal);
@@ -39,7 +35,7 @@ export function startWorkerRun(
   broadcast({ type: "worker.started", worker });
   const finish = () => {
     runs.delete(sessionId);
-    if (isListed(run)) broadcast({ type: "worker.finished", sessionId });
+    if (isActive(run)) broadcast({ type: "worker.finished", sessionId });
   };
   void completion.then(finish, finish);
   return completion;
@@ -48,7 +44,7 @@ export function startWorkerRun(
 /** Cancel a worker whether its session is still spawning or already running. */
 export async function cancelWorker(sessionId: string): Promise<boolean> {
   const run = runs.get(sessionId);
-  if (!run || !isListed(run)) return false;
+  if (!run || !isActive(run)) return false;
   run.cancel.abort(new WorkerCanceledError(sessionId));
   broadcast({ type: "worker.finished", sessionId });
   await abortSession(sessionId);
@@ -62,6 +58,6 @@ export class WorkerCanceledError extends Error {
   }
 }
 
-function isListed(run: WorkerRun): boolean {
+function isActive(run: WorkerRun): boolean {
   return !run.cancel.signal.aborted;
 }

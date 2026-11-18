@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { createAtom } from "@tanstack/react-store";
 import type { WorkspaceEvent } from "./model/events";
 
@@ -31,6 +31,17 @@ export function applyWorkspaceEvent(queryClient: QueryClient, event: WorkspaceEv
 /** Refresh every cache after the stream may have missed events. */
 export async function refreshWorkspace(queryClient: QueryClient): Promise<void> {
   await Promise.all(caches.map(async (cache) => cache.refresh?.(queryClient)));
+}
+
+/** A mutation whose effect is one workspace event. Every cache applies the event as the mutation
+ *  starts, and a rejection refreshes them all. The server broadcasts the same event on success, so
+ *  applying it twice must be harmless. */
+export function optimisticMutation<TData>(event: WorkspaceEvent, mutationFn: () => Promise<TData>) {
+  return mutationOptions({
+    mutationFn,
+    onMutate: (_variables, { client }) => applyWorkspaceEvent(client, event),
+    onError: (_error, _variables, _onMutateResult, { client }) => refreshWorkspace(client),
+  });
 }
 
 /** This tab's current workspace connection, which server resources the tab holds attach to. It

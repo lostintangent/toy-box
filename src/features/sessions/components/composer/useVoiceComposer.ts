@@ -1,7 +1,7 @@
 import {
+  modelConfiguration,
   modelCatalogKey,
   modelConfigurationKey,
-  resolveModelConfigurationForModel,
   type ModelConfiguration,
   type ModelInfo,
 } from "@providers/model";
@@ -217,11 +217,7 @@ function selectModel(context: VoiceComposerContext, modelId: string) {
         .join(", ")}.`,
     };
   }
-  const next = resolveModelConfigurationForModel(model, {
-    ...context.model,
-    name: model.id,
-    provider: model.provider,
-  });
+  const next = modelConfiguration(model, context.model);
   context.setModel(next);
   return { ok: true, model: next.name, reasoningEffort: next.reasoningEffort };
 }

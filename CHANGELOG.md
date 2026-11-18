@@ -1,3 +1,22 @@
+## 📅 v0.4.9 (11/17/26)
+
+- Channels now allow agents to run background commands and then wait on them. This provides a more deterministic and efficient means of waiting on things like CI, deployments, eval runs, etc.
+- Channels now display when a team member is waiting with a wake time.
+- A team member waiting on a background command now shows a terminal icon instead, with the command in its tooltip.
+- Channel agents now end their turn the moment they finish, instead of spending another model call afterwards.
+- Channel leads now retire done tasks when the next batch of work begins, and a top-level task that isn't done carries over whole, done subtasks included.
+- A channel member's role now describes its part in the team, including which teammates it takes work from and hands work to, and a new member writes it from its first real request instead of at onboarding.
+- Relative paths in channel tools now resolve in the folder the agent's provider actually runs in.
+- Every delete confirmation now closes the moment you confirm. Sessions, automations, inbox entries and apps disappear right away and come back if the delete fails.
+- A session without a folder now runs in its own artifacts folder, and a session resumes in the folder its history ran in, including your home folder.
+- Stopping or deleting a session now waits at most 5 seconds for its provider, and a provider that never confirms is disconnected, so the next message starts on a fresh connection.
+- Streaming into a long session now does far less work per update, and file edits are parsed faster.
+- A worker that fails to start no longer deletes an existing session that has the same ID.
+- Settings now shows why a provider failed to load or is signed out, and a failed provider stays failed until you update it or restart the server instead of retrying on every load.
+- Settings now reads Copilot's version from the build the server actually launches.
+- Videos in the attachment viewer can now be closed by clicking around them, like images.
+- A screen viewer's first frame now arrives at its own size, including on a phone and after a reconnect, and the screen picker's thumbnails load as JPEGs.
+
 ## 📅 v0.4.8 (11/16/26)
 
 - Channel leads are now given guidance about when to retire tasks and artifacts, and their insturctions/tools have been optimized for leaner context windows

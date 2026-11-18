@@ -17,7 +17,7 @@ import {
 import { setSessionProvider, readSession, readSessions } from "./state/sessions";
 import { buildSessionSystemPrompt } from "./instructions";
 import { getSessionSkillDirectories } from "./bundledSkills";
-import { ensureSessionFiles } from "./artifacts";
+import { ensureSessionFiles, sessionArtifactsDirectory } from "./artifacts";
 import { toolResultText, type Tool } from "./tools/definition";
 import { createToolCallProjector } from "./toolProjection";
 import { sharedSet } from "@/shared/server/processState";
@@ -29,7 +29,8 @@ const pendingCreations = sharedSet<{
   completion: ReturnType<typeof createNativeSession>;
 }>("provider-session-creations");
 
-type ConfigurationOptions = Pick<SessionConfiguration, "model" | "directory" | "disableMemory"> & {
+type ConfigurationOptions = Pick<SessionConfiguration, "model" | "disableMemory"> & {
+  directory?: string;
   sessionType: SessionType;
   tools?: Tool<any>[];
   artifactPath?: string;
@@ -109,13 +110,21 @@ function publicSession(
     id,
     createdAt: record?.createdAt ?? native.createdAt,
     provider: { id: providerId, ...(nativeId !== id ? { sessionId: nativeId } : {}) },
-    context: native.context && { ...native.context, directory: sessionDirectory(native.context) },
+    context: native.context && {
+      ...native.context,
+      directory: sessionDirectory(id, native.context),
+    },
     ...(record?.artifactPath ? { artifactPath: record.artifactPath } : {}),
   };
 }
 
-/** Sessions start in the home directory when none was chosen, which is not a workspace. */
-function sessionDirectory({ directory, gitRoot, repository }: SessionContext = {}) {
+/** A session without a chosen directory runs in its artifacts folder, and older or imported
+ *  ones ran in the home directory. Neither is a workspace. */
+function sessionDirectory(
+  sessionId: string,
+  { directory, gitRoot, repository }: SessionContext = {},
+) {
+  if (directory === sessionArtifactsDirectory(sessionId)) return undefined;
   return directory === homedir() && !gitRoot && !repository ? undefined : directory;
 }
 
@@ -132,17 +141,22 @@ async function defaultModel(): Promise<ModelConfiguration> {
   return model;
 }
 
-function configuration(sessionId: string, options: ConfigurationOptions): SessionConfiguration {
+function configuration(
+  sessionId: string,
+  options: ConfigurationOptions,
+  directory = options.directory ?? sessionArtifactsDirectory(sessionId),
+): SessionConfiguration {
+  const context = { sessionId, directory };
   return {
     model: options.model,
-    directory: options.directory,
+    directory,
     disableMemory: options.disableMemory,
     allowUserQuestions: options.sessionType === "standard" || options.sessionType === "hyper",
     tools: (options.tools ?? []).map((tool) => ({
       ...tool,
       handler: async (args) =>
         toolResultText(
-          await tool.handler(tool.parameters ? tool.parameters.parse(args) : args, sessionId),
+          await tool.handler(tool.parameters ? tool.parameters.parse(args) : args, context),
         ),
     })),
     instructions: buildSessionSystemPrompt(sessionId, options),
@@ -202,7 +216,18 @@ export async function resumeSession(sessionId: string, options: ConfigurationOpt
     );
   }
   await ensureSessionFiles(sessionId);
-  return provider.resume(nativeId, configuration(sessionId, options));
+  if ("directory" in options) return provider.resume(nativeId, configuration(sessionId, options));
+  // A session resumes where its history ran, even in a folder its catalog entry hides, such as
+  // home, while its prompt names only the workspace that entry shows.
+  const context = (await provider.readSession(nativeId))?.context;
+  return provider.resume(
+    nativeId,
+    configuration(
+      sessionId,
+      { ...options, directory: sessionDirectory(sessionId, context) },
+      context?.directory,
+    ),
+  );
 }
 
 export async function deleteSession(sessionId: string) {
@@ -212,7 +237,7 @@ export async function deleteSession(sessionId: string) {
 
 export async function getSessionDirectory(sessionId: string) {
   const { provider, nativeId } = await resolveSession(sessionId);
-  return sessionDirectory((await provider.readSession(nativeId))?.context);
+  return sessionDirectory(sessionId, (await provider.readSession(nativeId))?.context);
 }
 
 export async function readSessionHistory(sessionId: string) {

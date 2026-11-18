@@ -69,7 +69,8 @@ that snapshot cannot restore the entry. Inactive queries become stale and reload
 Presentation combines entries with shared Worker and Session activity to order running work first
 and show progress and unread state. An active Worker supplies startup progress; ordinary Session
 activity covers later follow-ups. Inbox does not manufacture a Session running status.
-`inboxMutations` owns dispatch and deletion requests plus the immediate successful delete projection.
+`inboxMutations` owns dispatch and deletion requests. Deletion is an `optimisticMutation` of the
+backing session's `session.deleted`, which drops the entry and its session together.
 Components retain only interaction state such as location choices. The
 creation composer's text is the Workspace saved draft `inbox`, so it survives reloads and follows
 the user across clients. A dispatch or send that fails returns its message to that draft unless

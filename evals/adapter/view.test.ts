@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Message, ToolCall } from "@sessions/model";
-import { turns } from "./view";
+import type { Run } from "../harness";
+import { turns, view } from "./view";
 
 const at = (second: number) => new Date(Date.UTC(2026, 0, 1) + second * 1_000).toISOString();
 const input = (second: number, content = "wake"): Message => ({
@@ -14,8 +15,8 @@ const called = (name: string, result: ToolCall["result"] = { content: "", succes
     content: "",
     toolCalls: [{ id: name, name, arguments: {}, result }],
   }) as Message;
-const agent = (messages: Message[], runs: number[], rests: number[]) =>
-  turns({ id: "lead", name: "lead", runs: runs.map(at), rests: rests.map(at), messages });
+const agent = (messages: Message[], runs: number[], rests: number[], lengths?: number[]) =>
+  turns({ id: "lead", name: "lead", runs: runs.map(at), rests: rests.map(at), lengths, messages });
 
 describe("turns", () => {
   test("a wake delivered while the agent runs stays in that turn", () => {
@@ -53,6 +54,14 @@ describe("turns", () => {
     ]);
   });
 
+  test("a run that begins without an input, like a native shell's wake, begins at a rest's length", () => {
+    const messages = [input(1), called("bash"), called("read_bash"), called("finish_agent_turn")];
+    const split = agent(messages, [0, 20], [9, 29], [2, 4]).map((turn) =>
+      turn.calls.map(({ name }) => name),
+    );
+    expect(split).toEqual([["bash"], ["read_bash", "finish_agent_turn"]]);
+  });
+
   test("a tool loses its MCP server prefix and keeps whether it failed", () => {
     const failed = { content: "", success: false };
     const [turn] = agent([input(1), called("mcp__toy-box__edit_channel_tasks", failed)], [0], [9]);
@@ -74,5 +83,28 @@ describe("turns", () => {
       [9],
     );
     expect(turn!.calls.map((call) => call.added)).toEqual([["One notes.json"], []]);
+  });
+});
+
+describe("view", () => {
+  test("a member the lead removed before the end keeps its turns among the members'", () => {
+    const state = { channel: { id: "lead", tasks: [] }, members: [] };
+    const recorded = (id: string, name: string) => ({
+      id,
+      name,
+      runs: [at(0)],
+      rests: [at(9)],
+      messages: [input(1), called("read_channel")],
+    });
+    const { lead, members } = view({
+      startedAt: at(0),
+      endedAt: at(30),
+      steps: [],
+      snapshots: [{ at: at(0), state }],
+      agents: [recorded("lead", "lead"), recorded("m1", "builder")],
+      work: "",
+    } as unknown as Run);
+    expect(lead).toHaveLength(1);
+    expect(members.map((turn) => turn.agent)).toEqual(["builder"]);
   });
 });

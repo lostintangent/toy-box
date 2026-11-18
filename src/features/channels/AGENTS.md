@@ -27,9 +27,11 @@ synchronization, and [Push](../push/AGENTS.md) owns delivery to devices.
 
 1. **Create.** The Channel and its lead commit together, and the lead starts immediately. With a
    purpose, it frames the work and posts a kickoff. Without one, it asks the user what to work on.
-2. **Staff.** Once a member's work is actionable, the lead creates it with a focused role, and the
-   member onboards by reading the Channel and establishing its role and avatar. When the purpose
-   changes, the lead reviews every role against it.
+2. **Staff.** Once a member's work is actionable, the lead creates it with a focused role that says
+   what it's responsible for and whom it takes work from and hands work to. The member onboards by
+   reading the Channel and designing its avatar. A member that joins without a role, as from the
+   composer, defines it once from the first request that gives it work, and the lead owns it after
+   that. When the purpose changes, the lead reviews every role against it.
 3. **Coordinate.** One audience policy routes every message, and mentions wake exactly the agents
    they name. A woken agent runs one private turn: it reads the Channel, acts publicly, and
    finishes, optionally leaving a waiting status.
@@ -38,9 +40,11 @@ synchronization, and [Push](../push/AGENTS.md) owns delivery to devices.
 5. **Keep going.** Follow-ups privately wake waiting agents and routines wake the lead on a schedule,
    so ongoing work advances without anyone posting.
 6. **Close.** Completing the task list is the lead's evidence-backed judgment that the work is done,
-   not a relay of members' reports. A done task stays until its outcome is recorded elsewhere, such
-   as in a commit or doc. The lead then retires it, along with the artifacts and the role and
-   purpose text that only served it, so the Channel describes current work.
+   not a relay of members' reports. Done work stays while its batch of work is current, so the list
+   shows where that batch stands. When the next batch begins, the lead retires each done top-level
+   task whose outcome is recorded elsewhere, such as in a commit or doc, along with the artifacts and
+   the role and purpose text that only served it, so the Channel describes current work. A subtask
+   never retires on its own, so unfinished work carries into the next batch whole.
 
 ## Domain model
 
@@ -201,6 +205,22 @@ attention writes check the Channel's intrinsic lead ID within their transaction.
   one transaction before delivery: a follow-up clears its waiting status, a routine moves its
   server-private `next_at` past now, and a check-in clears its timestamp. Routine runs missed while
   the server was stopped collapse into one.
+- A wake command is a shell command an agent starts with `run_wake_command`, at most one per agent.
+  `server/wakeCommands.ts` runs it in the agent's working directory in its own process group,
+  writing stdout and stderr to `command.stdout` and `command.stderr` in the agent's state folder.
+  The next command overwrites both, which the tool's result tells the agent.
+  Its exit wakes the agent whether or not it's still waiting, with a `channel_wake_command` that
+  names the command and carries its exit code and both paths, never the output, and that no other
+  queued wake absorbs. A new command replaces it. Replacement, removal and shutdown kill its whole
+  process group without a wake, at once rather than through `stopProcess`'s TERM and grace period,
+  since no step after a stop may run. The group is frozen first so no shell in it starts another
+  step, and shutdown awaits the exit. A server that dies without shutting down, as when a second
+  Ctrl-C cuts Nitro's close short, its terminal closes, or it's killed, leaves that to a watcher: a
+  detached `sh` the server holds a pipe to and never writes, which reads the pipe's end and kills
+  the group.
+  Its Worker metadata keeps the command until then, so a boot wakes the owner of a command its
+  server stopped, naming it, with a null exit code. A waiting status set while it runs names it as
+  `wakeCommand`, which the member list shows in place of a follow-up's countdown.
 
 ### Across Channels
 
@@ -246,8 +266,7 @@ always loaded, since every wake depends on them. `buildChannelAgentInstructions`
 A tool's description and schema say how to call it and what the call does, including whom it wakes.
 The instructions say when to act and why: how the lead frames, staffs, delegates, reviews, and
 closes work, how members take part, and when each tool fits. Keep every rule's reason beside it.
-Repeat a tool's constraint in the instructions only when runs show a model ignores it otherwise, as
-with a role's length: gpt leads write short roles when only the `role` parameter states it.
+Repeat a tool's constraint in the instructions only when runs show a model ignores it otherwise.
 Before landing a change to the instructions or tools, compare it against HEAD with the
 [channel-lead scenario](../../../evals/scenarios/channel-lead.ts), which scores a lead and its
 members against these rules. The [evals README](../../../evals/README.md) covers writing and running
@@ -289,9 +308,7 @@ the catalog's `working`.
 A turn start clears only a prior waiting status. Session completion clears any remaining working
 status, and startup clears working statuses left behind by inactive executions. `finish_agent_turn`
 clears active status and its projected activity reaction, or leaves a waiting status, optionally
-with a [follow-up](#scheduled-wakes). The agent then ends its turn normally; provider-enforced
-terminal execution is disabled pending
-[github/copilot-cli#4755](https://github.com/github/copilot-cli/issues/4755).
+with a [follow-up](#scheduled-wakes). It is a terminal tool, so its successful result ends the turn.
 
 ## Server
 
@@ -562,9 +579,9 @@ presents one deleted identity everywhere.
 - The overview opens as a sheet or pins beside the transcript, which the workspace layout remembers.
   It shows the purpose, directory, and preview, then the team with its presence, the shared
   artifacts by when each was shared, the tasks, and any routines with their next run, prompt, and
-  run and delete actions. Each artifact can be removed, and a waiting agent shows when its follow-up
-  checks back. Each section collapses independently, and its counts and task diff totals stay
-  visible while collapsed.
+  run and delete actions. Each artifact can be removed, and a waiting agent with a follow-up shows a
+  bell and the minutes until it checks back, kept current by the clock that ages its tasks. Each
+  section collapses independently, and its counts and task diff totals stay visible while collapsed.
   The Task list's count badge toggles an in-progress-only view, retaining and expanding every
   ancestor of an active task, and the Team members badge toggles working agents only. Filtering
   changes visibility only: count badges still describe their complete lists, and diff totals stay
@@ -592,8 +609,8 @@ presents one deleted identity everywhere.
   `/api/v1/channels` routes, and browser RPC is a thin entry point to the same operations.
 - Private work never enters the Channel. Agent transcripts, tool logs, and read positions stay in
   Sessions and Worker metadata, and the transcript holds only what was deliberately published.
-- Wakes are best effort. Mentions, follow-ups, routines, check-ins, and lead messages use ordinary
-  Session delivery, with no durable outbox.
+- Wakes are best effort. Mentions, follow-ups, wake commands, routines, check-ins, and lead messages
+  use ordinary Session delivery, with no durable outbox.
 - Agent IDs are unique across the server. An agent's ID is its Session ID, so clients join presence,
   rosters, and activity by ID alone.
 
@@ -615,9 +632,11 @@ presents one deleted identity everywhere.
   messages attach and the avatar image. `peers.ts` lists the Channels on the owner's peer servers
   and delivers a lead's message to one once, through Workspace's peers. `tools.ts` owns agent-facing
   projections and the Session, lead, and member tool sets, and translates the calling Session into
-  its Channel, actor, and workspace-relative paths. `agent.ts` composes each agent's execution and
-  instructions. `push.ts` publishes push milestones and followed topics, and `startup.ts` clears
-  finished working statuses and starts the wake interval and push.
+  its Channel and actor. Relative paths resolve against the directory in each handler's `ToolContext`,
+  the one its provider runs in. `agent.ts` composes each agent's execution and
+  instructions. `wakeCommands.ts` owns the wake command processes this server runs. `push.ts`
+  publishes push milestones and followed topics, and `startup.ts` clears finished working statuses,
+  starts the wake interval and push, and recovers and stops wake commands.
 - `routes/v1/`, at the feature root where the route convention discovers it, answers
   `/api/v1/channels` requests in place.
 - `queries.ts`, `stream.ts`, `mutations.ts`, `cache.ts`, `useChannels.ts`, and `useChannel.ts` own

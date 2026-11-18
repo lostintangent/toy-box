@@ -1,6 +1,7 @@
 // What a channel-lead run is held to. Each criterion encodes a decision the user made about how
-// channel agents work, or a rule that has separated arms, and each measure is a number a comparison
-// has asked for. Changing one rescores old runs, with no revision bump.
+// channel agents work, or a rule that has separated arms. Each measure is a number an open
+// comparison needs, and it goes once that comparison is decided, since results keep its values.
+// Changing either rescores old runs, with no revision bump.
 import type { ChannelTask } from "@channels/model";
 import type { Scorecard } from "../harness";
 import {
@@ -17,6 +18,13 @@ import {
   walk,
   writes,
 } from "../adapter/view";
+
+/** The M5 checks a criterion judges, by the script each runs and the verdict a report of it
+ *  carries: its count, or one of nightly's failing tests. Smoke runs between them, unjudged. */
+export const checks = {
+  quick: { script: "quick-check", verdict: /\b312\b/ },
+  nightly: { script: "nightly", verdict: /\b1,?28[46]\b|search_across_lines|export_with_emoji/ },
+};
 
 export default {
   criteria: [
@@ -76,17 +84,6 @@ export default {
         ]);
       },
     },
-    {
-      id: "S1",
-      step: "run",
-      governs: "Staff: a role of 100 to 200 words",
-      check: ({ lead }) => {
-        const words = roles(lead).map((role) => role.split(/\s+/).filter(Boolean).length);
-        return words.length
-          ? words.every((count) => count >= 100 && count <= 200) || `words ${words.join(", ")}`
-          : null;
-      },
-    },
     // The first planned task the lead marks done, at any depth, because the rule covers every task
     // it verifies. Read from its writes, since a task can be marked done and removed in one call.
     {
@@ -128,7 +125,35 @@ export default {
         ]);
       },
     },
-    // Done work stays until its outcome is recorded elsewhere, and then it retires.
+    // M5's checks, timed by each script's own record of when it finished, so a pass doesn't depend
+    // on how agents waited or what they read.
+    {
+      id: "W1",
+      step: "M5",
+      governs: "Waiting: run a short command in the turn and report it right away",
+      check: (view) => {
+        const quick = waited(view, "quick");
+        if (!quick) return null;
+        if (quick.exit === undefined) return "quick-check never finished";
+        const held = quick.held ? [] : ["quick-check not run in a turn"];
+        return fail([...held, ...late(quick.exit, quick.report)]);
+      },
+    },
+    {
+      id: "W2",
+      step: "M5",
+      governs: "Waiting: report long work soon after it exits, without waiting in a turn",
+      check: (view) => {
+        const nightly = waited(view, "nightly");
+        if (!nightly) return null;
+        if (nightly.exit === undefined) return "nightly never finished";
+        const held = nightly.held ? ["a turn held nightly"] : [];
+        return fail([...held, ...late(nightly.exit, nightly.report)]);
+      },
+    },
+    // The list shows the current batch's progress. Once the next batch begins, as kickoff does
+    // after the spike, finished work whose outcome is recorded elsewhere retires, done work with no
+    // other record stays, and an unfinished task keeps every subtask.
     {
       id: "N1",
       step: "run",
@@ -144,6 +169,23 @@ export default {
       step: "run",
       governs: "Track and adapt: done work whose outcome is recorded retires",
       check: ({ final }) => !tree(final).has("survey"),
+    },
+    // The audit never finishes, since its blocked half waits on another team, so both halves stay
+    // in every snapshot, wherever the lead regroups them, and a lead that finishes the audit some
+    // other way and retires it misses too. Snapshots come at each lead rest and step, so a half
+    // dropped and restored within one turn goes unseen. Revisions before 4 didn't seed it.
+    {
+      id: "N3",
+      step: "run",
+      governs: "Track and adapt: an unfinished task's done and blocked subtasks stay",
+      check: ({ run, seeded }) => {
+        if (!seeded.has("audit-conventions")) return null;
+        for (const { state } of run.snapshots) {
+          const gone = ["audit-conventions", "audit-site"].filter((id) => !tree(state).has(id));
+          if (gone.length) return `${gone.join(" and ")} removed`;
+        }
+        return true;
+      },
     },
     // Every whole turn, the lead's (T1, T2) and the members' (T1.m, T2.m) scored apart.
     {
@@ -174,12 +216,7 @@ export default {
       id: "T3.m",
       step: "run",
       governs: "Finish: a member's wait always sets a wake",
-      check: ({ members }) =>
-        everyTurn(members, (turns) =>
-          calls(turns, "finish_agent_turn")
-            .filter(({ args }) => args.waitingFor && !args.wakeAfterMinutes)
-            .map(({ args }) => String(args.waitingFor)),
-        ),
+      check: (view) => (complete(view.members).length ? fail(unwoken(view)) : null),
     },
   ],
   measures: [
@@ -198,23 +235,104 @@ export default {
       description: "Failed channel tool calls, by the lead and members",
       measure: ({ lead, members }) => failed([...lead, ...members]).length,
     },
-    ...(["edit_channel_tasks", "update_channel"] as const).map((tool) => ({
-      id: `failed.${tool}`,
-      description: `Failed ${tool} calls, by the lead and members`,
-      measure: ({ lead, members }: ChannelView) =>
-        failed([...lead, ...members]).filter(({ name }) => name === tool).length,
-    })),
-    ...(["add", "update", "move", "remove"] as const).map((kind) => ({
-      id: `tasks.${kind}`,
-      description: `Successful ${kind} operations in edit_channel_tasks calls, by the lead and members`,
-      measure: ({ lead, members }: ChannelView) =>
-        calls([...lead, ...members], "edit_channel_tasks")
-          .filter((call) => !call.failed)
-          .flatMap((call) => call.args.operations ?? [])
-          .filter((operation: { type: string }) => operation.type === kind).length,
-    })),
   ],
 } satisfies Scorecard<ChannelView>;
+
+/** One of M5's checks: when it exited, from the first finish its runs.log gained after M5, whether
+ *  an agent waited for that in a turn, and when an agent first posted its verdict after it. An agent
+ *  that deletes or reverts the log reads as never running the check, and revisions before 5 kept no
+ *  log, so none of this applies to them. Work waited when it ran unbroken by a rest from before an
+ *  exit to a call other than a channel tool that returned the exit line, by blocking or polling.
+ *  Work begins at the first input after a finish_agent_turn or a rest, or at a command's wake, so
+ *  an agent that reads the exit it was woken for didn't wait for it, even if other work kept it
+ *  busy. A message steered into work doesn't move its start. Transcripts are read in order, since a
+ *  provider's own wake can continue one with no input and no new run, as Claude's background tasks
+ *  do. A long call that did other work and then read the line reads as a wait too, so a held check
+ *  in a patched arm needs a look by hand. Only a verdict's time is read, so one quoted from the
+ *  script's text rather than its output still counts. */
+function waited(
+  view: ChannelView,
+  key: keyof typeof checks,
+): { exit?: number; held?: boolean; report?: number } | undefined {
+  if (view.run.revision < 5) return undefined;
+  const sent = Date.parse(sentAt(view, "M5") ?? "");
+  const { script, verdict } = checks[key];
+  const stamp = new RegExp(`${script} finished at (\\d{4}-\\d\\d-\\d\\dT[\\d:]{8}Z)`, "g");
+  const exits = (text: string) =>
+    [...text.matchAll(stamp)].map((match) => Date.parse(match[1]!)).filter((at) => at > sent);
+  const [exit] = view.added
+    .filter((line) => line.startsWith(`${script} `))
+    .flatMap(exits)
+    .sort((a, b) => a - b);
+  if (exit === undefined) return {};
+  let held = false;
+  for (const { messages, rests } of view.run.agents) {
+    const rested = rests.map(Date.parse);
+    const unbroken = (from: number | undefined, to: number) =>
+      from !== undefined && from < to && !rested.some((rest) => from < rest && rest < to);
+    let began: number | undefined;
+    for (const message of messages) {
+      if (message.role !== "assistant") {
+        const at = Date.parse(message.timestamp ?? "");
+        const woken = message.role === "system" && "command" in message.content;
+        began = woken || !unbroken(began, at) ? at || undefined : began;
+        continue;
+      }
+      for (const { name, result } of message.toolCalls ?? []) {
+        const tool = name.split("__").at(-1)!;
+        if (tool === "finish_agent_turn" && result?.success !== false) began = undefined;
+        else if (
+          !channelTools.has(tool) &&
+          exits(result?.content ?? "").some((at) => unbroken(began, at))
+        )
+          held = true;
+      }
+    }
+  }
+  const report = view.final?.messages.find(
+    (message) =>
+      message.sender.type === "agent" &&
+      typeof message.content === "string" &&
+      Date.parse(message.timestamp) >= exit &&
+      verdict.test(message.content),
+  );
+  return { exit, held, report: report && Date.parse(report.timestamp) };
+}
+const late = (exit: number, report?: number) =>
+  report === undefined
+    ? ["never reported"]
+    : report - exit > 60_000
+      ? [`reported ${((report - exit) / 60_000).toFixed(1)} minutes after it exited`]
+      : [];
+
+/** The members' waits that nothing would wake: each finish with waitingFor but no wakeAfterMinutes,
+ *  no wakeAfterCommand, and no command of the member's running. A command runs from the
+ *  run_wake_command that started it, or replaced another, until a command's wake. Transcripts are
+ *  read in order, since a command can exit mid-turn, and only as far as the member's last rest, as
+ *  everyTurn's rules skip a turn the run's end cut off. A run recorded without lengths is read
+ *  whole. */
+function unwoken({ run, final }: ChannelView) {
+  return run.agents
+    .filter(({ id }) => id !== final?.channel.id)
+    .flatMap(({ messages, lengths }) => {
+      let running = false;
+      return messages.slice(0, lengths?.at(-1)).flatMap((message) => {
+        if (message.role !== "assistant") {
+          if (message.role === "system" && "command" in message.content) running = false;
+          return [];
+        }
+        return (message.toolCalls ?? []).flatMap(({ name, arguments: input, result }) => {
+          const tool = name.split("__").at(-1);
+          const args: Call["args"] = input;
+          if (tool === "run_wake_command" && result?.success !== false) running = true;
+          const unset = !args.wakeAfterMinutes && !args.wakeAfterCommand && !running;
+          return tool === "finish_agent_turn" && args.waitingFor && unset
+            ? [String(args.waitingFor)]
+            : [];
+        });
+      });
+    });
+}
 
 /** Channels' rule for retiring a task: it closes once marked done, or once removed after the work
  *  records its outcome. Recorded means a file edit in these turns, which start once the outcome
@@ -254,14 +372,6 @@ const failures = (turns: Turn[]) =>
   failed(turns).map((call) => `${call.name}: ${call.result.slice(0, 200)}`);
 const unfinished = (turns: Turn[]) =>
   turns.filter((turn) => turn.calls.at(-1)?.name !== "finish_agent_turn").map(label);
-const roles = (lead: Turn[]): string[] => [
-  ...calls(lead, "create_channel_members").flatMap(({ args }) =>
-    (args.members ?? []).map((member: any) => String(member.role ?? "")),
-  ),
-  ...calls(lead, "update_channel_member").flatMap(({ args }) =>
-    args.role ? [String(args.role)] : [],
-  ),
-];
 
 /** A rule over whole turns, which doesn't apply until there is one. */
 function everyTurn(turns: Turn[], check: (turns: Turn[]) => string[]) {

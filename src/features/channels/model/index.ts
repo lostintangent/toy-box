@@ -175,6 +175,8 @@ export const channelAgentStatusSchema = z.discriminatedUnion("state", [
       text: channelStatusTextSchema,
       /** When to wake if nothing else wakes this agent first. */
       wakeAt: z.iso.datetime().optional(),
+      /** The running wake command whose exit wakes this agent. */
+      wakeCommand: z.string().min(1).optional(),
     })
     .strict(),
 ]);
@@ -188,6 +190,8 @@ export const channelAgentMetadataSchema = z
     avatar: agentAvatarSchema.optional(),
     seenThrough: z.number().int().nonnegative(),
     status: channelAgentStatusSchema.optional(),
+    /** The command an agent's wake command is running, kept so a boot can wake it once stopped. */
+    wakeCommand: z.string().min(1).optional(),
   })
   .strict();
 
@@ -197,7 +201,7 @@ export const setChannelAgentStatusInputSchema = channelStatusTargetSchema.safeEx
 export type SetChannelAgentStatusInput = z.output<typeof setChannelAgentStatusInputSchema>;
 
 const channelMemberSchema = channelAgentMetadataSchema
-  .omit({ seenThrough: true })
+  .omit({ seenThrough: true, wakeCommand: true })
   .extend({
     channelId: durableIdSchema,
     id: durableIdSchema,

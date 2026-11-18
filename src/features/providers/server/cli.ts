@@ -7,7 +7,8 @@ export function isInstalled(providerId: string): boolean {
 }
 
 export async function readVersion(providerId: string): Promise<string> {
-  const output = await runCommand(providerId, "--version");
+  // Copilot's launcher would name a newer cached build, but the server runs it without auto-update.
+  const output = await runCommand(providerId, "--version", { COPILOT_AUTO_UPDATE: "false" });
   const version = output.match(/\d+\.\d+\.\d+(?:-[\w-]+(?:\.[\w-]+)*)?/)?.[0];
   if (!version) throw new Error(`Unable to read ${providerId} version.`);
   return version;
@@ -20,10 +21,17 @@ export async function updateProvider(providerId: string) {
   return { version, updated: version !== before };
 }
 
-function runCommand(providerId: string, argument: string): Promise<string> {
+function runCommand(
+  providerId: string,
+  argument: string,
+  env?: Record<string, string>,
+): Promise<string> {
   const executable = Bun.which(providerId);
   if (!executable) throw new Error(`Could not find ${providerId} on PATH.`);
   // Updaters must find their own package manager before the dev server's local shims.
   const cliPath = `${dirname(executable)}${delimiter}${process.env.PATH}`;
-  return Bun.$`PATH=${cliPath} ${executable} ${argument} < /dev/null`.cwd(homedir()).text();
+  return Bun.$`PATH=${cliPath} ${executable} ${argument} < /dev/null`
+    .env({ ...process.env, ...env })
+    .cwd(homedir())
+    .text();
 }

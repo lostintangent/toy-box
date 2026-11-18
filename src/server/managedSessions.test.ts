@@ -8,16 +8,13 @@ import { deleteSavedDraft, saveDraft } from "@workspace/server/state/drafts";
 
 import { AutomationDatabase } from "@automations/server/database";
 import { ChannelDatabase } from "@channels/server/database";
-import {
-  registerWorkerSession,
-  unregisterWorkerSession,
-  WorkerDatabase,
-} from "@workers/server/database";
+import { WorkerDatabase } from "@workers/server/database";
+import { getStateDatabase } from "@/server/database";
 import { saveSettings } from "@workspace/server/state/settings";
 import { detachManagedSession, readSessionCatalog, resolveSessionType } from "./managedSessions";
 
-function createInboxWorker(sessionId: string) {
-  return registerWorkerSession({
+async function createInboxWorker(sessionId: string) {
+  return new WorkerDatabase(await getStateDatabase()).create({
     type: "inbox",
     sessionId,
     createdAt: new Date(0).toISOString(),
@@ -45,14 +42,14 @@ describe("session type resolution", () => {
     const channelWorkerId = `toy-box-${crypto.randomUUID()}`;
     await createInboxWorker(inboxId);
     await saveSettings({ ...DEFAULT_SETTINGS, hyperSessionId: hyperId });
-    await registerWorkerSession({
+    await new WorkerDatabase(db).create({
       createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: workerId,
       appId: "app-a",
       ephemeral: true,
     });
-    await registerWorkerSession({
+    await new WorkerDatabase(db).create({
       createdAt: new Date(0).toISOString(),
       type: "channel",
       channelId: "channel",
@@ -94,7 +91,7 @@ describe("session type resolution", () => {
       model: { provider: "copilot", name: "gpt-5" },
       cron: "0 9 * * *",
     });
-    await registerWorkerSession({
+    await new WorkerDatabase(db).create({
       createdAt: new Date(0).toISOString(),
       type: "session",
       sessionId: automation.id,
@@ -117,7 +114,7 @@ describe("Session catalog projection", () => {
       cron: "0 9 * * *",
     });
     await createInboxWorker("old-inbox");
-    await registerWorkerSession({
+    await new WorkerDatabase(db).create({
       createdAt: new Date(0).toISOString(),
       type: "channel",
       channelId: "channel",
@@ -199,7 +196,7 @@ describe("Session catalog projection", () => {
       const db = await openTestDatabase();
       const admit = async () => {
         await createInboxWorker("inbox");
-        await registerWorkerSession({
+        await new WorkerDatabase(db).create({
           createdAt: new Date(0).toISOString(),
           type: "channel",
           channelId: "channel",
@@ -208,7 +205,7 @@ describe("Session catalog projection", () => {
           name: "Reviewer",
           metadata: { seenThrough: 0 },
         });
-        await registerWorkerSession({
+        await new WorkerDatabase(db).create({
           createdAt: new Date(0).toISOString(),
           type: "session",
           sessionId: "worker",
@@ -230,8 +227,8 @@ describe("Session catalog projection", () => {
           if (change === "creation") {
             await admit();
           } else {
-            await unregisterWorkerSession("channel-worker");
-            await unregisterWorkerSession("worker");
+            await new WorkerDatabase(db).delete("channel-worker");
+            await new WorkerDatabase(db).delete("worker");
             await new WorkerDatabase(db).delete("inbox");
           }
           return [sessions, { "channel-worker": worktree, worker: worktree }];

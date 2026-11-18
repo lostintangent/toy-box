@@ -39,11 +39,13 @@ living inside the one before it:
   without closing is detached by the WebSocket ping within 30 seconds.
 
 The screen browser never opens a capture. Each time it opens, its search starts
-empty, it lists screens, and each card asks the helper for a fresh thumbnail. React
-Query keeps the last list and thumbnails for five minutes after the browser closes,
-so reopening shows them while fresh ones load; the server caches nothing. Picking a
-screen opens a pane whose viewer opens or joins that screen's capture, and closing
-the pane stops the capture unless someone else is still watching.
+empty, it lists screens, and each card loads a fresh thumbnail as an image the
+browser fetches lazily. React Query keeps the last list for five minutes after the
+browser closes, so reopening shows it while a fresh one loads. Thumbnail URLs name
+the opening, so a reopen waits for new captures rather than reusing old images; the
+server caches nothing. Picking a screen opens a pane whose viewer opens or joins
+that screen's capture, and closing the pane stops the capture unless someone else
+is still watching.
 
 ## Discovery and presentation
 
@@ -54,9 +56,10 @@ Displays are always listed; the tool and the screen browser share
 screen browser, `ScreenBrowserDialog`, in both layouts. It searches locally and
 shows each screen as a JPEG thumbnail, 960 pixels at most. Picking one opens it
 through the workspace's `reveal(pane)` verb, which focuses it if it's already open.
-Native apps list screens with `GET /api/v1/screens` and fetch a thumbnail's JPEG bytes
-from `GET /api/v1/screens/{id}/thumbnail`. They view and control a screen over the
-same socket as the browser, with `take-control`, `release-control` and `input`.
+Native apps list screens with `GET /api/v1/screens`, and they and the screen
+browser fetch a thumbnail's JPEG bytes from `GET /api/v1/screens/{id}/thumbnail`.
+They view and control a screen over the same socket as the browser, with
+`take-control`, `release-control` and `input`.
 Agents have only `list_screens`. They present a display or window with
 `set_session_preview`, clear it with `null`, or use the channel preview as lead.
 Automation belongs to provider computer-use tools or playwright-cli, not Screens.
@@ -122,17 +125,19 @@ encoder's fastest path; flattening onto any other color measured 2–3.5 ms slow
 per frame. Thumbnails skip the radius: at card size a window's corners are a few
 pixels, mostly under the card's own rounding.
 
-Packets contain two 32-bit big-endian lengths, JSON metadata, then JPEG bytes. The
-runtime forwards frame packets to viewers unchanged.
+Packets contain two 32-bit big-endian lengths, JSON metadata, then the JPEG bytes
+of a frame or thumbnail reply. The runtime forwards frame packets to viewers
+unchanged and serves a thumbnail's bytes as they arrived.
 All screens use 30 fps and JPEG quality 0.7. Frames fit the largest size a capture's
 viewers have given, in device pixels with zoom included, up to 3840x2400 and never past
 the native backing scale. Viewers without a size count only while no viewer has one, so
-a capture starts at full size and a browser joining a phone's screen doesn't refit it
-before giving its size. Native viewers give their size in the socket URL and send
-`resize` when it changes. The browser opens without one, then sends its canvas's size
-150 ms after it stops changing, since panes animate into place. It measures the
+a capture with no sized viewer runs at full size and an unsized viewer joining a phone's
+screen doesn't refit it. Viewers give their size in the socket URL as each socket
+connects, so a capture's first frame fits them, and send `resize` when it changes. The
+browser sends a change 150 ms after its canvas stops changing, since panes animate into
+place, and its first frame can come at a pane's size mid-animation. It measures the
 canvas's own box and transform, so an ancestor's animation doesn't shrink frames and a
-pinch sharpens them. A canvas with no area sends nothing. Local zoom stops where the
+pinch sharpens them. A canvas with no area gives no size. Local zoom stops where the
 largest frame would be one pixel per CSS pixel. The helper replies to a resize once
 macOS applies it, since stopping a stream mid-update can crash macOS's capture service.
 A refused resize is only logged, and frames keep their previous size. Full-frame

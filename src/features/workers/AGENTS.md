@@ -37,8 +37,9 @@ ownership and rejects completion.
 
 The persisted `ephemeral` flag is derived from that policy. Callback-based work is stored as durable;
 callbacks are process-local, and owners recover interrupted work after a restart. Startup and
-execution exceptions after admission become failed completion data with an error string. Failures
-before admission and cancellation during startup clean up the reservation. Worktree isolation
+execution exceptions after admission become failed completion data with an error string. A rejected
+admission committed nothing, so it rejects spawning without cleanup. Cancellation once admission
+commits, including during startup, deletes the reservation. Worktree isolation
 remains a Session concern.
 
 The Worker model deliberately knows no Agent role, Channel status, file editor task, or app state.
@@ -57,6 +58,7 @@ Workers owns lifecycle and owner-scoped storage capabilities:
 - **Cancel** verifies ownership, removes the run from active work at once, and stops startup or
   execution.
 - **Delete** removes the backing Session and its durable ownership record.
+- **Detach** removes only the ownership record once Session teardown has removed the Session.
 - **Read/update** lists retained Workers by type or exact owner, resolves an owned Worker, and
   updates name/metadata by Worker ID without changing ownership, identity, creation time, or lifetime.
   Omitted details remain unchanged; an explicit undefined metadata value clears it. Updates throw
@@ -66,9 +68,9 @@ Workers owns lifecycle and owner-scoped storage capabilities:
 Untrusted file and app creation enters through `spawnWorkerFromRequest` in `server/admission.ts`.
 An app request builds its prompt from the app it validated, then rechecks that app in `admit`,
 because app deletion cancels only Workers that are already published.
-The trusted `spawnWorker` admits ownership; `superviseWorker` in `server/supervisor.ts` composes
-Session creation with inheritance, cancellation, exact completion, and retention. Trusted
-supervisors use the public `spawnWorker` with a complete `SessionLaunch`, `owner`, optional `name`
+The trusted `spawnWorker` in `server/supervisor.ts` admits ownership, then composes Session creation
+with inheritance, cancellation, exact completion, and retention. Trusted
+supervisors call it with a complete `SessionLaunch`, `owner`, optional `name`
 and `metadata`, and a required `retention` policy. Workers assigns the Session ID and creation time;
 callers supply intent rather than constructing a persisted Worker. Supervisors apply their admission
 policy before spawning. Spawning resolves with `{ sessionId, value }` once ownership is persisted and Session acquisition has been
@@ -84,14 +86,13 @@ or a member with its membership message, before execution begins. Later mentions
 Channels has no separate activation operation or startup queue.
 
 Waiting remains a Session operation. Each in-flight Worker has one `WorkerRun`, and an ID has at most
-one at a time. Starting a run registers it, hands its completion to Sessions with
+one at a time. Starting a run makes it active, hands its completion to Sessions with
 `expectSessionCompletion`, and then publishes `worker.started`, so fast ephemeral work cannot
 disappear before `waitForSessions` observes it. `cancelWorker` aborts the run's signal, which removes
 it from active work and publishes `worker.finished` at once, then stops its Session. Supervision checks
 that signal at each step, and the run releases its ID when its completion settles.
-Unsuccessful execution outcomes remain data, including startup exceptions. Active Workers are
-available through the public read API so owners can distinguish current supervision from retained
-ownership.
+Unsuccessful execution outcomes remain data, including startup exceptions. `isWorkerActive` lets
+owners distinguish current supervision from retained ownership.
 
 ## Boundaries
 
@@ -112,7 +113,7 @@ ownership.
 - Owners own all interpretation of their metadata and any richer public projection.
 - Worker persistence and metadata operations do not publish owner-specific events. Owners publish
   their accepted workflow changes; application composition handles owner notification during shared
-  Session teardown. Raw `WorkerDatabase` operations remain composable into transactions.
+  Session teardown.
 - Metadata writes enforce the shared bounded-JSON contract before changing a row. SQLite enforces
   JSON validity; reads decode that JSON without reapplying write limits to historical records.
   Owners decide how to present metadata that no longer satisfies their own result schema.

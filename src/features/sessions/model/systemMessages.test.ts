@@ -41,6 +41,27 @@ describe("Session system messages", () => {
     expect(systemMessagePrompt(linked)).toContain(JSON.stringify(linked.server));
   });
 
+  test.each([
+    [1, "Wake command exited 1", "exited with code 1"],
+    [null, "Wake command stopped", "stopped without an exit code"],
+  ])(
+    "a wake command with exit code %p survives history, is never dropped, and names itself and its output",
+    (exitCode, label, outcome) => {
+      const message = {
+        type: "channel_wake_command",
+        command: 'gh run watch 123\necho "done"',
+        exitCode,
+        stdout: "/state/command.stdout",
+        stderr: "/state/command.stderr",
+      } as const;
+      expect(decodeSystemMessage(encodeSystemMessage(message))).toEqual(message);
+      expect(systemMessageLabel(message)).toBe(label);
+      expect(systemMessageCoalesceKey(message)).toBeUndefined();
+      for (const text of [JSON.stringify(message.command), outcome, message.stdout, message.stderr])
+        expect(systemMessagePrompt(message)).toContain(text);
+    },
+  );
+
   test("round-trips structured display content separately from the model prompt", () => {
     const message = {
       type: "file_edited",

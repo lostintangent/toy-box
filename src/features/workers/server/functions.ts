@@ -4,10 +4,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { cancelWorkerInputSchema, spawnWorkerInputSchema } from "../model";
 import * as workers from "./admission";
-import { getWorkers } from "./registry";
+import { getActiveWorkers } from "./registry";
 
 /** The pending workers every client shows on their owners. */
-export const listActiveWorkers = createServerFn({ method: "GET" }).handler(() => getWorkers());
+export const listActiveWorkers = createServerFn({ method: "GET" }).handler(() =>
+  getActiveWorkers(),
+);
 
 /** Spawn a background worker owned by a file or app. */
 export const spawnWorker = createServerFn({ method: "POST" })

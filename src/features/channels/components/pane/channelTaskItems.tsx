@@ -1,5 +1,4 @@
 import { Clock3, FileText, UserRound } from "lucide-react";
-import { useEffect, useState } from "react";
 import { AgentAvatar } from "@channels/components/agents/AgentAvatar";
 import {
   channelAgentIdentity,
@@ -11,6 +10,7 @@ import {
   type ChannelTask,
 } from "@channels/model";
 import type { DiffStats } from "@/shared/diffStats";
+import { useMinuteClock } from "@/shared/hooks/useMinuteClock";
 import { Button } from "@/shared/ui/button";
 import type { ChecklistItem } from "@/shared/ui/checklist";
 import { PopoverClose } from "@/shared/ui/popover";
@@ -22,18 +22,12 @@ const DIFF_COUNT_FORMATTER = new Intl.NumberFormat("en-US", {
 });
 
 export function useChannelTaskItems(options: Parameters<typeof channelTaskItems>[0]) {
-  const [now, setNow] = useState(Date.now);
-  const started = options.tasks.some(function hasStart(task): boolean {
-    return Boolean(task.startedAt) || Boolean(task.children?.some(hasStart));
-  });
-  useEffect(() => {
-    if (!started) return;
-    const tick = () => setNow(Date.now());
-    tick();
-    const timer = setInterval(tick, 60_000);
-    return () => clearInterval(timer);
-  }, [started]);
-  return channelTaskItems(options, now);
+  return channelTaskItems(options, useMinuteClock(channelTasksStarted(options.tasks)));
+}
+
+/** Whether any task at any depth has started, so its elapsed time needs a clock. */
+export function channelTasksStarted(tasks: readonly ChannelTask[]): boolean {
+  return tasks.some((task) => Boolean(task.startedAt) || channelTasksStarted(task.children ?? []));
 }
 
 /** Both Channel checklists present the same task identities, owners, and linked outcomes. */

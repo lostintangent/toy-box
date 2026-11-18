@@ -3,12 +3,13 @@ import { resolveSessionArtifactPath } from "@files/server/paths";
 import { deleteSessionFiles } from "@sessions/server/artifacts";
 import { expect, onTestFinished, test } from "bun:test";
 import { openTestDatabase } from "@/server/testFixtures";
-import { registerWorkerSession } from "@workers/server/database";
+import { WorkerDatabase } from "@workers/server/database";
+import { getStateDatabase } from "@/server/database";
 import { getInboxEntry } from "./index";
 import { inboxTools } from "./tools";
 
-function createInboxWorker(sessionId: string) {
-  return registerWorkerSession({
+async function createInboxWorker(sessionId: string) {
+  return new WorkerDatabase(await getStateDatabase()).create({
     type: "inbox",
     sessionId,
     createdAt: new Date(0).toISOString(),
@@ -19,6 +20,7 @@ function createInboxWorker(sessionId: string) {
 test("send_to_inbox attaches an existing nested file without rewriting it, and can clear its reference", async () => {
   await openTestDatabase();
   const sessionId = `toy-box-${crypto.randomUUID()}`;
+  const context = { sessionId, directory: "/tmp" };
   await createInboxWorker(sessionId);
   const artifact = "reports/research.md";
   const path = resolveSessionArtifactPath(sessionId, artifact)!;
@@ -28,7 +30,7 @@ test("send_to_inbox attaches an existing nested file without rewriting it, and c
 
   const [sendToInbox] = inboxTools;
   expect(sendToInbox.isTerminal).toBe(true);
-  const result = await sendToInbox.handler({ message: "Research is ready", artifact }, sessionId);
+  const result = await sendToInbox.handler({ message: "Research is ready", artifact }, context);
   expect(JSON.parse(String(result))).toEqual({ entryId: sessionId });
   expect(await Bun.file(path).text()).toBe("# Research");
   expect(Bun.file(path).lastModified).toBe(0);
@@ -40,7 +42,7 @@ test("send_to_inbox attaches an existing nested file without rewriting it, and c
     artifact,
   });
 
-  await sendToInbox.handler({ message: "Updated answer" }, sessionId);
+  await sendToInbox.handler({ message: "Updated answer" }, context);
   expect(await getInboxEntry(sessionId)).toEqual({
     id: sessionId,
     createdAt: new Date(0).toISOString(),
@@ -53,16 +55,15 @@ test("send_to_inbox attaches an existing nested file without rewriting it, and c
 test("send_to_inbox rejects invalid artifacts without replacing the existing result", async () => {
   await openTestDatabase();
   const sessionId = `toy-box-${crypto.randomUUID()}`;
+  const context = { sessionId, directory: "/tmp" };
   await createInboxWorker(sessionId);
   await Bun.write(resolveSessionArtifactPath(sessionId, "reports/result.md")!, "Result");
   onTestFinished(() => deleteSessionFiles(sessionId));
   const [sendToInbox] = inboxTools;
-  await sendToInbox.handler({ message: "Keep this answer" }, sessionId);
+  await sendToInbox.handler({ message: "Keep this answer" }, context);
   const existing = await getInboxEntry(sessionId);
   for (const artifact of ["missing.md", "reports", "../outside.md", "/etc/passwd"]) {
-    await expect(
-      sendToInbox.handler({ message: "Invalid", artifact }, sessionId),
-    ).rejects.toThrow();
+    await expect(sendToInbox.handler({ message: "Invalid", artifact }, context)).rejects.toThrow();
     expect(await getInboxEntry(sessionId)).toEqual(existing);
   }
 });

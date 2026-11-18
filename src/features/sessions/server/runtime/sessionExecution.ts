@@ -8,8 +8,12 @@
 // echoes sent inputs.
 
 import type { SessionConnection } from "@providers/server/provider";
-import { evictCachedSessionIfStale, releaseSession } from "@sessions/server/state/registry";
-import { cacheSnapshot, loadSessionSnapshot } from "@sessions/server/state/snapshots";
+import {
+  evictConnection,
+  evictConnectionIfStale,
+  releaseConnection,
+} from "@sessions/server/state/registry";
+import { cacheSnapshot } from "@sessions/server/state/snapshots";
 import { setSessionActivity } from "@sessions/server/state/activity";
 import { createToolCallProjector } from "@sessions/server/toolProjection";
 import { systemMessageCoalesceKey } from "@sessions/model/systemMessages";
@@ -27,7 +31,6 @@ import type {
   SessionSubscriptionEvent,
 } from "@sessions/model";
 import { broadcast } from "@workspace/server/events";
-import { sharedMap } from "@/shared/server/processState";
 import { createSessionEventLog } from "./eventLog";
 
 type MessageDisposition = "started" | "queued";
@@ -37,66 +40,17 @@ type StreamEndReason = Extract<SessionEvent, { type: "end" }>["reason"];
 // snapshot instead, so the cap trades a rare larger frame for bounded memory.
 const MAX_REPLAY_EVENTS = 1500;
 
-// Dev HMR can reload this module while active turns are still running. Keep the
-// registry on globalThis so reconnects and stop requests keep finding the same
-// runtime object. A registered execution is therefore expected to mean "active or
-// reconnectable"; terminal paths must finish or dispose it so idle sessions disappear.
+// Providers confirm Stop within milliseconds. One that never does, such as a CLI blocked on a
+// macOS privacy prompt, must not keep its session running, so Stop finishes without it.
+const PROVIDER_ABORT_TIMEOUT_MS = 5_000;
+
+// The runtime holds each execution until it settles and calls onSettled, so a held execution is
+// always active or reconnectable.
 export class SessionExecution {
-  // ── Static registry and controls ─────────────────────────────────────
-
-  private static readonly executions = sharedMap<SessionExecution>("session-executions");
-
-  static get(sessionId: string): SessionExecution | undefined {
-    return SessionExecution.executions.get(sessionId);
-  }
-
-  /** @internal acquireSessionExecution is the production caller. */
-  static getOrCreate(
-    sessionId: string,
-    session: SessionConnection,
-    initialState?: Partial<SessionState>,
-  ): SessionExecution {
-    const existing = SessionExecution.executions.get(sessionId);
-    if (existing) {
-      return existing;
-    }
-
-    const execution = new SessionExecution(sessionId, session, initialState);
-    SessionExecution.executions.set(sessionId, execution);
-    return execution;
-  }
-
-  static isRunning(sessionId: string): boolean {
-    return SessionExecution.executions.has(sessionId);
-  }
-
-  static async waitForCompletion(
-    sessionId: string,
-    timeoutMs?: number,
-  ): Promise<SessionCompletion> {
-    const execution = SessionExecution.get(sessionId);
-    if (!execution) {
-      return completionResult((await loadSessionSnapshot(sessionId)).messages);
-    }
-    return execution.waitForCompletion(timeoutMs);
-  }
-
-  /**
-   * Remove the live runtime as part of deleting its durable session.
-   * Provider work is aborted and subscribers receive a terminal event, but a
-   * deleted session publishes no idle/unread update. Completion waiters still
-   * settle cleanly.
-   */
-  static async remove(sessionId: string): Promise<void> {
-    const execution = SessionExecution.executions.get(sessionId);
-    if (!execution) return;
-    await execution.removeForDeletion();
-  }
-
   // ── Instance fields ──────────────────────────────────────────────────
 
   readonly sessionId: string;
-  /** Underlying provider session used by runtime-owned operations. */
+  /** Underlying provider connection used by runtime-owned operations. */
   readonly connection: SessionConnection;
 
   readonly #log: ReturnType<typeof createSessionEventLog>;
@@ -104,6 +58,7 @@ export class SessionExecution {
   // Settles once, when this execution finishes or is deleted.
   readonly #completion = Promise.withResolvers<SessionCompletion>();
   #unsubscribeProvider: () => void;
+  readonly #onSettled: VoidFunction;
 
   #sessionState: SessionState;
 
@@ -113,13 +68,15 @@ export class SessionExecution {
   #abortRequested = false;
   #finished = false;
 
-  private constructor(
+  constructor(
     sessionId: string,
     connection: SessionConnection,
+    onSettled: VoidFunction,
     initialState?: Partial<SessionState>,
   ) {
     this.sessionId = sessionId;
     this.connection = connection;
+    this.#onSettled = onSettled;
     this.#sessionState = createInitialSessionState(initialState);
     // The log continues this state, so a client holding a seed's revision, or a
     // draft's 0, replays from the first event.
@@ -242,16 +199,10 @@ export class SessionExecution {
 
   /** Wait for this execution instance to complete, not future replacements with the same ID. */
   waitForCompletion(timeoutMs?: number): Promise<SessionCompletion> {
-    if (timeoutMs === undefined || timeoutMs < 0) return this.#completion.promise;
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<SessionCompletion>((resolve) => {
-      timer = setTimeout(
-        () => resolve(completionResult(this.#sessionState.messages, "timed_out")),
-        timeoutMs,
-      );
-    });
-    return Promise.race([this.#completion.promise, timeout]).finally(() => clearTimeout(timer));
+    if (timeoutMs === undefined) return this.#completion.promise;
+    return withTimeout(this.#completion.promise, timeoutMs, () =>
+      completionResult(this.#sessionState.messages, "timed_out"),
+    );
   }
 
   getSessionState(): SessionState {
@@ -267,40 +218,56 @@ export class SessionExecution {
 
   /** @internal Complete this execution; external controls should abort or delete the session. */
   finish(reason: StreamEndReason = "idle", error?: string): void {
-    if (this.#finished) return;
-    this.#finished = true;
-    this.#emit({ type: "end", reason, ...(error ? { error } : {}) });
-    this.#completion.resolve(
-      completionResult(this.#sessionState.messages, reason === "error" ? "failed" : "completed"),
-    );
+    if (!this.#settle(reason, error)) return;
     if (reason === "idle" && !this.#abortRequested) {
       cacheSnapshot(this.sessionId, this.#sessionState);
     }
     // A finished turn waits to be read, even by a watching client, which marks it
     // read itself. A stopped one was already seen.
     setSessionActivity(this.sessionId, this.#abortRequested ? "idle" : "unread");
-    this.#dispose();
-    releaseSession(this.sessionId);
+    releaseConnection(this.sessionId);
   }
 
-  /** Always finish the execution, even if the SDK abort itself fails. */
+  /** Always finish the execution, even if the provider's abort fails or never confirms. */
   async abort(): Promise<void> {
     this.#abortRequested = true;
     try {
-      await this.connection.abort();
+      await this.#abortProvider();
     } catch (error) {
-      evictCachedSessionIfStale(this.sessionId, error);
+      evictConnectionIfStale(this.sessionId, error);
       throw error;
     } finally {
       this.finish();
     }
   }
 
-  private async removeForDeletion(): Promise<void> {
+  /** Settle as part of deleting the durable session, then abort provider work. Waiters settle
+   *  cleanly, but a deleted session publishes no idle or unread activity. */
+  async remove(): Promise<void> {
     this.#abortRequested = true;
-    if (!this.#finished) this.#emit({ type: "end", reason: "idle" });
-    this.#dispose();
-    await this.connection.abort();
+    if (this.#settle("idle")) await this.#abortProvider();
+  }
+
+  /** End the stream, settle waiters, and leave the runtime, once, so a stale reference can't
+   *  emit or accept a message afterwards. Returns whether this call settled it. */
+  #settle(reason: StreamEndReason, error?: string): boolean {
+    if (this.#finished) return false;
+    this.#finished = true;
+    this.#emit({ type: "end", reason, ...(error ? { error } : {}) });
+    this.#completion.resolve(
+      completionResult(this.#sessionState.messages, reason === "error" ? "failed" : "completed"),
+    );
+    this.#unsubscribeProvider();
+    this.#onSettled();
+    return true;
+  }
+
+  async #abortProvider(): Promise<void> {
+    await withTimeout(this.connection.abort(), PROVIDER_ABORT_TIMEOUT_MS, () => {
+      console.warn(`Session ${this.sessionId}: the provider didn't confirm Stop in time.`);
+      // A provider that can't confirm Stop can't take the next turn either.
+      evictConnection(this.sessionId);
+    });
   }
 
   // ── Turn execution ───────────────────────────────────────────────────
@@ -320,7 +287,7 @@ export class SessionExecution {
 
       await this.connection.send(message);
     } catch (error) {
-      evictCachedSessionIfStale(this.sessionId, error);
+      evictConnectionIfStale(this.sessionId, error);
       this.finish("error");
       throw error;
     }
@@ -435,17 +402,6 @@ export class SessionExecution {
       if (this.#sessionState.status === "background") void this.#drainMessageQueue();
     }
   }
-
-  #dispose(): void {
-    // Session deletion can dispose without the domain finish transition. Mark
-    // the execution finished so a stale reference cannot emit a terminal event or
-    // accept a message after registry removal.
-    this.#finished = true;
-
-    this.#completion.resolve(completionResult(this.#sessionState.messages));
-    this.#unsubscribeProvider();
-    SessionExecution.executions.delete(this.sessionId);
-  }
 }
 
 export class SessionExecutionFinishedError extends Error {
@@ -468,7 +424,7 @@ function deferMessage(message: SessionMessage): SessionMessage {
   return deferred;
 }
 
-function completionResult(
+export function completionResult(
   messages: SessionState["messages"],
   status: SessionCompletion["status"] = "completed",
 ): SessionCompletion {
@@ -484,4 +440,13 @@ function completionResult(
   }
 
   return result;
+}
+
+/** Settle as `promise` does, or with `onTimeout()` if it takes longer than `ms`. */
+export function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(onTimeout()), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }

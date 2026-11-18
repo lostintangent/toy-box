@@ -38,7 +38,7 @@ here. No additional OpenAI npm SDK or Toy Box login is required.
   live and during history replay. Retrying `error` notifications are not transcript
   failures; the final `turn/completed` outcome is authoritative.
 - `protocol/index.ts` is the checked-in Apache-2.0 upstream protocol generated against CLI
-  0.166.0. Run `bun src/features/providers/server/codex/protocol/generate.ts` after a deliberate protocol
+  0.169.0. Run `bun src/features/providers/server/codex/protocol/generate.ts` after a deliberate protocol
   upgrade and verify changed methods against the installed CLI. The generator formats its own output.
   Adding a request, server request, or notification takes only its wire method name; upstream's unions
   supply its types, so the transport delivers typed notifications and requests.

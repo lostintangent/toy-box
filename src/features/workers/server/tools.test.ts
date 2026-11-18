@@ -24,6 +24,8 @@ beforeEach(() => {
 });
 
 describe("worker SDK tool", () => {
+  const context = { sessionId: "toy-box-caller", directory: "/tmp" };
+
   test("spawns a retained child owned by the caller without opening it", async () => {
     const tool = workerTools.find((candidate) => candidate.name === "spawn_worker");
     const model = { provider: "copilot", name: "claude-sonnet-4.5" };
@@ -36,7 +38,7 @@ describe("worker SDK tool", () => {
         directory: "/workspace",
         useWorktree: true,
       },
-      "toy-box-caller",
+      context,
     );
 
     expect(JSON.parse(String(result))).toEqual({ sessionId: "toy-box-worker" });
@@ -52,7 +54,7 @@ describe("worker SDK tool", () => {
   test("can make a child ephemeral", async () => {
     const tool = workerTools.find((candidate) => candidate.name === "spawn_worker");
 
-    const result = await tool?.handler?.({ task: "Run once", ephemeral: true }, "toy-box-caller");
+    const result = await tool?.handler?.({ task: "Run once", ephemeral: true }, context);
 
     expect(JSON.parse(String(result))).toEqual({
       sessionId: "toy-box-worker",

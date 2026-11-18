@@ -41,6 +41,7 @@ import { deleteChannelFiles, storeChannelAttachments, storeChannelAvatar } from 
 import { publishChannelEvent, releaseChannelEvents } from "./eventLog";
 import { messagePeerChannelLead, type PeerLeadMessageInput } from "./peers";
 import { publishChannelNotification } from "./push";
+import { runWakeCommand, wakeCommandOutput } from "./wakeCommands";
 
 const CHANNEL_MESSAGE_LIMIT = 100;
 
@@ -376,8 +377,7 @@ export async function setChannelAgentStatus(
 /** Ends a turn. An agent waiting on a teammate or external work can ask to wake after a delay. */
 export async function finishChannelAgentTurn(
   sessionId: string,
-  waitingFor?: string,
-  wakeAfterMinutes?: number,
+  { waitingFor, wakeAfterMinutes }: { waitingFor?: string; wakeAfterMinutes?: number },
 ): Promise<void> {
   const database = new ChannelDatabase(await getStateDatabase());
   const wakeAt = wakeAfterMinutes
@@ -389,6 +389,18 @@ export async function finishChannelAgentTurn(
     false,
   );
   if (change) publishChannelChange(change);
+}
+
+/**
+ * Runs an agent's wake command, replacing the one it was running, and returns where its output
+ * goes. Its exit wakes the agent, whether or not it's still waiting.
+ */
+export async function runChannelWakeCommand(agentId: string, command: string, cwd: string) {
+  const database = new ChannelDatabase(await getStateDatabase());
+  // The record is queued synchronously after the spawn, before any exit can clear it.
+  runWakeCommand(agentId, command, cwd, (exitCode) => endWakeCommand(database, agentId, exitCode));
+  await database.setWakeCommand(agentId, command);
+  return wakeCommandOutput(agentId);
 }
 
 export async function setChannelRoutine(
@@ -508,6 +520,27 @@ export async function runChannelRoutine(channelId: string, routineId: string): P
   return true;
 }
 
+/**
+ * Wakes the owner of a wake command that ended, a null exit code meaning it stopped without
+ * exiting. Clearing its record is queued before anything else can record a newer command.
+ */
+export async function endWakeCommand(
+  database: ChannelDatabase,
+  agentId: string,
+  exitCode: number | null,
+): Promise<void> {
+  const command = await database.clearWakeCommand(agentId).catch((error) => {
+    console.error(`Failed to clear Channel agent ${agentId}'s wake command:`, error);
+  });
+  if (!command) return;
+  await wakeQuietly(agentId, {
+    type: "channel_wake_command",
+    command,
+    exitCode,
+    ...wakeCommandOutput(agentId),
+  });
+}
+
 function wakeQuietly(agentId: string, systemMessage: SessionSystemMessage): Promise<void> {
   return wakeChannelAgent(agentId, systemMessage).catch((error) => {
     console.error(`Failed to wake Channel agent ${agentId}:`, error);
@@ -515,8 +548,6 @@ function wakeQuietly(agentId: string, systemMessage: SessionSystemMessage): Prom
 }
 
 async function assertMedia(path: string): Promise<void> {
-  if (!isAbsolute(path))
-    throw new Error("Use an absolute attachment path when this Session has no workspace.");
   const file = Bun.file(path);
   if (!(await file.exists()) || !/^(image|video)\//.test(file.type)) {
     throw new Error(`Channel attachment is not an image or video file: ${path}`);

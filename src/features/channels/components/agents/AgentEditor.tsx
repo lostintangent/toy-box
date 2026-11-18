@@ -111,14 +111,14 @@ function AgentForm({ agent, onClose }: { agent: ChannelMember; onClose: () => vo
         </DialogFooter>
       </form>
 
-      {/* Removing closes the editor with it, while a failure stays in view. */}
+      {/* Removing closes the editor with it. */}
       <DestructiveConfirmationDialog
         open={confirmingDelete}
         onOpenChange={setConfirmingDelete}
         title={`Remove ${agent.name}?`}
         description="This removes the agent from the channel and deletes its private session. Its channel messages and reactions remain attributed to Deleted agent."
         confirmLabel="Remove agent"
-        mutation={{ ...channelMutations.removeMember(agent.id), onSuccess: onClose }}
+        mutation={{ ...channelMutations.removeMember(agent.id), onMutate: onClose }}
       />
     </>
   );

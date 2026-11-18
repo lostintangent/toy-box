@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
-import { FileText, Inbox as InboxIcon, Info, Loader2, Trash2, TriangleAlert } from "lucide-react";
+import { FileText, Inbox as InboxIcon, Info, Trash2, TriangleAlert } from "lucide-react";
 import { SessionPreview, useSessionPreview } from "@sessions/components/SessionPreview";
 import { Button } from "@/shared/ui/button";
 import { Markdown } from "@/shared/ui/markdown";
@@ -75,7 +75,7 @@ function InboxEntryRow({
   linked: boolean;
   onSelect: () => void;
 }) {
-  const deleteMutation = useMutation(inboxMutations.deleteEntry(entry.id));
+  const { mutate: deleteEntry } = useMutation(inboxMutations.deleteEntry(entry.id));
   const { unread, waiting, status } = useSessionActivity(entry.id);
   const { data: workers } = useSuspenseQuery(workerQueries.active);
   const running = useSessionsActivity((activities) =>
@@ -161,7 +161,6 @@ function InboxEntryRow({
       <InboxEntryAction
         label={label}
         status={mark}
-        deleting={deleteMutation.isPending}
         onDelete={() => {
           if (entry.kind === "error" || (entry.kind === "result" && entry.artifact))
             openDialog((dialog) => (
@@ -172,7 +171,7 @@ function InboxEntryRow({
                 mutation={inboxMutations.deleteEntry(entry.id)}
               />
             ));
-          else deleteMutation.mutate();
+          else deleteEntry();
         }}
       />
     </div>
@@ -188,12 +187,10 @@ const STATUS_LABELS = {
 function InboxEntryAction({
   label,
   status,
-  deleting,
   onDelete,
 }: {
   label?: string;
   status?: keyof typeof STATUS_LABELS;
-  deleting: boolean;
   onDelete: () => void;
 }) {
   return (
@@ -210,7 +207,6 @@ function InboxEntryAction({
         type="button"
         variant="destructive-ghost"
         size="icon"
-        disabled={deleting}
         aria-label={label ? `Delete inbox entry: ${label}` : "Delete inbox entry"}
         className={cn(
           "absolute inset-0 h-8 w-8",
@@ -219,11 +215,7 @@ function InboxEntryAction({
         )}
         onClick={onDelete}
       >
-        {deleting ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Trash2 className="h-3.5 w-3.5" />
-        )}
+        <Trash2 className="h-3.5 w-3.5" />
       </Button>
     </div>
   );

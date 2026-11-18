@@ -1,4 +1,7 @@
-const clockFormatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+export const clockFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
 const fullFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
 
 /** A time of day with its full date on hover, for timelines already divided by day. */

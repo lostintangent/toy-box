@@ -24,7 +24,7 @@ function setup() {
   };
   const helper: ScreenHelper = {
     list: async () => ({ displays: [], windows: [] }),
-    thumbnail: async () => "",
+    thumbnail: async () => new Uint8Array(),
     async start(screenId, { width, height }) {
       calls.push("start");
       sizes.push(`start ${width}x${height}`);

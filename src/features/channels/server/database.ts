@@ -280,6 +280,27 @@ export class ChannelDatabase {
     });
   }
 
+  async setWakeCommand(agentId: string, command: string): Promise<void> {
+    await inStateTransaction(this.db, async (db) => {
+      const worker = await requireChannelWorker(db, agentId);
+      const metadata = channelAgentMetadataSchema.parse(worker.metadata);
+      await new WorkerDatabase(db).update(agentId, {
+        metadata: { ...metadata, wakeCommand: command },
+      });
+    });
+  }
+
+  /** Removes an agent's wake command record, returning the command. */
+  async clearWakeCommand(agentId: string) {
+    return inStateTransaction(this.db, async (db) => {
+      const worker = await new WorkerDatabase(db).get(agentId, "channel");
+      if (!worker) return undefined;
+      const { wakeCommand, ...metadata } = channelAgentMetadataSchema.parse(worker.metadata);
+      if (wakeCommand) await new WorkerDatabase(db).update(agentId, { metadata });
+      return wakeCommand;
+    });
+  }
+
   async setAgentStatus(agentId: string, status?: ChannelAgentStatus, required = true) {
     return changeAgentStatus(this.db, agentId, status, required);
   }
@@ -899,9 +920,11 @@ async function changeAgentStatus(
     }
     const metadata = channelAgentMetadataSchema.parse(worker.metadata);
     if (requiredState && metadata.status?.state !== requiredState) return null;
-    if (Bun.deepEquals(metadata.status, status)) return null;
+    const { wakeCommand } = metadata;
+    const next = status?.state === "waiting" && wakeCommand ? { ...status, wakeCommand } : status;
+    if (Bun.deepEquals(metadata.status, next)) return null;
     await new WorkerDatabase(transaction).update(worker.sessionId, {
-      metadata: applyPatch(metadata, { status: status ?? null }),
+      metadata: applyPatch(metadata, { status: next ?? null }),
     });
     return {
       channelId: worker.channelId,
@@ -909,7 +932,7 @@ async function changeAgentStatus(
         {
           type: "status" as const,
           agentId,
-          status,
+          status: next,
           revision: await advanceRevision(transaction, worker.channelId),
         },
       ],

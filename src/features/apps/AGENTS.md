@@ -96,7 +96,8 @@ events on reconnect, and a read in flight replays the events applied meanwhile o
 returns.
 Saved app revisions advance monotonically when applying events and mutation responses.
 Definition-sensitive transitions are serialized by definition ID;
-ordinary instance updates remain independently optimistic.
+ordinary instance updates remain independently optimistic. Uninstall and deletion are
+`optimisticMutation`s of `app.unregistered` and `app.deleted`.
 
 ## Opening files
 

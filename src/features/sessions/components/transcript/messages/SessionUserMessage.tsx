@@ -46,7 +46,6 @@ function RewindControl({ sessionId, timestamp }: { sessionId: string; timestamp:
                   title="Rewind conversation?"
                   description="This removes this message and every message after it. Files are not changed. This action cannot be undone."
                   confirmLabel="Rewind"
-                  pendingLabel="Rewinding..."
                   mutation={sessionMutations.rewindSession(sessionId, timestamp)}
                 />
               ))

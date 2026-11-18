@@ -1,7 +1,6 @@
 // Persisted ownership and lifetime policy for worker sessions.
 
 import { sessionFile } from "@files/model";
-import { getStateDatabase } from "@/server/database";
 import { smallJsonSchema } from "@/shared/smallJson";
 import type { Worker, WorkerOwner } from "../model";
 
@@ -95,45 +94,24 @@ export class WorkerDatabase {
     `;
     return rows.length > 0;
   }
-}
 
-export async function getWorkerSessionIdsForParent(parentSessionId: string): Promise<string[]> {
-  const db = await getStateDatabase();
-  const rows = await db<WorkerSessionIdRow[]>`
-    SELECT session_id FROM workers
-    WHERE parent_session_id = ${parentSessionId}
-    ORDER BY session_id
-  `;
-  return rows.map((row) => row.session_id);
-}
+  /** The Workers of a parent Session, including its file Workers. */
+  async listChildIds(parentSessionId: string): Promise<string[]> {
+    const rows = await this.db<WorkerSessionIdRow[]>`
+      SELECT session_id FROM workers
+      WHERE parent_session_id = ${parentSessionId}
+      ORDER BY session_id
+    `;
+    return rows.map((row) => row.session_id);
+  }
 
-export async function getWorkerSessionIdsForApp(appId: string): Promise<string[]> {
-  const db = await getStateDatabase();
-  const rows = await db<WorkerSessionIdRow[]>`
-    SELECT session_id FROM workers WHERE app_id = ${appId} ORDER BY session_id
-  `;
-  return rows.map((row) => row.session_id);
-}
-
-/** Ephemeral workers cannot outlive their process-local supervisor. */
-export async function getEphemeralWorkerSessionIds(): Promise<string[]> {
-  const db = await getStateDatabase();
-  const rows = await db<WorkerSessionIdRow[]>`
-    SELECT session_id FROM workers WHERE ephemeral = 1 ORDER BY session_id
-  `;
-  return rows.map((row) => row.session_id);
-}
-
-export async function getPersistedWorker(sessionId: string): Promise<Worker | null> {
-  return new WorkerDatabase(await getStateDatabase()).get(sessionId);
-}
-
-export async function registerWorkerSession(worker: Worker): Promise<void> {
-  await new WorkerDatabase(await getStateDatabase()).create(worker);
-}
-
-export async function unregisterWorkerSession(sessionId: string): Promise<void> {
-  await new WorkerDatabase(await getStateDatabase()).delete(sessionId);
+  /** Ephemeral Workers cannot outlive their process-local supervisor. */
+  async listEphemeralIds(): Promise<string[]> {
+    const rows = await this.db<WorkerSessionIdRow[]>`
+      SELECT session_id FROM workers WHERE ephemeral = 1 ORDER BY session_id
+    `;
+    return rows.map((row) => row.session_id);
+  }
 }
 
 function workerColumns(worker: WorkerOwner) {

@@ -9,11 +9,13 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { ChannelEvent } from "@channels/model";
+import { channelAgentMetadataSchema, type ChannelEvent } from "@channels/model";
 import { machineFile, workspaceFileId } from "@files/model";
+import type { Worker } from "@workers/model";
 import { createFileServeUrl } from "@files/model/paths";
 import { reduceChannelState } from "@channels/model/reducer";
 import { openTestDatabase } from "@/server/testFixtures";
@@ -28,7 +30,6 @@ const runtime = {
   createSession: mock<typeof realRuntime.createSession>(),
   deliverSessionMessage: mock<typeof realRuntime.deliverSessionMessage>(),
   deleteSessionIfExists: mock<typeof realRuntime.deleteSessionIfExists>(),
-  getSessionDirectory: mock<typeof realRuntime.getSessionDirectory>(),
 };
 mock.module("@sessions/server/runtime", () => ({ ...realRuntime, ...runtime }));
 afterAll(() => {
@@ -37,7 +38,7 @@ afterAll(() => {
 
 const { detachManagedSession } = await import("@/server/managedSessions");
 const { RefusalError } = await import("@/shared/server/http");
-const { getPersistedWorker } = await import("@workers/server/database");
+const { getWorker } = await import("@workers/server");
 const { setSessionProvider } = await import("@sessions/server/state/sessions");
 const { deleteSessionActivity, setSessionActivity } =
   await import("@sessions/server/state/activity");
@@ -56,6 +57,7 @@ const {
   messageChannelLead,
   postChannelMessage,
   readChannel,
+  removeChannelMember,
   runChannelRoutine,
   setChannelAgentStatus,
   setChannelMessageReaction,
@@ -68,6 +70,7 @@ const { deleteChannelFiles } = await import("./attachments");
 const { subscribeChannelEvents, releaseChannelEvents } = await import("./eventLog");
 const { getChannelSnapshot } = await import("./stream");
 const { default: startChannels } = await import("./startup");
+const { stopWakeCommands } = await import("./wakeCommands");
 const { channelLeadTools, channelMemberTools, channelTools, createChannelMembersTool } =
   await import("./tools");
 
@@ -79,7 +82,6 @@ beforeEach(() => {
   runtime.createSession.mockReset().mockResolvedValue(started);
   runtime.deliverSessionMessage.mockReset().mockResolvedValue(started);
   runtime.deleteSessionIfExists.mockReset().mockResolvedValue(true);
-  runtime.getSessionDirectory.mockReset().mockResolvedValue(undefined);
 });
 
 const PNG_BASE64 =
@@ -100,7 +102,13 @@ async function openChannels() {
   return new ChannelDatabase(await openTestDatabase());
 }
 
-async function invokeTool(name: string, input = {}, sessionId = "coordinator", agentOnly = false) {
+async function invokeTool(
+  name: string,
+  input = {},
+  sessionId = "coordinator",
+  agentOnly = false,
+  directory = tmpdir(),
+) {
   const tool = [
     ...(agentOnly ? [] : channelTools),
     createChannelMembersTool,
@@ -108,7 +116,10 @@ async function invokeTool(name: string, input = {}, sessionId = "coordinator", a
     ...channelLeadTools,
   ].find((tool) => tool.name === name) as Tool | undefined;
   if (!tool) throw new Error(`Tool not found: ${name}`);
-  const result = await tool.handler(tool.parameters?.parse(input) ?? input, sessionId);
+  const result = await tool.handler(tool.parameters?.parse(input) ?? input, {
+    sessionId,
+    directory,
+  });
   return typeof result === "string" ? result : JSON.parse(toolResultText(result));
 }
 
@@ -146,7 +157,7 @@ test("attention uses normal messages and upserts, and a user reply also wakes th
   });
   expect(deliver).not.toHaveBeenCalled();
   expect((await channels.getAgent(channel.id))?.status?.state).toBe("working");
-  await finishChannelAgentTurn(channel.id, "Your color choice");
+  await finishChannelAgentTurn(channel.id, { waitingFor: "Your color choice" });
   await postChannelMessage(
     { id: "decision", channelId: channel.id, content: "@builder use blue." },
     { type: "user" },
@@ -164,9 +175,9 @@ test("creating a Channel starts its lead without creating a directory", async ()
   });
   const directory = join(root, "nested", "workspace");
   const leadStarted = Promise.withResolvers<Parameters<typeof realRuntime.createSession>>();
-  let leadWorker: Awaited<ReturnType<typeof getPersistedWorker>> = null;
+  let leadWorker: Worker | null = null;
   runtime.createSession.mockImplementation(async (...args) => {
-    leadWorker = await getPersistedWorker(args[0]);
+    leadWorker = await getWorker(args[0]);
     leadStarted.resolve(args);
     return {
       disposition: "started",
@@ -328,6 +339,27 @@ test("an Agent's image and video files are copied into its Channel and outlive t
   });
   expect((await channels.listMessagesAfter(channel.id)).at(-1)).toEqual(message);
   expect(await Bun.file(join(stored, "flow.webm")).text()).toBe("webm");
+});
+
+test("an Agent attaches files relative to the directory its provider runs in", async () => {
+  const channels = await openChannels();
+  const channel = await createStoredChannel(channels, { name: "Notes", ...CHANNEL_DEFAULTS });
+  onTestFinished(() => deleteChannelFiles(channel.id));
+  const directory = await mkdtemp(join(tmpdir(), "toy-box-channel-attachments-"));
+  onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  await Bun.write(join(directory, "shot.png"), Buffer.from(PNG_BASE64, "base64"));
+
+  await invokeTool(
+    "send_channel_message",
+    { content: "Ready.", attachments: ["shot.png"] },
+    channel.id,
+    false,
+    directory,
+  );
+
+  expect((await channels.listMessagesAfter(channel.id)).at(-1)).toMatchObject({
+    attachments: [{ name: "shot.png", mimeType: "image/png" }],
+  });
 });
 
 test("a user's uploads become Channel files that clients resolve", async () => {
@@ -525,6 +557,8 @@ test("a Session can seed and passively read Channel context", async () => {
     "share_channel_artifact",
     { channelId: channel.id, path: "brief.md", title: "Research brief" },
     "coordinator-session",
+    false,
+    directory,
   );
   await updateChannel(channel.id, {
     purpose: "Turn the evidence into a useful recommendation.",
@@ -903,7 +937,6 @@ test("a lead is nudged toward an avatar until it sets one", async () => {
   onTestFinished(() => deleteChannelFiles(channel.id));
   const directory = await mkdtemp(join(tmpdir(), "toy-box-channel-avatar-"));
   onTestFinished(() => rm(directory, { recursive: true, force: true }));
-  runtime.getSessionDirectory.mockResolvedValue(directory);
   const { getChannelAgentConfiguration } = await import("./agent");
   const nudged = async (channelId: string, sessionId = channelId) =>
     (
@@ -917,7 +950,13 @@ test("a lead is nudged toward an avatar until it sets one", async () => {
   expect(await nudged(unstated.id)).toBe(false);
 
   await Bun.write(join(directory, "icon.png"), "icon");
-  await invokeTool("update_channel", { avatar: { image: "icon.png" } }, channel.id);
+  await invokeTool(
+    "update_channel",
+    { avatar: { image: "icon.png" } },
+    channel.id,
+    false,
+    directory,
+  );
   expect(await nudged(channel.id)).toBe(false);
 });
 
@@ -1030,7 +1069,7 @@ test("a Channel Agent publishes focus and settles temporary turn state", async (
     sequence: first.message.sequence,
     reaction: "love",
   });
-  await finishChannelAgentTurn(member.id, "implementation feedback");
+  await finishChannelAgentTurn(member.id, { waitingFor: "implementation feedback" });
 
   expect(await channels.getMember(member.id)).toMatchObject({
     status: { state: "waiting", text: "implementation feedback" },
@@ -1040,7 +1079,7 @@ test("a Channel Agent publishes focus and settles temporary turn state", async (
     { agentId: member.id, reaction: "love" },
   ]);
   await setChannelAgentStatus(member.id, { status: "Checking the revision" });
-  await finishChannelAgentTurn(member.id);
+  await finishChannelAgentTurn(member.id, {});
   expect((await channels.getMember(member.id))?.status).toBeUndefined();
 });
 
@@ -1053,7 +1092,7 @@ test("session completion and startup clear working status, preserving waits and 
   );
   await setChannelAgentStatus(channel.id, { status: "Left over from shutdown" });
   await setChannelAgentStatus(member.id, { status: "Still running" });
-  await finishChannelAgentTurn(waiting.id, "CI", 20);
+  await finishChannelAgentTurn(waiting.id, { waitingFor: "CI", wakeAfterMinutes: 20 });
   const wait = (await channels.getAgent(waiting.id))!.status;
   setSessionActivity(member.id, "running");
   onTestFinished(() => {
@@ -1154,7 +1193,7 @@ test.each(["lead", "member"] as const)(
     setSystemTime(new Date("2026-09-29T15:00:00.000Z"));
     onTestFinished(() => setSystemTime());
 
-    await finishChannelAgentTurn(agentId, "CI to finish", 20);
+    await finishChannelAgentTurn(agentId, { waitingFor: "CI to finish", wakeAfterMinutes: 20 });
     expect((await channels.getAgent(agentId))?.status).toEqual({
       state: "waiting",
       text: "CI to finish",
@@ -1189,7 +1228,7 @@ test.each(["lead", "member"] as const)(
         : (await channels.createMember(channelAgent(channel.id, "builder", "Builder"))).member.id;
     const deliver = spyOnDelivery();
 
-    await finishChannelAgentTurn(agentId, "CI to finish", 20);
+    await finishChannelAgentTurn(agentId, { waitingFor: "CI to finish", wakeAfterMinutes: 20 });
     await postChannelMessage(
       {
         id: "update",
@@ -1208,6 +1247,166 @@ test.each(["lead", "member"] as const)(
     ]);
   },
 );
+
+/** A member whose wake commands run in a temporary folder and write to its real state folder. */
+async function wakeCommandMember() {
+  const channels = await openChannels();
+  const channel = await createStoredChannel(channels, { name: "Builds", ...CHANNEL_DEFAULTS });
+  const { member } = await channels.createMember(
+    channelAgent(channel.id, `wake-${crypto.randomUUID()}`, "Builder"),
+  );
+  const state = join(homedir(), ".toy-box", "sessions", member.id);
+  const cwd = await realpath(await mkdtemp(join(tmpdir(), "wake-command-")));
+  await mkdir(state, { recursive: true });
+  onTestFinished(async () => {
+    await stopWakeCommands();
+    await Promise.all([state, cwd].map((path) => rm(path, { recursive: true, force: true })));
+  });
+  const output = { stdout: join(state, "command.stdout"), stderr: join(state, "command.stderr") };
+  const run = (command: string): Promise<string> =>
+    invokeTool("run_wake_command", { command }, member.id, true, cwd);
+  const wake = (
+    command: string,
+    exitCode: number | null,
+  ): Parameters<typeof realRuntime.deliverSessionMessage> => [
+    member.id,
+    {
+      systemMessage: { type: "channel_wake_command", command, exitCode, ...output },
+      immediate: true,
+    },
+  ];
+  const record = async () =>
+    channelAgentMetadataSchema.parse((await getWorker(member.id))?.metadata).wakeCommand;
+  return { channels, channel, member, cwd, output, run, wake, record };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 500 && !predicate(); attempt++) await Bun.sleep(10);
+  expect(predicate()).toBe(true);
+}
+
+/** The process group of a wake command that ran `echo $$ > pid` in its working directory. */
+async function commandGroup(cwd: string): Promise<number> {
+  const path = join(cwd, "pid");
+  await waitFor(() => existsSync(path) && readFileSync(path, "utf8").endsWith("\n"));
+  return Number(readFileSync(path, "utf8"));
+}
+
+function processGroupExists(id: number): boolean {
+  try {
+    process.kill(-id, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test("a wake command's exit wakes its owner once with its output, even after its wait ended", async () => {
+  const { channels, channel, member, cwd, output, run, wake, record } = await wakeCommandMember();
+  const deliver = spyOnDelivery();
+  const command = "pwd; echo failed >&2; until [ -f done ]; do sleep 0.05; done; exit 3";
+
+  await run(command);
+  await finishChannelAgentTurn(member.id, { waitingFor: "CI" });
+  expect((await channels.getAgent(member.id))?.status).toEqual({
+    state: "waiting",
+    text: "CI",
+    wakeCommand: command,
+  });
+  await postChannelMessage(
+    { id: "update", channelId: channel.id, content: "@builder CI is still running." },
+    { type: "user" },
+  );
+  await finishChannelAgentTurn(member.id, {});
+  await Bun.write(join(cwd, "done"), "");
+  await waitFor(() => deliver.mock.calls.length > 1);
+
+  expect(deliver.mock.calls).toEqual([
+    [
+      member.id,
+      { systemMessage: { type: "channel_message", senderName: "the user" }, immediate: true },
+    ],
+    wake(command, 3),
+  ]);
+  expect(await Bun.file(output.stdout).text()).toBe(`${cwd}\n`);
+  expect(await Bun.file(output.stderr).text()).toBe("failed\n");
+  expect(await record()).toBeUndefined();
+});
+
+test("a new wake command kills the running one's group without a wake", async () => {
+  const { cwd, run, wake } = await wakeCommandMember();
+  const deliver = spyOnDelivery();
+  const first = "echo $$ > pid; sleep 30; touch first";
+
+  await run(first);
+  const group = await commandGroup(cwd);
+  const second = `while kill -0 -- -${group} 2>/dev/null; do sleep 0.05; done`;
+  await run(second);
+  await waitFor(() => deliver.mock.calls.length > 0);
+
+  expect(deliver.mock.calls).toEqual([wake(second, 0)]);
+});
+
+test("removing a member kills its wake command without waking it", async () => {
+  const { member, cwd, run } = await wakeCommandMember();
+  runtime.deleteSessionIfExists.mockImplementation(async (sessionId) => {
+    workspaceEvents.broadcast({ type: "session.deleted", sessionId });
+    return true;
+  });
+  onTestFinished(await startChannels());
+
+  await run("echo $$ > pid; sleep 30");
+  const group = await commandGroup(cwd);
+  await removeChannelMember(member.id, { type: "user" });
+  await waitFor(() => !processGroupExists(group));
+
+  expect(runtime.deliverSessionMessage).not.toHaveBeenCalled();
+});
+
+test("a wake command dies with a server that dies without stopping it", async () => {
+  const { member, cwd } = await wakeCommandMember();
+  const server = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `import { runWakeCommand } from ${JSON.stringify(join(import.meta.dir, "wakeCommands.ts"))};
+      runWakeCommand(${JSON.stringify(member.id)}, "echo $$ > pid; sleep 30", ${JSON.stringify(cwd)}, () => {});
+      setInterval(() => {}, 60_000);`,
+    ],
+    { stdin: "ignore" },
+  );
+  onTestFinished(() => server.kill("SIGKILL"));
+
+  const group = await commandGroup(cwd);
+  server.kill("SIGKILL");
+  await waitFor(() => !processGroupExists(group));
+});
+
+test("startup wakes the owner of a wake command its server stopped", async () => {
+  const { channels, member, wake, record } = await wakeCommandMember();
+  const deliver = spyOnDelivery();
+  await channels.setWakeCommand(member.id, "gh run watch 123");
+
+  onTestFinished(await startChannels());
+  await waitFor(() => deliver.mock.calls.length > 0);
+
+  expect(deliver.mock.calls).toEqual([wake("gh run watch 123", null)]);
+  expect(await record()).toBeUndefined();
+});
+
+test("a wake command still running when startup runs again, as on a dev reload, wakes on its exit", async () => {
+  const { cwd, run, wake, record } = await wakeCommandMember();
+  const deliver = spyOnDelivery();
+  const command = "until [ -f done ]; do sleep 0.05; done; exit 4";
+
+  await run(command);
+  onTestFinished(await startChannels());
+  await Bun.write(join(cwd, "done"), "");
+  await waitFor(() => deliver.mock.calls.length > 0);
+
+  expect(deliver.mock.calls).toEqual([wake(command, 4)]);
+  expect(await record()).toBeUndefined();
+});
 
 test("a due routine privately wakes its lead without adding to the transcript", async () => {
   const channels = await openChannels();

@@ -67,12 +67,9 @@ export const sessionQueries = {
       refetchOnReconnect: "always",
       // The stream resubscribes itself, and a failed open, such as a missing session, is final.
       retry: false,
-      // Every write keeps the previous pages already loaded.
-      structuralSharing: (previous: unknown, next: unknown) =>
-        replaceEqualDeep(
-          previous,
-          previous ? joinPreviousMessages(previous as SessionState, next as SessionState) : next,
-        ),
+      // The reducer keeps every message an event leaves alone, and a snapshot reconciles
+      // with the state it replaces as it's adopted.
+      structuralSharing: false,
     }),
 
   messagesBefore: (sessionId: string, before: number) =>
@@ -84,13 +81,16 @@ export const sessionQueries = {
     }),
 };
 
-/** A snapshot replaces a session's state but keeps its locally picked model when
- *  older history has none. */
+/** A snapshot replaces a session's state but keeps the previous pages and rows already
+ *  loaded, and its locally picked model when older history has none. */
 export function adoptSessionSnapshot(
   current: SessionState | undefined,
   snapshot: SessionState,
 ): SessionState {
-  return snapshot.model || !current?.model ? snapshot : { ...snapshot, model: current.model };
+  if (!current) return snapshot;
+  const adopted =
+    snapshot.model || !current.model ? snapshot : { ...snapshot, model: current.model };
+  return replaceEqualDeep(current, joinPreviousMessages(current, adopted));
 }
 
 function applySubscriptionEvent(state: SessionState, event: SessionSubscriptionEvent) {

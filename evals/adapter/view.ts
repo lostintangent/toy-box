@@ -8,6 +8,8 @@ import type { Run } from "../harness";
 
 /** What a run keeps beside the harness's fields. */
 export type Evidence = {
+  /** The first line of the provider CLI's `--version`. Runs recorded before it lack it. */
+  cli?: string;
   /** The channel as seeded, at each lead rest, before each step, and at the end. Only the last
    *  keeps its messages. */
   snapshots: { at: string; state: ChannelState }[];
@@ -23,6 +25,8 @@ export type Agent = {
   /** When the server started each of its runs, and when each came to rest. */
   runs: string[];
   rests: string[];
+  /** How many messages its transcript had at each rest. Runs recorded before it lack it. */
+  lengths?: number[];
   /** Its canonical transcript, complete from the first message. */
   messages: Message[];
 };
@@ -70,7 +74,10 @@ export function view(record: Run): ChannelView {
   return {
     run,
     lead,
-    members: (final?.members ?? []).flatMap((member) => turns(agent(member.id))),
+    // Every agent but the lead, so a member the lead removed before the end still counts.
+    members: run.agents
+      .filter(({ id }) => id !== final?.channel.id)
+      .flatMap((member) => turns(member)),
     final,
     seeded: new Set(walk(run.snapshots[0]?.state.channel.tasks).map(({ task }) => task.id)),
     added: additions(run.work),
@@ -91,10 +98,13 @@ export function view(record: Run): ChannelView {
 }
 
 /** Splits a transcript at the server's run starts. The server records a wake just before it starts
- *  the run it wakes, so an input belongs to the last run that began no more than a second after it. */
+ *  the run it wakes, so an input belongs to the last run that began no more than a second after it.
+ *  Output past the transcript's length at a rest belongs to a later run, even one that began with
+ *  no input, as a provider's own wake does when a background shell exits. */
 export function turns(agent: Agent | undefined): Turn[] {
   if (!agent) return [];
   const rests = agent.rests.map(Date.parse);
+  const lengths = agent.lengths ?? [];
   const result: Turn[] = agent.runs.map(Date.parse).map((at) => ({
     agent: agent.name,
     at,
@@ -103,8 +113,10 @@ export function turns(agent: Agent | undefined): Turn[] {
     calls: [],
   }));
   let turn: Turn | undefined;
-  for (const message of agent.messages) {
+  for (const [index, message] of agent.messages.entries()) {
     if (message.role === "assistant") {
+      const later = result[lengths.filter((length) => length <= index).length];
+      if (turn && later && later.at > turn.at) turn = later;
       turn?.calls.push(...(message.toolCalls ?? []).map(call));
       continue;
     }
@@ -127,11 +139,10 @@ function call({ name, arguments: args, result }: ToolCall): Call {
 }
 
 const additions = (diff: string) =>
-  parseUnifiedDiff(diff).flatMap((file) =>
-    file.hunks.flatMap((hunk) =>
-      hunk.lines.filter((line) => line.type === "added").map((line) => line.text),
-    ),
-  );
+  parseUnifiedDiff(diff)
+    .flatMap((file) => file.hunks.flat())
+    .filter((line) => line.type === "added")
+    .map((line) => line.text);
 
 export const calls = (turns: Turn[], name?: string) =>
   turns.flatMap((turn) => turn.calls).filter((call) => !name || call.name === name);
@@ -144,7 +155,8 @@ export const channelTools = new Set(
   `read_channel set_agent_status react_to_channel_message share_channel_artifact finish_agent_turn
   send_channel_message create_channel_members update_channel_member remove_channel_member update_member
   update_channel edit_channel_tasks set_routine delete_routine remove_channel_artifact message_channel_lead
-  list_channels create_channel post_channel_message wait_for_channel_agents`.split(/\s+/),
+  list_channels create_channel post_channel_message wait_for_channel_agents
+  run_wake_command`.split(/\s+/),
 );
 
 export type Node<Task = ChannelTask> = { task: Task; parent?: Task; depth: number };

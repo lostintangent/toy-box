@@ -6,8 +6,8 @@ import type { WorkspaceEvent } from "@workspace/model/events";
 import { subscribeWorkspaceEvents } from "@workspace/server/events";
 import {
   cancelWorker,
-  getRegisteredWorker,
-  getWorkers,
+  getActiveWorker,
+  getActiveWorkers,
   startWorkerRun,
   WorkerCanceledError,
 } from "./registry";
@@ -48,10 +48,10 @@ test("runs a worker once, waitable by ID, and announces its start and finish onc
   const { worker, events, execution, completion } = startRun();
   const waiters = [waitForSessions([worker.sessionId]), waitForSessions([worker.sessionId])];
 
-  expect(getRegisteredWorker(worker.sessionId)).toEqual(worker);
-  expect(getWorkers()).toContainEqual(worker);
+  expect(getActiveWorker(worker.sessionId)).toEqual(worker);
+  expect(getActiveWorkers()).toContainEqual(worker);
   expect(() => startWorkerRun(worker, () => execution.promise)).toThrow(
-    `Worker ${worker.sessionId} is already active.`,
+    `Worker ${worker.sessionId} already has a run.`,
   );
 
   execution.resolve({ status: "completed", response: "Replied." });
@@ -60,22 +60,22 @@ test("runs a worker once, waitable by ID, and announces its start and finish onc
     [{ status: "completed", response: "Replied." }],
     [{ status: "completed", response: "Replied." }],
   ]);
-  expect(getRegisteredWorker(worker.sessionId)).toBeUndefined();
+  expect(getActiveWorker(worker.sessionId)).toBeUndefined();
   expect(events).toEqual([
     { type: "worker.started", worker },
     { type: "worker.finished", sessionId: worker.sessionId },
   ]);
 });
 
-test("a canceled run leaves the listing at once and holds its ID until it settles", async () => {
+test("a canceled run stops being active at once and holds its ID until it settles", async () => {
   const { worker, events, execution, completion, signal } = startRun();
 
   expect(await cancelWorker(worker.sessionId)).toBe(true);
   expect(signal.reason).toBeInstanceOf(WorkerCanceledError);
-  expect(getRegisteredWorker(worker.sessionId)).toBeUndefined();
-  expect(getWorkers()).not.toContainEqual(worker);
+  expect(getActiveWorker(worker.sessionId)).toBeUndefined();
+  expect(getActiveWorkers()).not.toContainEqual(worker);
   expect(await cancelWorker(worker.sessionId)).toBe(false);
-  expect(() => startWorkerRun(worker, () => execution.promise)).toThrow("already active");
+  expect(() => startWorkerRun(worker, () => execution.promise)).toThrow("already has a run");
 
   execution.reject(signal.reason);
   await expect(completion).rejects.toBe(signal.reason);

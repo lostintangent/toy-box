@@ -31,7 +31,7 @@ Trace how the behavior works today, end to end, and ground every claim in code y
 
 ## 3. Choose the shape
 
-Start with the cheapest options and move up only for a reason: it already works or needs only configuration; then a change to an existing owner; then an extension of an existing concept; then a new concept. Sketch two or three candidate shapes and choose the one with the fewest new concepts and the clearest ownership.
+Start with the cheapest options and move up only for a reason: it already works or needs only configuration; then a change to an existing owner; then an extension of an existing concept; then a new concept. Sketch two or three candidate shapes and choose the one with the fewest new concepts and the clearest ownership that keeps every subsystem's contract semantic. Fewer internal nouns and verbs never pays for a weaker contract.
 
 - Reuse what step 2 found, and say what you're reusing. Each new noun or verb (a type, field, event, module, agent tool, or UI component) needs a reason no existing one can carry it. Name new ones in the codebase's existing vocabulary.
 - Keep one authority per fact, and derive whatever can be derived. A cache or stored copy is a second authority to keep in sync: when the source can't serve a view cheaply, first consider narrowing the view, and present a cache to the user as a decision, with its cost.
@@ -46,7 +46,7 @@ Name the assumption most likely to invalidate the plan, such as a platform or li
 
 ## 5. Set expectations
 
-- **Footprint:** the files or modules touched, every new concept, and rough production and test lines. When the estimate is large for the outcome it buys, look for a smaller shape or split the work.
+- **Footprint:** the files or modules touched, every new concept, and rough production and test lines. When you prototype, `bun run domain diff` measures all of them, run in a scratch copy against the shared tree when other work is uncommitted: post its size, contracts, nouns, and verbs as the footprint. When the estimate is large for the outcome it buys, look for a smaller shape or split the work.
 - **Validation:** the contracts worth testing and at which layer (exhaustive tests for pure models and reducers, thin integration tests only for what those can't prove), and the dogfood scenarios that exercise the change, including existing consumers of anything shared. A behavior-preserving refactor needs no new tests.
 - **Sequence:** behavior-preserving refactors land before the feature, and enhancements stay out of cleanups. Each step leaves the product working.
 
@@ -56,4 +56,4 @@ Lead with the recommendation, then include only what applies: the outcome (what 
 
 ## Build to the plan
 
-The plan is the contract. When the work needs something the plan didn't include, such as a new concept, guarantee, or group of files, or grows well past its footprint, stop and decide which is wrong: if the plan missed something, update it and tell the user in a line; if the work is drifting, cut it back. Check in with the user only when the change would alter agreed behavior or scope. When you finish, report the actual footprint against the plan.
+The plan is the contract. When the work needs something the plan didn't include, such as a new concept, guarantee, or group of files, or grows well past its footprint, stop and decide which is wrong: if the plan missed something, update it and tell the user in a line; if the work is drifting, cut it back. Check in with the user only when the change would alter agreed behavior or scope. When you finish, report `bun run domain diff` against the plan's footprint.

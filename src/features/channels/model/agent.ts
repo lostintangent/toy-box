@@ -11,7 +11,7 @@ export const agentRoleSchema = z
   .min(1)
   .max(8_000)
   .describe(
-    "What the member is accountable for, the quality bar, and judgment specific to that work, in about 150 words. Leave out task context, shared rules, paths, commands, and product specs.",
+    "The member's part in this project and team: what it's responsible for, and which teammates it takes work from and hands work to. Leave out task context, shared rules, paths, commands, and product specs.",
   );
 
 const agentAvatarMarkSchema = z

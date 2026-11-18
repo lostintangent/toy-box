@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { applySessionEvent, createInitialSessionState } from "@sessions/model/reducer";
 import { computeFileDiffStats, getToolCallFileDiffs } from "@sessions/model/fileDiffs";
-import { getModelReasoningConfig, modelCatalogKey, modelConfigurationKey } from "@providers/model";
+import { modelConfiguration, modelCatalogKey, modelConfigurationKey } from "@providers/model";
 import { createClaudeProjector } from "./projector";
 import { asLiveStream } from "./history";
 import { toModelInfo } from "./models";
@@ -61,10 +61,10 @@ test("catalog, startup, and history agree on the model and its reasoning options
       (model) => modelCatalogKey(model) === modelConfigurationKey(state.model!),
     );
     expect(selected?.name).toBe("Opus 5.5");
-    expect(getModelReasoningConfig(selected, state.model?.reasoningEffort)).toEqual({
-      supportedReasoningEfforts: ["low", "high"],
-      reasoningEffort: message.type === "assistant" ? "high" : "low",
-    });
+    expect(selected?.supportedReasoningEfforts).toEqual(["low", "high"]);
+    expect(modelConfiguration(selected!, state.model).reasoningEffort).toBe(
+      message.type === "assistant" ? "high" : "low",
+    );
   }
 });
 
@@ -362,8 +362,8 @@ test("native tool results replay edits, a completed checklist, and an answered q
   });
   const diffs = calls.flatMap((call) => getToolCallFileDiffs(call) ?? []);
   expect(computeFileDiffStats(diffs).total).toEqual({ added: 3, removed: 1 });
-  expect(diffs[1]?.hunks[0]?.lines).toContainEqual({ type: "removed", text: "alpha" });
-  expect(diffs[1]?.hunks[0]?.lines).toContainEqual({ type: "added", text: "gamma" });
+  expect(diffs[1]?.hunks[0]).toContainEqual({ type: "removed", text: "alpha" });
+  expect(diffs[1]?.hunks[0]).toContainEqual({ type: "added", text: "gamma" });
   expect(calls.find((call) => call.name === "finish")?.result).toMatchObject({
     success: true,
     content: "FINISHED",

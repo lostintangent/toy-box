@@ -41,6 +41,7 @@ const assistantItem: ThreadItem = {
   memoryCitation: null,
   delivery: null,
   questions: null,
+  moderation: null,
 };
 
 function sessionState(events: SessionEvent[]) {

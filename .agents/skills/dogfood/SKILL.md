@@ -58,6 +58,8 @@ slow-viewer isolation. Release input before handing the window to the user.
 
 - Run `playwright-cli --session <name> close` for each test session you created;
   never stop another user's browser sessions.
+- Restore any workspace setting you changed, such as the default model the composer writes.
+  Channel members and other sessions inherit it.
 - Keep the dev server running only if user asked for continued manual testing.
 
 ## Use Reference

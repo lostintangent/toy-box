@@ -110,10 +110,12 @@ function connectScreen(
 
   let drawing = Promise.resolve();
   const socket = connectSocket("screens", {
-    params: () => ({ screen: screenId }),
+    // The server forgets a closed socket's size, so each new one gives it as it connects.
+    params: () => {
+      size = measure();
+      return { screen: screenId, ...size };
+    },
     onOpen() {
-      // The server forgets a closed socket's size, so each new one sends it again.
-      size = undefined;
       drawing = Promise.resolve();
       resize();
     },
@@ -167,17 +169,25 @@ function connectScreen(
     move = undefined;
   }
 
-  /** Fits frames to the canvas as shown: its own zoom counts, an ancestor's animation doesn't. */
+  /** Refits frames once the canvas holds still at a new size. */
   function resize() {
     clearTimeout(settling);
     settling = setTimeout(() => {
-      const scale = new DOMMatrixReadOnly(canvas.style.transform).a * devicePixelRatio;
-      const width = Math.round(canvas.clientWidth * scale);
-      const height = Math.round(canvas.clientHeight * scale);
-      // A canvas with no area, like a pane yet to grow in, isn't shown.
-      if (!width || !height || (width === size?.width && height === size.height)) return;
-      if (send({ type: "resize", size: { width, height } })) size = { width, height };
+      const shown = measure();
+      if (!shown || (shown.width === size?.width && shown.height === size.height)) return;
+      if (send({ type: "resize", size: shown })) size = shown;
     }, RESIZE_SETTLE_MS);
+  }
+
+  /**
+   * The canvas's size as shown: its own zoom counts, an ancestor's animation doesn't. A canvas
+   * with no area, like a pane yet to grow in, isn't shown.
+   */
+  function measure(): FrameSize | undefined {
+    const scale = new DOMMatrixReadOnly(canvas.style.transform).a * devicePixelRatio;
+    const width = Math.round(canvas.clientWidth * scale);
+    const height = Math.round(canvas.clientHeight * scale);
+    return width && height ? { width, height } : undefined;
   }
 
   resizing.observe(canvas);

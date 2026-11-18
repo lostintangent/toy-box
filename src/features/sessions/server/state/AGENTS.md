@@ -7,20 +7,24 @@ creating another source of transcript truth.
 ## Responsibilities
 
 - `registry.ts` owns cached provider connections, single-flight resume, creation, explicit rename, automatic
-  title updates, and complete deletion. Cached sessions retain their application-supplied
-  configuration lifetime; runtime acquisition replaces a private Channel Agent session when its
+  title updates, and deletion of session resources. Cached connections retain their application-supplied
+  configuration lifetime; `acquireConnection` replaces a private Channel Agent's connection when its
   effective configuration changed, while unchanged Channel Agents and ordinary Sessions reuse their
-  cached session. Active executions retain that session; bounded provider operations restart its idle
-  window. Idle sessions disconnect after 30 minutes and resume from durable provider history on their
-  next execution or control operation. History reads bypass connections. Managed supervisors may release a retained session immediately once their workflow
+  cached connection. An active execution holds its connection until `releaseConnection`, and bounded
+  `withConnection` operations restart its idle window. Idle connections disconnect after 30 minutes and
+  resume from durable provider history on their session's next execution or control operation. History
+  reads bypass connections. Managed supervisors may call `releaseIdleConnection` once their workflow
   reaches a terminal state.
   Accepted explicit and automatic title changes publish workspace metadata here; callers do not
   depend on a provider echoing a native rename event.
-  One teardown path releases the live runtime, provider persistence, worktree, session record, cached
-  snapshot, activity, managed relationships, pin, and workspace projection. Permanent deletion publishes that
+  After the runtime settles any live execution, one teardown path releases the provider connection and
+  persistence, worktree, session record, cached snapshot, activity, managed relationships, pin, and
+  workspace projection. Permanent deletion publishes that
   the identity is gone; stable-ID recreation suppresses that publication and inserts the replacement.
   Native connections finish disconnecting before their history is deleted, so a final flush cannot
-  recreate a deleted session.
+  recreate a deleted session. That includes a connection evicted earlier, such as after an
+  unconfirmed Stop, whose disconnect deletion awaits for at most five seconds. Only deletion waits
+  for it; the next turn resumes a fresh connection at once.
 - `snapshots.ts` reconstructs `SessionState` through provider history projection and the canonical
   reducer, then caches that same value under the caller-supplied session ID. Readers share it
   without copying, because the reducer replaces every branch it changes. Active truth always

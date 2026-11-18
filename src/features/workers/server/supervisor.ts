@@ -1,13 +1,10 @@
-// Owner-scoped session execution. The worker supervisor centralizes inherited
+// Trusted Worker spawning. The supervisor admits ownership, then centralizes inherited
 // configuration, exact completion, cancellation, and owner-supplied retention.
 
-import { workerParentSessionId, type Worker } from "../model";
+import { workerParentSessionId, type Worker, type WorkerOwner } from "../model";
 import type { SessionCompletion, SessionLaunch } from "@sessions/model";
-import {
-  getEphemeralWorkerSessionIds,
-  getPersistedWorker,
-  registerWorkerSession,
-} from "./database";
+import { createWorker, WorkerDatabase } from "./database";
+import { getStateDatabase } from "@/server/database";
 import { getProcessValue } from "@/shared/server/processState";
 import {
   abortSession,
@@ -23,22 +20,39 @@ export type WorkerRetention =
   | "durable"
   | ((worker: Worker, completion: SessionCompletion) => boolean | Promise<boolean>);
 
-type SuperviseWorkerInput<Value> = SessionLaunch & {
-  worker: Worker;
-  retention: WorkerRetention;
-  admit?: () => Promise<Value>;
-};
+export type WorkerSpawn<Owner extends WorkerOwner = WorkerOwner, Value = void> = SessionLaunch &
+  Pick<Worker, "name"> & {
+    metadata?: unknown;
+    owner: Owner;
+    sessionId?: string;
+    retention: WorkerRetention;
+    /** Persist ownership with an owner-specific admission, before execution starts. */
+    admit?: (worker: Worker & Owner) => Promise<Value>;
+  };
 
 const startupSweep = getProcessValue<{ promise?: Promise<void> }>(
   "worker-startup-sweep",
   () => ({}),
 );
 
-/** Admit a durable Worker identity, then run it through execution and cleanup. */
-export function superviseWorker<Value = void>(
-  input: SuperviseWorkerInput<Value>,
+/** Admit trusted owner-supplied work as a durable Worker, then run it through execution and cleanup. */
+export function spawnWorker<Owner extends WorkerOwner, Value>(
+  input: WorkerSpawn<Owner, Value> & Required<Pick<WorkerSpawn<Owner, Value>, "admit">>,
+): Promise<{ sessionId: string; value: Value }>;
+export function spawnWorker(input: WorkerSpawn): Promise<{ sessionId: string; value: void }>;
+export function spawnWorker<Owner extends WorkerOwner, Value>(
+  input: WorkerSpawn<Owner, Value>,
 ): Promise<{ sessionId: string; value: Value | void }> {
-  const { worker, message: inputMessage, location, retention } = input;
+  const { message: inputMessage, location, retention } = input;
+  const worker = createWorker(
+    {
+      ...input.owner,
+      ephemeral: retention === "ephemeral",
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+    },
+    input.sessionId,
+  );
   const sessionId = worker.sessionId;
   const parentSessionId = workerParentSessionId(worker);
   const admission = Promise.withResolvers<{ sessionId: string; value: Value | void }>();
@@ -51,16 +65,19 @@ export function superviseWorker<Value = void>(
   return admission.promise;
 
   async function execute(signal: AbortSignal): Promise<SessionCompletion> {
-    let admitted: { sessionId: string; value: Value | void } | undefined;
+    await ensureWorkersSwept();
+    signal.throwIfAborted();
+    // A rejected admission committed nothing, so cleanup only takes over once it commits.
+    const admitted = {
+      sessionId,
+      value: await (input.admit
+        ? input.admit(worker)
+        : new WorkerDatabase(await getStateDatabase()).create(worker)),
+    };
     let started = false;
     let result: SessionCompletion;
     try {
-      await ensureWorkersSwept();
       signal.throwIfAborted();
-      const value = await (input.admit ? input.admit() : registerWorkerSession(worker));
-      signal.throwIfAborted();
-
-      admitted = { sessionId, value };
       const [parentDirectory, parentSnapshot] = await Promise.all([
         location?.directory === undefined && parentSessionId
           ? getSessionDirectory(parentSessionId)
@@ -96,7 +113,6 @@ export function superviseWorker<Value = void>(
         if (!started || worker.ephemeral) return cleanUpFailedSpawn(sessionId, signal.reason);
         throw signal.reason;
       }
-      if (!admitted) return cleanUpFailedSpawn(sessionId, error);
       admission.resolve(admitted);
       result = { status: "failed", error: error instanceof Error ? error.message : String(error) };
     }
@@ -109,7 +125,7 @@ export function superviseWorker<Value = void>(
 
 /** Delete workers whose supervising process ended before their completion. */
 export async function sweepAbandonedWorkers(): Promise<void> {
-  const sessionIds = await getEphemeralWorkerSessionIds();
+  const sessionIds = await new WorkerDatabase(await getStateDatabase()).listEphemeralIds();
   for (const sessionId of sessionIds) {
     await deleteSessionIfExists(sessionId);
   }
@@ -130,7 +146,7 @@ async function applyRetention(
 ): Promise<void> {
   let retain = retention === "durable";
   if (typeof retention === "function") {
-    const worker = await getPersistedWorker(sessionId);
+    const worker = await new WorkerDatabase(await getStateDatabase()).get(sessionId);
     signal.throwIfAborted();
     if (!worker) return;
     retain = await retention(worker, completion);

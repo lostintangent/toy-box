@@ -1,4 +1,3 @@
-import { Loader2 } from "lucide-react";
 import { useMutation, type UseMutationOptions } from "@tanstack/react-query";
 import {
   AlertDialog,
@@ -11,11 +10,12 @@ import {
 } from "@/shared/ui/alert-dialog";
 import { Button } from "@/shared/ui/button";
 
+/** Closes as it starts its mutation, so any optimistic hide and repair belong to the mutation's
+ *  own options. */
 export function DestructiveConfirmationDialog<TData, TContext>({
   title,
   description,
   confirmLabel = "Delete",
-  pendingLabel = confirmLabel,
   disabled = false,
   mutation: mutationOptions,
   open,
@@ -24,7 +24,6 @@ export function DestructiveConfirmationDialog<TData, TContext>({
   title: string;
   description: string;
   confirmLabel?: string;
-  pendingLabel?: string;
   disabled?: boolean;
   mutation: UseMutationOptions<TData, Error, void, TContext>;
   open: boolean;
@@ -33,27 +32,16 @@ export function DestructiveConfirmationDialog<TData, TContext>({
   const mutation = useMutation(mutationOptions);
 
   function handleConfirm() {
-    mutation.mutate(undefined, { onSuccess: () => onOpenChange(false) });
+    mutation.mutate();
+    onOpenChange(false);
   }
 
   return (
-    <AlertDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      // One kept mounted, as a nested dialog is, reopens without its last error.
-      onOpenChangeComplete={(open) => {
-        if (!open) mutation.reset();
-      }}
-    >
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
-          {mutation.error && (
-            <p role="alert" className="text-sm text-destructive">
-              {mutation.error.message}
-            </p>
-          )}
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -62,8 +50,7 @@ export function DestructiveConfirmationDialog<TData, TContext>({
             disabled={disabled || mutation.isPending}
             onClick={handleConfirm}
           >
-            {mutation.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />}
-            {mutation.isPending ? pendingLabel : confirmLabel}
+            {confirmLabel}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

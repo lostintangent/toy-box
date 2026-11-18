@@ -14,17 +14,12 @@ import { fileExtension, toRelativePath } from "@files/model/paths";
 import { ToolCallCard } from "./ToolCallCard";
 import { TextBlock } from "./TextBlock";
 
-type DiffLine = {
-  type: DiffHunk["lines"][number]["type"];
-  content: string;
-  tokens?: HighlightToken[];
-};
+type DiffLine = DiffHunk[number] & { tokens?: HighlightToken[] };
 
 interface DiffRenderSource {
+  hunk: DiffHunk;
   lines: DiffLine[];
   minIndent: number;
-  oldText: string;
-  newText: string;
   path: string;
 }
 
@@ -44,8 +39,8 @@ function computeMinIndent(diffLines: DiffLine[]): number {
   let minIndent = Infinity;
 
   for (const line of diffLines) {
-    if (line.content.trim()) {
-      const match = line.content.match(/^[ \t]*/);
+    if (line.text.trim()) {
+      const match = line.text.match(/^[ \t]*/);
       const indent = match ? match[0].length : 0;
       if (indent === 0) return 0;
       minIndent = Math.min(minIndent, indent);
@@ -58,20 +53,12 @@ function computeMinIndent(diffLines: DiffLine[]): number {
 function stripCommonIndent(diffLines: DiffLine[], indent: number): DiffLine[] {
   if (indent === 0) return diffLines;
 
-  return diffLines.map((line) => ({ ...line, content: line.content.slice(indent) }));
+  return diffLines.map((line) => ({ ...line, text: line.text.slice(indent) }));
 }
 
 function createDiffRenderSource(hunk: DiffHunk, path: string): DiffRenderSource {
-  const lines = hunk.lines.map((line): DiffLine => ({ type: line.type, content: line.text }));
-  const minIndent = computeMinIndent(lines);
-
-  return {
-    lines: stripCommonIndent(lines, minIndent),
-    minIndent,
-    oldText: hunk.oldText,
-    newText: hunk.newText,
-    path,
-  };
+  const minIndent = computeMinIndent(hunk);
+  return { hunk, lines: stripCommonIndent(hunk, minIndent), minIndent, path };
 }
 
 function renderTokens(tokens: HighlightToken[] | undefined, fallback: string) {
@@ -105,9 +92,7 @@ function stripTokensIndent(
 }
 
 function DiffLineRenderer({ line }: { line: DiffLine }) {
-  return (
-    <div className={DIFF_LINE_CLASSES[line.type]}>{renderTokens(line.tokens, line.content)}</div>
-  );
+  return <div className={DIFF_LINE_CLASSES[line.type]}>{renderTokens(line.tokens, line.text)}</div>;
 }
 
 function DiffView({ diffLines }: { diffLines: DiffLine[] }) {
@@ -123,22 +108,27 @@ function DiffView({ diffLines }: { diffLines: DiffLine[] }) {
   );
 }
 
-async function highlightDiffLines(
-  diffLines: DiffLine[],
-  oldText: string,
-  newText: string,
-  path: string,
-  minIndent: number,
-): Promise<DiffLine[]> {
+/** Highlights each side of the hunk whole, so a line's tokens see the lines around it. */
+async function highlightDiffLines({
+  hunk,
+  lines,
+  minIndent,
+  path,
+}: DiffRenderSource): Promise<DiffLine[]> {
   const language = fileExtension(path);
+  const sideText = (omitted: DiffLine["type"]) =>
+    hunk
+      .filter((line) => line.type !== omitted)
+      .map((line) => line.text)
+      .join("\n");
   const [oldHighlighted, newHighlighted] = await Promise.all([
-    highlightCode(oldText, language),
-    highlightCode(newText, language),
+    highlightCode(sideText("added"), language),
+    highlightCode(sideText("removed"), language),
   ]);
   let oldLineIndex = 0;
   let newLineIndex = 0;
 
-  return diffLines.map((line): DiffLine => {
+  return lines.map((line): DiffLine => {
     const oldTokens = stripTokensIndent(oldHighlighted[oldLineIndex], minIndent);
     const newTokens = stripTokensIndent(newHighlighted[newLineIndex], minIndent);
 
@@ -162,13 +152,7 @@ function useSyntaxHighlightedDiff(source: DiffRenderSource): DiffLine[] {
 
   useEffect(() => {
     let cancelled = false;
-    void highlightDiffLines(
-      source.lines,
-      source.oldText,
-      source.newText,
-      source.path,
-      source.minIndent,
-    ).then((enhanced) => {
+    void highlightDiffLines(source).then((enhanced) => {
       if (cancelled) return;
       startTransition(() => setHighlightedLines(enhanced));
     });
@@ -267,8 +251,7 @@ function encodeKeyPart(value: string): string {
 }
 
 function getDiffHunkKey(hunk: DiffHunk): string {
-  const linesKey = hunk.lines.map((line) => `${line.type[0]}${encodeKeyPart(line.text)}`).join("");
-  return `${encodeKeyPart(hunk.oldText)}>${encodeKeyPart(hunk.newText)}>${linesKey}`;
+  return hunk.map((line) => `${line.type[0]}${encodeKeyPart(line.text)}`).join("");
 }
 
 function getFileDiffKey(file: FileDiff): string {

@@ -411,6 +411,7 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         let params = request["params"] as? [String: Any] ?? [:]
         do {
             var value: Any = NSNull()
+            var payload = Data()
             switch method {
             case "list":
                 try requireCapturePermission()
@@ -443,8 +444,9 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                     throw ScreenFailure(message: "Invalid thumbnail request.")
                 }
                 let (target, _) = try await screenTarget(id)
-                value = try await thumbnail(of: target, size: size, quality: quality).base64EncodedString()
+                payload = try await thumbnail(of: target, size: size, quality: quality)
             case "focus":
+                try releaseInput()
                 try requireInputPermission()
                 try await focusScreen(getCapture(params))
             case "input":
@@ -476,7 +478,7 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
             default:
                 throw ScreenFailure(message: "Unsupported screen command: \(method)")
             }
-            writer.send(["type": "reply", "requestId": requestID, "ok": true, "value": value])
+            writer.send(["type": "reply", "requestId": requestID, "ok": true, "value": value], payload: payload)
         } catch {
             writer.send(["type": "reply", "requestId": requestID, "ok": false, "error": error.localizedDescription])
         }

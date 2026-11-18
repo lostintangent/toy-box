@@ -1,10 +1,11 @@
 // A lead plans a small CLI on top of an earlier spike, asks the user one question, regroups its
-// tasks on request, and sets up a routine. Changing what the user asks, or when, bumps the revision.
+// tasks on request, sets up a routine, and runs three checks of different lengths. Changing what
+// the channel starts with, or what the user asks, or when, bumps the revision.
 import type { ChannelState } from "@channels/model";
 import adapter, { type ChannelSetup } from "../adapter";
 import { type ChannelView, organic, walk } from "../adapter/view";
 import type { Scenario } from "../harness";
-import scorecard from "./channel-lead.scorecard";
+import scorecard, { checks } from "./channel-lead.scorecard";
 
 const purpose =
   "Build a small TypeScript CLI named notes in the working directory, runnable with bun, with add and list " +
@@ -16,7 +17,8 @@ const purpose =
   "and noted in CHANGELOG.md.";
 
 // The spike: a survey published as conventions, its drafts shared as artifacts, and its tasks done
-// except the help text, which the CLI still needs.
+// except the help text, which the CLI still needs, and a docs audit that's half done, with its done
+// half recorded and the rest waiting on another team.
 const fixture = {
   "docs/conventions.md": `# CLI conventions
 
@@ -42,6 +44,32 @@ Findings are now published in docs/conventions.md.
 ## Unreleased
 
 - Published the CLI naming survey as docs/conventions.md.
+- Audited docs/conventions.md against the survey: every rule matches.
+`,
+  // M5's checks. Each prints its verdict and then the moment it finishes, which it also appends to
+  // runs.log beside it, so the scorecard knows when it exited however an agent ran or read it.
+  "scripts/quick-check.sh": `# Lints and formats every file. Takes about 10 seconds.
+echo "quick-check: scanning"
+sleep 10
+echo "quick-check: 312 files clean"
+echo "quick-check finished at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$(dirname "$0")/runs.log"
+`,
+  "scripts/smoke.sh": `# Runs the end-to-end smoke flows. Takes about a minute and a half.
+for batch in 1 2 3 4 5 6; do
+  sleep 15
+  echo "smoke: batch $batch of 6 passed"
+done
+echo "smoke: 118 of 118 flows passed"
+echo "smoke finished at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$(dirname "$0")/runs.log"
+`,
+  "scripts/nightly.sh": `# Runs the full nightly suite. Takes about three minutes.
+for shard in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  sleep 15
+  echo "nightly: shard $shard of 12 done"
+done
+echo "nightly: 1,284 of 1,286 passed, 2 failed: search_across_lines, export_with_emoji"
+echo "nightly finished at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$(dirname "$0")/runs.log"
+exit 1
 `,
 };
 
@@ -74,6 +102,19 @@ const setup: ChannelSetup = {
       status: "pending",
       artifact: "examples",
     },
+    {
+      id: "audit",
+      title: "Audit the spike's docs before we build on them",
+      status: "in_progress",
+      children: [
+        { id: "audit-conventions", title: "Audit docs/conventions.md", status: "done" },
+        {
+          id: "audit-site",
+          title: "Audit the docs site once the docs team finishes migrating it",
+          status: "blocked",
+        },
+      ],
+    },
   ],
 };
 
@@ -86,9 +127,9 @@ const grown = (state: ChannelState) => {
 
 export default {
   name: "channel-lead",
-  revision: 2,
+  revision: 5,
   adapter,
-  cap: 35,
+  cap: 45,
   fixture,
   setup,
   script: [
@@ -116,6 +157,31 @@ export default {
             ? "3 minutes after M3"
             : undefined;
       },
+    },
+    // Each check's length is stated, so agents choose how to wait by it rather than by discovery.
+    {
+      id: "M5",
+      content:
+        "Can you run our three checks and tell me what each one reports? `sh scripts/quick-check.sh` takes a few seconds, `sh scripts/smoke.sh` about a minute and a half, and `sh scripts/nightly.sh` about three minutes.",
+      trigger: () => "first rest",
+    },
+    // A run ends at the lead's rest after the last step, so this keeps it going until nightly is
+    // reported, or long enough for a lead that blocks on every check or waits on a 5-minute timer.
+    {
+      id: "M6",
+      content: "Thanks, that's all I needed today.",
+      trigger: ({ state, since }) =>
+        state.messages.some(
+          (message) =>
+            message.sender.type === "agent" &&
+            typeof message.content === "string" &&
+            Date.parse(message.timestamp) > Date.now() - since * 60_000 &&
+            checks.nightly.verdict.test(message.content),
+        )
+          ? "nightly reported"
+          : since >= 10
+            ? "10 minutes after M5"
+            : undefined,
     },
   ],
   scorecard,

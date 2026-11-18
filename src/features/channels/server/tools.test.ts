@@ -42,11 +42,12 @@ test("suggested replies parse only with a lead request", () => {
 });
 
 test.each(["lead", "member"] as const)(
-  "%s agents can finish idle, waiting, or waiting with a bounded follow-up",
+  "%s agents can finish idle, waiting, or waiting with a bounded follow-up, ending the turn",
   (role) => {
     const tools = role === "lead" ? channelLeadTools : channelMemberTools;
     const finish = tools.find(({ name }) => name === "finish_agent_turn");
     const parameters = finish?.parameters;
+    expect(finish?.isTerminal).toBe(true);
     expect(parameters).toBeDefined();
 
     for (const input of [

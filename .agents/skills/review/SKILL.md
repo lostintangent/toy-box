@@ -37,7 +37,7 @@ Reading the implementation first anchors you to its choices. When the work follo
 - the name the codebase already uses for the role, with Sessions as the reference vocabulary (state, reducer, stream, passive and active);
 - what the platform or stack already provides, such as CSS, the DOM, Bun, TanStack, and Tailwind.
 
-Then read the change against the sketch. Each place where it exceeds the sketch, such as a concept, guarantee, file group, or size the plan didn't include, is a candidate; where it meets a requirement the sketch missed, fix the sketch instead. A plan isn't exempt from review: when a probe below shows it chose poorly, say what should change.
+Then read the change against the sketch, starting with `bun run domain diff` for its size, contracts, nouns, and verbs. Each place where it exceeds the sketch, such as a concept, guarantee, file group, or size the plan didn't include, is a candidate; where it meets a requirement the sketch missed, fix the sketch instead. A plan isn't exempt from review: when a probe below shows it chose poorly, say what should change.
 
 ## 3. Probe each candidate
 
@@ -45,7 +45,8 @@ Then read the change against the sketch. Each place where it exceeds the sketch,
 - **Necessity:** name the behavior it buys and what it obligates: state, branches, effects, tests, and docs. It stays when it serves the baseline or a demonstrated platform failure.
 - **Independence:** for each stored, cached, or passed value, ask whether any real producer can vary it independently. If none can, derive it where it is used; two values that always agree are one fact.
 - **Extension:** add the next representative instance on paper, such as another completion source, client, view, or kind. If it must touch more than its own declaration, ownership is leaking.
-- **Naming:** each new type, module, prop, and event should name a domain concept or a role the codebase already names. Prefer inferred types to named ones that aren't model concepts, and literal names to themed ones.
+- **Contract:** a subsystem's contract with other subsystems, which the diff lists under Contracts, is a boundary like a server function or HTTP route, so judge it as one: consumers should use it for what they mean. Removing a contract verb by having consumers reach into the storage or mechanics it hid weakens the boundary, however much it shrinks the count. Internal nouns and verbs are the ones to minimize.
+- **Naming:** each new type, module, prop, and event should name a domain concept or a role the codebase already names. A function that only builds a noun is its constructor, named after it, like `channelLead`, not a new verb. Prefer inferred types to named ones that aren't model concepts, and literal names to themed ones.
 - **Defensiveness:** handling for failures that cannot occur, or that would mean the app is already broken, has no requirement behind it.
 
 Keep distinct meanings distinct: share mechanics without merging concepts that merely look alike. Reject a candidate that trades one mechanism for another of similar size. Finding nothing is a valid outcome; don't manufacture findings.
@@ -77,6 +78,6 @@ When the user relays another agent's findings, or asks you to look again after s
 
 - Lead with your recommendation, then findings in order of leverage. For each finding, state what disappears or changes and why the agreed behavior survives. Present a needed behavior change as the user's decision.
 - Don't call a design minimal, finished, or "10 stars" by assertion. Name the criterion it meets, such as the extension probe passing, and list the candidates you rejected with one reason each. When asked for a rating, answer with the concrete remaining gaps.
-- When you changed code, end with one line of net lines for the files this change touched, split into production, tests, and docs, including new files; when a plan set a footprint, compare against it. A reduction that comes out net-positive needs a reason for each growing file, or another pass.
+- When you changed code, end with one line of net lines from `bun run domain diff`, split into production, tests, and docs; when a plan set a footprint, compare against it. A reduction that comes out net-positive needs a reason for each growing file, or another pass.
 - When the change creates or reshapes domain concepts, close with its nouns, verbs, and owners in a few lines.
 - Say explicitly when no findings remain.

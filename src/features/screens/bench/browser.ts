@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { strict as assert } from "node:assert";
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildScreenNative } from "../native/build";
@@ -330,9 +330,7 @@ try {
     "about:blank",
   ]);
   browserOpened = true;
-  const isolatedExecutable = join(directory, "ToyBoxScreens-Capture");
-  await copyFile(executable, isolatedExecutable);
-  const captured = await run(isolatedExecutable, join(directory, "profile.json"));
+  const captured = await run(executable, join(directory, "profile.json"));
   const report = { ...captured, failures: budgetFailures(captured) };
   console.log(
     JSON.stringify(

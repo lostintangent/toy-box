@@ -44,7 +44,7 @@ The runtime exposes the session operations directly:
 5. **Wait** for completion. `waitForSessions` covers the announced, live, or latest persisted execution for each session ID; a delivery receipt binds a supervisor to the exact execution it started.
 6. **Control** by renaming, steering or cancelling queued input, aborting, rewinding an idle conversation, deleting, or applying worktree operations.
 
-Control is a category, not one runtime method. Abort, queue steering, and queue cancellation act on live execution; rename, deletion, and worktree commands delegate through the session API to the registry or resource owner described in the state guide. Rewind resolves the selected user-message timestamp against the provider's current rewind boundaries, removes that root user turn and every later conversation event while preserving files, and lets the provider reject a concurrent busy session. Queue status supplies the submission claim shared by normal draining and steering; steering uses the provider connection without opening another turn boundary.
+Control is a category, not one runtime method. Abort, queue steering, and queue cancellation act on live execution; rename and worktree commands delegate through the session API to the registry or resource owner described in the state guide. Deletion removes owned sessions, then settles any live execution, then hands resource teardown to the registry. Rewind resolves the selected user-message timestamp against the provider's current rewind boundaries, removes that root user turn and every later conversation event while preserving files, and lets the provider reject a concurrent busy session. Queue status supplies the submission claim shared by normal draining and steering; steering uses the provider connection without opening another turn boundary.
 
 Once a session has turn-bearing history, resume is not a separate operation. Delivering to an idle session resumes its persisted provider connection; delivering to an active session queues. Callers do not choose whether a new turn starts or a message enters the active mailbox, though an active user delivery may request immediate dispatch.
 
@@ -61,14 +61,18 @@ Managed features supervise sessions because their terminal policies differ. The 
 1. Acquisition is single-flight. Before a new execution acquires a provider connection, the registry refreshes
    configuration when its application-supplied lifetime requires it. This lets a Channel-owned Worker
    receive current identity and collaboration instructions between executions. Active delivery never
-   refreshes that session. A caller joins an existing execution, shares an in-progress creation, creates a
+   refreshes that connection. A caller joins an existing execution, shares an in-progress creation, creates a
    new provider connection, or resumes an idle session from its reduced snapshot and cached provider
-   connection. Snapshot reads, subscriptions, and runtime status treat an in-progress acquisition as the
-   current execution, so a session announced before its execution exists never reads as missing.
+   connection. A resume without a configured model continues with the snapshot's, so a provider needn't
+   replay history to recover it. The runtime holds one entry per session, its acquisition and then its
+   execution, until that execution settles. `holdExecution` makes a new execution that entry and clears
+   it when the execution settles. Snapshot reads, subscriptions, and runtime status treat an
+   in-progress acquisition as the current execution, so a session announced before its execution exists
+   never reads as missing.
 2. Connected callers subscribe after delivery, from the revision they held before it. Every logical message has a unique client ID; `SessionExecution.deliver` synchronously claims the first turn or emits `message_queued` behind active execution. A queue entry is `queued` while cancellable, `submitting` while its provider call is in flight, and `submitted` until the provider echoes it. Only queued user messages can be steered. Each provider associates native message identity with the client ID and adds it to canonical input events after filtering native subagent and skill inputs. That event removes a queued input, reconciles browser optimism when present, and otherwise appends normally.
 3. Each provider translates raw events into canonical `SessionEvent`s. Runtime-generated turn-start status uses the same emission path. The event log stamps a process-monotonic `revision`, and the shared reducer returns the next immutable `SessionState`.
 4. A `background` status means the assistant is ready while background work keeps execution alive. It drains queued messages without finishing the execution; later deliveries also drain while in that status. When the provider emits `end`, the runtime drains queued work and finishes if none remains. A `session_title_changed` event updates workspace metadata and does not enter transcript state or its event stream.
-5. Finishing publishes one terminal `end`, caches the resulting clean state, becomes idle when aborted and unread otherwise, and then disposes the live runtime. Subscribers close on that `end`. Disposing resolves waiters, removes the provider listener, and removes the stream registry entry; finishing then returns the provider connection to the state registry's bounded idle cache. Aborting interrupts provider work and then finishes; session deletion aborts provider work and removes the live runtime without publishing ordinary idle/unread state.
+5. An execution settles once: it publishes one terminal `end`, resolves waiters, removes the provider listener, and leaves the runtime. Subscribers close on that `end`. Finishing settles, then caches the resulting clean state, becomes idle when aborted and unread otherwise, and returns the provider connection to the state registry's bounded idle cache. Aborting interrupts provider work and then finishes; session deletion settles without publishing ordinary idle/unread state, then aborts provider work. Both wait at most five seconds for the provider to confirm, so a stalled provider cannot keep a session running. A provider that doesn't confirm is evicted from the idle cache, so the next turn resumes a fresh connection.
 
 Files observation has a server lifetime independent of execution. Its shared artifact watcher reports
 changes beneath the Session storage root and supplies open editors. `refreshSessionArtifacts` updates an affected live
@@ -78,7 +82,7 @@ Streams neither own filesystem watchers nor wait for artifact discovery at turn 
 A delivery receipt exposes the initial `started` or `queued` decision and a waiter bound to that exact execution. Completion reports `completed`, `failed`, or `timed_out`, plus the latest substantive assistant response when available. Failed live completion also forwards the final assistant message's error, preserving partial output separately from the failure detail. Waiting by session ID also covers work announced before its execution exists and falls back to the final snapshot when no live execution remains. A timeout ends only that caller's wait; it does not abort the session or alter its supervisor's policy.
 
 A supervisor that retains durable history but expects little immediate reuse may call
-`releaseIdleSession` after completion. This disconnects only a session with no active execution;
+`releaseIdleConnection` after completion. This disconnects only a connection with no active execution;
 ordinary bounded provider operations independently restart the idle window when they finish.
 
 ## Subscriptions and client orchestration

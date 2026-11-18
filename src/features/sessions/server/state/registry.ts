@@ -1,11 +1,10 @@
-// Server-side provider session registry and lifecycle coordination.
+// Server-side session connection registry and lifecycle coordination.
 //
 // Providers persist native history; this module keeps live SessionConnection
 // instances in memory, creates and resumes them with role-scoped tools, and
 // coordinates lifecycle effects across runtime executions, workspace state,
 // snapshots, worktrees, and provider persistence.
 
-import { homedir } from "node:os";
 import {
   SessionConnectionUnavailableError,
   SessionNotFoundError,
@@ -15,7 +14,6 @@ import { ensureSessionFiles, writeSessionArtifact, deleteSessionFiles } from "..
 import {
   createSession as createProviderSession,
   deleteSession as deleteProviderSession,
-  getSessionDirectory,
   resumeSession as resumeProviderSession,
 } from "../providers";
 import { getSessionConfiguration } from "@/server/sessionConfiguration";
@@ -25,28 +23,26 @@ import { deleteSessionActivity } from "./activity";
 import { createSessionWorktree, deleteSessionWorktree } from "./worktrees";
 import { deleteSessionRecord, readSession, insertSession } from "./sessions";
 import { evictCachedSnapshot } from "./snapshots";
-import {
-  deleteOwnedSessions,
-  detachManagedSession,
-  resolveSessionType,
-} from "@/server/managedSessions";
+import { detachManagedSession, resolveSessionType } from "@/server/managedSessions";
 import { sharedMap } from "@/shared/server/processState";
 import type { ModelConfiguration } from "@providers/model";
 
 // Release idle native connections explicitly while preserving durable history.
-const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const CONNECTION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
-type CachedSession = {
-  session: SessionConnection;
+type CachedConnection = {
+  connection: SessionConnection;
   configurationKey?: string;
   executionLease: boolean;
   idleReleaseTimer?: ReturnType<typeof setTimeout>;
   // Join the same teardown when acquisitions and release overlap.
   disconnecting?: Promise<void>;
 };
-const cachedSessions = sharedMap<CachedSession>("configured-sessions");
+const connections = sharedMap<CachedConnection>("session-connections");
 // Configuration refresh and cold resume are single-flight per session.
-const sessionAcquisitions = sharedMap<Promise<SessionConnection>>("pending-session-resumes");
+const acquisitions = sharedMap<Promise<SessionConnection>>("connection-acquisitions");
+// Deletion waits, for at most five seconds, for an evicted connection's final history flush.
+const evictions = sharedMap<Promise<void>>("connection-evictions");
 
 export type CreateSessionOptions = {
   model?: ModelConfiguration;
@@ -101,7 +97,7 @@ export async function createSessionRecord(
 export async function createSession(
   sessionId: string,
   options?: CreateSessionOptions,
-): Promise<{ session: SessionConnection; artifactPath?: string }> {
+): Promise<{ connection: SessionConnection; artifactPath?: string }> {
   const requested = options ?? {};
   const model = requested.model;
   const name = requested.name;
@@ -114,9 +110,6 @@ export async function createSession(
     directory && useWorktree ? await createSessionWorktree(sessionId, directory) : undefined;
   const executionDirectory = worktree?.path ?? directory;
 
-  // Providers require a working directory. When none was explicitly provided
-  // (e.g. automations with no cwd), fall back to the user's home directory
-  // so the provider has a valid path without leaking the server's cwd.
   let created: Awaited<ReturnType<typeof createProviderSession>>;
   try {
     await ensureSessionFiles(sessionId);
@@ -124,16 +117,16 @@ export async function createSession(
       model,
       name,
       ...sessionConfiguration,
-      directory: executionDirectory ?? homedir(),
+      directory: executionDirectory,
       artifactPath: record?.artifactPath,
     });
   } catch (error) {
     if (worktree) await deleteSessionWorktree(sessionId).catch(console.error);
     throw error;
   }
-  const { connection: session, provider } = created;
+  const { connection, provider } = created;
   const now = new Date().toISOString();
-  cachedSessions.set(sessionId, { session, configurationKey, executionLease: true });
+  connections.set(sessionId, { connection, configurationKey, executionLease: true });
 
   // Publish the execution directory immediately so clients can resolve its location.
   broadcast({
@@ -152,188 +145,182 @@ export async function createSession(
   });
 
   return {
-    session,
+    connection,
     ...(record?.artifactPath ? { artifactPath: record.artifactPath } : {}),
   };
 }
 
 // ── Provider connections ───────────────────────────────────────────────────────
 
-/** Read the cached session after any in-flight disconnect for it has settled. */
-async function readCachedSession(sessionId: string): Promise<CachedSession | undefined> {
-  const disconnecting = cachedSessions.get(sessionId)?.disconnecting;
+/** Read the cached connection after any in-flight disconnect for it has settled. */
+async function readCachedConnection(sessionId: string): Promise<CachedConnection | undefined> {
+  const disconnecting = connections.get(sessionId)?.disconnecting;
   if (disconnecting) await disconnecting.catch(() => {});
-  return cachedSessions.get(sessionId);
+  return connections.get(sessionId);
 }
 
-/** Acquire the provider session owned by one execution, refreshing configuration when required. */
-export async function acquireSession(sessionId: string): Promise<SessionConnection> {
-  const cached = await readCachedSession(sessionId);
+/** Acquire the connection owned by one execution, refreshing configuration when required.
+ *  A resume without a configured model continues with the given one, such as its snapshot's. */
+export async function acquireConnection(
+  sessionId: string,
+  model?: ModelConfiguration,
+): Promise<SessionConnection> {
+  const cached = await readCachedConnection(sessionId);
   if (cached && cached.configurationKey === undefined) {
-    cancelSessionRelease(cached);
+    cancelIdleRelease(cached);
     cached.executionLease = true;
-    return cached.session;
+    return cached.connection;
   }
 
-  const session = await acquireConfiguredSession(sessionId, cached);
-  const acquired = cachedSessions.get(sessionId);
-  if (acquired?.session === session) {
-    cancelSessionRelease(acquired);
+  const connection = await acquireConfiguredConnection(sessionId, cached, model);
+  const acquired = connections.get(sessionId);
+  if (acquired?.connection === connection) {
+    cancelIdleRelease(acquired);
     acquired.executionLease = true;
   }
-  return session;
+  return connection;
 }
 
-async function acquireConfiguredSession(
+async function acquireConfiguredConnection(
   sessionId: string,
-  cached?: CachedSession,
+  cached?: CachedConnection,
+  model?: ModelConfiguration,
 ): Promise<SessionConnection> {
-  let acquisition = sessionAcquisitions.get(sessionId);
+  let acquisition = acquisitions.get(sessionId);
   if (!acquisition) {
     acquisition = (async () => {
       const { configurationKey, ...sessionConfiguration } =
         await getSessionConfiguration(sessionId);
-      if (cached && cached.configurationKey === configurationKey) return cached.session;
+      if (cached && cached.configurationKey === configurationKey) return cached.connection;
 
-      if (cached) await disconnectCachedSession(sessionId, cached);
-      const directory =
-        "directory" in sessionConfiguration
-          ? sessionConfiguration.directory
-          : await getSessionDirectory(sessionId);
-      const session = await resumeProviderSession(sessionId, {
+      if (cached) await disconnectConnection(sessionId, cached);
+      const connection = await resumeProviderSession(sessionId, {
         ...sessionConfiguration,
-        directory: directory ?? homedir(),
+        model: ("model" in sessionConfiguration ? sessionConfiguration.model : undefined) ?? model,
       });
-      cachedSessions.set(sessionId, { session, configurationKey, executionLease: false });
-      return session;
+      connections.set(sessionId, { connection, configurationKey, executionLease: false });
+      return connection;
     })().finally(() => {
-      sessionAcquisitions.delete(sessionId);
-      const idle = cachedSessions.get(sessionId);
-      if (idle) scheduleSessionRelease(sessionId, idle);
+      acquisitions.delete(sessionId);
+      const idle = connections.get(sessionId);
+      if (idle) scheduleIdleRelease(sessionId, idle);
     });
-    sessionAcquisitions.set(sessionId, acquisition);
+    acquisitions.set(sessionId, acquisition);
   }
 
   return acquisition;
 }
 
-/** Release an execution-owned provider session after its SessionExecution finishes. */
-export function releaseSession(sessionId: string): void {
-  const cached = cachedSessions.get(sessionId);
+/** Release an execution-owned connection after its SessionExecution finishes. */
+export function releaseConnection(sessionId: string): void {
+  const cached = connections.get(sessionId);
   if (!cached) return;
 
   cached.executionLease = false;
-  scheduleSessionRelease(sessionId, cached);
+  scheduleIdleRelease(sessionId, cached);
 }
 
-/** Disconnect an idle provider session when a supervisor expects no immediate reuse. */
-export async function releaseIdleSession(sessionId: string): Promise<void> {
-  const cached = cachedSessions.get(sessionId);
-  if (cached) await releaseCachedSessionIfIdle(sessionId, cached);
+/** Disconnect an idle connection when a supervisor expects no immediate reuse. */
+export async function releaseIdleConnection(sessionId: string): Promise<void> {
+  const cached = connections.get(sessionId);
+  if (cached) await releaseIfIdle(sessionId, cached);
 }
 
 /**
- * Run a short provider operation and retry once if it reveals a stale session.
+ * Run a short provider operation and retry once if it reveals a stale connection.
  *
  * Use this for bounded calls such as history replay, rename, and rewind, not
  * for a SessionExecution that owns one SessionConnection throughout execution. A
  * cached call retains its configuration; only execution acquisition refreshes it.
  */
-export async function withSession<T>(
+export async function withConnection<T>(
   sessionId: string,
-  operation: (session: SessionConnection) => Promise<T>,
+  operation: (connection: SessionConnection) => Promise<T>,
 ): Promise<T> {
   try {
-    return await runSessionOperation(sessionId, operation);
+    return await runConnectionOperation(sessionId, operation);
   } catch (error) {
-    if (!evictCachedSessionIfStale(sessionId, error)) throw error;
+    if (!evictConnectionIfStale(sessionId, error)) throw error;
 
-    return runSessionOperation(sessionId, operation);
+    return runConnectionOperation(sessionId, operation);
   }
 }
 
-async function runSessionOperation<T>(
+async function runConnectionOperation<T>(
   sessionId: string,
-  operation: (session: SessionConnection) => Promise<T>,
+  operation: (connection: SessionConnection) => Promise<T>,
 ): Promise<T> {
-  const cached = await readCachedSession(sessionId);
-  const session = cached?.session ?? (await acquireConfiguredSession(sessionId));
-  const acquired = cachedSessions.get(sessionId);
-  if (acquired?.session === session) cancelSessionRelease(acquired);
+  const cached = await readCachedConnection(sessionId);
+  const connection = cached?.connection ?? (await acquireConfiguredConnection(sessionId));
+  const acquired = connections.get(sessionId);
+  if (acquired?.connection === connection) cancelIdleRelease(acquired);
 
   try {
-    return await operation(session);
+    return await operation(connection);
   } finally {
-    const current = cachedSessions.get(sessionId);
-    if (current?.session === session) scheduleSessionRelease(sessionId, current);
+    const current = connections.get(sessionId);
+    if (current?.connection === connection) scheduleIdleRelease(sessionId, current);
   }
 }
 
-function evictCachedSession(sessionId: string): void {
-  const cached = cachedSessions.get(sessionId);
-  if (cached) cancelSessionRelease(cached);
-  cachedSessions.delete(sessionId);
-  if (cached) void cached.session.disconnect().catch(console.error);
+/** Drop a cached connection so the next access resumes fresh instead of reusing it. */
+export function evictConnection(sessionId: string): void {
+  const cached = connections.get(sessionId);
+  if (!cached) return;
+  connections.delete(sessionId);
+  const eviction = Promise.race([
+    disconnectConnection(sessionId, cached).catch(console.error),
+    new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref()),
+  ]);
+  evictions.set(sessionId, eviction);
+  void eviction.then(() => {
+    if (evictions.get(sessionId) === eviction) evictions.delete(sessionId);
+  });
 }
 
-/** Drop a cached provider session when an error says the provider no longer knows
+/** Drop a cached connection when an error says the provider no longer knows
  *  the session, so the next access resumes fresh instead of reusing a stale
- *  instance. Returns whether the error was a stale-session error. */
-export function evictCachedSessionIfStale(sessionId: string, error: unknown): boolean {
+ *  connection. Returns whether the error was a stale-connection error. */
+export function evictConnectionIfStale(sessionId: string, error: unknown): boolean {
   const stale =
     error instanceof SessionConnectionUnavailableError || error instanceof SessionNotFoundError;
   if (!stale) return false;
 
-  evictCachedSession(sessionId);
+  evictConnection(sessionId);
   return true;
 }
 
 /** Rename a session through its provider and broadcast the updated display name. */
 export async function renameSession(sessionId: string, name: string): Promise<void> {
-  await withSession(sessionId, (session) => session.rename(name));
+  await withConnection(sessionId, (connection) => connection.rename(name));
   broadcast({ type: "session.upserted", session: { id: sessionId, title: name } });
 }
 
 /** Update an inferred title without replacing a name explicitly assigned by its creator or user. */
 export async function updateSessionTitle(sessionId: string, title: string): Promise<boolean> {
-  const applied = await withSession(sessionId, (session) => session.rename(title, true));
+  const applied = await withConnection(sessionId, (connection) => connection.rename(title, true));
   if (applied) broadcast({ type: "session.upserted", session: { id: sessionId, title } });
   return applied;
 }
 
 // ── Deletion ───────────────────────────────────────────────────────────
 
-/** Delete a session and the complete tree of managed sessions it owns. */
-export async function deleteSession(
+/** Delete a session's connection, provider history, and state once its runtime is gone. */
+export async function deleteSessionResources(
   sessionId: string,
   options?: { publish?: boolean },
 ): Promise<void> {
-  await deleteOwnedSessions(sessionId);
-  await removeSessionRuntime(sessionId);
+  // Native teardown can flush history; it must finish before history is deleted.
+  const cached = connections.get(sessionId);
+  if (cached) await disconnectConnection(sessionId, cached);
+  await evictions.get(sessionId);
   const record = await readSession(sessionId);
   if (!record || record.provider) await deleteProviderSession(sessionId);
   await removeDeletedSessionState(sessionId, options);
 }
 
-/** Delete a session when present, while preserving real teardown failures. */
-export async function deleteSessionIfExists(
-  sessionId: string,
-  options?: { publish?: boolean },
-): Promise<boolean> {
-  try {
-    await deleteSession(sessionId, options);
-    return true;
-  } catch (error) {
-    if (!evictCachedSessionIfStale(sessionId, error)) throw error;
-    await removeSessionRuntime(sessionId);
-    await removeDeletedSessionState(sessionId, options);
-    return false;
-  }
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────
-
-async function removeDeletedSessionState(
+/** Delete a session's state, including when its provider history is already gone. */
+export async function removeDeletedSessionState(
   sessionId: string,
   { publish = true }: { publish?: boolean } = {},
 ): Promise<void> {
@@ -348,59 +335,51 @@ async function removeDeletedSessionState(
   await deleteSessionWorkspaceState(sessionId);
 }
 
-async function removeSessionRuntime(sessionId: string): Promise<void> {
-  // Dynamic import keeps the registry from forming a static cycle with the
-  // session execution, which imports this module to create and resume provider sessions.
-  const { SessionExecution } = await import("../runtime/sessionExecution");
-  await SessionExecution.remove(sessionId);
-  // Native teardown can flush history; it must finish before history is deleted.
-  const cached = cachedSessions.get(sessionId);
-  if (cached) await disconnectCachedSession(sessionId, cached);
-}
+// ── Helpers ────────────────────────────────────────────────────────────
 
-async function releaseCachedSessionIfIdle(sessionId: string, cached: CachedSession): Promise<void> {
+async function releaseIfIdle(sessionId: string, cached: CachedConnection): Promise<void> {
   if (
-    cachedSessions.get(sessionId) !== cached ||
+    connections.get(sessionId) !== cached ||
     cached.executionLease ||
-    sessionAcquisitions.has(sessionId)
+    acquisitions.has(sessionId)
   ) {
     return;
   }
 
-  await disconnectCachedSession(sessionId, cached);
+  await disconnectConnection(sessionId, cached);
 }
 
-function scheduleSessionRelease(sessionId: string, cached: CachedSession): void {
-  cancelSessionRelease(cached);
+function scheduleIdleRelease(sessionId: string, cached: CachedConnection): void {
+  cancelIdleRelease(cached);
   if (cached.executionLease || cached.disconnecting) return;
 
   cached.idleReleaseTimer = setTimeout(() => {
     cached.idleReleaseTimer = undefined;
-    void releaseCachedSessionIfIdle(sessionId, cached).catch((error) => {
-      console.error(`Unable to release idle session ${sessionId}:`, error);
+    void releaseIfIdle(sessionId, cached).catch((error) => {
+      console.error(`Unable to release the idle connection for ${sessionId}:`, error);
     });
-  }, SESSION_IDLE_TIMEOUT_MS);
+  }, CONNECTION_IDLE_TIMEOUT_MS);
   cached.idleReleaseTimer.unref();
 }
 
-function cancelSessionRelease(cached: CachedSession): void {
+function cancelIdleRelease(cached: CachedConnection): void {
   if (!cached.idleReleaseTimer) return;
   clearTimeout(cached.idleReleaseTimer);
   cached.idleReleaseTimer = undefined;
 }
 
-function disconnectCachedSession(sessionId: string, cached: CachedSession): Promise<void> {
+function disconnectConnection(sessionId: string, cached: CachedConnection): Promise<void> {
   if (cached.disconnecting) return cached.disconnecting;
 
-  cancelSessionRelease(cached);
-  const disconnecting = cached.session.disconnect().then(
+  cancelIdleRelease(cached);
+  const disconnecting = cached.connection.disconnect().then(
     () => {
-      if (cachedSessions.get(sessionId) === cached) cachedSessions.delete(sessionId);
+      if (connections.get(sessionId) === cached) connections.delete(sessionId);
     },
     (error) => {
-      if (cachedSessions.get(sessionId) === cached) {
+      if (connections.get(sessionId) === cached) {
         cached.disconnecting = undefined;
-        scheduleSessionRelease(sessionId, cached);
+        scheduleIdleRelease(sessionId, cached);
       }
       throw error;
     },

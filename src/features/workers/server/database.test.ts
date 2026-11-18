@@ -2,23 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { openTestDatabase } from "@/server/testFixtures";
 import { SMALL_JSON_MAX_BYTES } from "@/shared/smallJson";
 
-import {
-  createWorker,
-  getEphemeralWorkerSessionIds,
-  getPersistedWorker,
-  getWorkerSessionIdsForApp,
-  getWorkerSessionIdsForParent,
-  registerWorkerSession,
-  unregisterWorkerSession,
-  WorkerDatabase,
-} from "./database";
-import { getWorker, initializeWorkerMetadata, listWorkers, updateWorker } from "./index";
+import { createWorker, WorkerDatabase } from "./database";
 
 describe("worker ownership", () => {
-  test("public owner reads select one channel without exposing another's Workers", async () => {
-    await openTestDatabase();
+  test("owner reads select one channel without exposing another's Workers", async () => {
+    const store = new WorkerDatabase(await openTestDatabase());
     for (const channelId of ["a", "b"]) {
-      await registerWorkerSession({
+      await store.create({
         type: "channel",
         channelId,
         sessionId: channelId,
@@ -28,13 +18,13 @@ describe("worker ownership", () => {
       });
     }
     const owner = { type: "channel", channelId: "a" } as const;
-    expect((await listWorkers(owner)).map((worker) => worker.sessionId)).toEqual(["a"]);
-    expect(await getWorker("b", owner)).toBeNull();
-    expect((await getWorker("b", "channel"))?.name).toBe("Reviewer");
+    expect((await store.list(owner)).map((worker) => worker.sessionId)).toEqual(["a"]);
+    expect(await store.get("b", owner)).toBeNull();
+    expect((await store.get("b", "channel"))?.name).toBe("Reviewer");
   });
 
-  test("public detail updates preserve omitted fields and replace or clear opaque metadata", async () => {
-    await openTestDatabase();
+  test("detail updates preserve omitted fields and replace or clear opaque metadata", async () => {
+    const store = new WorkerDatabase(await openTestDatabase());
     const worker = {
       type: "inbox" as const,
       sessionId: "result",
@@ -43,21 +33,21 @@ describe("worker ownership", () => {
       ephemeral: false,
       metadata: { message: "First", artifact: "report.md" },
     };
-    await registerWorkerSession(worker);
-    await updateWorker(worker.sessionId, { name: "Renamed" });
-    expect(await getWorker(worker.sessionId, "inbox")).toEqual({ ...worker, name: "Renamed" });
-    await updateWorker(worker.sessionId, { metadata: { message: "Second" } });
-    expect(await getWorker(worker.sessionId, "inbox")).toEqual({
+    await store.create(worker);
+    await store.update(worker.sessionId, { name: "Renamed" });
+    expect(await store.get(worker.sessionId, "inbox")).toEqual({ ...worker, name: "Renamed" });
+    await store.update(worker.sessionId, { metadata: { message: "Second" } });
+    expect(await store.get(worker.sessionId, "inbox")).toEqual({
       ...worker,
       name: "Renamed",
       metadata: { message: "Second" },
     });
     expect(
-      await initializeWorkerMetadata(worker.sessionId, "inbox", { error: "Late failure" }),
+      await store.initializeMetadata(worker.sessionId, "inbox", { error: "Late failure" }),
     ).toBe(false);
-    await updateWorker(worker.sessionId, { metadata: undefined });
-    expect((await getWorker(worker.sessionId, "inbox"))?.metadata).toBeUndefined();
-    await expect(updateWorker("missing", { name: "Missing" })).rejects.toThrow("Worker not found");
+    await store.update(worker.sessionId, { metadata: undefined });
+    expect((await store.get(worker.sessionId, "inbox"))?.metadata).toBeUndefined();
+    expect(await store.update("missing", { name: "Missing" })).toBe(false);
   });
 
   test("initializes only absent metadata for the matching owner", async () => {
@@ -115,7 +105,8 @@ describe("worker ownership", () => {
 
   test("rejects malformed JSON at the SQLite boundary", async () => {
     const db = await openTestDatabase();
-    await registerWorkerSession({
+    const store = new WorkerDatabase(db);
+    await store.create({
       type: "inbox",
       sessionId: "valid-json",
       createdAt: new Date(0).toISOString(),
@@ -127,27 +118,27 @@ describe("worker ownership", () => {
         await db`UPDATE workers SET metadata = ${"{invalid"} WHERE session_id = 'valid-json'`;
       })(),
     ).rejects.toThrow();
-    expect((await getPersistedWorker("valid-json"))?.metadata).toEqual({ message: "Keep this" });
+    expect((await store.get("valid-json"))?.metadata).toEqual({ message: "Keep this" });
   });
 
   test("lists worker session ids for a specific parent", async () => {
-    await openTestDatabase();
+    const store = new WorkerDatabase(await openTestDatabase());
 
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "session",
       sessionId: "toy-box-worker-a",
       parentSessionId: "toy-box-parent-a",
       ephemeral: false,
     });
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "session",
       sessionId: "toy-box-worker-b",
       parentSessionId: "toy-box-parent-b",
       ephemeral: true,
     });
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "file",
       sessionId: "toy-box-worker-c",
@@ -155,16 +146,16 @@ describe("worker ownership", () => {
       file: { kind: "session", sessionId: "toy-box-parent-a", path: "notes.md" },
     });
 
-    expect(await getWorkerSessionIdsForParent("toy-box-parent-a")).toEqual([
+    expect(await store.listChildIds("toy-box-parent-a")).toEqual([
       "toy-box-worker-a",
       "toy-box-worker-c",
     ]);
   });
 
   test("round-trips owner details, names, and metadata", async () => {
-    await openTestDatabase();
+    const store = new WorkerDatabase(await openTestDatabase());
 
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "file",
       sessionId: "toy-box-file-worker",
@@ -173,7 +164,7 @@ describe("worker ownership", () => {
       name: "Editor",
       metadata: { task: "Review notes" },
     });
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "channel",
       sessionId: "toy-box-channel-worker",
@@ -183,7 +174,7 @@ describe("worker ownership", () => {
       metadata: { seenThrough: 4 },
     });
 
-    expect(await getPersistedWorker("toy-box-file-worker")).toEqual({
+    expect(await store.get("toy-box-file-worker")).toEqual({
       createdAt: new Date(0).toISOString(),
       type: "file",
       sessionId: "toy-box-file-worker",
@@ -192,7 +183,7 @@ describe("worker ownership", () => {
       name: "Editor",
       metadata: { task: "Review notes" },
     });
-    expect(await getPersistedWorker("toy-box-channel-worker")).toEqual({
+    expect(await store.get("toy-box-channel-worker")).toEqual({
       createdAt: new Date(0).toISOString(),
       type: "channel",
       sessionId: "toy-box-channel-worker",
@@ -204,49 +195,48 @@ describe("worker ownership", () => {
   });
 
   test("selects ephemeral workers independently of their owner", async () => {
-    await openTestDatabase();
+    const store = new WorkerDatabase(await openTestDatabase());
 
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "file",
       sessionId: "toy-box-file-worker",
       ephemeral: true,
       file: { kind: "session", sessionId: "toy-box-parent", path: "notes.md" },
     });
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: "toy-box-app-worker",
       appId: "app-a",
       ephemeral: false,
     });
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "session",
       sessionId: "toy-box-session-worker",
       parentSessionId: "toy-box-parent",
       ephemeral: true,
     });
-    expect(await getEphemeralWorkerSessionIds()).toEqual([
+    expect(await store.listEphemeralIds()).toEqual([
       "toy-box-file-worker",
       "toy-box-session-worker",
     ]);
-    expect(await getWorkerSessionIdsForApp("app-a")).toEqual(["toy-box-app-worker"]);
   });
 
-  test("unregisters workers and treats missing records as a no-op", async () => {
-    await openTestDatabase();
+  test("deletes workers and treats missing records as a no-op", async () => {
+    const store = new WorkerDatabase(await openTestDatabase());
 
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "session",
       sessionId: "toy-box-worker",
       parentSessionId: "toy-box-parent",
       ephemeral: false,
     });
-    await unregisterWorkerSession("toy-box-worker");
-    await unregisterWorkerSession("toy-box-worker");
+    await store.delete("toy-box-worker");
+    await store.delete("toy-box-worker");
 
-    expect(await getPersistedWorker("toy-box-worker")).toBeNull();
+    expect(await store.get("toy-box-worker")).toBeNull();
   });
 });

@@ -8,7 +8,7 @@ import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/utils";
 import { useWorkspaceSurface } from "@workspace/hooks/layout/surface";
 import { createScreenPane, filterScreenWindows, type Screen } from "../model";
-import { getScreenThumbnail, listScreens } from "../server/functions";
+import { listScreens } from "../server/functions";
 
 /** Picks a display or window to open, by how each looks right now. */
 export function ScreenBrowserDialog({
@@ -44,6 +44,8 @@ export function ScreenBrowserDialog({
  */
 function ScreenBrowser({ onOpen }: { onOpen: (screenId: string) => void }) {
   const [query, setQuery] = useState("");
+  // Thumbnail URLs name the opening, so the next one captures each screen anew.
+  const [openedAt] = useState(Date.now);
   const { data, error } = useQuery({
     queryKey: ["screens"],
     queryFn: () => listScreens(),
@@ -73,7 +75,7 @@ function ScreenBrowser({ onOpen }: { onOpen: (screenId: string) => void }) {
               className="grid-cols-1 sm:grid-cols-2"
             >
               {data?.displays.map((display) => (
-                <ScreenCard key={display.id} screen={display} onOpen={onOpen} />
+                <ScreenCard key={display.id} screen={display} openedAt={openedAt} onOpen={onOpen} />
               )) ?? <ScreenCardSkeleton />}
             </ScreenSection>
             <ScreenSection
@@ -87,6 +89,7 @@ function ScreenBrowser({ onOpen }: { onOpen: (screenId: string) => void }) {
                       key={window.id}
                       screen={window}
                       detail={window.application}
+                      openedAt={openedAt}
                       onOpen={onOpen}
                     />
                   ))
@@ -128,30 +131,34 @@ function ScreenSection({
 function ScreenCard({
   screen,
   detail,
+  openedAt,
   onOpen,
 }: {
   screen: Screen;
   detail?: string;
+  openedAt: number;
   onOpen: (screenId: string) => void;
 }) {
-  const { data: thumbnail, isPending } = useQuery({
-    queryKey: ["screens", screen.id, "thumbnail"],
-    queryFn: () => getScreenThumbnail({ data: screen.id }),
-    retry: false,
-    staleTime: 0,
-  });
+  const [thumbnail, setThumbnail] = useState<"loading" | "loaded" | "failed">("loading");
   return (
     <button
       type="button"
       onClick={() => onOpen(screen.id)}
       className="group flex min-w-0 flex-col gap-1.5 rounded-lg text-left outline-none"
     >
-      <div className="aspect-[16/10] w-full overflow-hidden rounded-md border bg-muted/40 transition-shadow group-hover:ring-2 group-hover:ring-accent/80 group-focus-visible:ring-2 group-focus-visible:ring-accent">
-        {thumbnail ? (
-          <img src={thumbnail} alt="" className="size-full object-contain" />
-        ) : (
-          isPending && <Skeleton className="size-full rounded-none" />
+      <div className="relative aspect-[16/10] w-full overflow-hidden rounded-md border bg-muted/40 transition-shadow group-hover:ring-2 group-hover:ring-accent/80 group-focus-visible:ring-2 group-focus-visible:ring-accent">
+        {/* A thumbnail that can't load leaves its box empty, rather than a broken image. */}
+        {thumbnail !== "failed" && (
+          <img
+            src={`/api/v1/screens/${encodeURIComponent(screen.id)}/thumbnail?opened=${openedAt}`}
+            alt=""
+            loading="lazy"
+            onLoad={() => setThumbnail("loaded")}
+            onError={() => setThumbnail("failed")}
+            className="size-full object-contain"
+          />
         )}
+        {thumbnail === "loading" && <Skeleton className="absolute inset-0 rounded-none" />}
       </div>
       <div className="min-w-0 px-0.5">
         <p className="truncate text-sm font-medium">{screen.title}</p>

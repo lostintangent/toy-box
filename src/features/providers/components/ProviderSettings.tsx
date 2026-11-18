@@ -1,15 +1,18 @@
 import { Fragment, useEffect } from "react";
 import { useIsMutating, useMutation, useMutationState, useQuery } from "@tanstack/react-query";
 import type { MutationState } from "@tanstack/react-query";
-import { Check, Clock3, Cpu, Loader2, Minus, RefreshCw, X } from "lucide-react";
+import { Check, CircleAlert, Clock3, Cpu, Loader2, Minus, RefreshCw, UserX, X } from "lucide-react";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { ProgressBar } from "@/shared/ui/progress-bar";
 import { RelativeTime } from "@/shared/ui/relative-time";
+import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { CollapsibleSection } from "@/shared/ui/section-heading";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import type { ProviderCatalog } from "../model";
 import { providerMutations, providerQueries, type ProviderUpdateResult } from "../queries";
 import { useProviders } from "../useProviders";
 
@@ -48,7 +51,7 @@ export function ProviderSettings() {
       }
     >
       <div className="grid gap-3">
-        {providers.map(({ id, name, status, enabled }) => (
+        {providers.map(({ id, name, status, error, enabled }) => (
           <div key={id} className="grid gap-1">
             <div className="flex min-h-6 items-center gap-2 text-sm">
               <label className="flex items-center gap-2">
@@ -65,9 +68,7 @@ export function ProviderSettings() {
                 <span className="ml-auto text-xs text-muted-foreground">Not installed</span>
               )}
               {status !== "unavailable" && <ProviderVersion id={id} />}
-              {status === "signedOut" && (
-                <span className="text-xs text-muted-foreground">Signed out</span>
-              )}
+              <ProviderStatus name={name} status={status} error={error} />
               {status === "ready" && enabled && <ProviderPlan id={id} />}
               {status !== "unavailable" && (
                 <ProviderUpdate
@@ -97,6 +98,29 @@ function ProviderVersion({ id }: { id: string }) {
     <span className="text-xs text-muted-foreground tabular-nums">
       ({version ?? "Version unavailable"})
     </span>
+  );
+}
+
+/** Why a signed-out or failed provider isn't ready, on hover or tap. */
+function ProviderStatus({ name, status, error }: Omit<ProviderCatalog["providers"][number], "id">) {
+  if (status !== "signedOut" && status !== "failed") return null;
+  const failed = status === "failed";
+  return (
+    <Popover>
+      <PopoverTrigger
+        openOnHover
+        delay={150}
+        aria-label={`${name} ${failed ? "failed to load" : "is signed out"}`}
+        render={<Button variant={failed ? "destructive-ghost" : "ghost"} size="icon-xs" />}
+      >
+        {failed ? <CircleAlert /> : <UserX className="text-muted-foreground" />}
+      </PopoverTrigger>
+      <PopoverContent className="w-max max-w-[min(24rem,var(--available-width))] p-0 text-xs">
+        <ScrollableFade axis="vertical" className="max-h-80 p-3 whitespace-pre-wrap wrap-anywhere">
+          {failed ? error : "Signed out"}
+        </ScrollableFade>
+      </PopoverContent>
+    </Popover>
   );
 }
 

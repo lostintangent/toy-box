@@ -27,7 +27,7 @@ Each run follows one path:
 3. Otherwise, `recreateSession` privately tears down any idle persisted execution so the new run begins with a clean transcript, then publishes the replacement draft while its provider connection starts. The stable session identity is never published as deleted.
 4. The runtime creates the fresh automation session through its first prompt with the configured model, working directory, and title.
 5. The caller returns after delivery starts. On completion, the automation supervisor records
-   `lastRunAt`, publishes the updated definition, and releases the now-idle SDK session while
+   `lastRunAt`, publishes the updated definition, and releases its now-idle connection while
    preserving the result for inspection and follow-up.
 
 The session runtime owns every execution transition: the first turn publishes running, and the execution's end publishes idle or unread. Automation events only synchronize durable definition and schedule metadata. A creation failure leaves the automation idle without changing `lastRunAt`; a metadata persistence failure leaves no changed automation row to publish.
@@ -42,8 +42,8 @@ data when the initial stream revision matches and refetches the catalog after re
 updates.
 
 `automationMutations` owns CRUD and run requests. Create and update rely on the
-`automation.upserted` event their server operations publish; deletion removes both the definition
-and its managed session from client caches. `commands.tsx` defines what can be done to one automation (Run, Edit, and Delete), so its
+`automation.upserted` event their server operations publish. Deletion is an `optimisticMutation`
+of `automation.deleted`, which drops the definition and its managed session together. `commands.tsx` defines what can be done to one automation (Run, Edit, and Delete), so its
 sidebar menu and its command palette row offer the same actions. Both surfaces list only
 automations whose provider isn't disabled, the same rule that hides sessions.
 

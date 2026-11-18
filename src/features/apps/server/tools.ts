@@ -79,7 +79,7 @@ const validateArtifactAppTool = defineTool("validate_artifact_app", {
       ),
     })
     .strict(),
-  handler: async ({ path }, sessionId) => {
+  handler: async ({ path }, { sessionId }) => {
     try {
       const apps = await import("@apps/server");
       const file = sessionFile(sessionId, path);

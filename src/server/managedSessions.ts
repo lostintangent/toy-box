@@ -4,7 +4,6 @@
 
 import type { SessionOwnership, SessionsState } from "@sessions/model";
 import { getSessionsActivity } from "@sessions/server/state/activity";
-import { getPersistedWorker, unregisterWorkerSession } from "@workers/server/database";
 import { getStateDatabase } from "@/server/database";
 import { draftSessionId, type DraftKey } from "@workspace/model/state/drafts";
 import { getSavedDrafts } from "@workspace/server/state/drafts";
@@ -64,7 +63,8 @@ export async function readSessionCatalog(source: {
 
 /** Resolve a Session's kind from the ownership that makes it one, with the Worker it found. */
 export async function resolveSessionType(sessionId: string) {
-  const worker = await getPersistedWorker(sessionId);
+  const { getWorker } = await import("@workers/server");
+  const worker = await getWorker(sessionId);
   if (worker) return { sessionType: "worker", worker } as const;
   const database = await getStateDatabase();
   const [automation] = await database`SELECT 1 FROM automations WHERE id = ${sessionId}`;
@@ -81,11 +81,12 @@ export async function deleteOwnedSessions(sessionId: string): Promise<void> {
 
 /** Remove feature ownership after the shared Session resource is gone. */
 export async function detachManagedSession(sessionId: string): Promise<void> {
-  const worker = await getPersistedWorker(sessionId);
+  const { detachWorker, getWorker } = await import("@workers/server");
+  const worker = await getWorker(sessionId);
   if (worker?.type === "channel") {
     const { detachChannelAgentSession } = await import("@channels/server");
     await detachChannelAgentSession(sessionId);
-  } else if (worker) await unregisterWorkerSession(sessionId);
+  } else if (worker) await detachWorker(sessionId);
 }
 
 async function readSessionOwnership(): Promise<SessionsState["ownership"]> {

@@ -26,11 +26,7 @@ import { channelAttention, createChannelPane, type Channel } from "@channels/mod
 import { channelQueries } from "@channels/queries";
 import { fileQueries } from "@files/queries";
 import { inboxMutations } from "@inbox/mutations";
-import {
-  modelCatalogKey,
-  modelConfigurationKey,
-  resolveModelConfigurationForModel,
-} from "@providers/model";
+import { modelConfiguration, modelCatalogKey, modelConfigurationKey } from "@providers/model";
 import { useModels } from "@providers/useModels";
 import { resolveSessionLocation } from "@sessions/components/location/locationDisplay";
 import { sessionMutations } from "@sessions/mutations";
@@ -429,10 +425,7 @@ export function usePaletteView(
           configuration:
             defaultModel && modelCatalogKey(info) === defaultKey
               ? defaultModel
-              : resolveModelConfigurationForModel(info, {
-                  name: info.id,
-                  provider: info.provider,
-                }),
+              : modelConfiguration(info),
         }),
       );
       return {

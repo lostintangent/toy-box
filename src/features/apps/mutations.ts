@@ -9,7 +9,7 @@ import {
   updateApp,
 } from "./server/functions";
 import { smallJsonSchema } from "@/shared/smallJson";
-import { applyWorkspaceEvent } from "@workspace/sync";
+import { applyWorkspaceEvent, optimisticMutation } from "@workspace/sync";
 
 type ShareWithApp = {
   sourceAppId: string | null;
@@ -52,20 +52,12 @@ export const appMutations = {
     }),
 
   uninstall: (definitionId: string) =>
-    mutationOptions({
-      mutationFn: () => uninstallApp({ data: { id: definitionId } }),
-      onSuccess: (_result, _variables, _onMutateResult, { client }) => {
-        applyWorkspaceEvent(client, { type: "app.unregistered", definitionId });
-      },
-    }),
+    optimisticMutation({ type: "app.unregistered", definitionId }, () =>
+      uninstallApp({ data: { id: definitionId } }),
+    ),
 
   delete: (appId: string) =>
-    mutationOptions({
-      mutationFn: () => deleteApp({ data: { appId } }),
-      onSuccess: (_result, _variables, _onMutateResult, { client }) => {
-        applyWorkspaceEvent(client, { type: "app.deleted", appId });
-      },
-    }),
+    optimisticMutation({ type: "app.deleted", appId }, () => deleteApp({ data: { appId } })),
 
   share: ({ sourceAppId, mimeType, content }: ShareWithApp) =>
     mutationOptions({

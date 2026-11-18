@@ -6,7 +6,7 @@ import {
   deleteSessionIfExists,
   isSessionRunning,
   recreateSession,
-  releaseIdleSession,
+  releaseIdleConnection,
 } from "@sessions/server/runtime";
 import type { SessionCompletion } from "@sessions/model";
 import { sharedMap } from "@/shared/server/processState";
@@ -105,5 +105,5 @@ async function superviseAutomationRun(
     console.error(`Failed to persist automation run ${automationId}:`, error);
   }
 
-  await releaseIdleSession(automationId);
+  await releaseIdleConnection(automationId);
 }

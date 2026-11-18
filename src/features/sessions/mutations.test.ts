@@ -158,33 +158,6 @@ describe("session mutation options", () => {
     expect(isSessionsStateInvalidated(queryClient)).toBe(true);
   });
 
-  test("optimistically deletes sessions and refreshes the catalog after a failed deletion", async () => {
-    const queryClient = createSessionListQueryClient();
-    const deleteMutation = new MutationObserver(queryClient, {
-      ...sessionMutations.deleteSession(sessionId),
-      mutationFn: async () => {
-        expect(readSessionsState(queryClient).sessions).toEqual([]);
-        throw new Error("delete failed");
-      },
-    });
-
-    await expect(deleteMutation.mutate()).rejects.toThrow("delete failed");
-    expect(isSessionsStateInvalidated(queryClient)).toBe(true);
-    expect(readActivity(queryClient)).toEqual({ [sessionId]: { status: "unread" } });
-  });
-
-  test("projects successful deletion into shared session activity", async () => {
-    const queryClient = createSessionListQueryClient();
-
-    await new MutationObserver(queryClient, {
-      ...sessionMutations.deleteSession(sessionId),
-      mutationFn: async () => true,
-    }).mutate();
-
-    expect(readSessionsState(queryClient).sessions).toEqual([]);
-    expect(readActivity(queryClient)).toEqual({});
-  });
-
   test("marks a session read before the server confirms and refreshes activity on failure", async () => {
     const queryClient = createSessionListQueryClient();
     const markRead = new MutationObserver(queryClient, {

@@ -71,7 +71,6 @@ export function AppsPanel({
             : "This removes its app.json and app.tsx definition files from this machine."
         }
         confirmLabel={instanceCount > 0 ? "Delete saved apps first" : "Uninstall"}
-        pendingLabel="Uninstalling…"
         disabled={instanceCount > 0}
         mutation={appMutations.uninstall(definition.id)}
       />

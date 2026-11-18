@@ -29,15 +29,15 @@ type Reply =
 /** The native helper, which owns capture and host input. */
 export type ScreenHelper = {
   list(): Promise<ScreenList>;
-  /** A thumbnail of a screen as it is now, as a base64 JPEG. */
-  thumbnail(screenId: string): Promise<string>;
+  /** A thumbnail of a screen as it is now, as JPEG bytes. */
+  thumbnail(screenId: string): Promise<Uint8Array<ArrayBuffer>>;
   /** Starts capturing a screen to fit `size`, and resolves its title. */
   start(screenId: string, size: FrameSize): Promise<string>;
   /** Fits a capture to a new size, once macOS applies it. */
   resize(screenId: string, size: FrameSize): Promise<void>;
   /** Stops a screen's capture, if it has one. */
   stop(screenId: string): Promise<void>;
-  /** Raises a window and its app to receive input. A display needs nothing. */
+  /** Releases held input, then raises a window's app. A display has nothing to raise. */
   focus(screenId: string): Promise<void>;
   input(screenId: string, actions: ScreenInput[]): Promise<void>;
   /** Lets go of every key and button held down on the host. */
@@ -98,12 +98,12 @@ export const startScreenHelper: StartScreenHelper = async (onEvent, onFailure, o
     onFailure(error);
   }
 
-  function settle(reply: Reply) {
+  function settle(reply: Reply, payload: Uint8Array) {
     const request = pending.get(reply.requestId);
     if (!request) return;
     pending.delete(reply.requestId);
     clearTimeout(request.timer);
-    if (reply.ok) request.resolve(reply.value);
+    if (reply.ok) request.resolve(payload.length ? payload : reply.value);
     else request.reject(new RefusalError(reply.error));
   }
 
@@ -137,9 +137,9 @@ export const startScreenHelper: StartScreenHelper = async (onEvent, onFailure, o
   void (async () => {
     const reader = new ScreenPacketReader();
     for await (const chunk of helper.stdout) {
-      for (const { metadata, bytes } of reader.push(chunk)) {
+      for (const { metadata, payload, bytes } of reader.push(chunk)) {
         const message = metadata as CaptureEvent | Reply;
-        if (message.type === "reply") settle(message);
+        if (message.type === "reply") settle(message, payload);
         else onEvent(message, bytes);
       }
     }
@@ -148,7 +148,8 @@ export const startScreenHelper: StartScreenHelper = async (onEvent, onFailure, o
 
   return {
     list: () => request<ScreenList>("list"),
-    thumbnail: (screenId) => request<string>("thumbnail", { screenId, ...SCREEN_THUMBNAIL }),
+    thumbnail: (screenId) =>
+      request<Uint8Array<ArrayBuffer>>("thumbnail", { screenId, ...SCREEN_THUMBNAIL }),
     start: (screenId, size) =>
       request<string>("start", { screenId, capture: { ...SCREEN_CAPTURE, ...size } }),
     resize: (screenId, size) => request("resize", { screenId, ...size }),

@@ -1,4 +1,4 @@
-// Generated from codex-cli 0.166.0 (experimental app-server schema).
+// Generated from codex-cli 0.169.0 (experimental app-server schema).
 // OpenAI Codex, Apache-2.0: https://github.com/openai/codex
 // Regenerate using ./generate.ts. Do not edit wire types by hand.
 /* oxlint-disable typescript/no-redundant-type-constituents -- Upstream unions list known variants beside open fallbacks. */
@@ -14,6 +14,11 @@ export type ClientInfo = { name: string; title: string | null; version: string }
  * Client-declared capabilities negotiated during initialize.
  */
 export type InitializeCapabilities = {
+  /**
+   * Present `humanCommand` approvals to a person and return only a one-time decision.
+   * Requires `experimentalApi`. Pending requests can be replayed to compatible clients.
+   */
+  requiredHumanApproval?: boolean;
   /**
    * Use explicit gateway OAuth login instead of automatic browser authorization.
    * Applies to this app-server's gateway runtime; later connections cannot undo it.
@@ -82,6 +87,10 @@ export type InitializeResponse = {
 export type AbsolutePathBuf = string;
 
 export type ModelListParams = {
+  /**
+   * List models for this configured provider instead of the app-server default.
+   */
+  modelProvider?: string | null;
   /**
    * Opaque pagination cursor returned by a previous call.
    */
@@ -203,6 +212,10 @@ export type GetAccountParams = {
 
 export type GetAccountResponse = {
   account: Account | null;
+  /**
+   * ChatGPT user ID belonging to this account response, when available.
+   */
+  userId: string | null;
   requiresOpenaiAuth: boolean;
   workspaceRouting: WorkspaceRouting | null;
 };
@@ -473,6 +486,14 @@ export type SkillScope = "user" | "repo" | "system" | "admin";
 
 export type ThreadListParams = {
   /**
+   * Include persistent threads attached to a parent when searching by title.
+   */
+  includeAttachedThreads?: boolean;
+  /**
+   * Show local history visible to the current ChatGPT account. Defaults to false.
+   */
+  currentAccountOnly?: boolean;
+  /**
    * Opaque pagination cursor returned by a previous call.
    */
   cursor?: string | null;
@@ -617,6 +638,10 @@ export type Thread = {
    * Source thread id when this thread was created by forking another thread.
    */
   forkedFromId: string | null;
+  /**
+   * Parent that owns this persisted attached thread, independent of fork or spawn lineage.
+   */
+  attachedToThreadId: string | null;
   /**
    * The ID of the parent thread. This will only be set if this thread is a subagent.
    */
@@ -873,6 +898,7 @@ export type ThreadItem = {
   | { type: "hookPrompt"; id: string; fragments: Array<HookPromptFragment> }
   | {
       type: "agentMessage";
+      moderation: AgentMessageModeration | null;
       id: string;
       text: string;
       phase: MessagePhase | null;
@@ -1046,7 +1072,7 @@ export type FunctionCallOutputBody = string | Array<FunctionCallOutputContentIte
 export type FunctionCallOutputContentItem =
   | { type: "input_text"; text: string }
   | ({ type: "input_image"; detail?: ImageDetail } & ({ image_url: string } | { file_id: string }))
-  | { type: "input_audio"; audio_url: string }
+  | ({ type: "input_audio" } & ({ audio_url: string } | { file_id: string }))
   | { type: "encrypted_content"; encrypted_content: string };
 
 export type ImageDetail = "auto" | "low" | "high" | "original";
@@ -1118,6 +1144,21 @@ export type WebSearchAction =
   | { type: "other" };
 
 export type AgentMessageDelivery = "async";
+
+export type AgentMessageModeration = { moderated: boolean; display: AgentMessageDisplay | null };
+
+/**
+ * A presentation instruction for Chat to apply to this answer when recovering history.
+ */
+export type AgentMessageDisplay = {
+  /**
+   * Unknown actions must be left for the producing client to handle.
+   */
+  action: string;
+  blockType: string | null;
+  cyberTrustedAccess: boolean | null;
+  checkTrustedContacts: boolean | null;
+};
 
 export type AsyncUserInputQuestion = { title: string; options: Array<string> | null };
 
@@ -1224,7 +1265,7 @@ export type UserInput =
     }
   | ({ type: "image"; detail?: ImageDetail } & ({ url: string } | { fileId: string }))
   | { type: "localImage"; detail?: ImageDetail; path: string }
-  | { type: "audio"; url: string }
+  | ({ type: "audio" } & ({ url: string } | { fileId: string }))
   | { type: "localAudio"; path: string }
   | { type: "skill"; name: string; path: string }
   | { type: "mention"; name: string; path: string };
@@ -1267,6 +1308,7 @@ export type CodexErrorInfo =
   | "serverOverloaded"
   | "modelNotFound"
   | "policyCapacityUnavailable"
+  | "inferenceHookDenied"
   | "cyberPolicy"
   | "misalignmentPolicyViolation"
   | "tooManyDenials"
@@ -1787,7 +1829,7 @@ export type ConfigurationReasoning = { effort: ReasoningEffort };
 export type ContentItem =
   | { type: "input_text"; text: string }
   | ({ type: "input_image"; detail?: ImageDetail } & ({ image_url: string } | { file_id: string }))
-  | { type: "input_audio"; audio_url: string }
+  | ({ type: "input_audio" } & ({ audio_url: string } | { file_id: string }))
   | { type: "output_text"; text: string; annotations?: unknown[]; logprobs?: unknown[] };
 
 /**
@@ -2361,6 +2403,11 @@ export type ItemCompletedNotification = {
   item: ThreadItem;
   threadId: string;
   turnId: string;
+  /**
+   * Native content tokens for the completed assistant message, including a sampled footer.
+   * Null when unavailable. Completion telemetry is not part of the stored thread item.
+   */
+  contentTokenCount?: number | null;
   /**
    * Unix timestamp (in milliseconds) when this item lifecycle completed.
    */

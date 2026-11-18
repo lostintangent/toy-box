@@ -22,7 +22,7 @@ import {
   insertSession,
 } from "./state/sessions";
 import type { SessionConnection } from "@providers/server/provider";
-import { deleteSessionFiles } from "./artifacts";
+import { deleteSessionFiles, sessionArtifactsDirectory } from "./artifacts";
 import { defineTool } from "./tools/definition";
 
 async function setup() {
@@ -126,13 +126,13 @@ test("providers receive tools bound to the public session that validate and answ
     tools: [
       defineTool("echo", {
         parameters: z.object({ value: z.string() }),
-        handler: ({ value }, caller) => ({ value, caller }),
+        handler: ({ value }, context) => ({ value, context }),
       }),
     ],
   });
   const [echo] = create.mock.calls[0]![1].tools;
   expect(await echo!.handler({ value: "ok" })).toBe(
-    JSON.stringify({ value: "ok", caller: sessionId }),
+    JSON.stringify({ value: "ok", context: { sessionId, directory: "/tmp" } }),
   );
   await expect(echo!.handler({ value: 3 })).rejects.toThrow();
 });
@@ -196,7 +196,48 @@ test("imported identities are uniform and existing sessions cannot change provid
   ).rejects.toThrow("cannot change providers");
 });
 
-test("a native session started in the home directory has a workspace only inside Git", async () => {
+test("a session without a directory works in its artifacts folder, and its prompt names none", async () => {
+  await setup();
+  const sessionId = `toy-box-test-${crypto.randomUUID()}`;
+  onTestFinished(() => deleteSessionFiles(sessionId));
+  const connection = { nativeId: "native" } as SessionConnection;
+  const create = spyOn(codexProvider, "create").mockResolvedValue(connection);
+
+  await createSession(sessionId, {
+    sessionType: "standard",
+    model: { provider: "codex", name: "model" },
+  });
+
+  const [, configuration] = create.mock.calls[0]!;
+  expect(configuration.directory).toBe(sessionArtifactsDirectory(sessionId));
+  expect(configuration.instructions).not.toContain("current working directory");
+});
+
+test("a session resumes where its history ran, even at home, unless configuration names a directory", async () => {
+  await setup();
+  const sessionId = `toy-box-test-${crypto.randomUUID()}`;
+  onTestFinished(() => deleteSessionFiles(sessionId));
+  await setSessionProvider(sessionId, { id: "codex", sessionId: "native" });
+  const resume = spyOn(codexProvider, "resume").mockResolvedValue({
+    nativeId: "native",
+  } as SessionConnection);
+  spyOn(codexProvider, "readSession").mockResolvedValue({
+    nativeId: "native",
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    context: { directory: homedir() },
+  });
+
+  await resumeSession(sessionId, { sessionType: "standard" });
+  await resumeSession(sessionId, { sessionType: "standard", directory: undefined });
+
+  const [atHome, configured] = resume.mock.calls.map(([, configuration]) => configuration);
+  expect(atHome!.directory).toBe(homedir());
+  expect(atHome!.instructions).not.toContain("current working directory");
+  expect(configured!.directory).toBe(sessionArtifactsDirectory(sessionId));
+});
+
+test("a native session has no workspace in its artifacts folder, or at home outside Git", async () => {
   await setup();
   spyOn(cli, "isInstalled").mockImplementation((id) => id === "codex");
   const home = {
@@ -210,17 +251,25 @@ test("a native session started in the home directory has a workspace only inside
     nativeId: "repository",
     context: { ...home.context, gitRoot: "/" },
   };
-  spyOn(codexProvider, "listSessions").mockResolvedValue([home, repository]);
+  const artifacts = {
+    ...home,
+    nativeId: "artifacts",
+    context: { directory: sessionArtifactsDirectory("codex:artifacts"), gitRoot: homedir() },
+  };
+  const sessions = [home, repository, artifacts];
+  spyOn(codexProvider, "listSessions").mockResolvedValue(sessions);
   spyOn(codexProvider, "readSession").mockImplementation(async (nativeId) =>
-    nativeId === home.nativeId ? home : repository,
+    sessions.find((session) => session.nativeId === nativeId),
   );
 
   expect((await listSessions()).map(({ context }) => context?.directory)).toEqual([
     undefined,
     homedir(),
+    undefined,
   ]);
   expect(await getSessionDirectory("codex:home")).toBeUndefined();
   expect(await getSessionDirectory("codex:repository")).toBe(homedir());
+  expect(await getSessionDirectory("codex:artifacts")).toBeUndefined();
 });
 
 test.each([

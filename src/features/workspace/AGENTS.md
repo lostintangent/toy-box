@@ -38,7 +38,7 @@ to its queries and, when it owns a catalog, preloads it for the first render and
 data declares that query as a [`reducedQuery`](../../shared/query.ts), which reduces the
 events applied during a read over the snapshot it returns, so a read already in flight can't
 overwrite them. [`sync.ts`](sync.ts) discovers those
-caches by convention, Workspace's own included, so neither the event type nor the client fan-out lists features. Live, optimistic, and confirmed events all go through `applyWorkspaceEvent`, so no caller reaches into a feature's cache directly. The one exception is Sessions' optimistic delete, which hides the session only in its own catalog until the server confirms. Meanwhile,
+caches by convention, Workspace's own included, so neither the event type nor the client fan-out lists features. Live, optimistic, and confirmed events all go through `applyWorkspaceEvent`, so no caller reaches into a feature's cache directly. A mutation whose effect is one event the server broadcasts, such as a delete, is an `optimisticMutation`: every cache applies the event as it starts, and a rejection refreshes the whole workspace. Meanwhile,
 the central pure reducer owns only Workspace's facts, such as clearing a deleted session's draft. It
 never performs a feature's persistence or lifecycle work.
 General invalidation hints such as `session.touched` remain reducer no-ops and instead prompt the
@@ -301,10 +301,11 @@ inline, and the route renders one `DialogHost` inside the main surface and roots
 what it opens itself and outlives the menu, sheet, or message that opened it. Each opening starts
 fresh, and the last dialog stays mounted after it closes so it animates out. To rename or delete its
 item, a feature gives the shared `NameDialog` or `DestructiveConfirmationDialog` its own copy and
-mutation options, so its cache effects run and the host needs no branch per feature. A delete
-closes no pane itself: the route closes any root whose session, Channel, or app left its list, in
-every tab. A dialog nested over another, such as a member editor's remove confirm, keeps its own
-`open` state.
+mutation options, so its cache effects run and the host needs no branch per feature. A destructive
+confirmation closes as it starts its mutation, so any optimistic hide and repair belong to the
+mutation's own options. A delete closes no pane itself: the route closes any root whose session,
+Channel, or app left its list, in every tab. A dialog nested over another, such as a member
+editor's remove confirm, keeps its own `open` state.
 
 [`components/palette/`](components/palette/) is the Mod+K palette, a composition over sessions,
 channels, apps, automations, files, and the provided commands. The sidebar's Hyper menu also runs

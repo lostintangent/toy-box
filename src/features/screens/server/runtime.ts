@@ -56,7 +56,7 @@ export class ScreenRuntime {
   }
 
   /** A thumbnail of a screen as it is now, whether or not anyone views it. */
-  async thumbnail(screenId: string): Promise<string> {
+  async thumbnail(screenId: string): Promise<Uint8Array<ArrayBuffer>> {
     return (await this.#native()).thumbnail(screenId);
   }
 
@@ -115,8 +115,7 @@ export class ScreenRuntime {
     try {
       const helper = await this.#native();
       if (this.#controller !== controller) return;
-      // Sent together, the helper releases held input before it raises the window.
-      await Promise.all([helper.releaseInput(), helper.focus(screenId)]);
+      await helper.focus(screenId);
     } catch (error) {
       if (this.#controller === controller) {
         this.#controller = undefined;

@@ -4,12 +4,19 @@ export type Tool<T = unknown> = {
   name: string;
   description?: string;
   parameters?: z.ZodType<T>;
-  /** Receives the calling session's public ID, regardless of the native backend. */
-  handler: (args: T, sessionId: string) => unknown;
+  handler: (args: T, context: ToolContext) => unknown;
   /** A successful result completes the current turn. */
   isTerminal?: boolean;
   /** Always in the model's context, never deferred behind tool search. */
   alwaysLoad?: boolean;
+};
+
+/** The session calling a tool. */
+export type ToolContext = {
+  /** Its public ID, regardless of the native backend. */
+  sessionId: string;
+  /** The directory its provider runs in. */
+  directory: string;
 };
 
 export function defineTool<T = unknown>(name: string, definition: Omit<Tool<T>, "name">): Tool<T> {

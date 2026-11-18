@@ -28,6 +28,16 @@ export const sessionSystemMessageSchema = z.discriminatedUnion("type", [
       waitingFor: z.string().min(1),
     })
     .strict(),
+  /** A null exit code means the command stopped without exiting, killed by a signal or a restart. */
+  z
+    .object({
+      type: z.literal("channel_wake_command"),
+      command: z.string().min(1),
+      exitCode: z.number().int().nullable(),
+      stdout: z.string().min(1),
+      stderr: z.string().min(1),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("channel_task_check_in"),
@@ -79,6 +89,8 @@ export function systemMessagePrompt(message: SessionSystemMessage): string {
       return `Your routine ${JSON.stringify(message.title)} is due: ${JSON.stringify(message.prompt)}. Call \`read_channel\`, then do it. If nothing needs the channel's attention, finish quietly.`;
     case "channel_follow_up":
       return `Your follow-up is due. You were waiting for ${message.waitingFor}. Call \`read_channel\` and check whether you can continue.`;
+    case "channel_wake_command":
+      return `Your wake command ${JSON.stringify(message.command)} ${message.exitCode === null ? "stopped without an exit code, killed by a signal or interrupted by a server restart" : `exited with code ${message.exitCode}`}. Its stdout is in ${message.stdout}, and its stderr is in ${message.stderr}. Call \`read_channel\` and check whether you can continue.`;
     case "channel_task_check_in":
       return `The check-in scheduled for ${message.checkInAt} on task ${JSON.stringify(message.taskId)} (${JSON.stringify(message.title)}) is due and has been cleared. Call \`read_channel\`. If the task is still assigned to you and in progress, step back and judge whether your approach is converging. Post a concise update for the lead with that judgment, blockers and the next step. This is a checkpoint, not a cancellation or instruction to stop work.`;
     case "channel_lead_message":
@@ -90,14 +102,22 @@ export function systemMessageLabel(message: SessionSystemMessage): string {
   switch (message.type) {
     case "file_edited":
       return `Edited ${getPathBasename(message.file.path)}`;
+
     case "channel_message":
       return `Message from ${message.senderName}`;
+
     case "channel_routine":
       return `Routine: ${message.title}`;
+
     case "channel_follow_up":
       return `Follow-up: ${message.waitingFor}`;
+
+    case "channel_wake_command":
+      return `Wake command ${message.exitCode === null ? "stopped" : `exited ${message.exitCode}`}`;
+
     case "channel_task_check_in":
       return `Task check-in: ${message.title}`;
+
     case "channel_lead_message":
       return `Message from the lead of ${message.channelName}${message.server ? ` on ${message.server}` : ""}`;
   }
@@ -116,6 +136,7 @@ export function systemMessageCoalesceKey(message: SessionSystemMessage): string 
       return "channel_follow_up";
     case "channel_task_check_in":
       return `channel_task_check_in:${message.taskId}`;
+    case "channel_wake_command":
     case "channel_lead_message":
       return undefined;
   }

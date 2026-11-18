@@ -26,7 +26,7 @@ export type Arm = {
 /** A script plus a scorecard. */
 export type Scenario<Setup, State, View> = {
   name: string;
-  /** Bumped when the script changes. Runs of different revisions never pool, and a changed
+  /** Bumped when the fixture, setup or script changes. Runs of different revisions never pool, and a changed
    *  scorecard rescores old runs instead. */
   revision: number;
   adapter: Adapter<Setup, State, View>;

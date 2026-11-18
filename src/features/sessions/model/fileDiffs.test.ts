@@ -118,15 +118,10 @@ index 0000000..0000000
         path: "/Users/lostintangent/Desktop/toy-box/docs/headings.md",
         status: "modified",
         hunks: [
-          {
-            oldText: "-- old heading",
-            newText: "++ new heading",
-            lines: [
-              { type: "removed", text: "-- old heading" },
-              { type: "added", text: "++ new heading" },
-            ],
-            stats: { added: 1, removed: 1 },
-          },
+          [
+            { type: "removed", text: "-- old heading" },
+            { type: "added", text: "++ new heading" },
+          ],
         ],
       },
     ]);

@@ -38,9 +38,10 @@ import { RelativeTime } from "@/shared/ui/relative-time";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
 import { ShowMore, useShowMore } from "@/shared/ui/show-more";
 import { nextCronOccurrence } from "@/shared/cron";
+import { useMinuteClock } from "@/shared/hooks/useMinuteClock";
 import { cn } from "@/shared/utils";
 import { useChannelPane } from "../ChannelPaneContext";
-import { useChannelTaskItems, TaskDiff } from "../channelTaskItems";
+import { channelTaskItems, channelTasksStarted, TaskDiff } from "../channelTaskItems";
 import { WorkspacePreview } from "@sessions/components/outputs/WorkspacePreview";
 
 /** What the overview shows: the Channel's context, team members, tasks, artifacts, and routines. */
@@ -76,12 +77,15 @@ export function ChannelOverviewContent({
     .sort((left, right) => left.name.localeCompare(right.name));
   const completedCount = channel.tasks.filter(({ status }) => status === "done").length;
   const diff = channelTasksDiff(channel.tasks);
-  const taskItems = useChannelTaskItems({
-    tasks: channel.tasks,
-    owners: agents,
-    artifacts,
-    onArtifactOpen,
-  });
+  // One clock serves the team's wake countdowns and the tasks' elapsed times.
+  const now = useMinuteClock(
+    channelTasksStarted(channel.tasks) ||
+      Object.values(presence).some((agent) => agent.state === "waiting" && agent.wakeAt),
+  );
+  const taskItems = channelTaskItems(
+    { tasks: channel.tasks, owners: agents, artifacts, onArtifactOpen },
+    now,
+  );
 
   return (
     <ScrollableFade axis="vertical" rootClassName="min-h-0 flex-1 bg-panel">
@@ -120,11 +124,14 @@ export function ChannelOverviewContent({
         >
           {showLead || visibleMembers.length > 0 ? (
             <div role="list" aria-label={`Team members in #${channel.name}`}>
-              {showLead && <AgentItem agent={lead} action={<RowMenu name={lead.name} />} />}
+              {showLead && (
+                <AgentItem agent={lead} now={now} action={<RowMenu name={lead.name} />} />
+              )}
               {visibleMembers.map((member) => (
                 <AgentItem
                   key={member.id}
                   agent={member}
+                  now={now}
                   action={
                     <RowMenu name={member.name}>
                       <DropdownMenuItem onClick={() => onEditMember(member)}>

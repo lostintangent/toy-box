@@ -165,19 +165,25 @@ export function AttachmentGallery({
             className="size-full"
             items={media.map(({ label, src, video }, index) =>
               video ? (
-                // Native video controls cannot live inside the click-to-close button.
+                // Native video controls cannot live inside the click-to-close button, so it fills
+                // the slide behind the video.
                 <div
                   // eslint-disable-next-line react/no-array-index-key -- each occurrence in the immutable message has its own carousel position
                   key={index}
-                  className="flex size-full min-h-0 items-center justify-center"
+                  className="relative flex size-full min-h-0 items-center justify-center"
                 >
+                  <DialogClose
+                    type="button"
+                    aria-label={`Close preview of ${label}`}
+                    className="absolute inset-0"
+                  />
                   <video
                     src={src}
                     aria-label={label}
                     controls
                     playsInline
                     preload="metadata"
-                    className="max-h-full max-w-full rounded-lg"
+                    className="relative max-h-full max-w-full rounded-lg"
                   />
                 </div>
               ) : (
@@ -203,7 +209,7 @@ export function AttachmentGallery({
             loop={false}
             page={selectedIndex}
           >
-            <AttachmentCarouselControls media={media} hotkeyTarget={dialogRef} />
+            <AttachmentCarouselControls media={media} />
           </Carousel>
         </DialogContent>
       )}
@@ -211,18 +217,14 @@ export function AttachmentGallery({
   );
 }
 
-function AttachmentCarouselControls({
-  media,
-  hotkeyTarget,
-}: {
-  media: { label: string }[];
-  hotkeyTarget: React.RefObject<HTMLDivElement | null>;
-}) {
+function AttachmentCarouselControls({ media }: { media: { label: string }[] }) {
   const { currentPage, totalPages, nextPage, prevPage, isNextActive, isPrevActive } = useCarousel();
   const selected = media[currentPage] ?? media[0]!;
 
-  useHotkey("ArrowLeft", prevPage, { target: hotkeyTarget });
-  useHotkey("ArrowRight", nextPage, { target: hotkeyTarget });
+  // Document-wide capture, because Base UI's popup stops arrows from bubbling and focus falls to the
+  // body when a nav button disables. These controls mount only while the modal is open.
+  useHotkey("ArrowLeft", prevPage, { capture: true });
+  useHotkey("ArrowRight", nextPage, { capture: true });
 
   return (
     <>

@@ -326,7 +326,7 @@ function Office({ channelId }: { channelId: string }) {
 `state` is the canonical `ChannelState`: channel metadata and tasks, lead, members,
 messages, pending `request`, artifacts, and routines. `presence` maps each agent ID
 to its live presence. Use it to place agents in working, waiting, or idle areas;
-working and waiting may include `text`, and waiting includes optional `wakeAt`.
+working and waiting may include `text`, and waiting includes optional `wakeAt` and `wakeCommand`.
 Avatars contain a hex `color` and SVG path `mark` in a 24×24 viewBox. Artifact `file`s work with `useFile` and `actions.openFile`.
 A task's `artifactId` is the `id` of its artifact in `state.artifacts`. `channelTasksDiff(tasks)`
 sums their direct and reported descendant diffs, or returns `undefined` when none are reported;

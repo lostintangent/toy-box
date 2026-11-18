@@ -1,4 +1,4 @@
-import type { ChannelAgent } from ".";
+import type { ChannelAgent, ChannelAgentStatus } from ".";
 
 /**
  * How an agent appears to the rest of the Channel. A running session is working. An idle agent can
@@ -6,7 +6,7 @@ import type { ChannelAgent } from ".";
  */
 export type ChannelAgentPresence =
   | { state: "working"; text?: string }
-  | { state: "waiting"; text: string; wakeAt?: string }
+  | Extract<ChannelAgentStatus, { state: "waiting" }>
   | { state: "idle" };
 
 export function channelAgentPresence(

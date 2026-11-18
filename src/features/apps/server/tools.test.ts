@@ -37,7 +37,7 @@ test("app-owned state tools read and update only their owning app", async () => 
   const getApp = tools.find(({ name }) => name === "get_app");
   const updateApp = tools.find(({ name }) => name === "update_app");
 
-  const readResult = await getApp?.handler?.({}, "worker-a");
+  const readResult = await getApp?.handler?.({}, { sessionId: "worker-a", directory: "/tmp" });
   expect(readResult).toMatchObject({
     ...owned,
     schema: { type: "object" },
@@ -52,7 +52,7 @@ test("app-owned state tools read and update only their owning app", async () => 
         cards: [],
       },
     },
-    "worker-a",
+    { sessionId: "worker-a", directory: "/tmp" },
   );
   expect(updateResult).toMatchObject({
     status: "updated",
@@ -89,13 +89,14 @@ test("listing saved app summaries is independent of definitions and pending shar
     state: { privateDraft: "Omit from the listing" },
   });
   const tool = createAppStateTools().find(({ name }) => name === "list_apps");
-  const result = await tool?.handler?.({}, "session-a");
+  const result = await tool?.handler?.({}, { sessionId: "session-a", directory: "/tmp" });
 
   expect(result).toEqual([summary]);
 });
 
 test("artifact validation compiles the invoking session's current .toy file", async () => {
   const sessionId = `toy-box-artifact-tool-${crypto.randomUUID()}`;
+  const context = { sessionId, directory: "/tmp" };
   const artifactPath = resolveSessionArtifactPath(sessionId, "board.toy");
   if (!artifactPath) throw new Error("Expected a valid artifact path.");
   const sessionRoot = dirname(dirname(artifactPath));
@@ -105,7 +106,7 @@ test("artifact validation compiles the invoking session's current .toy file", as
   const tool = artifactAppTools.find(({ name }) => name === "validate_artifact_app");
 
   await Bun.write(artifactPath, "export default function Board() { return <main>Ready</main>; }");
-  const valid = await tool?.handler?.({ path: "board.toy" }, sessionId);
+  const valid = await tool?.handler?.({ path: "board.toy" }, context);
   expect(valid).toMatchObject({
     valid: true,
     path: "board.toy",
@@ -115,7 +116,7 @@ test("artifact validation compiles the invoking session's current .toy file", as
   });
 
   await Bun.write(artifactPath, "export default function Board() { return <MissingComponent />; }");
-  const invalid = await tool?.handler?.({ path: "board.toy" }, sessionId);
+  const invalid = await tool?.handler?.({ path: "board.toy" }, context);
   expect(invalid).toMatchObject({
     valid: false,
     path: "board.toy",

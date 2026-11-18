@@ -18,6 +18,7 @@ Cases from this codebase's history. Each pairs a signal with the smaller design 
 - **Derived data stored as data.** An attachment's `name` was always the filename in its URL, so the gallery can derive it. A message's audience follows from its content, so it isn't stored. Toy Box likewise doesn't mirror provider metadata in its database or read transcripts to fill list views; when a provider can't supply something cheaply, show nothing.
 - **Duplicate authority.** A second column recording who may direct a task's agent duplicated the task's owner. Keep one authority per fact.
 - **Pass-through machinery.** A mutation hook that wrapped another mutation's `mutateAsync` gave one request two lifecycles. Prop chains carrying the working directory and skill catalog through the composer disappeared once completion sources read session context and queried their own catalog.
+- **A smaller count, a weaker boundary.** An audit removed seven Workers verbs (`listWorkers`, `getWorker`, `updateWorker`, and others) as pass-throughs to `WorkerDatabase`, so Inbox and `managedSessions` built Workers' storage class themselves. The count fell, but Inbox no longer asked Workers for what it meant, and the verbs came back. A verb in a subsystem's contract is a boundary even when it only delegates. Only an internal pass-through is noise.
 
 ## Names
 

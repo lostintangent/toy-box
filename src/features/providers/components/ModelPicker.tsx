@@ -11,12 +11,10 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import {
+  modelConfiguration,
   formatReasoningEffort,
   modelCatalogKey,
   modelConfigurationKey,
-  getModelContextTierConfig,
-  getModelReasoningConfig,
-  resolveModelConfigurationForModel,
   type ModelConfiguration,
   type ModelInfo,
 } from "../model";
@@ -104,16 +102,12 @@ function ModelOptionsPicker({
   value: ModelConfiguration;
   onValueChange: (value: ModelConfiguration) => void;
 }) {
-  const { supportedReasoningEfforts, reasoningEffort } = getModelReasoningConfig(
-    model,
-    value.reasoningEffort,
-  );
+  if (!model) return null;
+  const { reasoningEffort, contextTier } = modelConfiguration(model, value);
+  const supportedReasoningEfforts = model.supportedReasoningEfforts ?? [];
   if (supportedReasoningEfforts.length === 0 || !reasoningEffort) return null;
 
-  const { supportedContextTiers, contextTier } = getModelContextTierConfig(
-    model,
-    value.contextTier,
-  );
+  const supportedContextTiers = model.supportedContextTiers ?? [];
 
   return (
     <DropdownMenu modal={false}>
@@ -183,13 +177,7 @@ export function ModelConfigurationPicker({
           if (!name) return;
           const selected = models.find((candidate) => modelCatalogKey(candidate) === name);
           if (!selected) return;
-          onValueChange(
-            resolveModelConfigurationForModel(selected, {
-              ...value,
-              name: selected.id,
-              provider: selected.provider,
-            }),
-          );
+          onValueChange(modelConfiguration(selected, value));
         }}
       />
       <ModelOptionsPicker model={selectedModel} value={value} onValueChange={onValueChange} />
@@ -231,14 +219,7 @@ export function OptionalModelConfigurationPicker({
           }
           const selected = models.find((candidate) => modelCatalogKey(candidate) === name);
           if (!selected) return;
-          const seed = value ?? inheritedValue ?? { name: selected.id };
-          onValueChange(
-            resolveModelConfigurationForModel(selected, {
-              ...seed,
-              name: selected.id,
-              provider: selected.provider,
-            }),
-          );
+          onValueChange(modelConfiguration(selected, value ?? inheritedValue));
         }}
       />
       {value && (

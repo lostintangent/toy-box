@@ -31,7 +31,7 @@ const spawnWorkerTool = defineTool("spawn_worker", {
         "Delete the worker, transcript, and any worktree after its initial execution. Defaults to false.",
       ),
   }),
-  handler: async (args, parentSessionId) => {
+  handler: async (args, { sessionId: parentSessionId }) => {
     const { spawnWorker } = await import("@workers/server");
     const { sessionId } = await spawnWorker({
       owner: { type: "session", parentSessionId },

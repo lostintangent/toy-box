@@ -38,7 +38,7 @@ for (const [key, { path, title }] of Object.entries(artifacts)) {
 const task = ({ artifact, children, ...seed }: SeedTask): object => ({
   ...seed,
   ...(artifact && { artifactId: shared[artifact] }),
-  ...(seed.status === "done" && { owner: channelId }),
+  ...(seed.status !== "pending" && { owner: channelId }),
   ...(children && { children: children.map(task) }),
 });
 await channels.editTasks(channelId, {

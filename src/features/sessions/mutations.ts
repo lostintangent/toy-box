@@ -14,7 +14,7 @@ import {
   steerQueuedMessage,
 } from "./server/functions";
 import { adoptSessionSnapshot, sessionQueries } from "./queries";
-import { applyWorkspaceEvent } from "@workspace/sync";
+import { applyWorkspaceEvent, optimisticMutation } from "@workspace/sync";
 import { generateUUID } from "@/shared/utils";
 import type { SessionLaunch, SessionState } from "./model";
 import type { SessionQuestionAnswer } from "./model/protocol";
@@ -76,18 +76,9 @@ export const sessionMutations = {
     }),
 
   deleteSession: (sessionId: string) =>
-    mutationOptions({
-      mutationFn: () => deleteSession({ data: { sessionId } }),
-      // Only the catalog hides the session until the server confirms. Every other
-      // workspace cache waits for the confirmed event.
-      onMutate: (_variables, { client }) => {
-        sessionQueries.state.apply(client, { type: "session.deleted", sessionId });
-      },
-      onError: (_error, _variables, _context, { client }) => sessionQueries.state.repair(client),
-      onSuccess: (_result, _variables, _context, { client }) => {
-        applyWorkspaceEvent(client, { type: "session.deleted", sessionId });
-      },
-    }),
+    optimisticMutation({ type: "session.deleted", sessionId }, () =>
+      deleteSession({ data: { sessionId } }),
+    ),
 
   renameSession: (sessionId: string) =>
     mutationOptions({

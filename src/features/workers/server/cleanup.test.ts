@@ -26,8 +26,8 @@ mock.module("@sessions/server/runtime", () => ({
 }));
 
 const { deleteWorkersForApp, deleteWorkersForSession } = await import("./cleanup");
-const { registerWorkerSession } = await import("./database");
-const { hasWorker, startWorkerRun } = await import("./registry");
+const { WorkerDatabase } = await import("./database");
+const { getActiveWorker, startWorkerRun } = await import("./registry");
 
 afterAll(() => {
   mock.module("@sessions/server/runtime", () => realSessionRuntimeModule);
@@ -49,7 +49,7 @@ function startRun(worker: Worker): void {
 
 describe("worker cleanup", () => {
   test("deletes direct session children without treating its own worker as a child", async () => {
-    await openTestDatabase();
+    const store = new WorkerDatabase(await openTestDatabase());
     const parent = "parent-worker";
     const sessionChild = "session-child";
     const fileChild = "file-child";
@@ -78,14 +78,14 @@ describe("worker cleanup", () => {
     ];
     for (const worker of workers) {
       startRun(worker);
-      await registerWorkerSession(worker);
+      await store.create(worker);
     }
 
     await deleteWorkersForSession(parent);
 
-    expect(hasWorker(parent)).toBe(true);
-    expect(hasWorker(sessionChild)).toBe(false);
-    expect(hasWorker(fileChild)).toBe(false);
+    expect(getActiveWorker(parent)).toBeDefined();
+    expect(getActiveWorker(sessionChild)).toBeUndefined();
+    expect(getActiveWorker(fileChild)).toBeUndefined();
     expect(abortSessionMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
       fileChild,
       sessionChild,
@@ -97,7 +97,7 @@ describe("worker cleanup", () => {
   });
 
   test("removes live, queued, and abandoned workers", async () => {
-    await openTestDatabase();
+    const store = new WorkerDatabase(await openTestDatabase());
     const appId = "app-a";
     const active = "active-app-worker";
     const queued = "queued-app-worker";
@@ -111,14 +111,14 @@ describe("worker cleanup", () => {
         ephemeral: true,
       });
     }
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: active,
       appId,
       ephemeral: false,
     });
-    await registerWorkerSession({
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: abandoned,
@@ -128,8 +128,8 @@ describe("worker cleanup", () => {
 
     await deleteWorkersForApp(appId);
 
-    expect(hasWorker(active)).toBe(false);
-    expect(hasWorker(queued)).toBe(false);
+    expect(getActiveWorker(active)).toBeUndefined();
+    expect(getActiveWorker(queued)).toBeUndefined();
     expect(abortSessionMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
       active,
       queued,
@@ -142,7 +142,7 @@ describe("worker cleanup", () => {
   });
 
   test("attempts every independent cleanup", async () => {
-    await openTestDatabase();
+    const store = new WorkerDatabase(await openTestDatabase());
     const failing = {
       createdAt: new Date(0).toISOString(),
       type: "app" as const,
@@ -151,8 +151,8 @@ describe("worker cleanup", () => {
       ephemeral: false,
     };
     startRun(failing);
-    await registerWorkerSession(failing);
-    await registerWorkerSession({
+    await store.create(failing);
+    await store.create({
       createdAt: new Date(0).toISOString(),
       type: "app",
       sessionId: "successful-cleanup",

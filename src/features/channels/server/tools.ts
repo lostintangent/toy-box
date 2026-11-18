@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import { defineTool } from "@sessions/server/tools/definition";
 import { z } from "zod";
 import {
@@ -78,7 +78,7 @@ const createChannelTool = defineTool("create_channel", {
 
 export const createChannelMembersTool = defineTool("create_channel_members", {
   description:
-    "Creates one or more members in a channel with unique names, optional roles, and optional models. A role states what the member is accountable for, the quality bar, and judgment specific to that work. Leave paths, commands, product behavior, and rules for anyone in the repository to its instructions or the spec, agreements specific to this team to the purpose, and task context to assignments. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
+    "Creates one or more members in a channel with unique names, optional roles, and optional models. Use list_models to resolve supported model options. Members begin onboarding immediately. Mention the returned handles in a channel message to assign work.",
   parameters: channelIdentitySchema.extend({ members: channelMemberCreationsSchema }),
   handler: async ({ channelId, members }) => {
     const { createChannelMembers } = await import("@channels/server");
@@ -90,7 +90,7 @@ const createCurrentChannelMembersTool = defineTool("create_channel_members", {
   description:
     "Creates one or more members in this channel with unique names, optional roles, and optional models. Use list_models to resolve supported model options. Members begin onboarding immediately.",
   parameters: z.object({ members: channelMemberCreationsSchema }).strict(),
-  handler: async ({ members }, sessionId) => {
+  handler: async ({ members }, { sessionId }) => {
     const { createChannelMembers } = await import("@channels/server");
     const created = await createChannelMembers(sessionId, members);
     return { members: created.map(({ name }) => mention(name)) };
@@ -99,18 +99,18 @@ const createCurrentChannelMembersTool = defineTool("create_channel_members", {
 
 const postChannelMessageTool = defineTool("post_channel_message", {
   description:
-    "Posts a user-attributed Markdown message with optional image or video paths to a channel. Relative paths use this session's workspace. Name-derived @mentions wake the addressed agents. A message without mentions wakes the lead. Read the channel for exact mentions.",
+    "Posts a user-attributed Markdown message with optional image or video paths to a channel. Relative paths use your working directory. Name-derived @mentions wake the addressed agents. A message without mentions wakes the lead. Read the channel for exact mentions.",
   parameters: channelIdentitySchema.extend({
     content: conciseChannelMessageSchema,
     attachments: z.array(channelPathSchema).optional(),
   }),
-  handler: async ({ attachments, ...input }, sessionId) => {
+  handler: async ({ attachments, ...input }, { directory }) => {
     const { postChannelMessage } = await import("@channels/server");
     const message = await postChannelMessage(
       {
         id: crypto.randomUUID(),
         ...input,
-        attachments: attachments && (await resolveSessionPaths(sessionId, attachments)),
+        attachments: attachments?.map((path) => resolve(directory, path)),
       },
       { type: "user" },
     );
@@ -164,7 +164,7 @@ const readChannelForAgentTool = defineTool("read_channel", {
   description:
     "Reads this agent's next 100 unread messages, unfinished assigned tasks (all unfinished tasks for the lead), and working or waiting agents. Advances its read position. With no read cursor, always returns full context. Set detail:'full' for the channel purpose, directory, preview, complete tasks, roster with roles and models, artifacts, and routines. Set detail:'tasks' for the complete task tree instead of unfinished tasks and agents. Repeat while hasMore is true. Attachments are absolute paths.",
   parameters: z.object({ detail: channelReadDetailSchema.optional() }),
-  handler: async ({ detail = "compact" }, sessionId) => {
+  handler: async ({ detail = "compact" }, { sessionId }) => {
     const { readChannelUnread } = await import("@channels/server");
     const result = await readChannelUnread(sessionId);
     return channelReadForTool(result, result.isInitialRead ? "full" : detail, sessionId);
@@ -200,7 +200,7 @@ const sendChannelMessageTool = defineTool("send_channel_message", {
   parameters: sendChannelMessageParameters,
   handler: async (
     { attachments, ...input }: z.output<typeof sendLeadMessageParameters>,
-    sessionId,
+    { sessionId, directory },
   ) => {
     const { postChannelMessage, requireChannelAgent } = await import("@channels/server");
     const { channelId } = await requireChannelAgent(sessionId);
@@ -209,7 +209,7 @@ const sendChannelMessageTool = defineTool("send_channel_message", {
         id: crypto.randomUUID(),
         channelId,
         ...input,
-        attachments: attachments && (await resolveSessionPaths(sessionId, attachments)),
+        attachments: attachments?.map((path) => resolve(directory, path)),
       },
       { type: "agent", agentId: sessionId },
     );
@@ -227,7 +227,7 @@ const reactToChannelMessageTool = defineTool("react_to_channel_message", {
     sequence: z.number().int().positive(),
     reaction: channelReactionKindSchema.nullable(),
   }),
-  handler: async (args, sessionId) => {
+  handler: async (args, { sessionId }) => {
     const { setChannelMessageReaction } = await import("@channels/server");
     await setChannelMessageReaction(sessionId, args);
     return "Done";
@@ -238,7 +238,7 @@ const setChannelStatusTool = defineTool("set_agent_status", {
   description:
     "Sets this agent's brief channel status without posting a message, waking agents, or ending the turn.",
   parameters: setChannelAgentStatusInputSchema,
-  handler: async (args, sessionId) => {
+  handler: async (args, { sessionId }) => {
     const { setChannelAgentStatus } = await import("@channels/server");
     await setChannelAgentStatus(sessionId, args);
     return "Done";
@@ -249,12 +249,10 @@ const updateChannelTool = defineTool("update_channel", {
   description:
     "Updates this channel's name, purpose, working directory, preview, or avatar. Use an existing absolute directory. Set preview to {kind:'url',url} or {kind:'screen',screenId} from list_screens. A screen reference opens an existing host display or window; it does not launch an app. Preserve root-relative preview URLs.",
   parameters: updateChannelInputSchema,
-  handler: async (args, sessionId) => {
+  handler: async (args, { sessionId, directory }) => {
     const { updateChannel } = await import("@channels/server");
     const image = args.avatar && "image" in args.avatar && args.avatar.image;
-    const avatar = image
-      ? { image: (await resolveSessionPaths(sessionId, [image]))[0]! }
-      : undefined;
+    const avatar = image ? { image: resolve(directory, image) } : undefined;
     await updateChannel(sessionId, avatar ? { ...args, avatar } : args);
     return "Done";
   },
@@ -264,7 +262,7 @@ const editChannelTasksTool = defineTool("edit_channel_tasks", {
   description:
     "Adds, updates, removes, or moves this channel's tasks by stable ID in one atomic batch.",
   parameters: editChannelTasksInputSchema,
-  handler: async (input, sessionId) => {
+  handler: async (input, { sessionId }) => {
     const { editChannelTasks } = await import("@channels/server");
     await editChannelTasks(sessionId, input);
     return "Done";
@@ -304,11 +302,22 @@ const finishChannelAgentTurnTool = defineTool("finish_agent_turn", {
   description:
     "Ends this private agent turn and clears its active channel status. waitingFor leaves a brief waiting status.",
   parameters: finishChannelAgentTurnParameters,
-  // TODO: Restore isTerminal after https://github.com/github/copilot-cli/issues/4755 is fixed.
-  handler: async ({ waitingFor, wakeAfterMinutes }, sessionId) => {
+  isTerminal: true,
+  handler: async ({ waitingFor, wakeAfterMinutes }, { sessionId }) => {
     const { finishChannelAgentTurn } = await import("@channels/server");
-    await finishChannelAgentTurn(sessionId, waitingFor, wakeAfterMinutes);
+    await finishChannelAgentTurn(sessionId, { waitingFor, wakeAfterMinutes });
     return "Done";
+  },
+});
+
+const runWakeCommandTool = defineTool("run_wake_command", {
+  description:
+    "Runs a shell command in the background in your working directory and wakes you when it exits, with its exit code and output files. It keeps running after your turn ends. Starting another replaces the one running. A server restart stops it and wakes you.",
+  parameters: z.object({ command: z.string().trim().min(1) }).strict(),
+  handler: async ({ command }, { sessionId, directory }) => {
+    const { runChannelWakeCommand } = await import("@channels/server");
+    const { stdout, stderr } = await runChannelWakeCommand(sessionId, command, directory);
+    return `Started. Its stdout goes to ${stdout} and its stderr to ${stderr}. The next command you start overwrites both, so read them first.`;
   },
 });
 
@@ -316,7 +325,7 @@ const setRoutineTool = defineTool("set_routine", {
   description:
     "Adds a routine that privately wakes you with its prompt on its schedule, or changes one by routineId. Posts a system message to the channel.",
   parameters: setChannelRoutineInputSchema,
-  handler: async (input, sessionId) => {
+  handler: async (input, { sessionId }) => {
     const { setChannelRoutine } = await import("@channels/server");
     const routine = await setChannelRoutine(sessionId, input);
     return { routineId: routine.id };
@@ -326,7 +335,7 @@ const setRoutineTool = defineTool("set_routine", {
 const deleteRoutineTool = defineTool("delete_routine", {
   description: "Deletes one of this channel's routines and posts a system message.",
   parameters: channelRoutineIdentitySchema.omit({ channelId: true }),
-  handler: async ({ routineId }, sessionId) => {
+  handler: async ({ routineId }, { sessionId }) => {
     const { deleteChannelRoutine } = await import("@channels/server");
     if (!(await deleteChannelRoutine(sessionId, routineId))) {
       throw new Error("Routine not found in this channel.");
@@ -339,7 +348,7 @@ const removeArtifactTool = defineTool("remove_channel_artifact", {
   description:
     "Removes one of this channel's shared artifacts and posts a system message. The file stays on disk, and tasks linked to it are unlinked.",
   parameters: channelArtifactIdentitySchema.omit({ channelId: true }),
-  handler: async ({ artifactId }, sessionId) => {
+  handler: async ({ artifactId }, { sessionId }) => {
     const { removeChannelArtifact } = await import("@channels/server");
     if (
       !(await removeChannelArtifact(sessionId, artifactId, { type: "agent", agentId: sessionId }))
@@ -354,7 +363,7 @@ const messageChannelLeadTool = defineTool("message_channel_lead", {
   description:
     "Privately messages another channel's lead, found with list_channels, and wakes it. The exchange stays in the two leads' sessions. Replies arrive as private messages naming the sender's channel. A channel with a `server` is on another of the owner's Toy Box servers, where only your words arrive, so share work as pushed branches or in the message itself, never as paths, local URLs or artifacts.",
   parameters: channelIdentitySchema.extend({ content: conciseChannelMessageSchema }),
-  handler: async (input, sessionId) => {
+  handler: async (input, { sessionId }) => {
     const { messageChannelLead } = await import("@channels/server");
     await messageChannelLead(sessionId, input);
     return "Done";
@@ -364,7 +373,7 @@ const messageChannelLeadTool = defineTool("message_channel_lead", {
 const updateMemberTool = defineTool("update_member", {
   description: "Updates this channel agent's role, avatar, or both.",
   parameters: selfUpdateChannelMemberInputSchema,
-  handler: async (args, sessionId) => {
+  handler: async (args, { sessionId }) => {
     const { updateChannelMember } = await import("@channels/server");
     await updateChannelMember({ agentId: sessionId, ...args });
     return "Done";
@@ -375,7 +384,7 @@ const updateChannelMemberTool = defineTool("update_channel_member", {
   description:
     "Updates a member's name, role, or model from its next turn. A started member keeps its provider. Use list_models to resolve supported model options.",
   parameters: channelMemberUpdateSchema.safeExtend({ agent: agentReferenceSchema }),
-  handler: async ({ agent, ...changes }, sessionId) => {
+  handler: async ({ agent, ...changes }, { sessionId }) => {
     const { resolveChannelMember, updateChannelMember } = await import("@channels/server");
     const agentId = await resolveChannelMember(sessionId, agent);
     return { agent: mention((await updateChannelMember({ ...changes, agentId })).name) };
@@ -386,7 +395,7 @@ const removeChannelMemberTool = defineTool("remove_channel_member", {
   description:
     "Removes a member from this channel and posts a system message. Its session ends, and the tasks it owned lose their owner.",
   parameters: z.object({ agent: agentReferenceSchema }).strict(),
-  handler: async ({ agent }, sessionId) => {
+  handler: async ({ agent }, { sessionId }) => {
     const { removeChannelMember, resolveChannelMember } = await import("@channels/server");
     const memberId = await resolveChannelMember(sessionId, agent);
     await removeChannelMember(memberId, { type: "agent", agentId: sessionId });
@@ -396,40 +405,30 @@ const removeChannelMemberTool = defineTool("remove_channel_member", {
 
 const shareChannelArtifactFromSessionTool = defineTool("share_channel_artifact", {
   description:
-    "Registers an existing standalone file once for the channel to review or evolve without copying it. Later file edits appear automatically, and sharing the same file and title again is a no-op. The path may be absolute or relative to this session's workspace.",
+    "Registers an existing standalone file once for the channel to review or evolve without copying it. Later file edits appear automatically, and sharing the same file and title again is a no-op. The path may be absolute or relative to your working directory.",
   parameters: channelIdentitySchema.extend(shareChannelArtifactInputSchema.shape),
-  handler: async ({ path, ...input }, sessionId) => {
+  handler: async ({ path, ...input }, { directory }) => {
     const { shareChannelArtifact } = await import("@channels/server");
-    const [workspacePath] = await resolveSessionPaths(sessionId, [path]);
     return artifactForTool(
-      await shareChannelArtifact({ ...input, path: workspacePath! }, { type: "user" }),
+      await shareChannelArtifact({ ...input, path: resolve(directory, path) }, { type: "user" }),
     );
   },
 });
 
 const shareChannelArtifactFromAgentTool = defineTool("share_channel_artifact", {
   description:
-    "Registers an existing standalone file once for the channel to review or evolve without copying it. Later file edits appear automatically, and sharing the same file and title again is a no-op. The path may be absolute or relative to this agent's workspace.",
+    "Registers an existing standalone file once for the channel to review or evolve without copying it. Later file edits appear automatically, and sharing the same file and title again is a no-op. The path may be absolute or relative to your working directory.",
   parameters: shareChannelArtifactInputSchema,
-  handler: async ({ path, title }, sessionId) => {
+  handler: async ({ path, title }, { sessionId, directory }) => {
     const { requireChannelAgent, shareChannelArtifact } = await import("@channels/server");
     const { channelId } = await requireChannelAgent(sessionId);
-    const [workspacePath] = await resolveSessionPaths(sessionId, [path]);
     const artifact = await shareChannelArtifact(
-      { channelId, path: workspacePath!, title },
+      { channelId, path: resolve(directory, path), title },
       { type: "agent", agentId: sessionId },
     );
     return { artifactId: workspaceFileId(artifact.file) };
   },
 });
-
-/** In tool input, a relative path means the calling Session's workspace. Without one, it stays relative. */
-async function resolveSessionPaths(sessionId: string, paths: readonly string[]) {
-  if (paths.every((path) => isAbsolute(path))) return [...paths];
-  const { getSessionDirectory } = await import("@sessions/server/runtime");
-  const directory = await getSessionDirectory(sessionId);
-  return paths.map((path) => (directory ? resolve(directory, path) : path));
-}
 
 function channelReadForTool(
   result: ChannelRead,
@@ -626,6 +625,7 @@ const commonChannelAgentTools = [
   setChannelStatusTool,
   reactToChannelMessageTool,
   shareChannelArtifactFromAgentTool,
+  runWakeCommandTool,
   finishChannelAgentTurnTool,
 ];
 

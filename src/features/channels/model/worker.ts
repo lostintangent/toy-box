@@ -42,6 +42,6 @@ export function channelMemberFromWorker(
   metadata = channelAgentMetadataSchema.parse(worker.metadata),
 ): ChannelMember {
   if (!worker.name) throw new Error("Channel members require a name.");
-  const { seenThrough: _seenThrough, ...profile } = metadata;
+  const { seenThrough: _seenThrough, wakeCommand: _wakeCommand, ...profile } = metadata;
   return { channelId: worker.channelId, id: worker.sessionId, name: worker.name, ...profile };
 }

@@ -19,7 +19,7 @@ export const sessionProviders: readonly SessionProvider[] = [
   claudeProvider,
 ];
 
-type Discovery = { status: SessionProviderStatus; models: ModelInfo[] };
+type Discovery = { status: SessionProviderStatus; error?: string; models: ModelInfo[] };
 const discoveryByProvider = sharedMap<Promise<Discovery>>("provider-discovery");
 
 export function getSessionProvider(id: string): SessionProvider {
@@ -41,6 +41,7 @@ export async function getProviderCatalog(): Promise<ProviderCatalog> {
       id,
       name,
       status: discoveries[index]?.status ?? (cli.isInstalled(id) ? "ready" : "unavailable"),
+      error: discoveries[index]?.error,
     })),
     models: discoveries.flatMap((discovery) => discovery?.models ?? []),
   };
@@ -71,7 +72,7 @@ export async function updateProvider(providerId: string) {
   return result;
 }
 
-/** Failed discovery leaves the provider ready without models until a later request retries it. */
+/** Discovery settles once until Update or shutdown, so a failure stays visible instead of retrying. */
 function discover(provider: SessionProvider): Promise<Discovery> {
   const cached = discoveryByProvider.get(provider.id);
   if (cached) return cached;
@@ -79,18 +80,18 @@ function discover(provider: SessionProvider): Promise<Discovery> {
   const discovery = (async (): Promise<Discovery> => {
     const signedIn = await provider.isSignedIn();
     const models = signedIn ? await provider.listModels() : [];
-    // Catalog reads don't wait, so this is their hint. A failure stays quiet, since its hint would
-    // send every client into a refetch and retry loop.
-    broadcast({ type: "providers.changed" });
     return {
       status: signedIn ? "ready" : "signedOut",
       models: models.map((model) => ({ ...model, providerName: provider.name })),
     };
-  })().catch((error): Discovery => {
-    discoveryByProvider.delete(provider.id);
-    console.error(`Unable to discover ${provider.name}:`, error);
-    return { status: "ready", models: [] };
-  });
+  })()
+    .catch((error): Discovery => {
+      console.error(`Unable to discover ${provider.name}:`, error);
+      const message = error instanceof Error ? error.message : String(error);
+      return { status: "failed", error: message, models: [] };
+    })
+    // Catalog reads don't wait, so this is their hint. They only read the cache, so it can't loop.
+    .finally(() => broadcast({ type: "providers.changed" }));
   discoveryByProvider.set(provider.id, discovery);
   return discovery;
 }

@@ -1,12 +1,8 @@
 import type { ToolCall } from "./index";
 import type { DiffStats } from "@/shared/diffStats";
 
-export type DiffHunk = {
-  oldText: string;
-  newText: string;
-  lines: Array<{ type: "context" | "added" | "removed"; text: string }>;
-  stats: DiffStats;
-};
+/** One hunk's lines, in order, each tagged by the side it belongs to. */
+export type DiffHunk = Array<{ type: "context" | "added" | "removed"; text: string }>;
 
 export type FileDiff = {
   path: string;
@@ -21,14 +17,13 @@ type FileDraft = FileDiff & {
   newPath?: string;
 };
 
-type HunkDraft = {
-  oldLines: string[];
-  newLines: string[];
-  lines: DiffHunk["lines"];
-  stats: DiffStats;
-};
-
 const DEV_NULL = "/dev/null";
+
+const LINE_TYPES: Record<string, DiffHunk[number]["type"] | undefined> = {
+  "+": "added",
+  "-": "removed",
+  " ": "context",
+};
 
 function normalizeDiffPath(rawPath: string, cwd?: string): string {
   const tabIndex = rawPath.indexOf("\t");
@@ -67,31 +62,6 @@ function displayPathFromPaths(oldPath: string | undefined, newPath: string | und
   return newPath && newPath !== DEV_NULL ? newPath : oldPath && oldPath !== DEV_NULL ? oldPath : "";
 }
 
-function createHunkDraft(): HunkDraft {
-  return {
-    oldLines: [],
-    newLines: [],
-    lines: [],
-    stats: { added: 0, removed: 0 },
-  };
-}
-
-function hunkFromLines(hunk: HunkDraft): DiffHunk | undefined {
-  if (hunk.oldLines.length === 0 && hunk.newLines.length === 0) return undefined;
-  return {
-    oldText: hunk.oldLines.join("\n"),
-    newText: hunk.newLines.join("\n"),
-    lines: hunk.lines.map((line) => ({ ...line })),
-    stats: { ...hunk.stats },
-  };
-}
-
-function pushHunk(file: FileDraft | undefined, hunk: HunkDraft | undefined): void {
-  if (!file || !hunk) return;
-  const changeHunk = hunkFromLines(hunk);
-  if (changeHunk) file.hunks.push(changeHunk);
-}
-
 function pushFile(files: FileDiff[], file: FileDraft | undefined): void {
   if (!file || !file.path) return;
   files.push({
@@ -104,10 +74,10 @@ function pushFile(files: FileDiff[], file: FileDraft | undefined): void {
 export function parseUnifiedDiff(diff: string, cwd?: string): FileDiff[] {
   const files: FileDiff[] = [];
   let currentFile: FileDraft | undefined;
-  let currentHunk: HunkDraft | undefined;
+  let currentHunk: DiffHunk | undefined;
 
   function commitHunk() {
-    pushHunk(currentFile, currentHunk);
+    if (currentFile && currentHunk?.length) currentFile.hunks.push(currentHunk);
     currentHunk = undefined;
   }
 
@@ -125,28 +95,10 @@ export function parseUnifiedDiff(diff: string, cwd?: string): FileDiff[] {
   }
 
   for (const line of diff.split("\n")) {
-    if (currentHunk && !line.startsWith("\\ No newline at end of file")) {
-      if (line.startsWith("+")) {
-        const text = line.slice(1);
-        currentHunk.newLines.push(text);
-        currentHunk.lines.push({ type: "added", text });
-        currentHunk.stats.added++;
-        continue;
-      }
-      if (line.startsWith("-")) {
-        const text = line.slice(1);
-        currentHunk.oldLines.push(text);
-        currentHunk.lines.push({ type: "removed", text });
-        currentHunk.stats.removed++;
-        continue;
-      }
-      if (line.startsWith(" ")) {
-        const content = line.slice(1);
-        currentHunk.oldLines.push(content);
-        currentHunk.newLines.push(content);
-        currentHunk.lines.push({ type: "context", text: content });
-        continue;
-      }
+    const type = LINE_TYPES[line[0]];
+    if (currentHunk && type) {
+      currentHunk.push({ type, text: line.slice(1) });
+      continue;
     }
 
     if (line.startsWith("diff --git ")) {
@@ -173,11 +125,8 @@ export function parseUnifiedDiff(diff: string, cwd?: string): FileDiff[] {
 
     if (line.startsWith("@@")) {
       commitHunk();
-      currentHunk = createHunkDraft();
-      continue;
+      currentHunk = [];
     }
-
-    if (!currentHunk || line.startsWith("\\ No newline at end of file")) continue;
   }
 
   commitFile();
@@ -283,7 +232,11 @@ export type FileDiffStats = {
 export function computeFileDiffStats(fileDiffs: FileDiff[]): FileDiffStats {
   return sumFileDiffStats(
     fileDiffs.flatMap(({ path, hunks }) =>
-      hunks.map(({ stats }) => ({ total: stats, byFile: [{ path, diff: stats }] })),
+      hunks.map((hunk) => {
+        const diff = { added: 0, removed: 0 };
+        for (const { type } of hunk) if (type !== "context") diff[type]++;
+        return { total: diff, byFile: [{ path, diff }] };
+      }),
     ),
   );
 }

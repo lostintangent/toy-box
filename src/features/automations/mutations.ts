@@ -1,11 +1,11 @@
-import { mutationOptions, type QueryClient } from "@tanstack/react-query";
+import { mutationOptions } from "@tanstack/react-query";
 import {
   createAutomation,
   deleteAutomation,
   runAutomation,
   updateAutomation,
 } from "./server/functions";
-import { applyWorkspaceEvent } from "@workspace/sync";
+import { optimisticMutation } from "@workspace/sync";
 import type { AutomationOptions } from "./model";
 
 export const automationMutations = {
@@ -21,21 +21,12 @@ export const automationMutations = {
     }),
 
   delete: (automationId: string) =>
-    mutationOptions({
-      mutationFn: () => deleteAutomation({ data: { automationId } }),
-      onSuccess: (_deleted, _variables, _onMutateResult, { client }) => {
-        removeAutomation(client, automationId);
-      },
-    }),
+    optimisticMutation({ type: "automation.deleted", automationId }, () =>
+      deleteAutomation({ data: { automationId } }),
+    ),
 
   run: () =>
     mutationOptions({
       mutationFn: (automationId: string) => runAutomation({ data: { automationId } }),
     }),
 };
-
-function removeAutomation(client: QueryClient, automationId: string) {
-  // The definition owns the stable managed session with the same ID.
-  applyWorkspaceEvent(client, { type: "session.deleted", sessionId: automationId });
-  applyWorkspaceEvent(client, { type: "automation.deleted", automationId });
-}

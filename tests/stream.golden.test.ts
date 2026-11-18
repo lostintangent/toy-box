@@ -49,11 +49,11 @@ function identifyUserMessage(event: SdkSessionEvent, clientTurnId: string): SdkS
 mock.module("@sessions/server/state/registry", () => ({
   createSession: unused,
   getSession: unused,
-  withSession: unused,
-  evictCachedSession: () => {},
-  evictCachedSessionIfStale: () => false,
-  deleteSession: unused,
-  deleteSessionIfExists: unused,
+  withConnection: unused,
+  evictConnection: () => {},
+  evictConnectionIfStale: () => false,
+  deleteSessionResources: unused,
+  removeDeletedSessionState: unused,
 }));
 mock.module("@workspace/server/events", () => ({
   getWorkspaceRevision: unused,
@@ -122,9 +122,11 @@ describe("stream golden replay", () => {
       },
     } as unknown as CopilotSession;
 
-    const execution = SessionExecution.getOrCreate(
+    const settled = mock();
+    const execution = new SessionExecution(
       SESSION_ID,
       connectCopilotSession(fakeSession, holdNativeEvents()),
+      settled,
       {
         model: { provider: "copilot", name: "gpt-5.5" },
       },
@@ -185,14 +187,14 @@ describe("stream golden replay", () => {
         send: { prompt: "now fix the findings", attachments: undefined, clientTurnId: "queued-1" },
       },
     ]);
-    // Teardown sequence: unread announcement, end-of-stream marker to subscribers,
-    // SDK unsubscribe — in that order. A watching client marks the turn read itself.
+    // Teardown settles first, which detaches the SDK, then announces the turn as unread
+    // once. A watching client marks the turn read itself.
     expect(sideEffects.slice(sideEffects.indexOf("--- pre-finish ---") + 1)).toEqual([
-      `unread:${SESSION_ID}`,
       "sdk:unsubscribed",
+      `unread:${SESSION_ID}`,
     ]);
     expect(received.at(-1)).toBe("<<SUBSCRIPTION-DONE>>");
-    expect(SessionExecution.isRunning(SESSION_ID)).toBe(false);
+    expect(settled).toHaveBeenCalledTimes(1);
 
     // The SDK input is authoritative: delivery itself emits no provisional
     // transcript event, and the later SDK event receives the client's ID.
@@ -238,8 +240,9 @@ describe("stream golden replay", () => {
     const fixture = await loadSessionFixture("subagents");
 
     type DrivenExecution = {
-      execution: ReturnType<typeof SessionExecution.getOrCreate>;
+      execution: InstanceType<typeof SessionExecution>;
       emit: (event: SdkSessionEvent) => void;
+      settled: ReturnType<typeof mock>;
     };
 
     const driveExecution = (
@@ -256,13 +259,16 @@ describe("stream golden replay", () => {
         setModel: async () => {},
       } as unknown as CopilotSession;
 
+      const settled = mock();
       return {
-        execution: SessionExecution.getOrCreate(
+        execution: new SessionExecution(
           sessionId,
           connectCopilotSession(fakeSession, holdNativeEvents()),
+          settled,
           initialState,
         ),
         emit: (event) => handler!(event),
+        settled,
       };
     };
 
@@ -315,7 +321,7 @@ describe("stream golden replay", () => {
     await runTurnOne(interrupted);
     interrupted.emit(sdkEvent({ type: "session.idle", data: {} }));
     await settle();
-    expect(SessionExecution.isRunning("golden-interrupted")).toBe(false);
+    expect(interrupted.settled).toHaveBeenCalledTimes(1);
 
     const capturedSnapshot = interrupted.execution.getSessionState();
     const { revision: _revision, ...capturedState } = capturedSnapshot;

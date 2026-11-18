@@ -21,6 +21,7 @@ import {
   abortSession as abortRuntimeSession,
   cancelQueuedMessage as cancelRuntimeQueuedMessage,
   createSession as createRuntimeSession,
+  deleteSession as deleteRuntimeSession,
   deliverSessionMessage,
   getSessionSnapshot,
   rewindSession as rewindRuntimeSession,
@@ -166,7 +167,7 @@ export const rewindSession = createServerFn({ method: "POST" })
 export const deleteSession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
   .handler(async ({ data }): Promise<boolean> => {
-    await sessionRegistry.deleteSession(data.sessionId);
+    await deleteRuntimeSession(data.sessionId);
     return true;
   });
 

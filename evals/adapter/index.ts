@@ -11,10 +11,11 @@ import type { SessionState, SessionSubscriptionEvent } from "@sessions/model";
 import { joinPreviousMessages } from "@sessions/model/transcriptPages";
 import type { WorkspaceEvent } from "@workspace/model/events";
 import type { Adapter, Arm, Sandbox, System } from "../harness";
+import { endTree } from "./processes";
 import { calls, type ChannelView, type Evidence, turns, view, walk } from "./view";
 
-/** A channel to start: work folder files to share as artifacts, by key, and tasks to seed. A done
- *  seed is the lead's, and `artifact` names one of the keys. */
+/** A channel to start: work folder files to share as artifacts, by key, and tasks to seed. A seed
+ *  that has started is the lead's, and `artifact` names one of the keys. */
 export type ChannelSetup = {
   name: string;
   purpose: string;
@@ -24,7 +25,7 @@ export type ChannelSetup = {
 export type SeedTask = {
   id: string;
   title: string;
-  status: "pending" | "done";
+  status: "pending" | "in_progress" | "blocked" | "done";
   artifact?: string;
   children?: SeedTask[];
 };
@@ -82,8 +83,16 @@ async function live(
   sandbox: Sandbox,
   setup: ChannelSetup,
 ): Promise<System<ChannelState>> {
-  const evidence: Evidence = { snapshots: [], agents: [], work: "" };
-  const agents = new Map<string, { runs: string[]; rests: string[]; state?: SessionState }>();
+  // Read as the server finds its CLI, per run, since one can update partway through a batch.
+  const version = $`${arm.provider} --version < /dev/null`
+    .cwd(sandbox.home)
+    .env({ ...sandbox.env, COPILOT_AUTO_UPDATE: "false" });
+  const cli = (await version.text()).split("\n")[0];
+  const evidence: Evidence = { cli, snapshots: [], agents: [], work: "" };
+  const agents = new Map<
+    string,
+    { runs: string[]; rests: string[]; lengths: number[]; state?: SessionState }
+  >();
   const running = new Set<string>();
   let [lastSend, lastRest] = [Date.now(), 0];
   let pending: Promise<IteratorResult<WorkspaceEvent>> | undefined;
@@ -99,19 +108,21 @@ async function live(
     const event = await server.first<SessionSubscriptionEvent>(`/api/sessions/${id}`);
     if (event.type !== "snapshot")
       throw new Error(`Session ${id} sent ${event.type} before its snapshot`);
-    const agent = agents.get(id) ?? { runs: [], rests: [] };
+    const agent = agents.get(id) ?? { runs: [], rests: [], lengths: [] };
     const state = agent.state ? joinPreviousMessages(agent.state, event.state) : event.state;
     agents.set(id, { ...agent, state });
   };
+  // Any snapshot's, so a member the lead removed keeps its name.
   const name = (id: string) =>
     id === lead
       ? "lead"
-      : (evidence.snapshots.at(-1)?.state.members.find((member) => member.id === id)?.name ?? id);
+      : (evidence.snapshots.flatMap(({ state }) => state.members).find((member) => member.id === id)
+          ?.name ?? id);
   // Returns whether the lead just came to rest, after recording the channel at that moment.
   const observe = async (event: WorkspaceEvent) => {
     if (!event.type.startsWith("session.") || !("sessionId" in event)) return false;
     const id = event.sessionId;
-    const agent = agents.get(id) ?? { runs: [], rests: [] };
+    const agent = agents.get(id) ?? { runs: [], rests: [], lengths: [] };
     agents.set(id, agent);
     if (event.type === "session.running") {
       if (!running.has(id)) agent.runs.push(iso(event.at));
@@ -123,6 +134,7 @@ async function live(
     agent.rests.push(iso(at));
     if (id === lead) await snapshot((lastRest = at));
     await transcript(id);
+    agent.lengths.push(agents.get(id)!.state!.messages.length);
     return id === lead;
   };
 
@@ -162,9 +174,9 @@ async function live(
       await server.stop();
       const work = await changes(sandbox).catch(() => undefined);
       evidence.work = work ?? "";
-      evidence.agents = [...agents].flatMap(([id, { runs, rests, state }]) =>
+      evidence.agents = [...agents].flatMap(([id, { state, ...tracked }]) =>
         state
-          ? [{ id, name: name(id), model: state.model, runs, rests, messages: state.messages }]
+          ? [{ id, name: name(id), model: state.model, ...tracked, messages: state.messages }]
           : [],
       );
       const reason = work === undefined ? "the work couldn't be read" : undefined;
@@ -208,7 +220,7 @@ type Server = {
   events<Event>(path: string, signal: AbortSignal): AsyncGenerator<Event>;
   /** The first event of a stream, for routes that only serve SSE. */
   first<Event>(path: string): Promise<Event>;
-  /** SIGKILL to the whole process group, since the sandbox it ran in is about to go. */
+  /** Ends the server and every process it started, since the sandbox they ran in is about to go. */
   stop(): Promise<void>;
 };
 
@@ -237,9 +249,7 @@ async function serve(arm: Arm, sandbox: Sandbox): Promise<Server> {
       throw new Error(`${path} closed before its first event`);
     },
     async stop() {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {}
+      await endTree(child.pid);
       await child.exited;
     },
   };

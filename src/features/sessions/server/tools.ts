@@ -18,7 +18,7 @@ const updateSessionTitleTool = defineTool("update_session_title", {
   parameters: z.object({
     title: sessionNameSchema.describe("Concise 2-6 word title for the current focus"),
   }),
-  handler: async ({ title }, sessionId) => {
+  handler: async ({ title }, { sessionId }) => {
     const { updateSessionTitle } = await import("@sessions/server/state/registry");
     return JSON.stringify({
       applied: await updateSessionTitle(sessionId, title),
@@ -124,7 +124,7 @@ const deliverMessage = defineTool("deliver_message", {
       .optional()
       .describe("Optional model and reasoning override for this message"),
   }),
-  handler: async ({ sessionId, message, model }, callerId) => {
+  handler: async ({ sessionId, message, model }, { sessionId: callerId }) => {
     if (sessionId === callerId) {
       throw new Error("deliver_message cannot target the invoking session.");
     }

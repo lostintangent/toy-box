@@ -47,6 +47,8 @@ const {
   sessionHistoryTools,
 } = await import("./tools");
 
+const context = { sessionId: "toy-box-caller", directory: "/tmp" };
+
 test("model discovery returns the client catalog with provider and option metadata", async () => {
   const catalog = [
     {
@@ -74,8 +76,8 @@ test("model discovery returns the client catalog with provider and option metada
   onTestFinished(() => list.mockRestore());
 
   const [tool] = modelTools;
-  expect(await tool.handler({ provider: undefined }, "toy-box-caller")).toEqual(catalog);
-  expect(await tool.handler({ provider: "codex" }, "toy-box-caller")).toEqual([catalog[1]]);
+  expect(await tool.handler({ provider: undefined }, context)).toEqual(catalog);
+  expect(await tool.handler({ provider: "codex" }, context)).toEqual([catalog[1]]);
 });
 
 test("session discovery bounds results and searches titles across providers, newest first", async () => {
@@ -91,14 +93,14 @@ test("session discovery bounds results and searches titles across providers, new
   ]);
   onTestFinished(() => list.mockRestore());
   const tool = sessionHistoryTools[0];
-  const all = (await tool.handler({}, "toy-box-caller")) as {
+  const all = (await tool.handler({}, context)) as {
     sessions: { id: string; provider: { id: string } }[];
     total: number;
   };
   expect(all.total).toBe(25);
   expect(all.sessions).toHaveLength(20);
   expect(all.sessions[0]?.id).toBe("session-24");
-  const filtered = await tool.handler({ query: " PAGER ", limit: 2 }, "toy-box-caller");
+  const filtered = await tool.handler({ query: " PAGER ", limit: 2 }, context);
   expect(filtered).toMatchObject({
     total: 13,
     sessions: [
@@ -127,7 +129,7 @@ describe("SDK coordination tools", () => {
     await expect(
       deliverMessageTool.handler(
         { sessionId: "toy-box-caller", message: "Ownership returned to parent." },
-        "toy-box-caller",
+        context,
       ),
     ).rejects.toThrow("cannot target the invoking session");
     expect(deliverSessionMessageMock).not.toHaveBeenCalled();
@@ -136,7 +138,7 @@ describe("SDK coordination tools", () => {
   test("delivers the message to another session and reports its disposition", async () => {
     const result = await deliverMessageTool.handler(
       { sessionId: "toy-box-recipient", message: "Please review this", model: undefined },
-      "toy-box-caller",
+      context,
     );
 
     expect(deliverSessionMessageMock).toHaveBeenCalledWith("toy-box-recipient", {
@@ -151,10 +153,7 @@ describe("SDK session title tool", () => {
   test("updates the invoking session through automatic-name policy", async () => {
     const [tool] = sessionTitleTools;
 
-    const result = await tool?.handler?.(
-      { title: "Terminal Reconnect Scrollback" },
-      "toy-box-caller",
-    );
+    const result = await tool?.handler?.({ title: "Terminal Reconnect Scrollback" }, context);
 
     expect(updateSessionTitleMock).toHaveBeenCalledWith(
       "toy-box-caller",
@@ -168,10 +167,7 @@ describe("SDK lifecycle tools", () => {
   test("create_session creates a standard session without inherited defaults or a worker owner", async () => {
     const tool = hyperLifecycleTools.find((candidate) => candidate.name === "create_session");
 
-    const result = await tool?.handler?.(
-      { prompt: "Start a durable investigation" },
-      "toy-box-caller",
-    );
+    const result = await tool?.handler?.({ prompt: "Start a durable investigation" }, context);
 
     const { sessionId, opened } = JSON.parse(String(result)) as {
       sessionId: string;
@@ -202,7 +198,7 @@ describe("SDK lifecycle tools", () => {
         useWorktree: true,
         open: true,
       },
-      "toy-box-caller",
+      context,
     );
 
     expect(JSON.parse(String(result))).toEqual({

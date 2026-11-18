@@ -1,26 +1,14 @@
-// Server-only worker admission: validate the owner, register the pending worker,
-// and hand execution to the runtime supervisor.
+// Server-only worker admission: validate untrusted owners, then spawn through
+// the supervisor.
 
-import type { CancelWorkerInput, SpawnWorkerInput, Worker, WorkerOwner } from "../model";
-import * as supervisor from "./supervisor";
-import type { WorkerRetention } from "./supervisor";
-import { cancelWorker, getRegisteredWorker } from "./registry";
-import { createWorker, registerWorkerSession } from "./database";
+import type { CancelWorkerInput, SpawnWorkerInput, Worker } from "../model";
+import { spawnWorker } from "./supervisor";
+import { cancelWorker, getActiveWorker } from "./registry";
+import { WorkerDatabase } from "./database";
 import { getStateDatabase } from "@/server/database";
 import { AppDatabase } from "@apps/server/database";
 import { resolveWorkspaceFile } from "@files/server/paths";
 import { workspaceFileId } from "@files/model";
-import type { SessionLaunch } from "@sessions/model";
-
-export type WorkerSpawn<Owner extends WorkerOwner = WorkerOwner, Value = void> = SessionLaunch &
-  Pick<Worker, "name"> & {
-    metadata?: unknown;
-    owner: Owner;
-    sessionId?: string;
-    retention: WorkerRetention;
-    /** Persist ownership with an owner-specific admission, before execution starts. */
-    admit?: (worker: Worker & Owner) => Promise<Value>;
-  };
 
 export async function spawnWorkerFromRequest(
   input: SpawnWorkerInput,
@@ -48,7 +36,8 @@ export async function spawnWorkerFromRequest(
     return { sessionId };
   }
 
-  const apps = new AppDatabase(await getStateDatabase());
+  const db = await getStateDatabase();
+  const apps = new AppDatabase(db);
   const app = await apps.get(input.appId);
   if (!app) throw new Error("Workers require an existing app.");
   const { sessionId } = await spawnWorker({
@@ -61,38 +50,11 @@ export async function spawnWorkerFromRequest(
     },
     // App deletion cancels only published workers, so recheck the app once this one is published.
     admit: async (worker) => {
-      if (await apps.get(app.id)) return registerWorkerSession(worker);
+      if (await apps.get(app.id)) return new WorkerDatabase(db).create(worker);
       throw new Error("The app was deleted before its worker started.");
     },
   });
   return { sessionId };
-}
-
-/** Start trusted owner-supplied work through the same admission and completion lifecycle. */
-export function spawnWorker<Owner extends WorkerOwner, Value>(
-  input: WorkerSpawn<Owner, Value> & Required<Pick<WorkerSpawn<Owner, Value>, "admit">>,
-): Promise<{ sessionId: string; value: Value }>;
-export function spawnWorker(input: WorkerSpawn): Promise<{ sessionId: string; value: void }>;
-export function spawnWorker<Owner extends WorkerOwner, Value>(
-  input: WorkerSpawn<Owner, Value>,
-): Promise<{ sessionId: string; value: Value | void }> {
-  const { admit } = input;
-  const worker = createWorker(
-    {
-      ...input.owner,
-      ephemeral: input.retention === "ephemeral",
-      ...(input.name === undefined ? {} : { name: input.name }),
-      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
-    },
-    input.sessionId,
-  );
-  return supervisor.superviseWorker({
-    worker,
-    message: input.message,
-    location: input.location,
-    retention: input.retention,
-    admit: admit ? () => admit(worker) : undefined,
-  });
 }
 
 export async function cancelWorkerFromRequest(input: CancelWorkerInput): Promise<boolean> {
@@ -101,7 +63,7 @@ export async function cancelWorkerFromRequest(input: CancelWorkerInput): Promise
 }
 
 function getRequestedWorker(input: CancelWorkerInput): Worker | undefined {
-  const worker = getRegisteredWorker(input.workerSessionId);
+  const worker = getActiveWorker(input.workerSessionId);
   if (!worker || worker.type !== input.type) return;
   if (worker.type === "file" && input.type === "file") {
     return workspaceFileId(worker.file) === workspaceFileId(input.file) ? worker : undefined;

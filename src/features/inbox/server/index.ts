@@ -3,8 +3,8 @@
 import {
   deleteWorker,
   getWorker,
-  hasWorker,
   initializeWorkerMetadata,
+  isWorkerActive,
   listWorkers,
   spawnWorker,
   updateWorker,
@@ -21,13 +21,13 @@ import {
 
 export async function listInboxEntries(): Promise<InboxEntry[]> {
   return (await listWorkers("inbox")).map((worker) =>
-    inboxEntryFromWorker(worker, hasWorker(worker.sessionId)),
+    inboxEntryFromWorker(worker, isWorkerActive(worker.sessionId)),
   );
 }
 
 export async function getInboxEntry(entryId: string): Promise<InboxEntry | null> {
   const worker = await getWorker(entryId, "inbox");
-  return worker ? inboxEntryFromWorker(worker, hasWorker(entryId)) : null;
+  return worker ? inboxEntryFromWorker(worker, isWorkerActive(entryId)) : null;
 }
 
 /** Accept an Inbox task without attaching a client to its Worker. */

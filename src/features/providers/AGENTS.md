@@ -21,13 +21,17 @@ the workspace consumes the same provider-owned catalog and configuration.
 - `components/ModelPicker.tsx` owns the controlled model and configuration pickers.
 - `components/ProviderSettings.tsx` owns enablement, CLI updates, and subscriptions in Settings. Version reads
   share one query for all installed providers while the section is open, outside catalog loading. Disabled
-  providers still show their version but cannot be updated. A signed-out provider is muted and shows
-  no plan; its update check also rechecks sign-in. Each enabled, ready provider reads its account's
-  subscription through its own query, at most once a minute, so a slow or failed read affects only
-  its own row. The plan's name sits beside the version, with its limits beneath.
+  providers still show their version but cannot be updated. A signed-out or failed provider is muted
+  and shows no plan, with an icon beside its version that says why on hover or tap, quoting a
+  failure's native discovery error. Its update check rechecks sign-in and retries a failed discovery.
+  Each enabled, ready provider reads its account's subscription through its own query, at most once
+  a minute, so a slow or failed read affects only its own row. The plan's name sits beside the
+  version, with its limits beneath.
   `server/cli.ts` owns installation checks through `Bun.which(providerId)` and the shared `--version`
-  and `update` commands. Updates compare versions before and after; unchanged does not prove an installation
-  is current (some installers require manual updates). Restart Toy Box to use updated runtimes.
+  and `update` commands. Copilot's version is read with auto-update off, as the server launches it,
+  because its launcher would otherwise name a newer cached build. Updates compare versions before
+  and after; unchanged does not prove an installation is current (some installers require manual
+  updates). Restart Toy Box to use updated runtimes.
 - `server/provider.ts` defines `SessionProvider`, `SessionConnection`, and the configuration
   supplied by Sessions. The contract addresses each history by its native ID, and a connection
   exposes the one it runs; Sessions maps public IDs to native ones.
@@ -45,18 +49,19 @@ the workspace consumes the same provider-owned catalog and configuration.
   `getModelChoices` composes its models with the normalized workspace default, optionally scoped to
   one provider. A scoped default is null when the workspace default uses another provider.
   Discovery checks sign-in before reading models and shares one process-wide promise per provider
-  until shutdown or a successful CLI update check. Completed discovery broadcasts
-  `providers.changed`. Failed discovery is evicted and stays quiet, so the next request retries
-  without looping clients, and its provider stays ready. A signed-out provider contributes no models
-  but keeps its sessions. Disabled providers are never started to check. Updates evict only that
+  until shutdown or a successful CLI update check. Every discovery broadcasts `providers.changed`
+  once when it settles. A failed one reports `failed` with its native error, without models, until
+  that update check or shutdown rediscovers it. Catalog reads only peek at discovery, so the hint
+  never loops clients. A signed-out provider contributes no models but keeps its sessions.
+  Disabled providers are never started to check. Updates evict only that
   provider's discovery and wait for rediscovery, so its broadcast is the one hint that refreshes
   client catalogs and versions.
   Running native processes retain their version until restarted. Restart the server and reload
   the page after installing or removing a provider. Enabled providers are selected outside
   the cache, so toggling one never rediscovers the others. Session catalogs are read independently
   on every request. A provider that cannot discover its catalog contributes no entries and remains
-  visible in Settings. Disabling removes discovery and closes its open session panes; it does not
-  delete history or stop server work already running.
+  visible in Settings with its error. Disabling removes discovery and closes its open session
+  panes; it does not delete history or stop server work already running.
 - `routes/v1/models.ts` exposes `GET /api/v1/models` to external clients as
   `{ models, defaultModel }`. Channels reuses `getModelChoices` for member-scoped
   choices; the HTTP entry point does not introduce another catalog or cache.
@@ -100,6 +105,22 @@ these shared value fields also distinguish models with the same name across cata
 Keep one model configuration and transcript shape across providers and all consumers.
 Sessions applies a turn's model with `setModel` only when it differs from the stream's model, and
 never announces it. Each provider emits `model_changed` with the model it applies.
+
+## Upgrades
+
+No test spawns a native CLI, so an SDK or CLI upgrade is verified only once the installed CLIs
+complete a real handshake the way the server launches them:
+
+1. `COPILOT_AUTO_UPDATE=false copilot --version` matches the CLI pinned in
+   `node_modules/@github/copilot-sdk/dist/cliVersion.js`.
+2. Each provider discovers its models through the production modules, which skip the settings
+   database. A protocol mismatch or failed start throws its native error:
+
+   ```sh
+   bun -e 'import { sessionProviders, stopProviders } from "@providers/server"; for (const p of sessionProviders) console.log(p.id, (await p.isSignedIn()) && (await p.listModels()).length); await stopProviders()'
+   ```
+
+Then check the workarounds below.
 
 ## Native workarounds
 

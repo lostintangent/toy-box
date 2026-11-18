@@ -1,22 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import {
   areModelConfigurationsEqual,
+  modelConfiguration,
   formatReasoningEffort,
-  getModelReasoningConfig,
   normalizeModelConfiguration,
   parseSerializedModelConfiguration,
-  resolveModelConfigurationForModel,
   type ContextTier,
 } from "./index";
-
-type ModelOptions = Parameters<typeof getModelReasoningConfig>[0];
 
 function model(
   supportedReasoningEfforts: string[],
   defaultReasoningEffort?: string,
   supportedContextTiers: ContextTier[] = [],
-): ModelOptions {
+): Parameters<typeof modelConfiguration>[0] {
   return {
+    id: "gpt-5",
+    provider: "copilot",
     supportedReasoningEfforts,
     defaultReasoningEffort,
     supportedContextTiers,
@@ -53,9 +52,7 @@ describe("model configuration", () => {
     ).toBe("copilot");
   });
   test("preserves a requested effort when the selected model supports it", () => {
-    const configuration = resolveModelConfigurationForModel(model(["low", "medium"], "medium"), {
-      provider: "copilot",
-      name: "gpt-5",
+    const configuration = modelConfiguration(model(["low", "medium"], "medium"), {
       reasoningEffort: "low",
     });
 
@@ -67,23 +64,14 @@ describe("model configuration", () => {
   });
 
   test("falls back to the model default when the requested effort is missing or unsupported", () => {
-    expect(
-      resolveModelConfigurationForModel(model(["low", "medium", "high"], "medium"), {
-        provider: "copilot",
-        name: "gpt-5",
-      }),
-    ).toEqual({
+    expect(modelConfiguration(model(["low", "medium", "high"], "medium"))).toEqual({
       provider: "copilot",
       name: "gpt-5",
       reasoningEffort: "medium",
     });
 
     expect(
-      resolveModelConfigurationForModel(model(["low", "medium", "high"], "medium"), {
-        provider: "copilot",
-        name: "gpt-5",
-        reasoningEffort: "max",
-      }),
+      modelConfiguration(model(["low", "medium", "high"], "medium"), { reasoningEffort: "max" }),
     ).toEqual({
       provider: "copilot",
       name: "gpt-5",
@@ -92,10 +80,7 @@ describe("model configuration", () => {
   });
 
   test("falls back to the first supported effort when the model has no default", () => {
-    const configuration = resolveModelConfigurationForModel(model(["none", "max"]), {
-      provider: "copilot",
-      name: "gpt-5",
-    });
+    const configuration = modelConfiguration(model(["none", "max"]));
 
     expect(configuration).toEqual({
       provider: "copilot",
@@ -105,11 +90,7 @@ describe("model configuration", () => {
   });
 
   test("leaves reasoning effort unset when the model exposes no reasoning efforts", () => {
-    const configuration = resolveModelConfigurationForModel(model([]), {
-      provider: "copilot",
-      name: "gpt-5",
-      reasoningEffort: "medium",
-    });
+    const configuration = modelConfiguration(model([]), { reasoningEffort: "medium" });
 
     expect(configuration).toEqual({ provider: "copilot", name: "gpt-5" });
   });
@@ -119,30 +100,21 @@ describe("model configuration", () => {
     const contextModel = model(["low"], "low", [tier("default"), tier("future_tier", 1_000_000)]);
 
     expect(
-      resolveModelConfigurationForModel(contextModel, {
-        ...configuration,
-        contextTier: "future_tier",
-      }),
+      modelConfiguration(contextModel, { ...configuration, contextTier: "future_tier" }),
     ).toEqual({
       ...configuration,
       contextTier: "future_tier",
     });
 
     expect(
-      resolveModelConfigurationForModel(contextModel, {
-        ...configuration,
-        contextTier: "removed_tier",
-      }),
+      modelConfiguration(contextModel, { ...configuration, contextTier: "removed_tier" }),
     ).toEqual({
       ...configuration,
       contextTier: "default",
     });
 
     expect(
-      resolveModelConfigurationForModel(model(["low"], "low"), {
-        ...configuration,
-        contextTier: "future_tier",
-      }),
+      modelConfiguration(model(["low"], "low"), { ...configuration, contextTier: "future_tier" }),
     ).toEqual(configuration);
   });
 

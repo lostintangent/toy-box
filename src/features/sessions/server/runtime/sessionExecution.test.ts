@@ -1,5 +1,5 @@
 import { SessionNotFoundError, type SessionConnection } from "@providers/server/provider";
-import { afterAll, describe, expect, mock, onTestFinished, test } from "bun:test";
+import { afterAll, describe, expect, jest, mock, onTestFinished, test } from "bun:test";
 import { deleteSessionFiles, writeSessionArtifact } from "../artifacts";
 import * as realSessionRegistry from "@sessions/server/state/registry";
 import * as realSnapshotCache from "@sessions/server/state/snapshots";
@@ -42,11 +42,20 @@ function fileEdit(
 }
 
 function cleanUpExecutionAfterTest(sessionId: string): void {
-  onTestFinished(() => {
-    SessionExecution.get(sessionId)?.finish();
+  onTestFinished(async () => {
+    await abortSession(sessionId);
     realSnapshotCacheExports.evictCachedSnapshot(sessionId);
     realSessionActivity.deleteSessionActivity(sessionId);
   });
+}
+
+/** An execution the runtime doesn't hold, so its test drives it directly. */
+function createExecution(
+  sessionId: string,
+  connection: SessionConnection,
+  initialState?: Partial<SessionState>,
+) {
+  return new SessionExecution(sessionId, connection, () => {}, initialState);
 }
 
 /** One subscriber's frames. `closed` resolves with them once the subscription closes. */
@@ -63,7 +72,7 @@ function recorder() {
 
 /** A subscriber already current with the execution, unless it holds another cursor. */
 function recordStream(
-  execution: ReturnType<typeof SessionExecution.getOrCreate>,
+  execution: ReturnType<typeof createExecution>,
   after = execution.getSessionState().revision,
 ) {
   const stream = recorder();
@@ -93,12 +102,6 @@ function makeFakeSession(overrides: Partial<SessionConnection> = {}): SessionCon
     rewind: async () => {},
     ...overrides,
   };
-}
-
-function createExecutionWithAssistantResponse(sessionId: string, response: string) {
-  return SessionExecution.getOrCreate(sessionId, makeFakeSession(), {
-    messages: [{ role: "assistant", content: response }],
-  });
 }
 
 /** Emit canonical events synchronously; settle() lets async queue draining finish. */
@@ -144,20 +147,17 @@ function mockRuntimeModules({
       createSession: async () => {
         throw new Error("createSession mock was not provided");
       },
-      acquireSession: async () => {
-        throw new Error("acquireSession mock was not provided");
+      acquireConnection: async () => {
+        throw new Error("acquireConnection mock was not provided");
       },
-      withSession: async () => {
-        throw new Error("withSession mock was not provided");
+      withConnection: async () => {
+        throw new Error("withConnection mock was not provided");
       },
-      deleteSession: async () => {
-        throw new Error("deleteSession mock was not provided");
+      deleteSessionResources: async () => {
+        throw new Error("deleteSessionResources mock was not provided");
       },
-      deleteSessionIfExists: async () => {
-        throw new Error("deleteSessionIfExists mock was not provided");
-      },
-      evictCachedSessionIfStale: () => false,
-      releaseSession: () => {},
+      evictConnectionIfStale: () => false,
+      releaseConnection: () => {},
       ...sessionRegistryOverrides,
     },
     snapshotCache: {
@@ -199,11 +199,13 @@ afterAll(() => {
 });
 
 const {
+  abortSession,
   createSession,
   deliverSessionMessage,
   getSessionRuntimeStatus,
   expectSessionCompletion,
   getSessionSnapshot,
+  isSessionRunning,
   subscribeToSession,
   rewindSession,
   waitForSessions,
@@ -217,7 +219,7 @@ describe("SessionExecution lifecycle", () => {
     const broadcast = mock();
     mockRuntimeModules({ broadcast: { broadcast } });
     const { session, emit } = makeControllableSession();
-    const execution = SessionExecution.getOrCreate(sessionId, session);
+    const execution = createExecution(sessionId, session);
     const received = recordStream(execution).closed;
     await execution.deliver(userMessage("go"));
 
@@ -237,7 +239,7 @@ describe("SessionExecution lifecycle", () => {
     cleanUpExecutionAfterTest(sessionId);
     mockRuntimeModules();
     const { session, emit } = makeControllableSession();
-    const execution = SessionExecution.getOrCreate(sessionId, session);
+    const execution = createExecution(sessionId, session);
     const received = recordStream(execution).closed;
     await execution.deliver(userMessage("go"));
 
@@ -260,11 +262,11 @@ describe("SessionExecution lifecycle", () => {
     ]);
   });
 
-  test("finish clears the queue, signals end-of-stream, and deregisters", async () => {
+  test("finish clears the queue, signals end-of-stream, and settles once", async () => {
     cleanUpExecutionAfterTest("session-finish-semantics");
-    const fakeSession = makeFakeSession();
+    const settled = mock();
 
-    const execution = SessionExecution.getOrCreate("session-finish-semantics", fakeSession);
+    const execution = new SessionExecution("session-finish-semantics", makeFakeSession(), settled);
     const events = recordStream(execution);
 
     await execution.deliver(userMessage("go"));
@@ -278,15 +280,13 @@ describe("SessionExecution lifecycle", () => {
       "end",
     ]);
     expect(execution.getSessionState().queuedMessages).toEqual([]);
-    expect(SessionExecution.isRunning("session-finish-semantics")).toBe(false);
+    execution.finish();
+    expect(settled).toHaveBeenCalledTimes(1);
   });
 
   test("a subscription after finish brings its subscriber current, then closes", async () => {
     cleanUpExecutionAfterTest("session-replay-after-finish");
-    const execution = SessionExecution.getOrCreate(
-      "session-replay-after-finish",
-      makeFakeSession(),
-    );
+    const execution = createExecution("session-replay-after-finish", makeFakeSession());
     const live = recordStream(execution);
     await execution.deliver(userMessage("go"));
     execution.finish();
@@ -298,7 +298,7 @@ describe("SessionExecution lifecycle", () => {
   test("a covered cursor replays what it has not seen, and any other gets a snapshot", async () => {
     cleanUpExecutionAfterTest("session-reconnect-cursor");
     const { session, emit } = makeControllableSession();
-    const execution = SessionExecution.getOrCreate("session-reconnect-cursor", session);
+    const execution = createExecution("session-reconnect-cursor", session);
     await execution.deliver(userMessage("go"));
     emit({ type: "user_message", content: "go" });
     emit({ type: "assistant_message", content: "Done." });
@@ -323,11 +323,7 @@ describe("SessionExecution lifecycle", () => {
   test("a seeded execution covers its seed's revision", async () => {
     cleanUpExecutionAfterTest("session-seeded-cursor");
     const seed = createInitialSessionState({ revision: 42 });
-    const execution = SessionExecution.getOrCreate(
-      "session-seeded-cursor",
-      makeFakeSession(),
-      seed,
-    );
+    const execution = createExecution("session-seeded-cursor", makeFakeSession(), seed);
     await execution.deliver(userMessage("go"));
 
     expect(recordStream(execution, 42).events.map(({ type }) => type)).toEqual([
@@ -353,7 +349,7 @@ describe("SessionExecution lifecycle", () => {
       activity: { setSessionActivity },
     });
 
-    const execution = SessionExecution.getOrCreate(sessionId, makeFakeSession());
+    const execution = createExecution(sessionId, makeFakeSession());
     const subscription = recordStream(execution);
     await execution.deliver(userMessage("go"));
     transitions.length = 0;
@@ -378,25 +374,33 @@ describe("SessionExecution lifecycle", () => {
     cleanUpExecutionAfterTest("session-error-no-cache");
 
     const cacheSnapshot = mock((_sessionId: string, _snapshot: SessionState) => {});
-    mockRuntimeModules({ snapshotCache: { cacheSnapshot } });
+    const setSessionActivity = mock((_sessionId: string, _status: string) => {});
+    mockRuntimeModules({ snapshotCache: { cacheSnapshot }, activity: { setSessionActivity } });
 
-    const aborted = SessionExecution.getOrCreate("session-abort-no-cache", makeFakeSession());
+    const aborted = createExecution("session-abort-no-cache", makeFakeSession());
     await aborted.deliver(userMessage("abort"));
-    await aborted.abort();
-
-    const failed = SessionExecution.getOrCreate("session-error-no-cache", makeFakeSession());
+    const failed = createExecution("session-error-no-cache", makeFakeSession());
     await failed.deliver(userMessage("fail"));
+    setSessionActivity.mockClear();
+
+    await aborted.abort();
     failed.finish("error");
 
     expect(cacheSnapshot).toHaveBeenCalledTimes(0);
+    // A stopped turn was already seen, but a failed one waits to be read.
+    expect(setSessionActivity.mock.calls).toEqual([
+      ["session-abort-no-cache", "idle"],
+      ["session-error-no-cache", "unread"],
+    ]);
   });
 
   test("preserves the provider error in the terminal event and transcript", async () => {
     cleanUpExecutionAfterTest("session-provider-error");
 
     const { session, emit } = makeControllableSession();
+    const settled = mock();
 
-    const execution = SessionExecution.getOrCreate("session-provider-error", session);
+    const execution = new SessionExecution("session-provider-error", session, settled);
     const events = recordStream(execution);
     await execution.deliver(userMessage("go"));
 
@@ -415,7 +419,7 @@ describe("SessionExecution lifecycle", () => {
       content: "",
       error,
     });
-    expect(SessionExecution.isRunning("session-provider-error")).toBe(false);
+    expect(settled).toHaveBeenCalledTimes(1);
   });
 
   test("remove publishes a terminal event without global lifecycle updates", async () => {
@@ -425,15 +429,19 @@ describe("SessionExecution lifecycle", () => {
     mockRuntimeModules({ activity: { setSessionActivity } });
 
     const abort = mock(async () => {});
-    const fakeSession = makeFakeSession({ abort });
+    const settled = mock();
 
-    const execution = SessionExecution.getOrCreate("session-remove-semantics", fakeSession);
+    const execution = new SessionExecution(
+      "session-remove-semantics",
+      makeFakeSession({ abort }),
+      settled,
+    );
     const events = recordStream(execution);
     await execution.deliver(userMessage("go"));
     await execution.deliver(userMessage("queued"));
     setSessionActivity.mockClear();
 
-    await SessionExecution.remove("session-remove-semantics");
+    await execution.remove();
 
     const emittedEvents = await events.closed;
     expect(emittedEvents.map((event) => event.type)).toEqual([
@@ -444,7 +452,7 @@ describe("SessionExecution lifecycle", () => {
     ]);
     expect(emittedEvents.at(-1)).toMatchObject({ type: "end", reason: "idle" });
     expect(execution.getSessionState().queuedMessages).toEqual([]);
-    expect(SessionExecution.isRunning("session-remove-semantics")).toBe(false);
+    expect(settled).toHaveBeenCalledTimes(1);
     expect(abort).toHaveBeenCalledTimes(1);
     // Deleted sessions leave the list, so no idle/unread global broadcast events are emitted.
     expect(setSessionActivity).toHaveBeenCalledTimes(0);
@@ -454,7 +462,7 @@ describe("SessionExecution lifecycle", () => {
     cleanUpExecutionAfterTest("session-finished-mutations");
     const fakeSession = makeFakeSession();
 
-    const execution = SessionExecution.getOrCreate("session-finished-mutations", fakeSession);
+    const execution = createExecution("session-finished-mutations", fakeSession);
     execution.finish();
 
     await expect(execution.deliver(userMessage("late follow-up", "late"))).rejects.toThrow(
@@ -469,7 +477,7 @@ describe("SessionExecution lifecycle", () => {
 test("artifact refresh reconciles both clients and ignores updates after execution ends", async () => {
   const sessionId = "session-observed-artifacts";
   cleanUpExecutionAfterTest(sessionId);
-  const execution = SessionExecution.getOrCreate(sessionId, makeFakeSession(), {
+  const execution = createExecution(sessionId, makeFakeSession(), {
     artifacts: [{ path: "deleted.md", updatedAt: 1 }],
   });
   const first = recordStream(execution);
@@ -502,7 +510,7 @@ describe("SessionExecution question answers", () => {
     const { session, emit } = makeControllableSession({
       answerQuestion,
     });
-    const execution = SessionExecution.getOrCreate(sessionId, session);
+    const execution = createExecution(sessionId, session);
 
     expect(
       await execution.answerQuestion({
@@ -586,10 +594,7 @@ describe("SessionExecution abort", () => {
       },
     });
 
-    const execution = SessionExecution.getOrCreate(
-      sessionId,
-      makeFakeSession({ abort: abortProvider }),
-    );
+    const execution = createExecution(sessionId, makeFakeSession({ abort: abortProvider }));
     const events = recordStream(execution);
     await execution.deliver(userMessage("go"));
     events.unsubscribe();
@@ -610,7 +615,8 @@ describe("SessionExecution abort", () => {
       },
     });
 
-    const execution = SessionExecution.getOrCreate("session-abort-failure", fakeSession);
+    const settled = mock();
+    const execution = new SessionExecution("session-abort-failure", fakeSession, settled);
     const events = recordStream(execution);
     await execution.deliver(userMessage("go"));
 
@@ -618,19 +624,21 @@ describe("SessionExecution abort", () => {
 
     expect(calls).toEqual(["abort"]);
     expect((await events.closed).map((event) => event.type)).toEqual(["resumed", "status", "end"]);
-    expect(SessionExecution.isRunning("session-abort-failure")).toBe(false);
+    expect(settled).toHaveBeenCalledTimes(1);
   });
 
   test("abort wins a race with queued-message steering", async () => {
     cleanUpExecutionAfterTest("session-abort-steering-race");
     const abortGate = Promise.withResolvers<void>();
     const sendMock = mock(async () => {});
-    const execution = SessionExecution.getOrCreate(
+    const settled = mock();
+    const execution = new SessionExecution(
       "session-abort-steering-race",
       makeFakeSession({
         send: sendMock,
         abort: () => abortGate.promise,
       }),
+      settled,
     );
     await execution.deliver(userMessage("first turn", "opening-id"));
     await execution.deliver(userMessage("queued", "q1"));
@@ -641,7 +649,29 @@ describe("SessionExecution abort", () => {
 
     abortGate.resolve();
     await stopping;
-    expect(SessionExecution.isRunning("session-abort-steering-race")).toBe(false);
+    expect(settled).toHaveBeenCalledTimes(1);
+  });
+
+  test("deletion proceeds when the provider never confirms the abort", async () => {
+    const sessionId = "session-remove-unconfirmed-abort";
+    cleanUpExecutionAfterTest(sessionId);
+    const execution = createExecution(
+      sessionId,
+      makeFakeSession({ abort: () => new Promise(() => {}) }),
+    );
+    const events = recordStream(execution);
+    await execution.deliver(userMessage("go"));
+
+    jest.useFakeTimers();
+    try {
+      const removal = execution.remove();
+      jest.advanceTimersByTime(5_000);
+      await removal;
+    } finally {
+      jest.useRealTimers();
+    }
+
+    expect((await events.closed).at(-1)).toMatchObject({ type: "end", reason: "idle" });
   });
 });
 
@@ -653,7 +683,8 @@ describe("SessionExecution queued messages", () => {
       cleanUpExecutionAfterTest(sessionId);
       const send = mock(async (_message: SessionMessage) => {});
       const { session, emit } = makeControllableSession({ send });
-      const execution = SessionExecution.getOrCreate(sessionId, session);
+      const settled = mock();
+      const execution = new SessionExecution(sessionId, session, settled);
       await execution.deliver(userMessage("First", "first"));
       if (when === "before") await execution.deliver(userMessage("Next", "next"));
       emit({ type: "status", status: "background" });
@@ -662,7 +693,7 @@ describe("SessionExecution queued messages", () => {
       emit({ type: "end", reason: "idle" });
       await settle();
       expect(send).toHaveBeenCalledTimes(2);
-      expect(SessionExecution.isRunning(sessionId)).toBe(true);
+      expect(settled).not.toHaveBeenCalled();
 
       emit({ type: "status", status: "thinking" });
       expect(realSessionActivity.getSessionActivity(sessionId)?.status).toBe("running");
@@ -672,11 +703,11 @@ describe("SessionExecution queued messages", () => {
       expect(realSessionActivity.getSessionActivity(sessionId)?.status).toBe("background");
       expect(execution.getSessionState().queuedMessages).toEqual([]);
       expect((await execution.waitForCompletion(0)).status).toBe("timed_out");
-      expect(SessionExecution.isRunning(sessionId)).toBe(true);
+      expect(settled).not.toHaveBeenCalled();
       expect(send).toHaveBeenCalledTimes(2);
 
       emit({ type: "end", reason: "idle" });
-      expect(SessionExecution.isRunning(sessionId)).toBe(false);
+      expect(settled).toHaveBeenCalledTimes(1);
     },
   );
 
@@ -691,7 +722,7 @@ describe("SessionExecution queued messages", () => {
         if (message.clientId === "second") await submission.promise;
       },
     });
-    const execution = SessionExecution.getOrCreate(sessionId, session);
+    const execution = createExecution(sessionId, session);
     await execution.deliver(userMessage("First", "first"));
     await execution.deliver(userMessage("Second", "second"));
     emit({
@@ -732,7 +763,8 @@ describe("SessionExecution queued messages", () => {
     const { session, emit } = makeControllableSession({
       send: sendMock,
     });
-    const execution = SessionExecution.getOrCreate("session-drain", session);
+    const settled = mock();
+    const execution = new SessionExecution("session-drain", session, settled);
     const received = recordStream(execution).closed;
     await execution.deliver(userMessage("first turn", "opening-id"));
     await execution.deliver(userMessage("second turn", "q1"));
@@ -754,7 +786,7 @@ describe("SessionExecution queued messages", () => {
     ).toHaveLength(1);
     expect(execution.cancelQueuedMessage("q1")).toBe(false);
     expect(await execution.steerQueuedMessage("q1")).toBe(false);
-    expect(SessionExecution.isRunning("session-drain")).toBe(true);
+    expect(settled).not.toHaveBeenCalled();
 
     emit({ type: "user_message", content: "second turn", clientId: "q1" });
     expect(execution.getSessionState().queuedMessages).toEqual([]);
@@ -768,7 +800,7 @@ describe("SessionExecution queued messages", () => {
     emit({ type: "end", reason: "idle" });
     await settle();
 
-    expect(SessionExecution.isRunning("session-drain")).toBe(false);
+    expect(settled).toHaveBeenCalledTimes(1);
     expect((await received).filter((event) => event.type === "end")).toMatchObject([
       { type: "end", reason: "idle" },
     ]);
@@ -779,7 +811,7 @@ describe("SessionExecution queued messages", () => {
 
     const fakeSession = makeFakeSession();
 
-    const execution = SessionExecution.getOrCreate("session-queue-remove", fakeSession);
+    const execution = createExecution("session-queue-remove", fakeSession);
     await execution.deliver(userMessage("active", "active"));
     await execution.deliver(userMessage("keep me", "q1"));
     await execution.deliver(userMessage("cancel me", "q2"));
@@ -795,7 +827,7 @@ describe("SessionExecution queued messages", () => {
     cleanUpExecutionAfterTest("session-coalesce-direct");
 
     const fakeSession = makeFakeSession();
-    const execution = SessionExecution.getOrCreate("session-coalesce-direct", fakeSession);
+    const execution = createExecution("session-coalesce-direct", fakeSession);
     await execution.deliver(userMessage("Already running", "active-turn"));
 
     await execution.deliver(fileEdit("plan.md", "edit-1"));
@@ -823,7 +855,7 @@ describe("SessionExecution queued messages", () => {
     const { session, emit } = makeControllableSession({
       send: sendMock,
     });
-    const execution = SessionExecution.getOrCreate(sessionId, session);
+    const execution = createExecution(sessionId, session);
 
     await execution.deliver(userMessage("same prompt", "opening-id"));
     await execution.deliver(userMessage("same prompt", "q1"));
@@ -882,7 +914,7 @@ describe("SessionExecution queued messages", () => {
     const { session, emit } = makeControllableSession({
       send: sendMock,
     });
-    const execution = SessionExecution.getOrCreate(sessionId, session);
+    const execution = createExecution(sessionId, session);
 
     await execution.deliver(userMessage("opening", "opening-id"));
     emit({ type: "user_message", content: "opening", clientId: "opening-id" });
@@ -928,7 +960,7 @@ describe("SessionExecution queued messages", () => {
     cleanUpExecutionAfterTest(sessionId);
 
     const { session, emit } = makeControllableSession();
-    const execution = SessionExecution.getOrCreate(sessionId, session);
+    const execution = createExecution(sessionId, session);
     const systemMessage = fileEdit("plan.md", "system-1");
 
     await execution.deliver(userMessage("opening", "opening-id"));
@@ -953,7 +985,7 @@ describe("SessionExecution queued messages", () => {
     const { session, emit } = makeControllableSession({
       send: sendMock,
     });
-    const execution = SessionExecution.getOrCreate(sessionId, session);
+    const execution = createExecution(sessionId, session);
     const systemMessage = fileEdit("review.md", "system-immediate");
 
     await execution.deliver(userMessage("opening", "opening-id"));
@@ -976,7 +1008,7 @@ describe("SessionExecution queued messages", () => {
     cleanUpExecutionAfterTest(sessionId);
 
     const sendMock = mock(async () => {});
-    const execution = SessionExecution.getOrCreate(sessionId, makeFakeSession({ send: sendMock }));
+    const execution = createExecution(sessionId, makeFakeSession({ send: sendMock }));
     await execution.deliver(userMessage("first turn", "opening-id"));
     await execution.deliver(fileEdit("plan.md", "system-1"));
 
@@ -1009,7 +1041,8 @@ describe("SessionExecution queued messages", () => {
     const { session, emit } = makeControllableSession({
       send: sendMock,
     });
-    const execution = SessionExecution.getOrCreate(sessionId, session);
+    const settled = mock();
+    const execution = new SessionExecution(sessionId, session, settled);
     await execution.deliver(userMessage("first turn", "opening-id"));
     await execution.deliver(userMessage("send now", "q1"));
 
@@ -1019,7 +1052,7 @@ describe("SessionExecution queued messages", () => {
     expect(execution.getSessionState().queuedMessages).toEqual([
       { clientId: "q1", role: "user", content: "send now", status: "queued" },
     ]);
-    expect(SessionExecution.isRunning(sessionId)).toBe(true);
+    expect(settled).not.toHaveBeenCalled();
   });
 
   test("finishes the execution when draining fails to send", async () => {
@@ -1032,7 +1065,8 @@ describe("SessionExecution queued messages", () => {
       },
     });
 
-    const execution = SessionExecution.getOrCreate("session-drain-failure", session);
+    const settled = mock();
+    const execution = new SessionExecution("session-drain-failure", session, settled);
     const events = recordStream(execution);
     await execution.deliver(userMessage("first turn", "opening-id"));
     await execution.deliver(userMessage("doomed follow-up"));
@@ -1058,7 +1092,7 @@ describe("SessionExecution queued messages", () => {
       content: "",
       error: "An error occurred. Please try again.",
     });
-    expect(SessionExecution.isRunning("session-drain-failure")).toBe(false);
+    expect(settled).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1071,7 +1105,7 @@ describe("SessionExecution model selection", () => {
       emit({ type: "model_changed", model: announced }),
     );
     const { session, emit } = makeControllableSession({ setModel });
-    const execution = SessionExecution.getOrCreate("session-model-change", session, {
+    const execution = createExecution("session-model-change", session, {
       model: { provider: "copilot", name: "gpt-5", reasoningEffort: "high" },
     });
     const events = recordStream(execution);
@@ -1099,12 +1133,13 @@ describe("subscribeToSession", () => {
     const { session, emit } = makeControllableSession();
 
     const loadSessionSnapshot = mock(async () => createInitialSessionState());
-    mockRuntimeModules({ snapshotCache: { loadSessionSnapshot } });
-
-    const execution = SessionExecution.getOrCreate("session-reconnect", session, {
-      model: { provider: "copilot", name: "gpt-5" },
+    mockRuntimeModules({
+      sessionRegistry: { acquireConnection: async () => session },
+      snapshotCache: { loadSessionSnapshot },
     });
-    await execution.deliver(userMessage("Reconnect me", "client-1"));
+
+    await deliverSessionMessage("session-reconnect", userMessage("Reconnect me", "client-1"));
+    loadSessionSnapshot.mockClear();
 
     const stream = await sessionStream("session-reconnect");
     expect(stream.events).toEqual([
@@ -1134,7 +1169,7 @@ describe("subscribeToSession", () => {
     });
     const held = createInitialSessionState({ revision: 7 });
     mockRuntimeModules({
-      sessionRegistry: { acquireSession: async () => session },
+      sessionRegistry: { acquireConnection: async () => session },
       snapshotCache: { loadSessionSnapshot: async () => held },
     });
 
@@ -1167,7 +1202,7 @@ describe("subscribeToSession", () => {
       },
     });
     mockRuntimeModules({
-      sessionRegistry: { acquireSession: async () => session },
+      sessionRegistry: { acquireConnection: async () => session },
       snapshotCache: {
         cacheSnapshot: (id, state) => void snapshots.set(id, state),
         loadSessionSnapshot: async (id) => snapshots.get(id) ?? createInitialSessionState(),
@@ -1223,25 +1258,20 @@ describe("subscribeToSession", () => {
 
 describe("delivery receipts", () => {
   test("returns a queued receipt when the target execution is already live", async () => {
-    cleanUpExecutionAfterTest("session-delivery-queued");
+    const sessionId = "session-delivery-queued";
+    cleanUpExecutionAfterTest(sessionId);
+    mockRuntimeModules({ sessionRegistry: { acquireConnection: async () => makeFakeSession() } });
+    await deliverSessionMessage(sessionId, userMessage("Already running"));
 
-    const fakeSession = makeFakeSession();
-
-    const execution = SessionExecution.getOrCreate("session-delivery-queued", fakeSession);
-    await execution.deliver(userMessage("Already running"));
-
-    const receipt = await deliverSessionMessage(
-      "session-delivery-queued",
-      userMessage("Queue through delivery"),
-    );
+    const receipt = await deliverSessionMessage(sessionId, userMessage("Queue through delivery"));
 
     expect(receipt.disposition).toBe("queued");
-    expect(execution.getSessionState().queuedMessages).toEqual([
+    expect((await getSessionSnapshot(sessionId)).queuedMessages).toEqual([
       expect.objectContaining({ content: "Queue through delivery" }),
     ]);
 
     const completion = receipt.waitForCompletion();
-    execution.finish();
+    await abortSession(sessionId);
     await expect(completion).resolves.toEqual({ status: "completed" });
   });
 
@@ -1249,9 +1279,13 @@ describe("delivery receipts", () => {
     cleanUpExecutionAfterTest("session-delivery-immediate");
 
     const sendMock = mock(async () => {});
-    const { session } = makeControllableSession({ send: sendMock });
-    const execution = SessionExecution.getOrCreate("session-delivery-immediate", session);
-    await execution.deliver(userMessage("Already running", "opening"));
+    mockRuntimeModules({
+      sessionRegistry: { acquireConnection: async () => makeFakeSession({ send: sendMock }) },
+    });
+    await deliverSessionMessage(
+      "session-delivery-immediate",
+      userMessage("Already running", "opening"),
+    );
 
     const receipt = await deliverSessionMessage("session-delivery-immediate", {
       ...userMessage("Send this now", "immediate"),
@@ -1262,7 +1296,7 @@ describe("delivery receipts", () => {
     expect(sendMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ role: "user", content: "Send this now", immediate: true }),
     );
-    expect(execution.getSessionState().queuedMessages).toEqual([
+    expect((await getSessionSnapshot("session-delivery-immediate")).queuedMessages).toEqual([
       {
         clientId: "immediate",
         role: "user",
@@ -1277,11 +1311,11 @@ describe("delivery receipts", () => {
     cleanUpExecutionAfterTest("session-delivery-sent");
 
     const sendMock = mock(async (_message: SessionMessage) => {});
-    const fakeSession = makeFakeSession({ send: sendMock });
+    const { session, emit } = makeControllableSession({ send: sendMock });
 
     mockRuntimeModules({
       sessionRegistry: {
-        acquireSession: async () => fakeSession,
+        acquireConnection: async () => session,
       },
     });
 
@@ -1296,7 +1330,7 @@ describe("delivery receipts", () => {
     );
 
     const completion = receipt.waitForCompletion();
-    SessionExecution.get("session-delivery-sent")!.finish();
+    emit({ type: "end", reason: "idle" });
     await expect(completion).resolves.toEqual({ status: "completed" });
   });
 
@@ -1309,10 +1343,10 @@ describe("delivery receipts", () => {
       Promise.resolve({ status: "completed", response: "Earlier result" }),
     );
 
-    const fakeSession = makeFakeSession();
+    const { session, emit } = makeControllableSession();
     mockRuntimeModules({
       sessionRegistry: {
-        acquireSession: async () => fakeSession,
+        acquireConnection: async () => session,
       },
     });
 
@@ -1320,7 +1354,7 @@ describe("delivery receipts", () => {
 
     expect(receipt.disposition).toBe("started");
     const completion = waitForSessions([sessionId]);
-    SessionExecution.get(sessionId)!.finish();
+    emit({ type: "end", reason: "idle" });
 
     await expect(completion).resolves.toEqual([{ status: "completed" }]);
   });
@@ -1333,20 +1367,20 @@ describe("delivery retries", () => {
 
     mockRuntimeModules({
       sessionRegistry: {
-        acquireSession: async () =>
+        acquireConnection: async () =>
           makeFakeSession({
             send: async () => {
               throw new Error("send exploded");
             },
           }),
-        evictCachedSessionIfStale: () => false,
+        evictConnectionIfStale: () => false,
       },
     });
 
     await expect(deliverSessionMessage(sessionId, userMessage("doomed prompt"))).rejects.toThrow(
       "send exploded",
     );
-    expect(SessionExecution.isRunning(sessionId)).toBe(false);
+    expect(isSessionRunning(sessionId)).toBe(false);
   });
 
   test("retries a delivery once if the live execution finishes before it arrives", async () => {
@@ -1354,19 +1388,16 @@ describe("delivery retries", () => {
     cleanUpExecutionAfterTest(sessionId);
 
     const sendMock = mock(async (_message: SessionMessage) => {});
-    mockRuntimeModules({
-      sessionRegistry: { acquireSession: async () => makeFakeSession({ send: sendMock }) },
-    });
+    const { session, emit } = makeControllableSession();
+    const acquireConnection = mock(async () => makeFakeSession({ send: sendMock }));
+    acquireConnection.mockResolvedValueOnce(session);
+    mockRuntimeModules({ sessionRegistry: { acquireConnection } });
+    await deliverSessionMessage(sessionId, userMessage("Already running"));
 
-    const execution = SessionExecution.getOrCreate(sessionId, makeFakeSession());
-    await execution.deliver(userMessage("Already running"));
-    const originalDeliver = execution.deliver.bind(execution);
-    execution.deliver = (message: SessionMessage) => {
-      execution.finish();
-      return originalDeliver(message);
-    };
-
-    const receipt = await deliverSessionMessage(sessionId, userMessage("Follow-up after finish"));
+    // The turn ends after the follow-up finds the live execution, but before it is delivered.
+    const delivery = deliverSessionMessage(sessionId, userMessage("Follow-up after finish"));
+    emit({ type: "end", reason: "idle" });
+    const receipt = await delivery;
 
     expect(receipt.disposition).toBe("started");
     expect(sendMock).toHaveBeenCalledWith(
@@ -1387,7 +1418,7 @@ describe("createSession", () => {
     const createSessionMock = mock(
       async (_sessionId: string, _options?: realSessionRegistry.CreateSessionOptions) => {
         calls.push("create");
-        return { session: fakeSession };
+        return { connection: fakeSession };
       },
     );
     const setSessionActivity = mock((_sessionId: string, status: string) => {
@@ -1433,16 +1464,16 @@ describe("createSession", () => {
     cleanUpExecutionAfterTest(sessionId);
 
     const sendMock = mock(async (_message: SessionMessage) => {});
-    mockRuntimeModules();
-
-    const execution = SessionExecution.getOrCreate(sessionId, makeFakeSession({ send: sendMock }));
-    await execution.deliver(userMessage("Original message"));
+    mockRuntimeModules({
+      sessionRegistry: { acquireConnection: async () => makeFakeSession({ send: sendMock }) },
+    });
+    await deliverSessionMessage(sessionId, userMessage("Original message"));
 
     const receipt = await createSession(sessionId, userMessage("Second tab's first send"), {});
 
     expect(receipt.disposition).toBe("queued");
     expect(sendMock).toHaveBeenCalledTimes(1);
-    expect(execution.getSessionState().queuedMessages).toEqual([
+    expect((await getSessionSnapshot(sessionId)).queuedMessages).toEqual([
       expect.objectContaining({ content: "Second tab's first send" }),
     ]);
   });
@@ -1455,7 +1486,7 @@ describe("createSession", () => {
     mockRuntimeModules({
       sessionRegistry: {
         createSession: async () => ({
-          session: fakeSession,
+          connection: fakeSession,
           artifactPath: "document.md",
         }),
       },
@@ -1465,7 +1496,7 @@ describe("createSession", () => {
     onTestFinished(() => deleteSessionFiles(sessionId));
     await createSession(sessionId, userMessage("Update the document"), {});
 
-    expect(SessionExecution.get(sessionId)?.getSessionState().artifacts).toEqual([
+    expect((await getSessionSnapshot(sessionId)).artifacts).toEqual([
       { path: "document.md", updatedAt: expect.any(Number) },
     ]);
   });
@@ -1473,7 +1504,7 @@ describe("createSession", () => {
   test("reads join an in-progress creation instead of reporting a missing session", async () => {
     const sessionId = "session-reads-join-creation";
     cleanUpExecutionAfterTest(sessionId);
-    const creating = Promise.withResolvers<{ session: SessionConnection }>();
+    const creating = Promise.withResolvers<{ connection: SessionConnection }>();
     const loadSessionSnapshot = mock(async () => {
       throw new Error(`Session not found: ${sessionId}`);
     });
@@ -1488,7 +1519,7 @@ describe("createSession", () => {
     const subscribing = sessionStream(sessionId);
     expect(getSessionRuntimeStatus(sessionId).running).toBe(true);
 
-    creating.resolve({ session: makeFakeSession() });
+    creating.resolve({ connection: makeFakeSession() });
     await created;
 
     await expect(snapshot).resolves.toBeDefined();
@@ -1523,10 +1554,10 @@ describe("deliverSessionMessage", () => {
   test("does not acquire a session for execution when history replay fails", async () => {
     const sessionId = "session-replay-failure";
     cleanUpExecutionAfterTest(sessionId);
-    const acquireSession = mock(async () => makeFakeSession());
+    const acquireConnection = mock(async () => makeFakeSession());
 
     mockRuntimeModules({
-      sessionRegistry: { acquireSession },
+      sessionRegistry: { acquireConnection },
       snapshotCache: {
         loadSessionSnapshot: async () => {
           throw new Error("History replay failed");
@@ -1537,7 +1568,7 @@ describe("deliverSessionMessage", () => {
     await expect(deliverSessionMessage(sessionId, userMessage("Follow up"))).rejects.toThrow(
       "History replay failed",
     );
-    expect(acquireSession).not.toHaveBeenCalled();
+    expect(acquireConnection).not.toHaveBeenCalled();
   });
 
   test("starts an idle historical session immediately", async () => {
@@ -1548,7 +1579,7 @@ describe("deliverSessionMessage", () => {
 
     mockRuntimeModules({
       sessionRegistry: {
-        acquireSession: async () => fakeSession,
+        acquireConnection: async () => fakeSession,
       },
     });
 
@@ -1563,7 +1594,7 @@ describe("deliverSessionMessage", () => {
       ],
     });
 
-    expect(SessionExecution.get("session-start-helper")).toBeDefined();
+    expect(isSessionRunning("session-start-helper")).toBe(true);
     expect(sendMock).toHaveBeenCalledWith(
       expect.objectContaining({
         role: "user",
@@ -1581,7 +1612,7 @@ describe("deliverSessionMessage", () => {
 
     mockRuntimeModules({
       sessionRegistry: {
-        acquireSession: async () => fakeSession,
+        acquireConnection: async () => fakeSession,
       },
       snapshotCache: {
         loadSessionSnapshot: async () =>
@@ -1596,19 +1627,18 @@ describe("deliverSessionMessage", () => {
 
     await deliverSessionMessage("session-snapshot-seed", userMessage("follow-up question"));
 
-    const execution = SessionExecution.get("session-snapshot-seed");
-    expect(execution).toBeDefined();
+    expect(isSessionRunning("session-snapshot-seed")).toBe(true);
     expect(
-      execution!
-        .getSessionState()
-        .messages.map((message) => ("content" in message ? message.content : "")),
+      (await getSessionSnapshot("session-snapshot-seed")).messages.map((message) =>
+        "content" in message ? message.content : "",
+      ),
     ).toEqual(["earlier prompt", "earlier answer"]);
     expect(sendMock).toHaveBeenCalledWith(
       expect.objectContaining({ role: "user", content: "follow-up question" }),
     );
   });
 
-  test("retries once when a snapshot-seeded send hits a stale cached session", async () => {
+  test("retries once when a snapshot-seeded send hits a stale cached connection", async () => {
     cleanUpExecutionAfterTest("session-snapshot-stale");
 
     const staleSend = mock(async () => {
@@ -1618,13 +1648,13 @@ describe("deliverSessionMessage", () => {
     const staleSession = makeFakeSession({ send: staleSend });
     const freshSession = makeFakeSession({ send: freshSend });
 
-    // First resume returns the stale cached session; after eviction the next
+    // First resume returns the stale cached connection; after eviction the next
     // resume is fresh.
     let resumeCount = 0;
     mockRuntimeModules({
       sessionRegistry: {
-        acquireSession: async () => (resumeCount++ === 0 ? staleSession : freshSession),
-        evictCachedSessionIfStale: (_sessionId: string, error: unknown) =>
+        acquireConnection: async () => (resumeCount++ === 0 ? staleSession : freshSession),
+        evictConnectionIfStale: (_sessionId: string, error: unknown) =>
           error instanceof SessionNotFoundError,
       },
       snapshotCache: {
@@ -1643,11 +1673,11 @@ describe("deliverSessionMessage", () => {
     expect(staleSend).toHaveBeenCalledTimes(1);
     expect(freshSend).toHaveBeenCalledTimes(1);
     // The healed execution is live, snapshot-seeded, and carries the retried turn.
-    const execution = SessionExecution.get("session-snapshot-stale");
+    expect(isSessionRunning("session-snapshot-stale")).toBe(true);
     expect(
-      execution!
-        .getSessionState()
-        .messages.map((message) => ("content" in message ? message.content : "")),
+      (await getSessionSnapshot("session-snapshot-stale")).messages.map((message) =>
+        "content" in message ? message.content : "",
+      ),
     ).toEqual(["earlier prompt", "earlier answer"]);
   });
 });
@@ -1667,7 +1697,7 @@ describe("single-flight execution acquisition", () => {
       return createInitialSessionState();
     });
     mockRuntimeModules({
-      sessionRegistry: { acquireSession: async () => fakeSession },
+      sessionRegistry: { acquireConnection: async () => fakeSession },
       snapshotCache: { loadSessionSnapshot },
     });
 
@@ -1682,8 +1712,7 @@ describe("single-flight execution acquisition", () => {
     expect(sendMock).toHaveBeenCalledWith(
       expect.objectContaining({ role: "user", content: "first prompt" }),
     );
-    const execution = SessionExecution.get("session-single-flight");
-    expect(execution!.getSessionState().queuedMessages).toEqual([
+    expect((await getSessionSnapshot("session-single-flight")).queuedMessages).toEqual([
       expect.objectContaining({ role: "user", content: "second prompt" }),
     ]);
   });
@@ -1699,9 +1728,9 @@ describe("rewindSession", () => {
     const broadcast = mock();
     mockRuntimeModules({
       sessionRegistry: {
-        withSession: async <T>(
+        withConnection: async <T>(
           _sessionId: string,
-          operation: (session: SessionConnection) => Promise<T>,
+          operation: (connection: SessionConnection) => Promise<T>,
         ) => operation(makeFakeSession({ rewind })),
       },
       snapshotCache: { refreshSessionSnapshot },
@@ -1719,26 +1748,12 @@ describe("rewindSession", () => {
 });
 
 describe("SessionExecution.waitForCompletion", () => {
-  test("reads the completed response from a snapshot when no execution is running", async () => {
-    const loadSessionSnapshot = mock(async (_sessionId: string) =>
-      createInitialSessionState({
-        messages: [{ role: "assistant", content: "Persisted result" }],
-      }),
-    );
-    mockRuntimeModules({ snapshotCache: { loadSessionSnapshot } });
-    await expect(SessionExecution.waitForCompletion("session-not-running")).resolves.toEqual({
-      status: "completed",
-      response: "Persisted result",
-    });
-    expect(loadSessionSnapshot).toHaveBeenCalledWith("session-not-running");
-  });
-
   test("resolves when the current execution finishes", async () => {
     cleanUpExecutionAfterTest("session-finish-wait");
 
     const fakeSession = makeFakeSession();
 
-    const execution = SessionExecution.getOrCreate("session-finish-wait", fakeSession);
+    const execution = createExecution("session-finish-wait", fakeSession);
     const waitPromise = execution.waitForCompletion();
 
     execution.finish();
@@ -1748,14 +1763,16 @@ describe("SessionExecution.waitForCompletion", () => {
 
   test("returns timed-out status with the latest reduced assistant response", async () => {
     cleanUpExecutionAfterTest("session-timeout");
-
-    const execution = createExecutionWithAssistantResponse("session-timeout", "Partial result");
+    const settled = mock();
+    const execution = new SessionExecution("session-timeout", makeFakeSession(), settled, {
+      messages: [{ role: "assistant", content: "Partial result" }],
+    });
 
     await expect(execution.waitForCompletion(1)).resolves.toEqual({
       status: "timed_out",
       response: "Partial result",
     });
-    expect(SessionExecution.get("session-timeout")).toBe(execution);
+    expect(settled).not.toHaveBeenCalled();
   });
 
   test.each(["", "Partial result"])(
@@ -1763,7 +1780,7 @@ describe("SessionExecution.waitForCompletion", () => {
     async (response) => {
       cleanUpExecutionAfterTest("session-error-completion");
       const { session, emit } = makeControllableSession();
-      const execution = SessionExecution.getOrCreate("session-error-completion", session, {
+      const execution = createExecution("session-error-completion", session, {
         messages: [{ role: "assistant", content: response }],
       });
       const waitPromise = execution.waitForCompletion();
@@ -1787,31 +1804,17 @@ describe("SessionExecution.waitForCompletion", () => {
   test("deletion resolves waiters as completed with the latest response", async () => {
     cleanUpExecutionAfterTest("session-delete-wait");
 
-    const execution = createExecutionWithAssistantResponse("session-delete-wait", "Deleted result");
+    const execution = createExecution("session-delete-wait", makeFakeSession(), {
+      messages: [{ role: "assistant", content: "Deleted result" }],
+    });
     const waitPromise = execution.waitForCompletion();
 
-    await SessionExecution.remove("session-delete-wait");
+    await execution.remove();
 
     await expect(waitPromise).resolves.toEqual({
       status: "completed",
       response: "Deleted result",
     });
-  });
-
-  test("waits for the captured execution instance, not a future replacement", async () => {
-    cleanUpExecutionAfterTest("session-replaced");
-
-    const first = createExecutionWithAssistantResponse("session-replaced", "First result");
-    const waitPromise = first.waitForCompletion();
-
-    first.finish();
-    const second = SessionExecution.getOrCreate("session-replaced", makeFakeSession());
-
-    await expect(waitPromise).resolves.toEqual({
-      status: "completed",
-      response: "First result",
-    });
-    expect(SessionExecution.get("session-replaced")).toBe(second);
   });
 });
 
@@ -1821,6 +1824,19 @@ describe("waitForSessions", () => {
     expectSessionCompletion(sessionId, completion.promise);
     return completion;
   }
+
+  test("reads the completed response from a snapshot when no execution is running", async () => {
+    const loadSessionSnapshot = mock(async (_sessionId: string) =>
+      createInitialSessionState({
+        messages: [{ role: "assistant", content: "Persisted result" }],
+      }),
+    );
+    mockRuntimeModules({ snapshotCache: { loadSessionSnapshot } });
+    await expect(waitForSessions(["session-not-running"])).resolves.toEqual([
+      { status: "completed", response: "Persisted result" },
+    ]);
+    expect(loadSessionSnapshot).toHaveBeenCalledWith("session-not-running");
+  });
 
   test("waits for expected sessions and preserves input order", async () => {
     const firstId = crypto.randomUUID();

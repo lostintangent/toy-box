@@ -93,7 +93,6 @@ export function ChannelOverview({
         title={`Remove ${member.name}?`}
         description={`This removes ${member.name} from #${channel.name} and deletes their private channel session. Their messages and reactions remain attributed to Deleted agent.`}
         confirmLabel="Remove"
-        pendingLabel="Removing…"
         mutation={channelMutations.removeMember(member.id)}
       />
     ));

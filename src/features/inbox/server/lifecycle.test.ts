@@ -4,7 +4,7 @@ import { openTestDatabase } from "@/server/testFixtures";
 import * as sessionRuntime from "@sessions/server/runtime";
 import type { SessionCompletion, SessionLaunch } from "@sessions/model";
 import { getWorker, listWorkers, updateWorker } from "@workers/server";
-import { WorkerDatabase, registerWorkerSession } from "@workers/server/database";
+import { WorkerDatabase } from "@workers/server/database";
 import { detachManagedSession } from "@/server/managedSessions";
 import { SMALL_JSON_MAX_BYTES } from "@/shared/smallJson";
 import type { InboxEntry } from "../model";
@@ -187,9 +187,9 @@ test("startup failure retains a visible error until explicit deletion", async ()
 });
 
 test("a reported result replaces an earlier failure and survives later failures", async () => {
-  await openInbox();
+  const { db } = await openInbox();
   const sessionId = crypto.randomUUID();
-  await registerWorkerSession({
+  await new WorkerDatabase(db).create({
     type: "inbox",
     sessionId,
     createdAt: new Date(0).toISOString(),
@@ -232,6 +232,11 @@ test("Inbox lists its Workers in creation order and scopes reads and deletion to
   expect(await getInboxEntry("other-owner")).toBeNull();
   expect(await deleteInboxEntry("other-owner")).toBe(false);
   expect(await getWorker("other-owner", "app")).not.toBeNull();
+});
+
+test("a result for a missing entry is refused", async () => {
+  await openInbox();
+  await expect(sendToInbox("missing", "Lost result")).rejects.toThrow("Worker not found.");
 });
 
 async function waitFor(assertion: () => Promise<void>): Promise<void> {

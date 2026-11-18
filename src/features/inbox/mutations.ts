@@ -1,6 +1,6 @@
 import { mutationOptions } from "@tanstack/react-query";
 import { deleteInboxEntry, dispatchInboxTask } from "./server/functions";
-import { applyWorkspaceEvent } from "@workspace/sync";
+import { optimisticMutation } from "@workspace/sync";
 import type { SessionLaunch } from "@sessions/model";
 
 export const inboxMutations = {
@@ -10,10 +10,7 @@ export const inboxMutations = {
     }),
 
   deleteEntry: (entryId: string) =>
-    mutationOptions({
-      mutationFn: () => deleteInboxEntry({ data: { entryId } }),
-      onSuccess: (_deleted, _variables, _context, { client }) => {
-        applyWorkspaceEvent(client, { type: "session.deleted", sessionId: entryId });
-      },
-    }),
+    optimisticMutation({ type: "session.deleted", sessionId: entryId }, () =>
+      deleteInboxEntry({ data: { entryId } }),
+    ),
 };

@@ -38,11 +38,14 @@ export type ModelInfo = ModelOptionInfo & {
   providerName?: string;
 };
 
-/** Only a ready provider contributes models; a signed-out one still lists its history. */
-export type SessionProviderStatus = "unavailable" | "signedOut" | "ready";
+/**
+ * Only a ready provider contributes models; a signed-out one still lists its history, and only a
+ * failed one carries its native discovery `error`.
+ */
+export type SessionProviderStatus = "unavailable" | "signedOut" | "ready" | "failed";
 
 export type ProviderCatalog = {
-  providers: { id: string; name: string; status: SessionProviderStatus }[];
+  providers: { id: string; name: string; status: SessionProviderStatus; error?: string }[];
   models: ModelInfo[];
 };
 
@@ -94,22 +97,21 @@ export function areModelConfigurationsEqual(
   return true;
 }
 
-export function resolveModelConfigurationForModel(
-  model: ModelOptionInfo | undefined,
-  configuration: ModelConfiguration,
+/** `model`'s configuration, keeping the seed's options it supports and defaulting the rest. */
+export function modelConfiguration(
+  model: ModelCatalogInfo,
+  seed?: Pick<ModelConfiguration, "reasoningEffort" | "contextTier"> | null,
 ): ModelConfiguration {
-  const {
-    reasoningEffort: _currentReasoningEffort,
-    contextTier: _currentContextTier,
-    ...rest
-  } = configuration;
-  const reasoningEffort = getModelReasoningConfig(
-    model,
-    configuration.reasoningEffort,
-  ).reasoningEffort;
-  const contextTier = getModelContextTierConfig(model, configuration.contextTier).contextTier;
+  const efforts = model.supportedReasoningEfforts ?? [];
+  const reasoningEffort =
+    seed?.reasoningEffort && efforts.includes(seed.reasoningEffort)
+      ? seed.reasoningEffort
+      : (model.defaultReasoningEffort ?? efforts[0]);
+  const tiers = model.supportedContextTiers ?? [];
+  const contextTier = tiers.find(({ name }) => name === seed?.contextTier)?.name ?? tiers[0]?.name;
   return {
-    ...rest,
+    provider: model.provider,
+    name: model.id,
     ...(reasoningEffort ? { reasoningEffort } : {}),
     ...(contextTier ? { contextTier } : {}),
   };
@@ -126,42 +128,7 @@ export function normalizeModelConfiguration(
       (candidate) =>
         candidate.id === configuration?.name && candidate.provider === configuration?.provider,
     ) ?? models[0];
-  return resolveModelConfigurationForModel(model, {
-    ...configuration,
-    name: model.id,
-    provider: model.provider,
-  });
-}
-
-export function getModelReasoningConfig(
-  model: ModelOptionInfo | undefined,
-  requestedReasoningEffort: string | undefined,
-) {
-  const supportedReasoningEfforts = model?.supportedReasoningEfforts ?? [];
-  const reasoningEffort =
-    requestedReasoningEffort && supportedReasoningEfforts.includes(requestedReasoningEffort)
-      ? requestedReasoningEffort
-      : (model?.defaultReasoningEffort ?? supportedReasoningEfforts[0]);
-
-  return {
-    supportedReasoningEfforts,
-    reasoningEffort,
-  };
-}
-
-export function getModelContextTierConfig(
-  model: ModelOptionInfo | undefined,
-  requestedContextTier: string | undefined,
-) {
-  const supportedContextTiers = model?.supportedContextTiers ?? [];
-  const contextTier =
-    supportedContextTiers.find(({ name }) => name === requestedContextTier)?.name ??
-    supportedContextTiers[0]?.name;
-
-  return {
-    supportedContextTiers,
-    contextTier,
-  };
+  return modelConfiguration(model, configuration);
 }
 
 export function formatReasoningEffort(reasoningEffort: string) {

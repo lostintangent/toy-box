@@ -141,7 +141,7 @@ export function useSession(
       // The server never took the turn. Drop its optimistic message and hand
       // it back to the sender.
       console.error("Send error:", error);
-      queryClient.setQueryData(queryKey, turn.state);
+      update((current) => joinPreviousMessages(current, turn.state));
       if (turn.isDraft) {
         void repairFailedDraft(queryClient, sessionId);
       } else {

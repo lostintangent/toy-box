@@ -61,22 +61,33 @@ test("the public models route returns model choices without caching", async () =
   });
 });
 
-test("failed discovery quietly leaves provider settings reachable and the next request retries", async () => {
+test("failed discovery reports its error without retrying until an update rediscovers it", async () => {
   spyOn(console, "error").mockImplementation(() => {});
   spyOn(cli, "isInstalled").mockImplementation((id) => id === "codex");
+  spyOn(cli, "updateProvider").mockResolvedValue({ version: "1.1.0", updated: false });
   const read = spyOn(codexProvider, "listModels")
-    .mockRejectedValueOnce(new Error("Please authenticate"))
+    .mockRejectedValueOnce(new Error("SDK protocol version mismatch"))
     .mockResolvedValue([MODEL]);
   const events = mock();
   onTestFinished(subscribeWorkspaceEvents(events));
+  const codex = { id: "codex", name: codexProvider.name };
+
+  expect(await listModels()).toEqual([]);
   expect(await listModels()).toEqual([]);
   expect(await getProviderCatalog()).toMatchObject({
     models: [],
-    providers: expect.arrayContaining([{ id: "codex", name: codexProvider.name, status: "ready" }]),
+    providers: expect.arrayContaining([
+      { ...codex, status: "failed", error: "SDK protocol version mismatch" },
+    ]),
   });
-  expect(await listModels()).toEqual([{ ...MODEL, providerName: codexProvider.name }]);
-  expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenCalledTimes(1);
   expect(events.mock.calls).toEqual([[{ type: "providers.changed" }]]);
+
+  await updateProvider("codex");
+  expect(await getProviderCatalog()).toMatchObject({
+    models: [{ ...MODEL, providerName: codexProvider.name }],
+    providers: expect.arrayContaining([{ ...codex, status: "ready" }]),
+  });
 });
 
 test("catalog reads don't wait for discovery, which broadcasts once it completes", async () => {
