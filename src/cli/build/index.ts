@@ -6,16 +6,13 @@ import { APP_DEPENDENCIES } from "../../features/apps/runtime";
 import { readCompilerOptions } from "../../features/apps/server/compiler/config";
 import { buildScreenNative, SCREEN_NATIVE_DIRECTORY } from "../../features/screens/native/build";
 
-/** Compiles for this machine, or for another Bun target such as `bun-linux-x64`. */
-async function buildCli(
-  target = `bun-${process.platform}-${process.arch}` as Bun.Build.CompileTarget,
-): Promise<void> {
+async function buildCli(): Promise<void> {
   const projectRoot = resolve(Bun.fileURLToPath(new URL("../../../", import.meta.url)));
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "toy-box-build-"));
   const appTypeLibrary = join(temporaryDirectory, "app-type-library");
   const screenNative = join(temporaryDirectory, SCREEN_NATIVE_DIRECTORY);
-  // Screens' native helper exists only for macOS, so other targets ship without it.
-  const includesScreens = target.startsWith("bun-darwin");
+  // Screens' native helper exists only for macOS, so other platforms ship without it.
+  const includesScreens = process.platform === "darwin";
 
   try {
     await writeAppTypeLibrary(projectRoot, appTypeLibrary);
@@ -26,7 +23,6 @@ async function buildCli(
       minify: true,
       throw: false,
       compile: {
-        target,
         outfile: join(projectRoot, "toy-box"),
         assets: [
           join(projectRoot, ".output/server/public"),
@@ -90,4 +86,4 @@ function getAppSdkTypeSources(projectRoot: string): string[] {
     .sort();
 }
 
-if (import.meta.main) await buildCli(process.argv[2] as Bun.Build.CompileTarget | undefined);
+if (import.meta.main) await buildCli();

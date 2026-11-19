@@ -33,7 +33,7 @@ jobs:
         run: |
           bun -e '
             const pkg = await Bun.file("package.json").json();
-            Object.assign(pkg, { name: `${pkg.name}-${{ matrix.platform }}`, os: ["linux"], cpu: ["${{ matrix.cpu }}"] });
+            Object.assign(pkg, { name: `${pkg.name}-${{ matrix.platform }}`, os: ["linux"], cpu: ["${{ matrix.cpu }}"], libc: ["glibc"] });
             await Bun.write("package.json", JSON.stringify(pkg, null, 2) + "\n");
           '
 
