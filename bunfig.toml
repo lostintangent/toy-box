@@ -4,3 +4,6 @@ bun = true
 [fmt]
 flavor = "oxfmt"
 ignorePatterns = ["src/features/workspace/routeTree.gen.ts"]
+
+[install.scopes]
+motionplus = { url = "https://api.motion.dev/npm/", token = "$MOTION_TOKEN" }

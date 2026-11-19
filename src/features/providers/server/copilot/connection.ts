@@ -1,8 +1,4 @@
-import type {
-  CopilotSession,
-  SessionConfig as SdkSessionConfig,
-  SessionEvent as SdkEvent,
-} from "@github/copilot-sdk";
+import type { CopilotSession, SessionEvent as SdkEvent } from "@microsoft/copilot-sdk";
 import type { ModelConfiguration } from "@providers/model";
 import type { SessionConnection } from "@providers/server/provider";
 import { encodeSystemMessage, systemMessagePrompt } from "@sessions/model/systemMessages";
@@ -132,7 +128,7 @@ export function toSdkSetModelOptions(configuration?: ModelConfiguration): SdkSet
   return {
     ...(configuration?.reasoningEffort ? { reasoningEffort: configuration.reasoningEffort } : {}),
     ...(configuration?.contextTier
-      ? { contextTier: configuration.contextTier as SdkSessionConfig["contextTier"] }
+      ? { contextTier: configuration.contextTier as SdkSetModelOptions["contextTier"] }
       : {}),
   };
 }

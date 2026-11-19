@@ -1,6 +1,6 @@
 {
   "name": "@lostintangent/toy-box",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "description": "Your personal agent server",
   "repository": {
     "type": "git",
@@ -35,11 +35,11 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.326",
+    "@anthropic-ai/claude-agent-sdk": "latest",
     "@base-ui/react": "^1.9.0",
-    "@github/copilot-sdk": "^1.0.34",
     "@lostintangent/documint": "latest",
     "@lostintangent/leafnode": "^0.0.1",
+    "@microsoft/copilot-sdk": "^2.0.1",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@streamdown/code": "latest",
     "@tailwindcss/oxide": "^4.3.5",
@@ -69,8 +69,10 @@
     "@vitejs/plugin-react": "^6.3.0",
     "@xmldom/xmldom": "^0.9.12",
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-serialize": "^0.14.0",
     "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
     "app-typescript": "npm:typescript@^6.0.3",
     "bun-types": "^1.4.4",

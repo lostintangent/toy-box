@@ -1,4 +1,4 @@
-import type { CopilotClient } from "@github/copilot-sdk";
+import type { CopilotClient } from "@microsoft/copilot-sdk";
 import type { SessionSkill } from "@sessions/model";
 
 type SdkSkill = Awaited<ReturnType<CopilotClient["rpc"]["skills"]["discover"]>>["skills"][number];

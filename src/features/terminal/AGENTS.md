@@ -28,7 +28,7 @@ Every browser tab creates a stable `clientId` in session storage. That ID owns z
 | `ready` | The PTY is available; `resumed` distinguishes creation from reconnection and precedes replay |
 | `exit`  | The shell process exited and the client should close its terminal surface                    |
 
-Binary client messages are written directly to PTY stdin. PTY output is stored for reconnect and written directly to the active socket. Backpressure protects the server by skipping a socket whose buffered output exceeds the configured limit.
+Binary client messages are written directly to PTY stdin. The scrollback buffer parses PTY output before the runtime sends those bytes to the active socket. Backpressure protects the server by skipping a socket whose buffered output exceeds the configured limit.
 
 ## PTY lifecycle
 
@@ -40,12 +40,13 @@ Closing a PTY hangs up and signals its shell, and kills it if it's still running
 
 The terminal identity and reconnect contract deliberately differ from agent sessions: a terminal belongs to one tab-scoped client ID, accepts one current socket, and replays terminal display state rather than domain events.
 
-## Mode-aware scrollback
+## Replay
 
-Raw byte replay can corrupt full-screen applications, so the scrollback buffer interprets the ANSI state needed to reconstruct the terminal safely. It tracks private-mode changes, alternate-buffer entry and exit, scrollback clearing, and full reset.
+The scrollback buffer uses headless xterm with the same scrollback limit and Unicode version as the browser. After `ready`, a resuming socket receives the parsed screen and scrollback, including the alternate screen and its modes. Output still queued in xterm goes to the current socket as it is parsed, so the replay needs no separate queue.
 
-- In normal mode, reconnect replays private-mode state followed by normal scrollback output.
-- In alternate mode, reconnect replays only alternate and private-mode state. It never injects normal scrollback into the full-screen buffer and requests a redraw when needed.
+**xterm workaround.** `@xterm/addon-serialize` 0.14.0 omits cursor visibility, SGR mouse encoding, and the active scroll margins. `ScrollbackBuffer` restores them from xterm 6's internal state and restores the cursor position after setting margins or origin mode. Recheck on xterm upgrades. Remove each restore when the serializer itself restores that state without moving the cursor.
+
+A replay loses OSC 8 link targets, the cursor shape, a held line-drawing character set, and a scroll region set on the normal screen while a full-screen app runs. The browser answers queries it receives live, but terminal queries already parsed while disconnected are not replayed. If a sequence or UTF-8 character spans the parsed and unparsed output, the reconnecting browser can display stray characters. This does not change the buffer's parsed screen.
 
 ## Invariants
 

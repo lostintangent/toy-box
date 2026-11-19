@@ -20,6 +20,7 @@ const unions = {
     "thread/delete",
     "thread/unsubscribe",
     "thread/revert",
+    "thread/backgroundTerminals/clean",
     "turn/start",
     "turn/steer",
     "turn/interrupt",

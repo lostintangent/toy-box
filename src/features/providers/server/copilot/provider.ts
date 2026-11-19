@@ -1,12 +1,12 @@
-import { approveAll } from "@github/copilot-sdk";
+import { approveAll } from "@microsoft/copilot-sdk";
 import type {
   CopilotSession,
   CopilotClient,
-  SessionConfig,
+  CreateSessionOptions,
   SessionMetadata,
   Tool as CopilotTool,
   ToolResultObject,
-} from "@github/copilot-sdk";
+} from "@microsoft/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
 import type { ProviderSubscription } from "@providers/model";
 import {
@@ -98,10 +98,9 @@ export const copilotProvider: SessionProvider = {
     const client = await startCopilotClient();
     const early = holdNativeEvents();
     const session = await client.createSession({
-      ...nativeConfiguration(configuration),
+      ...nativeConfiguration(configuration, early),
       sessionId,
       name: configuration.name || undefined,
-      onEvent: early.onEvent,
     });
     try {
       return await connect(session, configuration.allowUserQuestions, early);
@@ -113,13 +112,10 @@ export const copilotProvider: SessionProvider = {
   async resume(nativeId, configuration) {
     const client = await startCopilotClient();
     const early = holdNativeEvents();
-    const native = await client.resumeSession(nativeId, {
-      ...nativeConfiguration(configuration),
-      onEvent: early.onEvent,
-    });
+    const native = await client.resumeSession(nativeId, nativeConfiguration(configuration, early));
     const connection = await connect(native, configuration.allowUserQuestions, early);
     const { model } = configuration;
-    // Workaround (Copilot CLI 1.0.112; listed in providers/AGENTS.md): resume keeps the session's
+    // Workaround (Copilot CLI 1.0.114; listed in providers/AGENTS.md): resume keeps the session's
     // last effort when the configuration names none, even one the resumed model rejects. Remove
     // once resume clears it.
     if (model && !model.reasoningEffort && (await native.rpc.model.getCurrent()).reasoningEffort)
@@ -133,7 +129,7 @@ export const copilotProvider: SessionProvider = {
   },
   async delete(nativeId) {
     await (await startCopilotClient()).deleteSession(nativeId).catch((error: Error) => {
-      // Workaround (Copilot CLI 1.0.108; listed in providers/AGENTS.md): a missing history is
+      // Workaround (Copilot CLI 1.0.114; listed in providers/AGENTS.md): a missing history is
       // reported only in the error's message. Remove once the CLI reports it with a code.
       if (!error.message.endsWith(`Session file not found for ${nativeId}`)) throw error;
     });
@@ -173,7 +169,10 @@ async function connect(
   return connectCopilotSession(session, early);
 }
 
-function nativeConfiguration(configuration: SessionConfiguration): SessionConfig {
+function nativeConfiguration(
+  configuration: SessionConfiguration,
+  early: ReturnType<typeof holdNativeEvents>,
+): CreateSessionOptions {
   const tools: CopilotTool<any>[] = configuration.tools.map((tool) => ({
     ...tool,
     parameters: toolInputSchema(tool.parameters),
@@ -187,21 +186,18 @@ function nativeConfiguration(configuration: SessionConfiguration): SessionConfig
     defer: tool.alwaysLoad ? "never" : "auto",
   }));
   return {
-    streaming: true,
-    requestCanvasRenderer: true,
     model: configuration.model?.name,
-    ...toSdkSetModelOptions(configuration.model),
+    inference: toSdkSetModelOptions(configuration.model),
     workingDirectory: configuration.directory,
     enableConfigDiscovery: true,
-    imageGeneration: { enabled: true },
-    enableSkills: true,
-    skillDirectories: configuration.skillDirectories,
     systemMessage: { mode: "append", content: configuration.instructions },
+    events: { streaming: true, onEvent: early.onEvent },
+    canvases: { requestRenderer: true },
+    skills: { enabled: true, directories: configuration.skillDirectories },
+    tools: { definitions: tools, imageGeneration: { enabled: true } },
     // Toy Box approves every request; allow-all also keeps the CLI from journaling each one.
-    permissionMode: "allow-all",
-    onPermissionRequest: approveAll,
-    tools,
-    ...(configuration.disableMemory ? { memory: { enabled: false } } : {}),
+    permissions: { mode: "allow-all", onRequest: approveAll },
+    ...(configuration.disableMemory ? { state: { memory: { enabled: false } } } : {}),
   };
 }
 

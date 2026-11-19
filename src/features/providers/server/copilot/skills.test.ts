@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SkillSource } from "@github/copilot-sdk";
+import type { SkillSource } from "@microsoft/copilot-sdk";
 import { toSessionSkills } from "./skills";
 
 function sdkSkill(

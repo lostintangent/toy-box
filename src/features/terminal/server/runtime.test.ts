@@ -1,4 +1,6 @@
-import { describe, expect, onTestFinished, test } from "bun:test";
+import { describe, expect, onTestFinished, spyOn, test } from "bun:test";
+import { Terminal } from "@xterm/headless";
+import { emulatorOptions, loadUnicode11 } from "../model/emulator";
 import type { TerminalServerMessage } from "../model/protocol";
 import { TerminalRuntime } from "./runtime";
 
@@ -9,7 +11,6 @@ const textEncoder = new TextEncoder();
 const DEFAULT_CLIENT_ID = "client-1";
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
-const ALT_BUFFER_ENTER_SEQUENCE = "\x1b[?1049h";
 
 class FakeServerSocket {
   public readonly id: string;
@@ -117,6 +118,37 @@ function createHarness({ orphanTimeoutMs = 200 } = {}) {
   };
 }
 
+/** What a browser terminal shows after writing `output`, including the state it reports. */
+function screenOf(output: string, cols = DEFAULT_COLS, rows = DEFAULT_ROWS) {
+  const terminal = new Terminal({ ...emulatorOptions, cols, rows });
+  loadUnicode11(terminal);
+  let reports = "";
+  terminal.onData((report) => (reports += report));
+  terminal.write(output);
+
+  return new Promise((resolve) => {
+    terminal.write("\x1b[?25$p\x1b[?1006$p\x1bP$qr\x1b\\", () => {
+      const { active } = terminal.buffer;
+      const lines = Array.from({ length: active.length }, (_, y) => {
+        const line = active.getLine(y)!;
+        return { text: line.translateToString(true), color: line.getCell(0)?.getFgColor() };
+      });
+      resolve({
+        buffer: active.type,
+        lines,
+        cursor: [active.cursorX, active.cursorY],
+        modes: terminal.modes,
+        reports,
+      });
+    });
+  });
+}
+
+function parseQueuedOutput() {
+  // xterm schedules its write buffer on the zero-delay timer queue.
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function initClient(
   manager: TerminalRuntime,
   ws: FakeServerSocket,
@@ -137,7 +169,9 @@ describe("TerminalRuntime", () => {
       expect(ws1.controlMessages[0]).toEqual({ type: "ready", resumed: false });
 
       processes[0].emitOutput("hello");
+      await parseQueuedOutput();
       manager.detach(DEFAULT_CLIENT_ID, "1");
+      processes[0].emitOutput(" world");
 
       const ws2 = createWs(2);
       initClient(manager, ws2, 100, 30);
@@ -146,6 +180,9 @@ describe("TerminalRuntime", () => {
       expect(ws2.controlMessages[0]).toEqual({ type: "ready", resumed: true });
       expect(ws2.outputText()).toBe("hello");
       expect(processes[0].resizes).toContainEqual({ cols: 100, rows: 30 });
+
+      await parseQueuedOutput();
+      expect(ws2.outputText()).toBe("hello world");
 
       // Ensure reconnect cancels orphan teardown.
       await Bun.sleep(70);
@@ -244,43 +281,63 @@ describe("TerminalRuntime", () => {
     });
   });
 
-  describe("alternate buffer replay scenarios", () => {
-    test("replays alternate-mode state and pokes redraw while alternate screen is active", () => {
+  describe("replay scenarios", () => {
+    test("replays a full-screen app's screen and the modes it set", async () => {
       const { manager, processes, createWs } = createHarness();
-      const ws1 = createWs(1);
-      initClient(manager, ws1);
-
-      processes[0].emitOutput("prompt$ ");
-      processes[0].emitOutput(ALT_BUFFER_ENTER_SEQUENCE);
-      processes[0].emitOutput("ACTIVE TUI FRAME");
+      initClient(manager, createWs(1));
+      const output =
+        "prompt$ vim 你好🙂\r\n" +
+        // An alternate screen, hidden cursor, SGR mouse reports, bracketed paste and a scroll region
+        "\x1b[?1049h\x1b[?1h\x1b[?2004h\x1b[?1000h\x1b[?1006h\x1b[?25l\x1b[2;20r" +
+        "\x1b[H\x1b[2J~\r\n~ text\x1b[?6h\x1b[5;3H";
+      processes[0].emitOutput(output);
+      await parseQueuedOutput();
 
       manager.detach(DEFAULT_CLIENT_ID, "1");
       const ws2 = createWs(2);
       initClient(manager, ws2);
 
-      expect(ws2.outputText()).toBe(ALT_BUFFER_ENTER_SEQUENCE);
-      expect(processes[0].resizes).toContainEqual({ cols: 80, rows: 23 });
-      expect(processes[0].resizes).toContainEqual({ cols: 80, rows: 24 });
+      expect(await screenOf(ws2.outputText())).toEqual(await screenOf(output));
+      // Quitting the app returns to the normal screen as it was.
+      const quit = "\x1b[?6l\x1b[r\x1b[?25h\x1b[?1049l";
+      expect(await screenOf(ws2.outputText() + quit)).toEqual(await screenOf(output + quit));
     });
 
-    test("does not poke redraw when reconnect already resized alternate screen", () => {
+    test("a resume mid-CSI does not change the buffer's parsed screen", async () => {
       const { manager, processes, createWs } = createHarness();
-      const ws1 = createWs(1);
-      initClient(manager, ws1);
+      initClient(manager, createWs(1));
+      const start = "one\r\n\x1b[3";
+      const end = "1mRED\x1b[0m\r\n";
+      processes[0].emitOutput(start);
+      await parseQueuedOutput();
+      initClient(manager, createWs(2));
+      processes[0].emitOutput(end);
+      await parseQueuedOutput();
+      const ws3 = createWs(3);
+      initClient(manager, ws3);
 
-      processes[0].emitOutput(ALT_BUFFER_ENTER_SEQUENCE);
-      processes[0].emitOutput("ACTIVE TUI FRAME");
-      manager.detach(DEFAULT_CLIENT_ID, "1");
-
-      const ws2 = createWs(2);
-      initClient(manager, ws2, 100, 30);
-
-      expect(ws2.outputText()).toBe(ALT_BUFFER_ENTER_SEQUENCE);
-      expect(processes[0].resizes).toEqual([{ cols: 100, rows: 30 }]);
+      expect(await screenOf(ws3.outputText())).toEqual(await screenOf(start + end));
     });
   });
 
   describe("edge-case session ownership", () => {
+    test("sends the last queued output before the shell's exit", async () => {
+      const { manager, processes, createWs } = createHarness();
+      const ws = createWs(1);
+      initClient(manager, ws);
+      const send = spyOn(ws, "send");
+
+      processes[0].emitOutput("last output");
+      processes[0].resolveExit();
+      await processes[0].exited;
+      await parseQueuedOutput();
+
+      expect(send.mock.calls).toEqual([
+        [textEncoder.encode("last output")],
+        [JSON.stringify({ type: "exit" })],
+      ]);
+    });
+
     test("ignores stale process exits after a replacement session is created", async () => {
       const { manager, processes, createWs } = createHarness();
       const ws1 = createWs(1);
@@ -294,15 +351,17 @@ describe("TerminalRuntime", () => {
       expect(processes).toHaveLength(2);
 
       processes[0].resolveExit();
-      await Bun.sleep(0);
+      await processes[0].exited;
+      await parseQueuedOutput();
 
       expect(ws2.hasExitMessage()).toBe(false);
 
       processes[1].emitOutput("still-alive\n");
+      await parseQueuedOutput();
       expect(ws2.outputText()).toContain("still-alive\n");
     }, 1000);
 
-    test("keeps a closed shell's trailing output out of its replacement", () => {
+    test("keeps a closed shell's trailing output out of its replacement", async () => {
       const { manager, processes, createWs } = createHarness();
       initClient(manager, createWs(1));
       manager.close(DEFAULT_CLIENT_ID);
@@ -310,6 +369,7 @@ describe("TerminalRuntime", () => {
       const ws2 = createWs(2);
       initClient(manager, ws2);
       processes[0].emitOutput("old-shell\n");
+      await parseQueuedOutput();
 
       expect(ws2.outputText()).toBe("");
     });

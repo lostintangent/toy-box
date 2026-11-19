@@ -1,12 +1,11 @@
 ## 📅 v0.4.10 (11/18/26)
 
-- A file link in a channel message now opens the shared artifact it names, and a link to an unshared file shows as plain text instead of "[blocked]".
-- A Copilot session that switches to a model without reasoning effort, such as Haiku, no longer keeps the old effort and fails every turn.
-- Stopping a session right after sending now works on every provider, even while it's still starting, and keeps your message in its history. Sending again right after Stop starts the next turn instead of returning your text to the composer.
-- Deleting a session while it's still starting no longer brings it back, and a delete whose provider connection already failed still removes the provider's history.
-- A canceled worker now reports as failed to anything waiting on it, instead of failing every other wait alongside it, and an app's spawned worker shows in its workspace as soon as `spawnWorker` resolves.
+- Channel requests now show attachments when the lead adds them.
+- Upgraded the GitHub Copilot SDK to use the new Microsoft Copilot SDK (your CLI setup remains the same)
+- File/artifact links in channel messages can now open the respective artifact on click
 - Automations in the sidebar show when their last run started, and one whose run failed to start no longer opens a session that was already deleted. A finished run no longer moves its automation to the top of the list.
 - The automation schedule editor now opens more cron expressions, such as weekday ranges, in its Daily and Interval modes.
+- Stopping and deleting sessions now works more correctly across providers
 
 ## 📅 v0.4.9 (11/17/26)
 

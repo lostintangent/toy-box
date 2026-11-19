@@ -65,7 +65,7 @@ export const claudeProvider: SessionProvider = {
   },
   create: (sessionId, configuration) => ClaudeConnection.open(sessionId, configuration),
   async resume(nativeId, configuration) {
-    // Workaround (Claude CLI 2.1.302; listed in providers/AGENTS.md): resume never restores
+    // Workaround (Claude CLI 2.1.328; listed in providers/AGENTS.md): resume never restores
     // reasoning effort and restores the model only when the CLI recognizes it. Reopen with the
     // last reply's model and effort from history; remove once the CLI restores both itself.
     const model =
@@ -83,7 +83,7 @@ export const claudeProvider: SessionProvider = {
   },
   async delete(nativeId) {
     await deleteSession(nativeId).catch((error: Error) => {
-      // Workaround (Claude Agent SDK 0.3.319; listed in providers/AGENTS.md): a missing history
+      // Workaround (Claude Agent SDK 0.3.328; listed in providers/AGENTS.md): a missing history
       // is reported only in the error's message. Remove once the SDK reports it with a code.
       if (error.message !== `Session ${nativeId} not found in any project directory`) throw error;
     });

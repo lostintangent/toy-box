@@ -161,7 +161,7 @@ export class ClaudeConnection implements SessionConnection {
     // turn stays in history only once taken up. Steers need only have been read.
     await this.#starting?.promise;
     await this.#written?.promise;
-    // Workaround (Claude Agent SDK 0.3.314; listed in providers/AGENTS.md): `Query.interrupt()`
+    // Workaround (Claude Agent SDK 0.3.328; listed in providers/AGENTS.md): `Query.interrupt()`
     // sends `cancelQueued` as the protocol's `cancel_queued`, but its type omits the option.
     // @ts-expect-error
     await this.#native?.interrupt({ cancelQueued: true });

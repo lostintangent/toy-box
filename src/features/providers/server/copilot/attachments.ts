@@ -2,7 +2,7 @@
 // writer (outbound prompt attachments) and the reader (persisted user.message
 // records) can never drift.
 
-import type { Attachment as SdkAttachment, MessageOptions } from "@github/copilot-sdk";
+import type { Attachment as SdkAttachment, MessageOptions } from "@microsoft/copilot-sdk";
 import type { Attachment } from "@/shared/attachments/model";
 
 /** Domain attachments → SDK blobs, for session.send. */

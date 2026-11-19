@@ -28,10 +28,9 @@ the workspace consumes the same provider-owned catalog and configuration.
   a minute, so a slow or failed read affects only its own row. The plan's name sits beside the
   version, with its limits beneath.
   `server/cli.ts` owns installation checks through `Bun.which(providerId)` and the shared `--version`
-  and `update` commands. Copilot's version is read with auto-update off, as the server launches it,
-  because its launcher would otherwise name a newer cached build. Updates compare versions before
-  and after; unchanged does not prove an installation is current (some installers require manual
-  updates). Restart Toy Box to use updated runtimes.
+  and `update` commands. Updates compare versions before and after; unchanged does not prove an
+  installation is current (some installers require manual updates). Restart Toy Box to use updated
+  runtimes.
 - `server/provider.ts` defines `SessionProvider`, `SessionConnection`, and the configuration
   supplied by Sessions. The contract addresses each history by its native ID, and a connection
   exposes the one it runs; Sessions maps public IDs to native ones.
@@ -111,8 +110,8 @@ never announces it. Each provider emits `model_changed` with the model it applie
 No test spawns a native CLI, so an SDK or CLI upgrade is verified only once the installed CLIs
 complete a real handshake the way the server launches them:
 
-1. `COPILOT_AUTO_UPDATE=false copilot --version` matches the CLI pinned in
-   `node_modules/@github/copilot-sdk/dist/cliVersion.js`.
+1. `copilot --version` matches the CLI pinned in
+   `node_modules/@microsoft/copilot-sdk/dist/cliVersion.js`.
 2. Each provider discovers its models through the production modules, which skip the settings
    database. A protocol mismatch or failed start throws its native error:
 
@@ -129,30 +128,30 @@ version where the defect was seen and when the code can be removed. Each one is 
 check the list whenever a provider is upgraded:
 
 - Claude resume (`server/claude/provider.ts`): the CLI never restores reasoning effort, and it
-  restores the model only when it recognizes it, falling back to its default otherwise (seen with
-  CLI 2.1.302). Resume starts with the model and effort of the last reply in history instead. A
+  restores the model only when it recognizes it, falling back to its default otherwise (seen
+  through CLI 2.1.328). Resume starts with the model and effort of the last reply in history instead. A
   session with no successful reply still starts on the CLI default. Remove once the CLI restores
   both itself.
 - Claude transcript directory (`server/claude/history.ts`): `getSessionInfo()` reads `cwd` only
-  from a transcript's first 64 KB, so a large first message hides it (seen with SDK 0.3.302).
+  from a transcript's first 64 KB, so a large first message hides it (seen through SDK 0.3.328).
   `readSession` reads the first transcript entry that records one instead. Remove once the SDK
   finds it itself.
 - Copilot computer use (`server/copilot/client.ts`): headless SDK servers load no bundled
-  plugins (seen through CLI 1.0.105), so the client registers the running CLI version's cached
+  plugins (seen through CLI 1.0.114), so the client registers the running CLI version's cached
   computer-use plugin at start and the CLI applies the user's opt-in. Remove when headless servers
   load bundled plugins.
 - Claude abort (`server/claude/connection.ts`): `Query.interrupt()` is typed without the
-  `cancelQueued` option its runtime sends as `cancel_queued` (seen through SDK 0.3.314), so Stop
+  `cancelQueued` option its runtime sends as `cancel_queued` (seen through SDK 0.3.328), so Stop
   expects a type error to cancel queued steers. Typecheck fails once the SDK types the option.
 - Copilot and Claude delete (`server/copilot/provider.ts`, `server/claude/provider.ts`): a history
-  that is already gone is reported only in the error's message (seen with Copilot CLI 1.0.108 and
-  Claude Agent SDK 0.3.319), so `delete` matches that message to resolve. Remove once each reports
+  that is already gone is reported only in the error's message (seen through Copilot CLI 1.0.114 and
+  Claude Agent SDK 0.3.328), so `delete` matches that message to resolve. Remove once each reports
   it with a code.
 - Copilot resume effort (`server/copilot/provider.ts`): resume keeps the session's last reasoning
   effort when its configuration names none, even one the resumed model rejects, so every turn
-  fails (seen with CLI 1.0.112). A resume whose model has no effort reads the native one and clears
+  fails (seen through CLI 1.0.114). A resume whose model has no effort reads the native one and clears
   it with a model switch. Remove once resume clears it.
 - Codex abort (`server/codex/connection.ts`): `turn/interrupt` stops only one thread's turn (seen
-  with CLI 0.166.0). Stop interrupts each loaded subagent with an empty `turnId`, the app-server's
+  through CLI 0.170.0). Stop interrupts each loaded subagent with an empty `turnId`, the app-server's
   startup interrupt, so it needs no subagent turn IDs. Replace it with `thread/interrupt` once
   openai/codex#40953 ships.

@@ -1,6 +1,6 @@
 // One Copilot SDK process, shared by every native session and catalog request.
 
-import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
+import { CopilotClient, RuntimeConnection } from "@microsoft/copilot-sdk";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +21,8 @@ export function startCopilotClient(): Promise<CopilotClient> {
 
   const promise = (async () => {
     const client = new CopilotClient({
-      connection: RuntimeConnection.forStdio({ path: resolveCopilotCliPath() }),
+      mode: "coding-agent",
+      runtime: RuntimeConnection.forSpawnedStdio({ path: resolveCopilotCliPath() }),
     });
     await client.start();
     await registerComputerUse(client).catch((error) =>
@@ -36,7 +37,7 @@ export function startCopilotClient(): Promise<CopilotClient> {
   return promise;
 }
 
-// Workaround seen through CLI 1.0.105: headless servers register none of the CLI's bundled
+// Workaround seen through CLI 1.0.114: headless servers register none of the CLI's bundled
 // plugins. Register the running version's computer-use plugin, and the CLI applies the user's
 // opt-in itself. It ignores a missing folder. Remove when headless servers load bundled plugins.
 async function registerComputerUse(client: CopilotClient): Promise<void> {

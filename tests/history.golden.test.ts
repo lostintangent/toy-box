@@ -72,4 +72,25 @@ describe("history pipeline golden replay", () => {
     expect(state.status).toBe("idle");
     expect(state).toMatchSnapshot();
   });
+
+  test("a subagent's model stays on its agent call while the session keeps its own", async () => {
+    const state = await replayCopilotHistory(
+      "history-golden-subagent-model",
+      await loadSessionFixture("subagentModel"),
+    );
+
+    // CLI 1.0.114 records the subagent's model as an agent-scoped model change...
+    const agents = agentToolCalls(state);
+    expect(agents).toHaveLength(1);
+    expect(agents[0].subagent?.model).toMatchObject({ provider: "copilot", name: "gpt-6-luna" });
+
+    // ...which leaves the session on the model the user chose for it.
+    expect(state.model).toMatchObject({
+      provider: "copilot",
+      name: "gpt-6.2-sol",
+      reasoningEffort: "high",
+    });
+    expect(state.status).toBe("idle");
+    expect(state).toMatchSnapshot();
+  });
 });

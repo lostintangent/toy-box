@@ -113,7 +113,7 @@ export class CodexConnection implements SessionConnection {
     return true;
   }
 
-  /** Stop interrupts the session tree's running turns: the root's and its subagents'. */
+  /** Stop interrupts the session tree's running turns and asks Codex to clean up its terminals. */
   async abort(): Promise<void> {
     await this.#starting?.promise;
     this.#cancelRequests();
@@ -124,12 +124,17 @@ export class CodexConnection implements SessionConnection {
         turnId: turn.id,
       });
     const subagents = await this.#loadedSubagents();
-    // Workaround (Codex CLI 0.166.0; listed in providers/AGENTS.md): an empty turn ID interrupts
+    // Workaround (Codex CLI 0.170.0; listed in providers/AGENTS.md): an empty turn ID interrupts
     // whatever a subagent is running, so Stop needs no subagent turn tracking. Replace with
     // thread/interrupt (openai/codex#40953).
     await Promise.all(
       subagents.map((threadId) => this.rpc.request("turn/interrupt", { threadId, turnId: "" })),
     );
+    for (const threadId of [this.nativeId, ...subagents]) {
+      void this.rpc.request("thread/backgroundTerminals/clean", { threadId }).catch((error) => {
+        console.warn(`Codex thread ${threadId}: failed to clean up background terminals:`, error);
+      });
+    }
   }
 
   async disconnect(): Promise<void> {

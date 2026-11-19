@@ -6,9 +6,9 @@
 
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { getOrCreateClientId } from "@workspace/model/config/clientId";
+import { emulatorOptions, loadUnicode11 } from "../model/emulator";
 import type { TerminalServerMessage } from "../model/protocol";
 import { TerminalConnection } from "./connection";
 import { TerminalResize } from "./resize";
@@ -18,8 +18,7 @@ const TERMINAL_CONFIG = {
   cursorBlink: true,
   fontSize: 14,
   fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-  scrollback: 1000,
-  allowProposedApi: true,
+  ...emulatorOptions,
 } as const;
 
 export type TerminalHandlers = {
@@ -115,11 +114,9 @@ class TerminalManager {
     if (!this.#xterm) {
       const xterm = new XTerm({ ...TERMINAL_CONFIG, theme });
       const fitAddon = new FitAddon();
-      const unicodeAddon = new Unicode11Addon();
 
       xterm.loadAddon(fitAddon);
-      xterm.loadAddon(unicodeAddon);
-      xterm.unicode.activeVersion = "11";
+      loadUnicode11(xterm);
       xterm.open(container);
 
       try {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ModelInfo } from "@github/copilot-sdk";
+import type { Model as ModelInfo } from "@microsoft/copilot-sdk";
 import { toModelInfo } from "./models";
 
 function model(overrides: Partial<ModelInfo> = {}): ModelInfo {

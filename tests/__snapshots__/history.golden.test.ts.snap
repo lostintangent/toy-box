@@ -462,3 +462,89 @@ exports[`history pipeline golden replay a rate-limited subagent fails its agent 
   "todos": [],
 }
 `;
+
+exports[`history pipeline golden replay a subagent's model stays on its agent call while the session keeps its own 1`] = `
+{
+  "artifacts": [],
+  "canvases": [],
+  "linkedSessionIds": [],
+  "messages": [
+    {
+      "attachments": undefined,
+      "clientId": "a4f2d630-f1f2-4970-8c6b-ab605ebda4a3",
+      "content": "Read-only check: use the explore subagent (via the task tool) to find the file and line where resolveParentToolCallId is defined in this repo, then report its a",
+      "role": "user",
+      "timestamp": "2026-11-19T19:27:10.192Z",
+    },
+    {
+      "content": "",
+      "messageId": "53a674df-c55f-47fa-910f-a4fe3c0c5dd4",
+      "role": "assistant",
+      "toolCalls": [
+        {
+          "arguments": {
+            "agent_type": "explore",
+            "description": "Locate tool call resolver",
+            "mode": "sync",
+            "name": "locate-resolver",
+            "prompt": "Read-only: in the current repository, find the exact file path and 1-based line where the symbol \`resolveParentToolCallId\` is defined (not usages). Report the definition location; if multiple, list them. Do not modify anything.",
+          },
+          "id": "call_U9GHjgVBjeMqxjAV9zbmmebh",
+          "name": "agent",
+          "result": {
+            "content": "\`resolveParentToolCallId\` is defined at \`/Users/dev/project/src/features/providers/server/copilot/projector.ts:369\`.",
+            "details": undefined,
+            "success": true,
+          },
+          "subagent": {
+            "content": "\`resolveParentToolCallId\` is defined at \`/Users/dev/project/src/features/providers/server/copilot/projector.ts:369\`.",
+            "model": {
+              "name": "gpt-6-luna",
+              "provider": "copilot",
+            },
+            "reasoningContent": "",
+            "toolCalls": [
+              {
+                "arguments": {
+                  "-n": true,
+                  "head_limit": 20,
+                  "output_mode": "content",
+                  "paths": "/Users/dev/project",
+                  "pattern": "resolveParentToolCallId",
+                },
+                "id": "call_JBhiKjiheyDTZi3G8zko9Tmz",
+                "name": "grep",
+                "result": {
+                  "content": 
+"/Users/dev/project/src/features/providers/server/copilot/projector.ts:111:      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
+/Users/dev/project/src/features/providers/server/copilot/projector.ts:144:      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
+/Users/dev/project/src/features/providers/server/copilot/projector.ts:171:      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
+/Users/dev/project/src/features/providers/server/copilot/projector.ts:251:      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
+/Users/dev/project/src/features/providers/server/copilot/projector.ts:284:      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
+/Users/dev/project/src/features/providers/server/copilot/projector.ts:292:      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
+/Users/dev/project/src/features/providers/server/copilot/projector.ts:369:function resolveParentToolCallId(agentId: string | undefined, state: ProjectionState) {"
+,
+                  "details": undefined,
+                  "success": true,
+                },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  ],
+  "model": {
+    "contextTier": "default",
+    "name": "gpt-6.2-sol",
+    "provider": "copilot",
+    "reasoningEffort": "high",
+  },
+  "openedFiles": [],
+  "queuedMessages": [],
+  "reasoningContent": "",
+  "revision": 0,
+  "status": "idle",
+  "todos": [],
+}
+`;

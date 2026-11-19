@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
+import type { SessionEvent as SdkSessionEvent } from "@microsoft/copilot-sdk";
 import type { SessionState } from "@sessions/model";
 import { replayCopilotHistory } from "./helpers";
 

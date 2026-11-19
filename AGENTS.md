@@ -45,7 +45,7 @@ Each guide explains one capability end to end, including its callers in other fo
 - [`src/features/briefs/AGENTS.md`](src/features/briefs/AGENTS.md): strict brief documents, derived specs and plans, editing transitions, presentation, and agent workflows
 - [`src/features/whiteboard/AGENTS.md`](src/features/whiteboard/AGENTS.md): host-neutral native SVG documents, transient whiteboard state, gestures, history, and presentation
 - [`src/features/files/AGENTS.md`](src/features/files/AGENTS.md): browsable workspace files presented as live, bidirectionally editable surfaces
-- [`src/features/terminal/AGENTS.md`](src/features/terminal/AGENTS.md): reconnectable PTYs with mode-aware scrollback that preserves the visible terminal
+- [`src/features/terminal/AGENTS.md`](src/features/terminal/AGENTS.md): reconnectable PTYs that replay their screen and scrollback
 - [`src/features/screens/AGENTS.md`](src/features/screens/AGENTS.md): native window capture, shared preview references, remote input handoff, and remoting benchmarks
 - [`src/cli/AGENTS.md`](src/cli/AGENTS.md): one installable binary that assembles the browser app and Nitro server
 - [`browser/AGENTS.md`](browser/AGENTS.md): the browser extension that sends a page and instructions to the Inbox

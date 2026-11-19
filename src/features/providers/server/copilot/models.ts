@@ -1,7 +1,7 @@
-import type { ModelInfo as SdkModelInfo } from "@github/copilot-sdk";
+import type { Model as SdkModel } from "@microsoft/copilot-sdk";
 import type { ContextTier, ModelInfo } from "@providers/model";
 
-export function toModelInfo(model: SdkModelInfo): ModelInfo {
+export function toModelInfo(model: SdkModel): ModelInfo {
   return {
     id: model.id,
     name: model.name,
@@ -13,7 +13,7 @@ export function toModelInfo(model: SdkModelInfo): ModelInfo {
 }
 
 /** Billing advertises each tier's prompt allowance; the runtime reports the same context limit. */
-function contextTiers({ billing }: SdkModelInfo): ContextTier[] | undefined {
+function contextTiers({ billing }: SdkModel): ContextTier[] | undefined {
   const defaultTokens = billing?.tokenPrices?.maxPromptTokens;
   const longContextTokens = billing?.tokenPrices?.longContext?.maxPromptTokens;
   if (defaultTokens === undefined || longContextTokens === undefined) return undefined;

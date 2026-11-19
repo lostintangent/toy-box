@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
+import type { SessionEvent as SdkSessionEvent } from "@microsoft/copilot-sdk";
 import type { JSONType } from "zod";
 import { encodeSystemMessage } from "@sessions/model/systemMessages";
 import { replaySessionHistory } from "@sessions/model/reducer";
@@ -83,7 +83,6 @@ function toolExecutionComplete(
     detailedContent?: string;
     errorMessage?: string;
     agentId?: string;
-    parentToolCallId?: string;
   },
 ): SdkSessionEvent {
   return sdkEvent({
@@ -92,7 +91,6 @@ function toolExecutionComplete(
     data: {
       toolCallId,
       success: options.success ?? true,
-      ...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
       ...(options.resultContent !== undefined || options.detailedContent !== undefined
         ? {
             result: {
@@ -731,22 +729,6 @@ describe("projector", () => {
           }),
         ),
       ).toEqual([{ type: "assistant_message", content: "", messageId: "tools" }]);
-
-      expect(
-        project(
-          sdkEvent({
-            type: "assistant.message",
-            agentId: "native-agent-1",
-            data: { content: "Agent response", parentToolCallId: "call-agent-1" },
-          }),
-        ),
-      ).toEqual([
-        {
-          type: "assistant_message",
-          parentToolCallId: "call-agent-1",
-          content: "Agent response",
-        },
-      ]);
     });
 
     test("identifies inputs by the client turn ID the CLI echoes", () => {

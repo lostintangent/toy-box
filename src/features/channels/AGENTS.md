@@ -574,8 +574,8 @@ the pane, such as in the sidebar's request preview. Every agent reference, wheth
   Tray, overview, and historical preview messages share Workspace's preview presentation.
   While a request is pending, its `replies` appear as buttons inside the question's bubble; tapping
   one posts its label directly, with no draft. An "Input needed" button beside the composer's
-  audience previews `state.request` on hover and, on click, loads any older pages needed and
-  scrolls to the question. Both leave once the user replies.
+  audience previews `state.request` and its attachments on hover and, on click, loads any older
+  pages needed and scrolls to the question. Both leave once the user replies.
 - User and agent messages carry a bookmark toggle. While any bookmarks exist, a pill with their
   count leads the tray. Its list loads history through the oldest bookmark, and selecting one
   scrolls to its message the same way.
@@ -602,7 +602,8 @@ the pane, such as in the sidebar's request preview. Every agent reference, wheth
 - The collapsed sidebar's rail lists each Channel that is waiting, has an unread completion, or has
   a working agent, by its avatar with that mark, and opens it without expanding the sidebar.
 - Hovering a waiting Channel's row or rail avatar previews the catalog's pending request with its
-  reply buttons, so the user can answer without opening it. Touch only opens the Channel.
+  attachments and reply buttons, so the user can answer without opening it. Touch only opens the
+  Channel.
 
 ## Invariants
 

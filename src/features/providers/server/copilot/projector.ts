@@ -3,7 +3,7 @@
 // live event streams; history replay adapts persisted logs onto this same
 // projection in provider.readHistory().
 
-import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
+import type { SessionEvent as SdkSessionEvent } from "@microsoft/copilot-sdk";
 import type { JSONType } from "zod";
 import type { SessionEvent, SessionQuestionBase, ToolCall } from "@sessions/model";
 import type { Attachment } from "@/shared/attachments/model";
@@ -108,11 +108,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         },
       ];
     case "assistant.message": {
-      const parentToolCallId = resolveParentToolCallId(
-        event.agentId,
-        event.data.parentToolCallId,
-        state,
-      );
+      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
       if (event.agentId && !parentToolCallId) return [];
       // Subagent reasoning stays on its agent call, so durable text replaces the live preview.
       const reasoning: SessionEvent[] =
@@ -145,7 +141,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       const content = event.data.deltaContent;
       if (!content) return [];
       if (!event.agentId) return [{ type: "reasoning_delta", content }];
-      const parentToolCallId = resolveParentToolCallId(event.agentId, undefined, state);
+      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
       return parentToolCallId ? [{ type: "reasoning_delta", content, parentToolCallId }] : [];
     }
     case "skill.invoked": {
@@ -172,11 +168,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
     case "assistant.turn_start": {
       if (!event.agentId) return [{ type: "status", status: "thinking" }];
       // Each subagent turn starts a new reasoning preview on its agent call.
-      const parentToolCallId = resolveParentToolCallId(
-        event.agentId,
-        event.data.parentToolCallId,
-        state,
-      );
+      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
       return parentToolCallId ? [{ type: "reasoning", content: "", parentToolCallId }] : [];
     }
     case "model.call_failure":
@@ -204,7 +196,10 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
         event.data.contextTier,
       );
     case "session.model_change":
-      return projectModel(event.data.newModel, event.data.reasoningEffort, event.data.contextTier);
+      // A subagent's model reaches its agent call through subagent.started, not the session.
+      return event.agentId
+        ? []
+        : projectModel(event.data.newModel, event.data.reasoningEffort, event.data.contextTier);
     case "session.title_changed":
       return [{ type: "session_title_changed", title: event.data.title }];
     case "session.handoff":
@@ -256,11 +251,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       const toolName = TOOL_NAME_ALIASES[rawToolName] ?? rawToolName;
       const args = readToolArguments(rawToolName, event.data.arguments);
       const toolCallId = event.data.toolCallId;
-      const parentToolCallId = resolveParentToolCallId(
-        event.agentId,
-        event.data.parentToolCallId,
-        state,
-      );
+      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
       if (event.agentId && !parentToolCallId) return [];
       // A SQL call that only edits the todo list becomes todo patches instead of a tool call.
       const todoPatches =
@@ -293,7 +284,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
       const { toolCallId, text: content } = event.data;
       if (!content) return [];
       if (!event.agentId) return [{ type: "tool_output_delta", toolCallId, content }];
-      const parentToolCallId = resolveParentToolCallId(event.agentId, undefined, state);
+      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
       return parentToolCallId
         ? [{ type: "tool_output_delta", toolCallId, content, parentToolCallId }]
         : [];
@@ -301,7 +292,7 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
     case "tool.execution_complete": {
       const { data } = event;
       const { toolCallId } = data;
-      const parentToolCallId = resolveParentToolCallId(event.agentId, data.parentToolCallId, state);
+      const parentToolCallId = resolveParentToolCallId(event.agentId, state);
       if (event.agentId && !parentToolCallId) {
         state.toolCallPolicies.delete(toolCallId);
         return [];
@@ -378,12 +369,8 @@ function projectSdkEvent(event: SdkSessionEvent, state: ProjectionState): Sessio
   }
 }
 
-function resolveParentToolCallId(
-  agentId: string | undefined,
-  nativeParentToolCallId: string | undefined,
-  state: ProjectionState,
-) {
-  return nativeParentToolCallId ?? (agentId ? state.subagentParents.get(agentId) : undefined);
+function resolveParentToolCallId(agentId: string | undefined, state: ProjectionState) {
+  return agentId ? state.subagentParents.get(agentId) : undefined;
 }
 
 // ============================================================================

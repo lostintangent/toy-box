@@ -1,4 +1,5 @@
 import { AgentMentionMarkdown } from "@channels/components/agents/AgentMentionMarkdown";
+import { AttachmentGallery } from "@/shared/attachments/AttachmentGallery";
 import { PreviewCard, PreviewCardContent, PreviewCardTrigger } from "@/shared/ui/preview-card";
 import { RunningIndicator } from "@/shared/ui/running-indicator";
 import { useImperativeHandle, type RefObject } from "react";
@@ -14,6 +15,7 @@ import {
   channelTasksDiff,
   resolveChannelAudience,
   type ChannelAgent,
+  type ChannelConversationMessage,
   type ChannelState,
   type PostChannelMessageInput,
 } from "@channels/model";
@@ -137,7 +139,7 @@ export function ChannelComposer({
         <>
           <ChannelAudience audience={audience} agentCount={agents.length} />
           {request && (
-            <InputNeeded request={request.content} onShow={() => onShowMessage(request.sequence)} />
+            <InputNeeded request={request} onShow={() => onShowMessage(request.sequence)} />
           )}
         </>
       }
@@ -201,7 +203,13 @@ function ChannelAudience({
 }
 
 /** The lead's pending question: hovering previews it, and clicking scrolls to it. */
-function InputNeeded({ request, onShow }: { request: string; onShow: () => void }) {
+function InputNeeded({
+  request,
+  onShow,
+}: {
+  request: ChannelConversationMessage;
+  onShow: () => void;
+}) {
   return (
     <PreviewCard>
       <PreviewCardTrigger
@@ -217,7 +225,12 @@ function InputNeeded({ request, onShow }: { request: string; onShow: () => void 
         align="start"
         className="max-h-72 w-80 overflow-y-auto text-sm"
       >
-        <AgentMentionMarkdown content={request} />
+        <AgentMentionMarkdown content={request.content} />
+        {request.attachments && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            <AttachmentGallery attachments={request.attachments} />
+          </div>
+        )}
       </PreviewCardContent>
     </PreviewCard>
   );

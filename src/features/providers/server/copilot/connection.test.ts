@@ -1,5 +1,5 @@
 import { expect, mock, test } from "bun:test";
-import type { CopilotSession, SessionEvent as SdkEvent } from "@github/copilot-sdk";
+import type { CopilotSession, SessionEvent as SdkEvent } from "@microsoft/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
 import { connectCopilotSession, holdNativeEvents } from "./connection";
 import { encodeSystemMessage, systemMessagePrompt } from "@sessions/model/systemMessages";

@@ -38,7 +38,7 @@ here. No additional OpenAI npm SDK or Toy Box login is required.
   live and during history replay. Retrying `error` notifications are not transcript
   failures; the final `turn/completed` outcome is authoritative.
 - `protocol/index.ts` is the checked-in Apache-2.0 upstream protocol generated against CLI
-  0.169.0. Run `bun src/features/providers/server/codex/protocol/generate.ts` after a deliberate protocol
+  0.170.0. Run `bun src/features/providers/server/codex/protocol/generate.ts` after a deliberate protocol
   upgrade and verify changed methods against the installed CLI. The generator formats its own output.
   Adding a request, server request, or notification takes only its wire method name; upstream's unions
   supply its types, so the transport delivers typed notifications and requests.
@@ -84,8 +84,10 @@ preserve the result in durable history.
 Stop interrupts the session tree's running turns. Codex rejects interrupting or steering a turn a
 send has started until it announces the turn with `turn/started`, so both wait for that
 announcement. Native `thread/list` supplies the loaded subagents at any depth, and each one is
-interrupted with an empty turn ID until `thread/interrupt` exists. An interrupted command keeps
-running as a background terminal, like any other process the agent launched.
+interrupted with an empty turn ID until `thread/interrupt` exists. Codex can leave interrupted
+commands running as background terminals. After the interrupts, Stop requests native cleanup
+of all background terminals on the root and each loaded subagent, including ones from earlier
+turns. Cleanup failures are logged without holding up Stop.
 
 Verify real CLI create/resume, deferred tool discovery and invocation, questions, terminal results,
 subagents, rename, and deletion alongside protocol tests and the shared reducer/queue fixtures.

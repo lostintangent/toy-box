@@ -63,13 +63,10 @@ export class TerminalRuntime {
     session.peer = peer;
     session.orphanClose.cancel();
     if (replaced && replaced.id !== peer.id) replaced.close(CLOSE_CODE_REPLACED, "replaced");
-
-    const resized = session.cols !== cols || session.rows !== rows;
     this.resize(clientId, cols, rows);
 
     peer.send(JSON.stringify({ type: "ready", resumed: true } satisfies TerminalServerMessage));
-    session.scrollback.replay((chunk) => peer.send(chunk));
-    if (session.scrollback.isAlternateMode() && !resized) pokeRedraw(session);
+    peer.send(session.scrollback.replay());
   }
 
   input(clientId: string, data: string | Uint8Array) {
@@ -81,6 +78,7 @@ export class TerminalRuntime {
     if (!session?.proc.terminal || (session.cols === cols && session.rows === rows)) return;
 
     session.proc.terminal.resize(cols, rows);
+    session.scrollback.resize(cols, rows);
     session.cols = cols;
     session.rows = rows;
   }
@@ -126,7 +124,7 @@ export class TerminalRuntime {
     rows: number,
     shell = process.env.SHELL || "bash",
   ): PTYSession {
-    const scrollback = new ScrollbackBuffer();
+    const scrollback = new ScrollbackBuffer(cols, rows);
     const proc = this.#spawnProcess({
       shell,
       cwd: process.cwd(),
@@ -139,8 +137,7 @@ export class TerminalRuntime {
       rows,
       onData: (data) => {
         if (data.byteLength === 0) return;
-        scrollback.add(data);
-        send(session, data);
+        scrollback.write(data, () => send(session, data));
       },
     });
 
@@ -155,12 +152,14 @@ export class TerminalRuntime {
 
     proc.exited
       .then(() => {
-        // A closed shell's exit must not end the client's replacement shell.
-        if (this.#sessions.get(clientId) !== session) return;
+        // The browser closes on exit, so send it after the last queued output.
+        scrollback.write(new Uint8Array(), () => {
+          if (this.#sessions.get(clientId) !== session) return;
 
-        this.#sessions.delete(clientId);
-        session.orphanClose.cancel();
-        send(session, JSON.stringify({ type: "exit" } satisfies TerminalServerMessage));
+          this.#sessions.delete(clientId);
+          session.orphanClose.cancel();
+          send(session, JSON.stringify({ type: "exit" } satisfies TerminalServerMessage));
+        });
       })
       .catch((error) => {
         console.error("[terminal] PTY exited with error:", error);
@@ -180,16 +179,6 @@ function send(session: PTYSession, payload: string | Uint8Array) {
   } catch (error) {
     console.error("[terminal] Error sending to socket:", error);
   }
-}
-
-// A client reattaching mid-TUI (alternate screen active) receives only the mode state,
-// since there is no captured frame to replay. Nudging the row count and restoring it
-// fires SIGWINCH inside the PTY, so full-screen apps (vim, htop, less) repaint against
-// the new socket, and the size ends up unchanged from the client's perspective.
-function pokeRedraw({ proc, cols, rows }: PTYSession) {
-  if (!proc.terminal) return;
-  proc.terminal.resize(cols, rows > 1 ? rows - 1 : rows + 1);
-  proc.terminal.resize(cols, rows);
 }
 
 // Test abstractions that allow injecting a fake PTY process for testing

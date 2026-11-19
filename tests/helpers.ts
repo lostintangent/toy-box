@@ -1,4 +1,4 @@
-import type { SessionEvent as SdkSessionEvent } from "@github/copilot-sdk";
+import type { SessionEvent as SdkSessionEvent } from "@microsoft/copilot-sdk";
 import { createSdkEventProjector } from "@providers/server/copilot/projector";
 import { replaySessionHistory } from "@sessions/model/reducer";
 import { createToolCallProjector } from "@sessions/server/toolProjection";

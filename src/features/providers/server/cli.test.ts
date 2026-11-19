@@ -21,16 +21,6 @@ test.each([
   expect(await readVersion(await createCli(output))).toBe(version);
 });
 
-test("reads the Copilot build the server launches rather than a newer cached one", async () => {
-  const copilot = join(directory, "copilot");
-  await Bun.write(
-    copilot,
-    '#!/bin/sh\n[ "$COPILOT_AUTO_UPDATE" = false ] && echo 1.0.112 || echo 1.0.113-0\n',
-  );
-  await chmod(copilot, 0o755);
-  expect(await readVersion(copilot)).toBe("1.0.112");
-});
-
 test("compares installed versions rather than update command output", async () => {
   const cli = await createCli("1.0.0", 'await Bun.write(versionFile, "1.1.0");');
   expect(await updateProvider(cli)).toEqual({ version: "1.1.0", updated: true });

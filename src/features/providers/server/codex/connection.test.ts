@@ -48,7 +48,7 @@ function sessionState(events: SessionEvent[]) {
   return events.reduce(applySessionEvent, createInitialSessionState());
 }
 
-function setup(tools: SessionConfiguration["tools"] = []) {
+function setup(tools: SessionConfiguration["tools"] = [], { holdCleanupResponse = false } = {}) {
   const written: Record<string, unknown>[] = [];
   const responses = new Map<string, (value: unknown) => void>();
   const events: SessionEvent[] = [];
@@ -73,6 +73,7 @@ function setup(tools: SessionConfiguration["tools"] = []) {
       responses.get(String(request.id))?.(request);
       return;
     }
+    if (holdCleanupResponse && request.method === "thread/backgroundTerminals/clean") return;
     let result: unknown = {};
     if (request.method === "turn/start") result = { turn };
     if (request.method === "turn/steer") result = { turnId: turn.id };
@@ -750,7 +751,7 @@ test.each(["abort", "completion", "disconnect"] as const)(
   },
 );
 
-test("Stop interrupts the session tree's running turns, including every loaded subagent", async () => {
+test("Stop interrupts the root and every loaded subagent before cleaning their terminals", async () => {
   const { connection, notify, setSubagents, written } = setup();
   setSubagents([
     { id: "busy", status: { type: "active", activeFlags: [] } },
@@ -770,7 +771,29 @@ test("Stop interrupts the session tree's running turns, including every loaded s
     },
     { method: "turn/interrupt", params: { threadId: "busy", turnId: "" } },
     { method: "turn/interrupt", params: { threadId: "idle", turnId: "" } },
+    { method: "thread/backgroundTerminals/clean", params: { threadId: "native" } },
+    { method: "thread/backgroundTerminals/clean", params: { threadId: "busy" } },
+    { method: "thread/backgroundTerminals/clean", params: { threadId: "idle" } },
   ]);
+});
+
+test("Stop does not wait for terminal cleanup and logs a later failure", async () => {
+  const { connection, rpc, notify, written } = setup([], { holdCleanupResponse: true });
+  const warning = Promise.withResolvers<unknown[]>();
+  const warn = spyOn(console, "warn").mockImplementation((...args) => warning.resolve(args));
+  try {
+    notify("turn/started", { turn });
+    await connection.abort();
+    const cleanup = written.find(({ method }) => method === "thread/backgroundTerminals/clean");
+    expect(cleanup).toBeDefined();
+    rpc.receive(JSON.stringify({ id: cleanup!.id, error: { message: "Refused" } }) + "\n");
+    expect(await warning.promise).toEqual([
+      expect.stringContaining("native"),
+      expect.objectContaining({ message: "Refused" }),
+    ]);
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 test.each(["during", "after"])(

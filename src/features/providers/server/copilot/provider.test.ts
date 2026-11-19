@@ -1,10 +1,10 @@
 import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
 import type {
   CopilotClient,
-  SessionConfig,
+  CreateSessionOptions,
   SessionEvent as SdkEvent,
   ToolInvocation,
-} from "@github/copilot-sdk";
+} from "@microsoft/copilot-sdk";
 import type { SessionEvent } from "@sessions/model";
 import * as client from "./client";
 import { copilotProvider, toSubscription } from "./provider";
@@ -99,20 +99,19 @@ test("a limited catalog reads only the newest local sessions it needs", async ()
 });
 
 test("creation uses the canonical ID and hands native start to the first subscriber", async () => {
-  const createSession = mock(
-    async ({ sessionId, onEvent }: { sessionId: string; onEvent: (event: SdkEvent) => void }) => {
-      onEvent({
-        type: "session.start",
-        data: { selectedModel: "gpt-5.4-mini", reasoningEffort: "none" },
-      } as SdkEvent);
-      onEvent({
-        type: "session.title_changed",
-        ephemeral: true,
-        data: { title: "Old" },
-      } as SdkEvent);
-      return { sessionId, on: () => () => {} };
-    },
-  );
+  const createSession = mock(async ({ sessionId, events }: CreateSessionOptions) => {
+    const onEvent = events!.onEvent!;
+    onEvent({
+      type: "session.start",
+      data: { selectedModel: "gpt-5.4-mini", reasoningEffort: "none" },
+    } as SdkEvent);
+    onEvent({
+      type: "session.title_changed",
+      ephemeral: true,
+      data: { title: "Old" },
+    } as SdkEvent);
+    return { sessionId, on: () => () => {} };
+  });
   const start = spyOn(client, "startCopilotClient").mockResolvedValue({
     createSession,
   } as unknown as CopilotClient);
@@ -130,8 +129,8 @@ test("creation uses the canonical ID and hands native start to the first subscri
     expect.objectContaining({
       sessionId: "public",
       workingDirectory: "/repo",
-      imageGeneration: { enabled: true },
-      permissionMode: "allow-all",
+      tools: expect.objectContaining({ imageGeneration: { enabled: true } }),
+      permissions: expect.objectContaining({ mode: "allow-all" }),
     }),
   );
   expect(connection.nativeId).toBe("public");
@@ -178,16 +177,17 @@ test("resume requests the configured model and tool loading from the native sess
   expect(resumeSession).toHaveBeenCalledWith(
     "native",
     expect.objectContaining({
-      tools: [
-        expect.objectContaining({ name: "deferred", defer: "auto" }),
-        expect.objectContaining({ name: "loaded", defer: "never" }),
-      ],
+      tools: {
+        definitions: [
+          expect.objectContaining({ name: "deferred", defer: "auto" }),
+          expect.objectContaining({ name: "loaded", defer: "never" }),
+        ],
+        imageGeneration: { enabled: true },
+      },
       model: "gpt-6-luna",
-      reasoningEffort: "max",
-      contextTier: "long_context",
-      imageGeneration: { enabled: true },
-      permissionMode: "allow-all",
-      onEvent: expect.any(Function),
+      inference: { reasoningEffort: "max", contextTier: "long_context" },
+      permissions: expect.objectContaining({ mode: "allow-all" }),
+      events: expect.objectContaining({ onEvent: expect.any(Function) }),
     }),
   );
 });
@@ -222,7 +222,7 @@ test("resume clears a persisted effort that the configured model doesn't name", 
 });
 
 test("a rejected tool call fails natively with its reason, and a successful one returns its text", async () => {
-  const resumeSession = mock(async (_id: string, _configuration: SessionConfig) => ({
+  const resumeSession = mock(async (_id: string, _configuration: CreateSessionOptions) => ({
     sessionId: "native",
     on: () => () => {},
   }));
@@ -247,7 +247,7 @@ test("a rejected tool call fails natively with its reason, and a successful one 
     skillDirectories: [],
   });
 
-  const [refuses, answers] = resumeSession.mock.calls[0][1].tools!;
+  const [refuses, answers] = resumeSession.mock.calls[0][1].tools!.definitions!;
   const invocation = {} as ToolInvocation;
   expect(await refuses.handler!({}, invocation)).toEqual({
     textResultForLlm: "The lead is offline.",

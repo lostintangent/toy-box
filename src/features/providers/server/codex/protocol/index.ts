@@ -1,4 +1,4 @@
-// Generated from codex-cli 0.169.0 (experimental app-server schema).
+// Generated from codex-cli 0.170.0 (experimental app-server schema).
 // OpenAI Codex, Apache-2.0: https://github.com/openai/codex
 // Regenerate using ./generate.ts. Do not edit wire types by hand.
 /* oxlint-disable typescript/no-redundant-type-constituents -- Upstream unions list known variants beside open fallbacks. */
@@ -1148,17 +1148,30 @@ export type AgentMessageDelivery = "async";
 export type AgentMessageModeration = { moderated: boolean; display: AgentMessageDisplay | null };
 
 /**
- * A presentation instruction for Chat to apply to this answer when recovering history.
+ * How Chat should present a recovered answer.
  */
-export type AgentMessageDisplay = {
-  /**
-   * Unknown actions must be left for the producing client to handle.
-   */
-  action: string;
-  blockType: string | null;
-  cyberTrustedAccess: boolean | null;
-  checkTrustedContacts: boolean | null;
-};
+export type AgentMessageDisplay =
+  | { mode: "show"; version: 1; annotation?: AnswerAnnotation; trustedContacts: TrustedContacts }
+  | { mode: "hide"; version: 1; replacement: AnswerReplacement }
+  | { mode: "block"; version: 1; reason: BlockReason };
+
+export type AnswerAnnotation = { kind: "wellbeingHelpline"; subject: HelplineSubject };
+
+export type HelplineSubject = "answer" | "prompt";
+
+export type AnswerReplacement = { kind: "wellbeingPromptHelpline" };
+
+export type BlockReason =
+  | {
+      kind: "protection";
+      /**
+       * Identifies the same moderation row that Chat writes on the live path.
+       */
+      protectionType: string;
+    }
+  | { kind: "cyber"; trustedAccess?: boolean };
+
+export type TrustedContacts = "check" | "skip";
 
 export type AsyncUserInputQuestion = { title: string; options: Array<string> | null };
 
@@ -2077,6 +2090,10 @@ export type ThreadRevertResponse = {
   itemsBackwardsCursor: string | null;
 };
 
+export type ThreadBackgroundTerminalsCleanParams = { threadId: string };
+
+export type ThreadBackgroundTerminalsCleanResponse = Record<string, never>;
+
 export type TurnStartParams = {
   threadId: string;
   /**
@@ -2473,6 +2490,10 @@ export type CodexMethods = {
   "thread/delete": { params: ThreadDeleteParams; result: ThreadDeleteResponse };
   "thread/unsubscribe": { params: ThreadUnsubscribeParams; result: ThreadUnsubscribeResponse };
   "thread/revert": { params: ThreadRevertParams; result: ThreadRevertResponse };
+  "thread/backgroundTerminals/clean": {
+    params: ThreadBackgroundTerminalsCleanParams;
+    result: ThreadBackgroundTerminalsCleanResponse;
+  };
   "turn/start": { params: TurnStartParams; result: TurnStartResponse };
   "turn/steer": { params: TurnSteerParams; result: TurnSteerResponse };
   "turn/interrupt": { params: TurnInterruptParams; result: TurnInterruptResponse };

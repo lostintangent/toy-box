@@ -22,10 +22,12 @@ export default defineConfig(({ mode }) => {
     // These libraries are only used on the server, and therefore,
     // don't need to be optimized for EJS by Vite during development.
     optimizeDeps: {
-      exclude: ["@tailwindcss/oxide", "app-typescript", "@github/copilot-sdk"],
+      exclude: ["@tailwindcss/oxide", "app-typescript", "@microsoft/copilot-sdk"],
     },
 
     resolve: {
+      // Its declared ESM entry is missing; let Bun load the CommonJS entry in dev.
+      external: isProduction ? [] : ["@xterm/headless"],
       alias: isProduction
         ? [
             {

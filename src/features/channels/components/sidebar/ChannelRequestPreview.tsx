@@ -4,6 +4,7 @@ import { AgentMentionMarkdown } from "@channels/components/agents/AgentMentionMa
 import { RequestReplies } from "@channels/components/RequestReplies";
 import type { ChannelConversationMessage } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
+import { AttachmentGallery } from "@/shared/attachments/AttachmentGallery";
 import { PreviewCard, PreviewCardContent, PreviewCardTrigger } from "@/shared/ui/preview-card";
 import { waitingOutlineClassName } from "@/shared/ui/running-indicator";
 import { ScrollableFade } from "@/shared/ui/scrollable-fade";
@@ -37,6 +38,11 @@ export function ChannelRequestPreview({
         <ScrollableFade axis="vertical" className="max-h-72 text-sm">
           <AgentMentionMarkdown content={request.content} />
         </ScrollableFade>
+        {request.attachments && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            <AttachmentGallery attachments={request.attachments} />
+          </div>
+        )}
         {request.replies && (
           <RequestReplies
             replies={request.replies}

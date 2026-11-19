@@ -129,7 +129,7 @@ function withoutForkContext(messages: SDKMessage[]): SDKMessage[] {
   return directive < 0 ? [] : messages.slice(directive + 1);
 }
 
-// Workaround (Claude Agent SDK 0.3.302; listed in providers/AGENTS.md): session info reads `cwd`
+// Workaround (Claude Agent SDK 0.3.328; listed in providers/AGENTS.md): session info reads `cwd`
 // only from a transcript's first 64 KB, so a large first message, such as a pasted image, hides
 // it. Read the first entry that records one instead; remove once `getSessionInfo()` finds it.
 export async function readTranscriptDirectory(nativeId: string): Promise<string | undefined> {
