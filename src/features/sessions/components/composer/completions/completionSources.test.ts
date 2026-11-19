@@ -81,7 +81,6 @@ describe("prompt completion sources", () => {
         { ...session("untitled-plan", 2), title: undefined },
       ],
       ownership: { worker: { type: "worker", parentSessionId: "self" } },
-      worktrees: {},
     }).map(({ value }) => value);
     expect(values).toEqual([
       "[Plan](session:tied-a)",

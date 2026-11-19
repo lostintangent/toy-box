@@ -148,6 +148,10 @@ check the list whenever a provider is upgraded:
   that is already gone is reported only in the error's message (seen with Copilot CLI 1.0.108 and
   Claude Agent SDK 0.3.319), so `delete` matches that message to resolve. Remove once each reports
   it with a code.
+- Copilot resume effort (`server/copilot/provider.ts`): resume keeps the session's last reasoning
+  effort when its configuration names none, even one the resumed model rejects, so every turn
+  fails (seen with CLI 1.0.112). A resume whose model has no effort reads the native one and clears
+  it with a model switch. Remove once resume clears it.
 - Codex abort (`server/codex/connection.ts`): `turn/interrupt` stops only one thread's turn (seen
   with CLI 0.166.0). Stop interrupts each loaded subagent with an empty `turnId`, the app-server's
   startup interrupt, so it needs no subagent turn IDs. Replace it with `thread/interrupt` once

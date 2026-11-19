@@ -19,7 +19,6 @@ type SessionListItemProps = {
   onPinToggle?: (sessionId: string) => void;
   isActive?: boolean;
   isPinned?: boolean;
-  isWorktree?: boolean;
   childCount: number;
   renderChildren?: () => ReactNode;
 };
@@ -30,7 +29,6 @@ export function SessionListItem({
   onPinToggle,
   isActive = false,
   isPinned = false,
-  isWorktree = false,
   childCount,
   renderChildren,
 }: SessionListItemProps) {
@@ -95,7 +93,7 @@ export function SessionListItem({
               cwd={directory}
               repository={session.context?.repository}
               gitRoot={session.context?.gitRoot}
-              isWorktree={isWorktree}
+              isWorktree={Boolean(session.worktree)}
             />
           )
         }

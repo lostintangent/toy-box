@@ -53,7 +53,6 @@ mock.module("@sessions/server/state/registry", () => ({
   evictConnection: () => {},
   evictConnectionIfStale: () => false,
   deleteSessionResources: unused,
-  removeDeletedSessionState: unused,
 }));
 mock.module("@workspace/server/events", () => ({
   getWorkspaceRevision: unused,

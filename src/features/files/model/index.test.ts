@@ -3,6 +3,7 @@ import {
   decodeFileRoute,
   encodeFileRoute,
   ownerSessionId,
+  sessionFileFromPath,
   workspaceFileId,
   type WorkspaceFile,
 } from ".";
@@ -30,6 +31,15 @@ describe("workspace files", () => {
       const { scope, path } = encodeFileRoute(file);
       expect(decodeFileRoute(scope, path)).toEqual(file);
     }
+  });
+
+  test.each([
+    ["/home/me/.toy-box/sessions/s1/artifacts/a/b.svg", { sessionId: "s1", path: "a/b.svg" }],
+    ["/Users/me/.toy-box/sessions/s1/attachments/input.txt", undefined],
+    ["/Users/me/.toy-box/sessions/s1/artifacts/", undefined],
+    ["/repo/src/foo.ts", undefined],
+  ])("the session file at %s", (path, expected) => {
+    expect(sessionFileFromPath(path)).toEqual(expected && { kind: "session", ...expected });
   });
 
   test("session URLs stay bare while machine files use the machine scope", () => {

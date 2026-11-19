@@ -32,7 +32,9 @@ its path (`saved_to:`), as Codex does, so agents can attach it.
 Copilot uses the Sessions-owned UUID as its native session ID.
 The registry persists the provider and resolves native identity for resume, history, and deletion.
 Creation and resume pass the working directory and model selection in the native session
-configuration, which applies them without follow-up RPCs. Native `session.start` and
+configuration, which applies them without follow-up RPCs, except when resume must clear a persisted
+effort (see the providers workarounds). A model switch sends a null effort when the configuration
+names none, because the native switch keeps an omitted one. Native `session.start` and
 `session.resume` arrive before anyone can subscribe, so the configuration's `onEvent` holds
 persisted events for the connection's first subscriber, and live and replayed streams project the
 same selections. Ephemeral startup events, such as the title restated on resume, are not held.
@@ -42,6 +44,10 @@ Sessions. Native permissions follow Toy Box's existing trusted-owner policy: the
 configuration sets `allow-all` mode, so the CLI doesn't journal each approval with its full file
 contents. Each send passes its client ID as the native `clientTurnId`, which the CLI echoes on the
 live and persisted `user.message`, so the projector correlates inputs the same way in both.
+Native abort cancels input the CLI has admitted but not taken up, and the SDK writes a send only
+after preparing it, so Stop waits for a send in flight to settle before it aborts. A send that
+starts a turn is taken up only once the CLI records its `user.message`, after loading the
+session's tools on a cold start, so Stop waits for that too and the prompt stays in history.
 Headless SDK servers load no bundled plugins, so `client.ts` registers the running CLI version's
 cached computer-use plugin at start, and the CLI applies the user's opt-in. If registration fails,
 Copilot warns and runs without computer use.

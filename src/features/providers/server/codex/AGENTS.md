@@ -81,10 +81,11 @@ subsequent host calls in their turn. Interruption waits until Codex records the
 successful dynamic tool result, then targets that native turn. This ordering is essential to
 preserve the result in durable history.
 
-Stop interrupts the session tree's running turns. Native `thread/list` supplies the loaded
-subagents at any depth, and each one is interrupted with an empty turn ID until
-`thread/interrupt` exists. An interrupted command keeps running as a background terminal, like
-any other process the agent launched.
+Stop interrupts the session tree's running turns. Codex rejects interrupting or steering a turn a
+send has started until it announces the turn with `turn/started`, so both wait for that
+announcement. Native `thread/list` supplies the loaded subagents at any depth, and each one is
+interrupted with an empty turn ID until `thread/interrupt` exists. An interrupted command keeps
+running as a background terminal, like any other process the agent launched.
 
 Verify real CLI create/resume, deferred tool discovery and invocation, questions, terminal results,
 subagents, rename, and deletion alongside protocol tests and the shared reducer/queue fixtures.

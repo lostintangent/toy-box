@@ -17,12 +17,12 @@ import type { Worker } from "../model";
 const realSessionRuntimeModule = { ...sessionRuntimeModule };
 
 const abortSessionMock = mock(async (_sessionId: string) => false);
-const deleteSessionIfExistsMock = mock(async (_sessionId: string) => true);
+const deleteSessionMock = mock(async (_sessionId: string) => {});
 
 mock.module("@sessions/server/runtime", () => ({
   ...realSessionRuntimeModule,
   abortSession: abortSessionMock,
-  deleteSessionIfExists: deleteSessionIfExistsMock,
+  deleteSession: deleteSessionMock,
 }));
 
 const { deleteWorkersForApp, deleteWorkersForSession } = await import("./cleanup");
@@ -36,8 +36,8 @@ afterAll(() => {
 beforeEach(() => {
   abortSessionMock.mockClear();
   abortSessionMock.mockImplementation(async () => false);
-  deleteSessionIfExistsMock.mockClear();
-  deleteSessionIfExistsMock.mockImplementation(async () => true);
+  deleteSessionMock.mockClear();
+  deleteSessionMock.mockImplementation(async () => {});
 });
 
 /** Runs a worker until its test finishes, ignoring cancellation like a stalled execution. */
@@ -90,7 +90,7 @@ describe("worker cleanup", () => {
       fileChild,
       sessionChild,
     ]);
-    expect(deleteSessionIfExistsMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
+    expect(deleteSessionMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
       fileChild,
       sessionChild,
     ]);
@@ -134,7 +134,7 @@ describe("worker cleanup", () => {
       active,
       queued,
     ]);
-    expect(deleteSessionIfExistsMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
+    expect(deleteSessionMock.mock.calls.map(([sessionId]) => sessionId).sort()).toEqual([
       abandoned,
       active,
       queued,
@@ -168,9 +168,9 @@ describe("worker cleanup", () => {
     await deleteWorkersForApp("app-a");
 
     expect(abortSessionMock).toHaveBeenCalledTimes(1);
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledTimes(2);
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("failed-cleanup");
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("successful-cleanup");
+    expect(deleteSessionMock).toHaveBeenCalledTimes(2);
+    expect(deleteSessionMock).toHaveBeenCalledWith("failed-cleanup");
+    expect(deleteSessionMock).toHaveBeenCalledWith("successful-cleanup");
     expect(log).toHaveBeenCalledWith(
       "Unable to clean up an app worker:",
       expect.objectContaining({ message: "cancel failed" }),

@@ -151,6 +151,7 @@ test("creation uses the canonical ID and hands native start to the first subscri
 test("resume requests the configured model and tool loading from the native session", async () => {
   const resumeSession = mock(async (_id: string, _configuration: object) => ({
     sessionId: "native",
+    on: () => () => {},
   }));
   const start = spyOn(client, "startCopilotClient").mockResolvedValue({
     resumeSession,
@@ -191,9 +192,39 @@ test("resume requests the configured model and tool loading from the native sess
   );
 });
 
+test("resume clears a persisted effort that the configured model doesn't name", async () => {
+  const switchTo = mock(async () => ({}));
+  let persisted: string | undefined = "xhigh";
+  const start = spyOn(client, "startCopilotClient").mockResolvedValue({
+    resumeSession: async () => ({
+      sessionId: "native",
+      on: () => () => {},
+      rpc: { model: { getCurrent: async () => ({ reasoningEffort: persisted }), switchTo } },
+    }),
+  } as unknown as CopilotClient);
+  onTestFinished(() => start.mockRestore());
+  const resume = () =>
+    copilotProvider.resume("native", {
+      model: { provider: "copilot", name: "claude-haiku-4.5" },
+      directory: "/repo",
+      allowUserQuestions: false,
+      tools: [],
+      instructions: "",
+      skillDirectories: [],
+    });
+
+  await resume();
+  expect(switchTo).toHaveBeenCalledWith({ modelId: "claude-haiku-4.5", reasoningEffort: null });
+
+  persisted = undefined;
+  await resume();
+  expect(switchTo).toHaveBeenCalledTimes(1);
+});
+
 test("a rejected tool call fails natively with its reason, and a successful one returns its text", async () => {
   const resumeSession = mock(async (_id: string, _configuration: SessionConfig) => ({
     sessionId: "native",
+    on: () => () => {},
   }));
   const start = spyOn(client, "startCopilotClient").mockResolvedValue({
     resumeSession,

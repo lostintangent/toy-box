@@ -214,9 +214,8 @@ test("removals answer 204 once and 404 after, and the user removes members", asy
     actor: { type: "user" },
   });
   const { member } = await channels.createMember(channelAgent(channel.id, "builder", "Builder"));
-  const cleanup = spyOn(sessionRuntime, "deleteSessionIfExists").mockImplementation(async (id) => {
+  const cleanup = spyOn(sessionRuntime, "deleteSession").mockImplementation(async (id) => {
     await detachManagedSession(id);
-    return true;
   });
   onTestFinished(() => {
     cleanup.mockRestore();

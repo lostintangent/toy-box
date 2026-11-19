@@ -24,7 +24,6 @@ export type Automation = AutomationOptions & {
   createdAt: string;
   updatedAt: string;
   nextRunAt: string;
-  lastRunAt?: string;
 };
 
 declare module "@workspace/model/events" {

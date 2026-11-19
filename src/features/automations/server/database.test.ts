@@ -55,23 +55,6 @@ describe("automation persistence and scheduling", () => {
     expect(await automations.claimDue()).toEqual([]);
     expect((await automations.get(created.id))?.nextRunAt).toBe("2026-02-14T10:06:00.000Z");
   });
-
-  test("records completion without changing the definition or its next occurrence", async () => {
-    mockTime("2026-02-14T10:00:00.000Z");
-    const { automations } = await openTestDatabase();
-    const created = await automations.create({ ...options, cwd: undefined });
-    const finishedAt = new Date("2026-02-14T10:05:00.000Z");
-
-    const finished = await automations.recordRunFinish(created.id, finishedAt);
-
-    expect(finished).toEqual({
-      ...created,
-      lastRunAt: finishedAt.toISOString(),
-      updatedAt: finishedAt.toISOString(),
-    });
-    expect(await automations.get(created.id)).toEqual(finished);
-    expect(await automations.recordRunFinish("missing", finishedAt)).toBeNull();
-  });
 });
 
 function mockTime(date: string): void {

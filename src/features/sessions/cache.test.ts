@@ -117,9 +117,9 @@ describe("session query cache", () => {
       id: sessionId,
       title: "Updated",
       updatedAt: new Date("2026-02-14T02:00:00.000Z"),
+      worktree: { branch: "feature" },
     });
     expect(state.ownership).toEqual({ [sessionId]: { type: "worker", parentSessionId: "parent" } });
-    expect(state.worktrees[sessionId]).toMatchObject({ branch: "feature" });
   });
 
   test("retains Channel worker metadata without projecting it as an ordinary session", () => {
@@ -139,7 +139,7 @@ describe("session query cache", () => {
     expect(state.ownership).toEqual({
       "channel-worker-session": { type: "worker", parentSessionId: null },
     });
-    expect(state.worktrees).toHaveProperty("channel-worker-session");
+    expect(state.sessions[0]?.worktree?.branch).toBe("agent");
     expect(selectNonWorkerSessions(state)).toEqual([]);
   });
 
@@ -204,15 +204,13 @@ describe("session query cache", () => {
     const queryClient = new QueryClient();
     const sessionId = "toy-box-delete";
     seedState(queryClient, {
-      sessions: [createSession(sessionId)],
-      ownership: { [sessionId]: { type: "worker", parentSessionId: "parent" } },
-      worktrees: {
-        [sessionId]: {
-          branch: "feature",
-          baseBranch: "main",
-          path: "/tmp/worktree",
+      sessions: [
+        {
+          ...createSession(sessionId),
+          worktree: { branch: "feature", baseBranch: "main", path: "/tmp/worktree" },
         },
-      },
+      ],
+      ownership: { [sessionId]: { type: "worker", parentSessionId: "parent" } },
     });
 
     cache.applyEvent(queryClient, {
@@ -223,7 +221,6 @@ describe("session query cache", () => {
     const state = readState(queryClient);
     expect(state.sessions).toEqual([]);
     expect(state.ownership).toEqual({});
-    expect(state.worktrees).toEqual({});
   });
 
   test("touch invalidates the session list and affected detail", () => {
@@ -301,12 +298,10 @@ describe("session replacement and deletion cache boundary", () => {
           provider: { id: "copilot", sessionId: "previous-native-id" },
           context: { directory: "/previous" },
           artifactPath: "old.md",
+          worktree: { path: "/previous", branch: "old", baseBranch: "main" },
         },
       ],
       ownership: { [sessionId]: { type: "automation" } },
-      worktrees: {
-        [sessionId]: { path: "/previous", branch: "old", baseBranch: "main" },
-      },
     });
     const previous = {
       ...createInitialSessionState({
@@ -347,7 +342,6 @@ describe("session replacement and deletion cache boundary", () => {
       },
     ]);
     expect(readState(client).ownership).toEqual({ [sessionId]: { type: "automation" } });
-    expect(readState(client).worktrees).toEqual({});
 
     history.resolve(previous);
     await read.catch(() => {});

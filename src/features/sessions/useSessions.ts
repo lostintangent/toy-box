@@ -6,11 +6,7 @@ import { sessionQueries } from "./queries";
 import type { SessionsState } from "./model";
 
 function selectCatalog(state: SessionsState) {
-  return {
-    sessions: state.sessions,
-    ownership: state.ownership,
-    worktreeSessionIds: Object.keys(state.worktrees),
-  };
+  return { sessions: state.sessions, ownership: state.ownership };
 }
 
 /** Session catalog and optimistic creation, including reuse of an untouched session. */
@@ -47,10 +43,5 @@ export function useSessions() {
     return sessionId;
   }
 
-  return {
-    sessions,
-    ownership: data.ownership,
-    worktreeSessionIds: data.worktreeSessionIds,
-    createSession,
-  };
+  return { sessions, ownership: data.ownership, createSession };
 }

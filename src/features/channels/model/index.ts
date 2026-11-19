@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { workspaceFileSchema } from "@files/model";
+import {
+  machineFile,
+  sessionFileFromPath,
+  workspaceFileId,
+  workspaceFileSchema,
+} from "@files/model";
 import { modelConfigurationSchema, type ModelConfiguration } from "@providers/model";
 import { attachmentsSchema, type AttachmentReference } from "@/shared/attachments/model";
 import { cronSchema } from "@/shared/cron";
@@ -258,6 +263,36 @@ export function channelArtifactsNewestFirst(
   return [...artifacts].sort(
     (left, right) => Date.parse(right.sharedAt) - Date.parse(left.sharedAt),
   );
+}
+
+/** The shared artifact a message's `file:` link names. Agents write a URL-escaped path relative to
+ *  their working directory, which is the Channel's directory or, without one, their own artifacts
+ *  folder, so a relative link there names the newest session artifact at that path. */
+export function linkedArtifact(
+  href: string,
+  { artifacts, directory }: { artifacts: readonly ChannelArtifact[]; directory?: string },
+): ChannelArtifact | undefined {
+  const path = fileLinkPath(href, directory);
+  if (path === undefined) return undefined;
+  if (path.startsWith("/")) {
+    const id = workspaceFileId(sessionFileFromPath(path) ?? machineFile(path));
+    return artifacts.find((artifact) => artifact.id === id);
+  }
+  return channelArtifactsNewestFirst(
+    artifacts.filter(({ file }) => file.kind === "session" && file.path === path),
+  )[0];
+}
+
+/** A `file:` link's decoded path: absolute, or relative only in a Channel without a directory. */
+function fileLinkPath(href: string, directory?: string): string | undefined {
+  const segments = (directory ?? "").split("/").filter(Boolean).map(encodeURIComponent);
+  const base = ["file://", ...segments, ""].join("/");
+  try {
+    const path = decodeURIComponent(new URL(href, base).pathname);
+    return directory || /^file:\//i.test(href) ? path : path.slice(1);
+  } catch {
+    return undefined;
+  }
 }
 
 /** A titled, recurring prompt that privately wakes the lead. Only the lead adds or changes one. */

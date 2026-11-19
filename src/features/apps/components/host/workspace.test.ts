@@ -109,6 +109,11 @@ describe("app workspace projection", () => {
           updatedAt: new Date("2026-07-28T01:00:00.000Z"),
           title: "Implement feature",
           context: { directory: "/tmp/worktree" },
+          worktree: {
+            path: "/tmp/worktree",
+            branch: "toy-box/session-worker",
+            baseBranch: "main",
+          },
         },
         {
           id: "nested-worker",
@@ -118,13 +123,6 @@ describe("app workspace projection", () => {
           context: { directory: "/tmp/worktree" },
         },
       ],
-      worktrees: {
-        "session-worker": {
-          path: "/tmp/worktree",
-          branch: "toy-box/session-worker",
-          baseBranch: "main",
-        },
-      },
       ownership: {
         automation: { type: "automation" },
         inbox: { type: "worker", parentSessionId: null },
@@ -180,7 +178,6 @@ describe("app workspace projection", () => {
             gitRoot: "/repo",
             branch: "main",
           },
-          worktree: undefined,
           children: [
             {
               id: "session-worker",
@@ -204,7 +201,6 @@ describe("app workspace projection", () => {
                   status: "idle",
                   kind: "standard",
                   context: { directory: "/tmp/worktree" },
-                  worktree: undefined,
                   children: [],
                 },
               ],
@@ -218,7 +214,6 @@ describe("app workspace projection", () => {
           title: "Managed work",
           status: "unread",
           kind: "automation",
-          worktree: undefined,
           children: [],
         },
         {
@@ -227,7 +222,6 @@ describe("app workspace projection", () => {
           updatedAt: new Date("2026-07-28T01:00:00.000Z"),
           status: "running",
           kind: "hyper",
-          worktree: undefined,
           children: [],
         },
       ],

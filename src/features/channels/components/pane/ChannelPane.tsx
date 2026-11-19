@@ -2,9 +2,10 @@ import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { CatchBoundary } from "@tanstack/react-router";
 import { AlertCircle, MessagesSquare, UserRound } from "lucide-react";
-import { channelAgentIdentity, channelLead } from "@channels/model";
+import { channelAgentIdentity, channelLead, linkedArtifact } from "@channels/model";
 import { channelMutations } from "@channels/mutations";
 import { useChannel } from "@channels/useChannel";
+import { useRevealFile } from "@files/useRevealFile";
 import type { PaneVariant } from "@/shared/panes/PaneSlots";
 import { PaneViewMenu } from "@/shared/panes/PaneViewMenu";
 import { TranscriptSkeleton } from "@/shared/messages/TranscriptSkeleton";
@@ -56,6 +57,7 @@ function ChannelContent({
   const composerRef = useRef<ChannelComposerHandle>(null);
   const [view, setView] = useState<TranscriptView>("all");
   const { mutate: bookmark } = useMutation(channelMutations.bookmark());
+  const revealFile = useRevealFile();
   // The lead is intrinsic, so the composer can address it before the first snapshot arrives.
   const lead = state?.lead ?? channelLead(channelId);
   const members = state?.members ?? [];
@@ -78,6 +80,15 @@ function ChannelContent({
         reply: (agent) => composerRef.current?.reply(agent),
         answer: (content) => void send({ content }).catch(console.error),
         mention: () => composerRef.current?.mention(),
+        openArtifactLink: (href) => {
+          const artifact =
+            state &&
+            linkedArtifact(href, {
+              artifacts: state.artifacts,
+              directory: state.channel.directory,
+            });
+          return artifact && (() => revealFile(artifact.file));
+        },
       }}
     >
       <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_auto] grid-rows-[minmax(0,1fr)_auto] bg-background">

@@ -59,8 +59,9 @@ Workers owns lifecycle and owner-scoped storage capabilities:
   execution.
 - **Delete** removes the backing Session and its durable ownership record.
 - **Detach** removes only the ownership record once Session teardown has removed the Session.
-- **Read/update** lists retained Workers by type or exact owner, resolves an owned Worker, and
-  updates name/metadata by Worker ID without changing ownership, identity, creation time, or lifetime.
+- **Read/update** lists all retained Workers or those of one type or exact owner, resolves an owned
+  Worker, and updates name/metadata by Worker ID without changing ownership, identity, creation time,
+  or lifetime.
   Omitted details remain unchanged; an explicit undefined metadata value clears it. Updates throw
   for a missing Worker. Initialization separately fills only absent metadata, returning false for
   existing metadata or missing ownership. Commands acknowledge writes; reads own projections.
@@ -91,8 +92,9 @@ one at a time. Starting a run makes it active, hands its completion to Sessions 
 disappear before `waitForSessions` observes it. `cancelWorker` aborts the run's signal, which removes
 it from active work and publishes `worker.finished` at once, then stops its Session. Supervision checks
 that signal at each step, and the run releases its ID when its completion settles.
-Unsuccessful execution outcomes remain data, including startup exceptions. `isWorkerActive` lets
-owners distinguish current supervision from retained ownership.
+Unsuccessful execution outcomes remain data, including startup exceptions. Waiters see a canceled
+run as failed with the cancel message, while supervision keeps the rejection so retention is
+skipped. `isWorkerActive` lets owners distinguish current supervision from retained ownership.
 
 ## Boundaries
 
@@ -104,7 +106,9 @@ owners distinguish current supervision from retained ownership.
 - `server/registry.ts` holds the run of each in-flight Worker, starts and cancels it, and publishes
   `worker.started` and `worker.finished`. Durable Channel membership is not active work.
   [`queries.ts`](queries.ts) reads it, [`model/active.ts`](model/active.ts) reduces those events and
-  session and app deletion into that list, and [`cache.ts`](cache.ts) applies them. Shared Session
+  session and app deletion into that list, and [`cache.ts`](cache.ts) applies them. An accepted
+  client spawn through [`mutations.ts`](mutations.ts) refreshes that list before resolving, so the
+  caller's pending state hands off directly to the authoritative projection. Shared Session
   teardown cancels a deleted session's child runs, and a run whose own Session is deleted finishes
   with its execution.
 - `components/WorkersMenu.tsx` presents active background work. Files and Apps select the Workers they

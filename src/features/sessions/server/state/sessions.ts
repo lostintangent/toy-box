@@ -1,15 +1,20 @@
 // Sessions owns durable IDs and provider associations; providers own native metadata and history.
 import type { Session } from "@sessions/model";
 import { getStateDatabase } from "@/server/database";
+import { toSessionWorktree } from "./worktrees";
 
 export async function readSessions(): Promise<Session[]> {
   const db = await getStateDatabase();
-  return (await db<SessionRow[]>`SELECT * FROM sessions`).map(sessionFromRow);
+  return (
+    await db<SessionRow[]>`SELECT * FROM sessions LEFT JOIN worktrees USING (session_id)`
+  ).map(sessionFromRow);
 }
 
 export async function readSession(id: string): Promise<Session | undefined> {
   const db = await getStateDatabase();
-  const [row] = await db<SessionRow[]>`SELECT * FROM sessions WHERE session_id = ${id}`;
+  const [row] = await db<SessionRow[]>`
+    SELECT * FROM sessions LEFT JOIN worktrees USING (session_id) WHERE session_id = ${id}
+  `;
   return row ? sessionFromRow(row) : undefined;
 }
 
@@ -56,9 +61,13 @@ type SessionRow = {
   native_id: string | null;
   artifact_path: string | null;
   created_at: number;
+  worktree_path: string | null;
+  worktree_branch: string | null;
+  worktree_base_branch: string | null;
 };
 
 function sessionFromRow(row: SessionRow): Session {
+  const worktree = toSessionWorktree(row);
   return {
     id: row.session_id,
     createdAt: new Date(row.created_at),
@@ -69,5 +78,6 @@ function sessionFromRow(row: SessionRow): Session {
         }
       : {}),
     ...(row.artifact_path ? { artifactPath: row.artifact_path } : {}),
+    ...(worktree ? { worktree } : {}),
   };
 }

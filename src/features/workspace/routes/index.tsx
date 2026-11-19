@@ -147,7 +147,7 @@ function WorkspacePage() {
     }),
   );
   useWorkspaceSync(workspaceRevision);
-  const { sessions, ownership, worktreeSessionIds, createSession } = useSessions();
+  const { sessions, ownership, createSession } = useSessions();
 
   // Create a draft session, optionally with an initial artifact or alongside the workspace.
   function handleCreateSession(options: SessionCreationOptions = {}) {
@@ -285,7 +285,6 @@ function WorkspacePage() {
     filter,
     onFilterChange: setFilter,
     sessions: filteredSessions,
-    worktreeSessionIds,
     emptyMessage:
       deferredFilter || filter.hiddenProviders.length || !filter.showExternalSessions
         ? "No sessions match your filters"

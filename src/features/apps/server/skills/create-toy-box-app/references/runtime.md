@@ -223,7 +223,6 @@ component needs:
 type AppSession = Session & {
   status: "running" | "waiting" | "background" | "idle" | "unread";
   kind: "standard" | "automation" | "hyper";
-  worktree?: SessionWorktree;
   children: AppSession[];
 };
 
@@ -255,8 +254,9 @@ const sessions = useWorkspace((workspace) => workspace.sessions);
 `AppSession`, `Session`, `SessionContext`, `ModelInfo`, and `ModelConfiguration` are
 exported by `@toy-box/sdk`. The session catalog fields pass
 through unchanged: `id`, optional `provider: { id, sessionId? }`, optional `title`,
-`createdAt` and `updatedAt` as `Date` values, and optional `context` containing
-`directory`, `gitRoot`, `repository`, and `branch`.
+`createdAt` and `updatedAt` as `Date` values, optional `context` containing
+`directory`, `gitRoot`, `repository`, and `branch`, and, for a session in its own
+worktree, `worktree: { path, branch, baseBranch }`.
 No provider means the session has not started. The status type is shared with the
 workspace. Use `session.id` with session actions and controls,
 `session.context?.directory` for its directory, and a display fallback such as
@@ -537,7 +537,8 @@ save the returned ID and let the user open or close its pane. Use
 owns or explicitly presents. `waitForSession` waits for a session's current
 execution, whether it is an ordinary session or a worker. Its optional timeout
 ends only the wait; use `abortSession`, or a saved app's `cancelWorker`, when the
-app should stop the underlying work.
+app should stop the underlying work. A wait on a canceled worker resolves as
+`failed` with the cancel message.
 
 #### App-Owned Workers
 
@@ -552,10 +553,11 @@ session ID in app state, use `deliverMessage` for follow-ups, and delete it when
 it is no longer needed. The app deletes all of its workers when the instance is
 deleted, regardless of their lifetime.
 
-`workspace.workers` contains only currently queued or running workers. Use
-`name` and JSON `metadata` for active-work UI and correlation. Persist only
-durable worker IDs that the app must contact again. The collection is already
-scoped to this app instance, so do not add app IDs or ownership filters.
+`workspace.workers` contains only currently queued or running workers. A
+spawned worker appears there by the time `spawnWorker` resolves. Use `name` and
+JSON `metadata` for active-work UI and correlation. Persist only durable worker
+IDs that the app must contact again. The collection is already scoped to this
+app instance, so do not add app IDs or ownership filters.
 
 App-owned workers execute independently. Let them run in parallel when their
 tasks are independent; gate or batch them in app logic only when the product

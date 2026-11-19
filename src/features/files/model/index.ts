@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SESSION_STORAGE_PATH } from "@sessions/model/constants";
 
 // A workspace file is one address for a file surfaced in the workspace: an
 // artifact under a session's artifacts directory, or a real file on the host machine.
@@ -105,4 +106,19 @@ export function sessionFile(sessionId: string, path: string): SessionFile {
 /** A machine file: a real file on the host, addressed by its absolute path. */
 export function machineFile(path: string): MachineFile {
   return { kind: "machine", path };
+}
+
+export const SESSION_ARTIFACTS_DIRECTORY = "artifacts";
+
+/** The session file an absolute path names, found by its suffix, since a client doesn't know the
+ *  server's home directory. */
+export function sessionFileFromPath(path: string): SessionFile | undefined {
+  const root = `/${SESSION_STORAGE_PATH}/`;
+  const start = path.indexOf(root);
+  if (start === -1) return undefined;
+  const [sessionId, directory, ...segments] = path.slice(start + root.length).split("/");
+  const artifactPath = segments.join("/");
+  return sessionId && directory === SESSION_ARTIFACTS_DIRECTORY && artifactPath
+    ? sessionFile(sessionId, artifactPath)
+    : undefined;
 }

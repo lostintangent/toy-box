@@ -115,6 +115,7 @@ function publicSession(
       directory: sessionDirectory(id, native.context),
     },
     ...(record?.artifactPath ? { artifactPath: record.artifactPath } : {}),
+    ...(record?.worktree ? { worktree: record.worktree } : {}),
   };
 }
 
@@ -230,9 +231,10 @@ export async function resumeSession(sessionId: string, options: ConfigurationOpt
   );
 }
 
+/** Delete a session's native history, if it has one. */
 export async function deleteSession(sessionId: string) {
-  const { provider, nativeId } = await resolveSession(sessionId);
-  await provider.delete(nativeId);
+  const address = nativeAddress(sessionId, await readSession(sessionId));
+  if (address) await getSessionProvider(address.providerId).delete(address.nativeId);
 }
 
 export async function getSessionDirectory(sessionId: string) {

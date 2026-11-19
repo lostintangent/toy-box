@@ -2,8 +2,7 @@
 //
 // The durable session catalog and live session activity are separate
 // `reducedQuery` entries. Workspace events update or invalidate only the session
-// queries they identify; worktrees and managed-session ownership remain in the
-// catalog.
+// queries they identify; managed-session ownership remains in the catalog.
 
 import type { QueryClient } from "@tanstack/react-query";
 import type { WorkspaceCache } from "@workspace/sync";

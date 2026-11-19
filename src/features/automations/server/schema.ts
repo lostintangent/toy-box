@@ -18,4 +18,7 @@ export default [
     CREATE INDEX IF NOT EXISTS idx_automations_next_run_at
       ON automations(next_run_at);
   `,
+  `
+    ALTER TABLE automations DROP COLUMN last_run_at;
+  `,
 ];

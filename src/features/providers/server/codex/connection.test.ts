@@ -166,6 +166,22 @@ test("a late turn/start response never reactivates a completed Codex turn", asyn
   expect(written.some(({ method }) => method === "turn/steer")).toBe(false);
 });
 
+test("a steer right after a send waits for Codex to announce the turn it steers", async () => {
+  const { connection, notify, written } = setup();
+  await connection.send({ role: "user", clientId: "first", content: "Start" });
+  const steering = connection.send({
+    role: "user",
+    clientId: "steer",
+    content: "Also",
+    immediate: true,
+  });
+  notify("turn/started", { turn });
+  await steering;
+  expect(written.filter(({ method }) => method === "turn/steer")).toEqual([
+    expect.objectContaining({ params: expect.objectContaining({ expectedTurnId: turn.id }) }),
+  ]);
+});
+
 test("subagent activity stays nested under one agent call live and after replay", async () => {
   const { notify, notifyThread, events, readHistory, setThread, setChildThread } = setup();
   const rootTurn = { ...turn, id: "root-turn" };
@@ -755,6 +771,32 @@ test("Stop interrupts the session tree's running turns, including every loaded s
     { method: "turn/interrupt", params: { threadId: "busy", turnId: "" } },
     { method: "turn/interrupt", params: { threadId: "idle", turnId: "" } },
   ]);
+});
+
+test.each(["during", "after"])(
+  "Stop %s a send interrupts its turn once Codex announces it, and not before",
+  async (when) => {
+    const { connection, notify, written } = setup();
+    const sending = connection.send({ role: "user", clientId: "first", content: "Start" });
+    if (when === "after") await sending;
+    const stopping = connection.abort();
+    await sending;
+    expect(written.some(({ method }) => method === "turn/interrupt")).toBe(false);
+    notify("turn/started", { turn });
+    await stopping;
+    expect(written.filter(({ method }) => method === "turn/interrupt")).toEqual([
+      expect.objectContaining({ params: { threadId: "native", turnId: turn.id } }),
+    ]);
+  },
+);
+
+test("Stop during a send Codex refuses settles without waiting for a turn", async () => {
+  const { connection, rpc, written } = setup();
+  spyOn(rpc, "request").mockRejectedValueOnce(new Error("Refused"));
+  const sending = connection.send({ role: "user", clientId: "first", content: "Start" });
+  await connection.abort();
+  await expect(sending).rejects.toThrow("Refused");
+  expect(written.some(({ method }) => method === "turn/interrupt")).toBe(false);
 });
 
 test("native tools reject calls outside the Toy Box namespace", async () => {

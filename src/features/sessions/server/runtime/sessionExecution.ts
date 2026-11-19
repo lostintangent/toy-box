@@ -66,6 +66,7 @@ export class SessionExecution {
   // cannot both open the execution's first turn.
   #hasOpenedTurn = false;
   #abortRequested = false;
+  #providerAbort?: Promise<void>;
   #finished = false;
 
   constructor(
@@ -116,6 +117,9 @@ export class SessionExecution {
   /** Start the first message, or dispatch queued work when the assistant is ready. */
   async deliver(message: SessionMessage): Promise<MessageDisposition> {
     if (this.#finished || this.#abortRequested) {
+      // A Stop holds this execution until the provider confirms. Reject once it has left the
+      // runtime, so the caller's retry starts the next turn instead of meeting it again.
+      await this.#completion.promise;
       throw new SessionExecutionFinishedError();
     }
 
@@ -128,6 +132,7 @@ export class SessionExecution {
     const queuedMessage = message.immediate && this.#isSubmitting ? deferMessage(message) : message;
 
     if (queuedMessage.immediate) {
+      this.#emit({ type: "message_queued", message: queuedMessage });
       await this.#submitMessage(queuedMessage);
       return "queued";
     }
@@ -262,12 +267,17 @@ export class SessionExecution {
     return true;
   }
 
-  async #abortProvider(): Promise<void> {
-    await withTimeout(this.connection.abort(), PROVIDER_ABORT_TIMEOUT_MS, () => {
-      console.warn(`Session ${this.sessionId}: the provider didn't confirm Stop in time.`);
-      // A provider that can't confirm Stop can't take the next turn either.
-      evictConnection(this.sessionId);
-    });
+  /** Stop and delete can overlap, so they join one provider abort. */
+  #abortProvider(): Promise<void> {
+    return (this.#providerAbort ??= withTimeout(
+      this.connection.abort(),
+      PROVIDER_ABORT_TIMEOUT_MS,
+      () => {
+        console.warn(`Session ${this.sessionId}: the provider didn't confirm Stop in time.`);
+        // A provider that can't confirm Stop can't take the next turn either.
+        evictConnection(this.sessionId);
+      },
+    ));
   }
 
   // ── Turn execution ───────────────────────────────────────────────────
@@ -288,6 +298,8 @@ export class SessionExecution {
       await this.connection.send(message);
     } catch (error) {
       evictConnectionIfStale(this.sessionId, error);
+      // A Stop or deletion already ended this turn, so retrying its send would undo that.
+      if (this.#abortRequested) return;
       this.finish("error");
       throw error;
     }
@@ -317,21 +329,14 @@ export class SessionExecution {
   }
 
   async #drainMessageQueue(finishWhenEmpty = false): Promise<void> {
-    if (
-      this.#abortRequested ||
-      this.#finished ||
-      this.#isSubmitting ||
-      hasBlockingSessionQuestion(this.#sessionState)
-    ) {
-      return;
-    }
+    if (this.#abortRequested || this.#finished || this.#isSubmitting) return;
 
     const queuedMessage = this.#sessionState.queuedMessages[0];
-    if (!queuedMessage) {
-      if (finishWhenEmpty) this.finish();
-      return;
-    }
-    if (queuedMessage.status !== "queued") return;
+    if (queuedMessage && queuedMessage.status !== "queued") return;
+    if (!queuedMessage && !finishWhenEmpty) return;
+    // A blocking question holds both the queue and the end of the turn.
+    if (hasBlockingSessionQuestion(this.#sessionState)) return;
+    if (!queuedMessage) return this.finish();
 
     try {
       await this.#submitMessage(messageFromQueue(queuedMessage));
@@ -366,8 +371,8 @@ export class SessionExecution {
     return this.#sessionState.queuedMessages.some(({ status }) => status === "submitting");
   }
 
+  /** Submit a message already in the queue. */
   async #submitMessage(message: SessionMessage): Promise<void> {
-    this.#emit({ type: "message_queued", message });
     this.#emit({
       type: "message_status_changed",
       clientId: message.clientId,

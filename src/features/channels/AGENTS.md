@@ -540,9 +540,12 @@ the `CompletionMenu` it shares with Sessions.
 `ChannelUserMessage` adds mentions, reactions, and timeline timestamps to the shared
 [`UserMessage`](../../shared/messages/UserMessage.tsx); agent messages reuse the shared
 [`CopyControl`](../../shared/messages/CopyControl.tsx). `ChannelReactions` takes a message and
-shows its recorded and projected reactions, or nothing. Every agent reference, whether an author,
-reactor, task owner, or sharer, resolves through `channelAgentIdentity`, so a removed agent
-presents one deleted identity everywhere.
+shows its recorded and projected reactions, or nothing. A `file:` link in a message opens the shared
+artifact it names, resolved by the model's `linkedArtifact`: a relative path against the channel's
+directory, or without one the newest Session artifact at that path, and an absolute path by its
+Session or machine file. Any other `file:` link shows its label as text, as every link does outside
+the pane, such as in the sidebar's request preview. Every agent reference, whether an author, reactor, task owner, or sharer, resolves through
+`channelAgentIdentity`, so a removed agent presents one deleted identity everywhere.
 
 - The transcript's rows come from `transcriptRows`, its pure presentation model: each user message
   stands alone, one agent's consecutive messages form a run, and matching system messages merge.

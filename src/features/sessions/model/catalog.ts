@@ -28,19 +28,13 @@ export function isSessionReplacement(session: Session | undefined, update: Sessi
 
 function removeSession(state: SessionsState, sessionId: string): SessionsState {
   const removesOwnership = state.ownership[sessionId]?.type === "worker";
-  if (
-    !state.sessions.some((session) => session.id === sessionId) &&
-    !removesOwnership &&
-    !(sessionId in state.worktrees)
-  ) {
+  if (!state.sessions.some((session) => session.id === sessionId) && !removesOwnership) {
     return state;
   }
 
-  const { [sessionId]: _worktree, ...worktrees } = state.worktrees;
   return {
     ...(removesOwnership ? setOwnership(state, sessionId, undefined) : state),
     sessions: state.sessions.filter((session) => session.id !== sessionId),
-    worktrees,
   };
 }
 
@@ -57,9 +51,6 @@ function upsertSession(state: SessionsState, update: SessionUpdate): SessionsSta
     ? state.sessions.map((current) => (current.id === update.id ? session : current))
     : [session, ...state.sessions];
 
-  const worktrees = update.worktree
-    ? { ...state.worktrees, [update.id]: update.worktree }
-    : state.worktrees;
   const owner = state.ownership[update.id];
   switch (update.sessionType) {
     case "worker":
@@ -73,7 +64,7 @@ function upsertSession(state: SessionsState, update: SessionUpdate): SessionsSta
       state = setOwnership(state, update.id, { type: update.sessionType });
       break;
   }
-  return { ...state, sessions, worktrees };
+  return { ...state, sessions };
 }
 
 function setOwnership(
@@ -107,6 +98,7 @@ function mergeSession(existing: Session | undefined, update: SessionUpdate): Ses
     provider: update.provider ?? existing?.provider,
     context: update.context ? { ...existing?.context, ...update.context } : existing?.context,
     artifactPath: update.artifactPath ?? existing?.artifactPath,
+    worktree: update.worktree ?? existing?.worktree,
   };
 }
 

@@ -48,7 +48,6 @@ export function projectAppWorkspace(
       ...session,
       status: activities[session.id]?.status ?? "idle",
       kind: sessionKind(session.id),
-      worktree: sessions.worktrees[session.id],
       children: (childrenByParent[session.id] ?? []).map(projectSession),
     };
   }

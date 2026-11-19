@@ -6,7 +6,7 @@ import { encodeSystemMessage, systemMessagePrompt } from "@sessions/model/system
 
 test("native inputs carry their payloads and client IDs", async () => {
   const send = mock(async () => "native");
-  const native = { sessionId: "native", send } as unknown as CopilotSession;
+  const native = { sessionId: "native", on: () => () => {}, send } as unknown as CopilotSession;
   const connection = connectCopilotSession(native, holdNativeEvents());
   await connection.send({
     role: "user",
@@ -27,6 +27,49 @@ test("native inputs carry their payloads and client IDs", async () => {
     mode: "immediate",
     clientTurnId: "system",
   });
+});
+
+test("Stop right after a send that starts a turn aborts once the CLI records it, so the prompt stays in history", async () => {
+  let record!: (event: SdkEvent) => void;
+  const calls: string[] = [];
+  const native = {
+    sessionId: "native",
+    on: (handler: typeof record) => ((record = handler), () => {}),
+    send: async () => void calls.push("send"),
+    abort: async () => void calls.push("abort"),
+  } as unknown as CopilotSession;
+  const connection = connectCopilotSession(native, holdNativeEvents());
+
+  await connection.send({ role: "user", clientId: "first", content: "Start" });
+  const stopped = connection.abort();
+  await Bun.sleep(10);
+  expect(calls).toEqual(["send"]);
+
+  record({ type: "user.message", data: { content: "Start", clientTurnId: "first" } } as SdkEvent);
+  await stopped;
+  expect(calls).toEqual(["send", "abort"]);
+});
+
+test("Stop during a steer aborts once the CLI has admitted it", async () => {
+  const admitted = Promise.withResolvers<void>();
+  const calls: string[] = [];
+  const native = {
+    sessionId: "native",
+    on: () => () => {},
+    send: () => admitted.promise.then(() => calls.push("send")),
+    abort: async () => calls.push("abort"),
+  } as unknown as CopilotSession;
+  const connection = connectCopilotSession(native, holdNativeEvents());
+  const sending = connection.send({
+    role: "user",
+    clientId: "steer",
+    content: "Also",
+    immediate: true,
+  });
+  const stopping = connection.abort();
+  admitted.resolve();
+  await Promise.all([sending, stopping]);
+  expect(calls).toEqual(["send", "abort"]);
 });
 
 test("native lifecycle events end live turns", () => {
@@ -61,10 +104,29 @@ test("native lifecycle events end live turns", () => {
   ]);
 });
 
+test("a model switch clears the session's effort when the configuration names none", async () => {
+  const switchTo = mock(async (_request: object) => ({}));
+  const connection = connectCopilotSession(
+    { on: () => () => {}, rpc: { model: { switchTo } } } as unknown as CopilotSession,
+    holdNativeEvents(),
+  );
+  await connection.setModel({
+    provider: "copilot",
+    name: "claude-opus-5.5",
+    reasoningEffort: "xhigh",
+  });
+  await connection.setModel({ provider: "copilot", name: "claude-haiku-4.5" });
+  expect(switchTo.mock.calls).toEqual([
+    [{ modelId: "claude-opus-5.5", reasoningEffort: "xhigh" }],
+    [{ modelId: "claude-haiku-4.5", reasoningEffort: null }],
+  ]);
+});
+
 test("rewind resolves the requested timestamp to a native conversation boundary", async () => {
   const rewind = mock(async () => ({ eventsRemoved: 5 }));
   const connection = connectCopilotSession(
     {
+      on: () => () => {},
       rpc: {
         history: {
           listRewindPoints: async () => ({

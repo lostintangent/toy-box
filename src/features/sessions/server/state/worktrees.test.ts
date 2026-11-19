@@ -10,9 +10,9 @@ import {
   applySessionWorktree,
   createSessionWorktree,
   deleteSessionWorktree,
-  getAllSessionWorktrees,
   mergeSessionWorktree,
 } from "./worktrees";
+import { insertSession, readSession } from "./sessions";
 
 let gitCalls: Array<{ directory: string; args: string[] }> = [];
 let runGit = async (_directory: string, _args: string[]): Promise<string> => {
@@ -20,25 +20,16 @@ let runGit = async (_directory: string, _args: string[]): Promise<string> => {
 };
 
 async function insertWorktree(sessionId: string, worktree: SessionWorktree): Promise<void> {
+  await insertSession({ id: sessionId, createdAt: new Date() });
   const db = await getStateDatabase();
   await db`
-    INSERT INTO worktrees (
-      session_id,
-      worktree_path,
-      worktree_branch,
-      worktree_base_branch,
-      lines_added,
-      lines_removed
-    )
-    VALUES (
-      ${sessionId},
-      ${worktree.path},
-      ${worktree.branch},
-      ${worktree.baseBranch},
-      ${worktree.linesAdded ?? null},
-      ${worktree.linesRemoved ?? null}
-    )
+    INSERT INTO worktrees (session_id, worktree_path, worktree_branch, worktree_base_branch)
+    VALUES (${sessionId}, ${worktree.path}, ${worktree.branch}, ${worktree.baseBranch})
   `;
+}
+
+async function recordedWorktree(sessionId: string): Promise<SessionWorktree | undefined> {
+  return (await readSession(sessionId))?.worktree;
 }
 
 describe("session worktrees", () => {
@@ -75,41 +66,16 @@ describe("session worktrees", () => {
     };
 
     const sessionId = "11111111-1111-4111-8111-111111111111";
-    const path = join(homedir(), ".toy-box", "worktrees", "11111111-111");
-    await expect(createSessionWorktree(sessionId, "/source/subdirectory")).resolves.toEqual({
-      path,
+    const worktree = {
+      path: join(homedir(), ".toy-box", "worktrees", "11111111-111"),
       branch: "toy-box/11111111-111",
       baseBranch: "main",
-    });
-    expect(await getAllSessionWorktrees()).toEqual({
-      [sessionId]: {
-        path,
-        branch: "toy-box/11111111-111",
-        baseBranch: "main",
-        linesAdded: undefined,
-        linesRemoved: undefined,
-      },
-    });
-  });
-
-  test("reads persisted worktree state", async () => {
-    await openTestDatabase();
-    await insertWorktree("toy-box-session", {
-      path: "/tmp/toy-box-session",
-      branch: "toy-box/session",
-      baseBranch: "main",
-      linesAdded: 12,
-      linesRemoved: 3,
-    });
-
-    const expected = {
-      path: "/tmp/toy-box-session",
-      branch: "toy-box/session",
-      baseBranch: "main",
-      linesAdded: 12,
-      linesRemoved: 3,
     };
-    expect(await getAllSessionWorktrees()).toEqual({ "toy-box-session": expected });
+    await insertSession({ id: sessionId, createdAt: new Date() });
+    await expect(createSessionWorktree(sessionId, "/source/subdirectory")).resolves.toEqual(
+      worktree,
+    );
+    expect(await recordedWorktree(sessionId)).toEqual(worktree);
   });
 
   test("deletion releases the Git worktree before removing its record", async () => {
@@ -141,7 +107,7 @@ describe("session worktrees", () => {
       },
       { directory: "/source", args: ["branch", "-D", "toy-box/session"] },
     ]);
-    expect(await getAllSessionWorktrees()).toEqual({});
+    expect(await recordedWorktree("toy-box-session")).toBeUndefined();
   });
 
   test("deletion removes the record when the Git worktree is already gone", async () => {
@@ -154,7 +120,7 @@ describe("session worktrees", () => {
 
     await deleteSessionWorktree("toy-box-session");
 
-    expect(await getAllSessionWorktrees()).toEqual({});
+    expect(await recordedWorktree("toy-box-session")).toBeUndefined();
   });
 
   test("does not create a worktree outside a Git repository", async () => {
@@ -216,7 +182,7 @@ for (const [name, finish] of [
     expect(await Bun.file(join(source, "value.txt")).text()).toBe("before\n");
     expect(await Bun.file(join(path, "value.txt")).text()).toBe("after\n");
     expect(await Bun.file(join(path, "new.txt")).text()).toBe("new file\n");
-    expect((await getAllSessionWorktrees())["toy-box-session"]?.path).toBe(path);
+    expect((await recordedWorktree("toy-box-session"))?.path).toBe(path);
 
     await git(path, "add", ".");
     await git(path, "commit", "-m", "session changes");
@@ -231,6 +197,6 @@ for (const [name, finish] of [
         () => false,
       ),
     ).toBe(false);
-    expect(await getAllSessionWorktrees()).toEqual({});
+    expect(await recordedWorktree("toy-box-session")).toBeUndefined();
   });
 }

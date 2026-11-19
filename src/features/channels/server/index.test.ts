@@ -29,7 +29,7 @@ const realRuntime = { ...(await import("@sessions/server/runtime")) };
 const runtime = {
   createSession: mock<typeof realRuntime.createSession>(),
   deliverSessionMessage: mock<typeof realRuntime.deliverSessionMessage>(),
-  deleteSessionIfExists: mock<typeof realRuntime.deleteSessionIfExists>(),
+  deleteSession: mock<typeof realRuntime.deleteSession>(),
 };
 mock.module("@sessions/server/runtime", () => ({ ...realRuntime, ...runtime }));
 afterAll(() => {
@@ -81,7 +81,7 @@ beforeEach(() => {
   };
   runtime.createSession.mockReset().mockResolvedValue(started);
   runtime.deliverSessionMessage.mockReset().mockResolvedValue(started);
-  runtime.deleteSessionIfExists.mockReset().mockResolvedValue(true);
+  runtime.deleteSession.mockReset().mockResolvedValue();
 });
 
 const PNG_BASE64 =
@@ -218,11 +218,10 @@ test.each([false, true])(
     const broadcasts = spyOn(workspaceEvents, "broadcast").mockImplementation((event) => {
       observed.push(event);
     });
-    runtime.deleteSessionIfExists.mockImplementation(async (id) => {
+    runtime.deleteSession.mockImplementation(async (id) => {
       observed.push(id);
       await detachManagedSession(id);
       if (failCleanup && id === "builder") throw new Error("Provider cleanup failed");
-      return true;
     });
     onTestFinished(() => broadcasts.mockRestore());
 
@@ -1349,9 +1348,8 @@ test("a new wake command kills the running one's group without a wake", async ()
 
 test("removing a member kills its wake command without waking it", async () => {
   const { member, cwd, run } = await wakeCommandMember();
-  runtime.deleteSessionIfExists.mockImplementation(async (sessionId) => {
+  runtime.deleteSession.mockImplementation(async (sessionId) => {
     workspaceEvents.broadcast({ type: "session.deleted", sessionId });
-    return true;
   });
   onTestFinished(await startChannels());
 

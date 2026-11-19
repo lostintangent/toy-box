@@ -31,7 +31,7 @@ export function startWorkerRun(
   const run = { worker, cancel: new AbortController() };
   runs.set(sessionId, run);
   const completion = execute(run.cancel.signal);
-  expectSessionCompletion(sessionId, completion);
+  expectSessionCompletion(sessionId, completion.catch(canceledCompletion));
   broadcast({ type: "worker.started", worker });
   const finish = () => {
     runs.delete(sessionId);
@@ -56,6 +56,12 @@ export class WorkerCanceledError extends Error {
     super(`Worker ${sessionId} was canceled.`);
     this.name = "WorkerCanceledError";
   }
+}
+
+/** Waiters see a canceled run as failed data. Supervision keeps the rejection, which skips retention. */
+function canceledCompletion(error: unknown): SessionCompletion {
+  if (error instanceof WorkerCanceledError) return { status: "failed", error: error.message };
+  throw error;
 }
 
 function isActive(run: WorkerRun): boolean {

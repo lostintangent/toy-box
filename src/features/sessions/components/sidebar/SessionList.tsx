@@ -13,16 +13,10 @@ import { groupSessions } from "./sessionGrouping";
 type SessionListProps = {
   className?: string;
   sessions: Session[];
-  worktreeSessionIds: string[];
   emptyMessage?: string;
 };
 
-export function SessionList({
-  className,
-  sessions,
-  worktreeSessionIds,
-  emptyMessage,
-}: SessionListProps) {
+export function SessionList({ className, sessions, emptyMessage }: SessionListProps) {
   const { selectRoot, isOpen } = useWorkspaceRoots();
   const { data: childrenByParent } = useQuery({
     ...sessionQueries.state,
@@ -57,7 +51,6 @@ export function SessionList({
         onPinToggle={isChild ? undefined : handleSessionPinToggle}
         isActive={isOpen(createSessionPane(session.id))}
         isPinned={!isChild && pinnedSessionIdSet.has(session.id)}
-        isWorktree={worktreeSessionIds.includes(session.id)}
         childCount={children.length}
         renderChildren={
           children.length > 0

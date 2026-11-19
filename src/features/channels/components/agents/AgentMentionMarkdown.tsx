@@ -1,17 +1,20 @@
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
 import { defaultRemarkPlugins, type Components } from "streamdown";
 import { splitAgentMentionText } from "@channels/model";
 import { Markdown } from "@/shared/ui/markdown";
 import { cn } from "@/shared/utils";
+import { ChannelPaneContext } from "../pane/ChannelPaneContext";
 
 const MENTION_TAG = "agent-mention";
+const ARTIFACT_LINK_TAG = "artifact-link";
 
 type MarkdownNode = {
   type: string;
   value?: string;
+  url?: string;
   data?: {
-    hName: typeof MENTION_TAG;
-    hProperties: { handle: string };
+    hName: string;
+    hProperties: Record<string, string>;
   };
   children?: MarkdownNode[];
 };
@@ -47,6 +50,44 @@ function decorateAgentMentions(node: MarkdownNode): void {
   });
 }
 
+/** Hands every `file:` link to `ArtifactLink`, since Markdown blocks links outside the web's
+ *  schemes. */
+function remarkArtifactLinks() {
+  const decorate = (node: MarkdownNode): void => {
+    if (node.type === "link" && node.url?.toLowerCase().startsWith("file:")) {
+      node.data = { hName: ARTIFACT_LINK_TAG, hProperties: { reference: node.url } };
+    }
+    node.children?.forEach(decorate);
+  };
+  return decorate;
+}
+
+/** A `file:` link to a shared artifact, styled as Markdown's links, or else its label as text, as it
+ *  is outside a Channel pane. */
+function ArtifactLink({
+  children,
+  reference,
+}: {
+  [key: string]: unknown;
+  children?: ReactNode;
+  reference?: string;
+}) {
+  const pane = useContext(ChannelPaneContext);
+  const open = reference ? pane?.openArtifactLink(reference) : undefined;
+  return open ? (
+    <button
+      type="button"
+      data-streamdown="link"
+      className="wrap-anywhere appearance-none text-left font-medium text-primary underline"
+      onClick={open}
+    >
+      {children}
+    </button>
+  ) : (
+    children
+  );
+}
+
 type MentionProps = {
   [key: string]: unknown;
   children?: ReactNode;
@@ -73,12 +114,20 @@ function AccentMention(props: MentionProps) {
   return <Mention {...props} onAccent />;
 }
 
-const remarkPlugins = [...Object.values(defaultRemarkPlugins), remarkAgentMentions];
-const allowedTags = { [MENTION_TAG]: ["handle"] };
-const components = { [MENTION_TAG]: Mention } satisfies Components;
-const accentComponents = { [MENTION_TAG]: AccentMention } satisfies Components;
+const remarkPlugins = [
+  ...Object.values(defaultRemarkPlugins),
+  remarkAgentMentions,
+  remarkArtifactLinks,
+];
+const allowedTags = { [MENTION_TAG]: ["handle"], [ARTIFACT_LINK_TAG]: ["reference"] };
+const components = {
+  [MENTION_TAG]: Mention,
+  [ARTIFACT_LINK_TAG]: ArtifactLink,
+} satisfies Components;
+const accentComponents = { ...components, [MENTION_TAG]: AccentMention } satisfies Components;
 
-/** Markdown whose operational agent mentions render distinctly from ordinary text. */
+/** Markdown whose operational agent mentions render distinctly from ordinary text, and whose
+ *  `file:` links open the shared artifacts they name. */
 export function AgentMentionMarkdown({
   content,
   onAccent = false,

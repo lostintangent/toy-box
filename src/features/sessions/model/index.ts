@@ -28,6 +28,7 @@ export type Session = {
   updatedAt: Date;
   /** Initial artifact, supplied as the first turn's subject. */
   artifactPath?: string;
+  worktree?: SessionWorktree;
 };
 
 export type { SessionSystemMessage } from "./systemMessages";
@@ -44,8 +45,6 @@ export type SessionWorktree = {
   path: string;
   branch: string;
   baseBranch: string;
-  linesAdded?: number;
-  linesRemoved?: number;
 };
 
 export type SessionOwnership =
@@ -54,7 +53,6 @@ export type SessionOwnership =
 
 export type SessionsState = {
   sessions: Session[];
-  worktrees: Record<string, SessionWorktree>;
   /** Durable ownership can precede, and outlive recreation of, a backing session. */
   ownership: Record<string, SessionOwnership>;
 };
@@ -317,7 +315,6 @@ export type SessionUpdate = Pick<Session, "id"> &
   Partial<Omit<Session, "id" | "createdAt" | "updatedAt">> & {
     createdAt?: string;
     updatedAt?: string;
-    worktree?: SessionWorktree;
     parentSessionId?: string;
     sessionType?: SessionType;
   };

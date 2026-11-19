@@ -7,9 +7,8 @@ import { createWorker, WorkerDatabase } from "./database";
 import { getStateDatabase } from "@/server/database";
 import { getProcessValue } from "@/shared/server/processState";
 import {
-  abortSession,
   createSession,
-  deleteSessionIfExists,
+  deleteSession,
   getSessionSnapshot,
   getSessionDirectory,
 } from "@sessions/server/runtime";
@@ -101,10 +100,7 @@ export function spawnWorker<Owner extends WorkerOwner, Value>(
       // Session acquisition is registered synchronously: follow-ups can now join its mailbox.
       admission.resolve(admitted);
       const receipt = await starting;
-      if (signal.aborted) {
-        await abortSession(sessionId);
-        throw signal.reason;
-      }
+      signal.throwIfAborted();
       started = true;
       result = await receipt.waitForCompletion();
       signal.throwIfAborted();
@@ -127,7 +123,7 @@ export function spawnWorker<Owner extends WorkerOwner, Value>(
 export async function sweepAbandonedWorkers(): Promise<void> {
   const sessionIds = await new WorkerDatabase(await getStateDatabase()).listEphemeralIds();
   for (const sessionId of sessionIds) {
-    await deleteSessionIfExists(sessionId);
+    await deleteSession(sessionId);
   }
 }
 
@@ -152,12 +148,12 @@ async function applyRetention(
     retain = await retention(worker, completion);
   }
   signal.throwIfAborted();
-  if (!retain) await deleteSessionIfExists(sessionId);
+  if (!retain) await deleteSession(sessionId);
 }
 
 async function cleanUpFailedSpawn(sessionId: string, spawnError: unknown): Promise<never> {
   try {
-    await deleteSessionIfExists(sessionId);
+    await deleteSession(sessionId);
   } catch (cleanupError) {
     throw new AggregateError(
       [spawnError, cleanupError],

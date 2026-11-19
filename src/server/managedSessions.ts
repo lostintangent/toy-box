@@ -4,7 +4,7 @@
 
 import type { SessionOwnership, SessionsState } from "@sessions/model";
 import { getSessionsActivity } from "@sessions/server/state/activity";
-import { getStateDatabase } from "@/server/database";
+import { workerParentSessionId } from "@workers/model";
 import { draftSessionId, type DraftKey } from "@workspace/model/state/drafts";
 import { getSavedDrafts } from "@workspace/server/state/drafts";
 import { getSettings } from "@workspace/server/state/settings";
@@ -14,7 +14,7 @@ const RECENT_SESSION_LIMIT = 250;
 /** Read the public Session catalog with feature-owned visibility and relationships. */
 export async function readSessionCatalog(source: {
   /** At least each provider's newest `limit` Sessions, plus drafts. */
-  list(limit: number): Promise<[SessionsState["sessions"], SessionsState["worktrees"]]>;
+  list(limit: number): Promise<SessionsState["sessions"]>;
   /** The Sessions with these public IDs, omitting any that no longer exist. */
   find(sessionIds: string[]): Promise<SessionsState["sessions"]>;
 }): Promise<SessionsState> {
@@ -28,9 +28,7 @@ export async function readSessionCatalog(source: {
   ]);
   // Fewer than 250 ordinary Sessions precede any of the newest 250, so each lies
   // within its own provider's newest 250 plus the exempt Sessions.
-  const [listedSessions, worktrees] = await source.list(
-    RECENT_SESSION_LIMIT + exemptSessionIds.size,
-  );
+  const listedSessions = await source.list(RECENT_SESSION_LIMIT + exemptSessionIds.size);
   const ownershipAfter = await readSessionOwnership();
   const ownership = { ...ownershipBefore, ...ownershipAfter };
   const retainedSessionIds = new Set([...exemptSessionIds, ...Object.keys(ownershipAfter)]);
@@ -56,7 +54,6 @@ export async function readSessionCatalog(source: {
   ];
   return {
     sessions: sessions.filter(({ id, provider }) => retainedSessionIds.has(id) || !provider),
-    worktrees,
     ownership,
   };
 }
@@ -66,9 +63,8 @@ export async function resolveSessionType(sessionId: string) {
   const { getWorker } = await import("@workers/server");
   const worker = await getWorker(sessionId);
   if (worker) return { sessionType: "worker", worker } as const;
-  const database = await getStateDatabase();
-  const [automation] = await database`SELECT 1 FROM automations WHERE id = ${sessionId}`;
-  if (automation) return { sessionType: "automation" } as const;
+  const { getAutomation } = await import("@automations/server");
+  if (await getAutomation(sessionId)) return { sessionType: "automation" } as const;
   const { hyperSessionId } = await getSettings();
   return { sessionType: hyperSessionId === sessionId ? "hyper" : "standard" } as const;
 }
@@ -90,28 +86,27 @@ export async function detachManagedSession(sessionId: string): Promise<void> {
 }
 
 async function readSessionOwnership(): Promise<SessionsState["ownership"]> {
-  const database = await getStateDatabase();
-  const rows = await database<
-    { session_id: string; type: SessionOwnership["type"]; parent_session_id: string | null }[]
-  >`
-    SELECT id AS session_id, 'automation' AS type, NULL AS parent_session_id
-      FROM automations
-    UNION ALL
-    SELECT session_id, 'worker', parent_session_id
-      FROM workers
-  `;
+  const [{ listAutomations }, { listWorkers }] = await Promise.all([
+    import("@automations/server"),
+    import("@workers/server"),
+  ]);
+  const [automations, workers] = await Promise.all([listAutomations(), listWorkers()]);
   const ownership: SessionsState["ownership"] = {};
-  for (const row of rows) {
-    const previous = ownership[row.session_id];
+  const own = (sessionId: string, owner: SessionOwnership) => {
+    const previous = ownership[sessionId];
     if (previous) {
       throw new Error(
-        `Session ${row.session_id} has conflicting types: ${previous.type}, ${row.type}`,
+        `Session ${sessionId} has conflicting types: ${previous.type}, ${owner.type}`,
       );
     }
-    ownership[row.session_id] =
-      row.type === "worker"
-        ? { type: "worker", parentSessionId: row.parent_session_id }
-        : { type: row.type };
+    ownership[sessionId] = owner;
+  };
+  for (const { id } of automations) own(id, { type: "automation" });
+  for (const worker of workers) {
+    own(worker.sessionId, {
+      type: "worker",
+      parentSessionId: workerParentSessionId(worker) ?? null,
+    });
   }
   return ownership;
 }

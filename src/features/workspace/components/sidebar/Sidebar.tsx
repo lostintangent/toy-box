@@ -30,7 +30,6 @@ export type SidebarProps = {
   onFilterChange: (value: SessionFilters) => void;
 
   sessions: Session[];
-  worktreeSessionIds: string[];
   emptyMessage?: string;
 
   onAppOpenInHyper: (appId: string) => void;
@@ -57,7 +56,6 @@ export function Sidebar({
   onFilterChange,
 
   sessions,
-  worktreeSessionIds,
   emptyMessage,
 
   onAppOpenInHyper,
@@ -111,12 +109,7 @@ export function Sidebar({
         />
 
         <div className="min-h-0 min-w-0 flex flex-col bg-panel">
-          <SessionList
-            className="px-3 py-2"
-            sessions={sessions}
-            worktreeSessionIds={worktreeSessionIds}
-            emptyMessage={emptyMessage}
-          />
+          <SessionList className="px-3 py-2" sessions={sessions} emptyMessage={emptyMessage} />
 
           <ChannelsPanel
             isExpanded={panels.channels ?? false}

@@ -34,7 +34,11 @@ Model and reasoning effort change together through the session-scoped `applyFlag
 Native messages omit effort, so live model changes carry the last one applied.
 
 Stop interrupts with `cancelQueued`, so steers the turn has not reached are cancelled instead of
-running as their own turn. The SDK's `interrupt()` type omits that option, a listed native
+running as their own turn. The CLI cancels only the sends it has read, so Stop first waits for
+the SDK to write every send. It also cancels a send that starts a turn until the CLI takes it up,
+which drops the prompt and, on a session's first send, its transcript, so Stop first waits for
+the CLI to replay that send or report compacting, as `/compact` and compaction before a turn
+replay only afterward. The SDK's `interrupt()` type omits that option, a listed native
 workaround. An interrupt also ends the running command and background agents, while background
 shells the agent launched keep running.
 

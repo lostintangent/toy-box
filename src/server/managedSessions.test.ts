@@ -1,12 +1,12 @@
 import { createStoredChannel } from "@channels/server/testFixtures";
 import { describe, expect, onTestFinished, test } from "bun:test";
 import { openTestDatabase } from "@/server/testFixtures";
-import type { Session, SessionsState } from "@sessions/model";
+import type { Session } from "@sessions/model";
 import { DEFAULT_SETTINGS } from "@workspace/model/config/settings";
 import { deleteSessionActivity, setSessionActivity } from "@sessions/server/state/activity";
 import { deleteSavedDraft, saveDraft } from "@workspace/server/state/drafts";
 
-import { AutomationDatabase } from "@automations/server/database";
+import { createAutomation } from "@automations/server";
 import { ChannelDatabase } from "@channels/server/database";
 import { WorkerDatabase } from "@workers/server/database";
 import { getStateDatabase } from "@/server/database";
@@ -30,7 +30,7 @@ describe("session type resolution", () => {
 
   test("resolves every managed session type from its authoritative record", async () => {
     const db = await openTestDatabase();
-    const automation = await new AutomationDatabase(db).create({
+    const automation = await createAutomation({
       title: "Managed automation",
       prompt: "Run",
       model: { provider: "copilot", name: "gpt-5" },
@@ -73,7 +73,6 @@ describe("session type resolution", () => {
     }
     expect(await readSessionCatalog(catalogSource([]))).toEqual({
       sessions: [],
-      worktrees: {},
       ownership: {
         [automation.id]: { type: "automation" },
         [inboxId]: { type: "worker", parentSessionId: null },
@@ -85,7 +84,7 @@ describe("session type resolution", () => {
 
   test("the catalog rejects conflicting durable owners", async () => {
     const db = await openTestDatabase();
-    const automation = await new AutomationDatabase(db).create({
+    const automation = await createAutomation({
       title: "Conflicting owner",
       prompt: "Run",
       model: { provider: "copilot", name: "gpt-5" },
@@ -107,7 +106,7 @@ describe("session type resolution", () => {
 describe("Session catalog projection", () => {
   test("reserves 250 history slots independently of managed and pinned sessions", async () => {
     const db = await openTestDatabase();
-    const automation = await new AutomationDatabase(db).create({
+    const automation = await createAutomation({
       title: "Old automation",
       prompt: "Run",
       model: { provider: "copilot", name: "gpt-5" },
@@ -133,9 +132,8 @@ describe("Session catalog projection", () => {
       catalogSession("new-pin", 1000),
       ...history,
     ];
-    const worktree = { branch: "old-work", baseBranch: "main", path: "/repo/old-work" };
 
-    const catalog = await readSessionCatalog(catalogSource(sessions, { "history-0": worktree }));
+    const catalog = await readSessionCatalog(catalogSource(sessions));
 
     expect(catalog.sessions.map(({ id }) => id).sort()).toEqual(
       [...required, "new-pin", ...history.slice(10).map(({ id }) => id)].sort(),
@@ -145,8 +143,6 @@ describe("Session catalog projection", () => {
       "old-inbox": { type: "worker", parentSessionId: null },
       "old-channel-member": { type: "worker", parentSessionId: null },
     });
-    // Resource ownership is independent of the browsing window.
-    expect(catalog.worktrees["history-0"]).toEqual(worktree);
   });
 
   test("retains older running, waiting, unread and draft work outside the history window", async () => {
@@ -180,7 +176,7 @@ describe("Session catalog projection", () => {
       catalogSession(`session-${String(i).padStart(3, "0")}`, 1),
     );
     const read = (sessions: Session[]) =>
-      readSessionCatalog({ list: async () => [sessions, {}], find: async () => [] });
+      readSessionCatalog({ list: async () => sessions, find: async () => [] });
     const first = await read(sessions);
     const second = await read([...sessions].reverse());
 
@@ -220,7 +216,6 @@ describe("Session catalog projection", () => {
         updatedAt: new Date(0),
         title: sessionId,
       }));
-      const worktree = { branch: "work", baseBranch: "main", path: "/repo/work" };
 
       const catalog = await readSessionCatalog({
         async list() {
@@ -231,14 +226,13 @@ describe("Session catalog projection", () => {
             await new WorkerDatabase(db).delete("worker");
             await new WorkerDatabase(db).delete("inbox");
           }
-          return [sessions, { "channel-worker": worktree, worker: worktree }];
+          return sessions;
         },
         find: async () => [],
       });
 
       expect(catalog).toEqual({
         sessions,
-        worktrees: { "channel-worker": worktree, worker: worktree },
         ownership: {
           "channel-worker": { type: "worker", parentSessionId: null },
           worker: { type: "worker", parentSessionId: "parent" },
@@ -260,17 +254,14 @@ function catalogSession(id: string, updatedAt: number): Session {
 }
 
 /** Lists the least one provider may: its newest `limit` Sessions, plus drafts. */
-function catalogSource(
-  sessions: Session[],
-  worktrees: SessionsState["worktrees"] = {},
-): Parameters<typeof readSessionCatalog>[0] {
+function catalogSource(sessions: Session[]): Parameters<typeof readSessionCatalog>[0] {
   const newestFirst = sessions
     .filter(({ provider }) => provider)
     .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
   return {
     list: async (limit) => [
-      [...sessions.filter(({ provider }) => !provider), ...newestFirst.slice(0, limit)],
-      worktrees,
+      ...sessions.filter(({ provider }) => !provider),
+      ...newestFirst.slice(0, limit),
     ],
     find: async (sessionIds) =>
       sessions.filter(({ id, provider }) => provider && sessionIds.includes(id)),

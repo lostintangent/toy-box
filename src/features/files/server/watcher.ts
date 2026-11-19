@@ -8,8 +8,12 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { SESSION_STORAGE_PATH } from "@sessions/model/constants";
 import { broadcast } from "@workspace/server/events";
 import { getProcessValue } from "@/shared/server/processState";
-import { workspaceFileId, type FileChange, type WorkspaceFile } from "../model";
-import { SESSION_ARTIFACTS_DIRECTORY } from "./paths";
+import {
+  SESSION_ARTIFACTS_DIRECTORY,
+  workspaceFileId,
+  type FileChange,
+  type WorkspaceFile,
+} from "../model";
 
 type WatchedFile = { file: WorkspaceFile; path: string; leases: number };
 type ArtifactObserver = (sessionId: string) => Promise<void>;

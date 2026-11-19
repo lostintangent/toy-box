@@ -13,7 +13,6 @@ import * as sessionActivity from "@sessions/server/state/activity";
 import * as sessionRegistry from "@sessions/server/state/registry";
 import {
   applySessionWorktree as applyWorktree,
-  getAllSessionWorktrees,
   mergeSessionWorktree as mergeWorktree,
 } from "@sessions/server/state/worktrees";
 import {
@@ -53,7 +52,7 @@ const withSessionId = createMiddleware({ type: "function" }).validator(sessionIn
 /** Fetch durable session list metadata in a single round-trip. */
 export const getSessionsState = createServerFn({ method: "GET" }).handler(() =>
   readSessionCatalog({
-    list: (limit) => Promise.all([listProviderSessions(limit), getAllSessionWorktrees()]),
+    list: listProviderSessions,
     find: findSessions,
   }),
 );
@@ -133,7 +132,9 @@ export const deliverMessage = createServerFn({ method: "POST" })
 
 export const cancelQueuedMessage = createServerFn({ method: "POST" })
   .validator(queuedMessageInputSchema)
-  .handler(({ data }): boolean => cancelRuntimeQueuedMessage(data.sessionId, data.clientId));
+  .handler(({ data }): Promise<boolean> =>
+    cancelRuntimeQueuedMessage(data.sessionId, data.clientId),
+  );
 
 /** Steer a queued message into the active SDK turn and await acceptance. */
 export const steerQueuedMessage = createServerFn({ method: "POST" })
@@ -152,10 +153,7 @@ export const answerSessionQuestion = createServerFn({ method: "POST" })
  *  Finishes the execution after interrupting SDK work. */
 export const abortSession = createServerFn({ method: "POST" })
   .middleware([withSessionId])
-  .handler(async ({ data }): Promise<boolean> => {
-    await abortRuntimeSession(data.sessionId);
-    return true;
-  });
+  .handler(({ data }): Promise<boolean> => abortRuntimeSession(data.sessionId));
 
 /** Rewind an idle local session to immediately before one root user message. */
 export const rewindSession = createServerFn({ method: "POST" })

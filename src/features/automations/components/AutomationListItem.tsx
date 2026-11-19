@@ -1,9 +1,10 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
 import { Clock3 } from "lucide-react";
 import { Badge } from "@/shared/ui/badge";
 import { RelativeTime } from "@/shared/ui/relative-time";
 import { CommandMenuItems } from "@/shared/commands/CommandMenuItem";
 import { SidebarSessionItem } from "@sessions/components/sidebar/SidebarSessionItem";
+import { sessionQueries } from "@sessions/queries";
 import { useSessionActivity } from "@sessions/useSessionActivity";
 import { automationCommands } from "../commands";
 import { automationMutations } from "../mutations";
@@ -23,8 +24,13 @@ export function AutomationListItem({
   const runMutation = useMutation(automationMutations.run());
   const activity = useSessionActivity(automation.id);
   const isRunning = activity.running || runMutation.isPending;
-  const hasUnreadActivity = activity.unread;
-  const canOpenSession = Boolean(automation.lastRunAt) || isRunning || hasUnreadActivity;
+  // Every run recreates the session, so its creation is when the last run started.
+  const { data: lastRunAt } = useSuspenseQuery({
+    ...sessionQueries.state,
+    select: (state) =>
+      state.sessions.find(({ id }) => id === automation.id)?.createdAt.toISOString(),
+  });
+  const canOpenSession = Boolean(lastRunAt) || isRunning;
 
   return (
     <SidebarSessionItem
@@ -34,8 +40,8 @@ export function AutomationListItem({
       time={
         isRunning ? (
           <span className="italic">Running</span>
-        ) : automation.lastRunAt ? (
-          <RelativeTime date={automation.lastRunAt} />
+        ) : lastRunAt ? (
+          <RelativeTime date={lastRunAt} />
         ) : (
           <span className="italic">Never run</span>
         )

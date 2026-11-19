@@ -38,7 +38,6 @@ describe("session list projection", () => {
     ].map((id) => ({ id, createdAt: new Date(0), updatedAt: new Date(0) }));
     const state: SessionsState = {
       sessions,
-      worktrees: {},
       ownership: {
         child: { type: "worker", parentSessionId: "standard" },
         inbox: { type: "worker", parentSessionId: null },
@@ -63,7 +62,6 @@ describe("session list projection", () => {
     }));
     const state: SessionsState = {
       sessions: [...workers, standard],
-      worktrees: {},
       ownership: Object.fromEntries(
         workers.map(({ id }) => [id, { type: "worker", parentSessionId: null }]),
       ),
@@ -76,7 +74,6 @@ describe("session list projection", () => {
   test("automation membership does not require a backing session", () => {
     const state: SessionsState = {
       sessions: [],
-      worktrees: {},
       ownership: {
         scheduled: { type: "automation" },
         inbox: { type: "worker", parentSessionId: null },
@@ -98,7 +95,6 @@ describe("session list projection", () => {
     ].map((id) => ({ id, createdAt: new Date(0), updatedAt: new Date(0) }));
     const state: SessionsState = {
       sessions,
-      worktrees: {},
       ownership: {
         child: { type: "worker", parentSessionId: "parent" },
         "file-worker": { type: "worker", parentSessionId: "parent" },

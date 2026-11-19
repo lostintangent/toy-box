@@ -673,6 +673,22 @@ describe("SessionExecution abort", () => {
 
     expect((await events.closed).at(-1)).toMatchObject({ type: "end", reason: "idle" });
   });
+
+  test("a deletion during a Stop joins its provider abort", async () => {
+    const sessionId = "session-remove-during-abort";
+    cleanUpExecutionAfterTest(sessionId);
+    const aborting = Promise.withResolvers<void>();
+    const abort = mock(() => aborting.promise);
+    const execution = createExecution(sessionId, makeFakeSession({ abort }));
+    await execution.deliver(userMessage("go"));
+
+    const stopping = execution.abort();
+    const removal = execution.remove();
+    aborting.resolve();
+    await Promise.all([stopping, removal]);
+
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("SessionExecution queued messages", () => {
@@ -866,7 +882,6 @@ describe("SessionExecution queued messages", () => {
         clientId: "q1",
         role: "user",
         content: "same prompt",
-        immediate: true,
         status: "submitting",
       },
     ]);
@@ -890,7 +905,6 @@ describe("SessionExecution queued messages", () => {
         clientId: "q1",
         role: "user",
         content: "same prompt",
-        immediate: true,
         status: "submitted",
       },
     ]);
@@ -928,14 +942,12 @@ describe("SessionExecution queued messages", () => {
         clientId: "steer-1",
         role: "user",
         content: "first steer",
-        immediate: true,
         status: "submitted",
       },
       {
         clientId: "steer-2",
         role: "user",
         content: "second steer",
-        immediate: true,
         status: "submitted",
       },
     ]);
@@ -946,7 +958,6 @@ describe("SessionExecution queued messages", () => {
         clientId: "steer-1",
         role: "user",
         content: "first steer",
-        immediate: true,
         status: "submitted",
       },
     ]);
@@ -1081,7 +1092,6 @@ describe("SessionExecution queued messages", () => {
       "status",
       "message_queued",
       "user_message",
-      "message_queued",
       "message_status_changed",
       "status",
       "end",
@@ -1517,7 +1527,7 @@ describe("createSession", () => {
     const created = createSession(sessionId, userMessage("Start"), {});
     const snapshot = getSessionSnapshot(sessionId);
     const subscribing = sessionStream(sessionId);
-    expect(getSessionRuntimeStatus(sessionId).running).toBe(true);
+    expect(getSessionRuntimeStatus(sessionId)).toEqual({ running: true, queuedCount: 0 });
 
     creating.resolve({ connection: makeFakeSession() });
     await created;

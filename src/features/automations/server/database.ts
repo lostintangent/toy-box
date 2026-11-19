@@ -65,17 +65,6 @@ export class AutomationDatabase {
     return rows.length > 0;
   }
 
-  async recordRunFinish(automationId: string, finishedAt: Date): Promise<Automation | null> {
-    const finishedAtIso = finishedAt.toISOString();
-    const [row] = await this.db<AutomationRow[]>`
-      UPDATE automations
-      SET last_run_at = ${finishedAtIso}, updated_at = ${finishedAtIso}
-      WHERE id = ${automationId}
-      RETURNING *
-    `;
-    return row ? automationFromRow(row) : null;
-  }
-
   async claimDue(): Promise<Automation[]> {
     const now = new Date();
     const nowIso = now.toISOString();
@@ -104,7 +93,6 @@ type AutomationRow = {
   created_at: string;
   updated_at: string;
   next_run_at: string;
-  last_run_at: string | null;
   cwd: string | null;
 };
 
@@ -132,6 +120,5 @@ function automationFromRow(row: AutomationRow): Automation {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     nextRunAt: row.next_run_at,
-    lastRunAt: row.last_run_at ?? undefined,
   };
 }

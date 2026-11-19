@@ -32,11 +32,11 @@ export class WorkerDatabase {
   }
 
   async list<Type extends Worker["type"]>(
-    scope: Type | Extract<WorkerOwner, { type: Type }>,
+    scope?: Type | Extract<WorkerOwner, { type: Type }>,
   ): Promise<Extract<Worker, { type: Type }>[]> {
-    const owner = scopePredicate(this.db, scope);
+    const owner = scope ? this.db`WHERE ${scopePredicate(this.db, scope)}` : this.db``;
     const rows = await this.db<WorkerRow[]>`
-      SELECT * FROM workers WHERE ${owner}
+      SELECT * FROM workers ${owner}
       ORDER BY created_at DESC, session_id
     `;
     return rows.map((row) => workerFromRow(row) as Extract<Worker, { type: Type }>);

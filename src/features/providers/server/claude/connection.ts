@@ -4,6 +4,7 @@ import {
   type CanUseTool,
   type EffortLevel,
   type Query,
+  type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AskUserQuestionInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
@@ -24,6 +25,10 @@ import { claudeQuestions, createClaudeProjector } from "./projector";
 export class ClaudeConnection implements SessionConnection {
   #native: Query | undefined;
   #input!: ReadableStreamDefaultController<SDKUserMessage>;
+  /** Settles once the SDK has written every send to the CLI. */
+  #written: ReturnType<typeof Promise.withResolvers<void>> | undefined;
+  /** Settles once the CLI takes up the send that starts a turn. */
+  #starting: (ReturnType<typeof Promise.withResolvers<void>> & { uuid: string }) | undefined;
   #listeners = new Set<(event: SessionEvent) => void>();
   // Sends awaiting their native replay: native message id to Toy Box clientId.
   #pendingInputs = new Map<string, string>();
@@ -37,11 +42,19 @@ export class ClaudeConnection implements SessionConnection {
     resume: boolean,
   ) {
     this.#reasoningEffort = configuration.model?.reasoningEffort;
-    const prompt = new ReadableStream<SDKUserMessage>({
-      start: (controller) => {
-        this.#input = controller;
+    const prompt = new ReadableStream<SDKUserMessage>(
+      {
+        start: (controller) => {
+          this.#input = controller;
+        },
+        // The SDK reads again only after writing what it read, so a pull finds every send written.
+        pull: () => {
+          this.#written?.resolve();
+          this.#written = undefined;
+        },
       },
-    });
+      { highWaterMark: 0 },
+    );
     this.#native = startClaudeQuery(
       {
         ...(resume ? { resume: nativeId } : { sessionId: nativeId }),
@@ -122,6 +135,8 @@ export class ClaudeConnection implements SessionConnection {
         ? { priority: hasImages ? ("later" as const) : ("next" as const) }
         : {}),
     });
+    this.#written ??= Promise.withResolvers();
+    if (!message.immediate) this.#starting = { uuid, ...Promise.withResolvers<void>() };
   }
 
   async setModel(model: ModelConfiguration): Promise<void> {
@@ -142,6 +157,10 @@ export class ClaudeConnection implements SessionConnection {
 
   /** Stops the turn and cancels the steers it has not reached. */
   async abort(): Promise<void> {
+    // The interrupt cancels every send the CLI has read but not taken up, so the send that starts a
+    // turn stays in history only once taken up. Steers need only have been read.
+    await this.#starting?.promise;
+    await this.#written?.promise;
     // Workaround (Claude Agent SDK 0.3.314; listed in providers/AGENTS.md): `Query.interrupt()`
     // sends `cancelQueued` as the protocol's `cancel_queued`, but its type omits the option.
     // @ts-expect-error
@@ -153,6 +172,8 @@ export class ClaudeConnection implements SessionConnection {
     const native = this.#native;
     this.#native = undefined;
     this.#input.close();
+    this.#written?.resolve();
+    this.#starting?.resolve();
     await closeClaudeQuery(native);
   }
 
@@ -171,6 +192,10 @@ export class ClaudeConnection implements SessionConnection {
     let error = "Claude Agent disconnected.";
     try {
       for await (const message of native) {
+        if (this.#starting && takesUp(message, this.#starting.uuid)) {
+          this.#starting.resolve();
+          this.#starting = undefined;
+        }
         // The projector alone decides what is transcript; replays of sends carry their clientId.
         let clientId: string | undefined;
         if (message.type === "user" && message.uuid) {
@@ -274,4 +299,15 @@ export class ClaudeConnection implements SessionConnection {
   #emit(event: SessionEvent): void {
     for (const listener of this.#listeners) listener(event);
   }
+}
+
+/**
+ * The CLI takes up a send when it replays it, but `/compact` and compaction before a turn replay
+ * only after compacting. Native idle retires any send it never took up.
+ */
+function takesUp(message: SDKMessage, uuid: string): boolean {
+  if (message.type === "user") return message.uuid === uuid;
+  if (message.type !== "system") return false;
+  if (message.subtype === "status") return message.status === "compacting";
+  return message.subtype === "session_state_changed" && message.state === "idle";
 }

@@ -6,8 +6,9 @@ import { getActiveWorker } from "./registry";
 export { deleteWorker, deleteWorkersForApp, deleteWorkersForSession } from "./cleanup";
 export { spawnWorker } from "./supervisor";
 
+/** List retained Workers, optionally only for one owner. */
 export async function listWorkers<Type extends Worker["type"]>(
-  scope: Type | Extract<WorkerOwner, { type: Type }>,
+  scope?: Type | Extract<WorkerOwner, { type: Type }>,
 ): Promise<Extract<Worker, { type: Type }>[]> {
   return new WorkerDatabase(await getStateDatabase()).list(scope);
 }

@@ -25,11 +25,10 @@ async function openInbox() {
     disposition: "started",
     waitForCompletion: () => completion.promise,
   }));
-  const deleteSession = spyOn(sessionRuntime, "deleteSessionIfExists").mockImplementation(
+  const deleteSession = spyOn(sessionRuntime, "deleteSession").mockImplementation(
     async (sessionId) => {
       await detachManagedSession(sessionId);
       broadcast({ type: "session.deleted", sessionId });
-      return true;
     },
   );
   async function finish(result: SessionCompletion = { status: "completed" }) {

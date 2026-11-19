@@ -4,7 +4,7 @@ Automations let users turn a prompt into dependable recurring work that runs wit
 
 ## Domain model
 
-An automation is a durable definition containing a title, prompt, model, cron schedule, and optional working directory, plus `nextRunAt` and `lastRunAt` lifecycle metadata. Its UUID is also the stable public ID of the session it manages. That identity persists across occurrences, while each run replaces the previous idle provider conversation so it starts with a clean transcript. No separate run ID or reusable-session option exists. Automation membership comes from its durable definition, never from the ID's spelling.
+An automation is a durable definition containing a title, prompt, model, cron schedule, and optional working directory, plus its `nextRunAt` schedule metadata. Its UUID is also the stable public ID of the session it manages. That identity persists across occurrences, while each run replaces the previous idle provider conversation so it starts with a clean transcript. No separate run ID or reusable-session option exists. Automation membership comes from its durable definition, never from the ID's spelling.
 
 The public operations are `list`, `create`, `update`, `delete`, and `run`. `server/index.ts` owns their lifecycle, publication, managed-session teardown, and dispatch. UI commands in `server/functions.ts` and model-facing tools in `server/tools.ts` validate inputs with the same schemas before calling that lifecycle; UI reads use the feature-owned catalog query. Trusted server orchestration calls that underlying lifecycle directly only when it already owns validated domain values.
 
@@ -26,11 +26,10 @@ Each run follows one path:
 2. If that stable session ID already has a live runtime, the attempt returns `started: false`; automation prompts never queue behind an overlapping run.
 3. Otherwise, `recreateSession` privately tears down any idle persisted execution so the new run begins with a clean transcript, then publishes the replacement draft while its provider connection starts. The stable session identity is never published as deleted.
 4. The runtime creates the fresh automation session through its first prompt with the configured model, working directory, and title.
-5. The caller returns after delivery starts. On completion, the automation supervisor records
-   `lastRunAt`, publishes the updated definition, and releases its now-idle connection while
-   preserving the result for inspection and follow-up.
+5. The caller returns after delivery starts. On completion, it releases the now-idle provider
+   connection while preserving the result for inspection and follow-up.
 
-The session runtime owns every execution transition: the first turn publishes running, and the execution's end publishes idle or unread. Automation events only synchronize durable definition and schedule metadata. A creation failure leaves the automation idle without changing `lastRunAt`; a metadata persistence failure leaves no changed automation row to publish.
+The session runtime owns every execution transition: the first turn publishes running, and the execution's end publishes idle or unread. Automation events only synchronize durable definition and schedule metadata. Every run recreates the session, so its `createdAt` in the Sessions catalog is when the last run started; a creation failure deletes the replacement and leaves the automation never run.
 
 ## Client synchronization
 
@@ -47,9 +46,9 @@ of `automation.deleted`, which drops the definition and its managed session toge
 sidebar menu and its command palette row offer the same actions. Both surfaces list only
 automations whose provider isn't disabled, the same rule that hides sessions.
 
-The mounted automation dialog owns one schedule draft. Daily, interval, and cron are editing modes; inactive tab inputs are remembered, and only the selected mode determines the saved cron.
+The mounted automation dialog owns one schedule draft. Daily, interval, and cron are editing modes; inactive tab inputs are remembered, and only the selected mode determines the saved cron. A saved cron opens in daily or interval mode only when that mode would save the same schedule; anything else opens as cron.
 
-A run from its sidebar menu displays as running immediately through the mutation's pending state, without opening its pane. Only the automation ID accompanies the request; the server uses the saved definition, and an open pane follows the replacement session's events exactly as it does for a scheduled run. Automation list items combine the pending request with Session activity for presentation. Run fires the request without waiting on it, so the palette closes immediately. A run started there shows as running in the sidebar once Session activity reports it running. Run is disabled while the automation runs.
+A run from its sidebar menu displays as running immediately through the mutation's pending state, without opening its pane. Only the automation ID accompanies the request; the server uses the saved definition, and an open pane follows the replacement session's events exactly as it does for a scheduled run. Automation list items combine the pending request with Session activity for presentation, and take their last run's start from the Sessions catalog. Run fires the request without waiting on it, so the palette closes immediately. A run started there shows as running in the sidebar once Session activity reports it running. Run is disabled while the automation runs.
 
 Automation events synchronize definition and schedule metadata through the shared workspace
 transport. Sessions consumes the same events to maintain ownership, without copying definitions.

@@ -66,7 +66,7 @@ async function waitForSession(sessionId: string, timeoutMs?: number): Promise<Se
     if (timeoutMs === undefined) return expected;
     return withTimeout(expected, timeoutMs, () => ({ status: "timed_out" }));
   }
-  const execution = liveExecution(sessionId);
+  const execution = await currentSessionExecution(sessionId);
   if (execution) return execution.waitForCompletion(timeoutMs);
   return completionResult((await loadSessionSnapshot(sessionId)).messages);
 }
@@ -77,30 +77,32 @@ export async function getSessionSnapshot(sessionId: string): Promise<SessionStat
   return execution ? execution.getSessionState() : loadSessionSnapshot(sessionId);
 }
 
+/** Whether the session has a live execution, including one still starting. */
 export function isSessionRunning(sessionId: string): boolean {
-  return liveExecution(sessionId) !== undefined;
+  return executions.has(sessionId);
 }
 
-export function getSessionRuntimeStatus(sessionId: string): {
-  running: boolean;
-  queuedCount: number;
-} {
+/** Answer at once, without waiting out a start. Nothing queues before the first turn opens. */
+export function getSessionRuntimeStatus(sessionId: string) {
+  const execution = executions.get(sessionId);
   return {
-    running: executions.has(sessionId),
-    queuedCount: liveExecution(sessionId)?.getSessionState().queuedMessages.length ?? 0,
+    running: execution !== undefined,
+    queuedCount:
+      execution instanceof SessionExecution ? execution.getSessionState().queuedMessages.length : 0,
   };
 }
 
-export function cancelQueuedMessage(sessionId: string, clientId: string): boolean {
-  return liveExecution(sessionId)?.cancelQueuedMessage(clientId) ?? false;
+export async function cancelQueuedMessage(sessionId: string, clientId: string): Promise<boolean> {
+  return (await currentSessionExecution(sessionId))?.cancelQueuedMessage(clientId) ?? false;
 }
 
 export async function steerQueuedMessage(sessionId: string, clientId: string): Promise<boolean> {
-  return liveExecution(sessionId)?.steerQueuedMessage(clientId) ?? false;
+  return (await currentSessionExecution(sessionId))?.steerQueuedMessage(clientId) ?? false;
 }
 
+/** Stop the session's execution. One still starting opens its turn, then stops. */
 export async function abortSession(sessionId: string): Promise<boolean> {
-  const execution = liveExecution(sessionId);
+  const execution = await currentSessionExecution(sessionId);
   if (!execution) return false;
   await execution.abort();
   return true;
@@ -110,7 +112,7 @@ export async function answerSessionQuestion(
   sessionId: string,
   answer: SessionQuestionAnswer,
 ): Promise<boolean> {
-  return liveExecution(sessionId)?.answerQuestion(answer) ?? false;
+  return (await currentSessionExecution(sessionId))?.answerQuestion(answer) ?? false;
 }
 
 /** Discard one root user turn and every later conversation event while preserving files. */
@@ -127,7 +129,7 @@ export async function rewindSession(sessionId: string, timestamp: string): Promi
 
 /** Filesystem observation refreshes artifact membership for active sessions. */
 export async function refreshSessionArtifacts(sessionId: string): Promise<void> {
-  const execution = liveExecution(sessionId);
+  const execution = await currentSessionExecution(sessionId);
   if (execution) execution.updateArtifacts(await listSessionArtifacts(sessionId));
 }
 
@@ -179,40 +181,25 @@ export async function recreateSession(
   message: MessageInput,
   options: SessionCreationOptions,
 ) {
-  await deleteSessionIfExists(sessionId, { publish: false });
+  await deleteSession(sessionId, { publish: false });
   await sessionRegistry.createSessionRecord(sessionId, { title: options.name });
   try {
     return await createSession(sessionId, message, options);
   } catch (error) {
-    await deleteSessionIfExists(sessionId);
+    await deleteSession(sessionId);
     throw error;
   }
 }
 
-/** Delete a session and the complete tree of managed sessions it owns. */
+/** Delete a session, including one still starting or already gone, and the complete
+ *  tree of managed sessions it owns. */
 export async function deleteSession(
   sessionId: string,
   options?: { publish?: boolean },
 ): Promise<void> {
   await deleteOwnedSessions(sessionId);
-  await liveExecution(sessionId)?.remove();
+  await (await currentSessionExecution(sessionId))?.remove();
   await sessionRegistry.deleteSessionResources(sessionId, options);
-}
-
-/** Delete a session when present, while preserving real teardown failures. */
-export async function deleteSessionIfExists(
-  sessionId: string,
-  options?: { publish?: boolean },
-): Promise<boolean> {
-  try {
-    await deleteSession(sessionId, options);
-    return true;
-  } catch (error) {
-    if (!sessionRegistry.evictConnectionIfStale(sessionId, error)) throw error;
-    await liveExecution(sessionId)?.remove();
-    await sessionRegistry.removeDeletedSessionState(sessionId, options);
-    return false;
-  }
 }
 
 /** Deliver to an existing session without subscribing. */
@@ -254,13 +241,7 @@ async function deliver(sessionId: string, message: MessageInput, create?: Sessio
   }
 }
 
-/** The live execution. One still starting isn't live yet. */
-function liveExecution(sessionId: string): SessionExecution | undefined {
-  const entry = executions.get(sessionId);
-  return entry instanceof Promise ? undefined : entry;
-}
-
-/** The live execution, including one still starting. A failed start belongs to its initiator. */
+/** The live execution, once any start settles. A failed start belongs to its initiator. */
 async function currentSessionExecution(sessionId: string): Promise<SessionExecution | undefined> {
   const entry = executions.get(sessionId);
   return entry instanceof Promise ? entry.catch(() => undefined) : entry;

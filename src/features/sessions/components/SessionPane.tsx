@@ -70,7 +70,7 @@ export function SessionPane({
   const [directorySelection, setDirectorySelection] = useState<string | null | undefined>(
     undefined,
   );
-  // Subscribe only to this session's durable metadata and worktree.
+  // Subscribe only to this session's durable metadata.
   const { data: sessionRecord, isLoading: isSessionRecordLoading } = useQuery({
     ...sessionQueries.state,
     enabled: !isPassive,
@@ -78,7 +78,6 @@ export function SessionPane({
       const session = state.sessions.find((session) => session.id === sessionId);
       return {
         session,
-        worktree: state.worktrees[sessionId],
         recentDirectory:
           session && !session.provider && directorySelection === undefined
             ? getRecentDirectories(state.sessions)[0]?.cwd
@@ -197,7 +196,7 @@ export function SessionPane({
   // ---------------------------------------------------------------------------
   const scrollToBottomRef = useRef<(() => void) | null>(null);
 
-  const worktree = sessionRecord?.worktree;
+  const worktree = session?.worktree;
   const isWorktreeSession = !isDraft && Boolean(worktree?.branch);
   const {
     mutate: mergeWorktree,

@@ -76,13 +76,7 @@ describe("artifact paths", () => {
       ).toBe("report.md");
     });
 
-    test("rejects root session-state files and other sessions", () => {
-      expect(
-        projectSessionArtifactPath(
-          "toy-box-session",
-          resolve(homedir(), ".toy-box/sessions/toy-box-session/report.md"),
-        ),
-      ).toBeUndefined();
+    test("rejects other sessions' artifacts", () => {
       expect(
         projectSessionArtifactPath(
           "toy-box-session",
@@ -98,20 +92,9 @@ describe("artifact paths", () => {
   });
 
   describe("workspace files", () => {
-    test("classifies absolute Session artifacts without losing their owner", () => {
-      expect(
-        workspaceFileFromAbsolutePath(
-          resolve(homedir(), ".toy-box/sessions/toy-box-session/artifacts/nested/report.md"),
-        ),
-      ).toEqual({
-        kind: "session",
-        sessionId: "toy-box-session",
-        path: "nested/report.md",
-      });
-      expect(workspaceFileFromAbsolutePath("/repo/src/foo.ts")).toEqual({
-        kind: "machine",
-        path: "/repo/src/foo.ts",
-      });
+    test("a session-shaped path outside this home's session root is a machine file", () => {
+      const path = "/Volumes/Backup/.toy-box/sessions/s1/artifacts/a.md";
+      expect(workspaceFileFromAbsolutePath(path)).toEqual({ kind: "machine", path });
     });
 
     test("resolves a session file under its session artifacts folder", () => {

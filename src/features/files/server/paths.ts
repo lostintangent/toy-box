@@ -5,9 +5,12 @@
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { SESSION_STORAGE_PATH } from "@sessions/model/constants";
-import { machineFile, sessionFile, type WorkspaceFile } from "../model";
-
-export const SESSION_ARTIFACTS_DIRECTORY = "artifacts";
+import {
+  machineFile,
+  SESSION_ARTIFACTS_DIRECTORY,
+  sessionFileFromPath,
+  type WorkspaceFile,
+} from "../model";
 
 /** Resolve a domain-relative artifact path under a session's artifacts directory. */
 export function resolveSessionArtifactPath(sessionId: string, artifactPath: string): string | null {
@@ -40,15 +43,10 @@ export function resolveWorkspaceFile(file: WorkspaceFile): string | null {
 export function workspaceFileFromAbsolutePath(path: string): WorkspaceFile {
   const absolutePath = resolve(path);
   const sessionStateRoot = resolve(homedir(), SESSION_STORAGE_PATH);
-  if (isPathInsideRoot(sessionStateRoot, absolutePath)) {
-    const [sessionId, directory, ...artifactPath] = relative(sessionStateRoot, absolutePath).split(
-      sep,
-    );
-    if (sessionId && directory === SESSION_ARTIFACTS_DIRECTORY && artifactPath.length > 0) {
-      return sessionFile(sessionId, artifactPath.join("/"));
-    }
-  }
-  return machineFile(absolutePath);
+  return (
+    (isPathInsideRoot(sessionStateRoot, absolutePath) && sessionFileFromPath(absolutePath)) ||
+    machineFile(absolutePath)
+  );
 }
 
 /** A machine file resolves to its own absolute path. One trusted owner, so no sandbox root. */

@@ -21,19 +21,20 @@ creating another source of transcript truth.
   persistence, worktree, session record, cached snapshot, activity, managed relationships, pin, and
   workspace projection. Permanent deletion publishes that
   the identity is gone; stable-ID recreation suppresses that publication and inserts the replacement.
-  Native connections finish disconnecting before their history is deleted, so a final flush cannot
-  recreate a deleted session. That includes a connection evicted earlier, such as after an
-  unconfirmed Stop, whose disconnect deletion awaits for at most five seconds. Only deletion waits
-  for it; the next turn resumes a fresh connection at once.
+  Deletion evicts the native connection and waits at most five seconds for it to disconnect before
+  deleting its history, so a final flush cannot recreate a deleted session and a failed or stalled
+  disconnect cannot keep one. A connection evicted earlier, such as after an unconfirmed Stop, gets
+  the same wait. Only deletion waits for it; the next turn resumes a fresh connection at once.
+  Deletion is total: a session whose history is already gone, or never existed, loses the rest.
 - `snapshots.ts` reconstructs `SessionState` through provider history projection and the canonical
   reducer, then caches that same value under the caller-supplied session ID. Readers share it
   without copying, because the reducer replaces every branch it changes. Active truth always
   comes from the runtime; cached snapshots only avoid replay work.
 - `schema.ts` defines the Sessions-owned `sessions` and `worktrees` tables. `sessions.ts` owns
   durable public identity in the `sessions` table. A row without a provider
-  is a draft; native creation adds its provider to that same row. Record reads return `Session`;
-  catalog discovery enriches it with native metadata. `native_id` is an optional override:
-  when absent, the canonical session UUID is also the native ID. Providers own
+  is a draft; native creation adds its provider to that same row. Record reads return `Session`
+  with its worktree; catalog discovery enriches it with native metadata. `native_id` is an
+  optional override: when absent, the canonical session UUID is also the native ID. Providers own
   names and message and attachment history, including after rewind.
 - `activity.ts` keeps every session's process-local activity and is its only writer. The runtime
   sets running, waiting, background, idle, or unread, and clients mark a session read; each

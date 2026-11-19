@@ -305,25 +305,16 @@ export async function updateSessionTitle(sessionId: string, title: string): Prom
 
 // ── Deletion ───────────────────────────────────────────────────────────
 
-/** Delete a session's connection, provider history, and state once its runtime is gone. */
+/** Delete a session's connection, provider history, and state once its runtime is gone,
+ *  including when its history already is. */
 export async function deleteSessionResources(
-  sessionId: string,
-  options?: { publish?: boolean },
-): Promise<void> {
-  // Native teardown can flush history; it must finish before history is deleted.
-  const cached = connections.get(sessionId);
-  if (cached) await disconnectConnection(sessionId, cached);
-  await evictions.get(sessionId);
-  const record = await readSession(sessionId);
-  if (!record || record.provider) await deleteProviderSession(sessionId);
-  await removeDeletedSessionState(sessionId, options);
-}
-
-/** Delete a session's state, including when its provider history is already gone. */
-export async function removeDeletedSessionState(
   sessionId: string,
   { publish = true }: { publish?: boolean } = {},
 ): Promise<void> {
+  // Native teardown can flush history, so it gets five seconds first, but can't block deletion.
+  evictConnection(sessionId);
+  await evictions.get(sessionId);
+  await deleteProviderSession(sessionId);
   await deleteSessionWorktree(sessionId);
   await deleteSessionFiles(sessionId);
   await deleteSessionRecord(sessionId);

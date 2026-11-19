@@ -117,7 +117,14 @@ export const copilotProvider: SessionProvider = {
       ...nativeConfiguration(configuration),
       onEvent: early.onEvent,
     });
-    return connect(native, configuration.allowUserQuestions, early);
+    const connection = await connect(native, configuration.allowUserQuestions, early);
+    const { model } = configuration;
+    // Workaround (Copilot CLI 1.0.112; listed in providers/AGENTS.md): resume keeps the session's
+    // last effort when the configuration names none, even one the resumed model rejects. Remove
+    // once resume clears it.
+    if (model && !model.reasoningEffort && (await native.rpc.model.getCurrent()).reasoningEffort)
+      await connection.setModel(model);
+    return connection;
   },
   async isHistoryCurrent(nativeId, capturedAt) {
     const metadata = await (await startCopilotClient()).getSessionMetadata(nativeId);

@@ -282,7 +282,6 @@ export type AppSession = Session & {
    * automation's durable run session, or a member of the Hyper workspace.
    */
   kind: "standard" | "automation" | "hyper";
-  worktree?: SessionWorktree;
   /** Worker sessions owned by this session or one of its files. */
   children: AppSession[];
 };

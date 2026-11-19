@@ -50,7 +50,7 @@ const createSessionMock = mock(async (..._args: CreateArguments) => {
     waitForCompletion: () => workerCompletion.promise,
   };
 });
-const deleteSessionIfExistsMock = mock(async (_sessionId: string) => true);
+const deleteSessionMock = mock(async (_sessionId: string) => {});
 const getSessionSnapshotMock = mock(async () => parentSnapshot);
 const getSessionDirectoryMock = mock(async () => parentDirectory);
 const abortSessionMock = mock(async () => false);
@@ -59,7 +59,7 @@ mock.module("@sessions/server/runtime", () => ({
   ...realStreamModule,
   abortSession: abortSessionMock,
   createSession: createSessionMock,
-  deleteSessionIfExists: deleteSessionIfExistsMock,
+  deleteSession: deleteSessionMock,
   getSessionSnapshot: getSessionSnapshotMock,
   getSessionDirectory: getSessionDirectoryMock,
 }));
@@ -86,6 +86,8 @@ function storedWorker() {
   return workers.get("toy-box-worker");
 }
 
+const canceled: Completion = { status: "failed", error: "Worker toy-box-worker was canceled." };
+
 /** Waits by ID, as the worker's callers do. */
 async function workerResult(): Promise<Completion> {
   const [result] = await streamModule.waitForSessions(["toy-box-worker"]);
@@ -102,10 +104,9 @@ beforeEach(async () => {
     disposition: "started",
     waitForCompletion: () => workerCompletion.promise,
   }));
-  deleteSessionIfExistsMock.mockClear();
-  deleteSessionIfExistsMock.mockImplementation(async (sessionId) => {
+  deleteSessionMock.mockClear();
+  deleteSessionMock.mockImplementation(async (sessionId) => {
     await workers.delete(sessionId);
-    return true;
   });
   getSessionSnapshotMock.mockClear();
   getSessionDirectoryMock.mockClear();
@@ -144,14 +145,14 @@ describe("spawnWorker", () => {
     );
     expect(getSessionSnapshotMock).toHaveBeenCalledWith("toy-box-parent");
     expect(getSessionDirectoryMock).toHaveBeenCalledWith("toy-box-parent");
-    expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
+    expect(deleteSessionMock).not.toHaveBeenCalled();
 
     const completion = workerResult();
     workerCompletion.resolve({ status: "completed", response: "Done." });
 
     await expect(completion).resolves.toEqual({ status: "completed", response: "Done." });
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledTimes(1);
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
+    expect(deleteSessionMock).toHaveBeenCalledTimes(1);
+    expect(deleteSessionMock).toHaveBeenCalledWith("toy-box-worker");
   });
 
   test("admits without waiting for startup and executes without a completion observer", async () => {
@@ -193,7 +194,7 @@ describe("spawnWorker", () => {
     ).rejects.toThrow();
 
     expect(createSessionMock).not.toHaveBeenCalled();
-    expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
+    expect(deleteSessionMock).not.toHaveBeenCalled();
     expect(await storedWorker()).toEqual(existing);
   });
 
@@ -216,7 +217,7 @@ describe("spawnWorker", () => {
 
     await expect(spawning).rejects.toBeInstanceOf(WorkerCanceledError);
     expect(createSessionMock).not.toHaveBeenCalled();
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith(sessionWorker.sessionId);
+    expect(deleteSessionMock).toHaveBeenCalledWith(sessionWorker.sessionId);
   });
 
   test("honors cancellation while inheritance is pending", async () => {
@@ -233,7 +234,7 @@ describe("spawnWorker", () => {
     await expect(spawning).rejects.toBeInstanceOf(WorkerCanceledError);
 
     expect(createSessionMock).not.toHaveBeenCalled();
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith(sessionWorker.sessionId);
+    expect(deleteSessionMock).toHaveBeenCalledWith(sessionWorker.sessionId);
   });
 
   test("uses explicit model and directory overrides without reading parent state", async () => {
@@ -274,7 +275,7 @@ describe("spawnWorker", () => {
         useWorktree: false,
       },
     );
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
+    expect(deleteSessionMock).toHaveBeenCalledWith("toy-box-worker");
   });
 
   test("deletes failed workers while preserving their completion result", async () => {
@@ -289,7 +290,7 @@ describe("spawnWorker", () => {
       status: "failed",
       response: "Could not finish.",
     });
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
+    expect(deleteSessionMock).toHaveBeenCalledWith("toy-box-worker");
     expect(log).not.toHaveBeenCalled();
   });
 
@@ -310,7 +311,7 @@ describe("spawnWorker", () => {
       parentSessionId: "toy-box-parent",
       useWorktree: true,
     });
-    expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
+    expect(deleteSessionMock).not.toHaveBeenCalled();
   });
 
   test("retains an app-owned worker when it is not ephemeral", async () => {
@@ -323,7 +324,7 @@ describe("spawnWorker", () => {
     workerCompletion.resolve({ status: "completed" });
 
     await workerResult();
-    expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
+    expect(deleteSessionMock).not.toHaveBeenCalled();
   });
 
   test("cancels a running worker through its live execution", async () => {
@@ -337,7 +338,7 @@ describe("spawnWorker", () => {
 
     await expect(cancelWorker("toy-box-worker")).resolves.toBe(true);
     expect(abortSessionMock).toHaveBeenCalledWith("toy-box-worker");
-    await expect(workerResult()).rejects.toBeInstanceOf(WorkerCanceledError);
+    await expect(workerResult()).resolves.toEqual(canceled);
     await expect(cancelWorker("toy-box-worker")).resolves.toBe(false);
     expect(log).not.toHaveBeenCalled();
   });
@@ -357,7 +358,7 @@ describe("spawnWorker", () => {
       status: "failed",
       error: creationError.message,
     });
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
+    expect(deleteSessionMock).toHaveBeenCalledWith("toy-box-worker");
   });
 
   test.each([
@@ -382,7 +383,7 @@ describe("spawnWorker", () => {
       error: error.message,
     });
     expect(await storedWorker()).toEqual(worker);
-    expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
+    expect(deleteSessionMock).not.toHaveBeenCalled();
   });
 
   test("retains an admitted durable Worker when inheritance fails", async () => {
@@ -403,7 +404,7 @@ describe("spawnWorker", () => {
       status: "failed",
       error: error.message,
     });
-    expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
+    expect(deleteSessionMock).not.toHaveBeenCalled();
   });
 
   test("normalizes a startup rejection caused by cancellation", async () => {
@@ -422,8 +423,8 @@ describe("spawnWorker", () => {
     await starting.promise;
     await cancelWorker(sessionWorker.sessionId);
     release.resolve();
-    await expect(workerResult()).rejects.toBeInstanceOf(WorkerCanceledError);
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith(sessionWorker.sessionId);
+    await expect(workerResult()).resolves.toEqual(canceled);
+    expect(deleteSessionMock).toHaveBeenCalledWith(sessionWorker.sessionId);
   });
 
   test("cancels an Inbox Worker during Session startup and cleans up the late creation", async () => {
@@ -450,8 +451,8 @@ describe("spawnWorker", () => {
     await starting.promise;
     await expect(cancelWorker("toy-box-worker")).resolves.toBe(true);
     release.resolve();
-    await expect(workerResult()).rejects.toBeInstanceOf(WorkerCanceledError);
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
+    await expect(workerResult()).resolves.toEqual(canceled);
+    expect(deleteSessionMock).toHaveBeenCalledWith("toy-box-worker");
     expect(await cancelWorker("toy-box-worker")).toBe(false);
   });
 
@@ -471,7 +472,7 @@ describe("spawnWorker", () => {
       error: directoryError.message,
     });
     expect(createSessionMock).not.toHaveBeenCalled();
-    expect(deleteSessionIfExistsMock).toHaveBeenCalledWith("toy-box-worker");
+    expect(deleteSessionMock).toHaveBeenCalledWith("toy-box-worker");
   });
 
   test("sweeps ephemeral workers left by a previous process", async () => {
@@ -481,7 +482,7 @@ describe("spawnWorker", () => {
 
     await sweepAbandonedWorkers();
 
-    expect(deleteSessionIfExistsMock.mock.calls.map(([sessionId]) => sessionId)).toEqual([
+    expect(deleteSessionMock.mock.calls.map(([sessionId]) => sessionId)).toEqual([
       "toy-box-worker-a",
       "toy-box-worker-b",
     ]);
@@ -489,7 +490,7 @@ describe("spawnWorker", () => {
 
   test("reports cleanup failures to completion waiters", async () => {
     const cleanupError = new Error("Unable to delete worker.");
-    deleteSessionIfExistsMock.mockImplementationOnce(async () => {
+    deleteSessionMock.mockImplementationOnce(async () => {
       throw cleanupError;
     });
     await spawn({
@@ -523,11 +524,10 @@ describe("spawnWorker", () => {
         },
       });
       if (!retain) {
-        deleteSessionIfExistsMock.mockImplementationOnce(async () => {
+        deleteSessionMock.mockImplementationOnce(async () => {
           cleaning.resolve();
           await cleanup.promise;
           await workers.delete(latest.sessionId);
-          return true;
         });
       }
       await workers.update(latest.sessionId, { metadata: latest.metadata });
@@ -601,11 +601,11 @@ describe("spawnWorker", () => {
     if (action === "canceled") await cancelWorker(sessionWorker.sessionId);
     else await workers.delete(sessionWorker.sessionId);
     workerCompletion.resolve({ status: "completed" });
-    if (action === "canceled")
-      await expect(workerResult()).rejects.toBeInstanceOf(WorkerCanceledError);
-    else await expect(workerResult()).resolves.toEqual({ status: "completed" });
+    await expect(workerResult()).resolves.toEqual(
+      action === "canceled" ? canceled : { status: "completed" },
+    );
     expect(retention).not.toHaveBeenCalled();
-    expect(deleteSessionIfExistsMock).not.toHaveBeenCalled();
+    expect(deleteSessionMock).not.toHaveBeenCalled();
   });
 
   test("cancellation during retention takes precedence over automatic deletion", async () => {
@@ -623,7 +623,7 @@ describe("spawnWorker", () => {
     await deciding.promise;
     await cancelWorker(sessionWorker.sessionId);
     decision.resolve(false);
-    await expect(workerResult()).rejects.toBeInstanceOf(WorkerCanceledError);
+    await expect(workerResult()).resolves.toEqual(canceled);
     expect(await storedWorker()).toEqual(sessionWorker);
   });
 });

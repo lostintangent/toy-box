@@ -11,7 +11,10 @@ An editor addresses one `WorkspaceFile`, whose `kind` is either `session` (an _a
 
 Clients never encode physical storage. Read, write, watch, serve, and worker operations all carry the same `WorkspaceFile` address, and one server resolver (`resolveWorkspaceFile`) selects the absolute path.
 When an Agent shares an absolute path with a Channel, Files performs the inverse classification once
-so a path beneath Session storage remains a Session file rather than becoming a machine file.
+so a path beneath Session storage remains a Session file rather than becoming a machine file. The
+model's `sessionFileFromPath` names the Session file a path addresses under any home, so a client,
+which doesn't know the server's home directory, can match a link an agent wrote; the server applies
+it only beneath its own Session storage.
 Shared tool projection derives that same identity from successful `open_file` / `close_file`
 calls' recorded path arguments; their results only acknowledge success.
 
@@ -71,8 +74,6 @@ metadata. Workers' active query projects pending workers back to connected clien
 selects those for its file address; renderers interpret their own metadata without teaching the host
 another workflow. Worker association remains process-local because it is published before the worker
 session runtime exists.
-
-An accepted spawn refreshes Workers' active query before resolving, so a renderer's local mutation state hands off directly to the authoritative worker projection.
 
 Workers for one resolved file can progress concurrently. The watched file remains their shared source of truth: each worker must reread it immediately before every write and merge its intended change around intervening edits. The [Workers feature](../workers/AGENTS.md) owns this admission policy and its started/finished projection; cancelling admitted work delegates to its race-safe supervisor without affecting siblings. Consumers may monitor the worker through the general session-completion API and receive its final assistant response, but ephemeral completion is not retained as history. File workers are always ephemeral, stay out of Inbox and the normal session list, and disappear after finishing; a startup sweep deletes ephemeral workers abandoned by a process restart. Source deletion finishes outstanding associations and recursively tears down its worker tree. The watched file remains the durable result.
 

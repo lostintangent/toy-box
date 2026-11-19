@@ -108,7 +108,6 @@ function applySubscriptionEvent(state: SessionState, event: SessionSubscriptionE
 export function createEmptySessionsState(): SessionsState {
   return {
     sessions: [],
-    worktrees: {},
     ownership: {},
   };
 }

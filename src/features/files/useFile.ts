@@ -158,14 +158,12 @@ export function useFile(file: WorkspaceFile, mode: WorkspaceFileMode): Workspace
     }
     await flush({ notifyAgent: false });
     const { prompt, ...details } = request;
-    const worker = await spawn.mutateAsync({
+    return spawn.mutateAsync({
       ...details,
       type: "file",
       file,
       message: { content: prompt },
     });
-    await workerQueries.active.refresh(queryClient);
-    return worker;
   }
 
   async function cancelWorker(workerSessionId: string): Promise<void> {

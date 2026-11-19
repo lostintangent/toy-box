@@ -3,6 +3,7 @@ import { MutationObserver, QueryClient, QueryObserver } from "@tanstack/react-qu
 import type { SessionState, SessionSubscriptionEvent } from "./model";
 import type { SessionActivity, SessionsActivity } from "./model/activity";
 import { createInitialSessionState } from "./model/reducer";
+import { sessionMutations } from "./mutations";
 import { sessionQueries } from "./queries";
 
 const snapshot = (revision: number, content: string): SessionSubscriptionEvent => ({
@@ -174,6 +175,27 @@ test("waits for this client's delivery, and drops a snapshot that one started du
   expect((await session.connections.next()).url).toBe("/api/sessions/session?after=4");
 });
 
+test("waits for this client's Stop, then subscribes once from its revision", async () => {
+  const session = watchSession();
+  await openIdle(session);
+
+  const stop = session.stop();
+  // A cold start announces its run only after the Stop ended the subscription.
+  session.setActivity({ status: "running", since: 1 });
+  void session.client.refetchQueries({ queryKey: session.options.queryKey, type: "active" });
+  await settle();
+  expect(session.connections.count).toBe(1);
+
+  stop.resolve();
+  const stopped = await session.connections.next();
+  expect(stopped.url).toBe("/api/sessions/session?after=4");
+  stopped.send(snapshot(6, "Hello"));
+  stopped.end();
+  await session.waitFor((state) => state?.revision === 6);
+  await settle();
+  expect(session.connections.count).toBe(2);
+});
+
 test("ends the subscription when the last watcher leaves, even while a pin retains it", async () => {
   const session = watchSession();
   session.pin();
@@ -343,6 +365,18 @@ function watchSession(activity?: SessionActivity) {
       });
       void observer.mutate().catch(() => {});
       return sent;
+    },
+    /** Starts a Stop from this client, which ends the subscription as a pane's does, settled
+     *  by the test. */
+    stop() {
+      const stopped = Promise.withResolvers<boolean>();
+      const observer = new MutationObserver(client, {
+        ...sessionMutations.abortSession(sessionId),
+        mutationFn: () => stopped.promise,
+        onMutate: () => client.cancelQueries({ queryKey: key, exact: true }),
+      });
+      void observer.mutate().catch(() => {});
+      return { resolve: () => stopped.resolve(true) };
     },
     /** Counts the subscription's writes to the detail from now on. */
     countWrites() {

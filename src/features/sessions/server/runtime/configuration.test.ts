@@ -10,7 +10,7 @@ import { stopProviders } from "@providers/server";
 import * as cli from "@providers/server/cli";
 import { codexProvider } from "@providers/server/codex/provider";
 import { copilotProvider } from "@providers/server/copilot/provider";
-import { AutomationDatabase } from "@automations/server/database";
+import { createAutomation } from "@automations/server";
 import { WorkerDatabase } from "@workers/server/database";
 import { openTestDatabase } from "@/server/testFixtures";
 import * as sdk from "../providers";
@@ -243,7 +243,7 @@ describe("Session-owned configuration lifetime", () => {
     });
     const hyperSessionId = `${sessionId}-hyper`;
     await settings.saveSettings({ ...DEFAULT_SETTINGS, hyperSessionId });
-    const { id: automationId } = await new AutomationDatabase(db).create({
+    const { id: automationId } = await createAutomation({
       title: "Daily summary",
       prompt: "Summarize",
       model: { provider: "copilot", name: "gpt-5" },
@@ -571,14 +571,41 @@ describe("Session-owned configuration lifetime", () => {
     expect(handles[1]!.send).toHaveBeenCalledWith(expect.objectContaining({ content: "Second" }));
   });
 
+  test("a delivery while Stop awaits the provider starts the next turn once it confirms", async () => {
+    const { sessionId, handles } = await setup();
+    await deliverSessionMessage(sessionId, { content: "First" });
+    const aborting = Promise.withResolvers<void>();
+    const confirming = Promise.withResolvers<void>();
+    handles[0]!.abort.mockImplementation(() => {
+      aborting.resolve();
+      return confirming.promise;
+    });
+
+    const stopping = abortSession(sessionId);
+    await aborting.promise;
+    const delivering = deliverSessionMessage(sessionId, { content: "Second" });
+    confirming.resolve();
+    await stopping;
+
+    await expect(delivering).resolves.toMatchObject({ disposition: "started" });
+    expect(handles[0]!.send).toHaveBeenLastCalledWith(
+      expect.objectContaining({ content: "Second" }),
+    );
+  });
+
   test("a stop the provider never confirms leaves the next delivery a fresh connection", async () => {
     const { sessionId, resume, handles } = await setup();
     await deliverSessionMessage(sessionId, { content: "First" });
-    handles[0]!.abort.mockImplementation(() => new Promise(() => {}));
+    const aborting = Promise.withResolvers<void>();
+    handles[0]!.abort.mockImplementation(() => {
+      aborting.resolve();
+      return new Promise(() => {});
+    });
 
     jest.useFakeTimers();
     try {
       const stopping = abortSession(sessionId);
+      await aborting.promise;
       jest.advanceTimersByTime(5_000);
       await stopping;
     } finally {
@@ -639,6 +666,89 @@ describe("Session-owned configuration lifetime", () => {
     registry.evictConnection(sessionId);
     jest.advanceTimersByTime(5_000);
     await expect(deleteSession(sessionId)).resolves.toBeUndefined();
+  });
+
+  test("deletion during a creation removes the session the creation makes", async () => {
+    const { sessionId, create } = await setup();
+    const handle = makeSession();
+    const creating = Promise.withResolvers<void>();
+    create.mockImplementationOnce(async () => {
+      await creating.promise;
+      return { connection: handle.session, provider: { id: "copilot", sessionId: "test" } };
+    });
+    const deleteHistory = spyOn(sdk, "deleteSession").mockImplementation(async () => {});
+
+    const created = createSession(sessionId, { content: "Start" }, {});
+    const deletion = deleteSession(sessionId);
+    creating.resolve();
+    await created;
+    await deletion;
+
+    expect(await readSession(sessionId)).toBeUndefined();
+    expect(deleteHistory).toHaveBeenCalledWith(sessionId);
+    expect(isSessionRunning(sessionId)).toBe(false);
+  });
+
+  test("deletion during a creation's first send doesn't create the session again", async () => {
+    const { sessionId, create, resume } = await setup();
+    const handle = makeSession();
+    const sent = Promise.withResolvers<void>();
+    const sending = Promise.withResolvers<void>();
+    handle.send.mockImplementationOnce(() => {
+      sent.resolve();
+      return sending.promise;
+    });
+    // Disconnecting fails the send still in flight, as a provider's closed transport does.
+    handle.disconnect.mockImplementationOnce(async () =>
+      sending.reject(new SessionConnectionUnavailableError("Disconnected")),
+    );
+    create.mockImplementationOnce(async () => ({
+      connection: handle.session,
+      provider: { id: "copilot", sessionId: "test" },
+    }));
+    spyOn(sdk, "deleteSession").mockImplementation(async () => {});
+
+    const created = createSession(sessionId, { content: "Start" }, {});
+    await sent.promise;
+    await deleteSession(sessionId);
+
+    await expect(created).resolves.toMatchObject({ disposition: "started" });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(resume).not.toHaveBeenCalled();
+    expect(isSessionRunning(sessionId)).toBe(false);
+  });
+
+  test("Stop during a start stops the turn the start opens", async () => {
+    const { sessionId, resume } = await setup();
+    const handle = makeSession();
+    const resuming = Promise.withResolvers<void>();
+    resume.mockImplementationOnce(async () => {
+      await resuming.promise;
+      return handle.session;
+    });
+
+    const delivering = deliverSessionMessage(sessionId, { content: "First" });
+    const stopping = abortSession(sessionId);
+    resuming.resolve();
+    await delivering;
+
+    await expect(stopping).resolves.toBe(true);
+    expect(handle.send).toHaveBeenCalledTimes(1);
+    expect(handle.abort).toHaveBeenCalledTimes(1);
+    expect(isSessionRunning(sessionId)).toBe(false);
+  });
+
+  test("deletion deletes provider history when the connection can't disconnect", async () => {
+    const { sessionId, handles } = await setup();
+    await deliverSessionMessage(sessionId, { content: "First" });
+    handles[0]!.finish();
+    handles[0]!.disconnect.mockRejectedValueOnce(new SessionConnectionUnavailableError("Gone"));
+    spyOn(console, "error").mockImplementation(() => {});
+    const deleteHistory = spyOn(sdk, "deleteSession").mockImplementation(async () => {});
+
+    await deleteSession(sessionId);
+
+    expect(deleteHistory).toHaveBeenCalledWith(sessionId);
   });
 
   test("disconnects after the idle window and waits for detach before resuming", async () => {

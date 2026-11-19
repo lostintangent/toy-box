@@ -1,4 +1,4 @@
-import { deleteSessionIfExists } from "@sessions/server/runtime";
+import { deleteSession } from "@sessions/server/runtime";
 import { getStateDatabase } from "@/server/database";
 import { WorkerDatabase } from "./database";
 import { cancelWorker, getActiveWorker, getActiveWorkers } from "./registry";
@@ -52,7 +52,7 @@ export async function deleteWorker(sessionId: string, type?: Worker["type"]): Pr
     errors.push(error);
   }
   try {
-    await deleteSessionIfExists(sessionId);
+    await deleteSession(sessionId);
   } catch (error) {
     errors.push(error);
   }

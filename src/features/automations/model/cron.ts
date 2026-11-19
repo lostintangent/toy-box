@@ -1,3 +1,5 @@
+import { CronExpressionParser } from "cron-parser";
+
 // Form state remembers inactive tab inputs; only the selected mode defines the cron.
 export type ScheduleDraft = {
   mode: "daily" | "interval" | "cron";
@@ -20,6 +22,7 @@ export function scheduleToCron(schedule: ScheduleDraft): string {
   return `0 ${hours} * * ${days}`;
 }
 
+/** Opens a cron in the visual mode that saves the same schedule, or as raw cron when none does. */
 export function cronToSchedule(cron: string): ScheduleDraft {
   const draft: ScheduleDraft = {
     mode: "cron",
@@ -28,96 +31,30 @@ export function cronToSchedule(cron: string): ScheduleDraft {
     daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
     cron,
   };
-  const fields = cron.trim().split(/\s+/);
-  if (fields.length !== 5) return draft;
+  // A hashed field (H) takes a new value on every parse, so it has no fixed visual form.
+  if (/\bH/.test(cron)) return draft;
 
-  const [minuteRaw, hourRaw, dayOfMonthRaw, monthRaw, dayOfWeekRaw] = fields;
-  if (dayOfMonthRaw !== "*" || monthRaw !== "*") return draft;
+  try {
+    const { fields } = CronExpressionParser.parse(cron);
+    const [minute] = fields.minute.values;
+    const hours = fields.hour.values;
+    const daysOfWeek = [...new Set(fields.dayOfWeek.values.map((day) => Number(day) % 7))].sort(
+      (left, right) => left - right,
+    );
+    const schedule: ScheduleDraft =
+      hours.length === 1
+        ? { ...draft, mode: "daily", time: [hours[0], minute].map(pad).join(":"), daysOfWeek }
+        : { ...draft, mode: "interval", intervalHours: hours[1], daysOfWeek };
 
-  const minute = parseNumericField(minuteRaw, 0, 59);
-  const daysOfWeek = parseDaysOfWeekField(dayOfWeekRaw);
-  if (minute === null || !daysOfWeek) return draft;
-
-  const hour = parseNumericField(hourRaw, 0, 23);
-  if (hour !== null) {
-    return {
-      ...draft,
-      mode: "daily",
-      time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
-      daysOfWeek,
-    };
+    // Seconds, days of the month, months, uneven hours, and nth or last weekdays have no
+    // visual form, so their candidate saves a different schedule or none at all.
+    const candidate = CronExpressionParser.parse(scheduleToCron(schedule)).fields;
+    return candidate.stringify(true) === fields.stringify(true) ? schedule : draft;
+  } catch {
+    return draft;
   }
-
-  // Interval mode supports top-of-hour schedules only.
-  const intervalHours = parseIntervalHoursField(hourRaw);
-  if (minute !== 0 || intervalHours === null) return draft;
-  return { ...draft, mode: "interval", intervalHours, daysOfWeek };
 }
 
-function parseDaysOfWeekField(value: string): number[] | null {
-  const trimmed = value.trim();
-  if (trimmed === "*") {
-    return [0, 1, 2, 3, 4, 5, 6];
-  }
-
-  const tokens = trimmed
-    .split(",")
-    .map((token) => token.trim())
-    .filter(Boolean);
-  if (tokens.length === 0) return null;
-
-  const days: number[] = [];
-  for (const token of tokens) {
-    const parsed = parseDayOfWeekField(token);
-    if (parsed === null) return null;
-    days.push(parsed);
-  }
-
-  return [...new Set(days)].sort((a, b) => a - b);
+function pad(part: number): string {
+  return String(part).padStart(2, "0");
 }
-
-function parseIntervalHoursField(value: string): number | null {
-  if (value === "*") return 1;
-
-  const match = value.match(/^\*\/(\d+)$/);
-  if (!match) return null;
-
-  const parsed = Number.parseInt(match[1], 10);
-  if (parsed < 1 || parsed > 24) return null;
-  return parsed;
-}
-
-function parseNumericField(value: string, min: number, max: number): number | null {
-  if (!/^\d+$/.test(value)) return null;
-  const parsed = Number.parseInt(value, 10);
-  if (parsed < min || parsed > max) return null;
-  return parsed;
-}
-
-function parseDayOfWeekField(value: string): number | null {
-  const lowered = value.toLowerCase();
-  if (Object.hasOwn(WEEKDAY_NAME_TO_VALUE, lowered)) {
-    return WEEKDAY_NAME_TO_VALUE[lowered];
-  }
-
-  const numeric = parseNumericField(value, 0, 7);
-  if (numeric === null) return null;
-  return numeric === 7 ? 0 : numeric;
-}
-
-const WEEKDAY_NAME_TO_VALUE: Record<string, number> = {
-  sun: 0,
-  sunday: 0,
-  mon: 1,
-  monday: 1,
-  tue: 2,
-  tuesday: 2,
-  wed: 3,
-  wednesday: 3,
-  thu: 4,
-  thursday: 4,
-  fri: 5,
-  friday: 5,
-  sat: 6,
-  saturday: 6,
-};

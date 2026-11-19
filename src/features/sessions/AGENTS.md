@@ -52,7 +52,7 @@ submission addressed to a session, including its turn-specific model or immediat
 A queued message is that same value plus its queue status. `SessionLaunch` composes the initial
 message payload with an optional `SessionLocation`; location is creation context, not message data.
 
-`SessionsState` combines draft records, provider metadata, worktrees, and a typed `ownership` index
+`SessionsState` combines draft records, provider metadata, and a typed `ownership` index
 for Automation and Worker sessions. Ownership is derived from feature records and can exist
 before a backing session. Worker ownership includes its optional parent relationship. Generic
 consumers use this index for filtering, draft reuse, editor defaults, and SDK classification rather
@@ -157,7 +157,9 @@ The browser sends one way and subscribes one way. A send posts `deliverMessage`,
 detail's query key, and the detail waits for this client's deliveries before subscribing from the
 revision it held before sending, so the replay carries the whole turn even when it started first.
 A snapshot could hide the optimistic turn, so one that opens a subscription after a delivery started
-is dropped, and the detail resubscribes once the delivery settles. A draft's first send carries its
+is dropped, and the detail resubscribes once the delivery settles. A Stop carries the same key, so a
+cold start's run hint that restarts the detail mid-Stop waits for it instead of replaying the
+stopping run. A draft's first send carries its
 location, which creates the session with that message, and `sessionMutations.startSession()` does
 the same for a new ID without mounting a pane. A subscription reads `GET /api/sessions/$sessionId`
 with `after` through the shared `readEventStream`, which Channels also uses. When nothing is live, it

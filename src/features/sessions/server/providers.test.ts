@@ -1,6 +1,7 @@
 import { expect, mock, onTestFinished, spyOn, test } from "bun:test";
 import { homedir } from "node:os";
 import { z } from "zod";
+import { getStateDatabase } from "@/server/database";
 import { openTestDatabase } from "@/server/testFixtures";
 import { copilotProvider } from "@providers/server/copilot/provider";
 import { codexProvider } from "@providers/server/codex/provider";
@@ -111,6 +112,20 @@ test("public IDs keep their provider and discovered native sessions resolve back
     provider: codexProvider,
     nativeId: "external",
   });
+});
+
+test("listed sessions carry their worktree", async () => {
+  await setup();
+  const worktree = { path: "/worktrees/isolated", branch: "toy-box/isolated", baseBranch: "main" };
+  await setSessionProvider("isolated", { id: "codex", sessionId: "native" });
+  await (await getStateDatabase())`
+    INSERT INTO worktrees (session_id, worktree_path, worktree_branch, worktree_base_branch)
+    VALUES ('isolated', ${worktree.path}, ${worktree.branch}, ${worktree.baseBranch})`;
+  spyOn(cli, "isInstalled").mockImplementation((id) => id === "codex");
+  const native = { nativeId: "native", createdAt: new Date(0), updatedAt: new Date(0) };
+  spyOn(codexProvider, "listSessions").mockResolvedValue([native]);
+
+  expect((await listSessions()).map((session) => session.worktree)).toEqual([worktree]);
 });
 
 test("providers receive tools bound to the public session that validate and answer with text", async () => {

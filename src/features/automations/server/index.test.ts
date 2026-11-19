@@ -34,7 +34,6 @@ describe("automation lifecycle", () => {
     deleteSession.mockImplementationOnce(async (sessionId) => {
       expect(sessionId).toBe(created.id);
       expect(await database.get(sessionId)).toEqual(updated);
-      return true;
     });
     expect(await deleteAutomation(created.id)).toBe(true);
     expect(deleteSession).toHaveBeenCalledTimes(1);
@@ -94,36 +93,27 @@ describe("automation lifecycle", () => {
     expect(recreate).toHaveBeenCalledTimes(1);
   });
 
-  test.each(["completed", "failed"] as const)(
-    "finalizes a %s run and permits another under the same session ID",
-    async (status) => {
-      const { database, events, completion, released, recreate } = await setup();
-      const automation = await database.create(options);
-      await runAutomation(automation.id);
-      expect((await database.get(automation.id))?.lastRunAt).toBeUndefined();
-      expect(events).toEqual([]);
+  test("releases a finished run's connection and permits another under the same session ID", async () => {
+    const { database, completion, released, recreate } = await setup();
+    const automation = await database.create(options);
+    await runAutomation(automation.id);
 
-      completion.resolve({ status });
-      expect(await released.promise).toBe(automation.id);
+    completion.resolve({ status: "completed" });
+    expect(await released.promise).toBe(automation.id);
 
-      const updated = (await database.get(automation.id))!;
-      expect(updated.lastRunAt).toEqual(expect.any(String));
-      expect(events).toEqual([{ type: "automation.upserted", automation: updated }]);
-
-      recreate.mockResolvedValueOnce({
-        disposition: "started",
-        waitForCompletion: () => new Promise(() => {}),
-      });
-      expect(await runAutomation(automation.id)).toEqual({
-        sessionId: automation.id,
-        started: true,
-      });
-      expect(recreate.mock.calls.map(([sessionId]) => sessionId)).toEqual([
-        automation.id,
-        automation.id,
-      ]);
-    },
-  );
+    recreate.mockResolvedValueOnce({
+      disposition: "started",
+      waitForCompletion: () => new Promise(() => {}),
+    });
+    expect(await runAutomation(automation.id)).toEqual({
+      sessionId: automation.id,
+      started: true,
+    });
+    expect(recreate.mock.calls.map(([sessionId]) => sessionId)).toEqual([
+      automation.id,
+      automation.id,
+    ]);
+  });
 
   test("a failed start leaves metadata unchanged and permits another run", async () => {
     const { database, events, recreate } = await setup();
@@ -134,20 +124,6 @@ describe("automation lifecycle", () => {
     expect(await database.get(automation.id)).toEqual(automation);
     expect(events).toEqual([]);
     expect(await runAutomation(automation.id)).toEqual({ sessionId: automation.id, started: true });
-  });
-
-  test("releases the connection without publishing metadata that failed to persist", async () => {
-    const { db, database, events, completion, released } = await setup();
-    const log = spyOn(console, "error").mockImplementation(() => {});
-    onTestFinished(() => log.mockRestore());
-    const automation = await database.create(options);
-
-    await runAutomation(automation.id);
-    await db`DROP TABLE automations`;
-    completion.resolve({ status: "completed" });
-
-    expect(await released.promise).toBe(automation.id);
-    expect(events).toEqual([]);
   });
 
   test("publishes due claims, continues after a failed start, and never redispatches a claim", async () => {
@@ -195,7 +171,7 @@ describe("automation lifecycle", () => {
 async function setup() {
   const db = await openTestDatabase();
   const database = new AutomationDatabase(db);
-  const deleteSession = spyOn(sessions, "deleteSessionIfExists").mockResolvedValue(true);
+  const deleteSession = spyOn(sessions, "deleteSession").mockResolvedValue();
   const running = spyOn(sessions, "isSessionRunning").mockReturnValue(false);
   const completion = Promise.withResolvers<SessionCompletion>();
   const released = Promise.withResolvers<string>();
@@ -218,5 +194,5 @@ async function setup() {
     recreate.mockRestore();
     release.mockRestore();
   });
-  return { db, database, events, deleteSession, running, recreate, completion, released };
+  return { database, events, deleteSession, running, recreate, completion, released };
 }

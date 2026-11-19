@@ -30,18 +30,6 @@ export async function createSessionWorktree(
   return worktree;
 }
 
-/** Get every session worktree for session-list hydration. */
-export async function getAllSessionWorktrees(): Promise<Record<string, SessionWorktree>> {
-  const db = await getStateDatabase();
-  const rows = await db<SessionWorktreeRow[]>`SELECT * FROM worktrees`;
-  const worktrees: Record<string, SessionWorktree> = {};
-  for (const row of rows) {
-    const worktree = toSessionWorktree(row);
-    if (worktree) worktrees[row.session_id] = worktree;
-  }
-  return worktrees;
-}
-
 /** Release a session's Git worktree and its persisted record. */
 export async function deleteSessionWorktree(sessionId: string): Promise<void> {
   const worktree = await getSessionWorktree(sessionId);
@@ -85,8 +73,6 @@ type SessionWorktreeRow = {
   worktree_path: string | null;
   worktree_branch: string | null;
   worktree_base_branch: string | null;
-  lines_added: number | null;
-  lines_removed: number | null;
 };
 
 async function getSessionWorktree(sessionId: string): Promise<SessionWorktree | null> {
@@ -97,15 +83,14 @@ async function getSessionWorktree(sessionId: string): Promise<SessionWorktree | 
   return row ? toSessionWorktree(row) : null;
 }
 
-function toSessionWorktree(row: SessionWorktreeRow): SessionWorktree | null {
+/** A row's worktree, or null for a session record joined without one. */
+export function toSessionWorktree(row: SessionWorktreeRow): SessionWorktree | null {
   if (!row.worktree_path || !row.worktree_branch || !row.worktree_base_branch) return null;
 
   return {
     path: row.worktree_path,
     branch: row.worktree_branch,
     baseBranch: row.worktree_base_branch,
-    linesAdded: row.lines_added ?? undefined,
-    linesRemoved: row.lines_removed ?? undefined,
   };
 }
 
@@ -116,24 +101,18 @@ async function saveSessionWorktree(sessionId: string, worktree: SessionWorktree)
       session_id,
       worktree_path,
       worktree_branch,
-      worktree_base_branch,
-      lines_added,
-      lines_removed
+      worktree_base_branch
     )
     VALUES (
       ${sessionId},
       ${worktree.path},
       ${worktree.branch},
-      ${worktree.baseBranch},
-      ${worktree.linesAdded ?? null},
-      ${worktree.linesRemoved ?? null}
+      ${worktree.baseBranch}
     )
     ON CONFLICT(session_id) DO UPDATE SET
       worktree_path = excluded.worktree_path,
       worktree_branch = excluded.worktree_branch,
-      worktree_base_branch = excluded.worktree_base_branch,
-      lines_added = excluded.lines_added,
-      lines_removed = excluded.lines_removed
+      worktree_base_branch = excluded.worktree_base_branch
   `;
 }
 

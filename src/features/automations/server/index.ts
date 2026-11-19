@@ -3,12 +3,11 @@
 import { broadcast } from "@workspace/server/events";
 import { getStateDatabase } from "@/server/database";
 import {
-  deleteSessionIfExists,
+  deleteSession,
   isSessionRunning,
   recreateSession,
   releaseIdleConnection,
 } from "@sessions/server/runtime";
-import type { SessionCompletion } from "@sessions/model";
 import { sharedMap } from "@/shared/server/processState";
 import type { Automation, AutomationOptions } from "../model";
 import { AutomationDatabase } from "./database";
@@ -18,6 +17,10 @@ const pendingAutomationRuns =
 
 export async function listAutomations(): Promise<Automation[]> {
   return new AutomationDatabase(await getStateDatabase()).list();
+}
+
+export async function getAutomation(automationId: string): Promise<Automation | null> {
+  return new AutomationDatabase(await getStateDatabase()).get(automationId);
 }
 
 export async function createAutomation(input: AutomationOptions): Promise<Automation> {
@@ -43,7 +46,7 @@ export async function deleteAutomation(automationId: string): Promise<boolean> {
   const database = new AutomationDatabase(await getStateDatabase());
   if (!(await database.get(automationId))) return false;
 
-  await deleteSessionIfExists(automationId);
+  await deleteSession(automationId);
   const deleted = await database.delete(automationId);
   if (deleted) broadcast({ type: "automation.deleted", automationId });
   return deleted;
@@ -67,8 +70,7 @@ export async function runAutomation(automationId: string) {
 }
 
 async function beginAutomationRun(automationId: string) {
-  const database = new AutomationDatabase(await getStateDatabase());
-  const automation = await database.get(automationId);
+  const automation = await getAutomation(automationId);
   if (!automation) throw new Error("Automation not found");
 
   if (isSessionRunning(automation.id)) {
@@ -81,29 +83,11 @@ async function beginAutomationRun(automationId: string) {
     { directory: automation.cwd, name: automation.title },
   );
 
-  void superviseAutomationRun(database, automation.id, receipt.waitForCompletion).catch((error) => {
-    console.error(`Failed to finalize automation run ${automation.id}:`, error);
-  });
+  void receipt
+    .waitForCompletion()
+    .then(() => releaseIdleConnection(automation.id))
+    .catch((error) => {
+      console.error(`Failed to release automation run ${automation.id}:`, error);
+    });
   return { sessionId: automation.id, started: true };
-}
-
-async function superviseAutomationRun(
-  database: AutomationDatabase,
-  automationId: string,
-  waitForCompletion: () => Promise<SessionCompletion>,
-): Promise<void> {
-  try {
-    await waitForCompletion();
-  } catch (error) {
-    console.error(`Failed to await automation run ${automationId}:`, error);
-  }
-
-  try {
-    const automation = await database.recordRunFinish(automationId, new Date());
-    if (automation) broadcast({ type: "automation.upserted", automation });
-  } catch (error) {
-    console.error(`Failed to persist automation run ${automationId}:`, error);
-  }
-
-  await releaseIdleConnection(automationId);
 }

@@ -1,8 +1,9 @@
 /** Reactive hooks exposed through the authored `@toy-box/sdk` module. */
+import { useMutation } from "@tanstack/react-query";
 import { useSelector } from "@tanstack/react-store";
 import type { AppHandle, AppWorkspace } from "@apps/sdk";
 import { consumeAppShare } from "@apps/server/functions";
-import { cancelWorker, spawnWorker } from "@workers/server/functions";
+import { workerMutations } from "@workers/mutations";
 import { useAppHost } from "../../host/context";
 
 export { useFile } from "@files/useFile";
@@ -14,6 +15,8 @@ export function useApp(): AppHandle {
   if (!state) throw new Error("useApp is available only to saved apps.");
   const app = useSelector(state.store);
   const shares = useSelector(workspace, (state) => state.shares);
+  const spawn = useMutation(workerMutations.spawn);
+  const cancel = useMutation(workerMutations.cancel);
   return {
     ...app,
     shares,
@@ -25,10 +28,10 @@ export function useApp(): AppHandle {
       },
       async spawnWorker(input) {
         await state.flush();
-        return spawnWorker({ data: { ...input, type: "app", appId: app.id } });
+        return spawn.mutateAsync({ ...input, type: "app", appId: app.id });
       },
       cancelWorker(workerSessionId) {
-        return cancelWorker({ data: { type: "app", appId: app.id, workerSessionId } });
+        return cancel.mutateAsync({ type: "app", appId: app.id, workerSessionId });
       },
     },
   };

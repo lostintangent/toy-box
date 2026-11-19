@@ -23,4 +23,8 @@ export default [
       lines_removed        INTEGER
     );
   `,
+  `
+    ALTER TABLE worktrees DROP COLUMN lines_added;
+    ALTER TABLE worktrees DROP COLUMN lines_removed;
+  `,
 ];

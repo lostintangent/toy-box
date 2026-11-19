@@ -26,9 +26,12 @@ type ChannelPane = {
   answer: (content: string) => void;
   /** Begins a mention, so the picker can address or add an agent. */
   mention: () => void;
+  /** Opens the shared artifact a message's `file:` link names, or undefined when it names none. */
+  openArtifactLink: (href: string) => (() => void) | undefined;
 };
 
-const ChannelPaneContext = createContext<ChannelPane | undefined>(undefined);
+/** Undefined outside a Channel pane, as in the sidebar's request previews. */
+export const ChannelPaneContext = createContext<ChannelPane | undefined>(undefined);
 
 export const ChannelPaneProvider = ChannelPaneContext.Provider;
 

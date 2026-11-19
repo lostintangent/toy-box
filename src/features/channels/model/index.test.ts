@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { machineFile, sessionFile, workspaceFileId, type WorkspaceFile } from "@files/model";
 import type { Channel, ChannelAgent, ChannelArtifact, ChannelMember } from "./index";
 import {
   agentHandleFromName,
@@ -10,6 +11,7 @@ import {
   channelSystemMessageContentSchema,
   channelUnreadAfter,
   createChannelInputSchema,
+  linkedArtifact,
   editChannelInputSchema,
   markChannelReadInputSchema,
   postChannelMessageInputSchema,
@@ -135,6 +137,47 @@ test("artifacts sort newest first without mutating input or reordering equal tim
     artifacts[0]!,
     artifacts[3]!,
   ]);
+});
+
+describe("file links name shared artifacts", () => {
+  const artifact = (file: WorkspaceFile, sharedAt: string): ChannelArtifact => ({
+    id: workspaceFileId(file),
+    file,
+    title: file.path,
+    sharedAt,
+  });
+  const plan = artifact(machineFile("/Users/me/My Project/docs/plan.md"), "2026-11-18T09:00:00Z");
+  const leadNotes = artifact(sessionFile("channel-1", "notes.md"), "2026-11-18T10:00:00Z");
+  const builderNotes = artifact(sessionFile("builder", "notes.md"), "2026-11-18T11:00:00Z");
+  const design = artifact(sessionFile("builder", "designs/ui.svg"), "2026-11-18T12:00:00Z");
+  const artifacts = [plan, leadNotes, builderNotes, design];
+  const directory = "/Users/me/My Project";
+
+  test.each([
+    ["a relative path against the directory", "file:./docs/../docs/plan.md", directory, plan],
+    [
+      "a session's artifacts folder under any home",
+      "file:/home/someone/.toy-box/sessions/builder/artifacts/designs/ui.svg",
+      directory,
+      design,
+    ],
+    [
+      "an absolute path without a directory",
+      "file:/Users/me/My%20Project/docs/plan.md",
+      undefined,
+      plan,
+    ],
+    ["a relative path without a directory as the newest", "file:notes.md", undefined, builderNotes],
+    [
+      "a relative session path in a channel with a directory",
+      "file:notes.md",
+      directory,
+      undefined,
+    ],
+    ["a malformed escape", "file:docs/%E0%A4%A.md", directory, undefined],
+  ])("resolves %s", (_, href, directory, expected) => {
+    expect(linkedArtifact(href, { artifacts, directory })).toBe(expected);
+  });
 });
 
 describe("channel audience labels", () => {

@@ -24,9 +24,9 @@ export async function* streamSession(
   const activityHash = hashKey(activityKey);
   const readActivity = () => client.getQueryData<SessionsActivity>(activityKey)?.[sessionId];
   const readState = () => client.getQueryData<SessionState>(queryKey);
-  // This client's deliveries carry the detail's key, so a subscription can wait for them.
-  const deliveries = { mutationKey: queryKey, exact: true };
-  const isDelivering = () => client.isMutating(deliveries) > 0;
+  // This client's deliveries and Stops carry the detail's key, so a subscription can wait for them.
+  const turnChanges = { mutationKey: queryKey, exact: true };
+  const isChangingTurn = () => client.isMutating(turnChanges) > 0;
 
   let changed = () => {};
   /** Waits until `ready` holds, and reports whether the detail is still watched. */
@@ -40,7 +40,7 @@ export async function* streamSession(
   let activity = readActivity();
   // A run, or the opening state, this detail hasn't subscribed to yet.
   let unseen = true;
-  let deliveriesStarted = 0;
+  let turnChangesStarted = 0;
   let opened = false;
 
   signal.addEventListener("abort", () => changed(), { once: true });
@@ -57,23 +57,24 @@ export async function* streamSession(
     }
   });
   const stopMutations = client.getMutationCache().subscribe(({ type, mutation }) => {
-    if (!mutation || !matchMutation(deliveries, mutation)) return;
-    if (type === "added") deliveriesStarted++;
+    if (!mutation || !matchMutation(turnChanges, mutation)) return;
+    if (type === "added") turnChangesStarted++;
     changed();
   });
 
   try {
-    // A pending delivery holds an optimistic turn that a snapshot would hide.
-    while (await until(() => unseen && !isDelivering())) {
+    // A pending delivery holds an optimistic turn that a snapshot would hide, and a pending
+    // Stop an optimistic end that the stopping run's replay would undo.
+    while (await until(() => unseen && !isChangingTurn())) {
       unseen = false;
-      const started = deliveriesStarted;
+      const started = turnChangesStarted;
       let received = false;
       try {
         for await (const events of subscribe(sessionId, readState()?.revision, signal)) {
           if (events[0]?.type === "deleted") throw new Error(`Session not found: ${sessionId}`);
           received = true;
-          // A delivery that started since subscribing may postdate the snapshot.
-          if (events[0]?.type === "snapshot" && deliveriesStarted !== started) {
+          // A delivery or Stop that started since subscribing may postdate the snapshot.
+          if (events[0]?.type === "snapshot" && turnChangesStarted !== started) {
             unseen = true;
             break;
           }
