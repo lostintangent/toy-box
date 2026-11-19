@@ -4,7 +4,7 @@ import { NotFoundError } from "@/shared/server/http";
 import { getServer } from "@workspace/server/installation";
 import { listPeers, post, read, readServer } from "@workspace/server/peers";
 
-// Leads reach the Channels on the owner's peer servers, the other Toy Box Macs on its tailnet,
+// Leads reach the Channels on the owner's peer servers, the other Toy Box servers on its tailnet,
 // which Workspace lists. Each peer server lists its Channels under the name it gives itself, and
 // takes messages to their leads at its origin.
 

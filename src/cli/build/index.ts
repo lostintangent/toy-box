@@ -11,19 +11,24 @@ async function buildCli(): Promise<void> {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "toy-box-build-"));
   const appTypeLibrary = join(temporaryDirectory, "app-type-library");
   const screenNative = join(temporaryDirectory, SCREEN_NATIVE_DIRECTORY);
+  // Screens' native helper exists only for macOS, so other platforms ship without it.
+  const includesScreens = process.platform === "darwin";
 
   try {
     await writeAppTypeLibrary(projectRoot, appTypeLibrary);
-    await buildScreenNative(screenNative);
+    if (includesScreens) await buildScreenNative(screenNative);
 
     const result = await Bun.build({
       entrypoints: [join(projectRoot, "src/cli/index.ts")],
       minify: true,
       throw: false,
       compile: {
-        target: "bun-darwin-arm64",
         outfile: join(projectRoot, "toy-box"),
-        assets: [join(projectRoot, ".output/server/public"), appTypeLibrary, screenNative],
+        assets: [
+          join(projectRoot, ".output/server/public"),
+          appTypeLibrary,
+          ...(includesScreens ? [screenNative] : []),
+        ],
       },
     });
 

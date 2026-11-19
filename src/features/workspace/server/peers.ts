@@ -1,14 +1,21 @@
 import { z } from "zod";
 
-// A peer is one of the owner's other Macs online on this tailnet, signed in as the same Tailscale
+// A peer is one of the owner's other computers online on this tailnet, signed in as the same Tailscale
 // user, at the MagicDNS origin where `tailscale serve` puts its Toy Box server. Peers are only
 // candidates: nothing stores them, each read asks Tailscale, and every reader keeps the ones that
-// answer, skipping a Mac that isn't running Toy Box. Features reach peers through the bounded reads
+// answer, skipping a computer that isn't running Toy Box. Features reach peers through the bounded reads
 // and posts at the end of this module, as Channels' leads do to message theirs.
 
-// A server launched outside a shell may not have the CLI on its PATH, so it falls back to the app's
-// own binary, which acts as the CLI only when told to.
-const tailscaleApp = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+// A server launched outside a shell may not have the CLI on its PATH, so on macOS it falls back to
+// the app's own binary, which acts as the CLI only when told to. WSL reaches its Windows host's CLI
+// through interop, under its Windows name.
+const tailscaleFallback =
+  process.platform === "darwin"
+    ? "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    : "tailscale.exe";
+
+// Toy Box servers run on Macs and Linux, including WSL, whose tailnet node may be its Windows host.
+const serverPlatforms = new Set(["macOS", "linux", "windows"]);
 
 const statusSchema = z.object({
   Self: z.object({ UserID: z.number() }),
@@ -20,7 +27,7 @@ const statusSchema = z.object({
     .nullish(),
 });
 
-/** The origins of the owner's other Macs online on this tailnet, sorted, or none when Tailscale
+/** The origins of the owner's other computers online on this tailnet, sorted, or none when Tailscale
  *  can't say. */
 export function listPeers(): Promise<string[]> {
   return readPeers().catch(() => []);
@@ -28,10 +35,10 @@ export function listPeers(): Promise<string[]> {
 
 async function readPeers() {
   const { Self, Peer } = statusSchema.parse(
-    await readStatus("tailscale").catch(() => readStatus(tailscaleApp)),
+    await readStatus("tailscale").catch(() => readStatus(tailscaleFallback)),
   );
   return Object.values(Peer ?? {})
-    .filter((peer) => peer.Online && peer.OS === "macOS" && peer.UserID === Self.UserID)
+    .filter((peer) => peer.Online && serverPlatforms.has(peer.OS) && peer.UserID === Self.UserID)
     .map((peer) => `https://${peer.DNSName.replace(/\.$/, "")}`)
     .sort();
 }

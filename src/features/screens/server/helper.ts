@@ -9,6 +9,7 @@ import {
   buildScreenNative,
   SCREEN_HELPER_EXECUTABLE,
   SCREEN_NATIVE_DIRECTORY,
+  SCREEN_NATIVE_REQUIREMENT,
 } from "../native/build";
 
 /** Captures run at 30 fps as JPEG, sized to their viewers. */
@@ -168,6 +169,7 @@ export const startScreenHelper: StartScreenHelper = async (onEvent, onFailure, o
 
 /** Development builds the helper whenever its source changes; the binary extracts its own copy once per version. */
 async function helperExecutable(): Promise<string> {
+  if (process.platform !== "darwin") throw new RefusalError(SCREEN_NATIVE_REQUIREMENT);
   if (!Bun.isStandaloneExecutable) return buildScreenNative();
   const bytes = await Bun.file(
     join(import.meta.dir, SCREEN_NATIVE_DIRECTORY, SCREEN_HELPER_EXECUTABLE),

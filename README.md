@@ -18,13 +18,13 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
 
 - **Multi-pane workspace:** Open up to four sessions, local files, artifacts, apps, terminals, or agent-provided canvases together, with live previews and an adaptive mobile layout.
 
-- **Screen sharing:** View and control the host's displays and windows from any client, and let agents put a running app in front of you as a channel's preview.
+- **Screen sharing:** View and control the host's displays and windows from any client, and let agents put a running app in front of you as a channel's preview. Currently macOS only.
 
 - **Multi-agent orchestration:** Delegate parallel work to child sessions and use the floating Hyper workspace for a dedicated orchestration thread.
 
 - **Agent channels:** Create channel-specific teammates with distinct roles, then collaborate through messages, reactions, statuses, screenshots, and shared artifacts.
 
-- **Peer servers:** Your other Toy Box Macs on the same tailnet find each other automatically, and the channel leads on any two can find and message each other. Each server has its own name, editable from any client.
+- **Peer servers:** Your other Toy Box servers on the same tailnet find each other automatically, and the channel leads on any two can find and message each other. Each server has its own name, editable from any client.
 
 - **Collaborative artifacts:** Browse and edit code, Markdown, HTML, JSON, and SVG alongside the agent, or use structured briefs to review and launch consequential work.
 
@@ -40,15 +40,34 @@ Beyond simple session management, Toy Box provides several helpful workflows tha
    - [GitHub Copilot CLI](https://github.com/github/copilot)
    - [Codex CLI](https://developers.openai.com/codex/cli/)
    - [Claude Code](https://code.claude.com/docs/en/setup)
-1. Install Toy Box: `npm install -g @lostintangent/toy-box` (or `bun ...`, etc.)
+1. Install Toy Box with the package for your platform (or `bun ...`, etc.):
+
+   | Platform              | Install command                                     |
+   | --------------------- | --------------------------------------------------- |
+   | macOS (Apple silicon) | `npm install -g @lostintangent/toy-box`             |
+   | Linux or WSL2 (x64)   | `npm install -g @lostintangent/toy-box-linux-x64`   |
+   | Linux or WSL2 (Arm64) | `npm install -g @lostintangent/toy-box-linux-arm64` |
+
 1. Start the agent server: `toy-box`, which will open the web client in your browser
-1. Run `caffeinate` (or `caffeinate -d`) to keep your agents running
+1. On macOS, run `caffeinate` (or `caffeinate -d`) to keep your agents running
 
 Optional, but recommended:
 
 1. Install and sign in to the `gh` CLI so that your agents can clone repos, watch Actions, co-ordinate via gists, etc.
 
-1. If you want to be able to access screens, then enable the app running Toy Box (for example Terminal or Conduit) in `System Settings` > `Privacy & Security` > `Screen & System Audio Recording`
+1. If you want to be able to access screens on macOS, then enable the app running Toy Box (for example Terminal or Conduit) in `System Settings` > `Privacy & Security` > `Screen & System Audio Recording`
+
+## Linux and WSL
+
+Toy Box runs on Linux distributions that use glibc, such as Ubuntu, Debian, and Fedora. WSL2 on Windows is supported in preview. Screen sharing isn't available on Linux yet.
+
+On WSL2:
+
+- Install Node, Toy Box, and your providers inside the distro, and run `npm` from the WSL shell rather than PowerShell.
+- Keep your projects and `~/.toy-box` in the Linux filesystem rather than under `/mnt/c`, where edits made from Windows don't reach Toy Box's live file views.
+- Open `http://localhost:3000` in a Windows browser. WSL forwards it to the server.
+- WSL stops once no Linux process is running, so keep the terminal running `toy-box` open.
+- Install Tailscale on Windows rather than inside WSL, and run `tailscale serve` (below) from Windows.
 
 ## Access From Anywhere
 
