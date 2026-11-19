@@ -8,6 +8,8 @@ Closing a pane never quits the source application.
 `model/` holds what the browser and server share: screens and their statuses,
 frames, input and the socket protocol. `server/` owns the runtime, the native
 helper process and the agent tool, and `native/` is the macOS helper itself.
+macOS is the only platform with a helper, so only macOS builds embed it, and on
+any other platform starting the helper refuses with the macOS requirement.
 `client/` holds the pane, the hover preview, the screen browser and the hooks
 behind them. `bench/` measures delivery.
 
