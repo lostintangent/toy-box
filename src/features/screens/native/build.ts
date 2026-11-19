@@ -3,13 +3,13 @@ import { join, resolve } from "node:path";
 
 export const SCREEN_NATIVE_DIRECTORY = "screen-native";
 export const SCREEN_HELPER_EXECUTABLE = "ToyBoxScreens";
+export const SCREEN_NATIVE_REQUIREMENT =
+  "Screen sharing currently requires an Apple silicon Mac running macOS 14.2 or later.";
 
 /** Compiles the helper, unless it was already built from its current source. */
 export async function buildScreenNative(destination?: string, benchmark = false): Promise<string> {
   if (process.platform !== "darwin" || process.arch !== "arm64")
-    throw new Error(
-      "Screen sharing currently requires an Apple silicon Mac running macOS 14.2 or later.",
-    );
+    throw new Error(SCREEN_NATIVE_REQUIREMENT);
   const source = Bun.fileURLToPath(new URL("./macos/", import.meta.url));
   const root = destination ?? resolve(source, "../../../../../.nitro", SCREEN_NATIVE_DIRECTORY);
   const executable = join(root, `${SCREEN_HELPER_EXECUTABLE}${benchmark ? "Benchmark" : ""}`);

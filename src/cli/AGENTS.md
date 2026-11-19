@@ -16,10 +16,13 @@ starts at the launcher and follows its dynamic `import()` of the Nitro server an
 chunks it loads. It packs that graph, the browser assets, the app type library, and a
 copy of the Bun runtime into one `toy-box` file. The temporary library is removed after
 compilation, and the finished binary reads nothing from `.output` or `node_modules` on
-disk. The npm package ships only this binary and its metadata, currently for Apple
-silicon on macOS; new platforms mean extending the build matrix, not changing the model.
+disk. The npm package ships only this binary and its metadata. Apple silicon Macs install
+`@lostintangent/toy-box`, and Linux installs `@lostintangent/toy-box-linux-x64` or
+`-linux-arm64`, whose builds compile in their own package name so updates find them.
+Each platform's binary is built on that platform, where `bun install` has fetched its
+native addons.
 
-The build also embeds Screens' native helper; [Screens](../features/screens/AGENTS.md) owns its packaging and permission contract.
+On macOS the build also embeds Screens' native helper; [Screens](../features/screens/AGENTS.md) owns its packaging and permission contract.
 
 The shape is fan out, then collapse. `vite build` fans the app into browser and server builds; `Bun.build()` collapses the Nitro server, browser assets, launcher, and Bun runtime into one native file.
 
@@ -88,7 +91,7 @@ session until the server exits.
 ## Invariants
 
 - Build the web app before compiling the launcher, because the binary embeds `.output`.
-- Keep native addons (compiled `.node` binaries) off the production runtime path. The published binary ships no `node_modules`, so a dependency that loads a native module at runtime will work in development and then fail in the binary. Tailwind's native compiler is safe because it only runs during the build, not at runtime.
+- Keep native addons (compiled `.node` binaries) off the production runtime path. The published binary ships no `node_modules`, so a dependency that loads a native module at runtime will work in development and then fail in the binary. Tailwind's native scanner is the exception: app styles load `@tailwindcss/oxide` at runtime, so the binary embeds the addon `bun install` fetched for the build machine, and works only on that platform.
 - Keep Nitro's `output.publicDir` and Bun's public asset path aligned at `.output/server/public`, and keep `serveStatic` enabled for production. The non-default nesting is intentional: Bun flattens the compiled server to its virtual root, so Nitro's default sibling `../public` path would escape that root.
 - Preserve `app-type-library` as the packaged type-library basename: the standalone compiler resolves it below Bun's `import.meta.dir` virtual root.
 - Keep feature sockets on Nitro's origin.
