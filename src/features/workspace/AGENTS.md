@@ -172,13 +172,14 @@ release ends when the tab reloads onto it. Both requests are `workspaceMutations
 client's mutation cache, so closing Settings doesn't lose one in flight, and reopening shows its
 progress or error. Each rereads the peers once it settles.
 
-[`server/peers.ts`](server/peers.ts) owns peers, the owner's other Macs on this server's tailnet.
-`listPeers` asks `tailscale status` on every read and answers the online macOS nodes signed in as
-this one's user, as `https://` origins, so nothing is stored and nobody links anything. Peers are
-candidate servers, not confirmed ones: a Mac that doesn't serve Toy Box through `tailscale serve` is
+[`server/peers.ts`](server/peers.ts) owns peers, the owner's other computers on this server's tailnet.
+`listPeers` asks `tailscale status` on every read and answers the online macOS, Linux and Windows
+nodes signed in as this one's user, Windows being where a WSL server's tailnet node lives, as `https://` origins, so nothing is stored and nobody links anything. Peers are
+candidate servers, not confirmed ones: a computer that doesn't serve Toy Box through `tailscale serve` is
 listed too, and readers keep the ones that answer. A missing or failing `tailscale` means no peers.
 It runs the CLI with `TAILSCALE_BE_CLI=1` and falls back to the app's own binary when `tailscale`
-isn't on PATH, as under launchd. Reading the server never calls another server, so peers can't
+isn't on PATH, as under launchd, then to `tailscale.exe`, which WSL reaches on its Windows host
+through interop. Reading the server never calls another server, so peers can't
 cycle. `getPeerServers` keeps the ones that answer, with the name, release, and installed release
 each reads for itself. Features reach peers through the module's bounded `readServer`, `read` and
 `post`.

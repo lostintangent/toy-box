@@ -232,9 +232,9 @@ attention writes check the Channel's intrinsic lead ID within their transaction.
   target must be an existing Channel because delivery accepts any Session. Like a routine run, the
   wake clears the receiving lead's waiting status, so its roster shows it working. That is the
   exchange's only trace in either Channel.
-- Peer servers are the other Toy Box Macs on the owner's tailnet, which
+- Peer servers are the other Toy Box servers on the owner's tailnet, which
   [Workspace lists](../workspace/AGENTS.md#the-server). `list_channels` adds each answering peer's
-  Channels with that server's `name` as `server`, so a sleeping Mac lists none. Messaging one posts
+  Channels with that server's `name` as `server`, so a sleeping computer lists none. Messaging one posts
   once to its server's [`lead-messages` route](#peers), and any answer but acceptance, or a timeout,
   fails the tool. The receiver wakes its lead without looking the sender up, and that lead replies
   through its own peers. Only words cross servers. Peers trust each other the way a server trusts

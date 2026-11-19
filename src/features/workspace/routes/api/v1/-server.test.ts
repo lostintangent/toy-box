@@ -50,7 +50,7 @@ async function useTailscale(status: unknown) {
   });
 }
 
-test("the server's peers are the owner's other Macs online on its tailnet", async () => {
+test("the server's peers are the owner's other computers online on its tailnet", async () => {
   await openTestDatabase();
   const peer = (DNSName: string, { OS = "macOS", Online = true, UserID = 7 } = {}) => ({
     DNSName,
@@ -66,12 +66,15 @@ test("the server's peers are the owner's other Macs online on its tailnet", asyn
       asleep: peer("asleep.tail1.ts.net.", { Online: false }),
       phone: peer("iphone.tail1.ts.net.", { OS: "iOS" }),
       box: peer("box.tail1.ts.net.", { OS: "linux" }),
+      desktop: peer("desktop.tail1.ts.net.", { OS: "windows" }),
       friend: peer("friend.tail1.ts.net.", { UserID: 8 }),
     },
   });
 
   const server = await invokeRoute(Route, new Request("http://toy-box.test/api/v1/server"));
   expect((await server.json()).peers).toEqual([
+    "https://box.tail1.ts.net",
+    "https://desktop.tail1.ts.net",
     "https://laptop.tail1.ts.net",
     "https://studio.tail1.ts.net",
   ]);
