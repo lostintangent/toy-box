@@ -6,11 +6,13 @@ import { z } from "zod";
 // answer, skipping a computer that isn't running Toy Box. Features reach peers through the bounded reads
 // and posts at the end of this module, as Channels' leads do to message theirs.
 
-// A server launched outside a shell may not have the CLI on its PATH, so it falls back to the app's
-// own binary, which acts as the CLI only when told to. WSL reaches its Windows host's CLI through
-// interop, under its Windows name.
-const tailscaleApp = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
-const tailscaleWindows = "tailscale.exe";
+// A server launched outside a shell may not have the CLI on its PATH, so on macOS it falls back to
+// the app's own binary, which acts as the CLI only when told to. WSL reaches its Windows host's CLI
+// through interop, under its Windows name.
+const tailscaleFallback =
+  process.platform === "darwin"
+    ? "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    : "tailscale.exe";
 
 // Toy Box servers run on Macs and Linux, including WSL, whose tailnet node may be its Windows host.
 const serverPlatforms = new Set(["macOS", "linux", "windows"]);
@@ -33,9 +35,7 @@ export function listPeers(): Promise<string[]> {
 
 async function readPeers() {
   const { Self, Peer } = statusSchema.parse(
-    await readStatus("tailscale")
-      .catch(() => readStatus(tailscaleApp))
-      .catch(() => readStatus(tailscaleWindows)),
+    await readStatus("tailscale").catch(() => readStatus(tailscaleFallback)),
   );
   return Object.values(Peer ?? {})
     .filter((peer) => peer.Online && serverPlatforms.has(peer.OS) && peer.UserID === Self.UserID)

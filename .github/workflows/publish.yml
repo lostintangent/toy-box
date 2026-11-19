@@ -136,18 +136,29 @@ jobs:
           cp "$smoke_dir/package/toy-box" toy-box-darwin-arm64
           echo "file=$package_file" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to npm
-        env:
-          RELEASE_PACKAGE: ${{ steps.package.outputs.file }}
-        run: npm publish "$RELEASE_PACKAGE" --ignore-scripts
-
       - uses: actions/download-artifact@v5
         with:
           path: linux
           merge-multiple: true
 
+      # The Linux packages publish before the main one, which marks the release as published, and skip
+      # any version already on npm, so a re-run after a partial publish finishes the release.
       - name: Publish Linux packages to npm
-        run: for package in linux/*.tgz; do npm publish "$package" --ignore-scripts; done
+        run: |
+          for package in linux/*.tgz; do
+            url="$(tar -xOzf "$package" package/package.json | jq -r '"https://registry.npmjs.org/\(.name | @uri)/\(.version)"')"
+            status="$(curl -sS -o /dev/null -w '%{http_code}' "$url")"
+            case "$status" in
+              200) echo "$url is already published" ;;
+              404) npm publish "$package" --ignore-scripts ;;
+              *) echo "Cannot verify $url: HTTP $status" && exit 1 ;;
+            esac
+          done
+
+      - name: Publish to npm
+        env:
+          RELEASE_PACKAGE: ${{ steps.package.outputs.file }}
+        run: npm publish "$RELEASE_PACKAGE" --ignore-scripts
 
       - name: Create GitHub release
         env:
